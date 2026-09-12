@@ -1,5 +1,12 @@
 ## Issue Triage
 
+> Historical reference: the taxonomy below describes the older
+> `sagemathinc/cocalc` repository. It is not the current label scheme for
+> `sagemathinc/cocalc-ai`. Use the [current repository labels](https://github.com/sagemathinc/cocalc-ai/labels)
+> and [good first issue candidates](https://github.com/sagemathinc/cocalc-ai/labels/good%20first%20issue)
+> when triaging or looking for an initial contribution. The original taxonomy
+> and contact guidance below are retained as historical context.
+
 Contributors with sufficient permissions on the CoCalc repo can help by adding
 labels to triage issues:
 

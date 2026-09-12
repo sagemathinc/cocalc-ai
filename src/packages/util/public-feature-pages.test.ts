@@ -24,9 +24,16 @@ describe("public feature page catalog", () => {
     [
       "/prefix/docs/hosts/storage?view=full#backups",
       "/prefix",
-      "/prefix/docs/hosts/storage?view=full#backups",
+      "/prefix/prefix/docs/hosts/storage?view=full#backups",
     ],
-    ["/prefix?view=full#top", "/prefix", "/prefix?view=full#top"],
+    ["/prefix?view=full#top", "/prefix", "/prefix/prefix?view=full#top"],
+    ["/docs/hosts/storage", "/docs", "/docs/docs/hosts/storage"],
+    [
+      "/docs/hosts/storage?view=full#backups",
+      "/docs/",
+      "/docs/docs/hosts/storage?view=full#backups",
+    ],
+    ["/docs?view=full#top", "/docs", "/docs/docs?view=full#top"],
     ["/prefix-other/docs", "/prefix", "/prefix/prefix-other/docs"],
     ["/docs/hosts/storage", "/prefix/", "/prefix/docs/hosts/storage"],
     [
@@ -112,4 +119,46 @@ describe("public feature page catalog", () => {
       }
     }
   });
+});
+
+describe("research compute product availability", () => {
+  it.each([{}, { cocalc_product: "plus" }, { cocalc_product: "invalid" }])(
+    "excludes only research compute for %j",
+    (config) => {
+      expect(getPublicFeaturePage("research-compute", config)).toBeUndefined();
+      expect(getPublicFeatureIndexPages(config)).toEqual(
+        getPublicFeatureIndexPages().filter(
+          (page) => page.slug !== "research-compute",
+        ),
+      );
+      expect(
+        PUBLIC_FEATURE_NAV_ITEMS.filter(({ slug }) =>
+          getPublicFeaturePage(slug, config),
+        ),
+      ).toEqual(
+        PUBLIC_FEATURE_NAV_ITEMS.filter(
+          ({ slug }) => slug !== "research-compute",
+        ),
+      );
+      for (const page of PUBLIC_FEATURE_PAGES.filter(
+        (page) => page.slug !== "research-compute",
+      )) {
+        for (const slug of [page.slug, ...(page.aliases ?? [])]) {
+          expect(getPublicFeaturePage(slug, config)).toBe(page);
+        }
+      }
+    },
+  );
+
+  it.each(["launchpad", "rocket"])(
+    "retains the complete catalog for %s",
+    (cocalc_product) => {
+      expect(getPublicFeaturePage("research-compute", { cocalc_product })).toBe(
+        getPublicFeaturePage("research-compute"),
+      );
+      expect(getPublicFeatureIndexPages({ cocalc_product })).toEqual(
+        getPublicFeatureIndexPages(),
+      );
+    },
+  );
 });

@@ -1,6 +1,10 @@
 # Browser Debugging with `cocalc browser`
 
-This guide is for agent-driven debugging in a live CoCalc browser session.
+This guide covers local source-development debugging and advanced browser
+reproduction. For hosted-site authentication and target selection, start with
+[the public browser workflow](../src/packages/docs/src/content/cli-workflows.ts).
+The local development environment commands below are not prerequisites for
+using the CLI against a hosted site.
 
 It is specifically useful when unit tests pass but behavior in the real app still fails.
 
@@ -28,15 +32,17 @@ In practice, these bugs often come from runtime differences:
    - Read the `url` (e.g. `http://localhost:7003`).
 
 2. List browser sessions for that exact server.
-   - `COCALC_API_URL=http://localhost:7003 COCALC_BEARER_TOKEN='' cocalc browser session list --active-only`
+   - `COCALC_API_URL=http://localhost:7003 cocalc browser session list --active-only`
    - Optionally scope to a workspace: `... --project-id <uuid>`
 
-3. Use the returned `browser_id` explicitly in every command.
-   - `COCALC_API_URL=http://localhost:7003 COCALC_BROWSER_ID=<id> COCALC_BEARER_TOKEN='' cocalc browser exec-api`
+3. Use the returned `browser_id` explicitly in every command. Replace
+   `BROWSER_ID` and `PROJECT_ID` below with the returned browser ID and intended
+   project ID.
+   - `COCALC_API_URL=http://localhost:7003 COCALC_BROWSER_ID="BROWSER_ID" cocalc browser exec-api`
 
 4. For open tabs/files, prefer the typed command before raw browser exec.
-   - `cocalc browser files --browser <id> --project-id <uuid>`
-   - `cocalc browser tabs --browser <id> --project-id <uuid>` is an alias.
+   - `cocalc browser files --browser "BROWSER_ID" --project-id "PROJECT_ID"`
+   - `cocalc browser tabs --browser "BROWSER_ID" --project-id "PROJECT_ID"` is an alias.
 
 5. Open a clean repro file from browser-exec itself.
    - Write file with `api.fs.writeFile(...)`
@@ -94,7 +100,7 @@ You now have two explicit ways to target browser automation:
 ## Practical debugging tips
 
 - Always set `COCALC_API_URL` for each command when using multiple servers.
-- In lite mode, `COCALC_BEARER_TOKEN=''` is often correct.
+- Preserve the authentication variables exported by the matching development environment; do not clear `COCALC_BEARER_TOKEN` manually.
 - Use session-targeting flags to avoid ambiguous browser selection:
   - `--active-only`
   - `--project-id <uuid>` for open tab/file listing and explicit project targets
@@ -110,9 +116,11 @@ You now have two explicit ways to target browser automation:
 - If two editors are present, never assume `querySelector(...)` returns the active one.
 - Prefer **spawned sessions** for long-running scripted repros; prefer **live sessions** for exact user-visible issues.
 
-## Browser API Wishlist
+## Implementation notes and historical wishlist
 
-These are improvements that would speed up real debugging and reduce mistakes.
+This section mixes implemented helpers with earlier follow-up ideas. Use the
+current command help and registration source to establish what is available;
+a wishlist item is not evidence that a feature is still missing.
 
 ### Session targeting
 
@@ -249,7 +257,7 @@ connected; use an ephemeral browser context for an existing test account rather
 than copying AI credentials into a disposable account. Reports are written
 under `.cocalc-browser-harness/` unless `--report-dir` is specified.
 
-### Screenshot support (next iterations)
+### Screenshot support
 
 - First pass now exists:
   - `cocalc browser screenshot --selector "<css>" --out /tmp/repro.png`
@@ -259,15 +267,17 @@ under `.cocalc-browser-harness/` unless `--report-dir` is specified.
   - `--renderer auto|native|dom|media`
   - native mode routes through spawned Playwright daemon for true compositor pixels
   - media mode uses `getDisplayMedia` and requires explicit browser share approval
-- Follow-ups:
-  - `--fullpage` / viewport-mode controls
+- Available controls:
+  - `--fullpage` captures the full page with the native renderer, or uses the HTML root with the DOM renderer.
+  - `--viewport-width` and `--viewport-height` must be supplied together to set a spawned native browser viewport before capture. Media capture rejects these options and `--fullpage`.
+- Earlier follow-up ideas:
   - direct blob/attachment output
   - richer failure diagnostics when client-side renderer cannot load
 
 ### Script ergonomics
 
 - `--json` structured output mode for script results and errors
-- `--eval-file` with sourcemap-ish line mapping for runtime errors
+- `cocalc browser exec --file <path>` or `--stdin` reads a script; choose exactly one of inline code, file, or stdin.
 - Persistent script snippets/macros for frequent debugging tasks
 
 ### Safety/diagnostics
@@ -289,7 +299,7 @@ Most of this command surface is implemented in:
 
 Recommended approach:
 
-1. Implement screenshot as a new `browser` subcommand in CLI.
+1. Extend the existing `browser screenshot` command in `src/packages/cli/src/bin/commands/browser.ts` when adding capture behavior.
 2. Reuse existing browser session resolution and context output.
 3. Keep output compatible with agent workflows (`--json` + shell-friendly text).
 

@@ -262,8 +262,9 @@ Because authorization is ACL-based (not project-list claims inside JWT), revocat
 ## Embedded Dev Host
 
 Embedded project-host mode inside the hub process has been removed.
-Development and production now share one runtime model: a VM-owned
-project-host deployment with the same privilege wrappers and network model.
+Project-host runs as a separate host deployment with privilege wrappers and
+explicit networking. SelfHost also supports a direct Linux installation, so
+a managed VM is not required for every project-host deployment.
 
 ## Hub -> Project-Host Routed Control Auth
 
@@ -305,9 +306,10 @@ Current model (as implemented now):
 - A short-lived bootstrap token (`purpose=bootstrap`) is used only during host bootstrap.
   - Default TTL: 24 hours.
 - During bootstrap, host fetches a separate `master-conat` token from hub (`/project-host/bootstrap/conat`) and stores it locally at:
-  - `/btrfs/data/secrets/master-conat-token`
+  - `/mnt/cocalc/data/secrets/master-conat-token`
 - The project-host then uses that `master-conat` token as a bearer credential for its outbound hub control connection.
-- `master-conat` token TTL is currently long (about 1 year), and bootstrap code currently does not continuously refresh it once present.
+- `master-conat` token TTL is long (about 1 year). The running host renews file-backed credentials as described below; a token supplied through `COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN` is instead owned by external orchestration.
+- `COCALC_PROJECT_HOST_MASTER_CONAT_TOKEN_PATH` overrides the file path. The reader falls back to the legacy `/btrfs/data/secrets/master-conat-token` when the default file is absent and the legacy file exists.
 
 Why this matters:
 
@@ -326,7 +328,7 @@ Implemented behavior:
 2. Renewal does not require rerunning full bootstrap.
    - Host asks hub `project-hosts.api.rotateMasterConatToken(...)` for a new token.
    - Hub verifies host identity token and returns a fresh `master-conat` token.
-   - Host writes token atomically to `/btrfs/data/secrets/master-conat-token` with mode `0600`.
+   - Host writes the token to its resolved token-file path, requesting mode `0600`.
 3. Existing connections continue; new connections use fresh token.
    - No immediate disconnect required solely due to token refresh.
 4. On renewal failure:
@@ -337,19 +339,22 @@ Implemented behavior:
    - This also covers host restart with missing token file, as long as bootstrap credential is still valid.
 
 6. Missing-token auto-recovery:
-   - If `/btrfs/data/secrets/master-conat-token` is missing while host is running, host detects this on a short probe interval and asks hub for a rotated `master-conat` token using its currently-authenticated host channel.
+   - If `/mnt/cocalc/data/secrets/master-conat-token` is missing while host is running, host detects this on a short probe interval and asks hub for a rotated `master-conat` token using its currently-authenticated host channel.
    - This gives a deterministic/manual rotation trigger.
    - If host starts and file is missing, host attempts bootstrap-token fallback (if available and still valid) to recover automatically.
 
 Operator action:
 
-- You can force immediate token renewal on a running host by moving/removing:
-  - `/btrfs/data/secrets/master-conat-token`
-- Host should recreate it automatically within the missing-token probe window (default about 30s).
+- Inspect the credential source and renewal logs before intervening. File-backed
+  hosts check for a missing token about every 30 seconds and can rotate using
+  their authenticated channel. Environment-injected tokens bypass this loop.
+- Do not remove the only working credential as a routine health check. A host
+  restarting without a token needs a valid bootstrap recovery credential;
+  connectivity or expired bootstrap credentials can prevent recovery.
 
 Default parameters:
 
-- Check interval: every 6-12 hours.
+- Check interval: every 6 hours by default; retry delays include jitter.
 - Renewal window: 30 days before expiration.
 - Retry backoff: 1m -> 5m -> 15m -> 1h (with jitter).
 - Missing-token probe: every ~30s.

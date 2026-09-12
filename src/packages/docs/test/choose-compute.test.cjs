@@ -9,7 +9,6 @@ const {
 const { verifyDocsStatic } = require("../dist/verification");
 
 const access = { siteProfile: "cocalc-ai", features: ["compute-vms"] };
-const signedInAccess = { ...access, includeSignedIn: true };
 
 test("compute choice is public, searchable, and starts the host reading path", () => {
   const entry = getDocsEntry("hosts/choose-compute");
@@ -36,7 +35,7 @@ test("compute choice is public, searchable, and starts the host reading path", (
   );
 });
 
-test("compute choice resolves all three setup routes and its supporting links", () => {
+test("compute choice links stay usable with VM support on or off", () => {
   const entry = getDocsEntry("hosts/choose-compute", access);
   const links = new Set(
     Array.from(
@@ -48,8 +47,25 @@ test("compute choice resolves all three setup routes and its supporting links", 
     assert.ok(links.has(slug), slug);
     assert.ok(getDocsEntry(slug, access), slug);
   }
-  for (const slug of links) {
-    assert.ok(getDocsEntry(slug, signedInAccess), slug);
+  assert.ok(!links.has("projects/virtual-machines"));
+  for (const includeSignedIn of [false, true]) {
+    for (const vmEnabled of [false, true]) {
+      const currentAccess = {
+        includeSignedIn,
+        features: vmEnabled ? ["compute-vms"] : [],
+      };
+      assert.ok(getDocsEntry(entry.slug, currentAccess));
+      assert.equal(
+        !!getDocsEntry("projects/virtual-machines", currentAccess),
+        vmEnabled,
+      );
+      for (const slug of links) {
+        assert.ok(
+          getDocsEntry(slug, currentAccess),
+          `${slug}: signedIn=${includeSignedIn}, vmEnabled=${vmEnabled}`,
+        );
+      }
+    }
   }
   assert.doesNotMatch(entry.body, /^#{1,6} \d/m);
   const report = verifyDocsStatic();
@@ -66,5 +82,34 @@ test("compute choice remains useful without linking to unavailable local VM docs
       /https:\/\/cocalc.ai\/docs\/projects\/virtual-machines/,
     );
     assert.doesNotMatch(entry.body, /\]\(\/docs\/projects\/virtual-machines\)/);
+  }
+});
+
+test("registered chapter links stay available to each reader profile", () => {
+  const profiles = [
+    ["plus", { product: "plus" }],
+    ["ai-public", { siteProfile: "cocalc-ai" }],
+    ["ai-public-vms", { siteProfile: "cocalc-ai", features: ["compute-vms"] }],
+    ["ai-signed-in", { siteProfile: "cocalc-ai", includeSignedIn: true }],
+    [
+      "ai-admin",
+      {
+        siteProfile: "cocalc-ai",
+        includeAdmin: true,
+        features: ["compute-vms"],
+      },
+    ],
+  ];
+  for (const [label, currentAccess] of profiles) {
+    for (const entry of listDocsEntries(currentAccess)) {
+      for (const match of entry.body.matchAll(/\]\((\/docs\/[^\s)]+)\)/g)) {
+        const target = match[1].slice("/docs/".length).split(/[?#]/, 1)[0];
+        if (!target) continue;
+        assert.ok(
+          getDocsEntry(target, currentAccess),
+          `${label}: ${entry.id} links to unavailable ${target}`,
+        );
+      }
+    }
   }
 });

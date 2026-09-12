@@ -81,7 +81,7 @@ describe("PublicFeaturesApp", () => {
   it("renders every indexed feature page on the index", () => {
     const { container } = render(
       <PublicFeaturesApp
-        config={{ site_name: "Launchpad" }}
+        config={{ cocalc_product: "launchpad", site_name: "Launchpad" }}
         initialRoute={{ view: "index" }}
       />,
     );
@@ -224,7 +224,7 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "TimeTravel: every change, recorded",
+        name: "TimeTravel: document edit history",
       }),
     ).not.toBeNull();
     expect(screen.getByText("Ready to use Jupyter in CoCalc?")).not.toBeNull();
@@ -447,7 +447,7 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Root access with sudo, and installs that persist"),
     ).not.toBeNull();
     expect(
-      screen.getByText("Snapshots every 15 minutes, backups off the host"),
+      screen.getByText("Snapshots and backups with configurable retention"),
     ).not.toBeNull();
     expect(screen.getByText("SSH, scp, and rsync")).not.toBeNull();
     expect(screen.getByText("Ready to use Linux in CoCalc?")).not.toBeNull();
@@ -755,4 +755,91 @@ describe("PublicFeaturesApp", () => {
         .getAttribute("href"),
     ).toBe("/policies/trust");
   });
+});
+
+describe("research compute product visibility", () => {
+  it.each(["plus", undefined, "unknown"])(
+    "omits only compute from the index and subnav for product %s",
+    (product) => {
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ cocalc_product: product, site_name: "CoCalc" }}
+          initialRoute={{ view: "index" }}
+        />,
+      );
+      expect(
+        container.querySelector('a[href="/features/research-compute"]'),
+      ).toBeNull();
+      expect(
+        container.querySelector('a[href="/features/terminal"]'),
+      ).not.toBeNull();
+      expect(
+        container.querySelector('a[href="/features/jupyter-notebook"]'),
+      ).not.toBeNull();
+      expect(screen.getByText("Runtime")).not.toBeNull();
+    },
+  );
+
+  it("reports Plus as not found without exposing the compute documentation links", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "plus" }}
+        initialRoute={{ view: "detail", slug: "research-compute" }}
+      />,
+    );
+    expect(screen.getByText("Feature page not found")).not.toBeNull();
+    expect(
+      container.querySelector('a[href="/docs/hosts/project-hosts"]'),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Research Compute", level: 1 }),
+    ).toBeNull();
+  });
+
+  it("keeps unknown availability distinct from not found and preserves the initial title", () => {
+    document.title = "Server compute title";
+    render(
+      <PublicFeaturesApp
+        initialRoute={{ view: "detail", slug: "research-compute" }}
+      />,
+    );
+    expect(
+      screen.getByText(/Feature availability could not be checked/),
+    ).not.toBeNull();
+    expect(screen.queryByText("Feature page not found")).toBeNull();
+    expect(document.title).toBe("Server compute title");
+  });
+
+  it.each(["launchpad", "rocket"])(
+    "renders compute after unknown configuration resolves to %s",
+    (product) => {
+      const route = { view: "detail" as const, slug: "research-compute" };
+      const { rerender } = render(<PublicFeaturesApp initialRoute={route} />);
+      expect(
+        screen.getByText(/Feature availability could not be checked/),
+      ).not.toBeNull();
+      rerender(
+        <PublicFeaturesApp
+          config={{ cocalc_product: product }}
+          initialRoute={route}
+        />,
+      );
+      expect(
+        screen.getByRole("heading", { name: "Research Compute", level: 1 }),
+      ).not.toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Understand project hosts" }),
+      ).toHaveAttribute("href", "/docs/hosts/project-hosts");
+      rerender(
+        <PublicFeaturesApp
+          config={{ cocalc_product: "plus" }}
+          initialRoute={route}
+        />,
+      );
+      expect(screen.getByText("Feature page not found")).not.toBeNull();
+      expect(
+        screen.queryByRole("link", { name: "Understand project hosts" }),
+      ).toBeNull();
+    },
+  );
 });

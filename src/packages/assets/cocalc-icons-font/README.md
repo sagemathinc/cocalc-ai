@@ -1,7 +1,7 @@
-# Dev Notes
+# Legacy icon-font assets
 
 1. generate font at icomoon.io or similar (this was the only one I found that worked well) -- config file is `CoCalc.json`
-2. replace the top part of the `style.css` -- webpack takes it from here:
+2. The legacy generated font CSS used this `@font-face` block:
 
 ```
        @font-face {
@@ -16,4 +16,8 @@
        }
 ```
 
-3. IMPORTANT: somehow Harald uploaded these to our collection of icons at https://www.iconfont.cn/?lang=en-us, and that's how they now get get loaded into cocalc, via `components/icon.tsx` and `components/iconfont.cn/` .
+The current frontend loads its generated Iconfont bundle through
+`frontend/components/icon.tsx` and `frontend/components/iconfont.cn/`. Changing
+these legacy font files does not update that bundle. The external iconfont.cn
+collection and its publishing access require separate verification; the steps
+above are historical asset-generation notes, not the current release procedure.

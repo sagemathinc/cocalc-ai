@@ -501,17 +501,7 @@ function CocalcRocketPage() {
       title: "Who it fits",
     },
     {
-      body: (
-        <>
-          Runs as a customer-operated private-cloud path, available as a VM
-          deployment or on Kubernetes depending on the organization's
-          infrastructure. It is exactly the same as the hosted service{" "}
-          <a href="https://cocalc.ai" style={{ textDecoration: "underline" }}>
-            https://cocalc.ai
-          </a>
-          .
-        </>
-      ),
+      body: "Runs on customer-operated infrastructure. The repository provides a systemd/VM bay runtime bundle and a minimal Kubernetes Helm chart to adapt to the chosen environment. Project compute runs on project hosts.",
       icon: "servers",
       title: "How it runs",
     },

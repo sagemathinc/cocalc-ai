@@ -7,16 +7,18 @@ export const ACCOUNT_SETTINGS_BODY = String.raw`
 ## What account settings are for
 
 Account settings control your identity, preferences, API keys, SSH keys,
-support access, and the billing tools attached to your CoCalc account. These
-settings are account-scoped, not project-scoped: changing them follows you
-across projects, courses, hosts, and browsers.
+support access, and the billing tools attached to your CoCalc account. Most
+apply across your projects, but some preferences are stored only in the current
+browser. For example, **Startup performance** and activity-bar labels are
+browser-local. Check a setting's description before expecting it to follow you
+to another browser.
 
 ## Profile and identity
 
-Use the profile page to edit your name, email, avatar, color, and account
-metadata. The avatar image is visible in collaboration surfaces, while the
-account color is also used independently in realtime editing and other shared
-contexts.
+Use **Profile** to edit your name, email, avatar, and color. Your account id
+and creation time are shown for reference. The avatar image is visible in
+collaboration surfaces, while the account color is also used independently in
+realtime editing and other shared contexts.
 
 Keep the account id available when working with support, admin tools, browser
 automation, or agent-driven workflows. It is the stable identifier, while names
@@ -67,15 +69,18 @@ CoCalc does not only ask whether you signed in sometime recently. For sensitive
 operations, it asks you to prove that the person at the browser right now is
 still the account owner.
 
-| Fresh-auth level | What CoCalc checks | Typical examples |
+| Check | What CoCalc checks | Typical examples |
 | :-- | :-- | :-- |
-| Normal fresh auth | You recently re-entered a password, completed an approved sign-in flow, or otherwise refreshed the current browser session. | Changing account profile details, changing password or email settings, adding credentials, or confirming account-level changes. |
-| Two-factor fresh auth | You recently approved a CoCalc second factor, such as a 6-digit authenticator code or a passkey prompt. | Creating or deleting dedicated computer/project hosts, operations that can spend substantial money, disabling important security controls, and other high-impact destructive or administrative actions. |
+| CoCalc 2FA enrollment | You have an active CoCalc authenticator app or passkey. | Creating billable dedicated hosts requires this alongside a fresh session and the applicable membership and funding checks. |
+| Normal fresh auth | You recently re-entered a password, completed an approved sign-in flow, or otherwise refreshed the current browser session. | Changing account profile details, changing password or email settings, adding credentials, confirming account-level changes, or creating billable dedicated hosts. |
+| Two-factor fresh auth | You recently approved a CoCalc second factor, such as a 6-digit authenticator code or a passkey prompt. | Deleting a project host or changing its SSH authorized keys, and other actions that explicitly require recent second-factor verification. |
 | Sign-in 2FA | When your account has CoCalc 2FA enabled, sign-in may require one of your configured CoCalc second factors. | Signing in from a new browser, after a session expires, or after CoCalc decides the sign-in needs a stronger check. |
 
 The exact prompts depend on the action, account state, site policy, and browser
-session. The important distinction is that some actions require recent CoCalc
-2FA, not merely an old login session.
+session. Enabling a factor and approving it recently are different checks. When
+you need to refresh a session and have CoCalc 2FA enabled, the verification
+dialog uses your configured second factor. Some actions also explicitly require
+recent CoCalc second-factor approval.
 
 ## Why Google SSO 2FA is not enough for every CoCalc action
 
@@ -87,18 +92,17 @@ For example, you may have completed Google 2FA days or weeks ago, then kept a
 browser session open. That is normal and convenient for everyday work, but it is
 not strong enough for actions such as:
 
-| Action category | Why CoCalc asks for its own recent 2FA |
+| Action category | Why account verification matters |
 | :-- | :-- |
-| Dedicated hosts | Creating hosts can spend significant money; deleting or changing hosts can disrupt active research work. |
+| Dedicated hosts | Creating billable hosts requires native CoCalc 2FA enrollment and a fresh session. Deleting a host or changing its SSH access requires recent CoCalc second-factor verification. |
 | Security recovery | Disabling 2FA, changing credentials, or approving sensitive support actions can lock users out or weaken account protection. |
 | Administrative actions | Site administration and billing operations can affect many users, projects, or costs. |
 | Destructive changes | Some project, host, or account operations are difficult or impossible to undo safely. |
 
-This is defense in depth. Google 2FA protects the external identity provider
-login. CoCalc 2FA protects high-impact CoCalc actions with a fresh,
-application-specific challenge. Requiring both greatly reduces the damage from
-stolen browser sessions, unattended logged-in computers, compromised SSO
-sessions, phishing, and mistakes around expensive infrastructure actions.
+Google sign-in and CoCalc second-factor checks serve different purposes. A
+Google 2FA setting does not enroll an authenticator app or passkey with CoCalc
+and does not satisfy an action that explicitly requires recent CoCalc
+second-factor verification. Complete the CoCalc prompt when it appears.
 
 ## If CoCalc says two-factor authentication is required
 
@@ -108,9 +112,10 @@ dedicated hosts**, configure CoCalc 2FA in the
 an authenticator app or passkey, return to the host page and try the action
 again.
 
-If your university or Google account already has 2FA, keep it enabled. CoCalc is
-asking for an additional CoCalc-managed factor because the action requires
-recent proof for this specific CoCalc account.
+If your university or Google account already has 2FA, keep it enabled. The
+host-creation message asks you to enable a CoCalc-managed factor for this
+account. A separate fresh-auth prompt may also be required before the action
+can proceed.
 
 ## Recommended setup
 
@@ -121,9 +126,10 @@ recent proof for this specific CoCalc account.
 5. Return to the action that required 2FA, such as **Create Host**.
 
 For support replies, it is usually enough to say: "Please enable CoCalc 2FA in
-Account Settings -> Profile -> Security. Your Google 2FA protects Google
-sign-in; CoCalc also requires recent CoCalc 2FA for dangerous or expensive
-actions such as creating dedicated hosts."
+Account Settings -> Profile -> Security, then retry creating the dedicated host
+and complete any fresh-auth prompt. Your Google 2FA protects Google sign-in;
+it does not enable a CoCalc second factor. Some other host actions also require
+recent approval with that CoCalc factor."
 `;
 
 export const BILLING_SETTINGS_BODY = String.raw`

@@ -68,9 +68,8 @@ These checks answer different questions:
 Being a project collaborator does not automatically give you permission to
 place other projects on its host or administer the host. Use
 [Host access and RAM](/docs/hosts/access-and-ram) for delegated roles and
-shared-pool access. After signing in, check your
-[account settings](/docs/account/settings),
-[two-factor authentication](/docs/account/two-factor-authentication), and the
+shared-pool access. After signing in, open **Account Settings -> Profile ->
+Security** to check your CoCalc two-factor authentication, and review the
 funding explanation shown by the host or VM controls. Current requirements
 and limits are account-specific.
 
@@ -89,14 +88,19 @@ The following commands inspect existing resources and catalogs:
 ~~~sh
 cocalc host list
 cocalc host catalog --provider gcp
-cocalc vm catalog --provider gcp
 ~~~
 
-The host list shows hosts visible to the account. The two catalog commands
-describe different resources: project hosts and managed VMs. The VM catalog
-requires account authentication. GCP is the example provider here; select a
+The host list shows hosts visible to the account. The host catalog describes
+project-host configurations. GCP is the example provider here; select a
 provider supported by your site and command. An empty list or an access error
 should prompt an account/site and permission check before choosing a machine.
+
+Only if managed VMs are enabled on the intended site, inspect their separate
+catalog with account authentication:
+
+~~~sh
+cocalc vm catalog --provider gcp
+~~~
 
 For a host you can access, replace HOST_ID with its ID or name:
 

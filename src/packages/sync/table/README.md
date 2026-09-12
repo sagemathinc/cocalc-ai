@@ -2,13 +2,17 @@
 
 ## Defined by an object query
 
-- Do a query against a PostgreSQL table using our object query description.
-
-- Synchronization with the backend database is done automatically.
+- Describe a query using the object-query format. The normal database adapter
+  synchronizes with the backend; `synctable_no_database` also supports a table
+  whose state is supplied by its client without a central database.
+- The client and query implementation determine persistence; a SyncTable
+  alone is not proof that data has reached durable storage.
 
 ## Methods
 
-- constructor(query): query = the name of a table (or a more complicated object)
+- Use the exported `synctable(query, options, client, throttle_changes, use_cache)`
+  factory when cache/reference management is wanted. The `SyncTable` constructor
+  also requires options and a compatible client; a query alone is insufficient.
 
 - set(map): Set the given keys of map to their values; one key must be
   the primary key for the table. NOTE: Computed primary keys will
@@ -34,36 +38,27 @@
 - 'disconnected': fired when table is disconnected from the server for some reason
 - 'connected': fired when table has successfully connected and finished initializing
   and is ready to use
-- 'saved', [array of saved objects]: fired after confirmed successful save of objects to backend
+- 'has-uncommitted-changes', boolean: reports changes to local pending-save state.
+  There is no generic 'saved' event in the current class; use its save API and
+  the relevant persistence layer's acknowledgement for the required guarantee.
 
 ## States
 
-A SyncTable is a finite state machine as follows:
+The current `get_state()` values are `disconnected`, `connected`, and `closed`.
+Initialization and reconnection take place while disconnected; `connecting`
+and `reconnecting` are not separate state values in the current class.
 
-                          -------------------<------------------
-                         \|/                                   |
-    [connecting] --> [connected]  -->  [disconnected]  --> [reconnecting]
+- `disconnected`: the table is not initialized with a live changefeed. Local
+  pending changes and reconnect behavior depend on its client adapter.
+- `connected`: initialized and receiving updates.
+- `closed`: terminal state after cleanup. Connection setup or fatal save errors
+  can also close the table; do not wait forever assuming only your own explicit
+  `close()` call can end it.
 
-Also, there is a final state called 'closed', that the SyncTable moves to when
-it will not be used further; this frees up all connections and used memory.
-The table can't be used after it is closed. The only way to get to the
-closed state is to explicitly call close() on the table; otherwise, the
-table will keep attempting to connect and work, until it works.
-
-    (anything)  --> [closed]
-
-- connecting -- connecting to the backend, and have never connected before.
-
-- connected -- successfully connected to the backend, initialized, and receiving updates.
-
-- disconnected -- table was successfully initialized, but the network connection
-  died. Can still takes writes, but they will never try to save to
-  the backend. Waiting to reconnect when user connects back to the backend.
-
-- reconnecting -- client just reconnected to the backend, so this table is now trying
-  to get the full current state of the table and initialize a changefeed.
-
-- closed -- table is closed, and memory/connections used by the table is freed.
+For a cached table, `close()` releases a reference. Final teardown occurs when
+no references remain; it attempts to save pending changes, then frees resources.
+It does not guarantee that a final save succeeded. See
+[synctable.ts](./synctable.ts) and [global-cache.ts](./global-cache.ts).
 
 ## Worry
 

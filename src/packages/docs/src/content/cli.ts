@@ -124,7 +124,7 @@ Use explicit \`--project\` arguments in scripts that may run from other director
 export const CLI_AUTHENTICATION_BODY = `
 ## Select credentials and a project separately
 
-An authentication profile selects the account and site used for a request.
+An authentication profile selects the credentials and site used for a request.
 A project selector chooses the project within that context. A browser selector
 chooses a browser session. Setting one does not prove the other two are correct.
 
@@ -233,6 +233,35 @@ An unattended script should report the approval requirement to its operator.
 Do not repeatedly retry an approval-dependent operation as though it were a
 temporary network failure.
 
+## Match the credential to the command
+
+A CoCalc account API key is limited by its capabilities and project scope.
+Limiting it to one project does not make it the project's runtime identity.
+See the [HTTP API guide](/docs/api/http-api) for key scope and endpoint usage.
+The current CLI's Hub account and admin calls do not accept account API-key
+authentication, even when the key works with an HTTP endpoint. Use a
+browser-approved account profile for those calls, with the required account
+or admin permissions.
+
+Project runtime credentials and scoped agent tokens have their own permitted
+operations. Changing \`--project\` does not broaden that identity's access.
+A project OpenAI API key configured for Codex supplies OpenAI access; it does
+not sign the CLI in to CoCalc.
+
+Fresh authentication is a separate check from whether a command reads or
+changes data. With an account profile, for example:
+
+| Command | Additional requirement |
+| --- | --- |
+| \`account api-key list\` | Lists key metadata without requiring fresh authentication. |
+| \`account api-key create\` and \`account api-key delete\` | Require fresh authentication with recent second-factor verification. Creating a key returns its secret; keep that output private. |
+| \`admin data datasets\` and \`admin data views list\` | These reads require an admin account and fresh authentication with recent second-factor verification. |
+
+Use the supported credential for each command and handle permission errors
+separately from expired approval. Elevation does not grant an admin role or
+expand an API key's capabilities. Use \`--help\` to inspect a command before
+scheduling it; plan for any required approval even when the command is a read.
+
 ## Plan authentication for host commands
 
 Host inventory and lifecycle commands require an account identity with the
@@ -253,6 +282,65 @@ approval requirement and stop that operation. Elevation can expire before a
 later scheduled run. Prepare the required approval before a deliberate
 operation, and keep an operator-visible path for failures; a saved profile or
 schedule does not renew approval automatically.
+
+## Select the identity for managed VM commands
+
+Managed VMs are an optional site feature. Their command scope differs from
+project-host commands, so check the identity supplied to the CLI before
+reusing a host automation script.
+
+| Command or task | Identity and scope to check |
+| --- | --- |
+| \`vm list\` | An account profile can list owned VMs. If \`COCALC_PROJECT_ID\` is set, it supplies the default project filter even with account authentication. Project and scoped-agent identities use their authenticated project's VM listing. |
+| \`vm list --all\` | Use an account profile for an account-wide inventory. The flag does not turn project or agent credentials into account access. Do not combine it with \`--project\`. |
+| \`vm list --project PROJECT_ID\` | An account caller needs access to the selected project. A project-scoped caller cannot select a different authenticated project by changing this argument. |
+| \`vm catalog\` and \`vm access list/grant/revoke\` | Use the appropriate account profile for catalog inspection and account-owned access management. An ordinary project secret is insufficient. A successful project VM listing does not establish permission for these commands. |
+| \`vm start\` and \`vm stop\` | An ordinary project secret is insufficient. Account callers need VM ownership; human starts also require fresh authentication. Scoped compute agents use their separate approval and capability checks. |
+
+These are authentication boundaries, not a guarantee that every account API
+key or token can call every method. Server permissions, agent grants, resource
+state, and admission rules still apply. For a human account, \`vm stop\` does not
+add the fresh-auth check used by \`vm start\`; \`host stop\` has its own fresh-auth
+requirement. Treat both stops as operations that interrupt running work.
+
+From your own computer, with an account profile already set up for the
+intended site, inspect the scope before a mutation:
+
+~~~sh
+cocalc --profile cocalc-ai --json vm list --all
+cocalc --profile cocalc-ai --json vm list --project PROJECT_ID
+~~~
+
+Replace \`PROJECT_ID\` with the project you intend to inspect. A scoped agent
+should keep its supplied identity rather than storing this personal account
+profile in a collaborative project. A VM appearing in a listing does not
+itself establish SSH access or permission to start or stop it.
+
+## Printing a VM connection command can still prepare access
+
+For \`vm ssh\` and \`vm rsync\`, \`--print\` and JSON output return the generated
+connection command instead of launching the local SSH or rsync process. They
+still request SSH-key authorization first. That request can add or reconcile
+access on the VM; adding a new account SSH key can require fresh authentication.
+Project and agent routes retain their own access, approval, and deploy-key
+checks. These options are therefore not a read-only connection preflight.
+
+Use command help to inspect syntax without requesting access:
+
+~~~sh
+cocalc vm ssh --help
+cocalc vm rsync --help
+~~~
+
+When recording JSON output in an unattended workflow, distinguish a returned
+connection command from an executed remote command or completed file transfer.
+Run the intended transport and verify the remote result separately when that
+operation is authorized.
+
+These selection and command-preparation paths were checked locally on
+2026-09-12 against CLI source version 1.0.3 with synthetic service adapters.
+No live account authorization, VM start/stop, SSH connection, or file transfer
+was performed by those checks.
 
 ## Browser targets need their own check
 

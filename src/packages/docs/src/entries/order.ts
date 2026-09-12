@@ -1,0 +1,172 @@
+/*
+ *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
+ *  License: MS-RSL – see LICENSE.md for details
+ */
+
+import type { DocsEntry } from "../types";
+
+export const DOCS_ENTRY_IDS = [
+  "account.settings",
+  "account.two-factor-authentication",
+  "billing.settings",
+  "account.migrating-from-cocalc-com",
+  "admin.overview",
+  "admin.news",
+  "admin.site-settings",
+  "admin.users",
+  "admin.cocalc-cli",
+  "admin.accounts-receivable",
+  "admin.crm-ui",
+  "admin.crm",
+  "admin.crm-outreach",
+  "admin.crm-outreach-ui",
+  "admin.cocalc-software",
+  "admin.bay-ops",
+  "admin.rootfs",
+  "admin.project-backup-shards",
+  "admin.registration-tokens",
+  "admin.signup-emergency-controls",
+  "admin.membership-licenses",
+  "admin.managed-egress",
+  "admin.sso",
+  "projects.create-project",
+  "projects.research-handoff",
+  "research.reproduce-analysis",
+  "research.notebook-migration",
+  "research.resume-computation",
+  "research.remote-cli",
+  "research.recover-work",
+  "research.private-dashboard",
+  "research.codex-sessions",
+  "research.gpu-notebook",
+  "research.quarto-report",
+  "projects.project-secrets",
+  "ai.connect-credentials",
+  "cli.use-cocalc-cli",
+  "cli.getting-started",
+  "cli.authentication-and-targets",
+  "cli.command-reference",
+  "cli.scripting-and-results",
+  "cli.collaborative-text",
+  "cli.notebook-workflows",
+  "cli.browser-workflows",
+  "cli.scheduled-agents",
+  "cli.workspaces-and-notices",
+  "cli.builds-and-versions",
+  "api.http-api",
+  "projects.open-terminal",
+  "terminal.use-terminal",
+  "terminal.graphical-applications",
+  "terminal.ssh-access",
+  "files.project-files",
+  "files.explorer",
+  "files.markdown",
+  "files.slides",
+  "files.whiteboard",
+  "projects.project-list",
+  "projects.virtual-machines",
+  "projects.publish-files",
+  "projects.tasks",
+  "jupyter.create-notebook",
+  "jupyter.use-jupyter",
+  "jupyter.studio-view",
+  "jupyter.remote-kernels",
+  "troubleshooting.jupyter-kernel-terminated",
+  "jupyter.custom-kernels",
+  "jupyter.octave-kernel",
+  "python.use-python",
+  "latex.build-papers",
+  "editors.r-markdown",
+  "projects.runtime-image",
+  "projects.rstudio-project",
+  "projects.publish-rootfs",
+  "self-hosting.cocalc-star",
+  "self-hosting.cocalc-star-local-vm",
+  "self-hosting.install-chromium",
+  "self-hosting.reverse-ssh-access",
+  "troubleshooting.project-start",
+  "troubleshooting.memory",
+  "troubleshooting.connectivity",
+  "hosts.choose-compute",
+  "hosts.project-hosts",
+  "hosts.access-and-ram",
+  "hosts.move-projects",
+  "hosts.lifecycle",
+  "hosts.spot-recovery",
+  "hosts.change-rules",
+  "hosts.reliability",
+  "hosts.software-lifecycle",
+  "hosts.storage",
+  "hosts.shared-scratch",
+  "hosts.logs",
+  "hosts.exam-scratchpads",
+  "projects.collaborators",
+  "collaboration.chat",
+  "collaboration.mentions",
+  "files.timetravel",
+  "files.git",
+  "teaching.course-workflow",
+  "teaching.student-pay",
+  "teaching.restrict-student-projects",
+  "teaching.shared-project",
+  "teaching.student-project-rootfs",
+  "teaching.create-assignment",
+  "teaching.nbgrader",
+  "ai.codex-chat",
+  "ai.codex-settings",
+  "ai.codex-conversations",
+  "ai.codex-goals",
+  "ai.codex-automation",
+  "ai.codex-notifications",
+  "ai.editor-agent",
+  "docs.browser",
+  "docs.executable-actions",
+  "docs.browser-automation",
+] as const;
+
+// CoCalc Plus runs exactly one local project, directly on the user's machine,
+// without accounts, admins, collaborators, project hosts, or sandbox images.
+// Keep its in-project docs flyout focused on workflows that make sense there.
+const DOCS_PLUS_ENTRY_IDS = new Set<string>([
+  "projects.open-terminal",
+  "terminal.use-terminal",
+  "terminal.graphical-applications",
+  "files.project-files",
+  "files.explorer",
+  "files.markdown",
+  "files.slides",
+  "files.whiteboard",
+  "projects.tasks",
+  "jupyter.create-notebook",
+  "jupyter.use-jupyter",
+  "jupyter.studio-view",
+  "troubleshooting.jupyter-kernel-terminated",
+  "jupyter.custom-kernels",
+  "python.use-python",
+  "latex.build-papers",
+  "editors.r-markdown",
+  "troubleshooting.memory",
+  "files.timetravel",
+  "files.git",
+]);
+
+export function isPlusDocsEntryId(id: string): boolean {
+  return DOCS_PLUS_ENTRY_IDS.has(id);
+}
+
+// The full registry requires every registered ID; a smaller client may omit
+// entire canonical entry groups that it never makes visible.
+export function orderDocsEntries(
+  entries: readonly DocsEntry[],
+  allowMissing = false,
+): DocsEntry[] {
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  return DOCS_ENTRY_IDS.flatMap((id) => {
+    const entry = byId.get(id);
+    if (entry == null) {
+      if (allowMissing) return [];
+      throw Error(`Unknown docs entry id: ${id}`);
+    }
+    return [entry];
+  });
+}

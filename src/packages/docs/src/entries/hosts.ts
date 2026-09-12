@@ -5,8 +5,8 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon, projectHostActionParameters } from "../helpers";
+import { CHOOSE_RESEARCH_COMPUTE_BODY } from "../content/compute";
 import {
-  CHOOSE_RESEARCH_COMPUTE_BODY,
   PROJECT_HOSTS_BODY,
   PROJECT_HOST_ACCESS_BODY,
   PROJECT_HOST_CHANGE_RULES_BODY,
@@ -19,7 +19,7 @@ import {
   PROJECT_HOST_SOFTWARE_LIFECYCLE_BODY,
   PROJECT_HOST_SPOT_RECOVERY_BODY,
   PROJECT_HOST_STORAGE_BODY,
-} from "../content";
+} from "../content/hosts";
 
 export const HOSTS_ENTRIES: DocsEntry[] = [
   {
@@ -335,11 +335,13 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-hosts-logs-df53d17e.webp",
       "A project host with logs diagnostics warnings and a magnifying glass",
     ),
-    lastReviewed: "2026-05-27",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "host metrics CPU load RAM memory GPU disk quota I/O bottleneck performance stale history diagnostics",
     slug: "hosts/logs",
     status: "ready",
     summary:
-      "Use host logs with runtime and reliability state to debug provisioning, daemon, and provider issues.",
-    title: "Debug project hosts with logs",
+      "Interpret host metrics and logs to investigate resource pressure, provisioning, and runtime failures.",
+    title: "Inspect host metrics and logs",
   },
 ];

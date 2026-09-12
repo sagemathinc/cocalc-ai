@@ -47,9 +47,10 @@ export default function SageFeaturePage({
               <Paragraph
                 style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: 720 }}
               >
-                Type Sage code in your browser and run it: in Jupyter notebooks,
-                on the command line, and inside LaTeX documents. No download, no
-                build, no setup.
+                Choose a hosted Sage image to run Sage code in notebooks and
+                terminals without installing Sage on your computer. SageTeX also
+                needs a compatible TeX installation in the project. Native
+                CoCalc Plus uses the software installed on your computer.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -67,7 +68,7 @@ export default function SageFeaturePage({
               items={[
                 {
                   icon: "sagemath",
-                  label: "SageMath preinstalled, ready to run",
+                  label: "SageMath preinstalled in the Sage image",
                 },
                 { icon: "jupyter", label: "Sage kernel in Jupyter notebooks" },
                 { icon: "tex", label: "SageTeX in the LaTeX editor" },
@@ -94,9 +95,9 @@ export default function SageFeaturePage({
           anchor="a-overview"
           description={
             <>
-              Installing Sage yourself is a big download and a build that can
-              take hours. In CoCalc it is already there, on every device with a
-              browser.
+              A hosted Sage image supplies the Sage runtime for your project.
+              Open the project from a browser and check its Sage version and
+              dependencies before reproducing an existing calculation.
             </>
           }
         >
@@ -123,7 +124,13 @@ export default function SageFeaturePage({
             Because these are CoCalc notebooks, you get{" "}
             <strong>real-time collaboration</strong>, chat anchored to cells,
             and TimeTravel edit history on top. Legacy <code>.sagews</code>{" "}
-            worksheets convert to Jupyter notebooks automatically when opened.
+            worksheets can open through an existing notebook or convert to a new
+            one. Conversion omits historical outputs; inspect the source and
+            select an available Sage kernel before rerunning. See the{" "}
+            <a href={appPath("docs/jupyter/use-jupyter")}>
+              worksheet migration notes
+            </a>
+            .
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/jupyter-notebook")}>
@@ -148,9 +155,9 @@ export default function SageFeaturePage({
             PARI, are included and usable directly.
           </Paragraph>
           <Paragraph>
-            You pick the image per project and can switch later, so{" "}
-            <strong>upgrading Sage is a project setting</strong>, not an
-            afternoon of compiling.
+            You pick the hosted image per project and can switch to an available
+            version later. Record the image and Sage version, then check custom
+            packages and rerun the calculation after a change.
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/software-environment")}>
@@ -192,15 +199,16 @@ export default function SageFeaturePage({
           title="The sage REPL and .sage scripts"
         >
           <Paragraph>
-            Open a <a href={appPath("features/terminal")}>terminal</a> and{" "}
-            <code>sage</code> is on the PATH: use the{" "}
-            <strong>interactive Sage REPL</strong>, run <code>.sage</code>{" "}
-            scripts, or install extra packages into the session.
+            In a project with Sage installed on the PATH, open a{" "}
+            <a href={appPath("features/terminal")}>terminal</a> and run{" "}
+            <code>sage</code>: use the <strong>interactive Sage REPL</strong>,
+            run <code>.sage</code> scripts, or install extra packages into the
+            session.
           </Paragraph>
           <Paragraph>
-            Long computations keep running when you close the browser, and{" "}
-            <strong>the session is shareable</strong>: a collaborator can open
-            the same terminal and see the same output.
+            Long computations can continue after you close the browser while the
+            project runtime remains running. The terminal is shared: a
+            collaborator can open the same session and inspect its output.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -215,17 +223,23 @@ export default function SageFeaturePage({
           title="Teach with SageMath"
         >
           <Paragraph>
-            Getting software installed on every student's machine is a struggle
-            in any course, and Sage is a particularly large beast to install. On
-            CoCalc, <strong>students just sign in</strong>: every student
-            project has the same Sage version and packages.
+            Configure the course's student projects with the intended Sage image
+            so students can start from a common version. Verify additional
+            package requirements in those projects; sharing an image does not
+            keep later package changes identical.
           </Paragraph>
           <Paragraph>
             The{" "}
             <a href={appPath("features/teaching")}>course management tools</a>{" "}
             distribute and collect assignments, and{" "}
-            <strong>nbgrader works with SageMath notebooks</strong>, with tests
-            running in each student's own project.
+            <strong>nbgrader works with SageMath notebooks</strong>. Choose
+            student projects or a specific grading project in the course's
+            nbgrader configuration, and ensure the selected location has the
+            required Sage kernel and dependencies. See the{" "}
+            <a href="https://cocalc.ai/docs/teaching/nbgrader">
+              nbgrader workflow
+            </a>
+            .
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -262,7 +276,7 @@ export default function SageFeaturePage({
           </Paragraph>
           <BulletList
             items={[
-              "When installing and maintaining Sage locally is not worth it: it is a large build, and CoCalc keeps current versions ready.",
+              "When a hosted Sage image fits better than maintaining a local installation.",
               "When a paper or handout should embed live Sage output via SageTeX in the collaborative LaTeX editor.",
               "When several people need to run, review, or continue the same computation in one shared project.",
               "When a course needs free open-source mathematics software that students can use without installing anything.",

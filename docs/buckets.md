@@ -6,7 +6,7 @@ future providers.
 
 ## Goals
 
-- Backups are **region-aware** and can move from one shared repo per region to multiple shards later without changing lookup semantics.
+- Backups are **region-aware** and use multiple shared repository shards per region. Assignment and capacity are managed by the control plane.
 - Bucket placement is **region\-aware** but **stable** once assigned.
 - Bucket and repo selection are **explicit** and recorded in the database.
 - Artifacts \(software, rootfs\) are **separate** from backups.
@@ -16,7 +16,7 @@ future providers.
 
 - **DB-assigned repo membership**: each project is assigned to a repo row in Postgres, not by a hash function.
 - **Bucket registry**: buckets are tracked in a `buckets` table with a purpose field.
-- **First\-use creation**: buckets and the initial shared repo row are created automatically only when a region is used.
+- **First-use creation**: configured regions get buckets and active shared repository shards when needed; creating missing buckets requires provider credentials.
 - **No silent switches**: once a project is bound to a bucket, it stays unless
   a deliberate migration is performed.
 
@@ -34,7 +34,7 @@ flowchart TD
   BackupRepos -->|bucket_id| Buckets
 
   subgraph R2[Cloudflare R2]
-    BackupBuckets["bucket (purpose=backups)"]
+    BackupBuckets["bucket (purpose=project-backups)"]
     ArtifactBuckets["bucket (purpose=artifacts/rootfs)"]
   end
 
@@ -47,7 +47,7 @@ flowchart TD
 `buckets` table (generic registry):
 
 - `id` (primary key)
-- `purpose` (`backups`, `artifacts`, `rootfs`, `logs`, ...)
+- `purpose` (project backups currently use `project-backups`; other purposes have their own owners)
 - `provider` (`r2`, later others)
 - `account_id` (provider account)
 - `region` (wnam/enam/weur/eeur/apac/oc)
@@ -66,10 +66,10 @@ flowchart TD
 - `status`
 - timestamps
 
-`projects.backup_repo_id`:
-
-- Set for projects using the shared-repo model.
-- Points at the repo row that owns future backups for that project.
+`project_backup_repo_assignments` records the project, region, and assigned
+repository. `projects.backup_repo_id` mirrors the current assignment for project
+control paths. Multibay requests resolve assignment through the seed authority
+when seed-managed backups are enabled.
 
 ## Backup Flow (shared repo)
 
@@ -79,7 +79,7 @@ flowchart TD
    - Verify actual location and record in `buckets`.
 2. Create or select an active `project_backup_repos` row for that region.
 3. Assign:
-   - `projects.backup_repo_id`
+   - `project_backup_repo_assignments` and `projects.backup_repo_id`
 4. Rustic uses:
    - `bucket` = bucket name
    - `root` = repo row root, e.g. `rustic/shared-wnam-0001`
@@ -87,9 +87,17 @@ flowchart TD
 
 Current operational policy:
 
-- Each region auto-creates one active shared repo on first use.
-- If we later add more active repo rows, the hub assigns new projects to the least-loaded active repo.
-- Existing assigned projects stay on their current repo unless explicitly migrated.
+- The control-plane policy maintains a target number of active shards per
+  region and limits new project assignments per shard. These are repository
+  assignment controls, not project storage quotas or a regional capacity guarantee.
+- New assignments select an active shard with capacity; full shards are sealed
+  and replacement active shards are created. Existing eligible assignments are
+  reused.
+- Region changes and repository migrations are explicit operations; a shard
+  reaching assignment capacity does not copy existing project data.
+
+See assignment, locking, and shard policy in
+[src/packages/server/project-backup/index.ts](../src/packages/server/project-backup/index.ts).
 
 ## Artifact Flow (software, rootfs)
 
@@ -121,9 +129,12 @@ This means:
 - If stronger deletion guarantees are required later, they must be designed at
   the repo/shard level rather than by claiming independent per-project keys.
 
-## Migration (Future)
+## Earlier Migration Design
 
-Migration requires an explicit admin action:
+The following is design guidance, not a complete current migration procedure.
+Cross-region project moves have an implemented backup-region cutover path; see
+[project moves](./project-move.md). Other repository migrations still require a
+separately reviewed plan:
 
 - Reassign new projects to a different active repo row, or
 - Copy/restore repo contents to a new bucket/root

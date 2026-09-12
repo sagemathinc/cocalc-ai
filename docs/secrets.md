@@ -14,12 +14,29 @@ private keys, tokens, etc.) in the database and UI.
 
 ## Master Key
 
-- Default path: `$COCALC_ROOT/data/secrets/server-settings-key`
-- Override: `COCALC_SECRET_SETTINGS_KEY_PATH`
-- Behavior:
-  - If the file does not exist, a random 32-byte key is generated and written
-    with `0600` permissions.
-  - In Kubernetes, mount the key via a secret.
+Secret settings use a purpose-specific key derived from the site master key
+with the purpose `secret-settings:v1`.
+
+- Default site key: `${SECRETS}/site-master-key`. `SECRETS` defaults to
+  `${DATA}/secrets`; `COCALC_DATA_DIR` takes precedence over `DATA`.
+- A configured systemd credential at `${CREDENTIALS_DIRECTORY}/site-master-key`
+  takes precedence over the `COCALC_SITE_MASTER_KEY_PATH` environment override.
+- `COCALC_SECRET_SETTINGS_KEY_PATH` remains a legacy fallback for selecting the
+  site key. It also selects the legacy secret-settings decryption file; without
+  that override, the legacy file defaults to `${SECRETS}/server-settings-key`.
+  Values decrypted with the legacy key are marked for migration to the derived
+  site key.
+- A missing writable site key is generated with 32 random bytes and mode `0600`.
+  With `COCALC_REQUIRE_SITE_MASTER_KEY` enabled, or a systemd credential selected,
+  a missing key is an error: startup does not generate a replacement.
+- Back up the site key separately from Postgres. Keep legacy keys needed by
+  retained database backups or unmigrated ciphertext; a new random key cannot
+  decrypt old data.
+
+The path and lifecycle implementation is
+[src/packages/util/master-key-lifecycle.ts](../src/packages/util/master-key-lifecycle.ts).
+Secret-settings derivation and legacy migration are in
+[src/packages/database/settings/secret-settings.ts](../src/packages/database/settings/secret-settings.ts).
 
 ## Encryption Format
 
@@ -29,7 +46,7 @@ associated data to prevent swapping values between fields.
 Encoded format:
 
 ```
-enc:v1:<key-id>:<nonce-b64>:<tag-b64>:<ciphertext-b64>
+enc:v1:site-master-key-v1:<nonce-b64>:<tag-b64>:<ciphertext-b64>
 ```
 
 ## Data Flow (Write and Read)
@@ -75,4 +92,3 @@ flowchart TD
 - Never expose decrypted secrets in logs or client responses.
 - For stronger protection, consider layering an optional passphrase to decrypt
   the master key at process startup.
-

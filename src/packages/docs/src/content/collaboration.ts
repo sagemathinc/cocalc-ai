@@ -36,6 +36,24 @@ For an end-to-end example, see [Start and hand off a research task](/docs/projec
 For courses, add students through the course interface instead of manually
 sharing every project.
 
+## Accept an invitation
+
+For an invitation sent to an existing CoCalc account, sign in to that account.
+On **Projects**, choose **Review** on the invitation notice to open
+**Notifications -> Project Invitations**. Choose **Accept**, check the
+**Joined** confirmation, then choose **Open project**.
+
+For an email invitation, open the complete invitation link and sign in. Check
+the project and the **Signed-in account** before choosing **Accept invite**;
+use **Sign out to use a different account** if necessary. If the inviter
+required the invited email address, the accepting account must have that exact
+verified address. After acceptance, choose **Open project**. Ask the inviter
+for a new invitation if the link has expired or been revoked.
+
+If email delivery is unavailable, the invitation creator or project owner can
+open **Pending Invitations -> Copy Link** for manual delivery. Keep the
+complete link and share it only with the intended recipient.
+
 ## Select the files a viewer can read
 
 **Viewer file access** offers **Full project, excluding sensitive paths** and

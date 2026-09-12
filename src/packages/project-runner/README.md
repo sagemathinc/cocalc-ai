@@ -1,73 +1,41 @@
 # Project Runner
 
-A project runner runs projects. It connects to a CoCalc installation,
-copies the files for a project from the central file server to a local
-cache. It then starts the project running and manages synchronizing
-files with the central file server.
+`@cocalc/project-runner` implements project runtime backends. In the normal
+project-host deployment, it runs alongside the file server and uses that
+host's project storage; it does not synchronize a private cache against a
+single central file server.
 
-Running projects is done almost entirely in user space using rootless
-podman. The only privileged operation is overlayfs mount lifecycle, and that
-goes through a root-owned wrapper command (e.g.
-`/usr/local/sbin/cocalc-runtime-storage`) with strict argument validation.
+## Runtime boundary
 
-**Absolutely everything else is done in user space right now.**
-The only way that might change is if we make management of the
-local storage cache more sophisticated. E.g., instead of one
-big ext4 directory, it could be a btrfs filesystem with subvolumes,
-quotas, compression, dedup (and a regular background dedup process using bees),
-etc.  That would require `sudo btrfs access` but doesn't exist today.
+- The Podman backend launches projects using rootless Podman and host-managed
+  Btrfs project volumes. Privileged storage operations go through the installed
+  runtime-storage wrapper, not unrestricted sudo from the project.
+- The workspace backend runs local processes for the explicit Launchpad
+  workspace mode. It has a different isolation boundary and is not a substitute
+  for a multi-tenant project host.
+- Runtime selection is implemented in [runtime-mode.ts](./runtime-mode.ts) and
+  [run/runtime-backend.ts](./run/runtime-backend.ts).
+- [run/index.ts](./run/index.ts) registers start, stop, status, and save handlers.
+  Cross-host project moves are orchestrated by the control plane; the runner's
+  move handler rejects direct move requests.
 
-## Running a Project Runner on a New Machine
+## Development and deployment
 
-How to run this on a random clean Google cloud Ubuntu machine. Everything below will
-likely get automated into a single curl call with some sort of admin api key.
+Build this package with `pnpm --filter @cocalc/project-runner build` in a prepared
+workspace. The standalone entry point also requires a runner identity and a
+configured Conat/filesystem environment; building the package does not provision
+those services.
 
-Install the dependencies, which are currently podman and rsync (and that's it):
+Use [Project Host](../project-host/README.md) for the combined host service and
+[Star](../../../docs/star.md) or [SelfHost](../../../docs/self-host.md) for the
+corresponding deployment entry points. Project-host packaging owns the host
+bundle and SEA distribution.
 
-```sh
-apt update; apt install podman rsync
-```
+## Historical setup instructions
 
-If the machine has a local SSD,
-
-```sh
-mkfs.ext4 /dev/disk/by-id/google-local-nvme-ssd-0
-```
-
-Make the storage location:
-
-```
-mkdir /projects
-mount /dev/disk/by-id/google-local-nvme-ssd-0 /projects
-chown wstein:wstein /projects
-```
-
-Copy data/secrets to ~data/secrets in your account from your main
-cocalc server. Really just data/secrets/conat-password is needed
-right now. TODO: we should have a notion of account and give the
-project-runner only what subjects it needs, once we know what
-they are.
-
-Using reflect-sync on the machine running cocalc (serving on port 9001 say),
-forward two ports from the main conat server to the new GCP node (say 34.53.6.50):
-
-```sh
-reflect forward create 34.53.6.50:2222 :2222
-reflect forward create 34.53.6.50:9001 :9001
-```
-
-Use this script to run it from this directory:
-
-```sh
-set -ev
-
-export COCALC_PROJECT_PATH=$HOME/projects
-export DATA=~/data
-export CONAT_SERVER=http://localhost:9001
-export DEBUG=cocalc:*,-cocalc:silly:*
-export DEBUG_CONSOLE=yes
-
-# Run the binary created via "pnpm build-all" in the project-runner directory:
-
-./cocalc-project-runner-0.1.4-x86_64-linux/cocalc-project-runner
-```
+Earlier versions of this README described an experimental central-file-server
+cache, formatting a local SSD as ext4, manually copying a hub Conat password,
+and starting a version-specific runner binary. Those instructions predate the
+current project-host storage and credential model and are not an installation
+procedure. They remain available in Git history; do not use them to prepare a
+current host or distribute its credentials.

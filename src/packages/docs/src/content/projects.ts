@@ -163,11 +163,14 @@ paper, workshop, or team workspace.
 
 ## Create a project
 
-1. Open **Projects**.
-2. Choose **New Project**.
-3. Give the project a clear name.
-4. Pick an initial setup if one is offered.
-5. Open the project and add files, collaborators, or runtime settings.
+1. Open **Projects** and choose **Create**.
+2. Give the project a clear name and review the image and placement options.
+3. Choose **Create Project**, or **Create and Open** to start and open it.
+4. Add files, collaborators, or runtime settings.
+
+If creation is disabled because your email address is unverified, complete
+email verification first. Essential uses **New project**, then **Create project**;
+see the worked example above.
 
 Project names are for humans. The project id is the durable identifier used by
 APIs, agents, browser-session actions, project hosts, and logs.
@@ -191,15 +194,47 @@ export const PROJECT_LIST_BODY = String.raw`
 ## What the projects page is for
 
 The projects page lists the CoCalc projects you can access. Use it to open
-recent work, create projects, search by title or file, inspect activity, and
-manage the projects that back your courses, research, classes, and agent
-workspaces.
+recent work, create projects, search, inspect activity, and manage the projects
+that back your courses, research, classes, and agent workspaces.
 
-## Organize projects
+## Find a project or file
 
-Use clear project names and descriptions. Archive, stop, or delete work that is
-no longer active, and keep important projects easy to find with naming
-conventions that match your team or course.
+Use **Search for projects** to find a project by name. The separate
+**Search for filenames you edited...** field searches recent file activity,
+not all files or their contents. Results can be incomplete when a project host
+is unavailable or a search request fails; an empty result does not prove that a
+file is missing. Open the project and use [Files and search](/docs/files/explorer)
+when you need to inspect its files or search their contents.
+
+## Organize projects and choose a lifecycle action
+
+Use clear project names and descriptions. **Hide Project** changes only your
+own project list; it does not remove collaborator access or stop the runtime.
+Turn on the **Hidden** filter to find hidden projects, then use **Unhide
+Project** to return one to your normal list.
+
+Other actions have different effects. Check the selected projects and the
+confirmation before proceeding:
+
+| Action | Effect |
+| --- | --- |
+| Stop | Stops the project runtime and its processes while keeping project files. Save work and checkpoint computations first. |
+| Archive | Uses a backup for later restoration and removes the active host copy and filesystem snapshots. A running project may be stopped first; published file shares are unavailable until the project is restored. |
+| Remove Myself as Collaborator | Leaves a project you do not own without deleting it for the remaining members. |
+| Delete Project | Permanently deletes a project you own. Preserve critical results independently before confirming. |
+
+Archive checks whether a backup is needed. If the host is unavailable, CoCalc
+may offer to use the latest existing backup and warn that newer edits can be
+lost. Read that warning; do not assume that archiving always creates a final
+backup. Starting an archived project restores its files from a backup and can
+take longer than starting a stopped project.
+
+Selecting project checkboxes reveals bulk actions. **Leave or Delete...** can
+transfer an owned project to its most recently active collaborator and remove
+you, or permanently delete an owned project with no eligible collaborator.
+Viewers are not eligible ownership-transfer recipients. Review the separate
+transfer, leave, and delete groups before confirming. Available actions depend
+on your project role and permissions.
 
 ## Create new projects
 
@@ -211,10 +246,10 @@ environment, or host placement. For the short creation flow, see
 export const VIRTUAL_MACHINES_BODY = String.raw`
 ## What virtual machines are
 
-Managed Compute VMs are standalone cloud machines owned by your account and
-attached to a CoCalc project. Choose Linux on GCP or Nebius, including supported
-ARM and GPU machines, or Windows Server 2022 on GCP. CoCalc, Jupyter, and other
-CoCalc project software are not installed automatically.
+Managed Compute VMs are standalone cloud machines owned by your account that
+can grant SSH access to a CoCalc project. Choose Linux on GCP or Nebius, including
+supported ARM and GPU machines, or Windows Server 2022 on GCP. CoCalc, Jupyter,
+and other CoCalc project software are not installed automatically.
 
 Use a VM when the project runtime is not the right size or shape for a job, or
 when you need full control of a conventional machine. Unlike a locked-down
@@ -290,24 +325,73 @@ ssh my-vm
 ~~~
 
 The **Connect** menu shows this project-local command first, followed by the
-CoCalc CLI command, DNS hostname, and full direct SSH command. The same commands
-work for Linux and Windows:
+CoCalc CLI command, DNS hostname, and full direct SSH command. Use the CLI to
+list VMs or open an interactive SSH session on Linux or Windows:
 
 ~~~sh
 cocalc vm list
 cocalc vm ssh my-vm
+~~~
+
+You can also pass a remote command. This example is for a Linux VM:
+
+~~~sh
 cocalc vm ssh my-vm uname -a
 ~~~
 
-For Linux file transfer, use \`rsync\` through the CLI:
+By default, Windows SSH starts PowerShell; use commands appropriate to that
+environment.
+
+For Linux file transfer, use \`rsync\` through the CLI. Install rsync on both
+the computer running the CLI and the VM, and wait until the VM is SSH-ready.
+Use \`-a\` to include directory contents; the CLI adds the SSH transport but
+does not add recursive or archive options for you:
 
 ~~~sh
-cocalc vm rsync ./data/ my-vm:/home/user/data/
-cocalc vm rsync my-vm:/home/user/results/ ./results/
+cocalc vm rsync -a ./data/ my-vm:/home/user/data/
+cocalc vm rsync -a my-vm:/home/user/results/ ./results/
 ~~~
 
 \`cocalc vm rsync\` is not supported for Windows. Use \`scp\`, SFTP, Git, or a
 Windows-compatible transfer command instead.
+
+Exactly one endpoint must use the VM-name prefix. The other endpoint is local
+to the process running the CLI. To copy results into a CoCalc project, run the
+download from that project's terminal; running it on your laptop writes onto
+the laptop. A trailing slash on the source directory copies its contents into
+the destination. Choose an unused destination or review existing files first,
+since a transfer can replace them.
+
+For a long transfer, add \`--partial\` if you want rsync to keep incomplete
+files for a later retry. Retry the same command after resolving the failure
+and checking that the source is stable. This option does not automatically
+reconnect or prove that a transfer completed. See the
+[rsync reference](https://download.samba.org/pub/rsync/rsync.1)
+for the installed tool's behavior and version-dependent options.
+
+### Verify results before a lifecycle action
+
+Wait for the producing job to finish writing the files. After the download
+exits successfully, check the expected file list and compare hashes at both
+ends. For example, on a Linux VM and a Linux project with \`sha256sum\`
+available, compare the digest printed by each command:
+
+~~~sh
+cocalc vm ssh my-vm sha256sum /home/user/results/summary.csv
+sha256sum ./results/summary.csv
+~~~
+
+Matching digests verify this one file's bytes, not the completeness of a whole
+results directory or the scientific result. Include the input/version record
+and other required artifacts in the handoff. Archive mode preserves symbolic
+links as links; a link to a file left on the VM does not make that file's
+contents available in the project.
+
+Check whether each source file is on the boot disk or an independent home
+volume before deleting anything. Stopping compute, deleting a VM, and deleting
+a detached home volume have different effects, described below. A persistent
+VM volume is separate from the project; persistence does not establish that a
+copy reached your project or entered its configured backups.
 
 Inside a CoCalc project, \`cocalc vm list\` defaults to that project. With an
 account CLI profile, \`cocalc vm list --all\` lists every VM owned by the
@@ -526,9 +610,26 @@ CoCalc creates an unguessable short slug by default. You can change the slug to
 something easier to remember if the link is meant to be public or easy to type.
 Slugs are global, URL-safe names; if a slug is already in use, choose another.
 
-Shares are unlisted. CoCalc does not publish a directory of public shares, but
-anyone who receives the URL may be able to open it. Treat the URL as a sharing
-link, not as a private secret.
+The normal **Publish** workflow creates an unlisted share. Other publication
+records can have a different visibility; check the displayed visibility in
+**Project Settings -> Publish** or **Account Settings -> Public Shares**.
+Anyone who receives an unlisted URL may be able to open it. Treat the URL as a
+sharing link, not as a private secret.
+
+## A share follows current project files
+
+Publishing records a project path, not an immutable release of its contents.
+Later edits, added files in a shared folder, or removal of source files can
+change what readers find at the same URL. A copied file is a separate copy,
+but the share URL itself does not pin a Git commit, snapshot, or checksum.
+
+For a research handoff, collect the intended artifacts in a dedicated version
+folder and keep that folder unchanged by your working procedure. Include a
+README with the input and code revisions, environment, rerun instructions,
+expected results, file hashes, and applicable license and attribution. Naming
+a folder with a version does not enforce immutability. Keep an independent
+copy and verify the shared files using the recipient's access, as described in
+[Research handoff](/docs/projects/research-handoff).
 
 ## Viewer access model
 
@@ -619,10 +720,12 @@ second live manifest inside the image.
 1. Open the project that has the software installed and tested.
 2. Open **Settings**.
 3. Go to **Environment**.
-4. Open **Runtime Image**.
-5. Choose **Publish Current RootFS** or manage the current catalog entry.
+4. In the **Image** card, choose **Details**.
+5. Under **Publish current image**, choose **Publish**. To update an existing
+   entry's metadata, use **Manage catalog entry** instead.
 6. Fill in metadata, theme, discovery actions, and visibility.
-7. Save or publish.
+7. Review the **Publish Current Image** dialog and choose **Publish Image**, or
+   choose **Update Catalog Entry** when managing existing metadata.
 
 Publishing the current project RootFS snapshots the visible software
 environment. It does not publish \`/home/user\`, \`/root\`, or \`/tmp\`.

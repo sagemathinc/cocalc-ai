@@ -10,10 +10,13 @@ import { renderPublicShell } from "./public-shell";
 
 // Public site fixtures model Launchpad explicitly; an unset product defaults
 // to Plus, whose smaller docs catalog intentionally excludes these pages.
-jest.mock("@cocalc/server/launchpad/mode", () => ({
-  getCocalcProduct: jest.fn(() => "launchpad"),
-  isLaunchpadProduct: jest.fn(() => true),
-}));
+jest.mock("@cocalc/server/launchpad/mode", () => {
+  const getCocalcProduct = jest.fn(() => "launchpad");
+  return {
+    getCocalcProduct,
+    isLaunchpadProduct: () => getCocalcProduct() === "launchpad",
+  };
+});
 
 jest.mock("@cocalc/database/settings/customize", () => ({
   __esModule: true,
@@ -523,4 +526,66 @@ describe("public shell rendering", () => {
       expect({ path, status }).toEqual({ path, status: 200 });
     }
   });
+});
+
+import { getCocalcProduct } from "@cocalc/server/launchpad/mode";
+const mockedProduct = jest.mocked(getCocalcProduct);
+beforeEach(() => mockedProduct.mockReturnValue("launchpad"));
+
+jest.mock("@cocalc/backend/base-path", () => ({
+  __esModule: true,
+  default: "/",
+}));
+
+describe("research compute shell availability", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it.each(["/", "/prefix", "/docs"])(
+    "keeps Plus status, metadata and body consistent under %s",
+    async (basePath) => {
+      mockedProduct.mockReturnValue("plus");
+      jest.replaceProperty(
+        jest.requireMock("@cocalc/backend/base-path"),
+        "default",
+        basePath,
+      );
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const req of [
+        request("/features/research-compute"),
+        request("/static/public.html", {
+          target: `${prefix}/features/research-compute`,
+        }),
+      ]) {
+        const { html, status } = await renderPublicShell(req);
+        expect(status).toBe(404);
+        expect(html).not.toContain('data-cocalc-public-prerender="feature"');
+        expect(html).not.toContain("Research Compute");
+        expect(html).toContain(
+          `href="https://cocalc.ai${prefix}/features" rel="canonical"`,
+        );
+      }
+      for (const path of ["/features", "/features/terminal"]) {
+        const { html, status } = await renderPublicShell(request(path));
+        expect(status).toBe(200);
+        expect(html).toContain("data-cocalc-public-prerender");
+        expect(html).not.toContain("research-compute");
+      }
+    },
+  );
+
+  it.each(["launchpad", "rocket"] as const)(
+    "retains the full research page for %s",
+    async (product) => {
+      mockedProduct.mockReturnValue(product);
+      const { html, status } = await renderPublicShell(
+        request("/features/research-compute"),
+      );
+      expect(status).toBe(200);
+      expect(html).toContain('data-cocalc-public-prerender="feature"');
+      expect(html).toContain(
+        'href="https://cocalc.ai/features/research-compute" rel="canonical"',
+      );
+      expect(html).toContain('href="/docs/hosts/project-hosts"');
+    },
+  );
 });

@@ -113,7 +113,7 @@ Also note that `src/.agents/` contains many working design docs and implementati
 
 ## CoCalc-AI And Kubernetes
 
-CoCalc-AI borrows some useful operational ideas from Kubernetes, but it is not a Kubernetes-native application and does not run on Kubernetes.
+CoCalc-AI includes both [VM/systemd bay tooling](./src/scripts/bay-systemd/README.md) and a [Rocket Helm chart](./src/packages/rocket/helm/rocket/) for Kubernetes. These are different deployment paths; the presence of either in this repository is not evidence that a particular installation has been tested.
 
 The similarities are conceptual:
 
@@ -131,9 +131,9 @@ The differences are important:
 - Runtime management uses a mix of systemd services, custom CoCalc services, Conat RPC, host-local SQLite, Postgres, cloud-provider APIs, Cloudflare tunnels, btrfs, rootless Podman, and project-specific runtime processes.
 - CoCalc-AI does not primarily deploy core services as OCI images. Most CoCalc components are built as `ncc` JavaScript bundles and installed/rolled out as software artifacts. OCI/rootfs/container tooling is used for project runtimes and related isolation, but it is not the main packaging model for the control plane or project-host daemon stack.
 - Project hosts run customer workloads and customer-facing services. Operational tooling must account for user-visible sessions, project storage, backups, snapshots, SSH, app servers, and long-lived compute processes.
-- The normal deployment target for a bay is single VM/systemd friendly. Kubernetes can be a future packaging or operations target for some environments, but correctness should not depend on Kubernetes APIs or cluster-specific service discovery.
+- The VM/systemd bay path runs without a Kubernetes cluster. The Rocket Helm chart supplies Kubernetes resources for the control plane; consult the selected deployment path for its configuration and prerequisites.
 
-We use Kubernetes as inspiration for operator ergonomics, not as an implementation substrate. CoCalc-AI exposes `describe`, `logs`, `events`, `top`, rollout, reconcile, and drain-style operations through audited CoCalc APIs and the `cocalc` CLI, whether the underlying deployment is a single VM, a VM fleet, or a partially Kubernetes-backed installation.
+CoCalc operator tooling uses its own APIs and recorded operations across deployment paths. CoCalc-AI exposes `describe`, `logs`, `events`, `top`, rollout, reconcile, and drain-style operations through audited CoCalc APIs and the `cocalc` CLI, whether the underlying deployment is a single VM, a VM fleet, or a partially Kubernetes-backed installation.
 
 ## Repository Layout
 
@@ -151,7 +151,9 @@ Inside `src/`:
 - `scripts/dev/` - Lite and hub local dev helpers, smoke scripts, and local dev tooling
 - `python/` - the Python API client and related Python build surface
 
-Notable package areas:`src/packages/frontend` - main browser UI
+Notable package areas:
+
+- `src/packages/frontend` - main browser UI
 
 - `src/packages/conat` - RPC, persistence, and routing primitives
 
@@ -173,9 +175,9 @@ If you are working on the codebase itself, almost everything starts in `src/`.
 
 ### Prerequisites
 
-- Node.js `22+`
+- Node.js `22.15.0` or newer, as required by `src/package.json`
 - a recent `pnpm`
-- Python `3`
+- Python `3.10` or newer for the Python API package
 - `make` for the Python API build
 
 For full Launchpad / project-host work you will also want a Linux environment with the host/runtime tooling used by that stack. For general frontend, Lite, CLI, and many agent workflows, the local Lite path is enough.
@@ -344,4 +346,3 @@ contact SageMath, Inc. through the commercial CoCalc channels:
 ## Acknowledgements
 
 CoCalc has been developed over many years by SageMath, Inc. and a long list of contributors. See [AUTHORS.md](./AUTHORS.md) and the contributor history in GitHub for the broader picture.
-

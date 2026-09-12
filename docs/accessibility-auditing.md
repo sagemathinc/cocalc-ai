@@ -14,7 +14,7 @@ Start the local hub/launchpad stack, then run:
 pnpm -C src accessibility:audit
 ```
 
-The default matrix covers 31 stable routes across landing and product pages,
+The checked-in default matrix covers routes across landing and product pages,
 feature documentation, support and news, account preferences, project files,
 and project settings. The runner reads the active hub development environment,
 issues a local impersonation login URL, starts an isolated Chromium profile,
@@ -54,10 +54,12 @@ pnpm -C src accessibility:audit:public -- \
 
 Run a subset or override the site and project:
 
+Replace the quoted project-ID placeholder below with your designated development project ID.
+
 ```bash
 pnpm -C src accessibility:audit -- \
   --base-url https://lite1b.cocalc.ai \
-  --project-id aab0ea4c-40f2-4163-a109-a66f699698f3 \
+  --project-id "<project-id>" \
   --pages landing,project-files
 ```
 

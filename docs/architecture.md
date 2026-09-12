@@ -2,7 +2,7 @@
 
 > Updated to reflect the new project-host model (Dec 2025). This is a working draft; keep it in sync with the code.
 
-At a glance: The control hub handles auth/config and keeps project placement in Postgres, then routes both conat and HTTP/WS traffic directly to the project\-host that owns a project. Each project\-host combines file\-server, project\-runner, HTTP/WS proxy, conat with persistence, sshpiperd and a local btrfs volume with per\-project subvolumes, quotas, snapshots, and backups \(rustic\). Projects run in podman with overlayfs uppers stored inside the project, so user changes are captured in snapshots/backups and survive moves. Moves use rustic backup/restore with restore staging for atomicity; there is no host\-to\-host SSH path for moves.
+At a glance: The control hub handles auth/config and keeps project placement in Postgres, then routes both conat and HTTP/WS traffic directly to the project\-host that owns a project. Each project\-host combines file\-server, project\-runner, HTTP/WS proxy, conat with persistence, sshpiperd and a local btrfs volume with per\-project subvolumes, quotas, snapshots, and backups \(rustic\). Projects run in podman with overlayfs uppers stored inside the project, so user changes are captured in snapshots/backups and survive moves. Moves use rustic backup/restore with destination staging before installing restored files; there is no host\-to\-host SSH path for moves. Installation is not an atomic swap of the whole project tree.
 
 ---
 
@@ -48,8 +48,8 @@ At a glance: The control hub handles auth/config and keeps project placement in 
 
 - Podman container per project with overlayfs upperdir in `.local/share/overlay/` keyed by image.
 - Ports: internal HTTP proxy on 80; SSH on per-project port.
-- Rootfs image: `rootfs_image` (or legacy `compute_image`) resolved and cached on host, with lightweight RootFS preflight before runtime bootstrap.
-- Persist store: per-project data/kv streams under `sync/projects/<project_id>` on the host.
+- RootFS image: the current `rootfs_image` or resolved binding/default is cached and preflighted on the host before runtime bootstrap.
+- Persist store: project data/kv streams live inside the project at `.local/share/cocalc/persist` in the standard project-host bootstrap configuration.
 
 4. **Proxies**
 
@@ -128,7 +128,7 @@ flowchart TB
 - Each project lives in a btrfs subvolume `project-<project_id>` on the host mount.
 - Quotas via qgroups on the live subvolume; snapshots live under `.snapshots` and are accounted in the same quota policy (live + snapshots).
 - Scratch/overlay: `.local/share/overlay/` upperdirs are inside the project and included in quotas/snapshots/backups.
-- Persist store is separate (`sync/projects/<project_id>`) and included in backups and moves.
+- Project persistence is inside the project tree at `.local/share/cocalc/persist` and is included in backups and moves. `COCALC_SYNC_PROJECTS` controls its physical location; custom layouts need a matching backup plan.
 - Optional compression/dedup (e.g., zstd, bees) per host.
 
 ---
@@ -136,7 +136,7 @@ flowchart TB
 ## Snapshots
 
 - RO snapshots under `project-.../.snapshots`. Automatic + user-named; host enforces retention and quota locally.
-- Sent/preserved during moves; browsed/restored in UI; not stored in backups (backups are file-level).
+- Browsed/restored on the current host. Existing Btrfs snapshot history is not transferred by backup-based moves: Rustic backups exclude `.snapshots`. The restored project files and collaboration history move; the old host's snapshot collection does not.
 
 ## Backups
 
@@ -148,11 +148,11 @@ flowchart TB
 
 - Orchestrated by the control hub via LRO (`project-move`).
 - Flow:
-  - Stop the project and always take a final rustic backup on the source host.
-  - Restore on the destination host using restore staging for atomicity.
+  - When the source is available and provisioned, stop the project and take a final Rustic backup. An offline-source move uses an existing backup; it cannot capture later source changes.
+  - Restore into destination staging before installing the restored files. Installation uses separate moves, not an atomic swap of the whole project tree.
   - Start the project on the destination.
   - Cleanup source data after destination start succeeds (or defer cleanup if the source is offline).
-- Post-move: host_id updated in Postgres; backups remain in the repo; snapshots are not transferred directly.
+- Post-move: host_id updated in Postgres; backups remain in the repo; snapshots are not transferred directly. This is the default destination-start flow; see [project moves](./project-move.md) for offline and placement-only cases.
 
 ---
 
@@ -160,7 +160,7 @@ flowchart TB
 
 **Start project**
 
-- Hub loads project meta (`rootfs_image/compute_image`, run_quota, users, host_id/host).
+- Hub loads project metadata (`rootfs_image`, run_quota, users, host_id/host), resolving an empty image from the current RootFS binding or the default.
 - If no placement, hub picks an active host and asks it to create/start the project.
 - Host resolves the image, writes sqlite row, ensures ports/quotas/authorized_keys, prepares the cached RootFS, starts the podman container, and lets first-start runtime bootstrap finish `user`/`sudo`/CA-cert setup before dropping privileges.
 
@@ -190,7 +190,7 @@ flowchart TB
 
 ## Open Items (ongoing)
 
-- Image allowlist/error reporting in UI; local rootfs support for very large images.
+- Image policy and error-reporting refinements. Managed RootFS releases already provide a non-OCI artifact path; arbitrary local-directory input is a separate question.
 - Tunable snapshot/backup retention; pruning policies per host/project.
 - Stronger story for untrusted hosts (per-bucket backups, limited key distribution).
 - Observability: richer progress metrics for moves/backups; host health surfacing.

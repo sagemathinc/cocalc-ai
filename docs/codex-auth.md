@@ -13,18 +13,27 @@ This covers:
 
 ## Current Auth Sources and Precedence
 
-For each Codex turn, project-host resolves auth in this order:
+Auth resolution first honors the selected payment-source preference. An
+explicit subscription, project key, account key, or site-funded selection
+fails when that source is unavailable instead of silently switching sources.
+
+With `preference="auto"` and shared-home mode disabled or set to `fallback`,
+the resolver tries:
 
 1. ChatGPT subscription (`subscription`)
-2. Workspace OpenAI API key (`project-api-key`)
-3. Account OpenAI API key (`account-api-key`)
-4. Site OpenAI API key (`site-api-key`)
-5. Shared `~/.codex` fallback (`shared-home`) only when explicitly enabled
+2. Registered workspace OpenAI API key (`project-api-key`)
+3. Registered account OpenAI API key (`account-api-key`)
+4. Compatibility environment-injected project key, then account key
+5. Site OpenAI API key (`site-api-key`)
+6. Shared home (`shared-home`), if the configured mode permits it
 
-Launchpad default:
-
-- shared-home auth is disabled by default (`COCALC_PRODUCT=launchpad`)
-- this avoids accidental collaborator auth leakage from workspace `~/.codex/auth.json`
+`COCALC_PRODUCT=launchpad` defaults shared-home mode to `disabled`; other
+product values default to `fallback`. `COCALC_CODEX_AUTH_SHARED_HOME_MODE`
+can select `disabled`, `fallback`, `prefer`, or `always`. In automatic mode,
+`prefer` uses shared home first when it has `auth.json`, and `always` chooses
+it first. An explicit `shared-home` preference still requires that auth file
+and a mode that permits it. These compatibility settings change credential
+selection and should not be confused with the default Launchpad behavior.
 
 Resolution code:
 
@@ -171,13 +180,13 @@ In project-host mode, CoCalc intentionally separates auth material from session 
   - subscription auth comes from host secrets (`/btrfs/data/secrets/codex-subscriptions/...`)
   - API-key auth comes from credential resolution and env injection
 - Session history source-of-truth:
-  - Codex session JSONL files live under workspace storage (`/root/.codex/sessions` in the runtime container, i.e. project volume)
+  - Codex session JSONL files live under workspace storage (`/home/user/.codex/sessions` in the runtime container, i.e. project volume)
 
 Important behavior:
 
-- Project-host ignores workspace `~/.codex/auth.json` for auth resolution in launchpad mode.
-- For subscription auth, project-host mounts only auth files (`auth.json`, `config.toml`) from secrets into `/root/.codex`, while keeping `/root/.codex/sessions` in the workspace.
-- Shared-home auth (`shared-home`) can still be explicitly enabled via `COCALC_CODEX_AUTH_SHARED_HOME_MODE` for single-user/plus-style deployments.
+- With the default Launchpad shared-home mode disabled, project-host ignores workspace `~/.codex/auth.json` for auth resolution.
+- For subscription auth, project-host mounts the subscription cache separately at `/run/cocalc/codex-subscription` for device login. It also mounts available auth files into `/home/user/.codex`, while keeping sessions in project storage. Normal app-server turns use host-supplied in-memory auth with ephemeral credential storage; token refresh updates the registry-backed subscription home.
+- Shared-home auth follows the mode and preference rules above. `/home/user` is the current runtime home; `/root` remains a legacy home alias, not the default used by these paths.
 
 ## Subscription Cache GC
 
@@ -190,7 +199,7 @@ Defaults:
 - TTL: 72h (`COCALC_CODEX_SUBSCRIPTION_CACHE_TTL_MS`)
 - Sweep interval: 1h (`COCALC_CODEX_SUBSCRIPTION_CACHE_SWEEP_MS`)
 
-GC skips currently mounted `/root/.codex` paths from active `codex-*` containers.
+GC protects subscription homes mounted at `/home/user/.codex` or `/run/cocalc/codex-subscription` in active `codex-*` containers. If container inspection fails, that sweep is skipped.
 
 ## Site-Funded Codex
 
@@ -205,8 +214,8 @@ When auth source is `site-api-key`, each turn uses the funded path:
 - unreported usage and finish events remain in a durable host SQLite outbox.
 
 The initial policy is GPT-5.6 Luna, low reasoning, standard speed, no OpenAI
-hosted paid tools, and a five-cent maximum reservation. All limits are dynamic
-site settings. `site_funded_codex_enabled` disables only included access;
+hosted paid tools, and a five-cent maximum reservation. The supported model and configurable limits are defined in
+`site-funded-codex-policy.ts`; this is not unrestricted provider configuration. `site_funded_codex_enabled` disables only included access;
 `launch_disable_ai` remains the complete AI kill switch.
 
 Per-account 5-hour and 7-day allowances come exclusively from the account's
@@ -221,7 +230,7 @@ Modules:
 - [src/packages/ai/acp/codex-site-key-governor.ts](../src/packages/ai/acp/codex-site-key-governor.ts)
 - [src/packages/project-host/codex/codex-site-metering.ts](../src/packages/project-host/codex/codex-site-metering.ts)
 - [src/packages/project-host/codex/site-funded-proxy.ts](../src/packages/project-host/codex/site-funded-proxy.ts)
-- [src/packages/server/ai/site-funded-codex-ledger.ts](../src/packages/server/ai/site-funded-codex-ledger.ts)
+- [src/packages/server/ai/site-funded-codex-reservations.ts](../src/packages/server/ai/site-funded-codex-reservations.ts)
 - [src/packages/server/ai/site-funded-codex-policy.ts](../src/packages/server/ai/site-funded-codex-policy.ts)
 - [src/packages/server/conat/api/hosts.ts](../src/packages/server/conat/api/hosts.ts)
 
@@ -275,7 +284,7 @@ Current intent:
   `OPENAI_API_KEY` into the Codex runtime.
 - For site-funded auth, the runtime only receives a turn-scoped local proxy
   token. The host forwards the real API key to OpenAI.
-- For subscription auth, Codex reads file-based auth from mounted `/root/.codex/auth.json` and `/root/.codex/config.toml` sourced from host secrets, not from workspace files.
+- For subscription auth, the host reads the registry-backed cache to supply app-server login tokens in memory. The app-server credential store is forced to ephemeral mode; device login uses the separate subscription mount described above.
 
 ## Known Limitations / Future Work
 
