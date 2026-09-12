@@ -98,3 +98,96 @@ The same infrastructure that lets Codex open a Secrets modal can also verify
 that docs are still true after frontend changes. This makes documentation,
 support, and agent behavior part of one testable system.
 `;
+
+export const QUICK_NAVIGATION_BODY = String.raw`
+## Open Quick Navigation
+
+Quick Navigation is made for the keyboard: switching between projects, files,
+frames, and settings never needs the mouse.
+
+- Double-tap **Shift** to open it from anywhere in CoCalc AI, including inside
+  an editor or terminal. (Double-Shift is the default; it can be changed or
+  disabled, see below.) The search field has focus immediately.
+- Type a few letters, use **Up/Down** to select a result, and press **Enter**
+  to open it.
+- Press **Tab** to move to the frame preview of the selected file, then a
+  digit **1–9** to open that frame, or **0** for its chat.
+- Press **Escape** to close and return to where you were.
+
+The dialog searches the projects in your project list, the editors open in
+projects you have opened in this browser session, starred files, files you
+recently used in this browser and tabs remembered for closed projects, recent
+files from project history already loaded in this browser, project panels such as
+Files or Log, the pages of the top navigation bar (Projects, Compute hosts,
+Notifications, and Admin for administrators), and account settings. Each file
+appears once; its frames are chosen
+in the preview on the right. This is not a search of every file on disk. The
+shortcut is ignored while another dialog is open.
+
+## Search and switch
+
+Type words or fragments separated by spaces. Each part can match a different
+part of the destination: **algebra notes** finds a notes file in the Algebra
+project, **dark** finds Appearance settings, and **key short** finds Keyboard
+preferences. Matches are highlighted in the name and in its project or path.
+
+Exact names rank first, followed by word prefixes and substrings. Matching
+ignores case and accents. If nothing matches, a typo-tolerant pass accepts one
+swapped, wrong, missing, or extra character (two in long words) as long as the
+first letter is right: **rwn** still finds **rnw.rnw**. Among similarly
+matching destinations, open projects come before closed projects, and bookmarked
+closed projects come before other closed projects. Within the current project,
+files come before the project entry itself: open files first, most recently used
+first, then starred and recently opened files. With an empty search this is the
+order you see.
+
+**Enter** opens the selected result; an editor opens at its last active frame.
+**Escape** closes the dialog and restores your previous focus.
+
+## Select a frame
+
+The preview on the right shows the arrangement of frames inside an editor,
+including tabbed frames, numbered 1–9. When the dialog opens it shows the
+current editor; while you move through results it shows the editor of the
+selected result, and it stays blank for results without frames.
+
+- **Shift, Shift → 2** immediately opens frame 2 of the current editor. No Enter
+  is needed.
+- Digits are commands only while the search is empty and a preview is shown. To
+  search for a number, press **Space** first: **Shift, Shift → Space → 2**
+  searches for **2**. Text such as **chapter2** searches directly, and pasted
+  text is always a search.
+- After selecting a result with **Up/Down**, press **Tab** to move to its frame
+  preview, then **1–9** to open that frame, or **Enter** for the frame that was
+  last active. Frames beyond 9 can be clicked in the preview.
+- **0** goes to the file's chat: it focuses an existing chat frame, or opens the
+  side chat first when the layout has none.
+- **Tab** cycles only through the dialog's own controls: search, preview,
+  Configure, and Help. **Shift-Tab** cycles backwards and returns from the
+  preview to the search, keeping your query and selection.
+
+The hint line under the search field names the file and frame the keys act on.
+CodeMirror source frames receive their text cursor, including LaTeX source
+frames that show an included file.
+
+Preference searches also match the names of the controls on each settings page.
+For example, **pre font** or **pref size** finds **Preferences → Editor**, where
+font size is configured. Result subtitles show only the settings group.
+
+## Configure or disable the shortcut
+
+Select **Configure** in the title bar to open a separate settings dialog; Escape
+or **Done** closes it and returns you to Quick Navigation. Choose double-Shift,
+an alternate shortcut, or **Disabled**. For double-Shift, set the maximum
+interval between taps (150–1000 milliseconds, 400 by default) and focus the test
+button to try it. The alternate shortcuts are **Ctrl+Shift+Space** and
+**Ctrl+K** (Command instead of Ctrl on macOS). Ctrl+K takes precedence over
+editor keymaps that use it, such as Emacs kill-line and Sublime chords.
+
+These settings are also in **Account settings → Preferences → Keyboard**. That
+page has an **Open Quick Navigation** button that works even when the shortcut
+is disabled. Both locations edit the same saved preferences.
+
+**Help** in the title bar closes the dialog and opens this guide in the
+integrated documentation, in the project's Docs panel when a project is active.
+`;

@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { CODEX_SUBAGENTS_LABEL } from "./codex-labels";
 import { Button, Popover, Select, Typography } from "antd";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -57,7 +58,7 @@ export function CodexSubagentConcurrencyField({
       style={{ marginTop: compact ? 0 : 16, marginBottom: compact ? 0 : 16 }}
     >
       <div style={{ marginBottom: 6 }}>
-        <Text strong>Maximum concurrent subagents</Text>{" "}
+        <Text strong>{CODEX_SUBAGENTS_LABEL}</Text>{" "}
         <Text type="secondary">(Account-wide)</Text>
       </div>
       <Select

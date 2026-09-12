@@ -13,11 +13,18 @@ import { lite } from "@cocalc/frontend/lite";
 import { OtherSettings } from "./other-settings";
 import { CodexCredentialsPanel } from "./codex-credentials-panel";
 import { CodexDefaultsPanel } from "./codex-defaults-panel";
+import {
+  CODEX_CREDENTIALS_LABELS,
+  CODEX_DEFAULTS_LABELS,
+  CODEX_SUBAGENTS_LABEL,
+} from "./codex-labels";
 import { CodexSubagentConcurrencyField } from "./codex-subagent-concurrency";
 import CodexSessionsPanel from "./codex-sessions-panel";
 import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import type { SettingsPageDefinition } from "./settings-page";
+
+const CODEX_SESSIONS_TITLE = "Codex sessions";
 
 export const ACCOUNT_PREFERENCES_AI_PAGE = {
   component: AccountPreferencesAI,
@@ -25,6 +32,12 @@ export const ACCOUNT_PREFERENCES_AI_PAGE = {
     id: "account.settings.overview.ai",
     defaultMessage: "Configure AI assistant settings and integrations.",
   }),
+  controls: [
+    CODEX_SESSIONS_TITLE,
+    CODEX_SUBAGENTS_LABEL,
+    ...Object.values(CODEX_DEFAULTS_LABELS),
+    ...Object.values(CODEX_CREDENTIALS_LABELS),
+  ],
   icon: ({ context }) => (
     <AIAvatar
       size={context === "overview" ? 24 : 16}
@@ -42,7 +55,7 @@ export function AccountPreferencesAI() {
   const codexSessionsSection = (
     <div style={{ marginTop: 24, marginBottom: 8 }}>
       <Typography.Title level={2} style={{ marginBottom: 6, fontSize: 18 }}>
-        Codex sessions
+        {CODEX_SESSIONS_TITLE}
       </Typography.Title>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 10 }}>
         Review current and recent Codex sessions, jump back to their chat files,
@@ -52,7 +65,7 @@ export function AccountPreferencesAI() {
         View Codex sessions
       </Button>
       <Modal
-        title="Codex sessions"
+        title={CODEX_SESSIONS_TITLE}
         open={codexSessionsOpen}
         onCancel={() => setCodexSessionsOpen(false)}
         footer={null}

@@ -41,6 +41,9 @@ describe("CoCalc Plus docs filter", () => {
         "troubleshooting.memory",
         "files.timetravel",
         "files.git",
+        // Quick Navigation is a frontend feature that works in the single
+        // local project as well
+        "docs.quick-navigation",
       ]),
     );
     expect(categories).toEqual(
@@ -53,6 +56,7 @@ describe("CoCalc Plus docs filter", () => {
         "LaTeX",
         "R",
         "Troubleshooting",
+        "Docs",
       ]),
     );
   });

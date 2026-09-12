@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { CODEX_DEFAULTS_LABELS } from "./codex-labels";
 import { Button, Select, Space, Typography } from "antd";
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -61,7 +62,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
   return (
     <div style={{ marginTop: 16, marginBottom: 16 }}>
       <Title level={2} style={{ marginBottom: 8, fontSize: 18 }}>
-        New Codex chat defaults
+        {CODEX_DEFAULTS_LABELS.title}
       </Title>
       <Paragraph type="secondary" style={{ marginBottom: 12 }}>
         Configure the model and execution settings used when you create a new
@@ -77,7 +78,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
       >
         <div>
           <div style={{ marginBottom: 4 }}>
-            <Text type="secondary">Model</Text>
+            <Text type="secondary">{CODEX_DEFAULTS_LABELS.model}</Text>
           </div>
           <Select
             aria-label="Default Codex model"
@@ -99,7 +100,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
         </div>
         <div>
           <div style={{ marginBottom: 4 }}>
-            <Text type="secondary">Reasoning</Text>
+            <Text type="secondary">{CODEX_DEFAULTS_LABELS.reasoning}</Text>
           </div>
           <Select
             aria-label="Default Codex reasoning level"
@@ -119,7 +120,7 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
         {lite ? (
           <div>
             <div style={{ marginBottom: 4 }}>
-              <Text type="secondary">Execution mode</Text>
+              <Text type="secondary">{CODEX_DEFAULTS_LABELS.execution}</Text>
             </div>
             <Select
               aria-label="Default Codex execution mode"

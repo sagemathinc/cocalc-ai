@@ -39,17 +39,10 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import { useProjectContext } from "../context";
 import { generatedWorkspaceChatLabel } from "../workspaces/chat-display";
-import {
-  getActivityBarPanelMode,
-  setActivityBarPanelMode,
-} from "./activity-bar-storage";
+import { activateProjectTab } from "./activate-project-tab";
 import { FilesFlyout } from "./flyouts/files";
 import { ActiveFlyout } from "./flyouts/active";
-import {
-  shouldForceFixedTabFlyout,
-  shouldForceFixedTabFullPage,
-  shouldOpenFileInNewWindow,
-} from "./utils";
+import { shouldOpenFileInNewWindow } from "./utils";
 import { file_options } from "@cocalc/frontend/editor-tmp";
 import type { FixedTab } from "./fixed-tab-ids";
 
@@ -381,29 +374,12 @@ export function FileTab(props: Readonly<Props>) {
         actions.set_active_tab(path_to_tab(path));
       }
     } else if (name != null) {
-      if (flyout != null) {
-        const canOpenFullPage = !FIXED_PROJECT_TABS[flyout].noFullPage;
-        if (shouldForceFixedTabFlyout(e)) {
-          setActivityBarPanelMode(flyout, "flyout");
-          actions?.setFlyoutExpanded?.(flyout, true);
-          return;
-        }
-        if (canOpenFullPage && shouldForceFixedTabFullPage(e)) {
-          setActivityBarPanelMode(flyout, "full");
-          actions?.setFlyoutExpanded?.(flyout, false, false);
-          setActiveTab(name);
-          return;
-        }
-        if (canOpenFullPage && getActivityBarPanelMode(flyout) !== "flyout") {
-          actions?.setFlyoutExpanded?.(flyout, false, false);
-          setActiveTab(name);
-          return;
-        }
-        setActivityBarPanelMode(flyout, "flyout");
-        actions?.toggleFlyout(flyout);
-      } else {
-        setActiveTab(name);
-      }
+      activateProjectTab(actions, name, {
+        flyout: flyout ?? undefined,
+        noFullPage: flyout ? FIXED_PROJECT_TABS[flyout].noFullPage : undefined,
+        event: e,
+        toggle: true,
+      });
     }
   }
 

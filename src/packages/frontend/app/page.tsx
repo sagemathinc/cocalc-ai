@@ -35,6 +35,7 @@ import openSupportTab from "@cocalc/frontend/support/open";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { IS_ANDROID, IS_IOS, IS_MOBILE, IS_SAFARI } from "../feature";
+import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
@@ -566,6 +567,13 @@ export const Page: React.FC = () => {
       >
         <ActiveContent />
       </CocalcErrorBoundary>
+      {/* Embedded surfaces (kiosk and project embed) and the auth view hide
+          the top navigation and confine what may be shown; keep the global
+          shortcut off there too. Plain fullscreen keeps it. */}
+      {!examMode &&
+        !isAuthView &&
+        fullscreen !== "kiosk" &&
+        fullscreen !== "project" && <QuickNavigation />}
       {showPostSurfaceModals && !examMode ? (
         <PostSurfaceSlot scope="app.post-surface-modals">
           <PostSurfaceModals />
