@@ -28,16 +28,17 @@ export interface PublicFeaturePage {
   title: string;
 }
 
-// Catalog links are authored relative to the site root. Add the deployment
-// prefix without changing external URLs, queries, or fragments.
-export function publicFeatureHref(href: string, basePath: string): string {
-  if (!href.startsWith("/") || href.startsWith("//")) return href;
-  const prefix = basePath.replace(/\/+$/, "");
-  const pathname = href.split(/[?#]/, 1)[0];
-  if (!prefix || pathname === prefix || pathname.startsWith(`${prefix}/`)) {
-    return href;
+// Accept unprefixed catalog links authored relative to the site root, not
+// URLs already resolved for a deployment. A catalog path may itself start with
+// the deployment prefix. Preserve external URLs, queries, and fragments.
+export function publicFeatureHref(
+  catalogHref: string,
+  basePath: string,
+): string {
+  if (!catalogHref.startsWith("/") || catalogHref.startsWith("//")) {
+    return catalogHref;
   }
-  return `${prefix}${href}`;
+  return `${basePath.replace(/\/+$/, "")}${catalogHref}`;
 }
 
 export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [

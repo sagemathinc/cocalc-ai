@@ -24,9 +24,16 @@ describe("public feature page catalog", () => {
     [
       "/prefix/docs/hosts/storage?view=full#backups",
       "/prefix",
-      "/prefix/docs/hosts/storage?view=full#backups",
+      "/prefix/prefix/docs/hosts/storage?view=full#backups",
     ],
-    ["/prefix?view=full#top", "/prefix", "/prefix?view=full#top"],
+    ["/prefix?view=full#top", "/prefix", "/prefix/prefix?view=full#top"],
+    ["/docs/hosts/storage", "/docs", "/docs/docs/hosts/storage"],
+    [
+      "/docs/hosts/storage?view=full#backups",
+      "/docs/",
+      "/docs/docs/hosts/storage?view=full#backups",
+    ],
+    ["/docs?view=full#top", "/docs", "/docs/docs?view=full#top"],
     ["/prefix-other/docs", "/prefix", "/prefix/prefix-other/docs"],
     ["/docs/hosts/storage", "/prefix/", "/prefix/docs/hosts/storage"],
     [
