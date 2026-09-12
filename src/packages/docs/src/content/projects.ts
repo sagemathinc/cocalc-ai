@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export const PROJECT_SECRETS_BODY = String.raw`
+export const PROJECT_SECRETS_BODY = `
 ## What project secrets are for
 
 Project secrets are named values that are available to code running in a
@@ -58,6 +58,89 @@ outputs, chat messages, logs, or command history.
 
 SSH private keys usually need a final newline. If you paste one manually, use
 the warning in the Secrets dialog to add the newline before saving.
+
+## Choose secrets or ordinary environment variables
+
+Use **Custom Environment Variables** for non-secret configuration. After an
+authorized update is saved, restart the project for those values to take effect
+in terminals, Jupyter kernels, and other processes. API keys, private keys, and
+tokens belong in **Project Secrets**. An authorized, saved secret update can
+refresh the mounted files without restarting the project; check the refresh
+result below. A secret-file refresh does not reload a value that an application
+already cached.
+
+## Manage secrets with the CLI
+
+Run these commands in a terminal with the CoCalc CLI installed and
+authenticated to the intended site as an account allowed to manage the selected
+projects. Start with [CLI setup](/docs/cli/getting-started) and
+[Authentication and targets](/docs/cli/authentication-and-targets). Replace
+\`TARGET_PROJECT_ID\` and \`SOURCE_PROJECT_ID\` below with the intended projects.
+Copying requires collaborator access to both projects.
+
+**Validation (2026-09-11):** the list, set, copy, and delete help was checked
+with CoCalc CLI 1.0.3. At source revision
+[b024f77](https://github.com/sagemathinc/cocalc-ai/blob/b024f77b31f7579104fa3481dd5c2aee1df43130/src/packages/cli/src/bin/commands/project/env-secrets.ts),
+17 command-registration checks passed with Commander 14.0.1 and synthetic
+project and service adapters. These examples describe reference syntax and
+selection behavior. Authenticated transfers, server enforcement, mount refresh,
+and application reloads have not been exercised by these checks.
+
+These commands inspect metadata and available options:
+
+~~~sh
+cocalc project secrets list --project TARGET_PROJECT_ID --json
+cocalc project secrets set --help
+cocalc project secrets copy --help
+~~~
+
+\`list\` returns secret metadata, such as names and sizes, rather than secret
+values. \`set NAME\` adds or replaces one secret and requires exactly one input
+source: \`--value\`, \`--file\`, or \`--stdin\`. Prefer a protected input file or stdin
+when supplying a credential so its value is not written into the command line.
+
+Course-managed secrets cannot be changed using generic \`set\`, \`delete\`, or
+\`copy --overwrite\` commands.
+
+To copy an existing secret named \`DOCS_EXAMPLE\`, explicitly select its source,
+destination, and name. This command writes to the destination project:
+
+~~~sh
+cocalc project secrets copy --from SOURCE_PROJECT_ID --project TARGET_PROJECT_ID --name DOCS_EXAMPLE --json
+~~~
+
+\`DOCS_EXAMPLE\` is an example name; the command does not create a source secret.
+Omitting \`--name\` requests all secrets from the source project. Use explicit
+names when only some credentials belong in the destination. Add \`--overwrite\`
+only when you intend to replace matching destination names; replacement is off
+by default.
+
+Inspect the command's result fields before continuing:
+
+| Field | Meaning |
+| --- | --- |
+| \`copied\` | Names copied by this request. |
+| \`conflicts\` | Destination names that prevented a copy without \`--overwrite\`. |
+| \`missing\` | Requested names absent from the source. |
+
+If \`conflicts\` or \`missing\` is nonempty, \`copied\` is empty: the request does not
+skip the problem names and copy the rest. Resolve the names or replacement
+choice deliberately before trying again. Listing destination metadata can
+confirm which names exist; it does not reveal their values or prove an
+application is using them.
+
+## Check the mount separately from the application
+
+A successful change can include a \`runtime_refresh\` result. The status
+\`cached_for_next_start\` means the saved secrets will be mounted on the next
+start; \`retry_pending\` means the runtime refresh has not been confirmed. In the
+**Secrets** panel, use **Retry mount refresh** when that action is offered.
+After the mount is current, reload an application that cached the old value and
+verify its expected behavior without printing the credential.
+
+\`cocalc project secrets delete NAME --project TARGET_PROJECT_ID\` removes a
+project secret. Removing or replacing that mounted value does not revoke the
+credential at its external issuer; handle issuer-side revocation separately.
 
 ## Why this matters in CoCalc
 
