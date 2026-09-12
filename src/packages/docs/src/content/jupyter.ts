@@ -61,6 +61,33 @@ plots, and workflows where code, output, and explanation belong together.
 
 For the creation flow, see [Create a Jupyter notebook](/docs/jupyter/create-notebook).
 
+## Open a legacy Sage worksheet
+
+In a project where you can edit files, opening \`analysis.sagews\` normally opens
+\`analysis.ipynb\` in the same folder. CoCalc creates the notebook if that path is
+missing or empty and leaves the original worksheet in place.
+
+If a nonempty \`analysis.ipynb\` already exists, CoCalc opens it without
+reconverting or comparing it with the worksheet. To try a fresh conversion
+without replacing that notebook, copy the worksheet to a new basename whose
+\`.ipynb\` path does not exist, then open the copied worksheet.
+
+Before rerunning the notebook:
+
+1. Keep the original \`.sagews\` file, including its historical outputs, for
+   comparison. Converted code cells start with empty outputs and no execution
+   count; saved worksheet results are not copied into the new notebook.
+2. Review the converted cells. A cell beginning with \`%md\` becomes Markdown;
+   other input becomes code, with surrounding whitespace trimmed. Check hidden
+   input/output settings, which are not reliably preserved across all cells.
+3. Choose an available, compatible SageMath kernel. Conversion sets the notebook
+   kernel metadata to \`sage\` / **SageMath**; it does not install SageMath,
+   packages, or the worksheet's original environment. Check required input files
+   and dependencies before running cells.
+4. Rerun the cells you have reviewed and compare their results with the original
+   worksheet. Legacy magics, interactive behavior, and external dependencies may
+   need adaptation; conversion does not execute or validate the computations.
+
 ## What CoCalc adds
 
 CoCalc notebooks are designed for shared and long-running work:

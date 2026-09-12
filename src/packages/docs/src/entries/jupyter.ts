@@ -79,10 +79,11 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
       "A collaborative Jupyter notebook with output and a running kernel",
     ),
     lastReviewed: "2026-09-07",
+    searchKeywords: "sagews ipynb legacy worksheet conversion saved outputs",
     slug: "jupyter/use-jupyter",
     status: "ready",
     summary:
-      "Use collaborative durable Jupyter notebooks inside CoCalc projects.",
+      "Use collaborative durable Jupyter notebooks, including legacy Sage worksheet conversion and rerun checks.",
     title: "Use Jupyter notebooks",
   },
   {

@@ -90,6 +90,11 @@ If a project opens while files are still restoring, you can leave the page and
 come back later. If CoCalc reports file warnings, the restored project contains
 the available files and the warning lists archive entries that were not restored.
 
+For restored \`.sagews\` files, see the legacy Sage worksheet section in
+[Using Jupyter in CoCalc](/docs/jupyter/use-jupyter) before rerunning them. Opening
+a worksheet may create a notebook without historical outputs or reuse an
+existing notebook.
+
 ## Troubleshooting
 
 If you see **Verify your email address to find legacy projects**, open

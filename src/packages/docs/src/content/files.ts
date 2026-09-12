@@ -285,6 +285,45 @@ the search and new-file controls when a project grows. The explorer is also a
 good starting point for creating terminals, notebooks, scripts, LaTeX files,
 slides, whiteboards, and task files.
 
+## Find a retained file when its path is unknown
+
+On CoCalc AI, use snapshot or backup search when you remember a name or text
+but cannot find the file in the current folders. These searches require the
+corresponding snapshot or backup service and retained data for your project.
+
+1. In a project you can edit, open **Find** (the magnifying-glass icon) in the
+   activity bar. In **Find in**, choose **Home** to start from the project's HOME
+   paths before selecting an archive tab.
+2. Choose **Snapshots**, then **Files** to search filenames or
+   **Contents** to search text. To search backup filenames, choose **Backups**.
+   Backup **Contents** search is disabled. Use **Choose** to narrow the search
+   to an ordinary project folder under HOME. Snapshot and backup searches only
+   cover HOME.
+3. Before entering your query, set **Subdirectories** to include nested folders,
+   **Hidden** to include dotfiles and hidden directories, and **Case sensitive**
+   when capitalization matters. For snapshot **Contents**, leave **Regexp** off
+   for literal text; turn off **Git ignore** to include ignored files.
+4. Enter a filename fragment such as \`measurements\`, or a filename glob such as
+   \`*.csv\`, then choose **Search**. For snapshot **Contents**, enter a distinctive
+   text fragment instead. Check each result's path and retained version.
+
+**Filter results** narrows the displayed matches; use the main search field to
+change the filename or contents query. Clear **Filter results** before
+interpreting an empty result. Also check the folder, search mode, and options,
+and read any error. An empty result
+means no match was displayed for that search, not that the file has never been
+retained.
+
+Backup search can stop at a result, time, or other limit. Its incomplete-search
+warning means more matches may exist. Refine the query, select a smaller folder,
+or turn off **Subdirectories** and search likely folders individually. Snapshot
+content search also has output limits; a missing warning does not establish an
+exhaustive search.
+
+If you already know the file's path, see [TimeTravel](/docs/files/timetravel)
+for inspecting its history. Finding a retained match does not restore or replace
+the current file.
+
 ## Files are shared project state
 
 Files opened from the explorer are visible to collaborators and tools in the
