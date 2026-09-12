@@ -33,6 +33,18 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     ],
   },
   {
+    category: "Research workflows",
+    startEntryId: "research.reproduce-analysis",
+    summary:
+      "Move, run, reproduce, recover, and share research using complete examples for people and project agents.",
+    workflows: [
+      "Reproduce results",
+      "Move notebooks",
+      "Resume runs",
+      "Share research",
+    ],
+  },
+  {
     category: "AI",
     startEntryId: "ai.codex-chat",
     summary:

@@ -1,0 +1,43 @@
+---
+title: "A reproducible measurement report"
+format:
+  html:
+    embed-resources: true
+execute:
+  echo: true
+---
+
+## Question and inputs
+
+What is the mean of the four synthetic measurements in measurements.csv?
+These values illustrate the workflow; they are not research observations.
+
+```{r}
+measurements <- read.csv("measurements.csv")
+stopifnot(identical(names(measurements), "value"))
+stopifnot(is.numeric(measurements$value))
+stopifnot(nrow(measurements) == 4L, !anyNA(measurements$value))
+stopifnot(all(is.finite(measurements$value)))
+result <- mean(measurements$value)
+stopifnot(result == 5)
+cat(sprintf("count=%d\nmean=%.1f\n", nrow(measurements), result))
+```
+
+## Inspect the measurements
+
+```{r}
+plot(seq_len(nrow(measurements)), measurements$value,
+     type = "b", xlab = "Measurement number", ylab = "Value")
+abline(h = result, col = "blue", lty = 2)
+```
+
+## Result and interpretation
+
+The four supplied values have mean 5.0. This example checks a calculation;
+it does not estimate uncertainty or establish a scientific conclusion.
+
+## Environment used to render this report
+
+```{r}
+sessionInfo()
+```

@@ -30,6 +30,9 @@ project or agent credentials.
 - [Schedule agent tasks with the CLI](/docs/cli/scheduled-agents)
 - [Manage workspaces and notices with the CLI](/docs/cli/workspaces-and-notices)
 - [Build documents and track CLI versions](/docs/cli/builds-and-versions)
+- [Upload, run, and retrieve a research analysis](/docs/research/remote-cli)
+- [Run and continue remote Codex tasks](/docs/research/codex-sessions)
+- [Launch a private research dashboard](/docs/research/private-dashboard)
 
 ## Read documentation from the CLI
 
