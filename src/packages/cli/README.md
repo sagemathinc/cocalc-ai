@@ -223,6 +223,13 @@ project codex execution run in the same project-host containerized path as the U
 emits raw ACP stream messages as JSONL on stdout.
 `--verbose` also enables codex progress streaming automatically.
 
+## Course Account Repairs
+
+For approved support repairs of a course student linked to the wrong account,
+see [course account replacement](docs/course-account-repair.md). The
+`admin support replace-course-student-account` command previews identities and
+projects before applying a backed-up, audited repair.
+
 ## Run And Continue Codex From The CLI
 
 Use the project Codex command for a turn against a project-hosted runtime. Start

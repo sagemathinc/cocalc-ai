@@ -3094,6 +3094,10 @@ const adminCommandDeps = {
   resolveAccountByIdentifier,
   isValidUUID,
   waitForLro,
+  contextForGlobals,
+  closeCommandContext,
+  resolveProjectConatClient,
+  resolveProjectFilesystem,
 } satisfies AdminCommandDeps;
 
 registerAdminCommand(program, adminCommandDeps);
