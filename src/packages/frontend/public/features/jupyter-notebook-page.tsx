@@ -270,7 +270,9 @@ export default function JupyterNotebookFeaturePage({
             Choose a <strong>software environment</strong> that provides your
             language and packages. Hosted images can supply Python, SageMath, R,
             Julia, Octave, and other kernels. Registered{" "}
-            <a href={appPath("docs/jupyter/remote-kernels")}>remote kernels</a>{" "}
+            <a href="https://cocalc.ai/docs/jupyter/remote-kernels">
+              remote kernels
+            </a>{" "}
             can instead run on another machine.
           </Paragraph>
           <Paragraph>
@@ -336,7 +338,10 @@ export default function JupyterNotebookFeaturePage({
             instructors run the autograder and review the results. The course's
             nbgrader settings choose whether grading runs in student projects or
             a selected grading project; see the{" "}
-            <a href={appPath("docs/teaching/nbgrader")}>nbgrader workflow</a>.
+            <a href="https://cocalc.ai/docs/teaching/nbgrader">
+              nbgrader workflow
+            </a>
+            .
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/teaching")}>

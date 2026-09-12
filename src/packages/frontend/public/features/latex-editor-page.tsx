@@ -417,7 +417,7 @@ export default function LatexEditorFeaturePage({
             Keep analysis, source data, and prose together, and record the
             environment and rerun instructions needed to reproduce the paper.
             The{" "}
-            <a href={appPath("docs/projects/research-handoff")}>
+            <a href="https://cocalc.ai/docs/projects/research-handoff">
               research handoff guide
             </a>{" "}
             describes what to include.

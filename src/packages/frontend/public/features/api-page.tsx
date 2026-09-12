@@ -51,8 +51,10 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 Use the HTTP API for targeted integrations with external
                 services. For project, notebook, terminal, and host automation,
                 start with the{" "}
-                <a href={appPath("docs/cli/use-cocalc-cli")}>CoCalc CLI</a> and
-                use the typed commands for your workflow.
+                <a href="https://cocalc.ai/docs/cli/use-cocalc-cli">
+                  CoCalc CLI
+                </a>{" "}
+                and use the typed commands for your workflow.
               </Paragraph>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Run computations against an authorized project and save the
@@ -61,7 +63,10 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 and permissions.
               </Paragraph>
               <Flex wrap gap={12}>
-                <Button type="primary" href={appPath("docs/api/http-api")}>
+                <Button
+                  type="primary"
+                  href="https://cocalc.ai/docs/api/http-api"
+                >
                   API documentation
                 </Button>
                 <Button href={supportHref}>Ask about API integration</Button>

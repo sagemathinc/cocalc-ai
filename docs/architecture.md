@@ -2,7 +2,7 @@
 
 > Updated to reflect the new project-host model (Dec 2025). This is a working draft; keep it in sync with the code.
 
-At a glance: The control hub handles auth/config and keeps project placement in Postgres, then routes both conat and HTTP/WS traffic directly to the project\-host that owns a project. Each project\-host combines file\-server, project\-runner, HTTP/WS proxy, conat with persistence, sshpiperd and a local btrfs volume with per\-project subvolumes, quotas, snapshots, and backups \(rustic\). Projects run in podman with overlayfs uppers stored inside the project, so user changes are captured in snapshots/backups and survive moves. Moves use rustic backup/restore with restore staging for atomicity; there is no host\-to\-host SSH path for moves.
+At a glance: The control hub handles auth/config and keeps project placement in Postgres, then routes both conat and HTTP/WS traffic directly to the project\-host that owns a project. Each project\-host combines file\-server, project\-runner, HTTP/WS proxy, conat with persistence, sshpiperd and a local btrfs volume with per\-project subvolumes, quotas, snapshots, and backups \(rustic\). Projects run in podman with overlayfs uppers stored inside the project, so user changes are captured in snapshots/backups and survive moves. Moves use rustic backup/restore with destination staging before installing restored files; there is no host\-to\-host SSH path for moves. Installation is not an atomic swap of the whole project tree.
 
 ---
 
@@ -149,7 +149,7 @@ flowchart TB
 - Orchestrated by the control hub via LRO (`project-move`).
 - Flow:
   - When the source is available and provisioned, stop the project and take a final Rustic backup. An offline-source move uses an existing backup; it cannot capture later source changes.
-  - Restore on the destination host using restore staging for atomicity.
+  - Restore into destination staging before installing the restored files. Installation uses separate moves, not an atomic swap of the whole project tree.
   - Start the project on the destination.
   - Cleanup source data after destination start succeeds (or defer cleanup if the source is offline).
 - Post-move: host_id updated in Postgres; backups remain in the repo; snapshots are not transferred directly. This is the default destination-start flow; see [project moves](./project-move.md) for offline and placement-only cases.
