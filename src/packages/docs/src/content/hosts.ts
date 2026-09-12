@@ -574,6 +574,27 @@ machine restart. Reboot is graceful when the provider supports it. Some
 providers also expose a hard reboot, which is more disruptive and should be a
 maintenance-window action.
 
+## Browser disconnects and project runtime
+
+Closing a browser tab disconnects that browser. Projects with a browser-idle
+policy can also stop automatically after browser presence has been absent for
+the configured time. Check the **Free project runtime** banner inside the
+project for its timeout; do not assume every project has the same policy.
+
+Running code in a notebook, terminal, or agent does not itself supply browser
+presence. A public share or a collaborator with only viewer access does not
+keep this runtime running. After a browser-idle stop, open the project in an
+authenticated CoCalc browser with runtime access before retrying automatic
+services. If automatic starts are disabled, use the project's **Start** button
+as directed by the error message.
+
+A browser-idle stop preserves project files. Save results to files instead of
+relying on variables or other state held only by a running process. A stopped
+project, a stopped host, and a browser disconnect are different conditions;
+check project and host status before deciding how to recover. Host maintenance,
+provider interruptions, and billing enforcement can interrupt availability
+independently of the browser-idle policy.
+
 ## Deprovision and delete
 
 Deprovisioning is destructive for provider resources. It removes the cloud
