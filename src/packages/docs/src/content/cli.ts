@@ -124,7 +124,7 @@ Use explicit \`--project\` arguments in scripts that may run from other director
 export const CLI_AUTHENTICATION_BODY = `
 ## Select credentials and a project separately
 
-An authentication profile selects the account and site used for a request.
+An authentication profile selects the credentials and site used for a request.
 A project selector chooses the project within that context. A browser selector
 chooses a browser session. Setting one does not prove the other two are correct.
 
@@ -232,6 +232,35 @@ cookie-backed interactive session required for fresh authentication.
 An unattended script should report the approval requirement to its operator.
 Do not repeatedly retry an approval-dependent operation as though it were a
 temporary network failure.
+
+## Match the credential to the command
+
+A CoCalc account API key is limited by its capabilities and project scope.
+Limiting it to one project does not make it the project's runtime identity.
+See the [HTTP API guide](/docs/api/http-api) for key scope and endpoint usage.
+The current CLI's Hub account and admin calls do not accept account API-key
+authentication, even when the key works with an HTTP endpoint. Use a
+browser-approved account profile for those calls, with the required account
+or admin permissions.
+
+Project runtime credentials and scoped agent tokens have their own permitted
+operations. Changing \`--project\` does not broaden that identity's access.
+A project OpenAI API key configured for Codex supplies OpenAI access; it does
+not sign the CLI in to CoCalc.
+
+Fresh authentication is a separate check from whether a command reads or
+changes data. With an account profile, for example:
+
+| Command | Additional requirement |
+| --- | --- |
+| \`account api-key list\` | Lists key metadata without requiring fresh authentication. |
+| \`account api-key create\` and \`account api-key delete\` | Require fresh authentication with recent second-factor verification. Creating a key returns its secret; keep that output private. |
+| \`admin data datasets\` and \`admin data views list\` | These reads require an admin account and fresh authentication with recent second-factor verification. |
+
+Use the supported credential for each command and handle permission errors
+separately from expired approval. Elevation does not grant an admin role or
+expand an API key's capabilities. Use \`--help\` to inspect a command before
+scheduling it; plan for any required approval even when the command is a read.
 
 ## Plan authentication for host commands
 
