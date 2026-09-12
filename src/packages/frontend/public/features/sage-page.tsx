@@ -236,7 +236,10 @@ export default function SageFeaturePage({
             student projects or a specific grading project in the course's
             nbgrader configuration, and ensure the selected location has the
             required Sage kernel and dependencies. See the{" "}
-            <a href={appPath("docs/teaching/nbgrader")}>nbgrader workflow</a>.
+            <a href="https://cocalc.ai/docs/teaching/nbgrader">
+              nbgrader workflow
+            </a>
+            .
           </Paragraph>
         </FeatureInfo>
       </PublicSection>

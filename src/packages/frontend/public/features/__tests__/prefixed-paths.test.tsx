@@ -2,7 +2,10 @@
 
 import { render, screen } from "@testing-library/react";
 import { getDocsEntry } from "@cocalc/docs";
-import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicFeaturePage,
+  getPublicFeatureIndexPages,
+} from "@cocalc/util/public-feature-pages";
 import PublicFeaturesApp from "../app";
 
 jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
@@ -11,35 +14,39 @@ jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
 
 afterEach(() => jest.restoreAllMocks());
 
-it.each(["jupyter-notebook", "latex-editor", "api"])(
-  "does not link %s to guides hidden on Plus",
-  (slug) => {
-    const { container } = render(
-      <PublicFeaturesApp
-        config={{ cocalc_product: "plus", site_name: "CoCalc" }}
-        initialRoute={{ view: "detail", slug }}
-      />,
-    );
-    const prefix = "/prefix/docs/";
-    const links = Array.from(container.querySelectorAll("a[href]"));
-    const localDocs = links
-      .map((link) => link.getAttribute("href")!)
-      .filter((href) => href.startsWith(prefix));
-    expect(
-      localDocs.filter(
-        (href) => !getDocsEntry(href.slice(prefix.length), { product: "plus" }),
-      ),
-    ).toEqual([]);
-    for (const link of links) {
-      const href = link.getAttribute("href")!;
-      if (href.startsWith("https://cocalc.ai/docs/")) {
-        expect(
-          getDocsEntry(href.slice("https://cocalc.ai/docs/".length)),
-        ).toBeDefined();
-      }
+it.each([
+  ...getPublicFeatureIndexPages({ cocalc_product: "plus" }).map(
+    ({ slug }) => slug,
+  ),
+  "slides",
+])("does not link %s to guides hidden on Plus", (slug) => {
+  const { container } = render(
+    <PublicFeaturesApp
+      config={{ cocalc_product: "plus", site_name: "CoCalc" }}
+      initialRoute={{ view: "detail", slug }}
+    />,
+  );
+  const prefix = "/prefix/docs/";
+  const links = Array.from(container.querySelectorAll("a[href]"));
+  const localDocs = links
+    .map((link) => link.getAttribute("href")!)
+    .filter((href) => href.startsWith(prefix));
+  expect(
+    localDocs.filter(
+      (href) => !getDocsEntry(href.slice(prefix.length), { product: "plus" }),
+    ),
+  ).toEqual([]);
+  for (const link of links) {
+    const href = link.getAttribute("href")!;
+    if (href.startsWith("https://cocalc.ai/docs/")) {
+      expect(
+        getDocsEntry(href.slice("https://cocalc.ai/docs/".length), {
+          siteProfile: "cocalc-ai",
+        }),
+      ).toBeDefined();
     }
-  },
-);
+  }
+});
 
 it.each(["/prefix", "/docs"])(
   "keeps research documentation links on deployment %s",

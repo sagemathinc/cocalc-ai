@@ -20,7 +20,8 @@ import { FeatureFinalBand } from "./feature-visuals";
 
 const { Paragraph, Title } = Typography;
 
-const OCTAVE_KERNEL_GUIDE = "docs/jupyter/install-octave-kernel";
+const OCTAVE_KERNEL_GUIDE =
+  "https://cocalc.ai/docs/jupyter/install-octave-kernel";
 const OCTAVE_IMAGE = "rootfs/octave-11-3";
 
 export default function OctaveFeaturePage({
@@ -139,7 +140,7 @@ export default function OctaveFeaturePage({
             package versions and installation locations, and check the
             configured backup coverage. System installs also require the
             appropriate permissions. To add Octave to a different image, follow
-            the <a href={appPath(OCTAVE_KERNEL_GUIDE)}>kernel setup guide</a>.
+            the <a href={OCTAVE_KERNEL_GUIDE}>kernel setup guide</a>.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -177,7 +178,7 @@ export default function OctaveFeaturePage({
           relatedLinks={[
             { href: appPath(OCTAVE_IMAGE), label: "Octave image" },
             {
-              href: appPath(OCTAVE_KERNEL_GUIDE),
+              href: OCTAVE_KERNEL_GUIDE,
               label: "Octave setup guide",
             },
             {
