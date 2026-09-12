@@ -57,7 +57,7 @@ describe("btrfs simple-quota queue", () => {
     });
   });
 
-  it("sets a simple-mode subvolume limit directly on the path", async () => {
+  it("sets the subvolume limit through the filesystem mount, not the over-quota path", async () => {
     process.env.COCALC_BTRFS_QUOTA_MODE = "simple";
 
     const info = jest.fn();
@@ -82,6 +82,9 @@ describe("btrfs simple-quota queue", () => {
         };
       }
       if (args.join(" ") === "qgroup limit 10M /mnt/test/project-1") {
+        throw new Error("Disk quota exceeded");
+      }
+      if (args.join(" ") === "qgroup limit 10M /mnt/test/project-1 /mnt/test") {
         return { exit_code: 0, stdout: "", stderr: "" };
       }
       throw new Error(`unexpected btrfs args: ${args.join(" ")}`);
@@ -95,8 +98,7 @@ describe("btrfs simple-quota queue", () => {
       btrfs: (opts: { args: string[] }) => btrfsMock(opts),
     }));
     jest.doMock("node:fs/promises", () => ({
-      readFile: (path: string, encoding: string) =>
-        readFileMock(path, encoding),
+      readFile: (path: string) => readFileMock(path),
     }));
     jest.doMock("@cocalc/backend/misc/async-utils-node", () => ({
       exists: async () => true,
@@ -113,7 +115,7 @@ describe("btrfs simple-quota queue", () => {
 
     expect(btrfsMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        args: ["qgroup", "limit", "10M", "/mnt/test/project-1"],
+        args: ["qgroup", "limit", "10M", "/mnt/test/project-1", "/mnt/test"],
       }),
     );
     expect(getBtrfsQuotaQueueStatus("/mnt/test")).toEqual({
@@ -197,7 +199,7 @@ describe("btrfs simple-quota queue", () => {
       .map(([opts]) => opts.args)
       .filter((args) => args[0] === "qgroup" && args[1] === "limit");
     expect(limitCalls).toEqual([
-      ["qgroup", "limit", "20M", "/mnt/test/project-1"],
+      ["qgroup", "limit", "20M", "/mnt/test/project-1", "/mnt/test"],
     ]);
   });
 
@@ -273,8 +275,8 @@ describe("btrfs simple-quota queue", () => {
     releaseHolder();
     await Promise.all([holder, scheduled, lifecycle]);
     expect(commands).toEqual([
-      "qgroup limit 20M /mnt/test/project-lifecycle",
-      "qgroup limit 10M /mnt/test/project-scheduled",
+      "qgroup limit 20M /mnt/test/project-lifecycle /mnt/test",
+      "qgroup limit 10M /mnt/test/project-scheduled /mnt/test",
     ]);
   });
 });

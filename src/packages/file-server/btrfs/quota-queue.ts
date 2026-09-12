@@ -314,8 +314,12 @@ async function setSubvolumeLimitNow({
   // only btrfs simple quotas because classic qgroups caused severe latency and
   // host instability under our snapshot-heavy workload.
   await ensureBtrfsQuotaMode(mount);
+  // Select the qgroup by subvolume path, but issue the ioctl through the
+  // filesystem mount. On some kernels, using the over-quota subvolume as the
+  // ioctl target needs a quota reservation there and fails with EDQUOT even
+  // when raising its limit. btrfs resolves the selector to its current ID.
   await btrfs({
-    args: ["qgroup", "limit", `${size}`, path],
+    args: ["qgroup", "limit", `${size}`, path, mount],
     verbose: false,
   });
 }
