@@ -130,6 +130,7 @@ const DOCS_ENTRY_IDS = [
   "files.timetravel",
   "files.git",
   "teaching.course-workflow",
+  "teaching.course-compute",
   "teaching.student-pay",
   "teaching.restrict-student-projects",
   "teaching.shared-project",
