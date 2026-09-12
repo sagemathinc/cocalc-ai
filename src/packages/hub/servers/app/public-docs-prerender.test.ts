@@ -44,11 +44,13 @@ if value < 4:
     expect(html).toContain("<li>First item</li>");
     expect(html).toContain("<table>");
     expect(html).toContain(
-      '<div style="max-width:100%;overflow-x:auto"><table>',
+      '<div style="max-width:100%;overflow-x:auto" tabindex="0"><table>',
     );
     expect(html).toContain("<td>4</td>");
     expect(html).toContain('<pre><code class="language-python">');
-    expect(html).toContain('<div style="max-width:100%;overflow-x:auto"><pre>');
+    expect(html).toContain(
+      '<div style="max-width:100%;overflow-x:auto" tabindex="0"><pre>',
+    );
     expect(html).toContain("if value &lt; 4:");
     expect(html).toContain("    print(&quot;checked&quot;)");
   });

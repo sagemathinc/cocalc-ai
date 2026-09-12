@@ -111,10 +111,10 @@ markdown.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
 for (const type of ["fence", "code_block"] as const) {
   const render = markdown.renderer.rules[type]!;
   markdown.renderer.rules[type] = (...args) =>
-    `<div style="max-width:100%;overflow-x:auto">${render(...args)}</div>`;
+    `<div style="max-width:100%;overflow-x:auto" tabindex="0">${render(...args)}</div>`;
 }
 markdown.renderer.rules.table_open = (tokens, index, options, _env, self) =>
-  `<div style="max-width:100%;overflow-x:auto">${self.renderToken(tokens, index, options)}`;
+  `<div style="max-width:100%;overflow-x:auto" tabindex="0">${self.renderToken(tokens, index, options)}`;
 markdown.renderer.rules.table_close = (tokens, index, options, _env, self) =>
   `${self.renderToken(tokens, index, options)}</div>`;
 
