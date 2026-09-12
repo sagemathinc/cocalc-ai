@@ -5,8 +5,8 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon, projectHostActionParameters } from "../helpers";
+import { CHOOSE_RESEARCH_COMPUTE_BODY } from "../content/compute";
 import {
-  CHOOSE_RESEARCH_COMPUTE_BODY,
   PROJECT_HOSTS_BODY,
   PROJECT_HOST_ACCESS_BODY,
   PROJECT_HOST_CHANGE_RULES_BODY,
@@ -19,7 +19,7 @@ import {
   PROJECT_HOST_SOFTWARE_LIFECYCLE_BODY,
   PROJECT_HOST_SPOT_RECOVERY_BODY,
   PROJECT_HOST_STORAGE_BODY,
-} from "../content";
+} from "../content/hosts";
 
 export const HOSTS_ENTRIES: DocsEntry[] = [
   {

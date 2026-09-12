@@ -7,10 +7,10 @@ import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
 import {
   CONNECTIVITY_TROUBLESHOOTING_BODY,
-  JUPYTER_KERNEL_TERMINATED_BODY,
   MEMORY_TROUBLESHOOTING_BODY,
   PROJECT_START_TROUBLESHOOTING_BODY,
-} from "../content";
+} from "../content/troubleshooting";
+import { JUPYTER_KERNEL_TERMINATED_BODY } from "../content/jupyter";
 
 export const TROUBLESHOOTING_ENTRIES: DocsEntry[] = [
   {

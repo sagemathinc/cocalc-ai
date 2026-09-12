@@ -14,7 +14,7 @@ import {
   CODEX_AUTOMATION_BODY,
   CODEX_NOTIFICATIONS_BODY,
   EDITOR_AGENT_BODY,
-} from "../content";
+} from "../content/ai";
 
 export const AI_ENTRIES: DocsEntry[] = [
   {

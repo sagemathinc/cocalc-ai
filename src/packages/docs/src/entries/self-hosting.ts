@@ -10,7 +10,7 @@ import {
   COCALC_STAR_LOCAL_VM_BODY,
   INSTALL_CHROMIUM_BODY,
   REVERSE_SSH_ACCESS_BODY,
-} from "../content";
+} from "../content/self-hosting";
 
 export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
   {

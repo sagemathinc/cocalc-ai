@@ -9,7 +9,7 @@ import {
   searchDocsEntries,
   type DocsAccess,
   type DocsEntry,
-} from "@cocalc/docs";
+} from "@cocalc/docs/essential";
 import { useDeferredValue, useMemo, useState, type MouseEvent } from "react";
 import { Markdown } from "./markdown";
 import {

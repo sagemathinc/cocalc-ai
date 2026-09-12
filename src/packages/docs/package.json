@@ -18,12 +18,19 @@
     "./verification": {
       "types": "./dist/verification.d.ts",
       "default": "./dist/verification.js"
+    },
+    "./essential": {
+      "types": "./dist/essential.d.ts",
+      "default": "./dist/essential.js"
     }
   },
   "typesVersions": {
     "*": {
       "verification": [
         "dist/verification.d.ts"
+      ],
+      "essential": [
+        "dist/essential.d.ts"
       ]
     }
   },

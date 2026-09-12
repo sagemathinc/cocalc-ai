@@ -8,13 +8,17 @@ import {
   RESEARCH_REPRODUCE_BODY,
   RESEARCH_MIGRATION_BODY,
   RESEARCH_RESUME_BODY,
+} from "../content/research-workflows";
+import {
   RESEARCH_REMOTE_CLI_BODY,
-  RESEARCH_RECOVERY_BODY,
   RESEARCH_DASHBOARD_BODY,
   RESEARCH_CODEX_SESSIONS_BODY,
+} from "../content/research-remote";
+import {
+  RESEARCH_RECOVERY_BODY,
   RESEARCH_GPU_BODY,
   RESEARCH_QUARTO_BODY,
-} from "../content";
+} from "../content/research-specialist";
 
 export const RESEARCH_ENTRIES: DocsEntry[] = [
   {

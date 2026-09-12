@@ -5,20 +5,20 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon, projectActionParameters } from "../helpers";
+import { COLLABORATORS_BODY } from "../content/collaboration";
 import {
-  COLLABORATORS_BODY,
   CREATE_PROJECT_BODY,
-  OPEN_TERMINAL_BODY,
   PROJECT_LIST_BODY,
   PROJECT_SECRETS_BODY,
   PUBLISH_FILES_BODY,
   PUBLISH_ROOTFS_BODY,
-  RESEARCH_HANDOFF_BODY,
   RSTUDIO_PROJECT_BODY,
-  ROOTFS_BODY,
-  TASKS_BODY,
   VIRTUAL_MACHINES_BODY,
-} from "../content";
+} from "../content/projects";
+import { OPEN_TERMINAL_BODY } from "../content/terminal";
+import { RESEARCH_HANDOFF_BODY } from "../content/research";
+import { ROOTFS_BODY } from "../content/jupyter";
+import { TASKS_BODY } from "../content/files";
 
 export const PROJECTS_ENTRIES: DocsEntry[] = [
   {

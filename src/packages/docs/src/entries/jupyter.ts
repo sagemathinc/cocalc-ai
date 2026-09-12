@@ -10,9 +10,9 @@ import {
   CUSTOM_JUPYTER_KERNELS_BODY,
   JUPYTER_STUDIO_BODY,
   OCTAVE_JUPYTER_KERNEL_BODY,
-  REMOTE_JUPYTER_KERNELS_BODY,
   USE_JUPYTER_BODY,
-} from "../content";
+} from "../content/jupyter";
+import { REMOTE_JUPYTER_KERNELS_BODY } from "../content/remote-jupyter";
 
 export const JUPYTER_ENTRIES: DocsEntry[] = [
   {
