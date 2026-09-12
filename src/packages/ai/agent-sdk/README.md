@@ -78,10 +78,13 @@ flowchart TD
 
 1. Planner emits an `AgentActionEnvelope`.
 2. Executor resolves action in registry.
-3. Args are validated (`validateArgs`) and preconditions are checked.
-4. Policy decides allow/block and confirmation requirements.
-5. If allowed, handler executes; result is audited.
-6. If `idempotencyKey` is present, result can be replayed from store.
+3. If a configured idempotency store has a result for `idempotencyKey`, return
+   that result without executing the handler again.
+4. Otherwise, evaluate policy and confirmation requirements.
+5. Validate arguments (`validateArgs`) and check preconditions before executing
+   the handler.
+6. Record execution events when an audit sink is configured; store completed
+   results when both an idempotency key and store are present.
 
 ## Responsibility Boundaries
 

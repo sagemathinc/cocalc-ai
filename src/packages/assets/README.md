@@ -1,6 +1,6 @@
 # Static Webapp Assets
 
-This code is part of https://github.com/sagemathinc/cocalc and isn't currently designed to be used standalone.
+This package supplies static assets for the CoCalc application and is not a standalone application.
 
 **TODO:** This module is called "assets" so you immediately think "I better not put things other than assets here", and usually "assets" refers to static assets in the context of web application.
 
@@ -10,23 +10,31 @@ This sub-directory contains assets (images, code, etc.) for the frontend and sta
 
 - [Licensing](./LICENSE.md)
 
-## Compute Environment
+## Legacy compute-environment inventory format
+
+The format below describes optional inventory artifacts. It is not a live
+report of software installed in a project, custom image, or remote kernel.
+Current TypeScript/JavaScript application source does not consume these two
+files. Inspect the selected runtime and its package environment when answering
+what software is available for a computation.
 
 Here is a description of two optional files describing the content of the computational environment (programming languages, libraries, ...)
 
-Do this if you want to test rendering with the full production data for `compute-*.json`:
+These historical download commands retrieve an external inventory snapshot;
+they are not a validation of current application rendering or project contents:
 
 ```
 ~/cocalc/src/packages/assets$ curl https://storage.googleapis.com/cocalc-compute-environment/compute-components.json > compute-components.json
 ~/cocalc/src/packages/assets$ curl https://storage.googleapis.com/cocalc-compute-environment/compute-inventory.json > compute-inventory.json
 ```
 
-Do NOT commit this to the repo.   It's unlikely you accidentally will, because
-neither file is in the cocalc git repo.
+Keep downloaded inventories out of commits; neither file belongs in this
+source reference.
 
 ### `compute-inventory.json`
 
-This is the "ground truth" of what is installed in the environment. Layout:
+This records the environment from which the inventory was generated; it does
+not establish what is installed in another or subsequently changed runtime. Layout:
 
 ```
 {

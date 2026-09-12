@@ -11,9 +11,12 @@ This is extremley nice because there's no notion of ip addresses,
 and clients and servers do not have to be directly connected to
 each other.
 
-**The TCP protocol for sockets guarantees **in-order, reliable, and
-lossless transmission of messages between sender and receiver.\*\*
-That same guarantee is thus what we support with our socket abstraction.
+The socket protocol sequences messages, acknowledges receipt, and retransmits
+unacknowledged messages. This is an in-memory transport, not durable storage
+or a guarantee that a completed application operation survives a process
+restart. Writes can fail with `ENOBUFS` when the unacknowledged queue fills,
+or `EPIPE` after the socket closes. Handle those failures and use application
+acknowledgements when you need to establish that an operation completed.
 
 This module provides an emulation of sockets but on top of the
 conat pub/sub model. The server and clients agree on a common
@@ -53,13 +56,16 @@ If you just use s.write(data) and s.on('data', (data)=>) then
 you get the raw data without headers. However, headers -- arbitrary
 JSON separate from the raw (possibly binary) payload -- are supported.
 You just have to pass a second argument:
-s.write(data, headers) and s.on('data', (data,headers) => ...)
+`s.write(data, { headers })` and `s.on("data", (data, headers) => ...)`.
 
 UNIT TESTS:
 
 For unit tests, see
 
-backend/conat/test/socket/conat-socket.test.ts
+[backend socket integration tests](../../backend/conat/test/socket/basic.test.ts)
+and the local [client](./client.test.ts), [base](./base.test.ts), and
+[protocol](./tcp.test.ts) tests. Integration tests create their own local test
+services; they are not a read-only production check.
 
 WARNING:
 
@@ -69,25 +75,44 @@ don't use `${subject}.>` for anything else!
 
 DEVELOPMENT:
 
-Start node via
+This local development sketch assumes a built workspace with package imports
+available. It starts a local Conat service; select an unused port and a test
+subject for which both clients have read/write permission. Start Node with:
 
+```sh
+CONAT_CLUSTER_PORT=3000 CONAT_SERVER=http://localhost:3000 node
 ```
-CONAT_SERVER=http://localhost:3000 node
 
+Then enter the following in the Node REPL:
+
+```js
 // conat socketio server
 
-s = await require('@cocalc/server/conat/socketio').initConatServer({port:3000}); 0
+s = await require("@cocalc/server/conat/socketio").initConatServer();
+0;
 
 // server side of socket
 
-conat = await require('@cocalc/backend/conat').conat(); s = conat.socket.listen('conat.io');s.on('connection',(socket)=>{
-    console.log("got new connection", socket.id);
-    socket.on('data',(data) => console.log("got", {data}));
-    socket.on('request', (mesg)=>{console.log("responding..."); mesg.respondSync('foo')})});0
+conat = await require("@cocalc/backend/conat").conat();
+s = conat.socket.listen("conat.io");
+s.on("connection", (socket) => {
+  console.log("got new connection", socket.id);
+  socket.on("data", (data) => console.log("got", { data }));
+  socket.on("request", (mesg) => {
+    console.log("responding...");
+    mesg.respondSync("foo");
+  });
+});
+0;
 
 // client side of socket
 
-conat = await require('@cocalc/backend/conat').conat(); c = conat.socket.connect('conat.io');c.on('data',(data) => console.log("got", {data}));0
+conat = await require("@cocalc/backend/conat").conat();
+c = conat.socket.connect("conat.io");
+c.on("data", (data) => console.log("got", { data }));
+0;
 
-c.write('hi')
+await s.waitUntilReady(5000);
+await c.waitUntilReady(5000);
+c.write("hi");
 ```

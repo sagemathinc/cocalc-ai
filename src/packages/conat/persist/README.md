@@ -18,7 +18,7 @@ characters.
 ## Subject and auth
 
 The subject only encodes scope and authorization. It does not name the stream.
-See persistSubject in [src/packages/conat/persist/util.ts](./src/packages/conat/persist/util.ts).
+See persistSubject in [src/packages/conat/persist/util.ts](util.ts).
 
 Examples:
 
@@ -39,7 +39,7 @@ The client sends a `storage` object on the socket:
 ```
 
 `storage.path` maps directly to a sqlite filename after resolution by
-resolveLocalPath in [src/packages/conat/persist/util.ts](./src/packages/conat/persist/util.ts).
+resolveLocalPath in [src/packages/conat/persist/util.ts](util.ts).
 The mapping uses `syncFiles.localProjects`, `syncFiles.localAccounts`, etc.
 
 ## Client protocol (high level)
@@ -52,8 +52,8 @@ The mapping uses `syncFiles.localProjects`, `syncFiles.localAccounts`, etc.
 5. Changefeed updates are pushed to the socket when enabled.
 
 The concrete protocol is implemented in
-[src/packages/conat/persist/server.ts](./src/packages/conat/persist/server.ts)
-and [src/packages/conat/persist/client.ts](./src/packages/conat/persist/client.ts).
+[src/packages/conat/persist/server.ts](server.ts)
+and [src/packages/conat/persist/client.ts](client.ts).
 
 ## Scaling and load balancing
 
@@ -62,12 +62,17 @@ and [src/packages/conat/persist/client.ts](./src/packages/conat/persist/client.t
   server id based on a stable hash of the scope.
 - The goal is consistent assignment so changefeeds remain coherent.
 
-There is no central coordinator or heartbeat-based rebalancing. If a server
-disappears, clients reconnect and ask for a new id.
+There is no heartbeat-based rebalancing in this helper. A lookup hashes the
+scope over the configured server-ID list; repeating it with the same list
+selects the same ID, even if that server is unavailable. Client lookup results
+have a short cache lifetime and are cleared on connection loss. This is not
+health-aware failover or automatic storage migration.
 
 ## Storage and retention
 
-- SQLite uses WAL and can be shared on a common filesystem.
+- SQLite uses WAL. The load-balancer design assumes its persist processes
+  share the same machine and disk. This does not establish support for a
+  network-shared SQLite database or changefeed coordination across machines.
 - Optional archive/backup roots can be configured via `syncFiles` for tiered
   storage.
 - Message TTLs and tombstones are supported by the core stream layer.
