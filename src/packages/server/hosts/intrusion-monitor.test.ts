@@ -687,7 +687,7 @@ describe("project-host intrusion monitor normalization", () => {
     }
   });
 
-  it("alerts when a valid snap refresh remains unattested", async () => {
+  it("honors the persisted confirmation delay even on immediate repeated passes", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
     const hostId = "d3bcc208-46ca-4915-a435-c064f20ddc9d";
@@ -724,6 +724,27 @@ describe("project-host intrusion monitor normalization", () => {
         pending: 1,
       });
       expect(mockAdminAlert).not.toHaveBeenCalled();
+      // A process restart or another caller need not wait for the timer.
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        changed: 0,
+        pending: 1,
+      });
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      await pool.query(
+        `UPDATE project_host_intrusion_snapshots
+         SET created_at=NOW() - INTERVAL '3 minutes' WHERE id=$1`,
+        [baselineId],
+      );
+      // Age only the first pending sample. Later observations must not reset
+      // the confirmation clock or keep an unresolved change pending forever.
+      await pool.query(
+        `UPDATE project_host_intrusion_snapshots
+         SET created_at=NOW() - INTERVAL '2 minutes'
+         WHERE id=(SELECT id FROM project_host_intrusion_snapshots
+           WHERE host_id=$1 AND NOT baseline_eligible
+           ORDER BY created_at ASC LIMIT 1)`,
+        [hostId],
+      );
       await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
         changed: 1,
         pending: 0,
@@ -745,12 +766,16 @@ describe("project-host intrusion monitor normalization", () => {
           ORDER BY created_at`,
         [hostId, baselineId],
       );
-      expect(rows).toHaveLength(2);
+      expect(rows).toHaveLength(3);
       expect(rows[0]).toMatchObject({
         assessment: { state: "pending_snap_refresh_confirmation" },
         baseline_eligible: false,
       });
       expect(rows[1]).toMatchObject({
+        assessment: { state: "pending_snap_refresh_confirmation" },
+        baseline_eligible: false,
+      });
+      expect(rows[2]).toMatchObject({
         assessment: { state: "notified_snap_refresh_confirmation" },
         baseline_eligible: true,
       });

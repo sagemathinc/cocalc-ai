@@ -172,6 +172,7 @@ type SnapshotAssessment =
 
 type PendingSnapRefreshRow = {
   id: string;
+  confirmation_due: boolean;
   assessment: Extract<
     SnapshotAssessment,
     { state: "pending_snap_refresh_confirmation" }
@@ -1084,7 +1085,9 @@ async function loadPendingSnapRefresh(
 ): Promise<PendingSnapRefreshRow | undefined> {
   const { rows } = await getPool().query<PendingSnapRefreshRow>(
     `
-      SELECT id, assessment
+      SELECT id, assessment,
+        created_at <= NOW() - ($2::double precision * INTERVAL '1 millisecond')
+          AS confirmation_due
       FROM ${TABLE} AS pending
       WHERE pending.host_id = $1
         AND pending.coverage = 'complete'
@@ -1098,10 +1101,10 @@ async function loadPendingSnapRefresh(
             AND accepted.baseline_eligible
             AND accepted.created_at > pending.created_at
         )
-      ORDER BY pending.created_at DESC
+      ORDER BY pending.created_at ASC
       LIMIT 1
     `,
-    [hostId],
+    [hostId, snapRefreshConfirmationDelayMs()],
   );
   return rows[0];
 }
@@ -1109,7 +1112,7 @@ async function loadPendingSnapRefresh(
 async function countPendingSnapRefreshes(bayId: string): Promise<number> {
   const { rows } = await getPool().query<{ count: string }>(
     `
-      SELECT COUNT(*)::text AS count
+      SELECT COUNT(DISTINCT pending.host_id)::text AS count
       FROM ${TABLE} AS pending
       INNER JOIN project_hosts AS hosts ON hosts.id = pending.host_id
       WHERE pending.bay_id = $1
@@ -1468,7 +1471,12 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       let assessment: SnapshotAssessment = { state: "observed" };
       let baselineEligible = true;
       if (snapRefreshCandidate) {
-        if (pendingSnapRefresh == null) {
+        if (
+          pendingSnapRefresh == null ||
+          (pendingSnapRefresh.assessment.fingerprint ===
+            snapRefreshCandidate.fingerprint &&
+            !pendingSnapRefresh.confirmation_due)
+        ) {
           assessment = {
             state: "pending_snap_refresh_confirmation",
             ...snapRefreshCandidate,
@@ -1601,6 +1609,14 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   return result;
 }
 
+function snapRefreshConfirmationDelayMs(): number {
+  return envNumberAtLeast(
+    "COCALC_HOST_INTRUSION_SNAP_CONFIRMATION_DELAY_MS",
+    DEFAULT_SNAP_REFRESH_CONFIRMATION_DELAY_MS,
+    MIN_SNAP_REFRESH_CONFIRMATION_DELAY_MS,
+  );
+}
+
 async function runLockedPass(): Promise<void> {
   const result = await withSessionAdvisoryLock({
     lockKey: `${LOCK_KEY}:${getConfiguredBayId()}`,
@@ -1609,11 +1625,7 @@ async function runLockedPass(): Promise<void> {
   if (result) {
     logger.info("project-host intrusion monitoring pass complete", result);
     if (result.pending > 0 && pendingConfirmationTimer == null) {
-      const delayMs = envNumberAtLeast(
-        "COCALC_HOST_INTRUSION_SNAP_CONFIRMATION_DELAY_MS",
-        DEFAULT_SNAP_REFRESH_CONFIRMATION_DELAY_MS,
-        MIN_SNAP_REFRESH_CONFIRMATION_DELAY_MS,
-      );
+      const delayMs = snapRefreshConfirmationDelayMs();
       logger.info("scheduling snap refresh confirmation pass", {
         pending: result.pending,
         delay_ms: delayMs,
