@@ -106,34 +106,52 @@ if value < 4:
     ).toBe("");
   });
 
-  it("keeps site links and fragments on the deployment base path", () => {
-    entry.body = `## Read the results
+  it.each(["/prefix", "/docs", "/assets"])(
+    "keeps authored site links and fragments on deployment %s",
+    (basePath) => {
+      entry.body = `## Read the results
 
 [Local](/docs/files/project-files?q=1#section)
-[Already prefixed](/prefix/docs/files/project-files?q=1#section)
+[Matching segment](/prefix/docs/files/project-files?q=1#section)
 [Fragment](#read-the-results)
 [External](https://example.com/docs/other#section)
 [Protocol relative](//example.com/docs/other)
-![Diagram](/assets/diagram.png)
+![Diagram](/assets/diagram.png?scale=2#view)
 `;
-    const html = detail(entry.slug, "/prefix");
-    expect(html).toContain('href="/prefix/docs"');
-    expect(
-      html.match(/href="\/prefix\/docs\/files\/project-files\?q=1#section"/g),
-    ).toHaveLength(2);
-    expect(html).toContain(
-      `href="/prefix/docs/${entry.slug}#read-the-results"`,
-    );
-    expect(html).toContain('id="read-the-results"');
-    expect(html).toContain('href="https://example.com/docs/other#section"');
-    expect(html).toContain('href="//example.com/docs/other"');
-    expect(html).toContain('src="/prefix/assets/diagram.png"');
-    expect(html).toContain('style="max-width:100%;height:auto"');
-    expect(html).not.toContain("/prefix/prefix/");
-    const root = detail(entry.slug);
-    expect(root).toContain('href="/docs/files/project-files?q=1#section"');
-    expect(root).toContain(`href="/docs/${entry.slug}#read-the-results"`);
-  });
+      const html = detail(entry.slug, basePath);
+      expect(html).toContain(`href="${basePath}/docs"`);
+      expect(html).toContain(
+        `href="${basePath}/docs/files/project-files?q=1#section"`,
+      );
+      expect(html).toContain(
+        `href="${basePath}/prefix/docs/files/project-files?q=1#section"`,
+      );
+      expect(html).toContain(
+        `href="${basePath}/docs/${entry.slug}#read-the-results"`,
+      );
+      expect(html).toContain('id="read-the-results"');
+      expect(html).toContain('href="https://example.com/docs/other#section"');
+      expect(html).toContain('href="//example.com/docs/other"');
+      expect(html).toContain(
+        `src="${basePath}/assets/diagram.png?scale=2#view"`,
+      );
+      expect(html).toContain('style="max-width:100%;height:auto"');
+      const root = detail(entry.slug);
+      expect(root).toContain('href="/docs/files/project-files?q=1#section"');
+      expect(root).toContain(`href="/docs/${entry.slug}#read-the-results"`);
+    },
+  );
+
+  it.each(["/docs", "/docs/"])(
+    "keeps actual chooser article links on deployment %s",
+    (basePath) => {
+      const html = detail("hosts/choose-compute", basePath);
+      expect(html).toContain('data-cocalc-public-prerender="docs-detail"');
+      expect(html).toContain('href="/docs/docs/hosts/project-hosts"');
+      expect(html).not.toContain('href="/docs/hosts/project-hosts"');
+      expect(html).toContain('href="/docs/docs"');
+    },
+  );
 
   it("escapes raw HTML and preserves the parser's unsafe-link rejection", () => {
     entry.body = `## Safe body

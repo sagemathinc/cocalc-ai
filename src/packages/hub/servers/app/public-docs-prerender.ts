@@ -61,15 +61,10 @@ function publicHref(
   // document path keeps fragment navigation on the current article there.
   if (href.startsWith("#")) return `${currentPath}${href}`;
   if (!href.startsWith("/") || href.startsWith("//")) return href;
-  const pathname = href.split(/[?#]/, 1)[0];
-  if (
-    basePath === "/" ||
-    pathname === basePath ||
-    pathname.startsWith(`${basePath}/`)
-  ) {
-    return href;
-  }
-  return `${basePath}${href}`;
+  // Markdown destinations are authored relative to the site root. A path
+  // can start with the same segment as the deployment prefix without already
+  // being resolved for that deployment (for example /docs under /docs).
+  return `${basePath.replace(/\/+$/, "")}${href}`;
 }
 
 function inlineText(tokens: Token[]): string {

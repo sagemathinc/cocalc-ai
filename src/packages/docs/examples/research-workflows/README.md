@@ -51,7 +51,14 @@ they do not preserve process memory or replace backups.
 
 ## Check the examples locally
 
-From the repository root:
+The documentation package test command runs these checks alongside its registry
+and link tests. Python 3 is required; the examples use only its standard library:
+
+```sh
+pnpm -C src/packages/docs test
+```
+
+To run just the example checks from the repository root:
 
 ```sh
 python3 src/packages/docs/test/research_examples.py
