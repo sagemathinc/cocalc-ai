@@ -13,6 +13,7 @@ import {
 } from "@testing-library/react";
 
 import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
+import * as authApi from "@cocalc/frontend/auth/api";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicApp from "../app";
 import type { PublicAboutRoute } from "../about/routes";
@@ -230,6 +231,7 @@ describe("section route parsers", () => {
 describe("PublicApp", () => {
   it("fetches shared customize config when none is injected", async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({
         configuration: {
           policy_pages: "sagemathinc",
@@ -1777,5 +1779,322 @@ describe("PublicApp", () => {
       screen.getByText("Planning an institutional private CoCalc deployment?"),
     ).not.toBeNull();
     expect(screen.getByText("Talk with CoCalc about Rocket")).not.toBeNull();
+  });
+});
+
+describe("feature configuration loading", () => {
+  const researchRoute = {
+    section: "features" as const,
+    route: { view: "detail" as const, slug: "research-compute" },
+  };
+  let authBootstrap: jest.SpiedFunction<
+    typeof authApi.getControlPlaneAuthBootstrap
+  >;
+
+  function deferred<T>() {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((next) => {
+      resolve = next;
+    });
+    return { promise, resolve };
+  }
+
+  function customizeResponse(product?: string): Response {
+    return {
+      ok: true,
+      json: async () => ({
+        configuration: { cocalc_product: product, site_name: "CoCalc" },
+      }),
+    } as Response;
+  }
+
+  function seedServerHead() {
+    document.title = "Server compute title";
+    const canonical = document.createElement("link");
+    canonical.setAttribute("data-cocalc-public-route-meta", "canonical");
+    canonical.rel = "canonical";
+    canonical.href = "https://example.test/features/research-compute";
+    document.head.appendChild(canonical);
+    const description = document.createElement("meta");
+    description.setAttribute("data-cocalc-public-route-meta", "description");
+    description.name = "description";
+    description.content = "Server compute description";
+    document.head.appendChild(description);
+  }
+
+  function expectServerHead() {
+    expect(document.title).toBe("Server compute title");
+    expect(canonicalHref()).toBe(
+      "https://example.test/features/research-compute",
+    );
+    expect(headMeta('[data-cocalc-public-route-meta="description"]')).toBe(
+      "Server compute description",
+    );
+  }
+
+  function expectNoCompute() {
+    expect(
+      document.querySelector('a[href="/features/research-compute"]'),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Research Compute", level: 1 }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Understand project hosts" }),
+    ).toBeNull();
+  }
+
+  beforeEach(async () => {
+    await import("../features/app");
+    authBootstrap = jest.spyOn(authApi, "getControlPlaneAuthBootstrap");
+    authBootstrap.mockReturnValue(new Promise(() => {}));
+    seedServerHead();
+  });
+
+  afterEach(() => {
+    authBootstrap.mockRestore();
+  });
+
+  it("waits for Plus customize even if auth bootstrap resolves first", async () => {
+    const customize = deferred<Response>();
+    global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+    authBootstrap.mockResolvedValue({ signed_in: true } as Awaited<
+      ReturnType<typeof authApi.getControlPlaneAuthBootstrap>
+    >);
+    render(<PublicApp initialRoute={researchRoute} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(authBootstrap).toHaveBeenCalled();
+    expect(global.fetch).toHaveBeenCalledWith("/customize");
+    expectNoCompute();
+    expect(screen.queryByText("Feature page not found")).toBeNull();
+    expectServerHead();
+
+    await act(async () => {
+      customize.resolve(customizeResponse("plus"));
+    });
+    expect(await screen.findByText("Feature page not found")).not.toBeNull();
+    expectNoCompute();
+    expect(document.title).not.toContain("CPU, RAM, and GPU");
+  });
+
+  it.each([true, false])(
+    "preserves early auth bootstrap (signed in: %s) after customize resolves",
+    async (signedIn) => {
+      const customize = deferred<Response>();
+      global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+      authBootstrap.mockResolvedValue({ signed_in: signedIn } as Awaited<
+        ReturnType<typeof authApi.getControlPlaneAuthBootstrap>
+      >);
+      render(<PublicApp initialRoute={researchRoute} />);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("Loading features");
+      expectServerHead();
+      await act(async () => {
+        customize.resolve({
+          ok: true,
+          json: async () => ({
+            configuration: {
+              cocalc_product: "launchpad",
+              is_authenticated: !signedIn,
+            },
+          }),
+        } as Response);
+      });
+      await screen.findByRole("heading", {
+        name: "Research Compute",
+        level: 1,
+      });
+      expect(screen.queryByRole("status")).toBeNull();
+      if (signedIn) {
+        expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+        expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+      } else {
+        expect(screen.getByRole("link", { name: "Sign in" })).not.toBeNull();
+        expect(screen.queryByRole("link", { name: "Projects" })).toBeNull();
+      }
+    },
+  );
+
+  it("preserves the initial head until a full product becomes available", async () => {
+    const customize = deferred<Response>();
+    global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+    render(<PublicApp initialRoute={researchRoute} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expectNoCompute();
+    expectServerHead();
+
+    await act(async () => {
+      customize.resolve(customizeResponse("launchpad"));
+    });
+    expect(
+      await screen.findByRole("heading", {
+        name: "Research Compute",
+        level: 1,
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Understand project hosts" }),
+    ).toHaveAttribute("href", "/docs/hosts/project-hosts");
+    expect(document.title).toContain("CPU, RAM, and GPU");
+    expect(canonicalHref()).toContain("/features/research-compute");
+  });
+
+  it.each([
+    "network",
+    "http",
+    "json",
+    "missing-config",
+    "invalid-config",
+    "missing-product",
+  ])(
+    "keeps unknown availability hidden after a %s failure",
+    async (failure) => {
+      global.fetch = jest.fn(async () => {
+        if (failure === "network") throw new Error("synthetic network failure");
+        if (failure === "http") {
+          // An unsuccessful response must not enable the feature, even if a
+          // configuration-shaped payload happens to accompany it.
+          return { ...customizeResponse("launchpad"), ok: false };
+        }
+        if (failure === "json") {
+          return {
+            ok: true,
+            json: async () => {
+              throw new Error("synthetic invalid JSON");
+            },
+          };
+        }
+        if (failure === "missing-config")
+          return { ok: true, json: async () => ({}) };
+        if (failure === "invalid-config")
+          return { ok: true, json: async () => ({ configuration: [] }) };
+        return customizeResponse();
+      }) as typeof fetch;
+      const { rerender } = render(<PublicApp initialRoute={researchRoute} />);
+      expect(
+        await screen.findByText(/Feature availability could not be checked/),
+      ).not.toBeNull();
+      expect(screen.queryByText("Feature page not found")).toBeNull();
+      expectNoCompute();
+      expectServerHead();
+      expect(
+        screen.getByRole("link", { name: "Back to features" }),
+      ).toHaveAttribute("href", "/features");
+
+      // The failed request does not make the rest of the feature catalog
+      // unusable or expose Compute through its index/subnav.
+      rerender(
+        <PublicApp
+          initialRoute={{ section: "features", route: { view: "index" } }}
+        />,
+      );
+      expect(await screen.findByText("Runtime")).not.toBeNull();
+      expect(
+        document.querySelector('a[href="/features/terminal"]'),
+      ).not.toBeNull();
+      expectNoCompute();
+    },
+  );
+
+  it.each(["plus", "launchpad", "rocket"])(
+    "uses an injected %s product without waiting for customize",
+    async (product) => {
+      render(
+        <PublicApp
+          config={{ cocalc_product: product }}
+          initialRoute={researchRoute}
+        />,
+      );
+      if (product === "plus") {
+        expect(
+          await screen.findByText("Feature page not found"),
+        ).not.toBeNull();
+        expectNoCompute();
+      } else {
+        expect(
+          await screen.findByRole("heading", {
+            name: "Research Compute",
+            level: 1,
+          }),
+        ).not.toBeNull();
+      }
+      expect(global.fetch).not.toHaveBeenCalledWith("/customize");
+    },
+  );
+
+  it("discards an old customize result after props change and another request starts", async () => {
+    const first = deferred<Response>();
+    const second = deferred<Response>();
+    global.fetch = jest
+      .fn()
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise) as typeof fetch;
+    const { rerender } = render(<PublicApp initialRoute={researchRoute} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    rerender(
+      <PublicApp
+        config={{ cocalc_product: "plus" }}
+        initialRoute={researchRoute}
+      />,
+    );
+    expect(await screen.findByText("Feature page not found")).not.toBeNull();
+    rerender(<PublicApp initialRoute={researchRoute} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(2);
+    expect(screen.queryByText("Feature page not found")).toBeNull();
+
+    await act(async () => {
+      first.resolve(customizeResponse("launchpad"));
+    });
+    expectNoCompute();
+    expect(screen.queryByText("Feature page not found")).toBeNull();
+    await act(async () => {
+      second.resolve(customizeResponse("rocket"));
+    });
+    expect(
+      await screen.findByRole("heading", {
+        name: "Research Compute",
+        level: 1,
+      }),
+    ).not.toBeNull();
+  });
+
+  it.each([
+    [
+      { view: "index" as const },
+      "One persistent computer for people, tools, and agents.",
+    ],
+    [{ view: "detail" as const, slug: "terminal" }, "Linux Terminal"],
+  ])(
+    "keeps independent feature route %j usable while customize is pending",
+    async (route, title) => {
+      global.fetch = jest.fn(() => new Promise(() => {})) as typeof fetch;
+      render(<PublicApp initialRoute={{ section: "features", route }} />);
+      expect(
+        await screen.findByRole("heading", { name: title, level: 1 }),
+      ).not.toBeNull();
+      expect(screen.queryByRole("status")).toBeNull();
+      expectNoCompute();
+    },
+  );
+
+  it("still renders other public sections while customize is pending", async () => {
+    const customize = deferred<Response>();
+    global.fetch = jest.fn(() => customize.promise) as typeof fetch;
+    render(<PublicApp initialRoute={aboutRoute({ view: "about" })} />);
+    expect(
+      await screen.findByRole("heading", { name: "About CoCalc" }),
+    ).not.toBeNull();
+    expectNoCompute();
   });
 });

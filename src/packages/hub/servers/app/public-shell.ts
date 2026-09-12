@@ -336,11 +336,10 @@ async function buildHead(req: Request): Promise<{
   const route = getPublicMetadataRouteFromPath(path, search, {
     basePath,
   });
-  let metadata: ShellRouteMetadata = getPublicRouteMetadata(
-    route,
-    publicMetadataConfig(req),
-    { basePath },
-  );
+  const config = publicMetadataConfig(req);
+  let metadata: ShellRouteMetadata = getPublicRouteMetadata(route, config, {
+    basePath,
+  });
   metadata = await resolveNewsMetadata(req, route, metadata);
   metadata = await resolveRootfsMetadata(req, route, metadata);
   const redirectPath = newsRedirectPath(req, route, metadata, path);
@@ -427,7 +426,7 @@ async function buildHead(req: Request): Promise<{
   ].join("\n  ");
 
   return {
-    body: renderPublicRoutePrerender(route, basePath),
+    body: renderPublicRoutePrerender(route, basePath, config),
     head: `${basePathMetaTag()}\n  <title>${htmlEscape(
       metadata.title,
     )}</title>\n  ${socialTags}`,

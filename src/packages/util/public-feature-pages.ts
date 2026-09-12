@@ -619,13 +619,29 @@ for (const page of PUBLIC_FEATURE_PAGES) {
 
 export function getPublicFeaturePage(
   slug?: string,
+  config?: { cocalc_product?: string },
 ): PublicFeaturePage | undefined {
   if (!slug) return;
-  return PUBLIC_FEATURE_PAGE_MAP.get(slug);
+  const page = PUBLIC_FEATURE_PAGE_MAP.get(slug);
+  // Omitted config is the authoring catalog. Renderers supply config even
+  // before the product is known, so unavailable compute links stay hidden.
+  if (
+    page?.slug === "research-compute" &&
+    config !== undefined &&
+    config.cocalc_product !== "launchpad" &&
+    config.cocalc_product !== "rocket"
+  ) {
+    return;
+  }
+  return page;
 }
 
-export function getPublicFeatureIndexPages(): PublicFeaturePage[] {
-  return PUBLIC_FEATURE_PAGES.filter((page) => page.index);
+export function getPublicFeatureIndexPages(config?: {
+  cocalc_product?: string;
+}): PublicFeaturePage[] {
+  return PUBLIC_FEATURE_PAGES.filter(
+    (page) => page.index && getPublicFeaturePage(page.slug, config) != null,
+  );
 }
 
 // The feature sub-navigation (side-rail pills on the feature pages and the

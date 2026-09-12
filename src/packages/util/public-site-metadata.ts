@@ -288,9 +288,9 @@ export function buildPublicSitemapPaths(
     ),
     publicPath("docs"),
     publicPath("features"),
-    ...getPublicFeatureIndexPages().map((page) =>
-      publicPath(`features/${page.slug}`),
-    ),
+    ...getPublicFeatureIndexPages(
+      config?.cocalc_product === undefined ? undefined : config,
+    ).map((page) => publicPath(`features/${page.slug}`)),
     // Slides is folded into the combined Whiteboard & Slides tile but remains
     // a dedicated detail page that search engines should be able to discover.
     publicPath("features/slides"),
@@ -610,9 +610,13 @@ function productRouteMetadata(
 function featureRouteMetadata(
   route: PublicMetadataRoute["route"],
   siteName: string,
+  config: PublicRouteMetadataConfig | undefined,
   options?: PublicRouteMetadataOptions,
 ): PublicRouteMetadata {
-  const page = getPublicFeaturePage(route?.slug);
+  const page = getPublicFeaturePage(
+    route?.slug,
+    config?.cocalc_product === undefined ? undefined : config,
+  );
   if (route?.slug === "compare") {
     return {
       canonicalPath: publicPath("features/compare", options),
@@ -1020,7 +1024,7 @@ function getSameOriginPublicRouteMetadata(
         title: pageTitle("CoCalc.ai Pricing and Licensing", siteName),
       };
     case "features":
-      return featureRouteMetadata(route.route, siteName, options);
+      return featureRouteMetadata(route.route, siteName, config, options);
     case "support":
       return supportRouteMetadata(route.route, siteName, options);
     case "auth":

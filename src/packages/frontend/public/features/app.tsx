@@ -58,6 +58,7 @@ import X11FeaturePage from "./x11-page";
 const { Paragraph, Text, Title } = Typography;
 
 interface FeaturesConfig {
+  cocalc_product?: string;
   help_email?: string;
   is_authenticated?: boolean;
   logo_square?: string;
@@ -153,7 +154,13 @@ const FEATURE_PANEL_SHADOW = `0 14px 34px ${alpha(
   0.07,
 )}`;
 
-function FeatureSubNav({ active }: { active?: string }) {
+function FeatureSubNav({
+  active,
+  config,
+}: {
+  active?: string;
+  config?: FeaturesConfig;
+}) {
   return (
     <nav aria-label="Feature pages" className="cocalc-feature-subnav">
       <style>{FEATURE_SUBNAV_CSS}</style>
@@ -166,33 +173,37 @@ function FeatureSubNav({ active }: { active?: string }) {
           <Icon name="star" style={{ fontSize: 13 }} />
           <span>All features</span>
         </a>
-        {FEATURE_NAV_ITEMS.filter(({ slug }) => getFeaturePage(slug)).map(
-          ({ label, slug }) => {
-            const meta = featureMeta(slug);
-            return (
-              <a
-                aria-current={active === slug ? "page" : undefined}
-                className="cocalc-feature-subnav-pill"
-                href={featurePath(slug)}
-                key={slug}
-              >
-                <Icon
-                  name={meta.icon}
-                  style={{ color: meta.accent, fontSize: 13 }}
-                />
-                <span>{label}</span>
-              </a>
-            );
-          },
-        )}
+        {FEATURE_NAV_ITEMS.filter(({ slug }) =>
+          getFeaturePage(slug, config ?? {}),
+        ).map(({ label, slug }) => {
+          const meta = featureMeta(slug);
+          return (
+            <a
+              aria-current={active === slug ? "page" : undefined}
+              className="cocalc-feature-subnav-pill"
+              href={featurePath(slug)}
+              key={slug}
+            >
+              <Icon
+                name={meta.icon}
+                style={{ color: meta.accent, fontSize: 13 }}
+              />
+              <span>{label}</span>
+            </a>
+          );
+        })}
       </div>
     </nav>
   );
 }
 
-function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
+function titleForRoute(
+  route: PublicFeaturesRoute,
+  siteName: string,
+  config?: FeaturesConfig,
+): string {
   if (route.view === "detail" && route.slug) {
-    const page = getFeaturePage(route.slug);
+    const page = getFeaturePage(route.slug, config ?? {});
     // prefer metadataTitle so the client-side document.title matches the
     // server-injected SEO <title> after hydration
     return `${page?.metadataTitle ?? page?.title ?? "Features"} – ${siteName}`;
@@ -200,11 +211,11 @@ function titleForRoute(route: PublicFeaturesRoute, siteName: string): string {
   return `${siteName} Features`;
 }
 
-function getOrderedFeatureIndexPages(): FeaturePage[] {
+function getOrderedFeatureIndexPages(config?: FeaturesConfig): FeaturePage[] {
   const priorities = new Map<string, number>(
     FEATURE_INDEX_PRIORITY.map((slug, index) => [slug, index]),
   );
-  return getFeatureIndexPages()
+  return getFeatureIndexPages(config ?? {})
     .map((page, index) => ({ index, page }))
     .sort((a, b) => {
       const aPriority = priorities.get(a.page.slug);
@@ -587,8 +598,8 @@ function TeachingWorkflowCallout() {
   );
 }
 
-function FeaturesIndex() {
-  const pages = getOrderedFeatureIndexPages();
+function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
+  const pages = getOrderedFeatureIndexPages(config);
   return (
     <>
       <style>{FEATURE_INDEX_CSS}</style>
@@ -656,11 +667,22 @@ function FeatureDetail({
   isAuthenticated?: boolean;
   slug: string;
 }) {
-  const page = getFeaturePage(slug);
+  const page = getFeaturePage(slug, config ?? {});
   if (!page) {
+    const availabilityUnknown =
+      slug === "research-compute" &&
+      config?.cocalc_product !== "plus" &&
+      config?.cocalc_product !== "launchpad" &&
+      config?.cocalc_product !== "rocket";
     return (
       <PublicSection>
-        <Empty description="Feature page not found" />
+        <Empty
+          description={
+            availabilityUnknown
+              ? "Feature availability could not be checked. Reload this page to try again."
+              : "Feature page not found"
+          }
+        />
         <div>
           <Button type="link" href={featurePath()} style={{ paddingInline: 0 }}>
             Back to features
@@ -872,14 +894,22 @@ export default function PublicFeaturesApp({
   initialRoute,
 }: PublicFeaturesAppProps) {
   const siteName = config?.site_name ?? SITE_NAME;
-  const title = titleForRoute(initialRoute, siteName);
+  const title = titleForRoute(initialRoute, siteName, config);
+  const product = config?.cocalc_product;
+  const preserveInitialTitle =
+    initialRoute.slug === "research-compute" &&
+    product !== "plus" &&
+    product !== "launchpad" &&
+    product !== "rocket";
 
   useEffect(() => {
-    document.title = title;
-  }, [title]);
+    // An unknown product is not evidence that this route is missing. Keep the
+    // server's title while configuration is unavailable, just like its head.
+    if (!preserveInitialTitle) document.title = title;
+  }, [preserveInitialTitle, title]);
 
   const feature = initialRoute.slug
-    ? getFeaturePage(initialRoute.slug)
+    ? getFeaturePage(initialRoute.slug, config ?? {})
     : undefined;
 
   return (
@@ -887,6 +917,7 @@ export default function PublicFeaturesApp({
       active="features"
       beforeTitle={
         <FeatureSubNav
+          config={config}
           active={
             initialRoute.view === "detail" ? initialRoute.slug : undefined
           }
@@ -907,7 +938,7 @@ export default function PublicFeaturesApp({
           slug={initialRoute.slug}
         />
       ) : (
-        <FeaturesIndex />
+        <FeaturesIndex config={config} />
       )}
     </PublicPage>
   );

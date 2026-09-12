@@ -21,7 +21,7 @@ it.each(["/prefix", "/docs"])(
     const page = getPublicFeaturePage("research-compute")!;
     const { container } = render(
       <PublicFeaturesApp
-        config={{ site_name: "CoCalc" }}
+        config={{ cocalc_product: "launchpad", site_name: "CoCalc" }}
         initialRoute={{ view: "detail", slug: page.slug }}
       />,
     );
@@ -39,5 +39,34 @@ it.each(["/prefix", "/docs"])(
       }
     }
     expect(container.querySelector('a[href^="/docs/hosts/"]')).toBeNull();
+  },
+);
+
+it.each(["/prefix", "/docs"])(
+  "keeps the Plus not-found return link on deployment %s",
+  (basePath) => {
+    jest.replaceProperty(
+      jest.requireMock("@cocalc/frontend/customize/app-base-path"),
+      "appBasePath",
+      basePath,
+    );
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc" }}
+        initialRoute={{ view: "detail", slug: "research-compute" }}
+      />,
+    );
+    expect(screen.getByText("Feature page not found")).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Back to features" }),
+    ).toHaveAttribute("href", `${basePath}/features`);
+    expect(
+      container.querySelector(
+        `a[href="${basePath}/features/research-compute"]`,
+      ),
+    ).toBeNull();
+    expect(
+      container.querySelector(`a[href="${basePath}/docs/hosts/project-hosts"]`),
+    ).toBeNull();
   },
 );
