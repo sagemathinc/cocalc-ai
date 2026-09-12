@@ -28,7 +28,106 @@ export interface PublicFeaturePage {
   title: string;
 }
 
+// Catalog links are authored relative to the site root. Add the deployment
+// prefix without changing external URLs, queries, or fragments.
+export function publicFeatureHref(href: string, basePath: string): string {
+  if (!href.startsWith("/") || href.startsWith("//")) return href;
+  const prefix = basePath.replace(/\/+$/, "");
+  const pathname = href.split(/[?#]/, 1)[0];
+  if (!prefix || pathname === prefix || pathname.startsWith(`${prefix}/`)) {
+    return href;
+  }
+  return `${prefix}${href}`;
+}
+
 export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
+  {
+    slug: "research-compute",
+    title: "Research Compute",
+    navLabel: "Compute",
+    metadataTitle: "CPU, RAM, and GPU Compute for Research",
+    tagline: "Keep research code, computation, and collaboration connected.",
+    summary:
+      "Run larger research workloads in CoCalc, or connect a remote Jupyter kernel to an existing machine and its datasets.",
+    metadataSummary:
+      "Explore research compute in CoCalc: CPU and RAM requirements, GPU workloads, remote Jupyter kernels, storage, and CLI inspection. Follow the documented setup and operating limits.",
+    docsUrl: "/docs/hosts/project-hosts",
+    index: true,
+    sections: [
+      {
+        title: "Run the project on suitable compute",
+        paragraphs: [
+          "A project host runs your CoCalc project's files, notebooks, terminals, and services. Choose resources for the workload and check host access before placing a project there. Options depend on your deployment and account.",
+          "Compare the project's RAM policy with the host's physical memory and the number of concurrent jobs. More CPU cores help only when your program can use them. A GPU workload also needs compatible software and enough GPU memory.",
+        ],
+        links: [
+          {
+            href: "/docs/hosts/project-hosts",
+            label: "Understand project hosts",
+          },
+          {
+            href: "/docs/hosts/access-and-ram",
+            label: "Check host access and RAM policy",
+          },
+          {
+            href: "/docs/troubleshooting/memory",
+            label: "Investigate memory pressure",
+          },
+        ],
+      },
+      {
+        title: "Use an existing server or GPU machine",
+        paragraphs: [
+          "Remote Jupyter kernels let you edit a notebook in CoCalc while its code runs on another machine over SSH. This can keep computation near software or datasets already on that machine. You need suitable access to the remote account and a configured kernel.",
+          "The notebook remains in the CoCalc project. Input and output files used by the remote code live on the remote machine; they are not automatically synchronized with project files.",
+        ],
+        links: [
+          {
+            href: "/docs/jupyter/remote-kernels",
+            label: "Connect a remote Jupyter kernel",
+          },
+        ],
+      },
+      {
+        title: "Plan for results, interruptions, and larger workloads",
+        paragraphs: [
+          "Save important results and checkpoints to files before moving or stopping compute. Review the differences between project files, temporary scratch space, host-local snapshots, and backups before a long run.",
+          "Moving a project transfers data through backup and restore; it does not transfer running process memory. Check destination compatibility and restart the computation from saved state when appropriate.",
+        ],
+        links: [
+          {
+            href: "/docs/hosts/storage",
+            label: "Understand storage and recovery",
+          },
+          { href: "/docs/hosts/move-projects", label: "Plan a project move" },
+          {
+            href: "/docs/hosts/lifecycle",
+            label: "Review host lifecycle actions",
+          },
+        ],
+      },
+      {
+        title: "Inspect and automate with the CoCalc CLI",
+        paragraphs: [
+          "Researchers and agents can use the CLI to inspect resources, discover documentation, and work with project files and notebooks. Start by choosing the correct site and authentication profile, then follow the command's prerequisites and result checks.",
+        ],
+        links: [
+          {
+            href: "/docs/cli/getting-started",
+            label: "Get started with the CoCalc CLI",
+          },
+          {
+            href: "/docs/cli/authentication-and-targets",
+            label: "Choose authentication and targets",
+          },
+          {
+            href: "/docs/cli/notebook-workflows",
+            label: "Run and save notebooks with the CLI",
+          },
+        ],
+      },
+    ],
+  },
   {
     slug: "jupyter-notebook",
     title: "Jupyter Notebooks",
