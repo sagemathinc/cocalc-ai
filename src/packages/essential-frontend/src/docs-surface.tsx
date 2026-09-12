@@ -10,7 +10,13 @@ import {
   type DocsAccess,
   type DocsEntry,
 } from "@cocalc/docs/essential";
-import { useDeferredValue, useMemo, useState, type MouseEvent } from "react";
+import {
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+  type MouseEvent,
+} from "react";
 import { Markdown } from "./markdown";
 import {
   essentialRouteUrl,
@@ -53,6 +59,10 @@ export default function DocsSurface({
   route: Extract<UltraliteRoute, { kind: "docs" }>;
 }) {
   const [query, setQuery] = useState("");
+  // App supplies a new route object for navigation, including the current URL.
+  useEffect(() => {
+    setQuery("");
+  }, [route]);
   const deferredQuery = useDeferredValue(query.trim());
   const entries = useMemo(() => listDocsEntries(DOCS_ACCESS), []);
   const selected = route.slug
