@@ -783,7 +783,6 @@ describe("createSubscriptionPayment", () => {
       },
       amount: 72,
     });
-
     const { rows } = await getPool().query(
       `SELECT s.metadata->'pending_plan_change' AS pending_plan_change,
               f.lifecycle, f.membership_class,
@@ -828,7 +827,7 @@ describe("createSubscriptionPayment", () => {
       [subscription_id],
     );
 
-    await processSubscriptionRenewal({
+    const result = await processSubscriptionRenewal({
       account_id,
       paymentIntent: {
         id: "pi_stale",
@@ -838,6 +837,10 @@ describe("createSubscriptionPayment", () => {
         },
       },
       amount: 72,
+    });
+    expect(result).toEqual({
+      status: "skipped",
+      reason: "payment-superseded",
     });
 
     const { rows: subscriptions } = await getPool().query(
@@ -872,7 +875,7 @@ describe("createSubscriptionPayment", () => {
       },
     );
 
-    await processSubscriptionRenewal({
+    const result = await processSubscriptionRenewal({
       account_id,
       paymentIntent: {
         id: "pi_orphaned",
@@ -882,6 +885,10 @@ describe("createSubscriptionPayment", () => {
         },
       },
       amount: 72,
+    });
+    expect(result).toEqual({
+      status: "skipped",
+      reason: "renewal-attempt-missing",
     });
 
     const { rows } = await getPool().query(
@@ -956,7 +963,7 @@ describe("createSubscriptionPayment", () => {
       account_id,
       {
         cost: 72,
-        status: "past_due",
+        status: "active",
       },
     );
     const newExpiresMs = Date.now() + 30 * 24 * 60 * 60 * 1000;
@@ -1006,6 +1013,39 @@ describe("createSubscriptionPayment", () => {
     expect(subscriptions[0].payment).toMatchObject({ status: "paid" });
   });
 
+  it("does not apply a legacy renewal callback to a canceled subscription", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        cost: 72,
+        status: "canceled",
+      },
+    );
+
+    const result = await processSubscriptionRenewal({
+      account_id,
+      paymentIntent: {
+        id: "pi_canceled_legacy_renewal",
+        metadata: { subscription_id: `${subscription_id}` },
+      },
+      amount: 72,
+    });
+    expect(result).toEqual({
+      status: "skipped",
+      reason: "subscription-not-active",
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT status, latest_purchase_id
+         FROM subscriptions
+        WHERE id=$1`,
+      [subscription_id],
+    );
+    expect(rows).toEqual([{ status: "canceled", latest_purchase_id: 0 }]);
+  });
+
   it("converts a legacy migration grant to its configured renewal class when paid", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
@@ -1015,7 +1055,7 @@ describe("createSubscriptionPayment", () => {
         class: "member",
         cost: 72,
         interval: "year",
-        status: "past_due",
+        status: "active",
       },
     );
     const newExpiresMs = Date.now() + 365 * 24 * 60 * 60 * 1000;

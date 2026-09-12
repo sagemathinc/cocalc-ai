@@ -221,37 +221,6 @@ describe("membership change pricing", () => {
     ).rejects.toThrow(`already subscribed to ${highTier}`);
   });
 
-  it.each(["unpaid", "past_due"] as const)(
-    "does not quote %s membership subscriptions as existing plans",
-    async (status) => {
-      const account_id = uuid();
-      const targetTier = `quote-${status}-${uuid().slice(0, 8)}` as any;
-      await createTestAccount(account_id);
-      await createTestMembershipTier({
-        id: targetTier,
-        price_monthly: 50,
-        price_yearly: 500,
-        priority: 20,
-      });
-      await createTestMembershipSubscription(account_id, {
-        class: targetTier,
-        cost: 50,
-        status,
-      });
-
-      const quote = await computeMembershipChange({
-        account_id,
-        targetClass: targetTier,
-        interval: "month",
-        client: getPool() as any,
-      });
-
-      expect(quote.change).toBe("new");
-      expect(quote.existing_subscription_id).toBeUndefined();
-      expect(quote.charge).toBe(50);
-    },
-  );
-
   it("does not give prorated upgrade credit for a free trial subscription", async () => {
     const account_id = uuid();
     const trialTier = `trial-paid-${uuid().slice(0, 8)}` as any;
@@ -313,9 +282,9 @@ describe("membership change pricing", () => {
     expect(pricing.charge).toBe(1440);
   });
 
-  it("does not fall back to subscription cost for unpaid trial credit", async () => {
+  it("does not fall back to subscription cost for an unfunded trial", async () => {
     const account_id = uuid();
-    const trialTier = `trial-unpaid-${uuid().slice(0, 8)}` as any;
+    const trialTier = `trial-unfunded-${uuid().slice(0, 8)}` as any;
     const proTier = `trial-upgrade-${uuid().slice(0, 8)}` as any;
     await createTestAccount(account_id);
     await createTestMembershipTier({

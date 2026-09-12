@@ -12,7 +12,6 @@ const mockGetParams = jest.fn();
 const mockGetCurrentAuthSession = jest.fn();
 const mockRequireFreshAuth = jest.fn();
 const mockRequireDangerousSessionAuth = jest.fn();
-const mockCreateSubscriptionPayment = jest.fn();
 const mockCreatePaymentIntent = jest.fn();
 const mockCreateSetupIntent = jest.fn();
 const mockCancelPaymentIntent = jest.fn();
@@ -67,14 +66,6 @@ jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
     mockGetPaymentIntentAccountId(...args),
 }));
 
-jest.mock(
-  "@cocalc/server/purchases/stripe/create-subscription-payment",
-  () => ({
-    __esModule: true,
-    default: (...args: any[]) => mockCreateSubscriptionPayment(...args),
-  }),
-);
-
 jest.mock("@cocalc/server/purchases/stripe/create-setup-intent", () => ({
   __esModule: true,
   default: (...args: any[]) => mockCreateSetupIntent(...args),
@@ -114,7 +105,6 @@ describe("purchases Stripe fresh-auth routes", () => {
     });
     mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
     mockRequireDangerousSessionAuth.mockReset().mockResolvedValue(undefined);
-    mockCreateSubscriptionPayment.mockReset().mockResolvedValue(undefined);
     mockCreatePaymentIntent.mockReset().mockResolvedValue(undefined);
     mockCreateSetupIntent.mockReset().mockResolvedValue({
       clientSecret: "seti_test_secret",
@@ -132,49 +122,6 @@ describe("purchases Stripe fresh-auth routes", () => {
     mockSetDefaultPaymentMethod.mockReset().mockResolvedValue(undefined);
     mockThrottle.mockReset();
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
-  });
-
-  it("requires fresh auth before creating a subscription-renewal payment", async () => {
-    mockRequireFreshAuth.mockRejectedValue(
-      Object.assign(new Error("fresh auth is required"), {
-        code: "fresh_auth_required",
-      }),
-    );
-    const { req, res } = createMocks({ method: "POST" });
-
-    const { default: handler } =
-      await import("./purchases/stripe/create-subscription-payment");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({
-      error: "fresh auth is required",
-      code: "fresh_auth_required",
-    });
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
-      req,
-      account_id: "acct-1",
-      allow_actor_impersonation: true,
-    });
-    expect(mockCreateSubscriptionPayment).not.toHaveBeenCalled();
-  });
-
-  it("creates a subscription-renewal payment after fresh auth", async () => {
-    const { req, res } = createMocks({ method: "POST" });
-
-    const { default: handler } =
-      await import("./purchases/stripe/create-subscription-payment");
-    await handler(req, res);
-
-    expect(res._getJSONData()).toEqual({ success: true });
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
-      req,
-      account_id: "acct-1",
-      allow_actor_impersonation: true,
-    });
-    expect(mockCreateSubscriptionPayment).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      subscription_id: 123,
-    });
   });
 
   it("requires recent dangerous auth before admin-created payment intent", async () => {

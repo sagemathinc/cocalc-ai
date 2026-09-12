@@ -40,6 +40,10 @@ import {
   syncSchemaConstraints,
 } from "./constraints";
 import { schemaSequencesNeedSync, syncSchemaSequences } from "./sequences";
+import {
+  ensureSubscriptionStatusSchema,
+  subscriptionStatusSchemaNeedsSync,
+} from "./subscription-status";
 
 const log = getLogger("db:schema:sync");
 
@@ -459,6 +463,9 @@ export async function syncSchema(
     // supports cross-table references without coupling correctness to import
     // order and keeps application request paths free of schema mutations.
     await syncSchemaConstraints(db, dbSchema);
+    if (dbSchema.subscriptions != null) {
+      await ensureSubscriptionStatusSchema(db);
+    }
     if (dbSchema.account_notification_index != null) {
       await ensureAccountNotificationRevisionSchema(db);
     }
@@ -549,6 +556,13 @@ export async function schemaNeedsSync(
     }
     if (await schemaConstraintsNeedSync(db, dbSchema)) {
       dbg("detected missing or invalid table constraints");
+      return true;
+    }
+    if (
+      dbSchema.subscriptions != null &&
+      (await subscriptionStatusSchemaNeedsSync(db))
+    ) {
+      dbg("detected stale personal subscription status guard");
       return true;
     }
     if (

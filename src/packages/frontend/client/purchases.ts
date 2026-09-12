@@ -75,14 +75,4 @@ export class PurchasesClient {
   async adminSetMinBalance(account_id: string, minBalance: number) {
     await purchasesApi.adminSetMinBalance(account_id, minBalance);
   }
-
-  async renewSubscription(
-    subscription_id: number,
-  ): Promise<{ purchase_id: number | null }> {
-    return await purchasesApi.renewSubscription(subscription_id);
-  }
-
-  async getLiveSubscriptions() {
-    return await purchasesApi.getLiveSubscriptions();
-  }
 }

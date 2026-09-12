@@ -121,7 +121,7 @@ export async function sendUpcomingRenewalNotifications() {
     SELECT id, cost, interval, metadata, account_id, current_period_end
     FROM subscriptions
     WHERE
-      status != 'canceled' AND
+      status='active' AND
       current_period_end > NOW() AND
       current_period_end <= NOW() + INTERVAL '${cutoff}' AND
       (renewal_email IS NULL OR renewal_email < NOW() - INTERVAL '${cutoff}')

@@ -42,6 +42,27 @@ describe("createSubscription membership metadata validation", () => {
     }
   });
 
+  it.each(["unpaid", "past_due"])(
+    "rejects the legacy %s status",
+    async (status) => {
+      await expect(
+        createSubscription(
+          {
+            account_id,
+            cost: 10,
+            interval: "month",
+            current_period_start: dayjs().toDate(),
+            current_period_end: dayjs().add(1, "month").toDate(),
+            status: status as any,
+            metadata: { type: "membership", class: "member" },
+            latest_purchase_id: 0,
+          },
+          null,
+        ),
+      ).rejects.toThrow(`unsupported subscription status "${status}"`);
+    },
+  );
+
   it("accepts membership metadata with class", async () => {
     const id = await createSubscription(
       {

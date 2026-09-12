@@ -18,11 +18,7 @@ import {
   processPaymentIntent,
 } from "./process-payment-intents";
 import { decimalToStripe, grandTotal } from "@cocalc/util/stripe/calc";
-import {
-  RESUME_SUBSCRIPTION,
-  SUBSCRIPTION_RENEWAL,
-} from "@cocalc/util/db-schema/purchases";
-import { resumeSubscriptionSetPaymentIntent } from "./create-subscription-payment";
+import { SUBSCRIPTION_RENEWAL } from "@cocalc/util/db-schema/purchases";
 import { bindSubscriptionRenewalPaymentIntent } from "../subscription-renewal-attempts";
 import send, { name, support, url } from "@cocalc/server/messages/send";
 import { delay } from "awaiting";
@@ -502,13 +498,7 @@ export async function recordPaymentIntent({
     paymentIntentId,
     metadata,
   });
-  if (purpose == RESUME_SUBSCRIPTION) {
-    await resumeSubscriptionSetPaymentIntent({
-      account_id,
-      subscription_id: parseInt(metadata.subscription_id),
-      paymentIntentId,
-    });
-  } else if (purpose == SUBSCRIPTION_RENEWAL) {
+  if (purpose == SUBSCRIPTION_RENEWAL) {
     await bindSubscriptionRenewalPaymentIntent({
       account_id,
       subscription_id: parseInt(metadata.subscription_id),

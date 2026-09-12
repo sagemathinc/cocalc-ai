@@ -13,7 +13,7 @@ import {
   startOfDay,
   roundToMidnight,
 } from "@cocalc/util/stripe/timecalcs";
-import { unitAmount } from "./licenses/purchase/charge";
+import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { COSTS } from "@cocalc/util/purchases/quota/consts";
 
 // TODO: some tests are ignored if the machine is not running on UTC.
@@ -73,7 +73,7 @@ describe("product id and compute cost", () => {
     // @ts-ignore
     info2.cost = compute_cost(info2);
     // console.log(days, info2, Math.round(info2.cost.cost_per_unit * 10000));
-    const unit_amount = unitAmount(info2);
+    const unit_amount = decimalToStripe(info2.cost.cost_per_unit);
 
     expect(unit_amount).toEqual(Math.ceil(price));
   });
@@ -87,7 +87,7 @@ describe("product id and compute cost", () => {
     };
     // @ts-ignore
     info2.cost = compute_cost(info2);
-    expect(unitAmount(info2)).toEqual(112);
+    expect(decimalToStripe(info2.cost.cost_per_unit)).toEqual(112);
   });
 });
 

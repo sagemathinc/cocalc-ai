@@ -459,7 +459,7 @@ export default async function createSubscriptionPayment({
     const client = await getTransactionClient();
     try {
       await setSubscriptionPaymentFromAttempt({ attempt, client });
-      await processSubscriptionRenewal({
+      const result = await processSubscriptionRenewal({
         account_id,
         paymentIntent: {
           metadata: {
@@ -470,6 +470,9 @@ export default async function createSubscriptionPayment({
         amount: amountValue.toNumber(),
         client,
       });
+      if (result.status !== "renewed") {
+        throw Error(`subscription renewal was skipped: ${result.reason}`);
+      }
       // it worked -- so commit it
       await client.query("COMMIT");
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
@@ -615,6 +618,17 @@ async function prepareSubscriptionRenewalAttempt({
   }
 }
 
+export type SubscriptionRenewalResult =
+  | { status: "renewed" }
+  | {
+      status: "skipped";
+      reason:
+        | "subscription-not-active"
+        | "renewal-attempt-missing"
+        | "renewal-attempt-terminal"
+        | "payment-superseded";
+    };
+
 export async function processSubscriptionRenewal({
   account_id,
   paymentIntent,
@@ -632,7 +646,7 @@ export async function processSubscriptionRenewal({
   };
   amount: number;
   client?: PoolClient;
-}) {
+}): Promise<SubscriptionRenewalResult> {
   const { subscription_id, renewal_attempt_id } = paymentIntent?.metadata ?? {};
   logger.debug("processSubscriptionRenewal", {
     account_id,
@@ -648,13 +662,14 @@ export async function processSubscriptionRenewal({
   const useTransaction = client == null;
   try {
     const { rows: subscriptions } = await transaction.query(
-      "SELECT payment, cost, metadata, interval, latest_purchase_id FROM subscriptions WHERE account_id=$1 AND id=$2 FOR UPDATE",
+      "SELECT payment, cost, metadata, interval, latest_purchase_id, status FROM subscriptions WHERE account_id=$1 AND id=$2 FOR UPDATE",
       [account_id, subscriptionId],
     );
     if (subscriptions.length == 0) {
       throw Error(`You do not have a subscription with id ${subscription_id}.`);
     }
-    const { cost, metadata, interval, latest_purchase_id } = subscriptions[0];
+    const { cost, metadata, interval, latest_purchase_id, status } =
+      subscriptions[0];
     const costValue = toDecimal(cost);
     const renewalTerms = renewalMembershipTerms({ metadata, interval });
     let { payment } = subscriptions[0];
@@ -674,6 +689,15 @@ export async function processSubscriptionRenewal({
     if (metadata?.type != "membership") {
       throw Error("subscription must be for a membership");
     }
+    if (status !== "active") {
+      logger.debug("ignoring renewal callback for canceled subscription", {
+        subscription_id: subscriptionId,
+      });
+      if (useTransaction) {
+        await transaction.query("COMMIT");
+      }
+      return { status: "skipped", reason: "subscription-not-active" };
+    }
     if (renewal_attempt_id && !attempt) {
       logger.debug("ignoring callback for missing renewal attempt", {
         renewal_attempt_id,
@@ -682,7 +706,7 @@ export async function processSubscriptionRenewal({
       if (useTransaction) {
         await transaction.query("COMMIT");
       }
-      return;
+      return { status: "skipped", reason: "renewal-attempt-missing" };
     }
     if (attempt) {
       if (
@@ -695,7 +719,7 @@ export async function processSubscriptionRenewal({
         if (useTransaction) {
           await transaction.query("COMMIT");
         }
-        return;
+        return { status: "renewed" };
       }
       if (attempt.state === "failed" || attempt.state === "canceled") {
         logger.debug("ignoring callback for terminal renewal attempt", {
@@ -705,7 +729,7 @@ export async function processSubscriptionRenewal({
         if (useTransaction) {
           await transaction.query("COMMIT");
         }
-        return;
+        return { status: "skipped", reason: "renewal-attempt-terminal" };
       }
       if (
         paymentIntent.id &&
@@ -720,7 +744,7 @@ export async function processSubscriptionRenewal({
         if (useTransaction) {
           await transaction.query("COMMIT");
         }
-        return;
+        return { status: "skipped", reason: "payment-superseded" };
       }
       if (!payment) {
         await setSubscriptionPaymentFromAttempt({
@@ -750,13 +774,13 @@ export async function processSubscriptionRenewal({
       if (useTransaction) {
         await transaction.query("COMMIT");
       }
-      return;
+      return { status: "skipped", reason: "payment-superseded" };
     }
     if (payment?.status == "paid") {
       if (useTransaction) {
         await transaction.query("COMMIT");
       }
-      return;
+      return { status: "renewed" };
     }
     const expectedAmount = attempt ? toDecimal(attempt.amount) : costValue;
     const balanceApplied = validatedBalanceApplied({
@@ -796,7 +820,6 @@ export async function processSubscriptionRenewal({
       // once, so we just do it manually in this case :-(
       // We also ensure new_expires_ms is in the future so the period update
       // happens for sure.
-      // this code is same as resumeSubscriptionSetPaymentIntent below:
       const new_expires_ms = addInterval(new Date(), interval).valueOf();
       payment = { new_expires_ms };
     }
@@ -939,6 +962,7 @@ export async function processSubscriptionRenewal({
       await transaction.query("COMMIT");
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
     }
+    return { status: "renewed" };
   } catch (err) {
     if (useTransaction) {
       await transaction.query("ROLLBACK");
@@ -973,8 +997,8 @@ function subtractInterval(expires: Date, interval: "month" | "year"): Date {
   return newExpires.subtract(1, interval).toDate();
 }
 
-// We set payment status to canceled *and* cancel the subscription --
-// user can resume it at current rates at a later date.
+// We set payment status to canceled and cancel automatic renewal. The user can
+// configure a new membership at current rates later.
 export async function processSubscriptionRenewalFailure({
   account_id,
   paymentIntent,
@@ -1094,83 +1118,4 @@ export async function processSubscriptionRenewalFailure({
       alertAdmin: false,
     });
   }
-}
-
-export async function processResumeSubscriptionFailure({
-  account_id,
-  paymentIntent,
-}: {
-  account_id: string;
-  paymentIntent;
-}) {
-  await clearResumeSubscriptionPayment({ account_id, paymentIntent });
-}
-
-async function clearResumeSubscriptionPayment({ account_id, paymentIntent }) {
-  const { subscription_id } = paymentIntent?.metadata ?? {};
-  if (!subscription_id) {
-    throw Error(
-      `invalid paymentIntent ${paymentIntent?.id} -- metadata must contain subscription_id`,
-    );
-  }
-  const id =
-    typeof subscription_id != "number"
-      ? parseInt(subscription_id)
-      : subscription_id;
-  const pool = getPool();
-  const result = await pool.query(
-    `UPDATE subscriptions SET resume_payment_intent=NULL WHERE id=$1 AND account_id=$2`,
-    [id, account_id],
-  );
-  if (result.rowCount != 1) {
-    throw Error(`You do not have a subscription with id ${subscription_id}.`);
-  }
-}
-
-export async function resumeSubscriptionSetPaymentIntent({
-  account_id,
-  subscription_id,
-  paymentIntentId,
-}: {
-  account_id: string;
-  subscription_id: number;
-  paymentIntentId: string;
-}) {
-  const pool = getPool();
-  const { rows } = await pool.query(
-    "SELECT resume_payment_intent, interval FROM subscriptions WHERE id=$1 AND account_id=$2",
-    [subscription_id, account_id],
-  );
-  if (rows.length == 0) {
-    throw Error(`You do not have a subscription with id ${subscription_id}.`);
-  }
-  if (rows[0].resume_payment_intent) {
-    const stripe = await getConn();
-    const intent = await stripe.paymentIntents.retrieve(
-      rows[0].resume_payment_intent,
-    );
-    if (intent.status != "canceled" && intent.status != "succeeded") {
-      throw Error(
-        `There is an outstanding payment to resume this subscription.  Pay that invoice or cancel it.`,
-      );
-    }
-  }
-  const new_expires_ms = addInterval(new Date(), rows[0].interval).valueOf();
-  await pool.query(
-    "UPDATE subscriptions SET resume_payment_intent=$2, payment=$3 WHERE id=$1",
-    [subscription_id, paymentIntentId, { new_expires_ms }],
-  );
-}
-
-export async function processResumeSubscription({
-  account_id,
-  paymentIntent,
-  amount,
-}) {
-  await processSubscriptionRenewal({
-    account_id,
-    paymentIntent,
-    amount,
-  });
-  await clearResumeSubscriptionPayment({ account_id, paymentIntent });
 }

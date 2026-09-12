@@ -66,12 +66,7 @@ export default async function createSubscription(
     if (metadataType != "membership") {
       throw Error(`unsupported subscription metadata type "${metadataType}"`);
     }
-    if (
-      opts.status != "active" &&
-      opts.status != "canceled" &&
-      opts.status != "unpaid" &&
-      opts.status != "past_due"
-    ) {
+    if (opts.status != "active" && opts.status != "canceled") {
       throw Error(`unsupported subscription status "${opts.status}"`);
     }
     if (
@@ -82,7 +77,7 @@ export default async function createSubscription(
     }
 
     db = db ?? (await getTransactionClient());
-    if (opts.status != "canceled") {
+    if (opts.status == "active") {
       await lockMembershipSubscriptionAccount({
         account_id: opts.account_id,
         client: db,

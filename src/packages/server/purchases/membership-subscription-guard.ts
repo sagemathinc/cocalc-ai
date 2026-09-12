@@ -76,7 +76,7 @@ export async function getRenewableMembershipSubscriptions({
        FROM subscriptions
       WHERE account_id=$1
         AND metadata->>'type'='membership'
-        AND status != 'canceled'
+        AND status='active'
       ORDER BY id
       ${forUpdate ? "FOR UPDATE" : ""}`,
     [account_id],
