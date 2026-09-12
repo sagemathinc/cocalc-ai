@@ -153,8 +153,8 @@ export default function LatexEditorFeaturePage({
                 An online LaTeX editor with a full project behind it
               </Title>
               <Paragraph style={LEAD_STYLE}>
-                Coauthors edit in real time, with builds and full history in one
-                project.
+                Coauthors edit in real time, with builds and document history in
+                one project.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -228,7 +228,7 @@ export default function LatexEditorFeaturePage({
                     Any hosted LaTeX editor gives you collaborative paper
                     editing, and CoCalc does too. The difference: in CoCalc the
                     paper can also depend on computation, project files,
-                    command-line tools, full history, and agent help without
+                    command-line tools, document history, and agent help without
                     leaving the project.
                   </Paragraph>
                   <LinkButton href={appPath("products")}>
@@ -274,8 +274,9 @@ export default function LatexEditorFeaturePage({
             experiences the document in exactly the same way.
           </Paragraph>
           <Paragraph>
-            The document <strong>compiles automatically</strong> on save and
-            problems are marked directly in the source file.
+            When the editor setting to <strong>build files on save</strong> is
+            enabled, saving triggers a build. You can also build explicitly,
+            then inspect diagnostics marked in the source file.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -296,10 +297,11 @@ export default function LatexEditorFeaturePage({
           title="Rich text editing, real LaTeX"
         >
           <Paragraph>
-            By default you edit your document as <strong>rich text</strong>:
-            formulas and formatted text render as they appear in the final
-            document, while you are still editing the LaTeX file itself. Switch
-            between rich text and the classic source view at any time.
+            By default, <strong>rich text</strong> widgets preview supported
+            formulas and formatting while you edit the LaTeX source. Unsupported
+            constructs remain editable as source or command chips. Use the
+            compiled PDF to check final layout, and switch to the classic source
+            view whenever you need it.
           </Paragraph>
           <Paragraph>
             Editing stays direct: put the cursor in a line and that line shows
@@ -353,8 +355,10 @@ export default function LatexEditorFeaturePage({
             Navigate effortlessly between source and PDF, powered by SyncTeX.
           </Paragraph>
           <Paragraph>
-            <strong>Forward search:</strong> click in your LaTeX source to jump
-            to the corresponding place in the PDF preview.
+            <strong>Forward search:</strong> place the cursor in your source and
+            use its Sync action to locate the corresponding PDF position. With
+            automatic forward synchronization enabled, cursor movement can
+            update the PDF position for you.
           </Paragraph>
           <Paragraph>
             <strong>Inverse search:</strong> double-click anywhere in the PDF to
@@ -403,16 +407,20 @@ export default function LatexEditorFeaturePage({
           title="Computed results inside your document"
         >
           <Paragraph>
-            <strong>Execute Python, SageMath, or R code</strong> directly within
-            your LaTeX source to generate figures, tables, and results. CoCalc
-            supports SageTeX, PythonTeX, and Knitr, orchestrating the full
-            compilation pipeline automatically. Change your code, recompile, and
-            your paper updates.
+            Use SageTeX, PythonTeX, or Knitr to <strong>execute code</strong>{" "}
+            for figures, tables, and results. The project needs the matching
+            language runtime, TeX tools, and packages. CoCalc coordinates the
+            relevant build stages; inspect their logs and the compiled PDF after
+            changing code or dependencies.
           </Paragraph>
           <Paragraph>
-            Your analysis and your prose live in the same project, which makes
-            the paper <strong>reproducible</strong> instead of a copy-paste
-            destination.
+            Keep analysis, source data, and prose together, and record the
+            environment and rerun instructions needed to reproduce the paper.
+            The{" "}
+            <a href={appPath("docs/projects/research-handoff")}>
+              research handoff guide
+            </a>{" "}
+            describes what to include.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -476,11 +484,11 @@ export default function LatexEditorFeaturePage({
           title="A managed LaTeX build"
         >
           <Paragraph>
-            You don't have to know how a LaTeX document gets built:{" "}
-            <strong>CoCalc takes care of it</strong>. LatexMK runs the right
-            engine the right number of times, together with bibliographies and
-            the Knitr, PythonTeX, or SageTeX steps your document needs, so a
-            plain "Build" just works.
+            The default build uses <strong>LatexMK</strong> to coordinate
+            repeated TeX passes and bibliographies, with Knitr, PythonTeX, or
+            SageTeX stages when needed. Ensure the project has the required
+            tools, and inspect build errors for missing packages or source
+            problems.
           </Paragraph>
           <Paragraph>
             <strong>Power users stay in control</strong>: pick PDFLaTeX,
@@ -498,12 +506,11 @@ export default function LatexEditorFeaturePage({
           anchor="a-timetravel"
           icon="history"
           image="latex-editor-timetravel-01.png"
-          title="TimeTravel: every change, recorded"
+          title="TimeTravel: document edit history"
         >
           <Paragraph>
-            TimeTravel <strong>records all changes</strong> to the document in
-            fine detail. Move across thousands of revisions with a slider to
-            recover earlier edits and see who changed what.
+            TimeTravel shows the document's recorded revisions. Use the slider
+            to inspect earlier edits and authorship or recover prior text.
           </Paragraph>
           <Paragraph>
             Especially helpful for pinpointing which recent change caused a

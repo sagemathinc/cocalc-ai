@@ -224,7 +224,7 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "TimeTravel: every change, recorded",
+        name: "TimeTravel: document edit history",
       }),
     ).not.toBeNull();
     expect(screen.getByText("Ready to use Jupyter in CoCalc?")).not.toBeNull();
@@ -447,7 +447,7 @@ describe("PublicFeaturesApp", () => {
       screen.getByText("Root access with sudo, and installs that persist"),
     ).not.toBeNull();
     expect(
-      screen.getByText("Snapshots every 15 minutes, backups off the host"),
+      screen.getByText("Snapshots and backups with configurable retention"),
     ).not.toBeNull();
     expect(screen.getByText("SSH, scp, and rsync")).not.toBeNull();
     expect(screen.getByText("Ready to use Linux in CoCalc?")).not.toBeNull();

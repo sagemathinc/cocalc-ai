@@ -27,7 +27,7 @@ const EXEC_EXAMPLE = [
   `curl -u "$COCALC_API_KEY:" \\`,
   `  https://cocalc.ai/api/v2/exec \\`,
   `  -H 'Content-Type: application/json' \\`,
-  `  -d '{"project_id": "...", "command": "python3", "args": ["analysis.py"]}'`,
+  `  -d '{"project_id": "...", "command": "python3", "args": ["analysis.py"], "err_on_exit": false}'`,
 ].join("\n");
 
 export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
@@ -48,14 +48,17 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 Drive your projects, notebooks, and terminals from your own code
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                A documented HTTP API lets your scripts, pipelines, and
-                scheduled jobs create projects and run notebooks, terminals, and
-                computations directly.
+                Use the HTTP API for targeted integrations with external
+                services. For project, notebook, terminal, and host automation,
+                start with the{" "}
+                <a href={appPath("docs/cli/use-cocalc-cli")}>CoCalc CLI</a> and
+                use the typed commands for your workflow.
               </Paragraph>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                The work lands back in a persistent CoCalc project your team can
-                reopen, review, and continue — hosted on CoCalc.ai or in your
-                own deployment — instead of a one-off run that disappears.
+                Run computations against an authorized project and save the
+                results as project files your team can reopen and review. Check
+                the reference exposed by your deployment for available routes
+                and permissions.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={appPath("docs/api/http-api")}>
@@ -85,10 +88,10 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
             </Title>
             <BulletList
               items={[
-                "Create and configure project environments — for a study or a pipeline — reproducibly.",
-                "Run notebooks, terminals, and computations from a script, and read the results back.",
-                "Schedule recurring work — data pulls, model runs, report builds — that writes into the project.",
-                "Wire CoCalc into an existing pipeline: provision, run, and collect without driving the browser.",
+                "Call a documented HTTP endpoint from an external service.",
+                "Run a command in an allowed project and inspect its returned output and exit status.",
+                "Save complete result files and environment records for later review.",
+                "Use CLI notebook and scheduling commands when the workflow needs those richer interfaces.",
               ]}
             />
           </PublicSection>
@@ -100,9 +103,13 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
             </Title>
             <CodeBlock ariaLabel="Example API call" code={EXEC_EXAMPLE} />
             <Paragraph style={{ color: PUBLIC_COLORS.mutedText, margin: 0 }}>
-              Returns the stdout, stderr, and exit code — and the run stays in
-              the project. Calls use a scoped API key; the full reference is in
-              the API documentation.
+              Replace the project id and use an existing analysis.py in that
+              project. The key needs project:exec and that project in its
+              allowlist. With err_on_exit disabled, a completed command returns
+              stdout, stderr, and its exit code; inspect API error responses
+              too. Timeout and output limits still apply. Save complete results
+              to project files instead of relying on returned output as an
+              archive.
             </Paragraph>
           </PublicSection>
         </Col>
@@ -141,8 +148,9 @@ export default function ApiFeaturePage({ helpEmail }: { helpEmail?: string }) {
                 Start automating
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Begin with the HTTP API docs. If your automation depends on
-                provisioning, scheduling, or where CoCalc runs, talk with us.
+                Begin with the CLI and HTTP API docs to choose the matching
+                interface. If your integration depends on provisioning,
+                scheduling, or deployment support, talk with us.
               </Paragraph>
             </div>
           </Col>

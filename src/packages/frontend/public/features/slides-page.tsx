@@ -174,8 +174,9 @@ export default function SlidesFeaturePage({
                 Present from the same canvas where technical ideas are built.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Live, editable slides you can run as you present — never a
-                static export.
+                Present editable slides inside your project, with Jupyter cells
+                you can run when the required kernel is available. Shared
+                previews show stored content.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -226,7 +227,7 @@ export default function SlidesFeaturePage({
             items={[
               "Present technical walkthroughs from the same editable canvas where the material was built.",
               "Use math, diagrams, markdown, and code in technical talks.",
-              "Collaborate on the deck, with TimeTravel history of every change.",
+              "Collaborate on the deck and review its document edit history with TimeTravel.",
             ]}
           />
         </FeatureFinalBand>

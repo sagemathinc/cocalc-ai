@@ -120,10 +120,10 @@ export default function LinuxFeaturePage({
               <Paragraph
                 style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: 720 }}
               >
-                Every CoCalc project is a full Linux system: Ubuntu-based, with
-                root access, a persistent home directory, snapshots, SSH, and
-                web services. Everything is already installed and running
-                online, ready from the first sign-in.
+                Hosted CoCalc projects provide a Linux environment with a
+                persistent home directory, terminals, SSH, and web services.
+                Choose a software image for your work, then start the project.
+                Available tools and storage policies depend on that environment.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -140,10 +140,10 @@ export default function LinuxFeaturePage({
               accent={FEATURE_ACCENTS.linux}
               items={[
                 { icon: "linux", label: "Ubuntu-based project environment" },
-                { icon: "wrench", label: "Passwordless sudo, apt installs" },
+                { icon: "wrench", label: "Install tools inside the project" },
                 {
                   icon: "history",
-                  label: "Snapshots as often as every 15 min",
+                  label: "Configurable snapshot retention",
                 },
                 { icon: "network-wired", label: "SSH, scp, and rsync access" },
               ]}
@@ -163,7 +163,7 @@ export default function LinuxFeaturePage({
             </>
           }
         >
-          Every project is a Linux machine
+          Your project tools share one Linux environment
         </FeatureInfoHeading>
       </PublicSection>
 
@@ -172,25 +172,23 @@ export default function LinuxFeaturePage({
           accent={COLORS.FEATURE_BLUE}
           anchor="a-environment"
           icon="linux"
-          title="A real Ubuntu-based system, not a restricted shell"
+          title="An Ubuntu-based environment for your project"
         >
           <Paragraph>
-            New projects start on an Ubuntu-based image with{" "}
-            <strong>a complete userland</strong>: bash, git, curl, and the
-            package ecosystem of a normal Ubuntu machine behind them. Compilers
-            and build tools like the gcc toolchain are one{" "}
-            <code>apt-get install</code> away when you want to compile C or C++.
-            Open a <a href={appPath("features/terminal")}>terminal</a> and it
-            behaves like the Linux you know, because it is. That also makes it a
-            safe place to practice Linux commands without risking your own
-            machine.
+            The CoCalc Basic image provides an Ubuntu-based userland with bash,
+            Git, curl, and Python. On an Ubuntu-based image, use{" "}
+            <code>sudo apt-get install</code> to add system libraries and build
+            tools. Open a <a href={appPath("features/terminal")}>terminal</a> to
+            work with them. Other images can use different package managers;
+            check the selected image before copying installation commands.
           </Paragraph>
           <Paragraph>
             The system itself is switchable: pick{" "}
             <strong>a ready-made software environment</strong> with Python,
-            SageMath, R, Julia, or TeX Live preinstalled, or bring your own OCI
-            image. The base system is shared and read-only, so even a large
-            scientific stack costs you nothing in storage.
+            SageMath, R, Julia, or TeX Live preinstalled. Administrators can
+            also select compatible OCI images through advanced controls. Managed
+            base layers are shared and read-only and do not use project disk
+            quota; writable project files and installed changes do.
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/software-environment")}>
@@ -208,20 +206,20 @@ export default function LinuxFeaturePage({
           title="Root access with sudo, and installs that persist"
         >
           <Paragraph>
-            You are not locked out of your own system.{" "}
-            <strong>Passwordless sudo</strong> works in every project, so{" "}
-            <code>sudo apt-get install</code> succeeds just like on your own
-            machine. Experiments cannot damage your computer, and they are
-            confined to that one project: if something goes wrong, restore a
-            backup or start a fresh project, and your other projects are
-            unaffected.
+            On images with sudo enabled, <strong>passwordless sudo</strong> lets
+            you install system packages inside a hosted project's container.
+            This is access to the project environment, not administration of its
+            host machine. Package availability depends on the image and its
+            repositories. Save work and check your recovery points before
+            changing system software.
           </Paragraph>
           <Paragraph>
             System-level installs land in a <strong>per-project overlay</strong>{" "}
-            on top of the read-only base image: they survive restarts, are
-            captured in snapshots and backups, and move with the project. The
-            same goes for <code>pip</code>, <code>npm</code>, R, and Julia
-            packages in your home directory.
+            on top of the read-only base image. Together with packages in your
+            persistent home directory, they survive normal restarts and are
+            included in project backups and moves. Files in <code>/tmp</code>{" "}
+            and host-shared <code>/scratch</code> have different lifetimes and
+            are not substitutes for persistent project storage.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -234,13 +232,15 @@ export default function LinuxFeaturePage({
           imageComponent={
             <CodeBlock
               ariaLabel="Linux package installation, service check, and verification commands"
-              code={`sudo apt-get update
-sudo apt-get install -y graphviz
+              code={`# Use an Ubuntu-based image with Python 3.
+sudo apt-get update
+sudo apt-get install -y graphviz python3-venv
 dot -V
 # graphviz version reported
 
-python -m pip install graphviz networkx
-python - <<'PY'
+python3 -m venv .venv-linux-example
+.venv-linux-example/bin/python -m pip install graphviz networkx
+.venv-linux-example/bin/python - <<'PY'
 import graphviz, networkx
 print("ready")
 PY
@@ -248,23 +248,22 @@ PY
 mkdir -p /tmp/cocalc-svc
 cd /tmp/cocalc-svc
 echo ok > index.html
-python -m http.server 8000 &
+python3 -m http.server 8000 --bind 127.0.0.1 &
 SERVER_PID=$!
-curl --fail http://127.0.0.1:8000/
-kill $SERVER_PID`}
+curl --fail --retry 5 --retry-connrefused --retry-delay 1 http://127.0.0.1:8000/
+kill "$SERVER_PID"`}
             />
           }
           title="Install at any layer, and fix problems with Codex"
         >
           <Paragraph>
-            There is no single right place to install software; use{" "}
-            <strong>any layer that fits the use case</strong>: system packages
-            via apt, language packages where the code runs, or a per-repository
-            setup such as a uv environment defined in a Git repo, which stays in
-            that repo. When an install fails, the{" "}
-            <a href={appPath("features/ai")}>Codex coding agent</a> runs in the
-            same project: it reads the exact error, suggests or applies the fix,
-            and you decide what runs.
+            Choose an installation method for the selected image and
+            interpreter: system packages via apt, language packages where the
+            code runs, or a per-repository setup such as a uv environment
+            defined in a Git repo, which stays in that repo. When an install
+            fails, the <a href={appPath("features/ai")}>Codex coding agent</a>{" "}
+            runs in the same project: it reads the exact error, suggests or
+            applies the fix, and you decide what runs.
           </Paragraph>
           <BulletList
             items={[
@@ -284,22 +283,23 @@ kill $SERVER_PID`}
           accent={COLORS.FEATURE_ORANGE}
           anchor="a-snapshots"
           icon="history"
-          title="Snapshots every 15 minutes, backups off the host"
+          title="Snapshots and backups with configurable retention"
         >
           <Paragraph>
-            Rolling <strong>snapshots of your files</strong> are taken
-            automatically, as often as every 15 minutes, with daily, weekly, and
-            monthly tiers you can configure. You can also take one manually at
-            any moment, which is worth doing right before a risky change. Browse
-            snapshots as a read-only <code>.snapshots</code> folder, search
-            them, and restore a single file or the whole project; a safety
-            snapshot is taken before every restore.
+            When enabled, rolling <strong>snapshots of project files</strong>{" "}
+            use configurable frequent, daily, weekly, and monthly retention.
+            Scheduling and storage limits can delay or prevent a snapshot, so
+            check its timestamp. Browse retained snapshots in the read-only{" "}
+            <code>.snapshots</code> folder and copy out a file when needed.
+            Whole-project snapshot restoration stops the runtime and creates a
+            safety snapshot before replacing the selected files or environment.
           </Paragraph>
           <Paragraph>
-            Separate <strong>backups are stored off the project host</strong>,
-            so your work also survives problems with the machine itself. On top
-            of that, TimeTravel records the full edit history of every document
-            you edit in CoCalc.
+            Completed <strong>backups stored off the project host</strong>{" "}
+            provide recovery points if the machine fails. Changes made after the
+            latest successful backup may be lost. TimeTravel adds edit history
+            for supported collaborative editors; it is not a backup of every
+            filesystem change or running process.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -312,20 +312,20 @@ kill $SERVER_PID`}
           title="Run web apps and services"
         >
           <Paragraph>
-            Start a development server on any port and the project's Apps panel{" "}
-            <strong>lists it as a detected running HTTP app</strong>: turn it
-            into an app entry with one click and open it through a project URL,
-            proxied behind your login with websocket support. That covers Flask
-            and Node dev servers, dashboards, documentation previews, and
-            anything else that speaks HTTP.
+            Start an HTTP development server, then inspect the project's Apps
+            panel for <strong>detected running HTTP apps</strong>. Turn a
+            detected server into an app entry and open its proxied project URL.
+            Some servers need a configured base path or websocket settings;
+            check the app's readiness and logs if it does not open correctly.
           </Paragraph>
           <Paragraph>
             An app can also be <strong>defined up front</strong>, with its
-            command and port, so CoCalc starts it and wakes it when someone
-            opens the URL. The Apps panel launches JupyterLab, VS Code, Pluto,
-            and an R IDE the same way. Managed app URLs remain private to
-            project collaborators; deploy production or anonymous applications
-            to a dedicated hosting provider.
+            command and port. Enable its wake policy when requests should start
+            a stopped app. Images with the corresponding software and app
+            definitions offer launchers for JupyterLab, VS Code, Pluto, or an R
+            IDE. Managed app URLs remain private to project collaborators;
+            deploy production or anonymous applications to a dedicated hosting
+            provider.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -338,7 +338,7 @@ kill $SERVER_PID`}
           title="SSH, scp, and rsync"
         >
           <Paragraph>
-            Every project runs an SSH server. Add your public key and{" "}
+            Configure SSH access to a hosted project and{" "}
             <strong>connect from your own terminal</strong>: run remote
             commands, forward ports, and copy files with <code>scp</code>,{" "}
             <code>sftp</code>, or <code>rsync</code>.
@@ -367,8 +367,11 @@ kill $SERVER_PID`}
           <Paragraph>
             Need a bigger machine?{" "}
             <strong>Move the project to a larger host</strong>, including GPU
-            hosts with CUDA-ready images, and keep your files, software, and
-            history.
+            hosts with compatible GPU images. A move stops the runtime and
+            transfers backed-up files and software. Temporary files and previous
+            host-local snapshots do not move; check backup freshness,
+            destination access, and the required hardware before moving
+            important work.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -402,8 +405,8 @@ kill $SERVER_PID`}
             <Paragraph style={{ margin: 0 }}>
               System-wide with apt, per language with uv, pip, conda, npm, or
               the R, Julia, and TeX package managers, per Git repository, or per
-              user: every layer is available, and a coding agent like Codex
-              helps pick the right one and runs the install with you.
+              user: choose the tools supported by your environment. A coding
+              agent like Codex can help choose a method and investigate errors.
             </Paragraph>
             <LinuxInstallLayersGrid />
           </FeatureFinalBand>
