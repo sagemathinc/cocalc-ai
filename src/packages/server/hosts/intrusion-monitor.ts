@@ -21,6 +21,8 @@ const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const MIN_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_RETENTION_DAYS = 90;
 const DEFAULT_CONCURRENCY = 2;
+const DEFAULT_SNAP_REFRESH_CONFIRMATION_DELAY_MS = 60_000;
+const MIN_SNAP_REFRESH_CONFIRMATION_DELAY_MS = 10_000;
 const HOST_ONLINE_WINDOW_MS = 5 * 60 * 1000;
 const HOST_RPC_TIMEOUT_MS = 130_000;
 const COVERAGE_FAILURE_ALERT_THRESHOLD = 3;
@@ -144,6 +146,42 @@ type PersistSnapshotOptions = {
   source: HostIntrusionSnapshotResponse;
   normalized: NormalizedHostIntrusionSnapshot;
   delta?: HostIntrusionSnapshotDelta;
+  assessment?: SnapshotAssessment;
+  baselineEligible?: boolean;
+};
+
+type SnapshotAssessment =
+  | { state: "observed" }
+  | {
+      state: "pending_snap_refresh_confirmation";
+      fingerprint: string;
+      units: string[];
+    }
+  | {
+      state: "resolved_snap_refresh_confirmation";
+      pending_snapshot_id: string;
+      fingerprint: string;
+      resolution: "attested" | "reverted";
+    }
+  | {
+      state: "notified_snap_refresh_confirmation";
+      pending_snapshot_id: string;
+      fingerprint: string;
+      units: string[];
+    };
+
+type PendingSnapRefreshRow = {
+  id: string;
+  confirmation_due: boolean;
+  assessment: Extract<
+    SnapshotAssessment,
+    { state: "pending_snap_refresh_confirmation" }
+  >;
+};
+
+export type SnapRefreshConfirmationCandidate = {
+  fingerprint: string;
+  units: string[];
 };
 
 type HostTransition = {
@@ -161,6 +199,7 @@ type CoverageFailure = {
 export interface HostIntrusionMonitorResult {
   checked: number;
   changed: number;
+  pending: number;
   baselined: number;
   incomplete: number;
   failed: number;
@@ -168,6 +207,7 @@ export interface HostIntrusionMonitorResult {
 
 let schemaReady: Promise<void> | undefined;
 let started = false;
+let pendingConfirmationTimer: ReturnType<typeof setTimeout> | undefined;
 
 function envNumberAtLeast(
   name: string,
@@ -415,19 +455,17 @@ function baselineSnapMountIdentities(
   return identities;
 }
 
-function isVerifiedSnapMountAddition({
+function isStructurallyValidSnapMountAddition({
   category,
   value,
   delta,
-  installedUnits,
 }: {
   category: "persistence.files" | "services.enabled";
   value: string;
   delta: HostIntrusionSnapshotDelta;
-  installedUnits: Set<string>;
 }): boolean {
   const signal = snapRevisionSignal(category, value);
-  if (!signal || !installedUnits.has(signal.unit)) return false;
+  if (!signal) return false;
   // A same-revision removal indicates content or metadata changed, rather than
   // snapd adding a newly active mount. Keep that transition actionable.
   if (
@@ -460,6 +498,25 @@ function isVerifiedSnapMountAddition({
     mode === "0777" &&
     type === "symlink" &&
     sha256 == null
+  );
+}
+
+function isVerifiedSnapMountAddition({
+  category,
+  value,
+  delta,
+  installedUnits,
+}: {
+  category: "persistence.files" | "services.enabled";
+  value: string;
+  delta: HostIntrusionSnapshotDelta;
+  installedUnits: Set<string>;
+}): boolean {
+  const signal = snapRevisionSignal(category, value);
+  return (
+    signal != null &&
+    installedUnits.has(signal.unit) &&
+    isStructurallyValidSnapMountAddition({ category, value, delta })
   );
 }
 
@@ -521,6 +578,102 @@ function routineSnapRevisionChanges(
     }
   }
   return routine;
+}
+
+function snapRefreshFingerprint(
+  delta: HostIntrusionSnapshotDelta,
+  units: string[],
+): string {
+  return createHash("sha256")
+    .update(JSON.stringify({ delta, units }))
+    .digest("hex");
+}
+
+export function snapRefreshConfirmationCandidate(
+  delta: HostIntrusionSnapshotDelta,
+  actionable: HostIntrusionSnapshotDelta,
+  {
+    installedSnapMountUnits,
+    baselineSnapshots,
+    persistenceFiles,
+    trustedAdminSshSources = [],
+  }: {
+    installedSnapMountUnits: string[] | undefined;
+    baselineSnapshots: NormalizedHostIntrusionSnapshot[];
+    persistenceFiles: HostIntrusionSnapshotResponse["persistence"]["files"];
+    trustedAdminSshSources?: string[];
+  },
+): SnapRefreshConfirmationCandidate | undefined {
+  // An omitted attestation field means an old collector, not a transient race.
+  if (installedSnapMountUnits == null) return;
+  if (!hasHostIntrusionSnapshotChanges(actionable)) return;
+
+  const installedUnits = new Set(installedSnapMountUnits);
+  const baselineIdentities = baselineSnapMountIdentities(baselineSnapshots);
+  const units = sortedUnique(
+    (delta.added["services.enabled"] ?? []).flatMap((value) => {
+      const signal = snapRevisionSignal("services.enabled", value);
+      if (
+        !signal ||
+        value !== `${signal.unit} enabled enabled` ||
+        installedUnits.has(signal.unit) ||
+        !baselineIdentities.has(signal.identity)
+      ) {
+        return [];
+      }
+      return [signal.unit];
+    }),
+  );
+  if (!units.length) return;
+
+  for (const unit of units) {
+    const persistence = (delta.added["persistence.files"] ?? []).filter(
+      (value) => snapRevisionSignal("persistence.files", value)?.unit === unit,
+    );
+    if (persistence.length !== 3) return;
+    const paths = new Set(
+      persistence.map((value) => decodeSignal(value)?.[0]).filter(Boolean),
+    );
+    if (
+      !paths.has(`/etc/systemd/system/${unit}`) ||
+      !paths.has(`/etc/systemd/system/multi-user.target.wants/${unit}`) ||
+      !paths.has(`/etc/systemd/system/snapd.mounts.target.wants/${unit}`) ||
+      persistence.some(
+        (value) =>
+          !isStructurallyValidSnapMountAddition({
+            category: "persistence.files",
+            value,
+            delta,
+          }),
+      )
+    ) {
+      return;
+    }
+    for (const target of [
+      "multi-user.target.wants",
+      "snapd.mounts.target.wants",
+    ]) {
+      const path = `/etc/systemd/system/${target}/${unit}`;
+      const raw = persistenceFiles.find((entry) => entry.path === path);
+      if (raw?.link_target !== `/etc/systemd/system/${unit}`) return;
+    }
+  }
+
+  // Prove that active-mount attestation is the only reason this sample would
+  // alert. Any unrelated or malformed change remains immediately actionable.
+  const actionableIfMounted = selectActionableHostIntrusionChanges(delta, {
+    installedSnapMountUnits: sortedUnique([
+      ...installedSnapMountUnits,
+      ...units,
+    ]),
+    baselineSnapshots,
+    trustedAdminSshSources,
+  });
+  if (hasHostIntrusionSnapshotChanges(actionableIfMounted)) return;
+  return {
+    units,
+    fingerprint: snapRefreshFingerprint(actionable, units),
+  };
 }
 
 function monitoredSignals(
@@ -796,9 +949,20 @@ export async function ensureHostIntrusionMonitorSchema(): Promise<void> {
         fingerprint TEXT,
         normalized JSONB NOT NULL,
         delta JSONB,
+        collector_evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
+        assessment JSONB NOT NULL DEFAULT '{"state":"observed"}'::jsonb,
+        baseline_eligible BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CHECK (coverage IN ('complete', 'partial', 'unavailable'))
       )
+    `);
+    await pool.query(`
+      ALTER TABLE ${TABLE}
+        ADD COLUMN IF NOT EXISTS collector_evidence JSONB NOT NULL
+          DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS assessment JSONB NOT NULL
+          DEFAULT '{"state":"observed"}'::jsonb,
+        ADD COLUMN IF NOT EXISTS baseline_eligible BOOLEAN NOT NULL DEFAULT TRUE
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS ${TABLE}_host_created_idx
@@ -842,6 +1006,7 @@ async function loadPreviousCompleteSnapshot(
       FROM ${TABLE}
       WHERE host_id = $1
         AND coverage = 'complete'
+        AND baseline_eligible
         AND normalization_version = $2
       ORDER BY created_at DESC
       LIMIT 1
@@ -880,6 +1045,7 @@ async function loadFleetCompleteSnapshots({
       WHERE snapshots.bay_id = $1
         AND snapshots.host_id <> $2
         AND snapshots.coverage = 'complete'
+        AND snapshots.baseline_eligible
         AND snapshots.normalization_version = $3
         AND hosts.deleted IS NULL
         AND hosts.status = 'running'
@@ -902,6 +1068,7 @@ export async function activeFleetHasCompleteBaseline(
          INNER JOIN project_hosts AS hosts ON hosts.id = snapshots.host_id
         WHERE snapshots.bay_id = $1
           AND snapshots.coverage = 'complete'
+          AND snapshots.baseline_eligible
           AND snapshots.normalization_version = $2
           AND hosts.deleted IS NULL
           AND hosts.status = 'running'
@@ -913,19 +1080,82 @@ export async function activeFleetHasCompleteBaseline(
   return rows[0]?.present === true;
 }
 
+async function loadPendingSnapRefresh(
+  hostId: string,
+): Promise<PendingSnapRefreshRow | undefined> {
+  const { rows } = await getPool().query<PendingSnapRefreshRow>(
+    `
+      SELECT id, assessment,
+        created_at <= NOW() - ($2::double precision * INTERVAL '1 millisecond')
+          AS confirmation_due
+      FROM ${TABLE} AS pending
+      WHERE pending.host_id = $1
+        AND pending.coverage = 'complete'
+        AND NOT pending.baseline_eligible
+        AND pending.assessment->>'state' = 'pending_snap_refresh_confirmation'
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${TABLE} AS accepted
+          WHERE accepted.host_id = pending.host_id
+            AND accepted.coverage = 'complete'
+            AND accepted.baseline_eligible
+            AND accepted.created_at > pending.created_at
+        )
+      ORDER BY pending.created_at ASC
+      LIMIT 1
+    `,
+    [hostId, snapRefreshConfirmationDelayMs()],
+  );
+  return rows[0];
+}
+
+async function countPendingSnapRefreshes(bayId: string): Promise<number> {
+  const { rows } = await getPool().query<{ count: string }>(
+    `
+      SELECT COUNT(DISTINCT pending.host_id)::text AS count
+      FROM ${TABLE} AS pending
+      INNER JOIN project_hosts AS hosts ON hosts.id = pending.host_id
+      WHERE pending.bay_id = $1
+        AND pending.coverage = 'complete'
+        AND NOT pending.baseline_eligible
+        AND pending.assessment->>'state' = 'pending_snap_refresh_confirmation'
+        AND hosts.deleted IS NULL
+        AND hosts.status = 'running'
+        AND hosts.last_seen >= NOW() - ($2::double precision * INTERVAL '1 millisecond')
+        AND COALESCE(NULLIF(hosts.bay_id, ''), $1) = $1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ${TABLE} AS accepted
+          WHERE accepted.host_id = pending.host_id
+            AND accepted.coverage = 'complete'
+            AND accepted.baseline_eligible
+            AND accepted.created_at > pending.created_at
+        )
+    `,
+    [bayId, HOST_ONLINE_WINDOW_MS],
+  );
+  return Number(rows[0]?.count ?? 0);
+}
+
 async function persistSnapshot({
   hostId,
   bayId,
   source,
   normalized,
   delta,
+  assessment = { state: "observed" },
+  baselineEligible = true,
 }: PersistSnapshotOptions): Promise<void> {
   await getPool().query(
     `
       INSERT INTO ${TABLE} (
         id, host_id, bay_id, captured_at, duration_ms, coverage,
-        normalization_version, fingerprint, normalized, delta
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb)
+        normalization_version, fingerprint, normalized, delta,
+        collector_evidence, assessment, baseline_eligible
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb,
+        $11::jsonb, $12::jsonb, $13
+      )
     `,
     [
       randomUUID(),
@@ -938,6 +1168,21 @@ async function persistSnapshot({
       source.coverage === "complete" ? monitoredFingerprint(normalized) : null,
       JSON.stringify(normalized),
       delta == null ? null : JSON.stringify(delta),
+      JSON.stringify({
+        collector_version: source.version,
+        snap_mount_units: source.snap_mount_units ?? null,
+        persistence_symlinks: source.persistence.files
+          .filter(({ type }) => type === "symlink")
+          .map(({ path, link_target }) => ({
+            path,
+            link_target: link_target ?? null,
+          })),
+        issues: source.issues,
+        truncated: source.truncated,
+        persistence_truncated: source.persistence.truncated,
+      }),
+      JSON.stringify(assessment),
+      baselineEligible,
     ],
   );
 }
@@ -1134,6 +1379,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   const result: HostIntrusionMonitorResult = {
     checked: 0,
     changed: 0,
+    pending: 0,
     baselined: 0,
     incomplete: 0,
     failed: 0,
@@ -1176,7 +1422,10 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
         return;
       }
 
-      const previous = await loadPreviousCompleteSnapshot(host.id);
+      const [previous, pendingSnapRefresh] = await Promise.all([
+        loadPreviousCompleteSnapshot(host.id),
+        loadPendingSnapRefresh(host.id),
+      ]);
       let delta: HostIntrusionSnapshotDelta | undefined;
       let baselineSnapshots: NormalizedHostIntrusionSnapshot[] = [];
       let baseline: HostTransition["baseline"] = "host";
@@ -1196,13 +1445,6 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
           comparedWithFleet = true;
         }
       }
-      const completeSnapshot = {
-        hostId: host.id,
-        bayId,
-        source,
-        normalized,
-        delta,
-      };
       const alertDelta =
         delta == null || alertMode === "off"
           ? undefined
@@ -1213,10 +1455,67 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
                 baselineSnapshots,
                 trustedAdminSshSources,
               });
-      const changedDelta =
+      let changedDelta =
         alertDelta != null && hasHostIntrusionSnapshotChanges(alertDelta)
           ? alertDelta
           : undefined;
+      const snapRefreshCandidate =
+        alertMode === "actionable" && delta != null && changedDelta != null
+          ? snapRefreshConfirmationCandidate(delta, changedDelta, {
+              installedSnapMountUnits: source.snap_mount_units,
+              baselineSnapshots,
+              persistenceFiles: source.persistence.files,
+              trustedAdminSshSources,
+            })
+          : undefined;
+      let assessment: SnapshotAssessment = { state: "observed" };
+      let baselineEligible = true;
+      if (snapRefreshCandidate) {
+        if (
+          pendingSnapRefresh == null ||
+          (pendingSnapRefresh.assessment.fingerprint ===
+            snapRefreshCandidate.fingerprint &&
+            !pendingSnapRefresh.confirmation_due)
+        ) {
+          assessment = {
+            state: "pending_snap_refresh_confirmation",
+            ...snapRefreshCandidate,
+          };
+          baselineEligible = false;
+          changedDelta = undefined;
+          result.pending += 1;
+        } else if (
+          pendingSnapRefresh.assessment.fingerprint ===
+          snapRefreshCandidate.fingerprint
+        ) {
+          assessment = {
+            state: "notified_snap_refresh_confirmation",
+            pending_snapshot_id: pendingSnapRefresh.id,
+            ...snapRefreshCandidate,
+          };
+        }
+      } else if (pendingSnapRefresh && changedDelta == null) {
+        const installedUnits = new Set(source.snap_mount_units ?? []);
+        assessment = {
+          state: "resolved_snap_refresh_confirmation",
+          pending_snapshot_id: pendingSnapRefresh.id,
+          fingerprint: pendingSnapRefresh.assessment.fingerprint,
+          resolution: pendingSnapRefresh.assessment.units.every((unit) =>
+            installedUnits.has(unit),
+          )
+            ? "attested"
+            : "reverted",
+        };
+      }
+      const completeSnapshot = {
+        hostId: host.id,
+        bayId,
+        source,
+        normalized,
+        delta,
+        assessment,
+        baselineEligible,
+      };
       const needsInitialReview =
         alertMode !== "off" && !previous && !comparedWithFleet;
       // Do not promote a security baseline until its alert is accepted. If
@@ -1227,7 +1526,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       } else {
         await persistSnapshot(completeSnapshot);
       }
-      if (!previous) {
+      if (!previous && baselineEligible) {
         result.baselined += 1;
         if (needsInitialReview) initialBaselines.push(host);
       }
@@ -1298,6 +1597,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     concurrency,
     persistSnapshot,
   );
+  result.pending = await countPendingSnapRefreshes(bayId);
 
   const retentionDays = envNumberAtLeast(
     "COCALC_HOST_INTRUSION_MONITOR_RETENTION_DAYS",
@@ -1309,6 +1609,14 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   return result;
 }
 
+function snapRefreshConfirmationDelayMs(): number {
+  return envNumberAtLeast(
+    "COCALC_HOST_INTRUSION_SNAP_CONFIRMATION_DELAY_MS",
+    DEFAULT_SNAP_REFRESH_CONFIRMATION_DELAY_MS,
+    MIN_SNAP_REFRESH_CONFIRMATION_DELAY_MS,
+  );
+}
+
 async function runLockedPass(): Promise<void> {
   const result = await withSessionAdvisoryLock({
     lockKey: `${LOCK_KEY}:${getConfiguredBayId()}`,
@@ -1316,6 +1624,20 @@ async function runLockedPass(): Promise<void> {
   });
   if (result) {
     logger.info("project-host intrusion monitoring pass complete", result);
+    if (result.pending > 0 && pendingConfirmationTimer == null) {
+      const delayMs = snapRefreshConfirmationDelayMs();
+      logger.info("scheduling snap refresh confirmation pass", {
+        pending: result.pending,
+        delay_ms: delayMs,
+      });
+      pendingConfirmationTimer = setTimeout(() => {
+        pendingConfirmationTimer = undefined;
+        void runLockedPass().catch((err) => {
+          logger.error("project-host intrusion confirmation pass failed", err);
+        });
+      }, delayMs);
+      pendingConfirmationTimer.unref?.();
+    }
   }
 }
 

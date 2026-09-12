@@ -72,6 +72,19 @@ test("compute choice links stay usable with VM support on or off", () => {
   assert.equal(report.ok, true, JSON.stringify(report.issues));
 });
 
+test("compute choice remains useful without linking to unavailable local VM docs", () => {
+  for (const features of [[], ["compute-vms"]]) {
+    const entry = getDocsEntry("hosts/choose-compute", { features });
+    assert.ok(entry);
+    assert.match(entry.body, /Managed VMs are optional/);
+    assert.match(
+      entry.body,
+      /https:\/\/cocalc.ai\/docs\/projects\/virtual-machines/,
+    );
+    assert.doesNotMatch(entry.body, /\]\(\/docs\/projects\/virtual-machines\)/);
+  }
+});
+
 test("registered chapter links stay available to each reader profile", () => {
   const profiles = [
     ["plus", { product: "plus" }],

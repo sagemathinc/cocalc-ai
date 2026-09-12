@@ -43,6 +43,7 @@ import {
   isLaunchpadProduct,
 } from "@cocalc/server/launchpad/mode";
 import { renderPublicRoutePrerender } from "./public-prerender";
+import { renderPublicDocsPrerender } from "./public-docs-prerender";
 
 const logger = getLogger("hub:servers:public-shell");
 
@@ -426,7 +427,9 @@ async function buildHead(req: Request): Promise<{
   ].join("\n  ");
 
   return {
-    body: renderPublicRoutePrerender(route, basePath, config),
+    body:
+      renderPublicDocsPrerender(route, basePath, config) ||
+      renderPublicRoutePrerender(route, basePath, config),
     head: `${basePathMetaTag()}\n  <title>${htmlEscape(
       metadata.title,
     )}</title>\n  ${socialTags}`,

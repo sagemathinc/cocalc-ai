@@ -306,6 +306,71 @@ cocalc browser session destroy <spawn_id_or_browser_id>
 For scoped/agent tokens, prefer `--project-id` + `--browser` (or the matching
 env vars) to avoid discovery calls that may require broader hub permissions.
 
+## Send To A Chat Agent
+
+Find the **Thread ID**, not the Codex runtime Session ID, using the copy control
+in the thread's **Codex settings -> Model and session**, or list the threads in
+a chat document:
+
+```bash
+cocalc --json project chat thread list --project "$COCALC_PROJECT_ID" \
+  --path review.chat
+cocalc project chat send --project "$COCALC_PROJECT_ID" \
+  --path review.chat --thread-id "$thread_id" "Please review PR #509."
+```
+
+`thread list` prints a compact table; with `--json`, its rows are in `data`.
+
+`send` adds a visible message as the authenticated account and submits it to
+the existing Codex/ACP thread, preserving its model, working directory, access
+mode and session continuity. An idle thread starts a turn; a busy thread queues
+it behind the running turn. No browser needs to be open. Thread creation by
+itself still does not start an agent.
+
+Use `--guidance` only when you want to steer current work. It uses the same
+backend path as **Send Immediately**: guide a running turn if possible, or
+fall back to a queued/normal turn if no steerable turn exists. It does not
+cancel the running task.
+
+```bash
+cocalc project chat send --project "$COCALC_PROJECT_ID" \
+  --path review.chat --thread-id "$thread_id" --guidance --stdin <<'EOF'
+{"kind":"review-update","note":"The new tests are in the latest commit."}
+EOF
+```
+
+`--stdin` accepts multiline text or JSON as message content (not an executable
+protocol); do not combine it with positional message text. A successful result
+contains `state: "accepted"` and the saved `message_id`. This acknowledges
+submission, **not completion or that guidance has already been read**. Open the
+thread, or use `project chat activity`, to inspect progress. A submission error
+can leave the message saved; a lost acknowledgement may also mean the backend
+accepted it. The CLI reports that uncertainty and does not automatically resend.
+
+This uses existing project access and ACP authorization, not a new permission
+grant. The target must be an existing, non-archived Codex/ACP thread. Credentials
+must allow both chat writes and agent execution in that project; read-only
+access is insufficient. Scoped message-only grants, automatic reply channels,
+and cross-site identity federation are not provided by this command. To use a
+different site, explicitly select its API/profile and authorized credentials;
+never put credentials into the message text.
+
+### Manual Smoke Check
+
+Use a dedicated test `.chat` file and read-only agent configuration. These tests
+invoke a model and are not part of CI:
+
+1. Create a thread, list it and compare its ID with the settings copy control.
+2. With its browser closed, send a short prompt. Reopen the thread and verify
+   one user message and one agent response with the same session on a follow-up.
+3. While a longer turn is running, send normally and check it stays queued.
+   Repeat with `--guidance` and verify it reaches the current turn. Also check
+   that `--guidance` starts a normal turn when idle.
+4. Repeat from another authorized project/account. Verify a viewer or revoked
+   collaborator cannot write or execute, without relaxing existing permissions.
+5. Disconnect during submission. Check that a missing acknowledgement is not
+   reported as success; inspect the thread before retrying.
+
 ## Create A Daily Chat Automation
 
 The `project chat` commands operate on a project `.chat` document. Create the

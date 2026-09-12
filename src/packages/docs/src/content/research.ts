@@ -142,4 +142,22 @@ file is unavailable, check the path and the viewer's read policy.
 If a file changed while you were editing, resolve the reported conflict before
 claiming the handoff is saved. Use the file's **File actions -> Full CoCalc**
 link when you need the full editor, notebook output support, or conflict tools.
+
+## Preserve research links and ownership
+
+For work cited in a paper or report, retain the source, data, environment notes,
+and a verified collaborator who can continue the project. Check each published
+link using the access its intended reader will have; an owner's signed-in view
+does not prove a public reader can open it. Keep an independent copy of critical
+artifacts and recheck links when moving or archiving the project. See
+[Publish files](/docs/projects/publish-files) for deliberate public sharing.
+
+## Continue with a complete research workflow
+
+- [Reproduce an analysis in a fresh project](/docs/research/reproduce-analysis).
+- [Move a Jupyter or Colab notebook](/docs/research/notebook-migration).
+- [Resume an interrupted computation](/docs/research/resume-computation).
+- [Share a private research dashboard](/docs/research/private-dashboard).
+- [Recover files and environments](/docs/research/recover-work).
+
 `;

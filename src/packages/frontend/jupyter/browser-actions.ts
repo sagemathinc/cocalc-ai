@@ -3215,6 +3215,9 @@ export class JupyterActions extends JupyterActions0 {
         project_id: this.project_id,
         caller: "JupyterActions.getJupyterClient",
       });
+      // Routing can finish after editor teardown or a project runtime change.
+      // Do not open a socket on a closed transport (or close this shared client).
+      if (this.isClosed() || client.state === "closed") return null;
       c = jupyterClient({
         path: this.syncdbPath,
         client,

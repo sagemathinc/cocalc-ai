@@ -1400,6 +1400,71 @@ test("receivables diagnostics uses the server review-queue report", async () => 
   assert.equal(output(), report);
 });
 
+test("receivables diagnostics forwards explicit legacy scope and pagination without mutations", async () => {
+  let captured: any;
+  const { program, output } = setup({
+    diagnostics: async (opts: any) => {
+      captured = opts;
+      return {
+        legacy_invoice_scan: {
+          invoices: [],
+          has_more: true,
+          next_cursor: "in_next",
+        },
+      };
+    },
+  });
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "receivables",
+    "diagnostics",
+    "--include-legacy-invoices",
+    "--legacy-invoice-limit",
+    "50",
+    "--legacy-invoice-cursor",
+    "in_previous",
+    "--reason",
+    "legacy review",
+  ]);
+  assert.deepEqual(captured, {
+    reason: "legacy review",
+    reconcile: undefined,
+    include_legacy_invoices: true,
+    legacy_invoice_limit: 50,
+    legacy_invoice_cursor: "in_previous",
+  });
+  assert.equal(output().legacy_invoice_scan.next_cursor, "in_next");
+});
+
+test("receivables diagnostics rejects invalid legacy scope and limits before calling the API", async () => {
+  for (const args of [
+    ["--legacy-invoice-limit", "5"],
+    ["--include-legacy-invoices", "--legacy-invoice-limit", "NaN"],
+    ["--include-legacy-invoices", "--legacy-invoice-limit", "501"],
+    ["--include-legacy-invoices", "--legacy-invoice-limit", "0"],
+  ]) {
+    let called = false;
+    const { program } = setup({
+      diagnostics: async () => {
+        called = true;
+      },
+    });
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "receivables",
+        "diagnostics",
+        ...args,
+      ]),
+    );
+    assert.equal(called, false);
+  }
+});
+
 test("receivables Stripe event retry previews and commits explicitly", async () => {
   const calls: any[] = [];
   const api = {

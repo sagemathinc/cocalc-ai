@@ -9,14 +9,16 @@ export const CHOOSE_RESEARCH_COMPUTE_BODY = `
 Use this guide when a research task needs more RAM, CPU capacity, a GPU, or
 software that does not fit your current CoCalc AI project. Start with where
 the code and data should live, then choose a compatible machine you can use.
-The available choices depend on your CoCalc deployment and account. Managed
-VMs are an optional site feature. If your site does not enable them, use the
-project-host or remote-kernel route; the rest of this guide still applies.
+The available choices depend on your CoCalc deployment and account.
+Managed VMs are optional and may be disabled on your site. Their links below
+open the CoCalc.ai reference guide, not a local VM control or an assertion that
+your site offers this feature. Project hosts and remote kernels remain separate
+choices when managed VMs are unavailable.
 
 | Your need | Choose | Execution and files |
 | --- | --- | --- |
 | Keep using the project's notebooks, terminals, files, and services together on different compute | [Project host](/docs/hosts/project-hosts) | The host runs the CoCalc project. Moving it transfers project data through backup and restore; running processes do not move with their memory. |
-| Control a conventional machine, install system services, or use a supported Windows environment | Managed VM (if enabled) | An account-owned machine that can connect to a project, with its own operating system and files. CoCalc project software is not installed automatically. |
+| Control a conventional machine, install system services, or use a supported Windows environment | [Managed VM (CoCalc.ai guide)](https://cocalc.ai/docs/projects/virtual-machines) | An account-owned machine that can connect to a project, with its own operating system and files. CoCalc project software is not installed automatically. |
 | Use a server or GPU machine that already has your software or datasets, while editing a notebook in CoCalc | [Remote Jupyter kernel](/docs/jupyter/remote-kernels) | The notebook stays in the project, while code runs on the remote machine over SSH. Files are not automatically synchronized. |
 
 A managed VM can also provide a remote kernel. In that combination, use the VM
@@ -73,9 +75,9 @@ and limits are account-specific.
 
 Review the displayed running and stopped costs before creating compute. Spot
 capacity can be interrupted or unavailable. Use
-[Host spot recovery](/docs/hosts/spot-recovery) for project hosts. If managed
-VMs are enabled, find **Virtual machines** in this site's [Docs index](/docs)
-for VM recovery and storage behavior.
+[Host spot recovery](/docs/hosts/spot-recovery) or the
+[VM lifecycle and costs guide on CoCalc.ai](https://cocalc.ai/docs/projects/virtual-machines) for the
+applicable recovery and storage behavior.
 
 ## Inspect choices from the CLI
 
@@ -124,10 +126,9 @@ against command help; an existing accessible host is needed to exercise them.
   project, save results and checkpoints to files, review
   [move behavior](/docs/hosts/move-projects), and check
   [which host changes require a restart or deprovision](/docs/hosts/change-rules).
-- **Managed VM (if enabled):** open this site's [Docs index](/docs) and select
-  **Virtual machines**. That page appears when the site enables managed VMs.
-  Use it to review the configuration, connect, and transfer inputs. Manage
-  the VM's files and retained storage separately from project files.
+- **Managed VM, when enabled:** follow [Virtual machines on CoCalc.ai](https://cocalc.ai/docs/projects/virtual-machines)
+  to review the configuration, connect, and transfer inputs. Manage the VM's
+  files and retained storage separately from project files.
 - **Remote kernel:** follow [Remote Jupyter kernels](/docs/jupyter/remote-kernels).
   Confirm password-less SSH works from the CoCalc project to the remote
   account, and put inputs on the filesystem that the remote code will read.

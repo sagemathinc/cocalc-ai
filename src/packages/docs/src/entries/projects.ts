@@ -54,7 +54,7 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "/public/docs/create-project-5b221552.webp",
       "A CoCalc project containing notebooks, files, and chat",
     ),
-    lastReviewed: "2026-09-08",
+    lastReviewed: "2026-09-11",
     noActionReason:
       "The walkthrough starts from the linked Essential projects page and uses files chosen by the reader.",
     searchKeywords:

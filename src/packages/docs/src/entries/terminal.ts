@@ -35,7 +35,9 @@ export const TERMINAL_ENTRIES: DocsEntry[] = [
       "/public/docs/ssh-access-32a43270.webp",
       "Secure SSH routes from a laptop and course project to CoCalc projects",
     ),
-    lastReviewed: "2026-07-25",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "SSH SFTP SCP rsync OpenSSH Windows PowerShell upload download ProxyCommand",
     slug: "terminal/ssh-access",
     status: "ready",
     summary:

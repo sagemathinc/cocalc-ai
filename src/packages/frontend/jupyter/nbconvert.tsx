@@ -89,8 +89,7 @@ const Error: React.FC<ErrorProps> = (props: ErrorProps) => {
 
   function scroll(): void {
     if (preNode.current == null) return;
-    const d = $(preNode.current);
-    d.scrollTop(d.prop("scrollHeight"));
+    preNode.current.scrollTop = preNode.current.scrollHeight;
   }
 
   function render_time() {

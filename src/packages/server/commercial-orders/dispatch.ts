@@ -39,6 +39,7 @@ import {
   commercialReconcilePreview,
   createStripeCommercialInvoiceDraft,
   findUnlinkedCommercialStripeInvoices,
+  findLegacyStripeInvoices,
   linkExistingStripeCommercialInvoice,
   reconcileStripeCommercialInvoice,
   recordStripeAwareCommercialManualPayment,
@@ -193,6 +194,13 @@ export async function dispatchCommercialSeedRequest(
     case "endFulfillment":
       return await endCommercialSiteLicenseFulfillment(opts);
     case "diagnostics": {
+      if (
+        !opts.include_legacy_invoices &&
+        (opts.legacy_invoice_limit != null ||
+          opts.legacy_invoice_cursor != null)
+      ) {
+        throw Error("legacy invoice options require include_legacy_invoices");
+      }
       const diagnostics = await getCommercialOrderDiagnostics();
       if (opts.reconcile === true) {
         const scan = await findUnlinkedCommercialStripeInvoices();
@@ -200,6 +208,13 @@ export async function dispatchCommercialSeedRequest(
           scan.invoices;
         diagnostics.review_queues.truncated.unlinked_commercial_stripe_invoices =
           scan.truncated;
+        diagnostics.unlinked_invoice_scan = "site_commercial";
+      }
+      if (opts.include_legacy_invoices === true) {
+        diagnostics.legacy_invoice_scan = await findLegacyStripeInvoices({
+          limit: opts.legacy_invoice_limit,
+          cursor: opts.legacy_invoice_cursor,
+        });
       }
       return diagnostics;
     }

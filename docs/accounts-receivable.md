@@ -412,6 +412,78 @@ payment never automatically suspends a university license.
 
 ## Diagnostics And Follow-Up
 
+### Invoice Balances Versus Order Value
+
+`admin receivables diagnostics --json` returns `amounts_by_currency` from the
+seed-owned local records. Amount strings are decimal major units, grouped by
+currency; no exchange conversion or cross-currency total is performed.
+
+- `invoice_outstanding`: remaining balances on open invoices, including partial
+  payments. Paid, void, draft, creating, and uncollectible invoices are excluded.
+- `invoice_overdue`: the portion whose invoice due date is before now. Missing
+  due dates are not assumed overdue; order collection-state lag does not affect
+  the calculation.
+- `fulfilled_invoice_outstanding`: open invoice balances for provisioned orders.
+- `uninvoiced_pipeline`: active not-invoiced orders without a non-void invoice.
+  Alternative proposals remain separate proposals, not collectible debt.
+- `paid_unfulfilled_order_value`: active paid orders awaiting provisioning.
+- `open_order_value`: agreed totals of active orders, **not accounts receivable**.
+
+Invoice balances remain included even if the order workflow is cancelled or
+complete: closing an order does not void its provider invoice. These totals
+cover **linked local invoices only** (`amount_scope=linked_local_invoices`), and
+can lag Stripe until webhook processing or invoice reconciliation runs.
+
+For older clients, `amounts.open_amount`, `amounts.overdue_amount`, and
+`amounts.fulfilled_unpaid_amount` now contain the corresponding **USD-only
+invoice balances**, rather than sums of order totals. They do not represent
+foreign-currency invoices. Use `amounts_by_currency` for new integrations.
+
+### Legacy Stripe Discovery (Read Only)
+
+Ordinary diagnostics do not scan Stripe (`unlinked_invoice_scan=not_requested`).
+`--reconcile` requests the existing bounded **current-site commercial metadata**
+scan (`site_commercial`); it cannot establish that legacy invoices are absent.
+
+Use an explicit account-wide discovery request to find legacy open invoices:
+
+```sh
+cocalc admin receivables diagnostics --include-legacy-invoices \
+  --legacy-invoice-limit 100 --reason "Review legacy invoice coverage" --json
+```
+
+`legacy_invoice_scan` lists unlinked candidates across the Stripe account,
+including invoices without commercial metadata. It uses Stripe's
+[invoice list API](https://docs.stripe.com/api/invoices/list), restricted to
+`status=open` and `collection_method=send_invoice`; automatic-charge attempts
+are intentionally excluded. No date filter is imposed.
+
+`scanned` counts provider invoices examined, including ones already linked and
+therefore omitted from the candidate list. The limit is 1-500, default 100. If
+`has_more` is true, continue with the returned `next_cursor`:
+
+```sh
+cocalc admin receivables diagnostics --include-legacy-invoices \
+  --legacy-invoice-cursor in_last_scanned --legacy-invoice-limit 100 \
+  --reason "Continue legacy invoice review" --json
+```
+
+An empty candidate list with `has_more=true` is **not** a completed scan. The
+cursor tracks the last examined invoice, not the last unlinked candidate.
+Pages are live provider reads, not a frozen accounting snapshot.
+
+Each candidate includes invoice/customer references, currency, due date, and
+`amount_remaining_minor` as an integer string in **Stripe minor units** (not
+universally cents; see [Stripe currency rules](https://docs.stripe.com/currencies)).
+`site_match` is `current`, `other`, or `unknown` based only on site metadata.
+Unknown or other-site candidates are not evidence of current-site ownership.
+
+Discovery performs no invoice creation, metadata update, import, send, payment,
+or void. Review identity, terms, tax, fulfillment, and currency before using the
+existing backfill/link workflow. Order creation/linking is still USD-only;
+foreign-currency discovery does not bypass that restriction. All requests retain
+the existing audited admin authorization and seed routing.
+
 The seed worker runs under a database lease so only one hub processes each
 maintenance interval. It:
 
