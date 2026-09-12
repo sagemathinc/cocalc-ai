@@ -198,7 +198,11 @@ Keep a ring buffer of recent events for late subscribers.
 
 Treat bootlog as a special case of LRO. Its progress and UI should work with the same event format and stream semantics.
 
-See [src/packages/frontend/project/bootlog.tsx](./src/packages/frontend/project/bootlog.tsx) for the current bootlog-style UI.
+The former `frontend/project/bootlog.tsx` component has been removed. Current
+project start progress is rendered by
+[src/packages/frontend/project/page/start-in-progress.tsx](../src/packages/frontend/project/page/start-in-progress.tsx),
+with shared stream and summary handling in the
+[frontend LRO helpers](../src/packages/frontend/lro/README.md).
 
 ## Mermaid diagram
 
@@ -229,7 +233,12 @@ sequenceDiagram
   Client-->>Client: render progress + final state
 ```
 
-## Implementation plan
+## Original Implementation Plan
+
+The sequence below records the design rollout. LRO types, storage, workers, and
+project integrations now exist; it is not a list of currently missing features.
+Use the relevant operation implementation to check its actual retry,
+cancellation, and recovery behavior.
 
 1. **Types and helpers**
    - Add shared LRO types and a progress helper module.

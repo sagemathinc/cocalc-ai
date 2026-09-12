@@ -1,15 +1,26 @@
-This is the Node.js daemon that run in a CoCalc project.  It includes some support code related to realtime sync, a self contained Jupyter kernel server, and much more.
+# CoCalc Project Runtime
 
-This code is part of https://github.com/sagemathinc/cocalc and isn't currently designed to be used standalone. Our plan is to refactor this code into smaller useful modules that are published under the @cocalc npm organization.
+This package implements the Node.js services inside a CoCalc project: Conat
+APIs, terminal execution, Jupyter kernels, file operations, and the internal
+HTTP/WS app proxy. It is part of the CoCalc-AI monorepo and is normally launched
+by the selected project runtime rather than installed as a standalone service.
 
-## Environment variables
+## Connections and configuration
 
-- `DATA` -- directory where local data about the running project server is stored. The default is `~/.cocalc`.
+- `COCALC_PROJECT_ID` identifies the project. `COCALC_USERNAME` defaults to `user`.
+- `COCALC_DATA_DIR` takes precedence over `DATA` for runtime metadata. The parent
+  runtime supplies the data location; without either override, shared backend
+  resolution uses `<CoCalc root>/data`.
+- The daemon connects to Conat using the configured address and project
+  credentials. [conat/connection.ts](./conat/connection.ts) owns that connection;
+  [conat/index.ts](./conat/index.ts) registers project services.
+- The app proxy uses `COCALC_PROXY_PORT` when supplied; its code default is 80
+  for a root process and 8080 otherwise. `COCALC_PROXY_HOST` defaults to loopback.
+  These are internal runtime settings, not instructions to expose an
+  unauthenticated port publicly. See [HTTP proxying](../../../docs/http-proxy.md).
 
-- `HUB_PORT` -- the project starts a TCP server listening on this port for connections _from_ the hub. Connections are denied unless they start with a secret token that is shared between the project and the hub. On cocalc-docker, the hub loads this from the file system. On Kubernetes, it shares it via a Kubernetes secret. If this variable is not set, then the operating system assigns the hub port at random, and you can find it in $DATA.
-
-- `CLIENT_PORT` -- the project also starts an HTTP server (that supports websockets) on this port for connections from web browser *clients*. The hub only proxies connections to the project if the user is allowed to make them, which is how this is secured in Kubernetes. In cocalc-docker, the hub inserts an extra cookie in the http request... TODO.
-
-- `COCALC_PROJECT_ID`
-
-- `COCALC_USERNAME`
+[servers/init.ts](./servers/init.ts) starts Conat services and the app proxy.
+The old description of separate `HUB_PORT` and `CLIENT_PORT` daemon listeners
+belongs to the earlier architecture and does not describe this initialization
+path. A remaining use of `HUB_PORT` by app-server helpers does not restore those
+old listeners.

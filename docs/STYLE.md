@@ -2,8 +2,8 @@
 
 ## Language (Javascript/Typescript/Python)
 
-- Prettier: Use the _defaults_ with the latest version of prettier on all of our Javascript and Typescript code. Use yapf for Python.
-  - NOTE: prettier's defaults change over time, but we don't ever just run it on our full massive codebase.
+- Prettier: Use the repository-installed version and `src/.prettierrc.json` for Javascript and Typescript. From `src/`, use `pnpm prettier:check <paths>` or `pnpm prettier:write <paths>`. Use yapf for Python.
+  - Format the files in the change; do not reformat the whole repository merely because formatter defaults or versions changed.
 
 - Typescript: Always prefer Typescript over Javascript.
 

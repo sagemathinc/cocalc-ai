@@ -293,8 +293,10 @@ Use the dedicated billing correction action when procurement supplies a new
 invoice recipient or address after approval or fulfillment. It preserves the
 approved agreement and fulfillment state, replaces only billing/procurement
 contacts and future invoice address/memo fields, and records an immutable
-event. It fails closed once any non-void invoice exists; void the incorrect
-invoice before correcting and reissuing it.
+event. It rejects the correction while any invoice has a status other than
+`void` or `failed`; resolve an active incorrect invoice before correcting and
+reissuing it. Unresolved provider operations and active Stripe quotes also
+block the correction.
 
 ```sh
 cocalc admin receivables billing update AR-2026-000123 \

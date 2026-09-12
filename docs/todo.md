@@ -1,6 +1,12 @@
 # Documentation TODO
 
-Short list of docs we still need to write so someone can understand and operate the new architecture end to end:
+This planning checklist identifies areas that need complete operational
+coverage. It is not an inventory of missing pages: several topics now have
+references linked from the [documentation index](README.md), including
+architecture, project moves, backups, secrets and SSH access. Check those
+references and current source before opening a new guide. An existing page
+does not establish that its full deployment or recovery workflow has been
+validated.
 
 - [ ] Security & Trust: threat model, trusted vs untrusted project-hosts, ssh key distribution, conat permissions, token lifetimes, forced commands, data at rest/in transit.
 - [ ] Deployment & Ops: how to bootstrap a hub + project-host cluster, required services (Postgres, object storage), sample configs/env vars, building and publishing images/SEAs, upgrade steps.

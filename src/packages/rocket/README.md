@@ -1,7 +1,8 @@
 # CoCalc Rocket
 
-CoCalc Rocket is the Kubernetes deployment of the Launchpad control plane.
-It runs the hub + conat services and uses external project hosts for compute.
+CoCalc Rocket packages the CoCalc control plane for customer-operated private
+infrastructure. This directory includes a systemd/VM bay runtime bundle and a
+Kubernetes Helm chart. Project compute runs on project hosts.
 
 This directory contains a first-round Helm chart and the bay runtime packaging
 work. The Helm chart is intentionally minimal and meant to be adapted for GKE +
@@ -12,7 +13,9 @@ Locations:
 
 - `bay/build-bundle.sh`: builds a compact Rocket bay runtime tarball
 - `bin/bay-migrate-schema.js`: bundled schema migration entrypoint
-- helm/rocket
+- `helm/rocket`: the Kubernetes chart
+- [bay systemd scaffold](../../scripts/bay-systemd/README.md): VM service templates
+  and operator bootstrap/upgrade instructions
 
 Build a bay runtime bundle:
 
@@ -24,7 +27,7 @@ The bundle includes the bay runtime plus the project-host, project, tools, and
 bootstrap artifacts needed for the bay's `/software/...` project-host bootstrap
 endpoints.
 
-Notes:
+Kubernetes chart notes:
 
 - Conat persist must run as exactly one pod with fast, durable storage.
 - The hub deployment runs the API + web entrypoint. It proxies /conat to the

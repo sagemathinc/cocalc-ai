@@ -1,5 +1,22 @@
 # Backup Indexes
 
+## Current backup browser
+
+The project-host now lists backups, browses directories, and searches through
+`rusticBackupBrowser` in
+[src/packages/project-host/rustic-backup-browser.ts](../src/packages/project-host/rustic-backup-browser.ts).
+The handlers in
+[src/packages/project-host/file-server.ts](../src/packages/project-host/file-server.ts)
+delegate to that service; `getBackups` accepts but no longer filters on
+`indexed_only`. A missing legacy SQLite index is therefore not a reason to hide
+a backup from the current browser. Restore continues to use Rustic snapshots.
+
+## Historical SQLite-index design
+
+The following design records the earlier SQLite-index approach. Index helpers,
+cache cleanup, and database compatibility APIs remain in the source, but this
+is not the current browser query path or a requirement for creating backups.
+
 CoCalc stores project backups in rustic repositories. Rustic is fast and
 reliable for backup/restore, but its query surface is intentionally small.
 For interactive browsing and search, we need fast local queries without
@@ -24,9 +41,9 @@ pulling metadata from remote buckets or forking rustic.
 4. UI listing and search read only from the local sqlite cache.
 5. When backups are deleted, their index snapshots are pruned and local
    cache entries removed.
-If an index build fails, that backup is still valid for full restore, but it
-won't appear in the interactive backup browser until a successful index is
-generated.
+   If an index build fails, that backup is still valid for full restore, but it
+   won't appear in the interactive backup browser until a successful index is
+   generated.
 
 ## Diagram
 
@@ -47,4 +64,3 @@ flowchart TD
 - The sqlite schema is compact and designed for fast parent/name lookup.
 - Index snapshots are kept in the same rustic repo, so the approach works
   for local disks or any supported remote backend.
-

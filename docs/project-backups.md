@@ -7,11 +7,9 @@ CoCalc backs up projects asynchronously from the project-host that holds the liv
 ```mermaid
 flowchart TD
     subgraph Host["Project-Host"]
-      P[Project subvolume<br/>btrfs snapshots]
-      S[Persist dir]
+      P[Project subvolume<br/>files + collaboration persistence]
       R[Backup job - rustic]
       P --> R
-      S --> R
     end
 
     subgraph Storage["Rustic Repo (bucket or disk)"]
@@ -29,33 +27,31 @@ flowchart TD
 
 ## Scope
 
-- Data included: project btrfs snapshot \(files\) plus the per\-project persist store \(`data/sync/projects/<project_id>`\).
+- Data included: a read-only snapshot of the project tree, including `.local/share/cocalc/persist` in the standard project-host configuration. Custom `COCALC_SYNC_PROJECTS` layouts need a matching backup plan.
 - Data excluded: btrfs snapshots themselves; backups are file\-level.
 - Frequency: daily per active/recent project \(host\-side scheduler\) plus on\-demand user triggers.
 - Concurrency: one backup at a time per project; small per\-host cap to protect I/O and CPU.
 
 ## Behavior
 
-- Backup flow: take a read\-only btrfs snapshot, run rustic against it \(and the persist dir\), then drop the temporary snapshot. Job state is recorded on the host \(pending/running/succeeded/failed with timestamps\).
-  - On hosts without btrfs, just backup the live filesystem.
+- Backup flow: take a read-only Btrfs snapshot of the project tree, run Rustic against it, then remove the temporary snapshot. The standard project-host path requires Btrfs; it does not fall back to backing up a live non-Btrfs directory.
 - Restore flow: any host can restore using repo \+ backup id, reconstructing the project tree and persist dir; archived projects can be rehydrated this way.
-- Failure/restart: running jobs on host restart become failed/stale and will retry on the next schedule or user request. No long RPC timeouts; initial “start” RPC ACKs quickly.
+- Failure/restart: user-requested backups are tracked as `project-backup` LROs by the hub worker, with leases, progress, timeout and host-availability handling. A request being accepted is not backup completion; inspect the final operation result before relying on it for recovery.
 
 ## Storage / Repos
 
 - [cocalc.ai](https://cocalc.ai): region buckets on Cloudflare R2. Projects are assigned to a shared rustic repo recorded in Postgres via `project_backup_repos` and `projects.backup_repo_id`.
-  - Today, the first project in a region auto-creates one active shared repo for that region.
-  - Additional shards can be added later by inserting more active repo rows; new projects are assigned by the hub.
-- Untrusted hosts: use per\-host \(or per\-tenant\) buckets/credentials, or signed\-URL gateway uploads so untrusted hosts lack broad bucket access.
+  - Multiple active shards per region and capacity-aware assignments are implemented; full shards are sealed and new active shards created. See [Buckets](./buckets.md) for the current policy and assignment records.
+- Untrusted-host isolation is a separate design question. Per-tenant credentials or signed-upload gateways must not be assumed from the shared-repository implementation.
   - Restores can target any host directly from the repo; no host\-to\-host SSH is required.
 - On\-prem: repo location is configurable \(local/NAS/S3\-compatible\).
 
 ## Observability
 
-- Host records job rows (project_id, backup_id, state, started/finished, bytes if available, repo). Hub API exposes list/status; UI shows last backup time/status and available backups. Progress streaming is optional; heartbeats can mark stalled jobs as failed.
+- The hub backup worker records the durable LRO summary and publishes progress events. Backup listing and browsing use the configured Rustic repository. Host-scheduled snapshot/backup maintenance is a separate path; inspect its logs and recorded backup results rather than assuming it creates the same user-requested LRO. See [backup-worker.ts](../src/packages/server/projects/backup-worker.ts) and [snapshot-backup-maintenance.ts](../src/packages/project-host/snapshot-backup-maintenance.ts).
 
 ## Open Items
 
-- Integrate per-project persist store into move/backup paths everywhere.
+- Validate nonstandard persistence layouts; standard project-host backups already include the in-project persistence directory.
 - Decide repo sharing model for untrusted hosts (per-bucket vs. brokered uploads).
-- Add pruning policy for old backups per project/host.
+- Further retention policy work; per-project backup retention and replacement-at-limit handling already exist.

@@ -13,11 +13,17 @@ and future key rotation.
 
 ## Current Design
 
-- A **master key** is stored on disk at:
-  - `DATA/secrets/backup-master-key`
-  - This file is created automatically if missing (similar to `conat-password`).
-  - The key is **not** stored in the database.
-  - In Kubernetes, the file should be mounted from a secret.
+- The backup encryption key is derived from the **site master key**, using the
+  purpose `project-backup-repo-secrets:v1`. The default site key is
+  `${SECRETS}/site-master-key` (`${DATA}/secrets/site-master-key` unless the
+  secrets directory is overridden). See [Secrets](./secrets.md) for path
+  overrides, systemd credentials, and required-key behavior.
+- `${SECRETS}/backup-master-key` is a **legacy** decryption key. Existing
+  repository secrets that need it are decrypted and re-encrypted with the
+  derived site key on read. Preserve legacy keys while retained databases or
+  unmigrated rows still depend on them.
+- The site master key is not stored in Postgres. Provision and back it up
+  separately from the database.
 
 - Hosted shared repos have one random secret per repo stored in Postgres:
   - Table: `project_backup_repos`
@@ -26,7 +32,7 @@ and future key rotation.
 
 - When a project host requests backup configuration:
   - The control plane resolves the assigned repo row.
-  - It decrypts that repo secret using the master key.
+  - It decrypts that repo secret using the purpose-derived key, with legacy-key migration when needed.
   - The secret is embedded into the Rustic TOML.
 
 ### Security Properties
@@ -43,6 +49,10 @@ and future key rotation.
   so it is not a per-project deletion mechanism.
 
 ## Rotation Plan (Future)
+
+The keyring below is an earlier proposal, not the implemented site-master-key
+lifecycle or an operator rotation command. The current stored repository-secret
+format is still `v1`; do not replace a live key based on this example.
 
 Rotation is intended to decouple:
 
@@ -79,7 +89,8 @@ shared repos.
 
 ## Operational Notes
 
-- The master key file must be backed up securely; losing it makes **all**
-  encrypted backup secrets unrecoverable.
-- For local dev, the file is generated automatically.
+- Back up the site key and any legacy keys still needed by retained database
+  versions. Losing a key makes ciphertext that depends on it unrecoverable
+  unless another valid copy of that key is available.
+- For local development, a missing site key is generated only when it is not required or supplied as a read-only credential.
 - For production, treat the master key like any other high-value secret.
