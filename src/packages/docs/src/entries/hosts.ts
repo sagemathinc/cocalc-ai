@@ -64,11 +64,13 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-hosts-684faa4c.webp",
       "A project host running several project folders",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "project host compute capacity CPU cores vCPU shared compute priority RAM memory limit GPU NVIDIA VRAM",
     slug: "hosts/project-hosts",
     status: "ready",
     summary:
-      "Run projects on dedicated or cloud-backed compute for courses, research, and agent sandboxes.",
+      "Run projects on dedicated or cloud-backed hosts and understand CPU sharing, RAM limits, and GPU access.",
     title: "Use project hosts",
   },
   {
@@ -89,11 +91,13 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-hosts-access-ram-9245deeb.webp",
       "A project host access panel with delegated users and resource limits",
     ),
-    lastReviewed: "2026-05-27",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "project host access owner manager delegated user private shared pool RAM memory entitlement cap limit",
     slug: "hosts/access-and-ram",
     status: "ready",
     summary:
-      "Delegate host access, understand shared-pool tiers, and set per-project RAM policy.",
+      "Delegate host access and understand shared-pool tiers, private-host RAM defaults, and per-project caps.",
     title: "Manage project host access and RAM",
   },
   {
