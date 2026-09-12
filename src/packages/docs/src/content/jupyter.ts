@@ -7,8 +7,14 @@ export const CREATE_JUPYTER_BODY = String.raw`
 ## What CoCalc Jupyter notebooks are for
 
 CoCalc notebooks are standard Jupyter notebooks in a backend project
-environment. Kernels and outputs are not tied to the browser tab, so long-running
-cells keep running and output is captured even if the browser disconnects.
+environment. Cells can keep running and output can be captured after a browser
+disconnect while the project and kernel remain running.
+
+On hosted sites, a configured browser-idle policy can stop the project even
+while a cell is running. Check **Project host lifecycle actions** in your site's
+[Docs index](/docs) before relying on unattended execution. Stopping or restarting
+the project or kernel loses its in-memory variables; save inputs and results to
+project files. See [kernel recovery](/docs/troubleshooting/jupyter-kernel-terminated).
 
 ## Create a notebook
 
@@ -39,8 +45,9 @@ export const USE_JUPYTER_BODY = String.raw`
 ## What Jupyter in CoCalc is for
 
 CoCalc runs standard Jupyter notebooks inside a durable project workspace. The
-notebook file is collaborative, the kernel runs in the project backend, and
-output is captured even if the browser tab disconnects.
+notebook file is collaborative and the kernel runs in the project backend.
+Execution and output capture can continue after a browser disconnect while the
+project and kernel remain running.
 
 Use notebooks for exploratory computation, teaching, data analysis, reports,
 plots, and workflows where code, output, and explanation belong together.
@@ -59,11 +66,18 @@ For the creation flow, see [Create a Jupyter notebook](/docs/jupyter/create-note
 CoCalc notebooks are designed for shared and long-running work:
 
 1. Multiple people can edit the same notebook in realtime.
-2. Long-running cells keep running when the browser disconnects.
+2. Cells can keep running after a browser disconnect while the project and
+   kernel remain running.
 3. Output is captured server-side and shown when you reconnect.
 4. TimeTravel records detailed notebook history.
 5. Large notebooks and large outputs are handled with CoCalc-specific rendering.
 6. Side chat, agents, terminals, and project files live next to the notebook.
+
+A configured browser-idle policy can stop a hosted project even while a cell
+runs. Before leaving work unattended, check **Project host lifecycle actions**
+in your site's [Docs index](/docs). A project or kernel stop loses in-memory
+variables; inspect saved files and outputs before rerunning work. See
+[kernel recovery](/docs/troubleshooting/jupyter-kernel-terminated).
 
 ## Choose a notebook view
 
@@ -84,8 +98,8 @@ hand-configuring each notebook.
 
 On CoCalc AI, you can also run a notebook's kernel on an SSH-accessible machine,
 including a GPU VM, while keeping the notebook in your project. See
-[Remote Jupyter kernels](/docs/jupyter/remote-kernels). Remote files are not
-automatically synchronized with project files.
+[Remote Jupyter kernels on CoCalc AI](https://cocalc.ai/docs/jupyter/remote-kernels).
+Remote files are not automatically synchronized with project files.
 
 ## Agents and notebooks
 
@@ -93,8 +107,10 @@ Agents should treat the live notebook state as the source of truth. Use
 \`cocalc project jupyter\` or the browser-session notebook APIs for durable
 notebook inspection and execution instead of editing \`.ipynb\` JSON directly.
 
-For shared popup controls, see
-[Use Agent from an editor](/docs/ai/editor-agent).
+Agent dialogs use **Recent agent sessions** when available to choose where a
+request goes. With **Automatically submit to Agent** unchecked, send the prepared
+draft from the agent chat. The steps below identify the controls for each cell
+action.
 
 ## Use Agent on a code cell
 
@@ -177,8 +193,9 @@ layout for the same live notebook: results and prose get the main column, source
 code moves into a narrow column beside them, and navigation aids make long
 notebooks easier to move through.
 
-Studio is a full editor, not a preview. Everything you can do in the classic
-view works here, including editing, running cells, collaborating, and chatting.
+Studio supports editing and running cells, collaborating, and chatting in the
+same live notebook. Its layout and navigation controls differ from the classic
+view.
 
 Use Studio when you are reading through results, presenting a notebook, working
 on a long document-style notebook, or when the code matters less than what it
@@ -274,9 +291,8 @@ Section-scoped runs are the reason headings pay off while you work, not only
 when you read: they let you re-run the part of the notebook you are editing
 without waiting for everything before or after it.
 
-All standard Jupyter keyboard shortcuts work unchanged: Shift+Enter to run,
-Escape and Enter to switch between command and edit mode, arrow keys to
-navigate.
+Use Shift+Enter to run cells, Escape and Enter to switch between command and
+edit mode, and arrow keys to navigate.
 
 ## Agents in the Studio view
 
@@ -303,7 +319,7 @@ A Jupyter kernel is the process that runs the code cells in a notebook. A
 or failed to start. The notebook file usually remains intact, but variables,
 imports, open files, and in-memory results from that kernel are gone.
 
-The most common causes are:
+Possible causes include:
 
 1. The project ran out of memory.
 2. The kernel crashed due to native code, compiled packages, or a bad extension.
@@ -327,9 +343,10 @@ project filesystem remain available.
 
 ## Diagnose memory pressure
 
-Out-of-memory kills are the most common reason for sudden kernel termination.
-The limit is shared by notebooks, terminals, language servers, web apps, and
-agents in the project.
+Memory pressure can cause sudden kernel termination. Check memory use alongside
+the kernel's error message; termination alone does not establish the cause.
+The project memory limit is shared by notebooks, terminals, language servers,
+web apps, and agents in the project.
 
 See [Low memory and out-of-memory crashes](/docs/troubleshooting/memory) for
 ways to reduce memory use, stop other processes, checkpoint work, or move the
@@ -398,6 +415,10 @@ any reported blocker in the chat.
 
 ## Create a Python kernel with uv
 
+The commands below are for a Linux project using a POSIX shell. Local CoCalc
+Plus uses your computer's operating system and installed software; interpreter
+paths and shell commands can differ there.
+
 Open a terminal in the project and install \`uv\` if it is not already
 available:
 
@@ -429,8 +450,10 @@ The display name is what people see in the notebook kernel selector. Replace
 3. Choose **Python (my-analysis)**.
 4. Run a cell that imports a package installed in the environment.
 
-If the kernel does not appear immediately, refresh the browser tab, reopen the
-notebook, or restart the project so Jupyter reloads the kernelspec list.
+If the kernel does not appear, click **Refresh** in the kernel selector to
+reload its list. Check the registered kernelspec and its Python path if it is
+still missing. If a runtime or tools update requires a project restart, save
+your work first: a project restart stops its running processes.
 
 ## Install more packages later
 
@@ -455,10 +478,9 @@ rm -rf ~/.venvs/my-analysis
 
 ## Why this matters in CoCalc
 
-CoCalc projects are real Linux environments, so Jupyter kernels are ordinary
-kernelspecs backed by ordinary Python executables. That means humans and agents
-can inspect, rebuild, and document the environment with normal terminal tools
-instead of relying on hidden browser state.
+Custom Jupyter kernels use ordinary kernelspecs backed by Python executables.
+Humans and agents can inspect, rebuild, and document the environment with
+terminal tools appropriate to the project's operating system.
 `;
 
 export const OCTAVE_JUPYTER_KERNEL_BODY = String.raw`
@@ -550,8 +572,10 @@ Expected notebook result:
 
 ## Troubleshooting
 
-If the Octave kernel does not appear immediately, refresh the browser tab,
-reopen the notebook, or restart the project so Jupyter reloads kernelspecs.
+If the Octave kernel does not appear, click **Refresh** in the notebook's
+kernel selector, then check the kernelspec and interpreter path below. If a
+runtime or tools update requires a project restart, save your work first: a
+project restart stops its running processes.
 
 If plotting works but prints a \`gnuplot\` warning, that warning is acceptable
 for this headless notebook setup.
@@ -591,12 +615,15 @@ environment for a class, research workflow, workshop, or agent sandbox.
 1. Open the project.
 2. Open **Settings**.
 3. Go to **Environment**.
-4. Open the runtime image or RootFS controls.
-5. Pick a catalog image or enter a custom image.
-6. Restart the project when prompted.
+4. In the **Image** card, choose **Details**, then **Change**.
+5. Pick a managed catalog image. Administrators can also enter an arbitrary
+   OCI image in the advanced controls.
+6. Save work before applying the change. Changing the image of a running project
+   automatically queues a project restart; a stopped project uses the selected
+   image on its next start.
 
 Changing the image affects system software. Project files remain in the project,
-but processes should be restarted so the new environment is active.
+but a restart ends running processes and clears their in-memory state.
 
 ## Reuse environments
 

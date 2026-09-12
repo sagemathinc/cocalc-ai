@@ -17,6 +17,9 @@ and Rocket expose the broader operator workflows for managing hosts.
 Use project hosts for heavier workloads such as long-running research
 computations, courses, or agent sandboxes.
 
+For a comparison with managed VMs and remote notebook kernels, see
+[Choose compute for research](/docs/hosts/choose-compute).
+
 The host is not just a label. It controls where the project filesystem lives,
 where project processes run, where host-local snapshots are stored, what runtime
 software is installed, which backup region is used, and which users are allowed
@@ -49,11 +52,35 @@ may place projects there without delegated host access.
 
 ## Project RAM cap
 
-The host **Project resource policy** has an optional per-project RAM cap. This
-cap lets projects use more RAM on a large host without changing normal project
-policy for CPU and storage. Leave it blank when normal project limits should
-apply. Set it deliberately when the host is dedicated to workloads that need
-larger in-memory notebooks, language models, databases, or agents.
+The host **Project resource policy** has an optional per-project RAM cap.
+With the cap blank, a private host uses a default derived from its reported
+RAM when available, with room left for host services. A public shared-pool host
+keeps the project's normal RAM entitlement.
+
+See [Manage project host access and RAM](/docs/hosts/access-and-ram) for the
+defaults and how to plan for several projects running together.
+
+## CPU sharing
+
+Projects can use otherwise-idle CPU capacity within the host's project pool,
+subject to the pool's CPU limit. That limit can leave capacity for host services.
+When several projects need CPU at the same time, their shared-compute
+priorities determine their relative shares. Higher priority helps under
+contention; it does not reserve particular cores.
+
+To use several cores at once, your program must run work in parallel. The
+number of cores visible to a program does not guarantee that all of them will
+be available to that program throughout a computation.
+
+## GPU access
+
+On an NVIDIA GPU host, GPU-enabled projects receive access to all of the
+host's GPUs. Projects on the same host can use the same devices, so coordinate
+concurrent jobs with other host users and check available GPU memory before
+starting a large workload.
+
+GPU memory is separate from the project RAM cap. Increasing that cap does not
+increase the memory on a GPU.
 
 ## Moving projects
 
@@ -133,8 +160,9 @@ When the instructor prepares a run, CoCalc freezes its configuration:
 - outbound project networking disabled and checked during readiness
 - terminal access either allowed or disabled for the entire run
 - backups and snapshots disabled for temporary projects
-- a required automatic project-deletion time
-- optional project-host shutdown after cleanup, enabled by default
+- a project-deletion deadline for scheduled runs, or manual cleanup for practice
+  runs
+- optional project-host shutdown after scheduled cleanup, enabled by default
 
 The central CoCalc service remains the instructor control plane. Student files,
 Jupyter kernels, browser traffic, and other project traffic go directly to the
@@ -213,12 +241,11 @@ cocalc host exam status <host>
 # Enable exam mode and configure per-project limits.
 cocalc host exam configure <host> --enable --max-projects 100 \
   --project-cpu 1 --project-memory-mb 2000 --project-disk-mb 5000 \
-  --maximum-run-minutes 360 --cleanup-grace-minutes 10 --deny-terminal \
-  --admission-token UCL-practice-2026
+  --maximum-run-minutes 360 --cleanup-grace-minutes 10 --deny-terminal
 
 # Prepare the run and wait for its smoke test to finish.
 cocalc host exam prepare <host> --rootfs <image> \
-  --delete-at 2026-08-01T15:00:00Z --stop-host
+  --delete-at "FUTURE_UTC_TIMESTAMP" --stop-host
 
 # Rotate a lost token before opening admission, then admit students.
 cocalc host exam rotate-token <host>
@@ -226,11 +253,17 @@ cocalc host exam open <host>
 cocalc host exam status <host> --wait
 
 # Change cleanup policy, or end early and permanently erase all exam projects.
-cocalc host exam deadline <host> --delete-at 2026-08-01T15:30:00Z --stop-host
+cocalc host exam deadline <host> --delete-at "UPDATED_FUTURE_UTC_TIMESTAMP" --stop-host
 cocalc host exam deadline <host> --manual-cleanup
 cocalc host exam capacity <host> --max-projects 110
 cocalc host exam end <host> --stop-host --yes
 ~~~
+
+Replace the timestamp placeholders before running the prepare or deadline
+commands. Use an ISO 8601 UTC timestamp in the form \`YYYY-MM-DDTHH:MM:SSZ\`
+that is at least one minute in the future and within the configured **Maximum
+run** interval. The configure example keeps the existing admission token or
+generates one when needed.
 
 Configuration, preparation, and token rotation return the stable plaintext
 admission token and a copyable admission URL. The authenticated status command
@@ -329,9 +362,9 @@ advice before the increase is submitted.
 
 ## Step 5: end the run safely
 
-The normal end is automatic. At the configured time, admission closes and all
-temporary projects are erased. If **Also shut down the project host to save
-resources** is selected, the VM then powers off; otherwise the reusable host
+A scheduled run ends automatically. At the configured time, admission closes
+and all temporary projects are erased. If **Also shut down the project host to
+save resources** is selected, the VM then powers off; otherwise the reusable host
 keeps running. A durable central reconciler and a persisted host-local watchdog
 both enforce cleanup across service and VM restarts.
 
@@ -387,7 +420,7 @@ Thirty to sixty minutes before the exam:
 
 - start the trusted host and wait for it to become healthy
 - prepare a new run and require all readiness checks to pass
-- securely record the one-time shared token
+- securely record the stable shared admission token
 - test one candidate project using the actual lockdown browser
 - confirm the project-deletion time, host-shutdown choice, and active-project
   capacity
@@ -428,15 +461,25 @@ that should only be usable by a known set of people.
 
 ## Per-project RAM cap
 
-The host access page also includes **Project resource policy**. The optional
-RAM cap applies to projects running on that host. It is useful when a large
-dedicated host should permit larger notebooks, agents, or databases than the
-normal project policy allows.
+The host access page includes **Project resource policy**, where an owner or
+manager can set an optional RAM cap for each project running on the host.
 
-Do not set the cap higher than the host can realistically support for the
-number of simultaneous projects. If several projects can run at once, leave
-headroom for the project host itself, filesystem cache, backups, and runtime
-services.
+- **Private host:** an explicit cap sets the project's RAM limit. With the cap
+  blank, the default is based on reported host RAM, with headroom for host
+  services. The user's shared-pool membership RAM limit does not constrain
+  this host-derived default. If host RAM is unavailable, the existing project
+  RAM limit remains in effect.
+- **Public shared pool:** leaving the cap blank keeps the project's normal
+  RAM entitlement. An explicit cap can lower that limit but cannot raise it
+  beyond the project's entitlement.
+
+All projects share the host's physical RAM. Setting a per-project cap does
+not reserve that amount for every project. Plan for the number of projects
+that will run together, and leave headroom for the project host itself,
+filesystem cache, backups, and runtime services.
+
+The cap covers memory used across the project's running processes, including
+notebook kernels, terminals, databases, and agents.
 
 ## Agent notes
 
@@ -538,6 +581,27 @@ machine restart. Reboot is graceful when the provider supports it. Some
 providers also expose a hard reboot, which is more disruptive and should be a
 maintenance-window action.
 
+## Browser disconnects and project runtime
+
+Closing a browser tab disconnects that browser. Projects with a browser-idle
+policy can also stop automatically after browser presence has been absent for
+the configured time. Check the **Free project runtime** banner inside the
+project for its timeout; do not assume every project has the same policy.
+
+Running code in a notebook, terminal, or agent does not itself supply browser
+presence. A public share or a collaborator with only viewer access does not
+keep this runtime running. After a browser-idle stop, open the project in an
+authenticated CoCalc browser with runtime access before retrying automatic
+services. If automatic starts are disabled, use the project's **Start** button
+as directed by the error message.
+
+A browser-idle stop preserves project files. Save results to files instead of
+relying on variables or other state held only by a running process. A stopped
+project, a stopped host, and a browser disconnect are different conditions;
+check project and host status before deciding how to recover. Host maintenance,
+provider interruptions, and billing enforcement can interrupt availability
+independently of the browser-idle policy.
+
 ## Deprovision and delete
 
 Deprovisioning is destructive for provider resources. It removes the cloud
@@ -588,8 +652,9 @@ capacity. The key settings are:
   moving on.
 - **Retry backoff (seconds)**: the base delay between spot restore attempts.
   The worker adds exponential backoff up to a cap.
-- **Max restore attempts before fallback**: a count-based limit. Set it to
-  \`0\` to rely only on the retry window.
+- **Max restore attempts before fallback**: a count-based limit. Use a positive
+  value. Entering \`0\` currently uses the default count instead of disabling
+  the attempt limit.
 
 Use a short window when user-facing uptime matters. Use a longer window when
 cost matters more than immediate recovery.
@@ -635,24 +700,28 @@ host edits as infrastructure changes, not normal project settings.
 
 ## Changes that can happen while running
 
-**Disk enlarge** can be done any time without reboot for GCP and Nebius hosts.
-This is an online capacity increase. It should still be treated carefully:
-watch the storage tab and keep backups current, but users do not need to stop
-the host just to grow disk.
+**Disk enlarge** supports online growth for provisioned GCP and Nebius hosts
+using persistent storage. Ephemeral storage cannot be resized this way. Keep
+backups current and check both provider disk size and usable filesystem capacity
+afterward. If the disk grows but filesystem growth reports a warning, follow
+the warning's recovery instructions before treating the extra space as usable.
 
 Access policy, per-project RAM cap, shared-pool tier, and many metadata or
 billing policy settings are also host record changes. They do not by
 themselves recreate the provider machine.
 
-## Changes that require restart
+## Changes that interrupt running work
 
-Switching **spot** and **standard** pricing can be requested any time, but the
-effective machine changes only after restart. Instance type changes are the
-same: they can be edited while the host exists, but they require restart before
-the running machine matches the new shape.
+Switching **spot** and **standard** pricing can be requested while a host is
+running, but the effective machine changes only after restart.
 
-Use the UI's restart/reprovision warnings as the source of truth for whether a
-host is currently running old infrastructure.
+For managed cloud hosts, stop the host before changing CPU, RAM, machine type,
+or GPU selection. Apply the permitted change, then start the host and verify
+that it reports the requested configuration. Self-hosted connector changes
+follow the connector's own capabilities.
+
+Check the UI's restart/reprovision warnings before applying a change and plan
+for interruption of the projects running on that host.
 
 ## Changes that require deprovision
 
@@ -672,10 +741,10 @@ again in the new location.
 
 ## Agent notes
 
-For GCP and Nebius, disk enlarge is online. For spot/standard and instance type
-changes, expect restart. For region/zone moves, expect deprovision. Do not
-promise a no-downtime machine shape or location change unless provider-specific
-code explicitly supports it.
+For GCP and Nebius persistent storage, check online disk and filesystem growth.
+For spot/standard changes, expect restart. Stop a managed cloud host before
+editing its machine shape. Region/zone and disk-type/storage-mode changes
+require deprovision. Check current backups and interruption effects first.
 `;
 
 export const PROJECT_HOST_RELIABILITY_BODY = String.raw`
@@ -700,15 +769,17 @@ The modal and tab show:
 **Reliability** measures uptime only during periods when the host was intended
 to be online. Planned downtime is excluded from the reliability denominator.
 
-**Availability** is wall-clock uptime over the whole window. A host that was
-intentionally stopped for most of the month can have low availability but good
-reliability.
+**Availability** divides online time by the selected window after subtracting
+periods recorded as **Unobserved**. Planned downtime remains in that denominator.
+A host intentionally stopped for most of the month can therefore have low
+availability but good reliability. Check the displayed unobserved duration too:
+missing observations are not evidence that a host was healthy.
 
 ## Reading the day grid
 
 The small day squares summarize the recent window. Green days were reporting
-online. Yellow or red indicates unplanned exposure. Gray indicates planned
-downtime. Hovering a day shows the day's details.
+online. Yellow or red indicates unplanned exposure. Gray can indicate planned
+downtime or unobserved time. Hovering a day shows the distinction and durations.
 
 If the host is currently unavailable, the top alert distinguishes planned
 unavailability from unplanned or recovering state.
@@ -813,12 +884,16 @@ disks** docs before enabling scratch for a host with multiple users or projects.
 
 ## Growing disk
 
-For GCP and Nebius hosts, disk enlarge can be done while the host is running
-and does not require a reboot. Growing disk is one-way: plan for future use,
-but do not treat it as a reversible experiment.
+For provisioned GCP and Nebius hosts using persistent storage, disk enlarge
+supports online growth. Ephemeral storage cannot be resized this way. Growing
+disk is one-way: plan for future use, but do not treat it as a reversible
+experiment.
 
-After growing disk, verify the Storage tab and the host status. If usage remains
-high, check whether projects are producing temporary files, caches, datasets,
+After growing disk, verify both the provider disk size and usable filesystem
+capacity in the Storage tab. If the provider resize succeeds but filesystem
+growth reports a warning, follow its recovery instructions and verify the
+capacity again. Also check the host status. If usage remains high, check whether
+projects are producing temporary files, caches, datasets,
 or build artifacts that should be moved or deleted instead of simply growing
 the disk again.
 
@@ -874,10 +949,11 @@ durability properties, but CoCalc does not back up scratch contents.
 
 ## Lifecycle rules
 
-Scratch persists across normal host stop/start, reboot, ordinary host edit or
-recreate, spot-to-standard fallback, standard-to-spot changes, and instance type
-changes. It is deleted when the host is explicitly deleted or when the scratch
-disk itself is deleted.
+CoCalc preserves scratch across normal host stop/start, reboot, and supported
+machine replacements such as spot-to-standard fallback. Explicit host
+deprovisioning, host deletion, or scratch-disk deletion destroys scratch data.
+Before these destructive actions, copy important scratch files to separately
+retained storage. Project backups do not include them.
 
 Adding scratch or deleting scratch can be requested while the host is running.
 Projects may need to be restarted before they see a newly added \`/scratch\`
@@ -896,8 +972,10 @@ configured maximum, and still runs billing/admission checks before increasing
 pay-as-you-go storage.
 
 For Nebius hosts, creating the initial scratch disk can be done without a host
-reboot. Growing an existing Nebius scratch disk later requires a host reboot
-before the larger filesystem is available.
+reboot. When growing an existing disk, CoCalc attempts to make the larger
+filesystem available online. Check the usable capacity after the operation.
+If filesystem growth does not complete, follow the warning to retry reconcile
+or restart the host if the provider has not exposed the new block size yet.
 
 Scratch growth is one-way: you can grow the disk, but you cannot shrink it in
 place. To shrink or change disk type, delete the scratch disk and recreate it at
@@ -934,7 +1012,7 @@ When helping with shared scratch:
    durable location first.
 `;
 
-export const PROJECT_HOST_LOGS_BODY = String.raw`
+export const PROJECT_HOST_LOGS_BODY = `
 ## What host logs are for
 
 The host **Logs** tab shows operational history for the project host itself:
@@ -952,7 +1030,7 @@ problem.
 
 Start with the drawer overview and the relevant tab:
 
-1. **Details** for current state and active operations.
+1. **Overview** for current state and active operations.
 2. **Reliability** for recent online/offline history.
 3. **Runtime** for software lifecycle, drift, and daemon health.
 4. **Logs** for the event stream behind those summaries.
@@ -960,11 +1038,94 @@ Start with the drawer overview and the relevant tab:
 For CLI inspection, use a small recent tail first:
 
 ~~~sh
-cocalc host logs <host-id> --tail 200
+cocalc host logs HOST_ID --tail 200
 ~~~
 
 If the recent tail is not enough, narrow by the time of the failed action
 instead of dumping unrelated history.
+
+## Read resource measurements before changing capacity
+
+Use the selected host's **Overview** tab and **Current metrics** card to check
+whether a slow or interrupted job coincides with host pressure. These are
+host-wide observations, including other projects and host services; they do not
+identify your job's bottleneck on their own.
+
+Check the sample time first. **metrics pending**, **metrics stale**, an absent
+field, or an empty history is missing or outdated evidence, not zero usage.
+A recent host action can make an earlier sample irrelevant. Compare samples
+from the period when the problem happened with the relevant project activity.
+
+### A computation is slow
+
+Inspect host CPU percentage and load averages; the project's process/activity view.
+
+Host CPU is aggregated across cores and projects. Check whether the affected program uses multiple cores and whether other work is competing. One host percentage does not establish that adding cores will speed up this job.
+
+### A notebook kernel is killed or memory grows
+
+Inspect the kernel's memory display, project RAM limit, and host available memory.
+
+The kernel display includes its child processes but excludes unrelated project processes. All of those processes share the project limit. Compare both scopes using [memory troubleshooting](/docs/troubleshooting/memory) and [host RAM policy](/docs/hosts/access-and-ram).
+
+### Writes fail or a project cannot start because of storage
+
+Inspect project disk quota, host disk and filesystem-metadata space, root-disk space, and shared scratch where applicable.
+
+These are separate limits and locations. Match the error to the affected storage before deleting files or changing disk size. See [host storage](/docs/hosts/storage); do not assume host free space means the project has free quota.
+
+### File-heavy work stalls while CPU use is modest
+
+Inspect available I/O containment status, sampled per-project read/write rates, and the workload's own timings.
+
+Check capability and sampling errors first. The top-project list is sampled and can be truncated; it is not a complete per-process profiler. Transfer rates alone do not prove that disk hardware is the bottleneck.
+
+### A GPU allocation fails or GPU work is slow
+
+Inspect device and framework measurements on the machine that actually runs the code.
+
+Current host metrics do not report GPU utilization or GPU memory. Host RAM is not GPU memory; missing GPU measurements do not mean the device is idle or has space.
+
+The notebook usage display does not currently report CPU or memory use for a
+[remote Jupyter kernel](/docs/jupyter/remote-kernels). Inspect that remote
+machine instead of interpreting the CoCalc host's measurements as remote usage.
+
+## Inspect current and recent metrics from the CLI
+
+Use the [CLI authentication guide](/docs/cli/authentication-and-targets) to
+select the correct site and account. Metrics history requires the host owner,
+a host manager, or a site administrator. Membership in a project alone does
+not grant that host-level access. Replace HOST_ID with an existing host you
+are authorized to inspect:
+
+~~~sh
+cocalc --json host metrics HOST_ID --window 1h --points 60
+~~~
+
+The JSON success response wraps the host identity and metric results in
+**data**. Check **data.current.collected_at** and the timestamps in
+**data.history.points**. **data.current** can be null, history points can be
+empty, and returned points can be compacted to the requested maximum.
+Requesting more points does not create measurements that were never collected.
+**data.derived** summarizes sampled storage risk and can be null. It is not a
+benchmark or a promise about future capacity.
+
+When **data.current.io_containment** is present, check **capability**,
+**capability_reason**,
+**sampling_error**, **sampled_project_count**, **total_project_count**, and
+**truncated** before interpreting **top_projects**. An unsupported collector
+or a partial sample is not evidence of no I/O load.
+
+Command syntax was checked with CoCalc CLI 1.0.3 on 2026-09-11. This reference
+does not include an observed host measurement or a before/after performance
+comparison.
+
+Record the input size, command or notebook, machine, concurrent work, sample
+timestamps, elapsed time, and output check for a representative run. Use those
+observations to choose one change, then compare the same input and verified
+result. Keep raw host output private when it includes identifiers for other
+projects. If the data does not identify a constraint, retain that uncertainty
+and inspect the application before changing capacity.
 
 ## Reading log patterns
 
@@ -994,7 +1155,7 @@ When helping with host debugging:
 2. Open **Logs**, **Runtime**, and **Reliability** rather than using logs alone.
 3. Capture the action attempted, approximate time, current host state, active
    operation, and whether the host is spot or standard.
-4. Use \`cocalc host logs <host-id> --tail 200\` for a focused first pass.
+4. Use \`cocalc host logs HOST_ID --tail 200\` for a focused first pass.
 5. Route host inspection to the host-owning bay; do not assume the browser's
    current project bay owns the host.
 `;

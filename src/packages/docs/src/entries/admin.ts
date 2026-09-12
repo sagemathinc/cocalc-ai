@@ -261,15 +261,15 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
       "/public/docs/cocalc-cli-862b8d4e.webp",
       "A terminal managing CoCalc software artifacts and deployments",
     ),
-    lastReviewed: "2026-06-16",
+    lastReviewed: "2026-09-11",
     noActionReason:
       "Command-line runbook; run the shown cocalc software commands in an authenticated source checkout.",
     searchKeywords:
-      "software deploy build push history rollback smoke artifacts release channels R2 bay project-host cli launchpad plus star",
+      "software deploy rollout canary readiness health build push history rollback smoke artifacts release channels R2 bay project-host cli launchpad plus star",
     slug: "admin/cocalc-software",
     status: "ready",
     summary:
-      "Build, publish, deploy, smoke, inspect, and roll back CoCalc software components from a source checkout.",
+      "Understand deployment effects, canary campaigns, and readiness evidence while managing CoCalc software releases.",
     title: "Manage software releases with cocalc software",
     visibility: "admin",
   },

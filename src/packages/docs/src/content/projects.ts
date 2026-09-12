@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export const PROJECT_SECRETS_BODY = String.raw`
+export const PROJECT_SECRETS_BODY = `
 ## What project secrets are for
 
 Project secrets are named values that are available to code running in a
@@ -59,6 +59,89 @@ outputs, chat messages, logs, or command history.
 SSH private keys usually need a final newline. If you paste one manually, use
 the warning in the Secrets dialog to add the newline before saving.
 
+## Choose secrets or ordinary environment variables
+
+Use **Custom Environment Variables** for non-secret configuration. After an
+authorized update is saved, restart the project for those values to take effect
+in terminals, Jupyter kernels, and other processes. API keys, private keys, and
+tokens belong in **Project Secrets**. An authorized, saved secret update can
+refresh the mounted files without restarting the project; check the refresh
+result below. A secret-file refresh does not reload a value that an application
+already cached.
+
+## Manage secrets with the CLI
+
+Run these commands in a terminal with the CoCalc CLI installed and
+authenticated to the intended site as an account allowed to manage the selected
+projects. Start with [CLI setup](/docs/cli/getting-started) and
+[Authentication and targets](/docs/cli/authentication-and-targets). Replace
+\`TARGET_PROJECT_ID\` and \`SOURCE_PROJECT_ID\` below with the intended projects.
+Copying requires collaborator access to both projects.
+
+**Validation (2026-09-11):** the list, set, copy, and delete help was checked
+with CoCalc CLI 1.0.3. At source revision
+[b024f77](https://github.com/sagemathinc/cocalc-ai/blob/b024f77b31f7579104fa3481dd5c2aee1df43130/src/packages/cli/src/bin/commands/project/env-secrets.ts),
+17 command-registration checks passed with Commander 14.0.1 and synthetic
+project and service adapters. These examples describe reference syntax and
+selection behavior. Authenticated transfers, server enforcement, mount refresh,
+and application reloads have not been exercised by these checks.
+
+These commands inspect metadata and available options:
+
+~~~sh
+cocalc project secrets list --project TARGET_PROJECT_ID --json
+cocalc project secrets set --help
+cocalc project secrets copy --help
+~~~
+
+\`list\` returns secret metadata, such as names and sizes, rather than secret
+values. \`set NAME\` adds or replaces one secret and requires exactly one input
+source: \`--value\`, \`--file\`, or \`--stdin\`. Prefer a protected input file or stdin
+when supplying a credential so its value is not written into the command line.
+
+Course-managed secrets cannot be changed using generic \`set\`, \`delete\`, or
+\`copy --overwrite\` commands.
+
+To copy an existing secret named \`DOCS_EXAMPLE\`, explicitly select its source,
+destination, and name. This command writes to the destination project:
+
+~~~sh
+cocalc project secrets copy --from SOURCE_PROJECT_ID --project TARGET_PROJECT_ID --name DOCS_EXAMPLE --json
+~~~
+
+\`DOCS_EXAMPLE\` is an example name; the command does not create a source secret.
+Omitting \`--name\` requests all secrets from the source project. Use explicit
+names when only some credentials belong in the destination. Add \`--overwrite\`
+only when you intend to replace matching destination names; replacement is off
+by default.
+
+Inspect the command's result fields before continuing:
+
+| Field | Meaning |
+| --- | --- |
+| \`copied\` | Names copied by this request. |
+| \`conflicts\` | Destination names that prevented a copy without \`--overwrite\`. |
+| \`missing\` | Requested names absent from the source. |
+
+If \`conflicts\` or \`missing\` is nonempty, \`copied\` is empty: the request does not
+skip the problem names and copy the rest. Resolve the names or replacement
+choice deliberately before trying again. Listing destination metadata can
+confirm which names exist; it does not reveal their values or prove an
+application is using them.
+
+## Check the mount separately from the application
+
+A successful change can include a \`runtime_refresh\` result. The status
+\`cached_for_next_start\` means the saved secrets will be mounted on the next
+start; \`retry_pending\` means the runtime refresh has not been confirmed. In the
+**Secrets** panel, use **Retry mount refresh** when that action is offered.
+After the mount is current, reload an application that cached the old value and
+verify its expected behavior without printing the credential.
+
+\`cocalc project secrets delete NAME --project TARGET_PROJECT_ID\` removes a
+project secret. Removing or replacing that mounted value does not revoke the
+credential at its external issuer; handle issuer-side revocation separately.
+
 ## Why this matters in CoCalc
 
 CoCalc projects are collaborative, durable, and agent-friendly. That is exactly
@@ -80,11 +163,14 @@ paper, workshop, or team workspace.
 
 ## Create a project
 
-1. Open **Projects**.
-2. Choose **New Project**.
-3. Give the project a clear name.
-4. Pick an initial setup if one is offered.
-5. Open the project and add files, collaborators, or runtime settings.
+1. Open **Projects** and choose **Create**.
+2. Give the project a clear name and review the image and placement options.
+3. Choose **Create Project**, or **Create and Open** to start and open it.
+4. Add files, collaborators, or runtime settings.
+
+If creation is disabled because your email address is unverified, complete
+email verification first. Essential uses **New project**, then **Create project**;
+see the worked example above.
 
 Project names are for humans. The project id is the durable identifier used by
 APIs, agents, browser-session actions, project hosts, and logs.
@@ -128,10 +214,10 @@ environment, or host placement. For the short creation flow, see
 export const VIRTUAL_MACHINES_BODY = String.raw`
 ## What virtual machines are
 
-Managed Compute VMs are standalone cloud machines owned by your account and
-attached to a CoCalc project. Choose Linux on GCP or Nebius, including supported
-ARM and GPU machines, or Windows Server 2022 on GCP. CoCalc, Jupyter, and other
-CoCalc project software are not installed automatically.
+Managed Compute VMs are standalone cloud machines owned by your account that
+can grant SSH access to a CoCalc project. Choose Linux on GCP or Nebius, including
+supported ARM and GPU machines, or Windows Server 2022 on GCP. CoCalc, Jupyter,
+and other CoCalc project software are not installed automatically.
 
 Use a VM when the project runtime is not the right size or shape for a job, or
 when you need full control of a conventional machine. Unlike a locked-down
@@ -207,14 +293,22 @@ ssh my-vm
 ~~~
 
 The **Connect** menu shows this project-local command first, followed by the
-CoCalc CLI command, DNS hostname, and full direct SSH command. The same commands
-work for Linux and Windows:
+CoCalc CLI command, DNS hostname, and full direct SSH command. Use the CLI to
+list VMs or open an interactive SSH session on Linux or Windows:
 
 ~~~sh
 cocalc vm list
 cocalc vm ssh my-vm
+~~~
+
+You can also pass a remote command. This example is for a Linux VM:
+
+~~~sh
 cocalc vm ssh my-vm uname -a
 ~~~
+
+By default, Windows SSH starts PowerShell; use commands appropriate to that
+environment.
 
 For Linux file transfer, use \`rsync\` through the CLI:
 
@@ -443,9 +537,11 @@ CoCalc creates an unguessable short slug by default. You can change the slug to
 something easier to remember if the link is meant to be public or easy to type.
 Slugs are global, URL-safe names; if a slug is already in use, choose another.
 
-Shares are unlisted. CoCalc does not publish a directory of public shares, but
-anyone who receives the URL may be able to open it. Treat the URL as a sharing
-link, not as a private secret.
+The normal **Publish** workflow creates an unlisted share. Other publication
+records can have a different visibility; check the displayed visibility in
+**Project Settings -> Publish** or **Account Settings -> Public Shares**.
+Anyone who receives an unlisted URL may be able to open it. Treat the URL as a
+sharing link, not as a private secret.
 
 ## Viewer access model
 
@@ -536,10 +632,12 @@ second live manifest inside the image.
 1. Open the project that has the software installed and tested.
 2. Open **Settings**.
 3. Go to **Environment**.
-4. Open **Runtime Image**.
-5. Choose **Publish Current RootFS** or manage the current catalog entry.
+4. In the **Image** card, choose **Details**.
+5. Under **Publish current image**, choose **Publish**. To update an existing
+   entry's metadata, use **Manage catalog entry** instead.
 6. Fill in metadata, theme, discovery actions, and visibility.
-7. Save or publish.
+7. Review the **Publish Current Image** dialog and choose **Publish Image**, or
+   choose **Update Catalog Entry** when managing existing metadata.
 
 Publishing the current project RootFS snapshots the visible software
 environment. It does not publish \`/home/user\`, \`/root\`, or \`/tmp\`.

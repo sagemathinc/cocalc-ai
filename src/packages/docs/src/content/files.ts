@@ -143,8 +143,9 @@ before changing the full paper.
 
 ## Ask Agent about a LaTeX build error
 
-For shared session-selection controls, see
-[Use Agent from an editor](/docs/ai/editor-agent).
+When **Recent agent sessions** is shown, select the conversation that should
+receive the request. The confirmation button submits it to that conversation;
+follow the response there and review any changes.
 
 An error entry with a source line can offer **Fix with Agent...** and
 **Ask Agent for a Hint...**, depending on the AI access allowed in the project.
@@ -353,20 +354,24 @@ browser-accessible workspace with terminals, notebooks, TimeTravel, and agents.
 export const PYTHON_BODY = String.raw`
 ## What Python in CoCalc is for
 
-Python in CoCalc is real Python running in a Linux project, not a browser-only
-runtime. You can use notebooks, scripts, terminals, virtual environments,
-package managers, LaTeX workflows, and agents in the same project.
+Python runs in the project's computing environment. Hosted CoCalc AI projects
+use Linux; local CoCalc Plus uses your computer's operating system and installed
+software. You can work with notebooks, scripts, terminals, virtual environments,
+and the tools available in that environment.
 
 ## Common ways to use Python
 
 1. Create a Jupyter notebook for exploratory work.
 2. Edit \`.py\` files for scripts, modules, and packages.
-3. Run \`python3\`, \`uv\`, \`pip\`, or \`conda\` in a terminal.
-4. Use Python from LaTeX workflows such as PyTeX when the document needs code.
+3. Use the available Python interpreter and package manager in a terminal,
+   such as \`python3\`, \`uv\`, \`pip\`, or \`conda\`.
+4. Use Python from LaTeX workflows such as PythonTeX when the document needs code.
 5. Install alternate Python versions or virtual environments when needed.
 
-Keep environment setup commands in a script, README, or runtime image workflow
-when other people or agents need to reproduce the project.
+Keep environment setup commands in a script or README when other people or
+agents need to reproduce the project. For an isolated notebook environment, see
+[Custom Jupyter kernels with uv](/docs/jupyter/custom-kernels) and check the
+recipe's operating-system requirements.
 
 ## Why this matters in CoCalc
 

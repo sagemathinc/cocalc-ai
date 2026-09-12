@@ -57,7 +57,7 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
     slug: "jupyter/create-notebook",
     status: "ready",
     summary:
-      "Create notebooks that keep running and capturing output after browser disconnects.",
+      "Create collaborative notebooks with kernels and output capture in the project backend.",
     title: "Create a Jupyter notebook",
   },
   {

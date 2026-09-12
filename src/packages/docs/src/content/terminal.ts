@@ -6,10 +6,13 @@
 export const OPEN_TERMINAL_BODY = String.raw`
 ## What CoCalc terminals are for
 
-CoCalc terminals are real terminals running in your project Linux environment.
-They use xterm.js in the browser, but the process state lives on the backend:
-you can start a command, close the browser tab, and come back to the same
-running terminal.
+CoCalc terminals run shell processes on the backend and use xterm.js in the
+browser. Hosted CoCalc projects use Linux; local CoCalc installations use the
+host operating system's shell, including PowerShell on Windows.
+
+You can reconnect to the same terminal while the project runtime remains
+running. A project stop, restart, failure, or browser-idle timeout ends running
+processes. Save important results in files and plan how to resume long jobs.
 
 ## Open a terminal
 
@@ -39,9 +42,11 @@ SSH access when you want native tools.
 export const USE_TERMINAL_BODY = String.raw`
 ## What CoCalc terminals are for
 
-CoCalc terminals are persistent Linux shell sessions inside a project. The
-terminal UI runs in the browser, but the shell process runs in the project
-backend, so commands can keep running while the browser disconnects.
+CoCalc terminals are shell sessions inside a project. Hosted CoCalc projects
+use Linux; local CoCalc installations use the host operating system's shell,
+including PowerShell on Windows. The terminal UI runs in the browser, while
+the shell process runs in the project backend. Commands can continue through a
+browser disconnect while that backend runtime remains running.
 
 Use terminals to install packages, run scripts, inspect files, start services,
 use Git, manage virtual environments, and work with command-line tools that are
@@ -73,18 +78,22 @@ directory.
 
 ## Persistent work
 
-Browser tabs are not the process boundary. Long commands can continue after the
-browser disconnects, and collaborators can reconnect to the same terminal later.
-For very long or fragile jobs, use standard shell tools such as \`tmux\`, log
-files, or scripts so progress is visible and restartable.
+Collaborators can reconnect to a terminal while its project runtime is still
+running. A browser-idle policy can stop the project even while a command is
+running. Project stops, restarts, and failures also end running processes.
+
+Tools such as \`tmux\` help with shell reconnection, but they do not keep a
+project runtime alive through a stop or restart. Use log files, checkpoints,
+and scripts so progress is visible and work can resume.
 
 ## Collaboration and safety
 
 Terminals are collaborative. People with access to the running project can see
 terminal content and may be able to interact with the shell. Avoid pasting
-secrets into commands, prompts, logs, or shell history. Use
-[project secrets](/docs/projects/project-secrets) for credentials consumed by
-project code.
+secrets into commands, prompts, logs, or shell history. On hosted CoCalc AI,
+use project secrets for credentials consumed by project code; find **Project
+secrets** in the site's [Docs index](/docs). Local CoCalc Plus uses the credentials
+you configure in your local environment.
 
 ## Agents and automation
 

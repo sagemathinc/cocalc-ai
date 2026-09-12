@@ -26,9 +26,10 @@ explicitly call for them.
 
 ## Navigation
 
-Open the Admin tab from the main app. The admin landing page contains collapsible
-sections for users, news, site settings, RootFS images, bay operations, backup
-shards, software licenses, registration tokens, SSO, and membership tiers.
+Open the Admin tab from the main app. Use the Admin navigation
+menu to choose User Search, News, Site Settings, RootFS Images, Bay Operations,
+Backup Shards, Software Licenses, Registration Tokens, SSO Providers & Domains,
+or Membership Tiers. On small screens, choose the area from the selector.
 
 Docs actions for admin pages are stable destinations that Codex can use through
 the browser action API when the current user is an admin.
@@ -45,7 +46,7 @@ maintenance, or service-impacting configuration changes.
 
 1. Open the Admin tab.
 2. Open **News**.
-3. Choose **Create system notice**.
+3. Choose **Create news item**, then set **Channel** to **System**.
 4. Write the notice in Markdown.
 5. Set timing, visibility, and any image or link fields.
 6. Save and verify how it appears in the app.
@@ -102,7 +103,7 @@ for the workflow you need:
 - **Profile** includes password reset and 2FA removal tools.
 - **Ban** controls account ban state.
 - **Projects** lists recent projects the account collaborates on.
-- **Purchases**, **Egress**, and **Membership** expose billing, network, and
+- **Billing**, **Egress**, and **Membership** expose billing, network, and
   membership tools.
 
 ## Safety
@@ -427,7 +428,8 @@ cocalc admin receivables document void AR-2026-000123 \
 Use the dedicated billing correction action when procurement supplies a new
 invoice recipient or address after approval or fulfillment. It preserves
 approval and fulfillment, updates only future billing/procurement contacts and
-invoice address/memo fields, and is rejected after a non-void invoice exists.
+invoice address/memo fields, and is rejected while an invoice has a status
+other than void or failed.
 
 ~~~sh
 cocalc admin receivables billing update AR-2026-000123 \
@@ -516,10 +518,14 @@ cocalc admin receivables backfill --file historical-site-licenses.json \
   --idempotency-key historical-site-licenses-2026-08 --commit --json
 ~~~
 
-Any preview blocker rejects the entire batch before writing. This includes
-duplicate site licenses, Zendesk tickets, or provenance references within one
-input file. If a later operational error interrupts a commit, rerun the
-identical command and idempotency key to resume its canonical action sequence.
+An invalid candidate rejects the entire batch before writing unless it has
+already been identified as represented by an existing order and marked skipped.
+Review both the planned actions and skipped rows: an existing match can appear
+in the blocker list without preventing other valid candidates from being
+imported. Duplicate site licenses, Zendesk tickets, or provenance references
+within the input file are blocking errors for candidates still being imported.
+If a later operational error interrupts a commit, rerun the identical command
+and idempotency key to resume its canonical action sequence.
 
 ## Recovery and idempotency
 
@@ -1419,7 +1425,8 @@ Bay profile target
   bay-frontdoor, bay-cloudflared, bay-scaffold
 
 Project-host fleet target
-  project-host, project, tools, host-conat-router, host-conat-persist
+  project-host, project, tools, container-runtime,
+  host-conat-router, host-conat-persist, host-acp-worker, host-runtime-stack
 
 Release channel target
   cli, launchpad, plus
@@ -1429,9 +1436,18 @@ GitHub Star channel target
 ~~~
 
 Site-profile targets use a profile from \`cocalc auth list\`. Release-channel
-targets use \`dev\`, \`candidate\`, or \`stable\`. Deploying a project-host
-fleet component updates the fleet default; add \`--rollout\` only when you also
-want to immediately upgrade or reconcile all online hosts.
+targets use \`dev\`, \`candidate\`, or \`stable\`. Keep the profile or channel
+explicit when deploying and inspecting results.
+
+The selected fleet components below have different deployment effects.
+Do not assume omitting \`--rollout\` prevents changes to running hosts:
+
+| Component | Effect of \`software deploy\` |
+| --- | --- |
+| \`project-host\`, \`host-conat-router\`, \`host-conat-persist\`, \`host-acp-worker\`, \`host-runtime-stack\` | Starts a canary-first fleet campaign for the selected managed components without requiring \`--rollout\`. |
+| \`project\` | Changes the fleet default. Add \`--rollout\` to upgrade online hosts as part of the command. |
+| \`tools\` | Changes the fleet default and upgrades online hosts without requiring \`--rollout\`. |
+| \`container-runtime\` | Publishes compatibility artifacts without changing fleet desired state. \`--rollout\` is rejected; selecting and qualifying hosts for an upgrade is a separate operation. |
 
 ## Components
 
@@ -1448,9 +1464,12 @@ want to immediately upgrade or reconcile all online hosts.
 | \`project-host\` | Project-host agent/runtime that supervises projects and host-side services. |
 | \`project\` | Runtime bundle used inside user projects for project daemons and project-level services. |
 | \`tools\` | Full project tools payload for Linux amd64 and arm64 project hosts. |
+| \`container-runtime\` | Host container-runtime artifact; deploy publishes compatibility artifacts without starting a fleet rollout. |
 | \`tools-minimal\` | Small tools payload coordinated with CoCalc Plus; build/push only as a standalone component. |
 | \`host-conat-router\` | Project-host-local Conat router managed component. |
 | \`host-conat-persist\` | Project-host-local Conat persist managed component. |
+| \`host-acp-worker\` | Project-host ACP worker managed component. |
+| \`host-runtime-stack\` | Combined project-host, Conat router, Conat persist, and ACP worker campaign. |
 | \`cli\` | Standalone \`cocalc\` command-line binary promoted through release channels. |
 | \`launchpad\` | Standalone local hub/runtime launcher promoted through release channels. |
 | \`plus\` | CoCalc Plus release-channel product, coordinated with \`tools-minimal\`. |
@@ -1474,6 +1493,43 @@ cocalc software smoke cli candidate
 
 For the exact component behavior, run \`cocalc software info <component>\` before
 deploying.
+
+## Read a fleet campaign result
+
+\`host deploy rollout-fleet\` operates on one authoritative bay. The CLI
+excludes hosts pinned for the selected components and rejects a mixed-bay
+cohort. It runs the canary first, requires a continuous healthy stabilization
+interval, then continues in bounded waves. A failed host or automatic rollback
+stops later waves; hosts from completed waves may already have changed.
+
+The direct \`host deploy rollout-fleet\` command returns a queued operation
+unless \`--wait\` is supplied. \`software deploy\` supplies \`--wait\` for these
+campaigns. Inspect the operation ID and per-host results, including excluded
+hosts; queued work is not a completed upgrade. Default promotion happens after
+all waves succeed and its promotion checks pass; the direct host command's
+\`--no-promote-global\` option leaves successful hosts as explicit exceptions.
+Software rollback deploys the selected artifact from successful deployment
+history; it does not restore project files or database contents.
+
+## Interpret readiness evidence
+
+After a change, review the evidence for the affected layer:
+
+- A successful \`rocket health host-routes\` check verifies routes from bay
+  frontdoor workers to project-host APIs. It does not execute a notebook or
+  verify a research result.
+- With an explicit site profile, \`cocalc --profile <profile> admin health --wide\`
+  reports individual operator checks, timestamps, latency observations, the
+  latest recorded smoke result, and backup/restore-test status. Review the
+  selected bay, sample coverage and each check; unknown, missing or stale
+  evidence is not a successful check.
+- A recorded smoke success covers its recorded steps and project. Verify the
+  affected terminal or kernel, file synchronization and required application
+  with a representative disposable workload before declaring that workflow
+  ready. Backup enablement alone does not prove a successful restore.
+
+These are source-backed command and result boundaries. No fleet campaign,
+rollback, workload or restore was executed to validate this reference.
 `;
 
 export const ADMIN_BAY_OPS_BODY = String.raw`
@@ -1523,11 +1579,16 @@ blocked, deleted, garbage-collected, or scanned on a real host.
 2. Open **RootFS Images**.
 3. Filter for the catalog entry you care about.
 4. Inspect central lifecycle state and per-host availability.
-5. Use **Scan** on an online project host when you need a host-level check.
+5. If scanning is enabled and the entry references a managed release, choose
+   **Scan now**, then select an online project host.
 6. Hide or block images before deleting when users may still depend on them.
 
-Scans run on project hosts. If no online host is available, start or choose a
-host before expecting scan results.
+Scanning is disabled by default. **RootFS Scan: Enabled** in Site Settings
+controls the scan UI and manual scan requests; scanning requires Trivy
+image/cache storage and project-host scan capacity. An online host alone is not
+sufficient if scanning is disabled or the catalog entry has no managed release.
+When scanning is enabled, choose an available online host before expecting
+results.
 
 ## When to use this page
 
@@ -1571,8 +1632,11 @@ ordinary email signup is restricted.
 4. Confirm intended limits, expiration, and account effects.
 5. Test the signup path with a non-admin account before sharing it widely.
 
-If general email signup should be disabled, configure that in **Site
-Settings**. Registration tokens are the targeted exception mechanism.
+For token-only email signup, leave **Allow email signup** enabled in **Site
+Settings**, then turn off **Public signup without a registration token** in
+**Registration Tokens**. Disabling **Allow email signup** blocks new email
+accounts even when they have a token. Review SSO signup policy separately; see
+[Signup emergency controls](/docs/admin/signup-emergency-controls).
 
 ## Safety
 
@@ -1740,6 +1804,12 @@ Domain policies decide how users with matching email domains sign in. A domain
 can allow passwords, require SSO, allow signup through SSO only, and optionally
 require CoCalc-native 2FA. Keep policy names and notes clear enough that
 another admin can understand why the rule exists.
+
+Enabling **Require CoCalc 2FA** also changes onboarding: SSO cannot create a
+new account for that domain. An admin must create or prepare the account first.
+Existing accounts must already have a CoCalc second factor enabled before
+signing in through SSO, and sign-in then requires that second factor. Prepare
+this access before requiring native CoCalc 2FA for a domain.
 
 ## Safety
 

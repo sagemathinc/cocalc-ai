@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export const COCALC_STAR_BODY = String.raw`
+export const COCALC_STAR_BODY = `
 ## What CoCalc Star is
 
 CoCalc Star is the single-VM CoCalc appliance. It is the default self-hosting
@@ -53,9 +53,11 @@ CoCalc system on your own VM.
 
 - Use CoCalc Plus for a local single-user install.
 - Use CoCalc Star for a one-command public VM appliance.
-- Use CoCalc Launchpad for lower-level operator control-plane work, custom
-  project-host connectivity, or deployment development.
-- Use CoCalc Rocket for production multi-user or multi-bay deployments.
+- Use CoCalc Launchpad for a bounded private deployment operated by your team,
+  with more control over the environment than Star.
+- Discuss CoCalc Rocket with CoCalc when planning a broader private-cloud
+  deployment, including infrastructure, operational ownership, and support
+  requirements. Rocket has VM and Kubernetes deployment paths.
 
 ## Current beta target
 
@@ -63,6 +65,68 @@ The documented beta target is Ubuntu 24.04 or Ubuntu 26.04 on a fresh public VM
 with a public IPv4 address and ports 80 and 443 open. Manual beta installs have
 passed on Google Cloud, AWS, and Azure. Other cloud providers should work if
 they provide a normal Ubuntu VM and let you expose ports 80 and 443.
+
+## Map the connections
+
+This map describes the public-VM Star installer with its default local
+services. Use it to identify which machine, storage, and network paths your
+team must operate. It is not a firewall allowlist or evidence that a restricted
+network has been tested. The [local VM guide](/docs/self-hosting/cocalc-star-local-vm)
+uses a different browser access path.
+
+| Connection | Default Star path | Operator check |
+| --- | --- | --- |
+| Browser to the site | Public HTTPS reaches Caddy, which forwards ordinary application requests to the local CoCalc web service on 127.0.0.1:9100. | Check the public hostname, certificate, and websocket access. A login page loading does not by itself verify notebooks and terminals. |
+| CoCalc to project compute | Star registers its project host on the same VM, with an internal HTTP address of 127.0.0.1:9002 and SSH address of 127.0.0.1:2222. | These are backend addresses on the VM, not browser destinations or instructions to expose those ports publicly. |
+| CoCalc to stored site state | The default site uses local PostgreSQL through a local socket. | Include site state as well as project files in recovery planning. |
+| Project backup service | A local Rustic REST service listens on 127.0.0.1:9345 and stores its repository on the VM. | A local backup repository is not an off-VM recovery copy. |
+| Installation and updates | The release installer downloads from GitHub; public-address discovery, DNS/TLS setup, package installation, and image preparation can need external services. | Review the selected release and enabled installation paths before restricting egress. A release archive alone does not establish an offline installation. |
+
+Installing CoCalc on your VM does not prevent applications from contacting
+external services. Review the credentials and endpoints selected for AI tools,
+remote kernels, package downloads, and user code as part of your deployment.
+This Star map does not describe Launchpad or Rocket deployments with separate
+machines, nor establish data residency, compliance, high availability, or
+successful backup restoration.
+
+## Inventory state before maintenance
+
+Before replacing the VM or removing an installation, identify its data and
+configuration. A software release directory is only one part of a Star site.
+The following are installer defaults; overrides and mounted storage can change
+the locations. Check the installed configuration before planning a backup.
+Copying a live database directory or active project files does not by itself
+establish a consistent backup.
+
+| State | Default location or reference | Why it matters |
+| --- | --- | --- |
+| Site database and control-plane data | \`STAR_DATA\`: \`/var/lib/cocalc/star/launchpad\`; local PostgreSQL data normally resides in its \`postgres\` subdirectory | Project files alone do not reconstruct accounts and site state. |
+| Project filesystem | Btrfs mounted at \`/mnt/cocalc\`; the default backing image is \`/var/lib/cocalc/btrfs.img\` | Identify the actual backing storage separately from the installed software release. |
+| Project-host state, caches, and runtime secrets | \`STAR_PROJECT_HOST_DATA\`: \`/mnt/cocalc/data\` | This lives under the project storage mount; it is not automatically a separate disk. |
+| Configuration and keys | \`/etc/cocalc/star/config.env\`, \`hub.env\`, \`project-host.env\`, and the configured secret paths | Configuration selects the data locations and services. The default site master key is under \`STAR_DATA/secrets\`; preserve it with the state it protects. Keep credentials out of shared logs and handoff notes. |
+| Local backups | \`COCALC_BACKUP_ROOT\`: \`/var/lib/cocalc/star/backup\` | A backup retained on the same VM is not an off-VM recovery copy. |
+| Installed releases and container runtime | \`/opt/cocalc-star/releases\`, \`/opt/cocalc-star/source\`, \`/opt/cocalc-star/current\`, and \`/opt/cocalc/container-runtime\` | The source and current links are siblings of releases and point into the selected release. Record the selected release and runtime; they do not replace database or project backups. |
+| Shared scratch | The configured shared-scratch mount; a local VM can use a folder on the operator's computer | Check where the backing files actually live. Copy results that must be retained into project storage and include them in the backup plan. |
+
+The normal \`star.sh uninstall\` removes active service hooks and preserves
+Star data. Removed configuration files are copied to the uninstall backup
+location printed by the command. After its unmount checks,
+\`uninstall --purge-data\` removes the configured \`STAR_ROOT\`,
+\`STAR_INSTALL_ROOT\`, and \`STAR_CONTAINER_RUNTIME_ROOT\`; the fixed paths
+\`/mnt/cocalc-scratch\` and \`/mnt/cocalc/shared-scratch\`; and the selected
+\`STAR_BTRFS_IMAGE\`. Those targets do not enumerate every custom storage path
+or external volume. Do not use purge as a repair or backup check. Deleting a
+Lima VM is a separate operation from uninstalling Star inside it.
+
+\`star.sh rollback\` selects an installed software release and restarts
+services. It does not restore earlier project files or database contents.
+A successful \`doctor\` or \`smoke\` check does not demonstrate recovery after
+loss of the VM. See the [Star operator reference](https://github.com/sagemathinc/cocalc-ai/blob/main/src/scripts/star/README.md)
+for the supported commands and release layout.
+
+This inventory is based on the installer source. It is not a backup or restore
+procedure; validate a consistent off-VM backup and a disposable restore before
+relying on recovery.
 
 ## Agent notes
 
@@ -185,10 +249,17 @@ The default memory is host-aware. On a typical laptop it uses a reasonable
 fraction of system RAM instead of Lima's small default.
 
 The shared directory setting is initial-install only. Lima reads this setting
-when the cocalc-star VM is created. If you want to change it later, delete or
-rename the Lima instance and reinstall with the new path.
+when the cocalc-star VM is created; rerunning the installer does not change an
+existing VM's shared directory.
 
-To reinstall the local VM while keeping the host shared folder:
+The commands below delete the VM and all data stored only inside it, including
+CoCalc project files, the database, and local backups. Before replacing the VM,
+back up important data outside it and verify that backup. Keeping the host
+shared folder preserves only the files stored in that folder, not the VM's
+project HOME directories.
+
+After protecting the guest data, use these commands to remove the local VM
+before reinstalling with the new shared-directory setting:
 
 ~~~sh
 limactl stop cocalc-star
