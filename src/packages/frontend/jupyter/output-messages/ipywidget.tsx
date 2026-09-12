@@ -3,6 +3,7 @@ ipywidgets rendering using @cocalc/widgets
 */
 
 import { useEffect, useRef, useState } from "react";
+import $ from "jquery";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { Alert, Button } from "antd";
 import type { JupyterActions } from "../browser-actions";
