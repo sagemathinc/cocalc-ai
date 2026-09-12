@@ -7,16 +7,18 @@ export const ACCOUNT_SETTINGS_BODY = String.raw`
 ## What account settings are for
 
 Account settings control your identity, preferences, API keys, SSH keys,
-support access, and the billing tools attached to your CoCalc account. These
-settings are account-scoped, not project-scoped: changing them follows you
-across projects, courses, hosts, and browsers.
+support access, and the billing tools attached to your CoCalc account. Most
+apply across your projects, but some preferences are stored only in the current
+browser. For example, **Startup performance** and activity-bar labels are
+browser-local. Check a setting's description before expecting it to follow you
+to another browser.
 
 ## Profile and identity
 
-Use the profile page to edit your name, email, avatar, color, and account
-metadata. The avatar image is visible in collaboration surfaces, while the
-account color is also used independently in realtime editing and other shared
-contexts.
+Use **Profile** to edit your name, email, avatar, and color. Your account id
+and creation time are shown for reference. The avatar image is visible in
+collaboration surfaces, while the account color is also used independently in
+realtime editing and other shared contexts.
 
 Keep the account id available when working with support, admin tools, browser
 automation, or agent-driven workflows. It is the stable identifier, while names

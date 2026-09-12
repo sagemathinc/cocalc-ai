@@ -113,6 +113,11 @@ are being killed.
 export const GRAPHICAL_APPLICATIONS_BODY = String.raw`
 ## Run Linux graphical applications in CoCalc
 
+These instructions require a Linux project with the graphical support tools.
+Automatic dependency installation uses Ubuntu/Debian package tools and requires
+permitted sudo access. Local CoCalc Plus uses the host operating system; it does
+not turn a native macOS or Windows installation into a Linux project.
+
 Open or create a file ending in \`.x11\` to start the graphical applications
 workspace. CoCalc uses [Blit](https://blit.sh/) to provide a terminal and a
 headless Wayland compositor inside the project. Applications that use Wayland

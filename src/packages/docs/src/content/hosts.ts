@@ -582,6 +582,28 @@ machine restart. Reboot is graceful when the provider supports it. Some
 providers also expose a hard reboot, which is more disruptive and should be a
 maintenance-window action.
 
+## Check operation status before retrying
+
+The CLI commands \`host start\` and \`host restart\` return a queued operation
+unless \`--wait\` is supplied. When waiting fails, read the complete error.
+A recovery error can say that the provider request was acknowledged but reboot
+completion and application readiness are unverified because a previous boot
+or host-session identity was unavailable. In that case, the request was sent
+and may still be in progress; the failed operation is not proof that the
+provider did nothing.
+
+Inspect the current host state, bootstrap details, and recent logs before
+issuing another start or restart. Replace HOST_ID with the existing host:
+
+~~~sh
+cocalc host get HOST_ID
+cocalc host bootstrap-status HOST_ID
+cocalc host logs HOST_ID --tail 200
+~~~
+
+Use the returned state and the original error to decide the next step. A host
+being online still requires a check of the project and workload you need.
+
 ## Browser disconnects and project runtime
 
 Closing a browser tab disconnects that browser. Projects with a browser-idle
@@ -622,6 +644,14 @@ sometimes **Cancel backups**. Backup projects creates project backups for
 provisioned or running projects on the host. Drain is for removing active work
 from a host before maintenance. Cancel backups is only offered during the
 backup stage of a host operation.
+
+For CLI maintenance, \`host drain <host>\` moves projects; \`--force\` instead
+clears their host assignments without copying project data. \`--allow-offline\`
+permits moves that may rely on stale backups. Without \`--wait\`, the command
+returns a queued operation. After a failure, inspect the operation and run
+\`cocalc host projects <source-host> --all\`: earlier moves may already have
+completed. Verify saved files and the required workloads at their destinations
+before treating the maintenance as complete.
 
 ## Agent notes
 
@@ -947,6 +977,41 @@ stay with the original host.
 Shared scratch is also not a CoCalc backup. It uses provider network block
 storage rather than local SSD, and the provider disk type may have its own
 durability properties, but CoCalc does not back up scratch contents.
+
+## Copy finished results into the project
+
+Agree on a shared input directory and give each project/run its own output
+directory, for example \`/scratch/study-data/\` and
+\`/scratch/study-runs/<project-id>/<run-id>/\`. These names reduce accidental
+overwrites; they do not create a permission boundary between projects. Keep
+shared inputs unchanged while other jobs read them.
+
+Before moving a project or removing scratch, copy the required finished
+outputs into that project's HOME or another retained destination. A symbolic
+link in HOME that points into \`/scratch\` is not a copy of the target data.
+
+For a single completed result, run this in a Linux project terminal after
+replacing the source path. It requires the source file to exist and refuses
+to reuse the destination directory:
+
+~~~sh
+(
+  set -e
+  src=/scratch/study-runs/my-project/run-001/results.csv
+  dst="$HOME/scratch-result-check"
+  test -f "$src"
+  mkdir "$dst"
+  cp -- "$src" "$dst/results.csv"
+  cmp -- "$src" "$dst/results.csv"
+)
+~~~
+
+A zero exit status and no output from \`cmp\` mean the two files have identical
+bytes at comparison time. If copying or comparison fails, any destination files
+remain for inspection; keep the source until verification succeeds. Confirm the
+copied file opens in the project and record the input, code and environment needed to
+reproduce it. This copy checks one file; it does not create or verify a project
+backup. Check your configured retention and backup result separately.
 
 ## Lifecycle rules
 

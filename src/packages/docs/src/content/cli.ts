@@ -254,6 +254,65 @@ later scheduled run. Prepare the required approval before a deliberate
 operation, and keep an operator-visible path for failures; a saved profile or
 schedule does not renew approval automatically.
 
+## Select the identity for managed VM commands
+
+Managed VMs are an optional site feature. Their command scope differs from
+project-host commands, so check the identity supplied to the CLI before
+reusing a host automation script.
+
+| Command or task | Identity and scope to check |
+| --- | --- |
+| \`vm list\` | An account profile can list owned VMs. If \`COCALC_PROJECT_ID\` is set, it supplies the default project filter even with account authentication. Project and scoped-agent identities use their authenticated project's VM listing. |
+| \`vm list --all\` | Use an account profile for an account-wide inventory. The flag does not turn project or agent credentials into account access. Do not combine it with \`--project\`. |
+| \`vm list --project PROJECT_ID\` | An account caller needs access to the selected project. A project-scoped caller cannot select a different authenticated project by changing this argument. |
+| \`vm catalog\` and \`vm access list/grant/revoke\` | Use the appropriate account profile for catalog inspection and account-owned access management. An ordinary project secret is insufficient. A successful project VM listing does not establish permission for these commands. |
+| \`vm start\` and \`vm stop\` | An ordinary project secret is insufficient. Account callers need VM ownership; human starts also require fresh authentication. Scoped compute agents use their separate approval and capability checks. |
+
+These are authentication boundaries, not a guarantee that every account API
+key or token can call every method. Server permissions, agent grants, resource
+state, and admission rules still apply. For a human account, \`vm stop\` does not
+add the fresh-auth check used by \`vm start\`; \`host stop\` has its own fresh-auth
+requirement. Treat both stops as operations that interrupt running work.
+
+From your own computer, with an account profile already set up for the
+intended site, inspect the scope before a mutation:
+
+~~~sh
+cocalc --profile cocalc-ai --json vm list --all
+cocalc --profile cocalc-ai --json vm list --project PROJECT_ID
+~~~
+
+Replace \`PROJECT_ID\` with the project you intend to inspect. A scoped agent
+should keep its supplied identity rather than storing this personal account
+profile in a collaborative project. A VM appearing in a listing does not
+itself establish SSH access or permission to start or stop it.
+
+## Printing a VM connection command can still prepare access
+
+For \`vm ssh\` and \`vm rsync\`, \`--print\` and JSON output return the generated
+connection command instead of launching the local SSH or rsync process. They
+still request SSH-key authorization first. That request can add or reconcile
+access on the VM; adding a new account SSH key can require fresh authentication.
+Project and agent routes retain their own access, approval, and deploy-key
+checks. These options are therefore not a read-only connection preflight.
+
+Use command help to inspect syntax without requesting access:
+
+~~~sh
+cocalc vm ssh --help
+cocalc vm rsync --help
+~~~
+
+When recording JSON output in an unattended workflow, distinguish a returned
+connection command from an executed remote command or completed file transfer.
+Run the intended transport and verify the remote result separately when that
+operation is authorized.
+
+These selection and command-preparation paths were checked locally on
+2026-09-12 against CLI source version 1.0.3 with synthetic service adapters.
+No live account authorization, VM start/stop, SSH connection, or file transfer
+was performed by those checks.
+
 ## Browser targets need their own check
 
 Start with discovery and resolution before sending browser actions:

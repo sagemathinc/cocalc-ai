@@ -376,6 +376,26 @@ After an agent request, inspect its response and the resulting commit in the
 Git browser. Sending the request is not proof that a commit succeeded. Review
 commits and use TimeTravel for file-level recovery as described below.
 
+## Transfer saved Git review notes
+
+In the Git browser's commit drawer, open the **Review actions** ellipsis menu.
+**Export reviews** downloads a JSON bundle of saved commit reviews from your
+account. Its scope is the account's review store, not only the repository or
+commit currently displayed. Confirm that notes are saved and inspect the
+bundle before sharing it; unsaved browser drafts are not the export source.
+
+On the receiving account, use **Review actions -> Import reviews** and select
+the JSON file. Imported records belong to that signed-in account. They are not
+shared ownership of the sender's notes. The import keeps an existing record
+when its update time is equal to or newer than the imported one, and skips
+invalid records. Check the reported imported/skipped counts and inspect the
+intended commit's notes afterward.
+
+The bundle transfers review notes and state, not the repository or access to
+it. Include the repository location and full commit id in your handoff, and
+confirm that the recipient can open that commit separately. Export/import does
+not push commits or submit a GitHub review.
+
 ## Git and TimeTravel
 
 Git and TimeTravel solve different problems. Git is for intentional repository

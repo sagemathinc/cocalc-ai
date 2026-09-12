@@ -571,6 +571,55 @@ payment never automatically suspends a university license.
 
 ## Diagnostics and follow-up
 
+### Read invoice balances by currency
+
+\`admin receivables diagnostics --json\` returns \`amounts_by_currency\` as
+decimal major-unit strings grouped by currency. It does not convert currencies
+or calculate a cross-currency total.
+
+| Field | Meaning |
+| --- | --- |
+| \`invoice_outstanding\` | Positive remaining balances on open invoices, including partial payments. |
+| \`invoice_overdue\` | The portion with an invoice due date before now; a missing due date is not assumed overdue. |
+| \`fulfilled_invoice_outstanding\` | Open invoice balances for provisioned orders. |
+| \`uninvoiced_pipeline\` | Active not-invoiced order values with no creating, draft, open, paid, or uncollectible invoice. Alternative proposals remain proposals, not debt. |
+| \`paid_unfulfilled_order_value\` | Active paid order values awaiting provisioning. |
+| \`open_order_value\` | Agreed totals of active orders, not accounts receivable. |
+
+\`amount_scope=linked_local_invoices\` limits the invoice figures to linked
+local records, which can lag Stripe until webhook processing or reconciliation.
+Closing or cancelling an order does not remove an open invoice balance. The
+older \`amounts.open_amount\`, \`amounts.overdue_amount\`, and
+\`amounts.fulfilled_unpaid_amount\` fields now report USD-only invoice balances;
+use \`amounts_by_currency\` for integrations that need other currencies.
+
+### Choose the scope of invoice discovery
+
+Ordinary diagnostics do not scan Stripe
+(\`unlinked_invoice_scan=not_requested\`). \`--reconcile\` requests the bounded
+current-site commercial-metadata scan (\`site_commercial\`); it does not prove
+that legacy invoices are absent. To request account-wide legacy discovery:
+
+~~~sh
+cocalc admin receivables diagnostics --include-legacy-invoices \
+  --legacy-invoice-limit 100 --reason "Review legacy invoice coverage" --json
+~~~
+
+\`legacy_invoice_scan\` examines open \`send_invoice\` invoices across the
+Stripe account, without a date filter, and returns unlinked candidates. The
+limit is 1-500 (default 100) provider invoices examined, including linked ones.
+If \`has_more\` is true, pass the returned \`next_cursor\` through
+\`--legacy-invoice-cursor\` with \`--include-legacy-invoices\`. An empty candidate
+list does not finish a scan when more pages remain.
+
+Candidate \`amount_remaining_minor\` values are integer strings in Stripe
+minor units, not universally cents. \`site_match\` reflects metadata only;
+other-site or unknown candidates do not establish current-site ownership.
+This audited discovery does not create, import, send, pay, or void invoices.
+Review candidates separately before using a mutation workflow.
+
+### Worker and review queues
+
 The seed worker runs under a database lease so only one hub processes each
 maintenance interval. It:
 
@@ -929,11 +978,17 @@ cocalc admin crm digest --assignee me --due-within-days 1 \
 ~~~
 
 It reports overdue and near-term CRM tasks, receivables next actions, upcoming
-renewals, open expansion opportunities, and unassigned customers. Pass
-\`--as-of\` when a repeatable historical cutoff is important. Counts are
-explicitly marked as bounded if any section reaches its requested limit. The
-digest does not send email or notifications; it is the source an admin or agent
-uses for a morning review.
+renewals, open expansion opportunities, and unassigned customers. For an
+explicit cutoff, pass a full timestamp such as
+\`--as-of 2026-09-01T17:00:00Z\`, with seconds and either \`Z\` or a numeric
+timezone offset such as \`-07:00\`. Date-only, timezone-free, and invalid
+calendar values are rejected. The response normalizes \`as_of\` to UTC; omitting
+it uses the current time. This fixes the time windows, not the underlying
+records: the digest still reads current data rather than a historical snapshot.
+
+Counts are explicitly marked as bounded if any section reaches its requested
+limit. The digest does not send email or notifications; it is the source an
+admin or agent uses for a morning review.
 
 The diagnostics queue identifies unowned active customers, overdue tasks,
 opportunities without next tasks, won opportunities without orders, unlinked
@@ -1648,9 +1703,10 @@ export const ADMIN_SIGNUP_EMERGENCY_CONTROLS_BODY = String.raw`
 ## What this runbook is for
 
 Use this during a launch incident when new-account creation is causing abuse,
-support load, or operational risk. These controls affect new signups only; they
-do not stop existing users, existing projects, active sessions, or billing
-records.
+support load, or operational risk. Registration-token and email-signup controls
+affect new account creation. The signup email domain policy also applies when
+existing users change their email address. These controls do not stop existing
+projects or active sessions, or remove billing records.
 
 ## Fast close: require registration tokens
 
@@ -1658,13 +1714,16 @@ records.
 2. Turn off **Public signup without a registration token**.
 3. Confirm there is at least one active registration token if invite-only
    signup should continue.
-4. If there are no active tokens, email/password signup is effectively closed
-   until an admin creates an active token or re-enables public signup.
-5. Verify in a private browser session that creating a new account requires a
-   token.
+4. Review **Domain Policies** in **Admin -> SSO Providers & Domains**. A
+   **Signup Mode** of \`public_allowed\` can permit token-free signup for that
+   domain, including email signup when passwords are allowed.
+5. With no active tokens and no domain policy allowing public signup,
+   email/password signup is closed until an admin changes those settings.
+6. Verify in a private browser session that creating a new account requires a
+   token, including addresses covered by domain policies.
 
-This is the preferred first response because it preserves controlled onboarding
-for known cohorts while blocking public anonymous account creation.
+Use this when known cohorts should continue onboarding with registration
+tokens.
 
 ## Full close: disable email signup
 
@@ -1692,11 +1751,10 @@ domains but a known institution or pilot group should continue onboarding.
 
 ## SSO account creation
 
-If SSO is enabled, also review **Access & Identity -> Single Sign-On** and any
-domain-specific SSO policies. Prefer **Registration token required** or
-**Disabled** for SSO account creation during an incident. Otherwise users may
-still create accounts through an SSO path even when ordinary email signup is
-closed.
+Open **Admin -> SSO Providers & Domains** and review the provider account-creation
+settings and **Domain Policies**. Use \`registration_token_required\` or
+\`disabled\` for the signup paths you intend to restrict. An enabled SSO path
+may still create accounts when **Allow email signup** is off.
 
 ## Reopen checklist
 
@@ -1729,9 +1787,11 @@ normal billing and admission checks.
 
 ## Software licenses
 
-Use **Software Licenses** to manage license tiers and concrete licenses. License
-configuration can control project upgrades, max project hosts, and other
-resource limits.
+Use **Software Licenses** to manage license tiers and issued software licenses.
+Tier fields include **Max accounts** and **Max project hosts**. When creating a
+license, select its product and optional expiration, limits, and feature
+overrides. The issued license contains the tier values and overrides from that
+time; editing a tier does not rewrite previously issued license tokens.
 
 ## Safety
 

@@ -424,7 +424,8 @@ currency; no exchange conversion or cross-currency total is performed.
   due dates are not assumed overdue; order collection-state lag does not affect
   the calculation.
 - `fulfilled_invoice_outstanding`: open invoice balances for provisioned orders.
-- `uninvoiced_pipeline`: active not-invoiced orders without a non-void invoice.
+- `uninvoiced_pipeline`: active not-invoiced orders without a creating, draft,
+  open, paid, or uncollectible invoice.
   Alternative proposals remain separate proposals, not collectible debt.
 - `paid_unfulfilled_order_value`: active paid orders awaiting provisioning.
 - `open_order_value`: agreed totals of active orders, **not accounts receivable**.

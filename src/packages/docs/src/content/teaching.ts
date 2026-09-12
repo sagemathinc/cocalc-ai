@@ -225,10 +225,11 @@ outside CoCalc.
 
 ## When the settings take effect
 
-After changing options, save the panel and reconfigure student projects. New
-student projects get the current policy when they are created. Existing student
-projects get the policy when course configuration is pushed to them, for
-example by **Reconfigure all projects** or other course maintenance actions.
+Choose **Save changes** after changing options. Saving also starts
+reconfiguration of student projects; wait for it to complete and check any
+reported errors. New student projects get the current policy when they are
+created. To apply the saved course configuration again, use **Reconfigure all
+projects**.
 
 ## File and upload restrictions
 
@@ -260,12 +261,12 @@ interfaces outside the main CoCalc course UI.
 
 - **Disable command line terminal** disables opening terminal sessions from the
   main project UI and flyouts.
-- **Disable adding or removing collaborators** removes the collaborators UI for
-  student projects. Students should not be able to use the standard project UI
-  to add other people or remove course staff. Reconfiguring the course also
-  removes collaborators who are neither the assigned student nor an instructor
-  or TA from the course project. Project owners are retained as a safety
-  boundary.
+- **Disable adding or removing collaborators** disables collaborator-management
+  controls. The collaborators panel can still show the current collaborators
+  in read-only form. Reconfiguring the course removes collaborators who are
+  neither the assigned student nor a course manager, while retaining project
+  owners. If the student account has not yet been resolved from an invitation,
+  extra collaborators are retained until the student identity is known.
 
 The course still manages student-project collaborators during reconfiguration:
 students, instructors, and TAs are kept in sync based on the course roster and

@@ -92,7 +92,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     slug: "ai/codex-conversations",
     status: "ready",
     summary:
-      "Steer running work, manage queued messages, choose a working directory, and fork context.",
+      "Steer running work, queue follow-ups, send to existing threads from the CLI, choose a working directory, and fork context.",
     title: "Guide and fork Codex conversations",
   },
   {
