@@ -119,4 +119,48 @@ postpaid capacity, promotional or otherwise restricted credit cannot be treated
 as freely transferable cash. Review the recipient and exact amount through the
 trusted financial approval flow. A pending delivery must not be submitted again
 as a new transfer merely because it has not appeared at the destination yet.
+
+## CLI and agents
+
+The CLI uses the same authorization and funding checks as the browser. With
+account authentication, inspect your own allowances, including their timestamps:
+
+~~~sh
+cocalc compute-funding sources --include-inactive --json
+~~~
+
+An instructor can inspect the budget for a particular course instance:
+
+~~~sh
+cocalc compute-funding summary --course-project PROJECT_UUID --course-instance COURSE_UUID --json
+~~~
+
+For a VM you are authorized to inspect, read its current funding and deadlines:
+
+~~~sh
+cocalc vm funding VM_UUID --json
+~~~
+
+The VM creation dialog provides a CLI command for its selected configuration.
+A course-funded creation includes all three identifiers: **--funding-payer**,
+**--funding-pool**, and **--funding-grant**. Keep those together; omitting the
+source is not an instruction to spend the course allowance. The server checks
+the beneficiary, available backing, and current policy again at admission.
+
+For account-authenticated personal-funding changes, use **vm personal-funding**
+to preview and propose bounded terms, inspect status, or cancel consent. An
+immediate change has a separate **apply** operation after approval; submitting
+a proposal alone does not change the payer.
+
+Financial proposals return a separate approval URL. Only the human account
+holder can sign in there and approve the exact transaction. Never give an agent
+your password, authentication code, or session cookie. Project-scoped agents
+cannot inspect an instructor's private budget or authorize allocations,
+transfers, or personal fallback. Existing permission to start or stop a VM does
+not grant permission to change its payer or extend its financial deadline.
+
+Ask an agent to identify the selected source, the **as-of** time, the scheduled
+stop and storage-deletion deadlines before acting. Missing or stale information
+means it must refresh or report the uncertainty, not assume free usage. Stopping
+a VM remains useful when funding information is unavailable.
 `;

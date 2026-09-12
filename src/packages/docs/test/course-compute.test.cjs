@@ -17,6 +17,9 @@ test("course compute guide distinguishes authorization, reservations, and remote
     "They remain in your project",
     "does not use vouchers",
     "personal credit or a payment card",
+    "compute-funding sources --include-inactive --json",
+    "vm funding VM_UUID --json",
+    "Project-scoped agents cannot inspect",
   ]) {
     assert.ok(guide.body.replace(/\s+/g, " ").includes(phrase), phrase);
   }
