@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any
 
 STATE_SCHEMA_VERSION = 1
-HELPER_SCHEMA_VERSION = "20260910-v55"
+HELPER_SCHEMA_VERSION = "20260912-v56"
 HOST_INTRUSION_SNAPSHOT_HELPER = r'''import collections
 import datetime
 import hashlib
@@ -181,6 +181,20 @@ def file_record(path):
         "size": info.st_size,
         "type": "symlink" if stat.S_ISLNK(info.st_mode) else "file",
     }
+    if stat.S_ISLNK(info.st_mode):
+        try:
+            target = os.readlink(path)
+            checked = os.lstat(path)
+            if (
+                not stat.S_ISLNK(checked.st_mode)
+                or checked.st_dev != info.st_dev
+                or checked.st_ino != info.st_ino
+            ):
+                issue("persistence", "FILE_CHANGED")
+                return record
+            record["link_target"] = clean(target)
+        except OSError:
+            issue("persistence", "READLINK_FAILED")
     if stat.S_ISREG(info.st_mode) and info.st_size <= 1024 * 1024:
         descriptor = None
         try:
