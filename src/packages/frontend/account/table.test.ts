@@ -86,6 +86,30 @@ describe("AccountTable", () => {
     expect(projection.state().other_settings.appearance_theme).toBe("light");
   });
 
+  it("preserves appearance when a local settings row intentionally omits it", () => {
+    const projection = accountProjection();
+    projection.snapshot({
+      appearance_theme: "light",
+      dark_mode: false,
+      launcher: { quickCreate: ["chat", "ipynb"] },
+    });
+    projection.realtime({ appearance_theme: "dark", dark_mode: true });
+    projection.snapshot({ locale: "en", launcher: { quickCreate: ["py"] } });
+    expect(projection.state().other_settings).toEqual({
+      appearance_theme: "dark",
+      dark_mode: true,
+      locale: "en",
+      launcher: { quickCreate: ["py"] },
+    });
+    projection.snapshot({ locale: "de", launcher: { quickCreate: [] } });
+    expect(projection.state().other_settings).toEqual({
+      appearance_theme: "dark",
+      dark_mode: true,
+      locale: "de",
+      launcher: { quickCreate: [] },
+    });
+  });
+
   it("does not forward an unchanged explicit theme with a changed legacy key", () => {
     const projection = accountProjection();
     projection.snapshot({ appearance_theme: "light", dark_mode: false });

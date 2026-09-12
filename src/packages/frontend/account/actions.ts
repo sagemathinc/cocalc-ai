@@ -292,66 +292,114 @@ export class AccountActions extends Actions<AccountState> {
     values: Record<string, any>,
   ): Promise<void> {
     const names = Object.keys(values);
-    if (names.length === 1 && names[0] === "appearance_theme") {
-      await this.setAppearanceAndWait(values.appearance_theme);
-      return;
+    if (names.length === 0) return;
+    const requested = { ...values };
+    if (names.includes("appearance_theme")) {
+      const preference = parseAppearancePreference(requested.appearance_theme);
+      if (preference == null) throw Error("Invalid appearance preference");
+      requested.appearance_theme = preference;
     }
-    const current =
-      this.redux.getStore("account")?.get("other_settings")?.toJS?.() ?? {};
-    await writeAndWaitForProjection({
-      consumer: "account",
-      name: `account.other_settings.${names.join("+")}`,
-      write: () =>
-        this.redux
-          .getTable("account")
-          .set({ other_settings: { ...current, ...values } }, "shallow"),
-      matchesProjection: () =>
-        names.every((name) =>
-          this.otherSettingProjectionMatches(name, values[name]),
-        ),
-      repair: () => refreshAccountSnapshot("write-ack"),
-      timeout_ms: 2_500,
-    });
-  }
-
-  private async setAppearanceAndWait(value: unknown): Promise<void> {
-    const preference = parseAppearancePreference(value);
-    if (preference == null) throw Error("Invalid appearance preference");
-    const accountId = this.redux.getStore("account")?.get("account_id");
-    const assertSameAccount = () => {
+    const writesAppearance = names.some(
+      (name) => name === "appearance_theme" || name === "dark_mode",
+    );
+    const initialAccount = this.redux.getStore("account");
+    const accountId = initialAccount?.get("account_id");
+    const initialUserType = initialAccount?.get("user_type");
+    const assertSameAccount = (allowInitializing = false) => {
       const account = this.redux.getStore("account");
+      const userType = account?.get("user_type");
       if (
         !accountId ||
         account?.get("account_id") !== accountId ||
-        account?.get("user_type") !== "signed_in" ||
+        (userType !== "signed_in" &&
+          (!allowInitializing ||
+            userType !== initialUserType ||
+            !["public", "signing_in"].includes(userType))) ||
         webapp_client.account_id !== accountId
       ) {
-        throw Error("Account changed before appearance could be saved");
+        throw Error("Account changed before settings could be saved");
       }
     };
+    if (initialUserType !== "signed_in") {
+      // URL locale persistence can start after the account id arrives but
+      // before auth bootstrap finishes. Wait without sending an early write;
+      // cancellation must remain final even if the same account signs in again.
+      assertSameAccount(true);
+      await new Promise<void>((resolve, reject) => {
+        const finish = (error?: Error) => {
+          clearTimeout(timer);
+          initialAccount.removeListener("change", check);
+          webapp_client.removeListener("signed_out", cancel);
+          webapp_client.removeListener("remember_me_failed", cancel);
+          if (error != null) reject(error);
+          else resolve();
+        };
+        const cancel = () => {
+          finish(Error("Account changed before settings could be saved"));
+        };
+        const check = () => {
+          try {
+            assertSameAccount(true);
+            if (
+              this.redux.getStore("account")?.get("user_type") === "signed_in"
+            ) {
+              finish();
+            }
+          } catch (error) {
+            finish(error);
+          }
+        };
+        const timer = setTimeout(() => {
+          finish(
+            Error("Account sign-in timed out before settings could be saved"),
+          );
+        }, 60_000);
+        initialAccount.on("change", check);
+        webapp_client.on("signed_out", cancel);
+        webapp_client.on("remember_me_failed", cancel);
+        check();
+      });
+    }
     await writeAndWaitForProjection({
       consumer: "account",
-      name: "account.other_settings.appearance_theme",
+      name: `account.other_settings.${names.join("+")}`,
       write: async () => {
         assertSameAccount();
-        // The snapshot-only table may still contain this value and omit the
-        // write, even though a newer realtime preference is different. Submit
-        // this single key through the existing account/home-bay query route.
-        await webapp_client.async_query({
-          query: {
-            accounts: {
-              account_id: accountId,
-              other_settings: { appearance_theme: preference },
+        if (writesAppearance) {
+          // The snapshot-only table can suppress an explicit choice equal to
+          // its stale baseline. Force the requested keys through the existing
+          // account query route, including mixed appearance/settings requests.
+          await webapp_client.async_query({
+            query: {
+              accounts: {
+                account_id: accountId,
+                other_settings: requested,
+              },
             },
-          },
-        });
+          });
+        } else {
+          const current = {
+            ...(this.redux
+              .getStore("account")
+              ?.get("other_settings")
+              ?.toJS?.() ?? {}),
+          };
+          // Unrelated writes must not persist a stale or failed optimistic
+          // theme. Retain the other keys and shallow local replacement: the
+          // table coalesces saves, so replacing its pending map with only this
+          // call's keys could discard an earlier disjoint settings update.
+          delete current.appearance_theme;
+          delete current.dark_mode;
+          await this.redux
+            .getTable("account")
+            .set({ other_settings: { ...current, ...requested } }, "shallow");
+        }
         assertSameAccount();
       },
       matchesProjection: () => {
         assertSameAccount();
-        return this.otherSettingProjectionMatches(
-          "appearance_theme",
-          preference,
+        return names.every((name) =>
+          this.otherSettingProjectionMatches(name, requested[name]),
         );
       },
       repair: async () => {
