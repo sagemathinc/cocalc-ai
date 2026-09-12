@@ -6,6 +6,7 @@
 import type { DocsEntry } from "../types";
 import { docsIcon, projectHostActionParameters } from "../helpers";
 import {
+  CHOOSE_RESEARCH_COMPUTE_BODY,
   PROJECT_HOSTS_BODY,
   PROJECT_HOST_ACCESS_BODY,
   PROJECT_HOST_CHANGE_RULES_BODY,
@@ -21,6 +22,22 @@ import {
 } from "../content";
 
 export const HOSTS_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CHOOSE_RESEARCH_COMPUTE_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.choose-compute",
+    lastReviewed: "2026-09-11",
+    noActionReason:
+      "Decision guide; follow the linked setup workflow for the chosen compute route.",
+    searchKeywords:
+      "research compute more RAM CPU cores GPU capacity machine type architecture region provider quota availability project host managed VM remote kernel",
+    slug: "hosts/choose-compute",
+    status: "ready",
+    summary:
+      "Compare project hosts, managed VMs, and remote kernels, then check machine fit, availability, permissions, and readiness.",
+    title: "Choose compute for research",
+  },
   {
     actions: [
       {
@@ -64,11 +81,13 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-hosts-684faa4c.webp",
       "A project host running several project folders",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "project host compute capacity CPU cores vCPU shared compute priority RAM memory limit GPU NVIDIA VRAM",
     slug: "hosts/project-hosts",
     status: "ready",
     summary:
-      "Run projects on dedicated or cloud-backed compute for courses, research, and agent sandboxes.",
+      "Run projects on dedicated or cloud-backed hosts and understand CPU sharing, RAM limits, and GPU access.",
     title: "Use project hosts",
   },
   {
@@ -89,11 +108,13 @@ export const HOSTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-hosts-access-ram-9245deeb.webp",
       "A project host access panel with delegated users and resource limits",
     ),
-    lastReviewed: "2026-05-27",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "project host access owner manager delegated user private shared pool RAM memory entitlement cap limit",
     slug: "hosts/access-and-ram",
     status: "ready",
     summary:
-      "Delegate host access, understand shared-pool tiers, and set per-project RAM policy.",
+      "Delegate host access and understand shared-pool tiers, private-host RAM defaults, and per-project caps.",
     title: "Manage project host access and RAM",
   },
   {

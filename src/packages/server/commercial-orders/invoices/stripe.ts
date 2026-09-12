@@ -26,6 +26,7 @@ import type {
   CommercialOrder,
   CommercialPaymentMethod,
   CommercialUnlinkedStripeInvoice,
+  CommercialLegacyInvoiceScan,
 } from "@cocalc/util/commercial-orders";
 import {
   moneyAdd,
@@ -254,13 +255,79 @@ export async function findUnlinkedCommercialStripeInvoices(
         provider_invoice_id: invoice.id,
         status: `${invoice.status ?? "unknown"}`,
         currency: `${invoice.currency ?? ""}`.toLowerCase(),
-        amount_due: fromStripeAmount(invoice.amount_due),
+        amount_due: fromStripeAmount(invoice.amount_remaining),
         commercial_order_id: invoice.metadata?.commercial_order_id ?? null,
         commercial_invoice_id: invoice.metadata?.commercial_invoice_id ?? null,
         order_number: invoice.metadata?.order_number ?? null,
         created_at: timestamp(invoice.created),
       })),
     truncated: found.length > cappedLimit,
+  };
+}
+
+export async function findLegacyStripeInvoices(
+  opts: { limit?: number; cursor?: string } = {},
+): Promise<CommercialLegacyInvoiceScan> {
+  const limit = opts.limit ?? 100;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 500) {
+    throw Error("legacy invoice limit must be an integer between 1 and 500");
+  }
+  if (opts.cursor != null && !/^in_[A-Za-z0-9]+$/.test(opts.cursor)) {
+    throw Error("legacy invoice cursor must be a Stripe invoice id");
+  }
+  const stripe = await getConn();
+  const site = await currentStripeSite();
+  const candidates: any[] = [];
+  let cursor = opts.cursor;
+  let hasMore = false;
+  do {
+    const response = await stripe.invoices.list({
+      status: "open",
+      collection_method: "send_invoice",
+      limit: Math.min(100, limit - candidates.length),
+      ...(cursor ? { starting_after: cursor } : {}),
+    });
+    for (const invoice of response.data) assertStripeMode(stripe, invoice);
+    candidates.push(...response.data);
+    hasMore = response.has_more;
+    const next = response.data.at(-1)?.id;
+    if (hasMore && (!next || next === cursor)) {
+      throw Error("Stripe returned an invalid legacy invoice page");
+    }
+    cursor = next;
+  } while (hasMore && candidates.length < limit);
+  const linked = new Set<string>();
+  if (candidates.length) {
+    const { rows } = await getPool().query<{ provider_invoice_id: string }>(
+      `SELECT provider_invoice_id FROM commercial_invoices
+       WHERE provider='stripe' AND provider_invoice_id=ANY($1::text[])`,
+      [candidates.map(({ id }) => id)],
+    );
+    for (const row of rows) linked.add(row.provider_invoice_id);
+  }
+  return {
+    scope: "stripe_account_open_send_invoice",
+    scanned: candidates.length,
+    has_more: hasMore,
+    ...(hasMore ? { next_cursor: cursor } : {}),
+    invoices: candidates
+      .filter((invoice) => !linked.has(invoice.id))
+      .map((invoice) => ({
+        provider_invoice_id: invoice.id,
+        invoice_number: invoice.number ?? null,
+        customer_id: invoiceCustomerId(invoice) ?? null,
+        customer_name: invoice.customer_name ?? null,
+        currency: invoice.currency,
+        amount_remaining_minor: `${invoice.amount_remaining}`,
+        due_at: timestamp(invoice.due_date),
+        created_at: timestamp(invoice.created),
+        site_metadata: invoice.metadata?.cocalc_site ?? null,
+        site_match: !invoice.metadata?.cocalc_site
+          ? "unknown"
+          : invoice.metadata.cocalc_site === site
+            ? "current"
+            : "other",
+      })),
   };
 }
 

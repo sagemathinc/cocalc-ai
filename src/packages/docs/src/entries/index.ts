@@ -15,6 +15,7 @@ import { HOSTS_ENTRIES } from "./hosts";
 import { JUPYTER_ENTRIES } from "./jupyter";
 import { MIGRATION_ENTRIES } from "./migration";
 import { PROJECTS_ENTRIES } from "./projects";
+import { RESEARCH_ENTRIES } from "./research";
 import { SELF_HOSTING_ENTRIES } from "./self-hosting";
 import { TEACHING_ENTRIES } from "./teaching";
 import { TERMINAL_ENTRIES } from "./terminal";
@@ -32,6 +33,7 @@ const ENTRY_GROUPS: DocsEntry[] = [
   ...JUPYTER_ENTRIES,
   ...MIGRATION_ENTRIES,
   ...PROJECTS_ENTRIES,
+  ...RESEARCH_ENTRIES,
   ...SELF_HOSTING_ENTRIES,
   ...TEACHING_ENTRIES,
   ...TERMINAL_ENTRIES,
@@ -66,6 +68,15 @@ const DOCS_ENTRY_IDS = [
   "admin.sso",
   "projects.create-project",
   "projects.research-handoff",
+  "research.reproduce-analysis",
+  "research.notebook-migration",
+  "research.resume-computation",
+  "research.remote-cli",
+  "research.recover-work",
+  "research.private-dashboard",
+  "research.codex-sessions",
+  "research.gpu-notebook",
+  "research.quarto-report",
   "projects.project-secrets",
   "ai.connect-credentials",
   "cli.use-cocalc-cli",
@@ -110,10 +121,11 @@ const DOCS_ENTRY_IDS = [
   "self-hosting.cocalc-star-local-vm",
   "self-hosting.install-chromium",
   "self-hosting.reverse-ssh-access",
+  "troubleshooting.project-start",
   "troubleshooting.memory",
   "troubleshooting.connectivity",
+  "hosts.choose-compute",
   "hosts.project-hosts",
-  "hosts.exam-scratchpads",
   "hosts.access-and-ram",
   "hosts.move-projects",
   "hosts.lifecycle",
@@ -124,6 +136,7 @@ const DOCS_ENTRY_IDS = [
   "hosts.storage",
   "hosts.shared-scratch",
   "hosts.logs",
+  "hosts.exam-scratchpads",
   "projects.collaborators",
   "collaboration.chat",
   "collaboration.mentions",

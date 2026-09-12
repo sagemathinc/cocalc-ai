@@ -111,3 +111,79 @@ more confusing than a fully offline page because some UI may render while the
 realtime project connection is blocked. The fastest diagnosis is to separate
 browser state, authentication state, and network websocket access.
 `;
+
+export const PROJECT_START_TROUBLESHOOTING_BODY = `
+## Identify what failed to start
+
+A project start failure is different from a notebook kernel crash or a browser
+that cannot connect. Record the exact error and when it appeared before
+changing settings. If the project is running but one notebook fails, start with
+[Jupyter kernel troubleshooting](/docs/troubleshooting/jupyter-kernel-terminated).
+For sign-in or reconnect problems, see
+[Connectivity and browser troubleshooting](/docs/troubleshooting/connectivity).
+
+## Match the start message to the next check
+
+| Message or condition | What it means | Next check |
+| --- | --- | --- |
+| Start is temporarily paused while the host upgrades its container runtime | Host maintenance is preventing a new runtime from starting. | Wait for maintenance to finish, then inspect the current project state. Files and collaborative documents remain available during this pause. |
+| Recently stopped after exceeding project-host resource limits; try again in a stated number of minutes | A resource-pressure cooldown is still active. | Use the remaining duration in the message. Review the workload that preceded the stop and the [memory troubleshooting guide](/docs/troubleshooting/memory). Repeated start requests do not remove the cooldown. |
+| Repeatedly exceeded project-host resource limits; quarantined for a stated duration | Repeated resource pressure has placed the project in quarantine. | Use the duration in the message and contact support if the block is unexpected. Plan to reduce the offending workload before resuming it. |
+| Project disk quota exceeded or almost exhausted for project startup | There is insufficient free quota for the filesystem metadata needed at startup. | Review both current files and snapshots using the storage actions below. |
+| \`master hub connection unavailable for project start\` or \`host id is required to start a project\` | The host cannot complete the connection or identity checks needed to request a start. | If you manage the host, inspect its current state and [host logs](/docs/hosts/logs). Otherwise, report the message to the host owner or site support. |
+
+Cooldown and quarantine durations depend on the current stop state. Follow the
+message rather than assuming every project has the same waiting period. During
+these blocks, you can still browse and delete files without starting the
+project.
+
+## Review storage before removing anything
+
+The disk-quota alert is titled **Project storage is full or nearly full**.
+Startup reserves a small amount of free quota for filesystem metadata, so a
+project can be blocked before the usage display reaches 100 percent. Structured
+errors identify this condition as \`project_disk_quota_exceeded\`.
+
+1. Choose **Manage files** to inspect current files. Download anything you need
+   to keep before choosing a deletion.
+2. Choose **Manage snapshots** to inspect retained snapshots. Deleted or
+   modified files may still occupy space there; removing a current file does
+   not necessarily reclaim all of its space.
+3. Review the current quota again after making an intentional change. The alert
+   also offers **Upgrade membership** and **Contact support** if the work needs
+   more quota.
+
+File and snapshot access does not require a running project. It still requires
+the relevant host/file service to be reachable and normal project permissions.
+For the existing file and storage tools, see [Project files](/docs/files/project-files) and
+[Project host storage](/docs/hosts/storage). Free disk space and available RAM
+are separate checks; increasing RAM does not address a disk-quota denial.
+
+## Distinguish a host prerequisite from a project failure
+
+Creating or starting a billable dedicated host can also be blocked by
+membership, account-security, or funding checks. Address the requirement named
+in the error:
+
+- For host roles, placement, or membership RAM, use [Host access and RAM](/docs/hosts/access-and-ram).
+- For a two-factor requirement, use [Two-factor authentication](/docs/account/two-factor-authentication).
+- For prepaid credit, a payment method, automatic billing, or a usage-window
+  limit, inspect [Billing settings and payment methods](/docs/billing/settings).
+  Follow the specific funding
+  or limit explanation in the host controls; contact support if it is unclear.
+
+Changing a notebook or repeatedly starting its project does not satisfy a
+host-level requirement.
+
+Once the blocking condition is addressed, check the current project state and
+start it if needed. Then verify the notebook, terminal, or application you
+intended to use: a running project alone does not establish that its workload
+completed successfully.
+
+## Give support the useful context
+
+Include the site URL, project ID, approximate time, exact start message, and
+whether files remain accessible. If you have host access, include the relevant
+host-state or log details. Keep secret values and private file contents out of
+the report.
+`;

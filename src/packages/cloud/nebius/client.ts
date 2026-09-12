@@ -52,6 +52,7 @@ export type NebiusCreds = {
 
 export class NebiusClient {
   private sdk: SDK;
+  private closing?: Promise<void>;
   readonly disks: DiskService;
   readonly instances: InstanceService;
   readonly images: ImageService;
@@ -87,5 +88,21 @@ export class NebiusClient {
 
   parentId(): string | undefined {
     return this.sdk.parentId();
+  }
+
+  close(): Promise<void> {
+    // Service-account renewal timers retain the SDK and its native TLS contexts
+    // even after the last request. GC alone cannot release these resources.
+    return (this.closing ??= this.sdk.close());
+  }
+
+  async [Symbol.asyncDispose](): Promise<void> {
+    try {
+      await this.close();
+    } catch (err) {
+      // A cleanup failure must not turn a successful cloud mutation into a
+      // failed operation that callers might retry, or mask its original error.
+      logger.warn("failed to close Nebius SDK", { err });
+    }
   }
 }

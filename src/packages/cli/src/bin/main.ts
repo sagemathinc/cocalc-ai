@@ -94,6 +94,7 @@ import {
 import { createProjectFileOps } from "./core/project-file";
 import { createProjectCodexOps } from "./core/project-codex";
 import { createProjectChatOps } from "./core/project-chat";
+import { readChatSendAccountSettings } from "./core/project-chat-send";
 import { createProjectJupyterOps } from "./core/project-jupyter";
 import { createProjectSyncOps as createProjectSyncOps } from "./core/project-sync";
 import { createProjectTasksOps } from "./core/project-tasks";
@@ -2406,12 +2407,15 @@ const {
 });
 
 const {
+  projectChatSendData,
   projectChatThreadCreateData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,
 } = createProjectChatOps<CommandContext, ProjectRow>({
   resolveProjectConatClient,
+  readAccountSettings: (ctx) =>
+    readChatSendAccountSettings(ctx.hub.db, ctx.accountId),
 });
 
 const {
@@ -2993,6 +2997,7 @@ const projectCommandDeps = {
   projectCodexAuthUploadFileData,
   resolveProjectConatClient,
   projectChatThreadCreateData,
+  projectChatSendData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,

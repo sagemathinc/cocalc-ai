@@ -1830,6 +1830,114 @@ describePglite("integrated CRM store", () => {
     );
   });
 
+  it.each([
+    "2026-08-24",
+    "2026-08-24T12:00:00",
+    "2026-08-24 12:00:00Z",
+    "not-a-timestamp",
+    "2026-02-30T12:00:00Z",
+    "2026-02-29T12:00:00Z",
+    "2026-08-24T24:00:00Z",
+    "2026-08-24T12:60:00Z",
+    "2026-08-24T12:00:60Z",
+    "2026-08-24T12:00:00+24:00",
+    "2026-08-24T12:00:00+01:60",
+    "",
+    "   ",
+    null,
+    0,
+  ])("rejects an invalid explicit daily digest cutoff: %p", async (as_of) => {
+    await expect(
+      store.getDailyDigest({
+        reason: "validate synthetic digest cutoff",
+        // Exercise malformed callers as well as the typed request contract.
+        as_of: as_of as string,
+      }),
+    ).rejects.toThrow(/as_of must be .*RFC3339 timestamp/);
+  });
+
+  it.each([
+    ["2026-08-24T12:00:00Z", "2026-08-24T12:00:00.000Z"],
+    ["2026-08-24T05:00:00-07:00", "2026-08-24T12:00:00.000Z"],
+    ["2026-08-24T17:30:00+05:30", "2026-08-24T12:00:00.000Z"],
+    ["2028-02-29T23:30:00-01:00", "2028-03-01T00:30:00.000Z"],
+    ["2026-08-24T12:00:00.123Z", "2026-08-24T12:00:00.123Z"],
+    [" 2026-08-24T12:00:00Z ", "2026-08-24T12:00:00.000Z"],
+  ])(
+    "normalizes an explicit daily digest cutoff: %s",
+    async (as_of, expected) => {
+      const digest = await store.getDailyDigest({
+        reason: "normalize synthetic digest cutoff",
+        as_of,
+        due_within_days: 1,
+        renewal_within_days: 2,
+        assignee_account_id: randomUUID(),
+      });
+      expect(digest.as_of).toBe(expected);
+      expect(digest.due_before).toBe(
+        new Date(Date.parse(expected) + 24 * 60 * 60 * 1000).toISOString(),
+      );
+      expect(digest.renewal_before).toBe(
+        new Date(Date.parse(expected) + 2 * 24 * 60 * 60 * 1000).toISOString(),
+      );
+    },
+  );
+
+  it.each([{}, { as_of: undefined }])(
+    "defaults an omitted daily digest cutoff to now: %p",
+    async (cutoff) => {
+      const before = Date.now();
+      const digest = await store.getDailyDigest({
+        reason: "default synthetic digest cutoff",
+        ...cutoff,
+        assignee_account_id: randomUUID(),
+      });
+      expect(Date.parse(digest.as_of)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(digest.as_of)).toBeLessThanOrEqual(Date.now());
+    },
+  );
+
+  it("uses the normalized daily digest cutoff at task window boundaries", async () => {
+    const organizationId = randomUUID();
+    const assignee = randomUUID();
+    const taskIds = Array.from({ length: 4 }, () => randomUUID());
+    await pool.query(
+      `INSERT INTO crm_organizations
+         (id,customer_number,display_name,organization_type,lifecycle_stage,
+          created_by_account_id,updated_by_account_id)
+       VALUES($1,$2,'Synthetic Cutoff Organization','company','prospect',$3,$3)`,
+      [organizationId, `CRM-CUTOFF-${randomUUID().slice(0, 20)}`, actor],
+    );
+    await pool.query(
+      "UPDATE crm_organizations SET relationship_owner_account_id=$2 WHERE id=$1",
+      [organizationId, assignee],
+    );
+    await pool.query(
+      `INSERT INTO crm_tasks
+         (id,organization_id,type,assignee_account_id,due_at,priority,subject,
+          created_by_account_id,updated_by_account_id)
+       VALUES
+         ($1,$5,'renewal',$6,'2026-08-24T11:59:59.999Z','normal','Before cutoff',$7,$7),
+         ($2,$5,'renewal',$6,'2026-08-24T12:00:00Z','normal','At cutoff',$7,$7),
+         ($3,$5,'renewal',$6,'2026-08-25T12:00:00Z','normal','At window end',$7,$7),
+         ($4,$5,'renewal',$6,'2026-08-25T12:00:00.001Z','normal','After window end',$7,$7)`,
+      [...taskIds, organizationId, assignee, actor],
+    );
+    const digest = await store.getDailyDigest({
+      reason: "preserve synthetic task window boundaries",
+      as_of: "2026-08-24T05:00:00-07:00",
+      due_within_days: 1,
+      assignee_account_id: assignee,
+    });
+    expect(digest.overdue_tasks.map(({ task }) => task.id)).toEqual([
+      taskIds[0],
+    ]);
+    expect(digest.due_soon_tasks.map(({ task }) => task.id)).toEqual([
+      taskIds[1],
+      taskIds[2],
+    ]);
+  });
+
   it("builds a deterministic bounded daily work digest", async () => {
     const organizationId = randomUUID();
     await pool.query(

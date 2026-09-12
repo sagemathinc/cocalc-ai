@@ -77,6 +77,7 @@ import {
   acceptCommercialStripeWebhookEvent,
   createStripeCommercialInvoiceDraft,
   findUnlinkedCommercialStripeInvoices,
+  findLegacyStripeInvoices,
   linkExistingStripeCommercialInvoice,
   reconcileStripeCommercialInvoice,
   recordStripeAwareCommercialManualPayment,
@@ -249,6 +250,7 @@ describe("commercial Stripe invoices", () => {
       create: jest.fn(),
       finalizeInvoice: jest.fn(),
       listLineItems: jest.fn(),
+      list: jest.fn(),
       pay: jest.fn(),
       retrieve: jest.fn(),
       search: jest.fn(),
@@ -794,6 +796,152 @@ describe("commercial Stripe invoices", () => {
         limit: 100,
       }),
     );
+  });
+
+  it("reports remaining rather than original amounts for partially paid invoices", async () => {
+    stripe.invoices.search.mockResolvedValue({
+      data: [
+        stripeInvoiceFixture({ amount_due: 390000, amount_remaining: 10000 }),
+      ],
+      has_more: false,
+    });
+    const result = await findUnlinkedCommercialStripeInvoices();
+    expect(result.invoices[0].amount_due).toBe("100.0000000000");
+  });
+
+  it("discovers legacy invoices without metadata, keeping currency minor units and site scope explicit", async () => {
+    stripe.invoices.list.mockResolvedValue({
+      data: [
+        stripeInvoiceFixture({ id: "in_linked" }),
+        stripeInvoiceFixture({
+          id: "in_legacy",
+          metadata: {},
+          currency: "jpy",
+          amount_remaining: 1234,
+          number: "EXAMPLE-1",
+          customer_name: "Example",
+        }),
+        stripeInvoiceFixture({
+          id: "in_other",
+          metadata: { cocalc_site: "other.example" },
+        }),
+      ],
+      has_more: false,
+    });
+    mockDbQuery.mockResolvedValue({
+      rows: [{ provider_invoice_id: "in_linked" }],
+    });
+    const result = await findLegacyStripeInvoices();
+    expect(result).toEqual(
+      expect.objectContaining({
+        scope: "stripe_account_open_send_invoice",
+        scanned: 3,
+        has_more: false,
+        invoices: [
+          expect.objectContaining({
+            provider_invoice_id: "in_legacy",
+            currency: "jpy",
+            amount_remaining_minor: "1234",
+            invoice_number: "EXAMPLE-1",
+            site_match: "unknown",
+          }),
+          expect.objectContaining({
+            provider_invoice_id: "in_other",
+            site_match: "other",
+          }),
+        ],
+      }),
+    );
+    expect(stripe.invoices.list).toHaveBeenCalledWith({
+      status: "open",
+      collection_method: "send_invoice",
+      limit: 100,
+    });
+    expect(stripe.invoices.search).not.toHaveBeenCalled();
+    expect(stripe.invoices.update).not.toHaveBeenCalled();
+    expect(mockDbQuery.mock.calls.every(([sql]) => /^SELECT/.test(sql))).toBe(
+      true,
+    );
+  });
+
+  it("returns a continuation even when the entire scanned page is already linked", async () => {
+    stripe.invoices.list
+      .mockResolvedValueOnce({
+        data: [stripeInvoiceFixture({ id: "in_first" })],
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [stripeInvoiceFixture({ id: "in_second" })],
+        has_more: false,
+      });
+    mockDbQuery.mockResolvedValue({
+      rows: [{ provider_invoice_id: "in_first" }],
+    });
+    expect(await findLegacyStripeInvoices({ limit: 1 })).toEqual({
+      scope: "stripe_account_open_send_invoice",
+      scanned: 1,
+      invoices: [],
+      has_more: true,
+      next_cursor: "in_first",
+    });
+    const next = await findLegacyStripeInvoices({
+      limit: 1,
+      cursor: "in_first",
+    });
+    expect(next.has_more).toBe(false);
+    expect(next.invoices[0].provider_invoice_id).toBe("in_second");
+    expect(stripe.invoices.list).toHaveBeenLastCalledWith({
+      status: "open",
+      collection_method: "send_invoice",
+      limit: 1,
+      starting_after: "in_first",
+    });
+  });
+
+  it("paginates within the bounded scan and rejects broken pagination", async () => {
+    stripe.invoices.list
+      .mockResolvedValueOnce({
+        data: Array.from({ length: 100 }, (_, n) =>
+          stripeInvoiceFixture({ id: `in_${n}` }),
+        ),
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [stripeInvoiceFixture({ id: "in_last" })],
+        has_more: false,
+      });
+    expect((await findLegacyStripeInvoices({ limit: 101 })).scanned).toBe(101);
+    expect(stripe.invoices.list).toHaveBeenLastCalledWith({
+      status: "open",
+      collection_method: "send_invoice",
+      starting_after: "in_99",
+      limit: 1,
+    });
+    stripe.invoices.list.mockResolvedValue({ data: [], has_more: true });
+    await expect(findLegacyStripeInvoices()).rejects.toThrow(
+      "invalid legacy invoice page",
+    );
+  });
+
+  it.each([0, 501, 1.5, NaN])(
+    "rejects invalid legacy scan limit %s",
+    async (limit) => {
+      await expect(findLegacyStripeInvoices({ limit })).rejects.toThrow(
+        "legacy invoice limit",
+      );
+      expect(stripe.invoices.list).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects invalid legacy cursors and live/test mode mismatches", async () => {
+    await expect(findLegacyStripeInvoices({ cursor: "bad" })).rejects.toThrow(
+      "cursor",
+    );
+    stripe.invoices.list.mockResolvedValue({
+      data: [stripeInvoiceFixture({ livemode: true })],
+      has_more: false,
+    });
+    await expect(findLegacyStripeInvoices()).rejects.toThrow();
   });
 
   it("fails closed when Stripe draft metadata does not identify the internal invoice", async () => {

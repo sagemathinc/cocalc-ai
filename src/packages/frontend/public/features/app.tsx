@@ -8,6 +8,7 @@ import { Fragment, type CSSProperties, useEffect } from "react";
 import { Button, Col, Empty, Flex, Row, Typography } from "antd";
 
 import { Icon } from "@cocalc/frontend/components/icon";
+import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import type { PublicPolicyPages } from "@cocalc/frontend/public/config";
 import {
   PUBLIC_INTERACTIVE_CARD_CLASS,
@@ -21,7 +22,10 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
-import { PUBLIC_FEATURE_NAV_ITEMS as FEATURE_NAV_ITEMS } from "@cocalc/util/public-feature-pages";
+import {
+  PUBLIC_FEATURE_NAV_ITEMS as FEATURE_NAV_ITEMS,
+  publicFeatureHref,
+} from "@cocalc/util/public-feature-pages";
 import { COLORS, SITE_NAME } from "@cocalc/util/theme";
 import AIFeaturePage from "./ai-page";
 import ApiFeaturePage from "./api-page";
@@ -88,6 +92,7 @@ const FEATURE_DETAIL_COMPONENTS = {
 
 const FEATURE_INDEX_PRIORITY = [
   "ai",
+  "research-compute",
   "jupyter-notebook",
   "latex-editor",
   "terminal",
@@ -104,7 +109,13 @@ const FEATURE_GROUPS = [
     description:
       "Use a persistent Linux environment for shells, packages, processes, and services.",
     icon: "terminal",
-    slugs: ["terminal", "linux", "x11", "software-environment"],
+    slugs: [
+      "research-compute",
+      "terminal",
+      "linux",
+      "x11",
+      "software-environment",
+    ],
     title: "Runtime",
     variant: "cards",
   },
@@ -803,7 +814,7 @@ function FeatureDetail({
           {page.docsUrl ? (
             <Button
               type="link"
-              href={page.docsUrl}
+              href={publicFeatureHref(page.docsUrl, appBasePath)}
               style={{ paddingInline: 0 }}
             >
               Documentation
@@ -842,7 +853,7 @@ function FeatureDetail({
                 <Button
                   key={link.href}
                   type="link"
-                  href={link.href}
+                  href={publicFeatureHref(link.href, appBasePath)}
                   style={{ paddingInline: 0 }}
                 >
                   {link.label}

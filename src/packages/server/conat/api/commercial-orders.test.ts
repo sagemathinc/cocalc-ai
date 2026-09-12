@@ -63,6 +63,7 @@ import {
   create,
   createPreview,
   createInvoiceDraft,
+  diagnostics,
   issueManualInvoice,
   issueQuoteLink,
   revokeQuoteLink,
@@ -363,5 +364,37 @@ describe("commercial orders public Conat API", () => {
     expect(mockAssertCommercialReceivablesCapability).toHaveBeenCalledWith(
       "visible",
     );
+  });
+
+  it("routes audited read-only legacy discovery to the seed without dropping pagination", async () => {
+    const commercialOrders = jest
+      .fn()
+      .mockResolvedValue({
+        legacy_invoice_scan: { has_more: false, invoices: [] },
+      });
+    const bayOps = jest.fn(() => ({ commercialOrders }));
+    mockGetConfiguredBayId.mockReturnValue("worker-bay");
+    mockGetInterBayBridge.mockReturnValue({ bayOps });
+    await diagnostics({
+      ...BASE,
+      include_legacy_invoices: true,
+      legacy_invoice_cursor: "in_previous",
+      legacy_invoice_limit: 10,
+    });
+    expect(bayOps).toHaveBeenCalledWith("seed-bay", { timeout_ms: 120_000 });
+    expect(commercialOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "diagnostics",
+        actor_account_id: "admin-1",
+        payload: expect.objectContaining({
+          reason: BASE.reason,
+          include_legacy_invoices: true,
+          legacy_invoice_cursor: "in_previous",
+          legacy_invoice_limit: 10,
+        }),
+      }),
+    );
+    expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
+    expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
   });
 });

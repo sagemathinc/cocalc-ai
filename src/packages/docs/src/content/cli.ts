@@ -233,6 +233,27 @@ An unattended script should report the approval requirement to its operator.
 Do not repeatedly retry an approval-dependent operation as though it were a
 temporary network failure.
 
+## Plan authentication for host commands
+
+Host inventory and lifecycle commands require an account identity with the
+appropriate host permissions. Project or managed-agent credentials do not by
+themselves grant account access. A successful \`auth status --check\` verifies
+the effective connection; it does not prove that every command is permitted.
+
+| Command | Additional authentication to plan for |
+| --- | --- |
+| \`host list\`, \`host get\`, \`host projects\` | Account and host access checks; fresh authentication is not required for these inventory reads. |
+| \`host projects-backup\` | Account and permission to operate the host; fresh authentication is not required. This starts backup work. |
+| \`host create\`, \`host start\` | Cloud provisioning and starts can require fresh authentication. Requirements also depend on provider and routing; do not assume these are unattended operations. |
+| \`host stop\`, \`host restart\`, \`host projects-stop\`, \`host projects-restart\` | Fresh authentication is required in addition to account and host permissions. |
+
+The CLI's automatic fresh-auth prompt requires an interactive terminal on both
+standard input and standard error. A noninteractive job should report the
+approval requirement and stop that operation. Elevation can expire before a
+later scheduled run. Prepare the required approval before a deliberate
+operation, and keep an operator-visible path for failures; a saved profile or
+schedule does not renew approval automatically.
+
 ## Browser targets need their own check
 
 Start with discovery and resolution before sending browser actions:

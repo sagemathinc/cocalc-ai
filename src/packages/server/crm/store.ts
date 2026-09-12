@@ -3874,10 +3874,10 @@ export async function getDailyDigest(
   opts: CrmDailyDigestRequest,
 ): Promise<CrmDailyDigest> {
   await prepareRead(opts.reason);
-  const asOfDate = opts.as_of ? new Date(opts.as_of) : new Date();
-  if (!Number.isFinite(asOfDate.valueOf())) {
-    throw Error("as_of must be a valid ISO timestamp");
-  }
+  const asOfDate =
+    opts.as_of === undefined
+      ? new Date()
+      : new Date(rfc3339TimestampRequired(opts.as_of, "as_of"));
   const boundedDays = (value: unknown, fallback: number, max: number) => {
     const parsed = Number(value ?? fallback);
     if (!Number.isInteger(parsed) || parsed < 0 || parsed > max) {
