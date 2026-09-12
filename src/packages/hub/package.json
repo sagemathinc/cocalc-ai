@@ -32,6 +32,7 @@
     "http-proxy-3": "^1.23.2",
     "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
+    "markdown-it": "^14.2.0",
     "ms": "2.1.2",
     "parse-domain": "^5.0.0",
     "react": "19.2.3",
@@ -40,6 +41,7 @@
   "devDependenicesNotes": "For license and size reasons, we make @cocalc/crm a dev dependency so it is NOT installed unless explicitly installed as a separate step.",
   "devDependencies": {
     "@types/express": "^5.0.6",
+    "@types/markdown-it": "12.2.3",
     "@types/node": "^22.10.10"
   },
   "scripts": {

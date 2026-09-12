@@ -1333,6 +1333,9 @@ importers:
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
+      markdown-it:
+        specifier: ^14.2.0
+        version: 14.2.0
       ms:
         specifier: 2.1.2
         version: 2.1.2
@@ -1349,6 +1352,9 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
+      '@types/markdown-it':
+        specifier: 12.2.3
+        version: 12.2.3
       '@types/node':
         specifier: ^22.10.10
         version: 22.20.1
