@@ -9,6 +9,7 @@ import {
   CONNECTIVITY_TROUBLESHOOTING_BODY,
   JUPYTER_KERNEL_TERMINATED_BODY,
   MEMORY_TROUBLESHOOTING_BODY,
+  PROJECT_START_TROUBLESHOOTING_BODY,
 } from "../content";
 
 export const TROUBLESHOOTING_ENTRIES: DocsEntry[] = [
@@ -65,5 +66,21 @@ export const TROUBLESHOOTING_ENTRIES: DocsEntry[] = [
     summary:
       "Diagnose sign-in, websocket, stale browser state, and network connection problems.",
     title: "Connectivity and browser troubleshooting",
+  },
+  {
+    audiences: ["agents", "instructors", "researchers", "students", "teams"],
+    body: PROJECT_START_TROUBLESHOOTING_BODY.trim(),
+    category: "Troubleshooting",
+    id: "troubleshooting.project-start",
+    lastReviewed: "2026-09-11",
+    noActionReason:
+      "The next destination depends on the observed start error and current project state.",
+    searchKeywords:
+      "project start startup blocked cooldown quarantine disk quota full nearly full maintenance host connection",
+    slug: "troubleshooting/project-start",
+    status: "ready",
+    summary:
+      "Identify maintenance, resource-pressure, disk-quota, and host-connection start blocks and choose the next check.",
+    title: "Project will not start",
   },
 ];
