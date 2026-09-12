@@ -77,6 +77,7 @@ import {
   getDefaultCodexSessionMode,
 } from "./codex-defaults";
 import { CodexFullAccessNotice } from "./codex-full-access";
+import { CodexThreadId } from "./codex-thread-id";
 import { getLatestAcpThreadIdForThread } from "./thread-session";
 import {
   getCodexPaymentSourceShortLabel,
@@ -1796,6 +1797,7 @@ export function CodexConfigButton({
                   ) : null}
                   <CodexSubagentConcurrencyButton />
                 </div>
+                <CodexThreadId threadId={threadKey} />
                 {effectiveServiceTier === "fast" && !siteFundedPolicy ? (
                   <Alert
                     type="warning"
