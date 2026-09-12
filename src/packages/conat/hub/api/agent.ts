@@ -9,9 +9,25 @@ Who calls this:
   `transformArgs` in `conat/hub/api/index.ts` to enforce account auth and
   shape typed request/response signatures.
 */
-import { authFirstRequireAccount } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
+  authFirstRequireHostWithAccountTarget,
+} from "./util";
+import type {
+  AgentIdentity,
+  AgentCredential,
+} from "@cocalc/conat/agents/protocol";
 
 export const agent = {
+  registerIdentity: authFirstRequireAccountWithBoundSession,
+  listIdentities: authFirstRequireAccount,
+  grantMessaging: authFirstRequireAccountWithBoundSession,
+  revokeMessaging: authFirstRequireAccountWithBoundSession,
+  disableIdentity: authFirstRequireAccountWithBoundSession,
+  issueIdentity: authFirstRequireHostWithAccountTarget,
+  endIdentityRun: authFirstRequireHostWithAccountTarget,
+  authorizeDelivery: authFirstRequireHostWithAccountTarget,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -135,7 +151,67 @@ export type AgentRunResponse = {
   error?: string;
 };
 
+export interface AgentHumanAuth {
+  account_id?: string;
+  session_hash?: string;
+}
+export interface AgentHostAuth {
+  account_id?: string;
+  host_id?: string;
+}
+export interface AgentGrant {
+  grant_id: string;
+  source_agent_id: string;
+  target_agent_id: string;
+  allow_guidance: boolean;
+  approved_by: string;
+  reason: string;
+  expires_at: Date | string;
+  revoked_at?: Date | string | null;
+}
+
 export interface AgentApi {
+  registerIdentity(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+    },
+  ): Promise<AgentIdentity>;
+  listIdentities(opts: {
+    account_id?: string;
+    project_id: string;
+  }): Promise<AgentIdentity[]>;
+  grantMessaging(
+    opts: AgentHumanAuth & {
+      source_agent_id: string;
+      target_agent_id: string;
+      ttl_seconds: number;
+      reason: string;
+      allow_guidance?: boolean;
+    },
+  ): Promise<AgentGrant>;
+  revokeMessaging(opts: AgentHumanAuth & { grant_id: string }): Promise<void>;
+  disableIdentity(opts: AgentHumanAuth & { agent_id: string }): Promise<void>;
+  issueIdentity(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      run_id: string;
+    },
+  ): Promise<AgentCredential | undefined>;
+  endIdentityRun(
+    opts: AgentHostAuth & { agent_id: string; run_id: string },
+  ): Promise<void>;
+  authorizeDelivery(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      message_id: string;
+    },
+  ): Promise<void>;
   execute: (opts: AgentExecuteRequest) => Promise<AgentExecuteResponse>;
   manifest: (opts?: { account_id?: string }) => Promise<AgentManifestEntry[]>;
   plan: (opts: AgentPlanRequest) => Promise<AgentPlanResponse>;

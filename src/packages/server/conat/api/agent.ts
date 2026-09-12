@@ -4,6 +4,15 @@ import {
   type AgentActionResult,
   type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
+import * as identities from "@cocalc/server/agents/api";
+export const registerIdentity = identities.registerIdentity;
+export const listIdentities = identities.listIdentities;
+export const grantMessaging = identities.grantMessaging;
+export const revokeMessaging = identities.revokeMessaging;
+export const disableIdentity = identities.disableIdentity;
+export const issueIdentity = identities.issueIdentity;
+export const endIdentityRun = identities.endIdentityRun;
+export const authorizeDelivery = identities.authorizeDelivery;
 import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { projectApiClient } from "@cocalc/conat/project/api";

@@ -573,6 +573,7 @@ async function rotateProjectCliBearerWithRetry(
 }
 
 export type ProjectCliTokenLease = {
+  identityContainerPath?: string;
   hostPath: string;
   containerPath: string;
   setAgentSessionKey: (agentSessionKey: string) => Promise<void>;
@@ -645,6 +646,20 @@ export async function createProjectCliTokenLease({
     }
   };
   await writeToken(initialToken);
+  const { createAgentIdentityLease } = await import("./agent-identity-lease");
+  let identityLease: Awaited<ReturnType<typeof createAgentIdentityLease>>;
+  try {
+    identityLease = await createAgentIdentityLease({
+      api: hubApi.agent,
+      projectId,
+      accountId: resolvedAccountId,
+      env: currentEnv,
+      hostDir,
+    });
+  } catch (error) {
+    await fs.rm(hostDir, { recursive: true, force: true });
+    throw error;
+  }
 
   let closed = false;
   let generation = 0;
@@ -707,6 +722,9 @@ export async function createProjectCliTokenLease({
   return {
     hostPath,
     containerPath,
+    identityContainerPath: identityLease
+      ? join(containerDir, "identity.json")
+      : undefined,
     setAgentSessionKey: async (nextAgentSessionKey: string) => {
       const nextSessionId = projectCliSessionId(nextAgentSessionKey);
       if (closed || nextSessionId === sessionId) return;
@@ -736,6 +754,7 @@ export async function createProjectCliTokenLease({
       closed = true;
       if (timer) clearTimeout(timer);
       await refreshPromise?.catch(() => undefined);
+      await identityLease?.close();
       await fs.rm(hostDir, { recursive: true, force: true });
     },
   };
@@ -1882,7 +1901,10 @@ async function spawnCodexAppServerInProjectRuntime({
   delete execEnv.COCALC_AGENT_TOKEN;
   delete execEnv.COCALC_BEARER_TOKEN_FILE;
   delete execEnv.COCALC_AGENT_TOKEN_FILE;
+  delete execEnv.COCALC_AGENT_IDENTITY_FILE;
   if (cliTokenLease) {
+    if (cliTokenLease.identityContainerPath)
+      execEnv.COCALC_AGENT_IDENTITY_FILE = cliTokenLease.identityContainerPath;
     execEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
     execEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
   }

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { hubApi } from "../api";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
@@ -7561,6 +7562,15 @@ async function executeAcpRequest({
   });
   if (!projectId) {
     throw Error("project_id must be set");
+  }
+  if (request.chat?.agent_delivery_id) {
+    await hubApi.agent.authorizeDelivery({
+      account_id: request.account_id,
+      project_id: projectId,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id!,
+      message_id: request.chat.agent_delivery_id,
+    });
   }
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({

@@ -8,6 +8,7 @@ const logger = getLogger("lite:hub:acp:runtime-env");
 
 const RUNTIME_AUTH_ENV_KEYS = new Set([
   "COCALC_ACCOUNT_ID",
+  "COCALC_AGENT_IDENTITY_FILE",
   "COCALC_AGENT_TOKEN",
   "COCALC_AGENT_TOKEN_FILE",
   "COCALC_API_URL",
