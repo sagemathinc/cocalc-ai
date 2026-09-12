@@ -162,10 +162,18 @@ are separate checks; increasing RAM does not address a disk-quota denial.
 ## Distinguish a host prerequisite from a project failure
 
 Creating or starting a billable dedicated host can also be blocked by
-membership, account-security, or funding checks. If the error names one of those requirements, use
-[Host access and RAM](/docs/hosts/access-and-ram) and address the named
-prerequisite. Changing a notebook or repeatedly starting its project does not
-satisfy a host-level requirement.
+membership, account-security, or funding checks. Address the requirement named
+in the error:
+
+- For host roles, placement, or membership RAM, use [Host access and RAM](/docs/hosts/access-and-ram).
+- For a two-factor requirement, use [Two-factor authentication](/docs/account/two-factor-authentication).
+- For prepaid credit, a payment method, automatic billing, or a usage-window
+  limit, inspect [Billing settings and payment methods](/docs/billing/settings).
+  Follow the specific funding
+  or limit explanation in the host controls; contact support if it is unclear.
+
+Changing a notebook or repeatedly starting its project does not satisfy a
+host-level requirement.
 
 Once the blocking condition is addressed, check the current project state and
 start it if needed. Then verify the notebook, terminal, or application you

@@ -1,13 +1,18 @@
 """Exercise the downloadable research scripts without a CoCalc account."""
 
 import hashlib
+from http.server import ThreadingHTTPServer
+import importlib.util
 import json
 from pathlib import Path
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
+from urllib.error import HTTPError
+from urllib.request import urlopen
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "research-workflows"
@@ -50,11 +55,34 @@ class ResearchExamples(unittest.TestCase):
         self.assertNotEqual(changed["input_sha256"], first["input_sha256"])
 
     def test_invalid_input_does_not_create_result(self):
-        for content in ("value\n", "wrong\n2\n", "value\nnan\n", "value\ninf\n"):
+        for content in ("value\n", "wrong\n2\n", "value\nnan\n", "value\ninf\n", "value\n2,1000\n4\n", "value,other\n2,4\n", "value\n\"\"\n"):
             with self.subTest(content=content):
                 (self.directory / "bad.csv").write_text(content)
                 self.run_script("analyze.py", "bad.csv", "unexpected.json", success=False)
                 self.assertFalse((self.directory / "unexpected.json").exists())
+
+    def test_dashboard_rejects_malformed_rows_and_headers(self):
+        spec = importlib.util.spec_from_file_location("dashboard", EXAMPLES / "dashboard.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        module.DATA = self.directory / "measurements.csv"
+        with ThreadingHTTPServer(("127.0.0.1", 0), module.Dashboard) as server:
+            worker = threading.Thread(target=server.serve_forever)
+            worker.start()
+            try:
+                url = f"http://127.0.0.1:{server.server_port}/"
+                module.DATA.write_text("value\n2\n4\n6\n8\n")
+                with urlopen(url, timeout=3) as response:
+                    self.assertIn(b"Count: 4; mean: 5.0", response.read())
+                for content in ("value\n2,1000\n4\n", "value,other\n2,4\n", "value\n", "value\nnan\n"):
+                    module.DATA.write_text(content)
+                    with self.subTest(content=content), self.assertRaises(HTTPError) as error:
+                        urlopen(url, timeout=3)
+                    self.assertEqual(error.exception.code, 503)
+                    error.exception.close()
+            finally:
+                server.shutdown()
+                worker.join(timeout=3)
 
     def test_failure_resume_preserves_completed_cases(self):
         failed = self.run_script("sweep.py", "--out", "run", "--fail-at", 3, "--delay", 0, success=False)

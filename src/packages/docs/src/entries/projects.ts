@@ -90,7 +90,7 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
     slug: "projects/project-secrets",
     status: "ready",
     summary:
-      "Store runtime credentials as encrypted files, select secrets to copy with the CLI, and check mount-refresh results.",
+      "Store runtime credentials as encrypted, read-only files, select secrets to copy with the CLI, and check mount-refresh results.",
     title: "Project secrets",
   },
   {

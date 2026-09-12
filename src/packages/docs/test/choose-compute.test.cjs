@@ -44,11 +44,7 @@ test("compute choice resolves all three setup routes and its supporting links", 
       (match) => match[1],
     ),
   );
-  for (const slug of [
-    "hosts/project-hosts",
-    "projects/virtual-machines",
-    "jupyter/remote-kernels",
-  ]) {
+  for (const slug of ["hosts/project-hosts", "jupyter/remote-kernels"]) {
     assert.ok(links.has(slug), slug);
     assert.ok(getDocsEntry(slug, access), slug);
   }
@@ -58,4 +54,17 @@ test("compute choice resolves all three setup routes and its supporting links", 
   assert.doesNotMatch(entry.body, /^#{1,6} \d/m);
   const report = verifyDocsStatic();
   assert.equal(report.ok, true, JSON.stringify(report.issues));
+});
+
+test("compute choice remains useful without linking to unavailable local VM docs", () => {
+  for (const features of [[], ["compute-vms"]]) {
+    const entry = getDocsEntry("hosts/choose-compute", { features });
+    assert.ok(entry);
+    assert.match(entry.body, /Managed VMs are optional/);
+    assert.match(
+      entry.body,
+      /https:\/\/cocalc.ai\/docs\/projects\/virtual-machines/,
+    );
+    assert.doesNotMatch(entry.body, /\]\(\/docs\/projects\/virtual-machines\)/);
+  }
 });

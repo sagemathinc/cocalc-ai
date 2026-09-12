@@ -18,7 +18,14 @@ class Dashboard(BaseHTTPRequestHandler):
         elif route == "/":
             try:
                 with DATA.open(encoding="utf-8", newline="") as source:
-                    values = [float(row["value"]) for row in csv.DictReader(source)]
+                    reader = csv.DictReader(source)
+                    if reader.fieldnames != ["value"]:
+                        raise ValueError("Expected one column named value")
+                    values = []
+                    for row in reader:
+                        if set(row) != {"value"} or row["value"] is None:
+                            raise ValueError("Expected exactly one value per CSV row")
+                        values.append(float(row["value"]))
                 if not all(math.isfinite(value) for value in values):
                     raise ValueError("Measurements must be finite")
                 mean = statistics.mean(values)
@@ -45,7 +52,8 @@ class Dashboard(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-host = os.environ.get("HOST", "127.0.0.1")
-port = int(os.environ.get("PORT", "8765"))
-print(f"Dashboard listening on {host}:{port}", flush=True)
-ThreadingHTTPServer((host, port), Dashboard).serve_forever()
+if __name__ == "__main__":
+    host = os.environ.get("HOST", "127.0.0.1")
+    port = int(os.environ.get("PORT", "8765"))
+    print(f"Dashboard listening on {host}:{port}", flush=True)
+    ThreadingHTTPServer((host, port), Dashboard).serve_forever()

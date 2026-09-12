@@ -32,14 +32,26 @@ test("external documentation URLs do not hide broken site-relative links", () =>
   try {
     entry.body =
       "[External](https://example.com/docs/external-only)\n" +
+      "[Query](https://example.com?next=/docs/external-query)\n" +
+      "[Reference][guide]\n\n[guide]:/docs/missing-reference\n\n" +
+      "[Adjacent](https://example.com/docs/other)[Local](/docs/missing-adjacent)\n" +
       "[Missing](/docs/missing-research-example)\n" +
       "[Existing](/docs/projects/create-project)";
     const links = verifyDocsStatic().issues.filter(
       (issue) =>
         issue.entryId === entry.id && issue.code === "entry-internal-link",
     );
-    assert.equal(links.length, 1);
-    assert.match(links[0].message, /missing-research-example/);
+    assert.equal(links.length, 3);
+    for (const slug of [
+      "missing-reference",
+      "missing-adjacent",
+      "missing-research-example",
+    ]) {
+      assert.ok(
+        links.some((link) => link.message.includes(slug)),
+        slug,
+      );
+    }
   } finally {
     entry.body = original;
   }

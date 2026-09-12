@@ -62,7 +62,9 @@ defaults and how to plan for several projects running together.
 
 ## CPU sharing
 
-Projects can use otherwise-idle CPU capacity on a CoCalc.ai project host.
+Projects can use otherwise-idle CPU capacity within the host's project pool.
+Managed project hosts reserve some CPU capacity for host services; those cores
+are not available to projects even when the services are idle.
 When several projects need CPU at the same time, their shared-compute
 priorities determine their relative shares. Higher priority helps under
 contention; it does not reserve particular cores.

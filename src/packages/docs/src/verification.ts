@@ -4,6 +4,8 @@
  */
 
 import { spawn } from "node:child_process";
+import MarkdownIt from "markdown-it";
+import type Token from "markdown-it/lib/token";
 import {
   docsPath,
   getDocsAction,
@@ -135,8 +137,23 @@ export type DocsLiveVerificationReport = {
   results: DocsLiveVerificationResult[];
 };
 
-// Match site-relative docs paths, not a /docs/ segment inside an external URL.
-const DOCS_LINK_RE = /(?<![A-Za-z0-9/:._-])\/docs\/([A-Za-z0-9._/-]+)/g;
+const markdown = new MarkdownIt();
+
+function internalDocsSlugs(body: string): string[] {
+  const slugs: string[] = [];
+  const visit = (tokens: Token[]) => {
+    for (const token of tokens) {
+      const href = token.type === "link_open" ? token.attrGet("href") : null;
+      if (href?.startsWith("/docs/")) {
+        slugs.push(href.slice("/docs/".length).split(/[?#]/, 1)[0]);
+      }
+      if (token.children) visit(token.children);
+    }
+  };
+  // Match the docs renderer's normalization of legacy String.raw bodies.
+  visit(markdown.parse(body.replace(/\\`/g, "`"), {}));
+  return slugs;
+}
 const APP_DOCS_LINK_RE = /\/app-docs(?:\/[A-Za-z0-9._/-]+)?/g;
 const LEGACY_DOCS_RE = /https:\/\/doc\.cocalc\.com\/[^\s"'<>)]*/g;
 const DEFAULT_STALE_REVIEW_DAYS = 90;
@@ -707,8 +724,7 @@ export function verifyDocsStatic(): DocsVerificationReport {
         }),
       );
     }
-    for (const match of entry.body.matchAll(DOCS_LINK_RE)) {
-      const slug = match[1]?.replace(/[),.;:]+$/, "");
+    for (const slug of internalDocsSlugs(entry.body)) {
       if (slug && !getDocsEntry(slug, docsAccess)) {
         issues.push(
           issue({

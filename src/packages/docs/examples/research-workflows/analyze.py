@@ -15,7 +15,11 @@ def analyze(source):
     rows = csv.DictReader(io.StringIO(raw.decode("utf-8")))
     if rows.fieldnames != ["value"]:
         raise ValueError("Expected one column named value")
-    values = [float(row["value"]) for row in rows]
+    values = []
+    for row in rows:
+        if set(row) != {"value"} or row["value"] is None:
+            raise ValueError("Expected exactly one value per CSV row")
+        values.append(float(row["value"]))
     if not values or not all(math.isfinite(value) for value in values):
         raise ValueError("The input must contain at least one finite measurement")
     return {
