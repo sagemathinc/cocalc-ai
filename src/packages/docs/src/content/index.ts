@@ -8,6 +8,7 @@ export * from "./account";
 export * from "./ai";
 export * from "./automation";
 export * from "./collaboration";
+export * from "./compute";
 export * from "./docs";
 export * from "./files";
 export * from "./hosts";

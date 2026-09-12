@@ -116,10 +116,10 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
   },
   {
     category: "Project hosts",
-    startEntryId: "hosts.project-hosts",
+    startEntryId: "hosts.choose-compute",
     summary:
-      "Understand dedicated hosts, access and RAM policy, lifecycle operations, storage, scratch disks, and reliability.",
-    workflows: ["Host setup", "Lifecycle", "Storage"],
+      "Choose research compute, then understand project-host access, RAM policy, lifecycle operations, storage, and reliability.",
+    workflows: ["Choose compute", "Host setup", "Lifecycle", "Storage"],
   },
   {
     category: "Self Hosting",

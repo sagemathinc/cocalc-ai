@@ -6,6 +6,7 @@
 import type { DocsEntry } from "../types";
 import { docsIcon, projectHostActionParameters } from "../helpers";
 import {
+  CHOOSE_RESEARCH_COMPUTE_BODY,
   PROJECT_HOSTS_BODY,
   PROJECT_HOST_ACCESS_BODY,
   PROJECT_HOST_CHANGE_RULES_BODY,
@@ -21,6 +22,22 @@ import {
 } from "../content";
 
 export const HOSTS_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: CHOOSE_RESEARCH_COMPUTE_BODY.trim(),
+    category: "Project hosts",
+    id: "hosts.choose-compute",
+    lastReviewed: "2026-09-11",
+    noActionReason:
+      "Decision guide; follow the linked setup workflow for the chosen compute route.",
+    searchKeywords:
+      "research compute more RAM CPU cores GPU capacity machine type architecture region provider quota availability project host managed VM remote kernel",
+    slug: "hosts/choose-compute",
+    status: "ready",
+    summary:
+      "Compare project hosts, managed VMs, and remote kernels, then check machine fit, availability, permissions, and readiness.",
+    title: "Choose compute for research",
+  },
   {
     actions: [
       {
