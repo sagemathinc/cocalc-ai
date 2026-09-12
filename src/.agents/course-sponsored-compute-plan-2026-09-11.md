@@ -906,3 +906,41 @@ proposed operational defaults or implementation choices needing explicit review:
 - [ ] Real-PostgreSQL concurrency, multibay, and provider-failure tests passing.
 - [ ] Project notebook preservation and absence of VM backups clearly documented/tested.
 - [ ] Pilot reconciled; operations documentation, kill switches, and safe rollback ready.
+
+## 19. Future Sponsorship Contexts (Out Of Scope For V1)
+
+Course sponsorship is the first user-facing workflow, not a requirement of the
+underlying accounting model. Research groups, laboratories, departments, and
+short-lived collaborative projects have the same basic problem: one payer backs
+a budget, named people receive bounded allowances, and those people own and
+operate their resources.
+
+The reusable core is account backing, pools, account-bound grants, resource
+reservations, payer attribution, settlement, and explicit personal fallback.
+Keep these operations independent of editable course contents. Course-specific
+work belongs at the association, recipient-selection, recommendation, and
+presentation boundaries.
+
+The initial pool schema requires a course project and course instance. That is
+an intentional v1 association, not a claim that other contexts work already.
+A later release can introduce a server-owned sponsorship context with a kind
+and stable identity, migrate existing course associations into it, and add a
+research-group setup interface. Non-course pools should not require a dummy
+course file, and they should reuse the same ledger and funding invariants rather
+than obtain a separate accounting implementation.
+
+For example, a principal investigator could allocate a time-limited research
+budget to named group members, recommend GPU templates, monitor spending, and
+let members explicitly continue with personal funds. Paying would still not
+transfer ownership of their VMs or grant access to their data.
+
+Group membership or a group-manager role must not automatically authorize
+spending the payer's money. Any future delegated financial administration needs
+its own explicit approval and revocation contract; retain the payer/beneficiary/
+actor distinction and account-home authority described above.
+
+**Out of scope for the first release:** non-course setup screens, organization
+or research-group membership management, delegated financial administrators,
+multi-payer pools, and a generalized sponsorship-context framework. This section
+records the extension path and architectural boundary, not additional v1
+deliverables or permission to delay the Manchester course workflow.
