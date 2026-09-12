@@ -3,7 +3,12 @@ import test from "node:test";
 import { buildThreadConfigRecord } from "@cocalc/chat";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
-import { prepareChatSend, submitChatSend } from "./project-chat-send";
+import {
+  prepareChatSend,
+  submitChatSend,
+  readChatSendAccountSettings,
+} from "./project-chat-send";
+import { OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY } from "@cocalc/util/notification-preferences";
 
 const options = {
   projectId: "e9a4b7f0-6893-4e6c-9231-83d918bedcbe",
@@ -100,9 +105,107 @@ test("send rejects blank messages, unauthenticated, archived and non-agent threa
     () =>
       prepareChatSend({
         ...options,
-        thread: { ...options.thread, agent_kind: "llm" },
+        thread: { ...options.thread, agent_kind: "llm", acp_config: undefined },
       }),
     /Codex\/ACP/,
+  );
+});
+
+test("reads the sender's account settings and does not silently default on lookup failure", async () => {
+  const settings = { codex_max_concurrent_subagents: 1 };
+  assert.equal(
+    await readChatSendAccountSettings(
+      {
+        userQuery: async (opts) => {
+          assert.deepEqual(opts, {
+            query: {
+              accounts: [
+                { account_id: options.accountId, other_settings: null },
+              ],
+            },
+          });
+          return {
+            accounts: [
+              { account_id: options.accountId, other_settings: settings },
+            ],
+          };
+        },
+      },
+      options.accountId,
+    ),
+    settings,
+  );
+  await assert.rejects(
+    readChatSendAccountSettings(
+      { userQuery: async () => ({ accounts: [] }) },
+      options.accountId,
+    ),
+    /preferences/,
+  );
+  await assert.rejects(
+    readChatSendAccountSettings(
+      {
+        userQuery: async () => {
+          throw Error("offline");
+        },
+      },
+      options.accountId,
+    ),
+    /offline/,
+  );
+});
+
+test("accepts legacy config-only and model-only Codex threads", () => {
+  for (const thread of [
+    { ...options.thread, agent_kind: undefined },
+    {
+      ...options.thread,
+      agent_kind: undefined,
+      acp_config: undefined,
+      agent_model: "codex-agent",
+    },
+  ])
+    assert.equal(
+      prepareChatSend({ ...options, thread }).request.chat.thread_id,
+      "thread-1",
+    );
+});
+
+test("preserves account concurrency and effective completion notifications", () => {
+  const otherSettings = {
+    codex_max_concurrent_subagents: 1,
+    [OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY]: {
+      version: 2,
+      ai: { completion_default: false },
+    },
+  };
+  for (const guidance of [false, true]) {
+    const { request } = prepareChatSend({
+      ...options,
+      otherSettings,
+      guidance,
+    });
+    assert.equal(request.config?.maxConcurrentSubagents, 1);
+    assert.equal(request.chat.completion_notification_enabled, false);
+  }
+  for (const override of ["on", "off", "inherit"] as const) {
+    const { request } = prepareChatSend({
+      ...options,
+      otherSettings,
+      thread: { ...options.thread, codex_completion_notification: override },
+    });
+    assert.equal(
+      request.chat.completion_notification_enabled,
+      override === "on",
+    );
+  }
+  assert.equal(
+    prepareChatSend(options).request.config?.maxConcurrentSubagents,
+    undefined,
+  );
+  assert.equal(
+    prepareChatSend(options).request.chat.completion_notification_enabled,
+    true,
   );
 });
 

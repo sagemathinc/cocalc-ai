@@ -46,6 +46,7 @@ type ThreadConfigPatch = Partial<
 type ProjectChatAutomationAction = AcpAutomationRequest["action"] | "status";
 
 type ProjectChatOpsDeps<Ctx, Project extends ProjectIdentity> = {
+  readAccountSettings: (ctx: Ctx) => Promise<Record<string, unknown>>;
   resolveProjectConatClient: (
     ctx: Ctx,
     projectIdentifier?: string,
@@ -257,6 +258,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
           rows,
           prompt,
           guidance,
+          otherSettings: await deps.readAccountSettings(ctx),
         });
         return await submitChatSend({
           prepared,

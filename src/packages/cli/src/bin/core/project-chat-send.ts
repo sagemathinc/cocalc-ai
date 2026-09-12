@@ -11,7 +11,34 @@ import type { ImmerDB } from "@cocalc/chat/server";
 import { steerAcp, streamAcp } from "@cocalc/conat/ai/acp/client";
 import type { Client } from "@cocalc/conat/core/client";
 import type { AcpRequest, AcpChatContext } from "@cocalc/conat/ai/acp/types";
-import { normalizeCodexSessionId } from "@cocalc/util/ai/codex";
+import {
+  isCodexModelName,
+  normalizeCodexSessionId,
+} from "@cocalc/util/ai/codex";
+import {
+  OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS,
+  normalizeCodexMaxConcurrentSubagents,
+} from "@cocalc/util/ai/codex-subagent-concurrency";
+import {
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY,
+  OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY,
+  normalizeNotificationPreferencesV2,
+  resolveCodexCompletionNotificationEnabled,
+} from "@cocalc/util/notification-preferences";
+import type { DB } from "@cocalc/conat/hub/api/db";
+
+export async function readChatSendAccountSettings(
+  db: Pick<DB, "userQuery">,
+  accountId: string,
+) {
+  const result = await db.userQuery({
+    query: { accounts: [{ account_id: accountId, other_settings: null }] },
+  });
+  const account = result?.accounts?.find((row) => row.account_id === accountId);
+  if (!account)
+    throw new Error("could not read the sending account's preferences");
+  return account.other_settings ?? {};
+}
 
 export function prepareChatSend({
   projectId,
@@ -22,6 +49,7 @@ export function prepareChatSend({
   prompt,
   guidance = false,
   apiUrl,
+  otherSettings = {},
 }: {
   projectId: string;
   accountId: string;
@@ -31,11 +59,16 @@ export function prepareChatSend({
   prompt: string;
   guidance?: boolean;
   apiUrl?: string;
+  otherSettings?: Record<string, unknown>;
 }) {
   if (!prompt.trim()) throw new Error("message must not be empty");
   if (!accountId) throw new Error("an authenticated account is required");
   if (thread.archived) throw new Error("cannot send to an archived thread");
-  if (thread.agent_kind !== "acp") {
+  if (
+    thread.agent_kind !== "acp" &&
+    thread.acp_config == null &&
+    !isCodexModelName(thread.agent_model)
+  ) {
     throw new Error("project chat send requires a Codex/ACP thread");
   }
   const messages = rows
@@ -58,6 +91,9 @@ export function prepareChatSend({
     path,
     config: sessionId ? { ...config, sessionId } : config,
     model: normalizeCodexMention(thread.agent_model),
+    maxConcurrentSubagents: normalizeCodexMaxConcurrentSubagents(
+      otherSettings[OTHER_SETTINGS_CODEX_MAX_CONCURRENT_SUBAGENTS],
+    ),
   });
   // Chat's legacy keys also include dates. Avoid reusing a loaded row's date.
   const dates = new Set(rows.map((row) => Date.parse(row?.date)));
@@ -88,6 +124,14 @@ export function prepareChatSend({
       parent_message_id: message.message_id,
       api_url: apiUrl,
       sendMode: guidance ? "immediate" : undefined,
+      completionNotificationEnabled: resolveCodexCompletionNotificationEnabled({
+        override: thread.codex_completion_notification,
+        legacy: config,
+        accountDefault: normalizeNotificationPreferencesV2(
+          otherSettings[OTHER_SETTINGS_NOTIFICATION_PREFERENCES_V2_KEY],
+          otherSettings[OTHER_SETTINGS_NOTIFICATION_PREFERENCES_KEY],
+        ).ai.completion_default,
+      }),
     }),
     thread_title: thread.name,
   };
