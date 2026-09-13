@@ -3,7 +3,14 @@ import { abortable } from "../core/abort";
 
 export const READ_PROTOCOL = "ack-v1";
 export const READ_CHUNK_BYTES = 4 * 1024 * 1024;
-export const MAX_READ_WAIT = 60 * 60 * 1000;
+export const MAX_READ_WAIT = 60 * 1000;
+export const READ_HANDSHAKE_WAIT = 5000;
+
+export function readIdleWait(requested: unknown): number {
+  return Number.isSafeInteger(requested) && (requested as number) > 0
+    ? Math.min(requested as number, MAX_READ_WAIT)
+    : MAX_READ_WAIT;
+}
 
 // Acknowledgements represent consumption, not publication to the router.
 // There is exactly one outstanding sequence; duplicate ACKs grant no credit.
@@ -15,20 +22,25 @@ export class ReadFlow {
   private resolveAck?: () => void;
   private closed = false;
 
-  constructor(maxWait: number) {
+  constructor(private readonly maxWait: number) {
+    this.resetTimer(Math.min(maxWait, READ_HANDSHAKE_WAIT));
+  }
+
+  private resetTimer(wait: number) {
+    clearTimeout(this.timer);
     this.timer = setTimeout(
       () => this.controller.abort(Error("file read timed out")),
-      maxWait,
+      wait,
     );
     this.timer.unref?.();
   }
 
-  async start(message: Message, maxWait: number) {
+  async start(message: Message) {
     const ready = this.expect(0);
     this.controls = await message.respondMany(null, {
       headers: { fileReadProtocol: READ_PROTOCOL },
-      maxWait,
-      timeout: maxWait,
+      // ReadFlow owns the idle timer: duplicate ACKs must not extend it.
+      timeout: Math.min(this.maxWait, READ_HANDSHAKE_WAIT),
       maxQueue: 8,
       maxQueueBytes: 4096,
       signal: this.controller.signal,
@@ -49,7 +61,10 @@ export class ReadFlow {
         if (seq === this.expected) {
           const resolve = this.resolveAck;
           this.resolveAck = undefined;
-          resolve?.();
+          if (resolve) {
+            this.progress();
+            resolve();
+          }
         }
       }
       if (!this.closed) throw Error("file read control channel closed");
@@ -61,6 +76,11 @@ export class ReadFlow {
   expect(seq: number): Promise<void> {
     this.expected = seq;
     return new Promise((resolve) => (this.resolveAck = resolve));
+  }
+
+  progress() {
+    if (!this.closed && !this.controller.signal.aborted)
+      this.resetTimer(this.maxWait);
   }
 
   async wait<T>(promise: Promise<T>): Promise<T> {

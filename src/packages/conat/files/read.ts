@@ -43,13 +43,17 @@ import {
 } from "@cocalc/conat/core/client";
 import { delay } from "awaiting";
 import { getLogger } from "@cocalc/conat/logger";
-import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
 import {
   ReadFlow,
   READ_PROTOCOL,
   READ_CHUNK_BYTES,
-  MAX_READ_WAIT,
+  readIdleWait,
 } from "./read-flow";
+import { ReadAdmission, MAX_PROJECT_READS } from "./read-admission";
+import {
+  FILE_READ_PRINCIPAL_HEADER,
+  fileReadPrincipal,
+} from "./read-principal";
 import type { Message } from "@cocalc/conat/core/client";
 
 const logger = getLogger("conat:files:read");
@@ -68,26 +72,12 @@ type CreateReadStream = (
   },
 ) => ReadSource | Promise<ReadSource>;
 
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const n = parseInt(value ?? "", 10);
-  if (Number.isFinite(n) && n > 0) {
-    return n;
-  }
-  return fallback;
-}
-
-const MAX_ACTIVE_READ_STREAMS = parsePositiveInt(
-  process.env.COCALC_PROJECT_FILE_READ_MAX_ACTIVE,
-  16,
-);
-// Per-reader admission provides isolation; the process cap bounds the sum of
-// transfer windows when a host serves many projects/read-only identities.
-const MAX_TOTAL_ACTIVE_READ_STREAMS = parsePositiveInt(
-  process.env.COCALC_FILE_READ_MAX_ACTIVE_TOTAL,
-  64,
-);
-let totalActiveReadStreams = 0;
-let totalActiveReadConsumers = 0;
+const producers = new ReadAdmission("producer");
+const consumers = new ReadAdmission("consumer");
+export const FILE_READ_PROTOCOL_REQUIRED = "file-read-protocol-required";
+export const FILE_READ_UPGRADE_MESSAGE =
+  "CoCalc was upgraded; refresh this browser tab and retry. " +
+  "For a project/server runtime, restart or update the runtime and retry.";
 
 let subs: { [name: string]: Subscription } = {};
 export async function close({
@@ -160,50 +150,43 @@ export async function createServer({
     sub,
     createReadStream,
     project_id,
-    maxActiveStreams: maxActiveStreams ?? MAX_ACTIVE_READ_STREAMS,
+    maxActiveStreams: maxActiveStreams ?? MAX_PROJECT_READS,
   });
 }
 
 async function listen({ sub, createReadStream, project_id, maxActiveStreams }) {
-  // Keep admission accounting local to this reader. A project-host serves many
-  // projects in one process, so a module-global counter lets one project's slow
-  // downloads starve every other project.
-  let activeReadStreams = 0;
   for await (const mesg of sub) {
-    const totalLimitReached =
-      totalActiveReadStreams >= MAX_TOTAL_ACTIVE_READ_STREAMS;
-    if (activeReadStreams >= maxActiveStreams || totalLimitReached) {
-      const error = "project file read service is busy";
-      recordServiceAdmissionDenial({
-        surface: "project-file-read",
-        source: "project-service",
-        limit: totalLimitReached
-          ? "COCALC_FILE_READ_MAX_ACTIVE_TOTAL"
-          : "COCALC_PROJECT_FILE_READ_MAX_ACTIVE",
-        current: totalLimitReached ? totalActiveReadStreams : activeReadStreams,
-        maximum: totalLimitReached
-          ? MAX_TOTAL_ACTIVE_READ_STREAMS
-          : maxActiveStreams,
-        reason: error,
-        subject: mesg.subject,
-        project_id,
+    let protocol: unknown;
+    try {
+      protocol = mesg.data?.fileReadProtocol;
+    } catch {
+      // Reject malformed encodings too; one bad request must not terminate
+      // the shared reader's subscription loop.
+    }
+    if (protocol !== READ_PROTOCOL) {
+      mesg.respondSync(null, {
+        headers: {
+          error: FILE_READ_UPGRADE_MESSAGE,
+          code: FILE_READ_PROTOCOL_REQUIRED,
+        },
       });
-      logger.warn(error, {
-        active: activeReadStreams,
-        max: maxActiveStreams,
-        totalActive: totalActiveReadStreams,
-        totalMax: MAX_TOTAL_ACTIVE_READ_STREAMS,
-        subject: mesg.subject,
-      });
-      mesg.respondSync(null, { headers: { error } });
       continue;
     }
-    activeReadStreams += 1;
-    totalActiveReadStreams += 1;
-    void handleMessage(mesg, createReadStream).finally(() => {
-      activeReadStreams -= 1;
-      totalActiveReadStreams -= 1;
-    });
+    let release: () => void;
+    try {
+      // Only authenticated routers stamp this header. Missing stamps (old
+      // routers) share one conservative bucket rather than bypassing fairness.
+      release = producers.acquire(
+        project_id,
+        mesg.headers?.[FILE_READ_PRINCIPAL_HEADER] ?? "unattributed",
+        mesg.subject,
+        maxActiveStreams,
+      );
+    } catch (err) {
+      mesg.respondSync(null, { headers: { error: (err as Error).message } });
+      continue;
+    }
+    void handleMessage(mesg, createReadStream).finally(release);
   }
 }
 
@@ -234,19 +217,12 @@ function getSeqHeader(seq) {
 
 async function sendData(mesg: Message, createReadStream: CreateReadStream) {
   const { path, start, end } = mesg.data;
-  const requestedWait = mesg.data.maxWait;
-  const maxWait =
-    Number.isSafeInteger(requestedWait) && requestedWait > 0
-      ? Math.min(requestedWait, MAX_READ_WAIT)
-      : MAX_READ_WAIT;
-  const acknowledged = mesg.data.fileReadProtocol === READ_PROTOCOL;
+  const maxWait = readIdleWait(mesg.data.maxWait);
   const flow = new ReadFlow(maxWait);
   let stream: ReadSource | undefined;
   const destroy = () => stream?.destroy?.();
   try {
-    if (acknowledged) {
-      await flow.start(mesg, maxWait);
-    }
+    await flow.start(mesg);
     flow.controller.signal.addEventListener("abort", destroy, { once: true });
     logger.debug("sendData: starting", { path });
     let seq = 0;
@@ -260,7 +236,10 @@ async function sendData(mesg: Message, createReadStream: CreateReadStream) {
       seq += 1;
       logger.debug("sendData: sending", { path, seq });
       const data = Buffer.concat(chunks);
-      const consumed = acknowledged ? flow.expect(seq) : undefined;
+      const consumed = flow.expect(seq);
+      // Pacing overlaps transport and downstream consumption; serializing
+      // these waits needlessly adds 250 ms to every ACK round trip.
+      const paced = delay(CHUNK_INTERVAL);
       const sending = mesg.respond(data, {
         ...getSeqHeader(seq),
         signal: flow.controller.signal,
@@ -273,10 +252,10 @@ async function sendData(mesg: Message, createReadStream: CreateReadStream) {
       }
       size = 0;
       chunks.length = 0;
-      if (consumed) await flow.wait(consumed);
+      await flow.wait(consumed);
       // Delay a little just to give other messages a chance, so we don't get disconnected
       // e.g., due to lack of heartbeats. Also, this reduces the load on conat-router.
-      await delay(CHUNK_INTERVAL);
+      await flow.wait(paced);
     };
 
     const opening = Promise.resolve(
@@ -305,6 +284,7 @@ async function sendData(mesg: Message, createReadStream: CreateReadStream) {
         const chunk = Buffer.isBuffer(next.value)
           ? next.value
           : Buffer.from(next.value);
+        if (chunk.length) flow.progress();
         // A stream factory may yield more than its highWaterMark. Never send an
         // oversized transport chunk, including custom upload stream factories.
         for (let offset = 0; offset < chunk.length; ) {
@@ -351,6 +331,9 @@ export interface ReadFileOptions {
   start?: number;
   end?: number;
   signal?: AbortSignal;
+  // Only trusted backend callers may forward an already-authenticated account.
+  // The router overwrites this for ordinary account/project sockets.
+  account_id?: string;
 }
 
 export async function* readFile({
@@ -362,15 +345,16 @@ export async function* readFile({
   start,
   end,
   signal,
+  account_id,
 }: ReadFileOptions) {
   logger.debug("readFile", { project_id, path });
   const subject = getSubject({ project_id, name });
   const cn = requireExplicitConatClient(client);
   signal?.throwIfAborted();
-  if (totalActiveReadConsumers >= MAX_TOTAL_ACTIVE_READ_STREAMS) {
-    throw Error("file read consumer is busy");
-  }
-  totalActiveReadConsumers += 1;
+  const principal =
+    fileReadPrincipal(account_id ? { account_id } : cn.info?.user) ??
+    (cn.info?.user?.hub_id ? `project:${project_id}` : "unattributed");
+  const release = consumers.acquire(project_id, principal, subject);
   let seq = 0;
   let control: Message | undefined;
   let sub: Subscription | undefined;
@@ -402,6 +386,13 @@ export async function* readFile({
         maxQueue: 4,
         maxQueueBytes: 2 * READ_CHUNK_BYTES,
         signal,
+        ...(account_id
+          ? {
+              headers: {
+                [FILE_READ_PRINCIPAL_HEADER]: `account:${account_id}`,
+              },
+            }
+          : {}),
       },
     );
     for await (const resp of sub) {
@@ -441,7 +432,7 @@ export async function* readFile({
     }
     throw Error("truncated file read (missing completion)");
   } finally {
-    totalActiveReadConsumers -= 1;
+    release();
     signal?.removeEventListener("abort", cancel);
     if (!completed) cancel();
     sub?.cancel();

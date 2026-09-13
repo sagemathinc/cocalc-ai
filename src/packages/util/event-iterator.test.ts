@@ -3,6 +3,54 @@ import { EventEmitter } from "events";
 import { EventIterator } from "./event-iterator";
 
 describe("EventIterator", () => {
+  test.each([NaN, Infinity, -1, undefined])(
+    "rejects invalid weight %s",
+    async (bytes) => {
+      const emitter = new EventEmitter();
+      const iter = new EventIterator(emitter, "data", {
+        sizeOf: () => bytes as number,
+        maxQueueBytes: 10,
+      });
+      const next = iter.next();
+      emitter.emit("data", "bad");
+      await expect(next).rejects.toThrow("invalid queue byte weight");
+      expect(iter.queueBytes()).toBe(0);
+      expect(emitter.listenerCount("data")).toBe(0);
+    },
+  );
+
+  test("dequeues using the original validated weight, not mutable input", async () => {
+    const emitter = new EventEmitter();
+    const sizeOf = jest.fn((value: any) => value.bytes);
+    const iter = new EventIterator(emitter, "data", {
+      map: ([x]) => x,
+      sizeOf,
+      maxQueueBytes: 10,
+    });
+    const value = { bytes: 8 };
+    emitter.emit("data", value);
+    value.bytes = NaN;
+    await iter.next();
+    expect(iter.queueBytes()).toBe(0);
+    expect(sizeOf).toHaveBeenCalledTimes(1);
+    iter.cancel();
+  });
+
+  test("checks the byte bound even if map ends the iterator", async () => {
+    const emitter = new EventEmitter();
+    const iter = new EventIterator(emitter, "data", {
+      map: () => {
+        iter.end();
+        return 11;
+      },
+      sizeOf: (n) => n,
+      maxQueueBytes: 10,
+      overflow: "throw",
+    });
+    emitter.emit("data");
+    await expect(iter.next()).rejects.toThrow("maxQueue overflow");
+    expect(iter.queueBytes()).toBe(0);
+  });
   const bounded = (emitter: EventEmitter) =>
     new EventIterator<Buffer>(emitter, "data", {
       map: ([value]) => value,

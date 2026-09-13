@@ -9,7 +9,11 @@ import { createHash } from "node:crypto";
 import { init, type ConatServer } from "../core/server";
 import type { Client } from "../core/client";
 import { createServer, close, readFile } from "./read";
-import { READ_CHUNK_BYTES } from "./read-flow";
+import {
+  READ_CHUNK_BYTES,
+  READ_HANDSHAKE_WAIT,
+  READ_PROTOCOL,
+} from "./read-flow";
 import { handleFileDownload } from "./file-download";
 import { projectSubject } from "../names";
 
@@ -138,6 +142,22 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
     expect(streams[0].destroyed).toBe(true);
   });
 
+  it("completes a progressing read that exceeds the requested idle interval", async () => {
+    let bytes = 0;
+    for await (const chunk of readFile({
+      client: consumer,
+      project_id,
+      name,
+      path: source,
+      end: 4 * READ_CHUNK_BYTES - 1,
+      maxWait: 500,
+    })) {
+      bytes += chunk.length;
+      await sleep(100);
+    }
+    expect(bytes).toBe(4 * READ_CHUNK_BYTES);
+  });
+
   it("cancels a stalled filesystem read and releases its admission slot", async () => {
     await close({ project_id, name });
     let first = true;
@@ -250,7 +270,7 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
     expect(streams[0].bytesRead).toBeLessThanOrEqual(2 * READ_CHUNK_BYTES);
   });
 
-  it("caps aggregate read windows and releases them after cancellation", async () => {
+  it("caps project-wide read windows and releases them after cancellation", async () => {
     await close({ project_id, name });
     const blocked: PassThrough[] = [];
     await createServer({
@@ -264,7 +284,7 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
         return stream;
       },
     });
-    const controllers = Array.from({ length: 64 }, () => new AbortController());
+    const controllers = Array.from({ length: 4 }, () => new AbortController());
     const pending = controllers.map((controller) =>
       readFile({
         client: consumer,
@@ -276,7 +296,7 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
     );
     const settled = Promise.allSettled(pending);
     try {
-      await until(() => blocked.length === 64);
+      await until(() => blocked.length === 4);
       const overflow = readFile({
         client: consumer,
         project_id,
@@ -288,7 +308,7 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
       // as well (the remote caller could be a different process).
       const remoteOverflow = await consumer.requestMany(
         projectSubject({ project_id, service: `files:read${name}` }),
-        { path: source },
+        { path: source, fileReadProtocol: READ_PROTOCOL },
         { maxWait: 1000 },
       );
       try {
@@ -298,7 +318,7 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
       } finally {
         remoteOverflow.cancel();
       }
-      expect(blocked).toHaveLength(64);
+      expect(blocked).toHaveLength(4);
     } finally {
       controllers.forEach((controller) => controller.abort());
       await settled;
@@ -314,10 +334,96 @@ describe("bounded reads over real Conat and HTTP sockets", () => {
       signal: retryController.signal,
     }).next();
     const rejected = expect(retry).rejects.toThrow();
-    await until(() => blocked.length === 65);
+    await until(() => blocked.length === 5);
     retryController.abort();
     await rejected;
-    await until(() => blocked[64].destroyed);
+    await until(() => blocked[4].destroyed);
+  });
+
+  it.each([undefined, "legacy", "ack-v2"])(
+    "rejects missing/unsupported protocol %s before opening any source",
+    async (fileReadProtocol) => {
+      const request = await consumer.requestMany(
+        projectSubject({ project_id, service: `files:read${name}` }),
+        { path: source, fileReadProtocol },
+        { maxWait: 1000 },
+      );
+      try {
+        const response = (await request.next()).value;
+        expect(response?.headers?.code).toBe("file-read-protocol-required");
+        expect(response?.headers?.error).toContain("refresh this browser tab");
+        expect(streams).toHaveLength(0);
+      } finally {
+        request.cancel();
+      }
+    },
+  );
+
+  it("releases abandoned pre-handshake admission within the short server deadline", async () => {
+    await close({ project_id, name });
+    const opened = jest.fn((path, opts) => createReadStream(path, opts));
+    await createServer({
+      client: producer,
+      project_id,
+      name,
+      maxActiveStreams: 1,
+      createReadStream: opened,
+    });
+    const request = await consumer.requestMany(
+      projectSubject({ project_id, service: `files:read${name}` }),
+      {
+        path: source,
+        fileReadProtocol: READ_PROTOCOL,
+        maxWait: 60 * 60 * 1000,
+      },
+      { maxWait: 60 * 60 * 1000 },
+    );
+    request.cancel();
+    await sleep(50);
+    await expect(
+      readFile({ client: consumer, project_id, name, path: source }).next(),
+    ).rejects.toThrow("busy");
+    expect(opened).not.toHaveBeenCalled();
+    await sleep(READ_HANDSHAKE_WAIT + 100);
+    const retry = readFile({
+      client: consumer,
+      project_id,
+      name,
+      path: source,
+      end: 0,
+    });
+    try {
+      expect((await retry.next()).value).toHaveLength(1);
+    } finally {
+      await retry.return(undefined);
+    }
+  });
+
+  it("rejects a malformed encoding without shutting down the shared reader", async () => {
+    const request = await consumer.requestMany(
+      projectSubject({ project_id, service: `files:read${name}` }),
+      null,
+      { raw: Buffer.from([0xc1]), maxWait: 1000 },
+    );
+    try {
+      expect((await request.next()).value?.headers?.code).toBe(
+        "file-read-protocol-required",
+      );
+    } finally {
+      request.cancel();
+    }
+    const retry = readFile({
+      client: consumer,
+      project_id,
+      name,
+      path: source,
+      end: 0,
+    });
+    try {
+      expect((await retry.next()).value).toHaveLength(1);
+    } finally {
+      await retry.return(undefined);
+    }
   });
 
   it("cancels before inbox readiness without dispatching a read", async () => {

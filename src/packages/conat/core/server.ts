@@ -28,6 +28,7 @@ cd packages/server
 */
 
 import type { ConnectionStats, ServerInfo } from "./types";
+import { stampFileReadPrincipal } from "../files/read-principal";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -1479,6 +1480,12 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
+    stampFileReadPrincipal({
+      subject,
+      data,
+      user: from,
+      trusted: isHubUser(from),
+    });
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();
 

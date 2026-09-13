@@ -6,6 +6,7 @@ import { getLogger } from "@cocalc/conat/logger";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import mime from "mime-types";
 import { isTemporaryDownloadArchivePath } from "./download-archive";
+import { readIdleWait } from "./read-flow";
 
 const DANGEROUS_CONTENT_TYPE = new Set(["image/svg+xml" /*, "text/html"*/]);
 export const DOWNLOAD_ERROR_HEADER = "X-CoCalc-Download-Error";
@@ -142,8 +143,8 @@ export async function handleFileDownload({
   onExplicitDownloadComplete,
   readServiceName,
   statSubject,
-  // allow a long download time (1 hour), since files can be large and
-  // networks can be slow.
+  account_id,
+  // Idle timeout, not a limit on the duration of a progressing download.
   maxWait = 1000 * 60 * 60,
 }: {
   req;
@@ -165,6 +166,8 @@ export async function handleFileDownload({
   }) => Promise<void>;
   readServiceName?: string;
   statSubject?: string;
+  // Authenticated by the caller, never taken from HTTP parameters/headers.
+  account_id?: string;
   maxWait?: number;
 }) {
   url ??= req.url;
@@ -293,11 +296,16 @@ export async function handleFileDownload({
   req.on?.("aborted", abort);
   res.on("close", abort);
   res.on("error", abort);
-  const timer = setTimeout(
-    () => controller.abort(Error("download timed out")),
-    maxWait,
-  );
-  timer.unref?.();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const progress = () => {
+    clearTimeout(timer);
+    timer = setTimeout(
+      () => controller.abort(Error("download timed out")),
+      readIdleWait(maxWait),
+    );
+    timer.unref?.();
+  };
+  progress();
   if (req.aborted || res.destroyed || res.writableEnded) abort();
   try {
     controller.signal.throwIfAborted();
@@ -308,6 +316,7 @@ export async function handleFileDownload({
       name: readServiceName,
       maxWait,
       signal: controller.signal,
+      ...(account_id ? { account_id } : {}),
       ...(range != null ? range : {}),
     })) {
       if (res.writableEnded || res.destroyed) {
@@ -324,6 +333,7 @@ export async function handleFileDownload({
         // and the upstream subscription even while the generator is yielded.
         await once(res, "drain", { signal: controller.signal });
       }
+      if (chunk.length > 0) progress();
     }
     streamCompleted = !partial && !res.destroyed;
     if (cleanupClient && streamCompleted) {

@@ -98,7 +98,7 @@ export class EventIterator<
   /**
    * The queue of received values.
    */
-  #queue: V[] = [];
+  #queue: { value: V; bytes: number }[] = [];
   #queueBytes = 0;
   readonly #maxQueueBytes: number;
   readonly #sizeOf: (value: V) => number;
@@ -234,8 +234,8 @@ export class EventIterator<
     }
     // If there are elements in the queue, return an undone response:
     if (this.#queue.length) {
-      const value = this.#queue.shift()!;
-      this.#queueBytes -= this.#sizeOf(value);
+      const { value, bytes } = this.#queue.shift()!;
+      this.#queueBytes -= bytes;
       if (!this.filter(value)) {
         return this.next();
       }
@@ -330,18 +330,19 @@ export class EventIterator<
     }
     try {
       const value = this.map(args);
-      if (this.#ended) {
-        // the this.map... call could have decided to end
-        // the iterator, by calling this.end() instead of returning a value.
-        if (value !== undefined) {
-          // not undefined so at least give the user the opportunity to get this final value.
-          this.#queue.push(value);
-          this.#queueBytes += this.#sizeOf(value);
-        }
-        return;
+      if (this.#ended && value === undefined) return;
+      // Cache the validated weight. A mutable value or stateful sizeOf must
+      // not corrupt accounting when the item is later dequeued.
+      const bytes = this.#sizeOf(value);
+      if (
+        !Number.isFinite(bytes) ||
+        bytes < 0 ||
+        !Number.isFinite(this.#queueBytes + bytes)
+      ) {
+        throw Error("invalid queue byte weight");
       }
-      this.#queue.push(value);
-      this.#queueBytes += this.#sizeOf(value);
+      this.#queue.push({ value, bytes });
+      this.#queueBytes += bytes;
       while (
         this.#queue.length > 0 &&
         (this.#queue.length > this.#maxQueue ||
@@ -350,7 +351,7 @@ export class EventIterator<
         if (this.#overflow == "throw") {
           throw Error("maxQueue overflow");
         }
-        this.#queueBytes -= this.#sizeOf(this.#queue.shift()!);
+        this.#queueBytes -= this.#queue.shift()!.bytes;
       }
     } catch (err) {
       this.err = err;

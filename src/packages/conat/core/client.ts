@@ -3084,7 +3084,11 @@ export class MessageData<T = any> {
     // raw is binary data so it's the closest thing we have to the
     // size of this message.  It would also make sense to include
     // the headers, but JSON'ing them would be expensive, so we don't.
-    return this.raw.length;
+    const length = this.raw.byteLength ?? this.raw.length;
+    if (!Number.isSafeInteger(length) || length < 0) {
+      throw Error("invalid message byte length");
+    }
+    return length;
   }
 }
 
