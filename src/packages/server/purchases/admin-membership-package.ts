@@ -113,6 +113,44 @@ function normalizeDate(value: Date | string | undefined, name: string): Date {
   return date;
 }
 
+async function resolveValidatedPackageQuote({
+  client,
+  product,
+}: {
+  client: PoolClient;
+  product: MembershipPackageProduct;
+}): Promise<{
+  quote: MembershipPackageQuote;
+  starts_at: Date;
+  expires_at: Date;
+}> {
+  const courseProject = await resolveLockedLocalAdminCourseProjectQuoteContext({
+    client,
+    product,
+  });
+  const quote = await resolveAdminMembershipPackageQuote(
+    product,
+    client,
+    courseProject,
+  );
+  const starts_at = product.starts_at
+    ? normalizeDate(product.starts_at, "starts_at")
+    : quote.starts_at;
+  const expires_at = product.expires_at
+    ? normalizeDate(product.expires_at, "expires_at")
+    : quote.expires_at;
+  if (!(starts_at instanceof Date) || !Number.isFinite(starts_at.valueOf())) {
+    throw Error("starts_at is required");
+  }
+  if (!(expires_at instanceof Date) || !Number.isFinite(expires_at.valueOf())) {
+    throw Error("expires_at is required");
+  }
+  if (expires_at <= starts_at) {
+    throw Error("expires_at must be after starts_at");
+  }
+  return { quote, starts_at, expires_at };
+}
+
 function invoiceId(adminAccountId: string, idempotencyKey: string): string {
   return `admin-membership-package:${adminAccountId}:${idempotencyKey}`;
 }
@@ -309,7 +347,7 @@ export default async function adminCreateMembershipPackagePurchase({
       account_id: user_account_id,
       action: "create admin membership package purchase",
     });
-    await resolveLockedLocalAdminCourseProjectQuoteContext({
+    await resolveValidatedPackageQuote({
       client,
       product,
     });
@@ -366,35 +404,9 @@ export default async function adminCreateMembershipPackagePurchase({
       await client.query("COMMIT");
       return existingAfterFunding;
     }
-    const courseProject =
-      await resolveLockedLocalAdminCourseProjectQuoteContext({
-        client,
-        product,
-      });
-
-    const quote = await resolveAdminMembershipPackageQuote(
-      product,
-      client,
-      courseProject,
+    const { quote, starts_at, expires_at } = await resolveValidatedPackageQuote(
+      { client, product },
     );
-    const starts_at = product.starts_at
-      ? normalizeDate(product.starts_at, "starts_at")
-      : quote.starts_at;
-    const expires_at = product.expires_at
-      ? normalizeDate(product.expires_at, "expires_at")
-      : quote.expires_at;
-    if (!(starts_at instanceof Date) || !Number.isFinite(starts_at.valueOf())) {
-      throw Error("starts_at is required");
-    }
-    if (
-      !(expires_at instanceof Date) ||
-      !Number.isFinite(expires_at.valueOf())
-    ) {
-      throw Error("expires_at is required");
-    }
-    if (expires_at <= starts_at) {
-      throw Error("expires_at must be after starts_at");
-    }
 
     const notes = [
       `Admin-assisted membership package created by account \`${admin_account_id}\`.`,
