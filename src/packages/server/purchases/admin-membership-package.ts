@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createHash } from "node:crypto";
-
 import getPool, { getClient, type PoolClient } from "@cocalc/database/pool";
 import { recordAccountAdminAuditEvent } from "@cocalc/server/accounts/admin-audit";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
@@ -26,20 +24,22 @@ import {
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
-import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
-import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import { toDecimal } from "@cocalc/util/money";
 import {
   resolveAdminCourseProjectQuoteContext,
   resolveLockedLocalAdminCourseProjectQuoteContext,
 } from "./admin-course-project";
 import {
+  adminMembershipPackageBusinessIdentityHash,
   adminMembershipPackageInvoiceId,
+  normalizeAdminMembershipPackageBusinessIdentity,
   normalizeAdminMembershipPackageProduct,
   normalizeAdminMembershipPackageUuid,
 } from "./admin-membership-package-identity";
+import type { AdminMembershipPackageSource } from "./admin-membership-package-identity";
 
-export type AdminMembershipPackageSource = "card" | "credit" | "free";
+export type { AdminMembershipPackageSource } from "./admin-membership-package-identity";
 
 export interface AdminMembershipPackagePurchaseOptions {
   admin_account_id: string;
@@ -106,21 +106,6 @@ export async function adminGetMembershipPackageQuote({
   );
 }
 
-function normalizeRequiredText(
-  value: string | undefined,
-  name: string,
-  maxLength: number,
-): string {
-  const normalized = `${value ?? ""}`.trim();
-  if (!normalized) {
-    throw Error(`${name} is required`);
-  }
-  if (normalized.length > maxLength) {
-    throw Error(`${name} must be at most ${maxLength} characters`);
-  }
-  return normalized;
-}
-
 function normalizeDate(value: Date | string | undefined, name: string): Date {
   const date = value instanceof Date ? value : new Date(`${value ?? ""}`);
   if (!Number.isFinite(date.valueOf())) {
@@ -153,77 +138,6 @@ interface PackageIntentRow {
   admin_account_id: string;
   request_hash: string;
   snapshot: unknown;
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value != null && typeof value === "object") {
-    const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === "function") {
-      return canonical(toJSON.call(value));
-    }
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, item]) => item !== undefined)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => [key, canonical(item)]),
-    );
-  }
-  return value;
-}
-
-function packageIntentRequestHash({
-  admin_account_id,
-  user_account_id,
-  product,
-  custom_price,
-  source,
-  reason,
-  pricing_note,
-}: {
-  admin_account_id: string;
-  user_account_id: string;
-  product: MembershipPackageProduct;
-  custom_price: number;
-  source: AdminMembershipPackageSource;
-  reason: string;
-  pricing_note?: string;
-}): string {
-  const normalizedProduct = {
-    ...product,
-    ...(product.starts_at == null
-      ? {}
-      : {
-          starts_at: normalizeDate(
-            product.starts_at,
-            "starts_at",
-          ).toISOString(),
-        }),
-    ...(product.expires_at == null
-      ? {}
-      : {
-          expires_at: normalizeDate(
-            product.expires_at,
-            "expires_at",
-          ).toISOString(),
-        }),
-  };
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        canonical({
-          version: 1,
-          admin_account_id,
-          user_account_id,
-          product: normalizedProduct,
-          custom_price,
-          source,
-          reason,
-          pricing_note: pricing_note || null,
-        }),
-      ),
-    )
-    .digest("hex");
 }
 
 function parseApprovedPackageSnapshot(value: unknown): ApprovedPackageSnapshot {
@@ -505,35 +419,24 @@ export default async function adminCreateMembershipPackagePurchase({
   if (product?.type !== "membership-package" || product.package_id) {
     throw Error("product must create a new membership package");
   }
-  if (source !== "card" && source !== "credit" && source !== "free") {
-    throw Error("source must be card, credit, or free");
-  }
-  const normalizedReason = normalizeRequiredText(reason, "reason", 4000);
-  const normalizedPricingNote = pricing_note?.trim() || undefined;
-  const idempotencyKey = normalizeRequiredText(
-    idempotency_key,
-    "idempotency_key",
-    120,
-  );
-  const customPrice = moneyRound2Up(toDecimal(price));
-  if (!Number.isFinite(customPrice.toNumber()) || customPrice.lt(0)) {
-    throw Error("price must be a finite nonnegative number");
-  }
-  if (customPrice.gt(MAX_COST)) {
-    throw Error(
-      `price exceeds the maximum allowed cost of ${moneyToCurrency(MAX_COST)}`,
-    );
-  }
-
-  const request_hash = packageIntentRequestHash({
+  const businessIdentity = normalizeAdminMembershipPackageBusinessIdentity({
     admin_account_id,
     user_account_id,
     product,
-    custom_price: customPrice.toNumber(),
+    price,
     source,
-    reason: normalizedReason,
-    pricing_note: normalizedPricingNote,
+    reason,
+    idempotency_key,
+    pricing_note,
   });
+  product = businessIdentity.product;
+  source = businessIdentity.source;
+  const normalizedReason = businessIdentity.reason;
+  const normalizedPricingNote = businessIdentity.pricing_note ?? undefined;
+  const idempotencyKey = businessIdentity.idempotency_key;
+  const customPrice = toDecimal(businessIdentity.custom_price);
+  const request_hash =
+    adminMembershipPackageBusinessIdentityHash(businessIdentity);
   const invoice_id = adminMembershipPackageInvoiceId(
     admin_account_id,
     idempotencyKey,

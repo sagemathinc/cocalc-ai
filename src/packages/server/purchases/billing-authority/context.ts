@@ -28,6 +28,7 @@ interface StoredBillingAuthorityContext extends BillingAuthorityContext {
   active: boolean;
   authority_active: () => boolean;
   assert_authority: () => Promise<void>;
+  record_provider_start?: () => Promise<void>;
   register_account: (account_id: string) => Promise<void>;
   registered_accounts: Set<string>;
   provider_tracker: BillingAuthorityProviderMutationTracker;
@@ -101,6 +102,7 @@ export async function runInBillingAuthorityContext<T>({
   request_id,
   authority_active = () => true,
   assert_authority = async () => undefined,
+  record_provider_start,
   register_account = async () => undefined,
   pre_registered_accounts = [],
   provider_tracker = createBillingAuthorityProviderMutationTracker(),
@@ -108,6 +110,7 @@ export async function runInBillingAuthorityContext<T>({
 }: BillingAuthorityContext & {
   authority_active?: () => boolean;
   assert_authority?: () => Promise<void>;
+  record_provider_start?: () => Promise<void>;
   register_account?: (account_id: string) => Promise<void>;
   pre_registered_accounts?: Iterable<string>;
   provider_tracker?: BillingAuthorityProviderMutationTracker;
@@ -122,6 +125,7 @@ export async function runInBillingAuthorityContext<T>({
     active: true,
     authority_active,
     assert_authority,
+    record_provider_start,
     register_account,
     registered_accounts: new Set(
       [...pre_registered_accounts].map((account_id) =>
@@ -262,7 +266,23 @@ export async function beginStripeMutation({
     });
   }
   const tracker = context.provider_tracker;
-  tracker.started = true;
+  if (!tracker.started) {
+    if (context.record_provider_start) {
+      await context.record_provider_start();
+    } else if (isBillingAuthorityEnabled()) {
+      throw Object.assign(
+        new Error("billing authority provider journal is unavailable"),
+        { code: 503, status: 503 },
+      );
+    }
+    if (!context.active || !context.authority_active()) {
+      throw Object.assign(new Error("billing authority context expired"), {
+        code: 503,
+        status: 503,
+      });
+    }
+    tracker.started = true;
+  }
   if (existing_key && tracker.known_keys.has(existing_key)) {
     return existing_key;
   }

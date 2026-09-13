@@ -27,6 +27,7 @@ import {
   markBillingAuthorityLeaseServing,
   pruneBillingAuthorityCommands,
   registerBillingAuthorityCommandAccount,
+  recordBillingAuthorityProviderMutationStart,
   reconcileExpiredBillingAuthorityLease,
   releaseBillingAuthorityLease,
   requestBillingAuthorityDrain,
@@ -244,6 +245,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
       ],
     );
     await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
     await finishBillingAuthorityCommand({
       ...identity,
       command_id: item.command_id,
@@ -302,14 +307,17 @@ describePostgres("billing authority PostgreSQL journal", () => {
             product: {
               type: "membership-package",
               kind: "team",
-              membership_class: "standard",
+              membership_class: "  standard  ",
               seat_count: 1,
               interval: "month",
+              starts_at: "2026-10-01T00:00:00-07:00",
+              expires_at: "2026-11-01T00:00:00-07:00",
             },
-            price: 25,
+            price: "25.0100000000000000001",
             source: "card",
-            reason: "recover a real Hub API package request",
-            idempotency_key: idempotencyKey,
+            reason: "  recover a real Hub API package request  ",
+            pricing_note: "  approved by billing operations  ",
+            idempotency_key: `  ${idempotencyKey}  `,
           },
         ],
       },
@@ -328,6 +336,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
       ],
     );
     await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
     await finishBillingAuthorityCommand({
       ...identity,
       command_id: item.command_id,
@@ -365,6 +377,19 @@ describePostgres("billing authority PostgreSQL journal", () => {
             account_id: ADMIN_ACCOUNT_ID,
             user_account_id: ACCOUNT_ID,
             session_hash: "ignored-stale-input-session",
+            product: {
+              type: "membership-package",
+              kind: "team",
+              membership_class: "standard",
+              seat_count: 1,
+              interval: "month",
+              starts_at: "2026-10-01T07:00:00.000Z",
+              expires_at: new Date("2026-11-01T07:00:00.000Z"),
+            },
+            price: 25.01,
+            reason: "recover a real Hub API package request",
+            pricing_note: "approved by billing operations",
+            idempotency_key: idempotencyKey,
           },
         ],
       },
@@ -382,8 +407,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
     const recovered = await claimNextBillingAuthorityCommand(identity);
     expect(recovered).toMatchObject({
       record: { command_id: item.command_id, status: "running" },
-      command: refreshedCommand,
     });
+    expect(recovered?.command).toEqual(
+      JSON.parse(JSON.stringify(refreshedCommand)),
+    );
   });
 
   it("does not ignore credential changes for other Hub API methods", async () => {
@@ -412,6 +439,70 @@ describePostgres("billing authority PostgreSQL journal", () => {
             ...command.call,
             auth_session_hash: "second-session",
           },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 409, status: 409 });
+  });
+
+  it("canonicalizes account-local package input without weakening trust flags", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const command = {
+      kind: "account-local" as const,
+      operation: "admin-create-membership-package-purchase" as const,
+      actor_account_id: ADMIN_ACCOUNT_ID.toUpperCase(),
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID.toUpperCase(),
+        user_account_id: ACCOUNT_ID.toUpperCase(),
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: "standard",
+          seat_count: 1,
+          starts_at: "2026-10-01T00:00:00-07:00",
+        },
+        price: "25.001",
+        source: "card",
+        reason: "  account-local package  ",
+        idempotency_key: "  account-local-key  ",
+        pricing_note: "  approved  ",
+        trusted_admin: true,
+      },
+    } satisfies BillingAuthorityCommand;
+    const item = request(command);
+    await submitBillingAuthorityCommand(item);
+    const normalized = {
+      ...command,
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        ...command.input,
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        product: {
+          ...command.input.product,
+          starts_at: "2026-10-01T07:00:00.000Z",
+        },
+        price: 25.01,
+        reason: "account-local package",
+        idempotency_key: "account-local-key",
+        pricing_note: "approved",
+      },
+    } satisfies BillingAuthorityCommand;
+    await expect(
+      submitBillingAuthorityCommand({ ...item, command: normalized }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+      reused: true,
+    });
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: {
+          ...normalized,
+          input: { ...normalized.input, trusted_admin: false },
         },
       }),
     ).rejects.toMatchObject({ code: 409, status: 409 });
@@ -464,6 +555,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
       ],
     );
     await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: stale.command_id,
+    });
     await finishBillingAuthorityCommand({
       ...identity,
       command_id: stale.command_id,
@@ -472,7 +567,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
     await getPool().query(
       `UPDATE billing_authority_commands
-          SET first_started_at=clock_timestamp() - INTERVAL '24 hours'
+          SET provider_uncertain_started_at=clock_timestamp() - INTERVAL '24 hours'
         WHERE command_id=$1`,
       [stale.command_id],
     );
@@ -484,7 +579,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     ).resolves.toMatchObject({ status: "uncertain", reused: true });
   });
 
-  it("requeues a durable package intent after a pre-provider failure", async () => {
+  it("starts a fresh provider window after a delayed pre-provider failure", async () => {
     const lease = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
       lease_ms: 5_000,
@@ -537,6 +632,139 @@ describePostgres("billing authority PostgreSQL journal", () => {
       command_id: item.command_id,
       status: "queued",
     });
+    await expect(
+      claimNextBillingAuthorityCommand(identity),
+    ).resolves.toMatchObject({
+      record: { command_id: item.command_id },
+    });
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
+    const { rows } = await getPool().query<{
+      provider_age_seconds: number;
+      uncertain_started_at: Date | null;
+      first_age_seconds: number;
+      attempt_count: number;
+    }>(
+      `SELECT EXTRACT(EPOCH FROM
+                (clock_timestamp() - provider_attempt_started_at))::FLOAT8
+                AS provider_age_seconds,
+              provider_uncertain_started_at AS uncertain_started_at,
+              EXTRACT(EPOCH FROM
+                (clock_timestamp() - first_started_at))::FLOAT8
+                AS first_age_seconds,
+              attempt_count
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(rows[0].provider_age_seconds).toBeLessThan(5);
+    expect(rows[0].uncertain_started_at).toBeNull();
+    expect(rows[0].first_age_seconds).toBeGreaterThan(29 * 24 * 60 * 60);
+    expect(rows[0].attempt_count).toBe(2);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: { message: "the first provider attempt became ambiguous" },
+    });
+    const { rows: uncertainRows } = await getPool().query<{
+      uncertain_age_seconds: number;
+    }>(
+      `SELECT EXTRACT(EPOCH FROM
+                (clock_timestamp() - provider_uncertain_started_at))::FLOAT8
+                AS uncertain_age_seconds
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(uncertainRows[0].uncertain_age_seconds).toBeLessThan(5);
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+  });
+
+  it("does not consume recovery time for a definitive provider failure", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const idempotencyKey = "definitive-card-failure";
+    const item = request({
+      kind: "account-local",
+      operation: "admin-create-membership-package-purchase",
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        source: "card",
+        idempotency_key: idempotencyKey,
+      },
+    });
+    await submitBillingAuthorityCommand(item);
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+      [
+        `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+        ACCOUNT_ID,
+        ADMIN_ACCOUNT_ID,
+        "f".repeat(64),
+      ],
+    );
+    await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+      error: { message: "the card was definitively declined" },
+    });
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET provider_attempt_started_at=clock_timestamp() - INTERVAL '30 days'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+    await expect(
+      claimNextBillingAuthorityCommand(identity),
+    ).resolves.toMatchObject({
+      record: { command_id: item.command_id },
+    });
+    const { rows } = await getPool().query<{
+      provider_attempt_started_at: Date | null;
+      provider_uncertain_started_at: Date | null;
+    }>(
+      `SELECT provider_attempt_started_at, provider_uncertain_started_at
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(rows).toEqual([
+      {
+        provider_attempt_started_at: null,
+        provider_uncertain_started_at: null,
+      },
+    ]);
   });
 
   it("does not let a later failure erase an earlier provider ambiguity", async () => {
@@ -570,6 +798,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
       ],
     );
     await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
     await finishBillingAuthorityCommand({
       ...identity,
       command_id: item.command_id,
@@ -589,7 +821,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
     await getPool().query(
       `UPDATE billing_authority_commands
-          SET first_started_at=clock_timestamp() - INTERVAL '24 hours'
+          SET provider_uncertain_started_at=clock_timestamp() - INTERVAL '24 hours'
         WHERE command_id=$1`,
       [item.command_id],
     );
@@ -623,6 +855,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
     await submitBillingAuthorityCommand(item);
     await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
     await finishBillingAuthorityCommand({
       ...identity,
       command_id: item.command_id,
@@ -646,7 +882,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     );
     await getPool().query(
       `UPDATE billing_authority_commands
-          SET first_started_at=clock_timestamp() - INTERVAL '30 days'
+          SET provider_uncertain_started_at=clock_timestamp() - INTERVAL '30 days'
         WHERE command_id=$1`,
       [item.command_id],
     );
@@ -1257,7 +1493,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
   it("fences completion and marks an interrupted generation uncertain", async () => {
     const first = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
-      lease_ms: 30,
+      lease_ms: 100,
     });
     const oldIdentity = {
       instance_id: INSTANCE_A,
@@ -1268,7 +1504,11 @@ describePostgres("billing authority PostgreSQL journal", () => {
     await expect(
       claimNextBillingAuthorityCommand(oldIdentity),
     ).resolves.toBeDefined();
-    await new Promise((resolve) => setTimeout(resolve, 75));
+    await recordBillingAuthorityProviderMutationStart({
+      ...oldIdentity,
+      command_id: item.command_id,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     const second = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_B,
@@ -1285,6 +1525,16 @@ describePostgres("billing authority PostgreSQL journal", () => {
       status: "uncertain",
       error: { code: "authority_generation_changed" },
     });
+    const { rows: providerRows } = await getPool().query<{
+      boundary_preserved: boolean;
+    }>(
+      `SELECT provider_uncertain_started_at IS NOT NULL
+                AND provider_uncertain_started_at=provider_attempt_started_at
+                AS boundary_preserved
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(providerRows).toEqual([{ boundary_preserved: true }]);
     await expect(
       finishBillingAuthorityCommand({
         ...oldIdentity,
@@ -1378,14 +1628,18 @@ describePostgres("billing authority PostgreSQL journal", () => {
   it("reconciles an authority that dies after global drain begins", async () => {
     const lease = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
-      lease_ms: 30,
+      lease_ms: 100,
     });
     const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
     const item = request({ kind: "maintenance", task: "statements" });
     await submitBillingAuthorityCommand(item);
     await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
     await requestBillingAuthorityDrain();
-    await new Promise((resolve) => setTimeout(resolve, 75));
+    await new Promise((resolve) => setTimeout(resolve, 150));
 
     await expect(reconcileExpiredBillingAuthorityLease()).resolves.toBe(true);
     await expect(
@@ -1394,6 +1648,16 @@ describePostgres("billing authority PostgreSQL journal", () => {
       status: "uncertain",
       error: { code: "authority_lease_expired_during_drain" },
     });
+    const { rows: providerRows } = await getPool().query<{
+      boundary_preserved: boolean;
+    }>(
+      `SELECT provider_uncertain_started_at IS NOT NULL
+                AND provider_uncertain_started_at=provider_attempt_started_at
+                AS boundary_preserved
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(providerRows).toEqual([{ boundary_preserved: true }]);
     await expect(getBillingAuthorityHealth()).resolves.toMatchObject({
       ready: false,
       enabled: false,

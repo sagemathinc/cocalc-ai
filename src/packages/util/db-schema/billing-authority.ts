@@ -128,7 +128,15 @@ Table({
     },
     first_started_at: {
       type: "timestamp",
-      desc: "Immutable first execution time used to bound provider replay safety.",
+      desc: "Immutable first command execution time.",
+    },
+    provider_attempt_started_at: {
+      type: "timestamp",
+      desc: "Time immediately before the current execution first attempted a provider mutation; reset at each claim.",
+    },
+    provider_uncertain_started_at: {
+      type: "timestamp",
+      desc: "Immutable earliest unresolved provider-mutation boundary; bounds safe provider replay across later attempts.",
     },
     finished_at: {
       type: "timestamp",

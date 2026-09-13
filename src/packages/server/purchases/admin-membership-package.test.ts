@@ -7,7 +7,11 @@ import { getPool } from "@cocalc/server/test";
 import { after, before } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import adminCreateMembershipPackagePurchase from "./admin-membership-package";
-import { normalizeAdminMembershipPackageProduct } from "./admin-membership-package-identity";
+import {
+  adminMembershipPackageBusinessIdentityHash,
+  normalizeAdminMembershipPackageBusinessIdentity,
+  normalizeAdminMembershipPackageProduct,
+} from "./admin-membership-package-identity";
 import { createTestAccount, createTestMembershipTier } from "./test-data";
 
 const mockCreatePaymentIntent = jest.fn();
@@ -60,6 +64,62 @@ describe("admin membership package purchase", () => {
         course_project_id: "not-a-project-id",
       }),
     ).toThrow("course_project_id must be a valid UUID");
+  });
+
+  it("uses one canonical identity for equivalent billing input", () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: `  ${membershipClass}  `,
+      seat_count: 1,
+      interval: "month" as const,
+      starts_at: "2026-10-01T00:00:00-07:00",
+      expires_at: "2026-11-01T00:00:00-07:00",
+    };
+    const first = normalizeAdminMembershipPackageBusinessIdentity({
+      admin_account_id: admin_account_id.toUpperCase(),
+      user_account_id: user_account_id.toUpperCase(),
+      product,
+      price: "25.001",
+      source: "card",
+      reason: "  approved package  ",
+      idempotency_key: "  stable-key  ",
+      pricing_note: "  approved price  ",
+    });
+    const second = normalizeAdminMembershipPackageBusinessIdentity({
+      admin_account_id,
+      user_account_id,
+      product: {
+        ...product,
+        membership_class: membershipClass,
+        starts_at: new Date("2026-10-01T07:00:00.000Z"),
+        expires_at: "2026-11-01T07:00:00.000Z",
+      },
+      price: 25.01,
+      source: "card",
+      reason: "approved package",
+      idempotency_key: "stable-key",
+      pricing_note: "approved price",
+    });
+
+    expect(first).toEqual(second);
+    expect(first.custom_price).toBe(25.01);
+    expect(adminMembershipPackageBusinessIdentityHash(first)).toBe(
+      adminMembershipPackageBusinessIdentityHash(second),
+    );
+    expect(() =>
+      normalizeAdminMembershipPackageBusinessIdentity({
+        admin_account_id,
+        user_account_id,
+        product,
+        price: true,
+        source: "card",
+        reason: "approved package",
+        idempotency_key: "stable-key",
+      }),
+    ).toThrow("price must be a number");
   });
 
   it("atomically creates a custom-price package and reuses its idempotency key", async () => {

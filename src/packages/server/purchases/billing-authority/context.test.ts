@@ -121,6 +121,55 @@ describe("billing authority context", () => {
     });
   });
 
+  it("records the provider boundary once before issuing mutation keys", async () => {
+    const recordProviderStart = jest.fn(async () => undefined);
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "provider-boundary",
+      record_provider_start: recordProviderStart,
+      fn: async () => {
+        await beginStripeMutation({
+          method: "POST",
+          path: "/v1/customers",
+          body: "name=first",
+          existing_key: "first",
+        });
+        await beginStripeMutation({
+          method: "POST",
+          path: "/v1/invoices",
+          body: "customer=cus_1",
+          existing_key: "second",
+        });
+      },
+    });
+    expect(recordProviderStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when an enabled authority omits provider journaling", async () => {
+    const previous = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+    try {
+      await expect(
+        runInBillingAuthorityContext({
+          operation: "test",
+          request_id: "missing-provider-journal",
+          fn: async () =>
+            await beginStripeMutation({
+              method: "POST",
+              path: "/v1/invoices",
+              body: "customer=cus_1",
+            }),
+        }),
+      ).rejects.toThrow("provider journal is unavailable");
+    } finally {
+      if (previous == null) {
+        delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+      } else {
+        process.env.COCALC_BILLING_AUTHORITY_ENABLED = previous;
+      }
+    }
+  });
+
   it("expires authority inherited by detached asynchronous work", async () => {
     enableStripeMutationAuthorityEnforcement();
     let release!: () => void;

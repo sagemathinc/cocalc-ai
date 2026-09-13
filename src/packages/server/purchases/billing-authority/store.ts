@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   adminMembershipPackageInvoiceId,
-  normalizeAdminMembershipPackageProduct,
+  normalizeAdminMembershipPackageBusinessIdentity,
 } from "@cocalc/server/purchases/admin-membership-package-identity";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -81,6 +81,8 @@ interface CommandRow {
   created_at: Date | string;
   updated_at: Date | string;
   first_started_at?: Date | string | null;
+  provider_attempt_started_at?: Date | string | null;
+  provider_uncertain_started_at?: Date | string | null;
   started_at?: Date | string | null;
   finished_at?: Date | string | null;
   expires_at: Date | string;
@@ -170,9 +172,61 @@ function normalizedUuidField(value: unknown): unknown {
   return isValidUUID(normalized) ? normalized : value;
 }
 
-function adminPackageHubSemanticCommand(
+function adminPackageBusinessIdentity(
+  input: Record<string, unknown>,
+  actor: string,
+  hubApiWireFormat = false,
+):
+  | ReturnType<typeof normalizeAdminMembershipPackageBusinessIdentity>
+  | undefined {
+  try {
+    return normalizeAdminMembershipPackageBusinessIdentity({
+      admin_account_id: actor,
+      user_account_id: input.user_account_id,
+      product: input.product as MembershipPackageProduct,
+      price: hubApiWireFormat ? Number(input.price) : input.price,
+      source: input.source,
+      reason: hubApiWireFormat ? `${input.reason ?? ""}` : input.reason,
+      idempotency_key: hubApiWireFormat
+        ? `${input.idempotency_key ?? ""}`
+        : input.idempotency_key,
+      pricing_note: input.pricing_note,
+    });
+  } catch {
+    return;
+  }
+}
+
+function adminPackageSemanticCommand(
   command: BillingAuthorityCommand,
 ): BillingAuthorityCommand {
+  if (
+    command.kind === "account-local" &&
+    command.operation === "admin-create-membership-package-purchase"
+  ) {
+    const actor = normalizedUuidField(command.actor_account_id);
+    if (typeof actor !== "string" || !isValidUUID(actor)) return command;
+    if (normalizedUuidField(command.input.admin_account_id) !== actor) {
+      return command;
+    }
+    const businessIdentity = adminPackageBusinessIdentity(command.input, actor);
+    if (!businessIdentity) return command;
+    return {
+      ...command,
+      actor_account_id: actor,
+      input: {
+        ...command.input,
+        admin_account_id: businessIdentity.admin_account_id,
+        user_account_id: businessIdentity.user_account_id,
+        product: businessIdentity.product,
+        price: businessIdentity.custom_price,
+        source: businessIdentity.source,
+        reason: businessIdentity.reason,
+        idempotency_key: businessIdentity.idempotency_key,
+        pricing_note: businessIdentity.pricing_note,
+      },
+    };
+  }
   if (
     command.kind !== "hub-api" ||
     command.call.name !== ADMIN_PACKAGE_HUB_METHOD ||
@@ -184,16 +238,6 @@ function adminPackageHubSemanticCommand(
   if (!input) return command;
   const actor = normalizedUuidField(command.call.account_id);
   if (typeof actor !== "string" || !isValidUUID(actor)) return command;
-  let product = input.product;
-  if (record(product)) {
-    try {
-      product = normalizeAdminMembershipPackageProduct(
-        product as MembershipPackageProduct,
-      );
-    } catch {
-      // Invalid products remain byte-for-byte distinct and fail in the API.
-    }
-  }
   const call = { ...command.call };
   // Credential instances may rotate between retries. The full payload remains
   // journaled and is replayed so the Hub API revalidates the current session.
@@ -201,25 +245,18 @@ function adminPackageHubSemanticCommand(
   delete call.auth_token_fingerprint;
   delete call.auth_iat_s;
   delete call.auth_exp_s;
+  const businessIdentity = adminPackageBusinessIdentity(input, actor, true);
+  if (!businessIdentity) {
+    // Invalid requests cannot create a durable package intent. Keep their raw
+    // business payload distinct while still allowing credentials to rotate.
+    return { kind: "hub-api", call };
+  }
   return {
     kind: "hub-api",
     call: {
       ...call,
       account_id: actor,
-      args: [
-        {
-          user_account_id: normalizedUuidField(input.user_account_id),
-          product,
-          price: input.price,
-          source: input.source,
-          reason: input.reason,
-          idempotency_key:
-            typeof input.idempotency_key === "string"
-              ? input.idempotency_key.trim()
-              : input.idempotency_key,
-          pricing_note: input.pricing_note,
-        },
-      ],
+      args: [{ admin_membership_package_business_identity: businessIdentity }],
     },
   };
 }
@@ -233,7 +270,7 @@ function requestHash(request: BillingAuthoritySubmitRequest): {
     throw authorityError("billing authority command is too large", 413);
   }
   const semanticJson = JSON.stringify(
-    canonical(adminPackageHubSemanticCommand(request.command)),
+    canonical(adminPackageSemanticCommand(request.command)),
   );
   return {
     hash: createHash("sha256").update(semanticJson).digest("hex"),
@@ -383,23 +420,24 @@ async function canRecoverAdminPackage(
                  AND description->>'type'='membership-package'
                  AND NULLIF(description->>'package_id', '') IS NOT NULL
             ) AS has_purchase,
-            $4::TIMESTAMPTZ >=
-              clock_timestamp() - INTERVAL '${STRIPE_IDEMPOTENCY_RECOVERY_WINDOW}'
+            $4::TIMESTAMPTZ IS NOT NULL
+              AND $4::TIMESTAMPTZ >=
+                clock_timestamp() - INTERVAL '${STRIPE_IDEMPOTENCY_RECOVERY_WINDOW}'
               AS provider_key_retained`,
     [
       identity.invoice_id,
       identity.account_id,
       identity.admin_account_id,
-      existing.first_started_at ?? existing.started_at ?? existing.created_at,
+      existing.provider_uncertain_started_at ?? null,
     ],
   );
   const state = rows[0];
   if (state?.has_purchase) return true;
   if (!state?.has_intent) return false;
   if (identity.source !== "card") return true;
-  // A first-attempt failure is known not to have an ambiguous provider result.
-  // Later failures must not erase ambiguity retained from an earlier attempt.
-  if (existing.status === "failed" && existing.attempt_count === 1) return true;
+  // No unresolved guarded Stripe mutation exists without this durable anchor.
+  // Pre-provider and definitive provider failures can retry at any age.
+  if (!existing.provider_uncertain_started_at) return true;
   return state.provider_key_retained;
 }
 
@@ -1047,6 +1085,8 @@ export async function acquireBillingAuthorityLease({
     await db.query(
       `UPDATE billing_authority_commands
           SET status='uncertain', finished_at=clock_timestamp(),
+              provider_uncertain_started_at=COALESCE(
+                provider_uncertain_started_at, provider_attempt_started_at),
               updated_at=clock_timestamp(),
               error=jsonb_build_object(
                 'message', 'authority changed while command outcome was unknown',
@@ -1214,6 +1254,8 @@ export async function reconcileExpiredBillingAuthorityLease(): Promise<boolean> 
     const uncertain = await db.query(
       `UPDATE billing_authority_commands
           SET status='uncertain', finished_at=clock_timestamp(),
+              provider_uncertain_started_at=COALESCE(
+                provider_uncertain_started_at, provider_attempt_started_at),
               updated_at=clock_timestamp(),
               error=jsonb_build_object(
                 'message', 'authority lease expired while globally drained',
@@ -1271,6 +1313,38 @@ export async function beginBillingAuthorityCommandExecution({
   } catch (err) {
     await db.query("ROLLBACK").catch(() => undefined);
     throw err;
+  }
+}
+
+export async function recordBillingAuthorityProviderMutationStart({
+  ...identity
+}: BillingAuthorityLeaseIdentity & { command_id: string }): Promise<void> {
+  // This must commit before network I/O. If the worker dies after Stripe sees
+  // the request, lease recovery can preserve this attempt's replay anchor.
+  const { rowCount } = await getPool().query(
+    `UPDATE billing_authority_commands
+        SET provider_attempt_started_at=COALESCE(
+              provider_attempt_started_at, clock_timestamp()),
+            updated_at=clock_timestamp()
+      WHERE command_id=$1 AND status='running'
+        AND authority_instance_id=$2 AND authority_generation=$3
+        AND EXISTS (
+          SELECT 1 FROM billing_authority_lease
+           WHERE name=$4 AND holder_id=$2 AND generation=$3
+             AND lease_until > clock_timestamp()
+        )`,
+    [
+      identity.command_id,
+      identity.instance_id,
+      identity.generation,
+      LEASE_NAME,
+    ],
+  );
+  if (rowCount !== 1) {
+    throw authorityError(
+      "provider mutation start was fenced by authority loss",
+      503,
+    );
   }
 }
 
@@ -1345,6 +1419,7 @@ export async function claimNextBillingAuthorityCommand(
             SET status='running', attempt_count=attempt_count + 1,
                 authority_generation=$2, authority_instance_id=$3,
                 first_started_at=COALESCE(first_started_at, clock_timestamp()),
+                provider_attempt_started_at=NULL,
                 started_at=clock_timestamp(), updated_at=clock_timestamp()
           WHERE command_id=$1 AND status='queued'
             AND expires_at > clock_timestamp()
@@ -1377,7 +1452,11 @@ export async function finishBillingAuthorityCommand({
   const succeeded = status === "succeeded";
   const { rowCount } = await db.query(
     `UPDATE billing_authority_commands
-        SET status=$4, result=$5::JSONB, error=$6::JSONB,
+        SET status=$4::TEXT, result=$5::JSONB, error=$6::JSONB,
+            provider_uncertain_started_at=CASE WHEN $4::TEXT='uncertain'
+              THEN COALESCE(provider_uncertain_started_at,
+                            provider_attempt_started_at)
+              ELSE provider_uncertain_started_at END,
             finished_at=clock_timestamp(), updated_at=clock_timestamp()
       WHERE command_id=$1 AND status='running'
         AND authority_instance_id=$2 AND authority_generation=$3

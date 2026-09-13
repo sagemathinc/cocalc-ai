@@ -75,6 +75,28 @@ describe("authority-guarded Stripe HTTP client", () => {
     expect(makeRequest).toHaveBeenCalledTimes(1);
   });
 
+  it("does not contact Stripe unless the provider boundary is durable", async () => {
+    enableStripeMutationAuthorityEnforcement();
+    const { guarded, makeRequest } = client();
+    await expect(
+      runInBillingAuthorityContext({
+        operation: "test",
+        request_id: "request-provider-boundary-failure",
+        record_provider_start: async () => {
+          throw new Error("provider boundary was not durable");
+        },
+        fn: async () =>
+          await (guarded.makeRequest as any)(
+            "api.stripe.com",
+            "443",
+            "/v1/invoices",
+            "POST",
+          ),
+      }),
+    ).rejects.toThrow("provider boundary was not durable");
+    expect(makeRequest).not.toHaveBeenCalled();
+  });
+
   it("injects one deterministic key across a Stripe transport retry", async () => {
     enableStripeMutationAuthorityEnforcement();
     const { guarded, makeRequest } = client();

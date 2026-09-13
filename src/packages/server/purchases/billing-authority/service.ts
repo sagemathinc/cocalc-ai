@@ -49,6 +49,7 @@ import {
   markBillingAuthorityLeaseServing,
   pruneBillingAuthorityCommands,
   registerBillingAuthorityCommandAccount,
+  recordBillingAuthorityProviderMutationStart,
   reconcileExpiredBillingAuthorityLease,
   requestBillingAuthorityDrain,
   releaseBillingAuthorityLease,
@@ -444,6 +445,11 @@ async function executeClaimedCommand({
       request_id: command_id,
       authority_active: () => authorityLocallyActive(lease),
       assert_authority: async () => await assertAuthorityFenced(lease),
+      record_provider_start: async () =>
+        await recordBillingAuthorityProviderMutationStart({
+          ...lease,
+          command_id,
+        }),
       register_account: async (account_id) =>
         await registerBillingAuthorityCommandAccount({
           ...lease,
