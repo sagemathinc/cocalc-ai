@@ -134,7 +134,7 @@ export async function computeOwnerMutationOnBay(
   );
   if (rows.length !== 1)
     throw Error("Compute resource not found or access denied.");
-  const value = await withLocalComputeResource(async () => {
+  const result = await withLocalComputeResource(async () => {
     const api = await import("@cocalc/server/conat/api/compute");
     switch (request.method) {
       case "startVm":
@@ -172,12 +172,16 @@ export async function computeOwnerMutationOnBay(
       case "deleteVolume":
         return api.deleteVolume(request.opts);
     }
-  });
+  })
+    .then((value) => ({ value }))
+    .catch(async (err) =>
+      (await import("./turn-grants")).agentComputeApprovalRequired(err),
+    );
   return {
     id,
     owner_account_id: account_id,
     owning_bay_id: getConfiguredBayId(),
-    value,
+    ...result,
   };
 }
 
@@ -243,5 +247,10 @@ export async function routeComputeOwnerMutation<
     result.owning_bay_id !== resource.owning_bay_id
   )
     throw Error("Compute resource authority changed; refresh and retry.");
+  if ("approval_required" in result)
+    throw Object.assign(
+      new Error(result.approval_required.message),
+      result.approval_required,
+    );
   return result.value as Awaited<ReturnType<ComputeApi[M]>>;
 }

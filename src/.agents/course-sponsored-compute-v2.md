@@ -5,6 +5,44 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+Latest local validation (2026-09-13, 07:03 UTC): unattended **exhaustion** fallback
+passed on GCP VM `249401db-c964-4634-8f31-3c6674d7d120`. The instructor approved
+a grant ceiling equal to existing spent/reserved commitments, preventing further
+renewal. The student separately approved only `course_exhausted`, with a USD 1.50
+personal cap. The normal worker stopped course service, waited for GCP network
+accounting, and activated personal funding at 06:48:29. SSH/Python worked before
+and after restart, including its changed public IP. The original 06:57 stop and
+07:02 deletion deadlines survived the handoff. Independent provider inventory at
+07:03 showed no instance, disk, or address. Final financial settlement is still
+being observed; do not equate physical deletion with released backing.
+
+Project-scoped discovery and owner SSH/project-access controls now route to the
+resource bay. Actual three-bay public API tests cover denied project membership,
+revoked project discovery, fresh-auth rejection, SSH add/list/revoke, and project
+grant/list/revoke. Incomplete project revocations remain visible to the owner
+while the project has already lost discovery rights. Local commits `8ad3a3bec9`
+and `932072477c` contain these connected changes.
+
+Agent grant checks now route to the current account home, where normal account
+APIs can list, approve, and revoke them. Three-bay tests exercise that sequence
+through a remote VM Stop request; no grant row is created on the resource bay.
+Structured approval fields are preserved across the private RPCs. Short-lived
+agent approvals are not financial consents and must be approved again after
+account rehome; old-bay grants are not authoritative. The broader real-PostgreSQL
+run passed 557 tests across 49 suites, with 12 database-mode skips. Server/frontend
+typechecks, the ownership-manifest checks, and dependency consistency passed.
+The ownership manifest now distinguishes stationary
+resources/site-funded usage from movable account metering and account-home grants.
+
+The live pending and active personal-funding panels passed keyboard/focus and
+scoped axe checks at 320/720/1440 pixels in both themes, plus actual Chromium
+200% zoom. Zoom screenshots use direct viewport capture to avoid the browser's
+full-page screenshot cropping. This is not an iOS/iPad or full application audit.
+A new small live run is checking independently personally funded home storage;
+its resources must be cleaned before this validation is considered complete.
+The existing project notebook was saved and reloaded through the live notebook
+backend after exhaustion-test VM deletion; its original marker remained intact.
+
 Personal VM handoff now has a payer-home coordinator and a resource-bay
 prepare/commit/abort protocol. It stops the old generation, waits for physical
 stop and GCP network accounting, reserves the combined VM/disk personal cap,
@@ -27,8 +65,8 @@ and deletion accepted with a session present only at the new account home.
 Copied consent rows on old bays are excluded from local financial sweeps.
 The focused real-PostgreSQL run passed 148 checks, including local funding,
 storage, schedule and routing regressions. This is not yet the complete live
-cross-bay browser or agent workflow; SSH/project-association operations and
-project-scoped discovery need a separate routing audit.
+cross-bay browser workflow; subsequent SSH/project-association, project discovery,
+and agent checks are described in the latest checkpoint above.
 
 The latest real-PostgreSQL run passed 533 tests across 47 suites, with 12
 database-mode skips. It includes normal explicit-stop fencing/replay, remote

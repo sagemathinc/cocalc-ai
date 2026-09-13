@@ -1126,6 +1126,10 @@ async function startAccountLocalService(): Promise<void> {
       (
         await import("@cocalc/server/compute/owner-resource-mutation")
       ).computeOwnerMutationOnBay(opts),
+    computeOwnerCheckAgentGrant: async (opts) =>
+      (
+        await import("@cocalc/server/compute/turn-grants")
+      ).checkAgentComputeGrantOnHome(opts),
     computeOwnerCheckFreshAuth: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-mutation")

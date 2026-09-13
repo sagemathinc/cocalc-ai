@@ -130,7 +130,10 @@ jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
 );
 jest.mock("@cocalc/database/settings/server-settings", () => ({
-  getServerSettings: async () => ({ compute_vm_course_funding_enabled: true }),
+  getServerSettings: async () => ({
+    compute_vm_course_funding_enabled: true,
+    dns: "funding.test",
+  }),
 }));
 
 // Explicit attestation hook, NOT signed-rollout acceptance. The real exposure
@@ -166,7 +169,10 @@ jest.mock("@cocalc/server/accounts/persist-portability", () => ({
   clearAccountPersistState: async () => {},
 }));
 jest.mock("@cocalc/server/conat/api/browser-sessions", () => ({
-  listBrowserSessionsForAccount: async () => [],
+  listBrowserSessionsForAccount: () => [],
+}));
+jest.mock("@cocalc/server/conat/api/browser-sessions-live", () => ({
+  getLiveBrowserSessionInfo: async () => ({}),
 }));
 
 const [payerBay, resourceBay, courseBay] = bays;
@@ -242,6 +248,12 @@ describePg(
                   (
                     await import("../owner-resource-mutation")
                   ).computeOwnerMutationOnBay(opts),
+                ),
+              computeOwnerCheckAgentGrant: (opts) =>
+                onBay(bay, async () =>
+                  (await import("../turn-grants")).checkAgentComputeGrantOnHome(
+                    opts,
+                  ),
                 ),
               computeOwnerCheckFreshAuth: (opts) =>
                 onBay(bay, async () =>
@@ -813,6 +825,49 @@ describePg(
             project_id: f.project,
           }),
         ).toEqual([]);
+        const agent_auth = {
+          account_id: f.student,
+          project_id: f.project,
+          token_fingerprint: "e".repeat(64),
+          issued_at_s: Math.floor(Date.now() / 1000) - 5,
+          expires_at_s: Math.floor(Date.now() / 1000) + 600,
+        };
+        const agentStop = {
+          account_id: f.student,
+          agent_auth,
+          id_or_name: f.vm.id,
+          idempotency_key: randomUUID(),
+        };
+        await expect(api.stopVm(agentStop)).rejects.toMatchObject({
+          code: "agent_grant_required",
+          grant_id: expect.any(String),
+          approval_url: expect.stringContaining("funding.test"),
+        });
+        const requests = await api.listAgentGrants({
+          account_id: f.student,
+          project_id: f.project,
+        });
+        expect(requests).toHaveLength(1);
+        expect(
+          await row(
+            resourceBay,
+            "SELECT count(*)::int AS n FROM compute_vm_turn_grants WHERE owner_account_id=$1",
+            [f.student],
+          ),
+        ).toEqual({ n: 0 });
+        await api.approveAgentGrant({
+          account_id: f.student,
+          grant_id: requests[0].grant_id,
+          session_hash,
+        });
+        expect((await api.stopVm(agentStop)).desired_state).toBe("stopped");
+        await api.revokeAgentGrant({
+          account_id: f.student,
+          grant_id: requests[0].grant_id,
+        });
+        await expect(
+          api.stopVm({ ...agentStop, idempotency_key: randomUUID() }),
+        ).rejects.toThrow(/does not permit/);
         const deleted = await api.deleteVm({
           account_id: f.student,
           id_or_name: f.vm.id,

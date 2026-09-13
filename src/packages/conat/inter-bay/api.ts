@@ -4281,14 +4281,26 @@ export type ComputeOwnerMutationResult = {
   id: string;
   owner_account_id: string;
   owning_bay_id: string;
-  value: Awaited<
-    ReturnType<
-      import("@cocalc/conat/hub/api/compute").ComputeApi[ComputeOwnerMutationMethod]
+} & (
+  | {
+      value: Awaited<
+        ReturnType<
+          import("@cocalc/conat/hub/api/compute").ComputeApi[ComputeOwnerMutationMethod]
+        >
+      >;
+    }
+  | Extract<
+      import("@cocalc/util/compute-agent-auth").ComputeAgentGrantCheckResult,
+      { approval_required: unknown }
     >
-  >;
-};
+);
 
 export interface InterBayComputeFundingApi {
+  computeOwnerCheckAgentGrant: (
+    opts: import("@cocalc/util/compute-agent-auth").ComputeAgentGrantCheck,
+  ) => Promise<
+    import("@cocalc/util/compute-agent-auth").ComputeAgentGrantCheckResult
+  >;
   computeProjectResources: (
     opts: ComputeProjectResourcesRequest,
   ) => Promise<ComputeOwnerResourcesResult>;
@@ -8225,6 +8237,8 @@ export function createInterBayAccountLocalClient({
       await computeFundingClient.computeFundingGetOwnedPools(opts),
     computeOwnerResources: (opts) =>
       computeFundingClient.computeOwnerResources(opts),
+    computeOwnerCheckAgentGrant: (opts) =>
+      computeFundingClient.computeOwnerCheckAgentGrant(opts),
     computeProjectResources: (opts) =>
       computeFundingClient.computeProjectResources(opts),
     computeOwnerMutate: (opts) => computeFundingClient.computeOwnerMutate(opts),
@@ -8736,6 +8750,8 @@ export function createInterBayAccountLocalHandler({
         computeFundingGetOwnedPools: async (opts) =>
           await impl.computeFundingGetOwnedPools(opts),
         computeOwnerResources: (opts) => impl.computeOwnerResources(opts),
+        computeOwnerCheckAgentGrant: (opts) =>
+          impl.computeOwnerCheckAgentGrant(opts),
         computeProjectResources: (opts) => impl.computeProjectResources(opts),
         computeOwnerMutate: (opts) => impl.computeOwnerMutate(opts),
         computeOwnerCheckFreshAuth: (opts) =>

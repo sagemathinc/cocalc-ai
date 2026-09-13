@@ -27,6 +27,7 @@ export type TableAuthorityKey =
   | "host_id"
   | "connector_id"
   | "bay_id"
+  | "owning_bay_id"
   | "local"
   | "none"
   | "mixed";
@@ -629,22 +630,53 @@ export const TABLE_OWNERSHIP = {
       "compute_vm_project_access",
       "compute_vm_instances",
       "compute_volumes",
-      "compute_egress_meter_intervals",
-      "compute_site_funded_usage",
-      "compute_vm_turn_grants",
     ],
     {
-      ownership: "account-home",
-      authority: "owner_account_id",
+      ownership: "stable-bay",
+      authority: "owning_bay_id",
       portability: "stable",
       secondary_reference_fields: {
+        owner_account_id:
+          "The beneficiary owns the resource; account rehome does not relocate it.",
         project_id:
           "Revocable project access controls discovery and SSH data-plane access, but not authority.",
       },
       notes:
-        "Account-owned managed compute state. Many projects may receive revocable SSH access without receiving lifecycle or billing authority.",
+        "Managed resources remain at their owning bay across account rehome. Instance records inherit authority from their VM. Owner API calls route to this bay; funding is checked separately at the payer home. Revocable project access confers neither lifecycle nor billing authority.",
     },
   ),
+
+  ...entries(["compute_egress_meter_intervals"], {
+    ownership: "account-home",
+    authority: "owner_account_id",
+    portability: "portable",
+    secondary_reference_fields: {
+      project_id:
+        "Usage context only; replay accounting belongs to its account owner.",
+    },
+    notes:
+      "Account-owned metering replay evidence, moved with financial state. Physical resource identities remain unchanged.",
+  }),
+  ...entries(["compute_site_funded_usage"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    notes:
+      "Site-funded provider usage evidence remains with the resource's worker bay, independently of its beneficiary's account home.",
+  }),
+  ...entries(["compute_vm_turn_grants"], {
+    ownership: "account-home",
+    authority: "owner_account_id",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      project_id:
+        "The capability is scoped to this project but approved by its account owner.",
+    },
+    notes:
+      "Short-lived agent approvals are checked at the current account home. Account rehome requires a new approval there; old-bay approvals are not accepted or copied as financial consent.",
+    rebuild:
+      "A verified agent capability creates a fresh, initially read-only or unapproved request at the new home. Billable, destructive, and availability permissions require account approval again.",
+  }),
 
   ...entries(["compute_vm_orphans"], {
     ownership: "stable-bay",
