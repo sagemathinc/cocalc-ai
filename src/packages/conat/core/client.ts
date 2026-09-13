@@ -267,6 +267,7 @@ import {
   viewerFsSubject,
 } from "@cocalc/conat/files/fs";
 import TTL from "@isaacs/ttlcache";
+import { abortable } from "./abort";
 import {
   ConatSocketServer,
   ConatSocketClient,
@@ -2174,7 +2175,8 @@ export class Client extends EventEmitter {
         // already closed
         return { bytes: 0, count: 0 };
       }
-      await this.waitUntilSignedIn();
+      opts.signal?.throwIfAborted();
+      await abortable(this.waitUntilSignedIn(), opts.signal);
       const start = Date.now();
       const { bytes, getCount, getServerTiming, promise } = this._publish(
         subject,
@@ -2184,7 +2186,7 @@ export class Client extends EventEmitter {
           confirm: true,
         },
       );
-      await promise;
+      await abortable(promise!, opts.signal);
       let count = getCount?.()!;
       const serverTiming = getServerTiming?.();
       opts.phaseReporter?.("publish_done", {
@@ -2204,9 +2206,13 @@ export class Client extends EventEmitter {
       ) {
         let timeout = opts.timeout ?? DEFAULT_WAIT_FOR_INTEREST_TIMEOUT;
         const waitStart = Date.now();
-        await this.waitForInterest(subject, {
-          timeout: timeout ? timeout - (Date.now() - start) : undefined,
-        });
+        await abortable(
+          this.waitForInterest(subject, {
+            timeout: timeout ? timeout - (Date.now() - start) : undefined,
+          }),
+          opts.signal,
+        );
+        opts.signal?.throwIfAborted();
         opts.phaseReporter?.("publish_wait_for_interest_done", {
           elapsed_ms: Date.now() - waitStart,
         });
@@ -2231,7 +2237,7 @@ export class Client extends EventEmitter {
           },
         );
         const retryStart = Date.now();
-        await promise;
+        await abortable(promise!, opts.signal);
         count = getCount?.()!;
         const retryServerTiming = getServerTiming?.();
         opts.phaseReporter?.("publish_retry_done", {
@@ -2464,13 +2470,23 @@ export class Client extends EventEmitter {
   requestMany = async (
     subject: string,
     mesg: any,
-    { maxMessages, maxWait, ...options }: RequestManyOptions = {},
+    {
+      maxMessages,
+      maxWait,
+      maxQueue,
+      maxQueueBytes,
+      signal,
+      ...options
+    }: RequestManyOptions = {},
   ): Promise<Subscription> => {
     const client = this.resolveClient(subject);
     if (client !== this) {
       return await client.requestMany(subject, mesg, {
         maxMessages,
         maxWait,
+        maxQueue,
+        maxQueueBytes,
+        signal,
         ...options,
       });
     }
@@ -2480,25 +2496,40 @@ export class Client extends EventEmitter {
     if (maxWait != null && maxWait <= 0) {
       throw Error("maxWait must be positive");
     }
-    const inbox = await this.getInbox();
+    signal?.throwIfAborted();
+    const inbox = await abortable(this.getInbox(), signal);
+    signal?.throwIfAborted();
     const inboxSubject = this.temporaryInboxSubject();
+    const abort = () => sub.cancel(signal?.reason ?? Error("request aborted"));
     const sub = new EventIterator<Message>(inbox, inboxSubject, {
       idle: maxWait,
       limit: maxMessages,
+      maxQueue,
+      maxQueueBytes,
+      sizeOf: (message) => message.length,
+      overflow: "throw",
       map: (args) => args[0],
+      onEnd: () => signal?.removeEventListener("abort", abort),
     });
-    const { count } = await this.publish(subject, mesg, {
-      ...options,
-      headers: { ...options?.headers, [REPLY_HEADER]: inboxSubject },
-    });
-    if (!count) {
-      sub.stop();
-      throw new ConatError(
-        `requestMany -- no subscribers matching ${subject}`,
-        { code: 503 },
-      );
+    signal?.addEventListener("abort", abort, { once: true });
+    try {
+      const { count } = await this.publish(subject, mesg, {
+        ...options,
+        signal,
+        headers: { ...options?.headers, [REPLY_HEADER]: inboxSubject },
+      });
+      signal?.throwIfAborted();
+      if (!count) {
+        throw new ConatError(
+          `requestMany -- no subscribers matching ${subject}`,
+          { code: 503 },
+        );
+      }
+      return sub;
+    } catch (err) {
+      sub.cancel();
+      throw err;
     }
-    return sub;
   };
 
   // watch: this is mainly for debugging and interactive use.
@@ -2711,6 +2742,7 @@ export class Client extends EventEmitter {
 }
 
 interface PublishOptions {
+  signal?: AbortSignal;
   headers?: Headers;
   // if encoding is given, it specifies the encoding used to encode the message
   encoding?: DataEncoding;
@@ -2752,6 +2784,8 @@ interface PublishOptions {
 interface RequestManyOptions extends PublishOptions {
   maxWait?: number;
   maxMessages?: number;
+  maxQueue?: number;
+  maxQueueBytes?: number;
 }
 
 interface Chunk {
@@ -3081,6 +3115,17 @@ export class Message<T = any> extends MessageData<T> {
     const subject = this.respondSubject();
     if (!subject) return { bytes: 0 };
     return this.client.publishSync(subject, mesg, opts);
+  };
+
+  // Bidirectional streaming protocols use the reply inbox as their return
+  // channel, retaining this message's routed client and inbox authorization.
+  respondMany = (mesg, opts?: RequestManyOptions): Promise<Subscription> => {
+    const subject = this.respondSubject();
+    if (!subject) throw Error("message has no reply subject");
+    return this.client.requestMany(subject, mesg, {
+      waitForInterest: true,
+      ...opts,
+    });
   };
 
   respond = (

@@ -155,6 +155,7 @@ describe("handleFileDownload", () => {
       project_id: "project-123",
       path: "/home/user/a.txt",
       maxWait: 1000 * 60 * 60,
+      signal: expect.any(AbortSignal),
     });
     expect(res.write).toHaveBeenCalledWith(Buffer.from("hello"));
     expect(res.write).toHaveBeenCalledWith(Buffer.from(" world"));
@@ -235,6 +236,7 @@ describe("handleFileDownload", () => {
       path: "/home/user/a.pdf",
       name: ":workspace",
       maxWait: 1000 * 60 * 60,
+      signal: expect.any(AbortSignal),
       start: 10,
       end: 19,
     });
@@ -343,6 +345,7 @@ describe("handleFileDownload", () => {
       project_id: "project-123",
       path: "/tmp/.cocalc-download-archive-token-selection.zip",
       maxWait: 1000 * 60 * 60,
+      signal: expect.any(AbortSignal),
     });
     expect(mockFsRm).not.toHaveBeenCalled();
     expect(onFinish).toBeDefined();

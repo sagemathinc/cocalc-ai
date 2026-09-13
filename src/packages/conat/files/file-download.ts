@@ -283,20 +283,31 @@ export async function handleFileDownload({
     }
   }
 
-  let headersSent = false;
   let bytesWritten = 0;
   let partial = false;
   let streamCompleted = false;
-  res.on("finish", () => {
-    headersSent = true;
-  });
+  const controller = new AbortController();
+  const abort = () => controller.abort(Error("download connection closed"));
+  // req.close also fires for a completely received, healthy GET. Only an
+  // aborted request or a closed response cancels the outbound file stream.
+  req.on?.("aborted", abort);
+  res.on("close", abort);
+  res.on("error", abort);
+  const timer = setTimeout(
+    () => controller.abort(Error("download timed out")),
+    maxWait,
+  );
+  timer.unref?.();
+  if (req.aborted || res.destroyed || res.writableEnded) abort();
   try {
+    controller.signal.throwIfAborted();
     for await (const chunk of await readFile({
       client,
       project_id,
       path,
       name: readServiceName,
       maxWait,
+      signal: controller.signal,
       ...(range != null ? range : {}),
     })) {
       if (res.writableEnded || res.destroyed) {
@@ -309,7 +320,9 @@ export async function handleFileDownload({
         bytesWritten += Buffer.byteLength(chunk);
       }
       if (!res.write(chunk)) {
-        await once(res, "drain");
+        // close does not imply drain. Cancellation must interrupt this wait
+        // and the upstream subscription even while the generator is yielded.
+        await once(res, "drain", { signal: controller.signal });
       }
     }
     streamCompleted = !partial && !res.destroyed;
@@ -326,24 +339,40 @@ export async function handleFileDownload({
       });
     }
     res.end();
-    if (explicitDownload && onExplicitDownloadComplete && bytesWritten > 0) {
-      await onExplicitDownloadComplete({
-        project_id,
-        path,
-        request_path: url,
-        bytes: bytesWritten,
-        partial,
-      });
-    }
   } catch (err) {
+    partial = true;
     logger.debug("ERROR streaming file", { project_id, path }, err);
-    if (!headersSent) {
+    if (res.destroyed) {
+      // The browser is gone; writing an error body cannot repair the download.
+    } else if (!res.headersSent && bytesWritten === 0) {
       const missing = isMissingFileError(err);
       res.statusCode = missing ? 404 : 500;
       res.end(missing ? "File not found." : "Error reading file.");
     } else {
       // Data sent, forcibly kill the connection
       res.destroy(err);
+    }
+  } finally {
+    clearTimeout(timer);
+    req.off?.("aborted", abort);
+    res.off?.("close", abort);
+    res.off?.("error", abort);
+    controller.abort(Error("download finished"));
+    if (explicitDownload && onExplicitDownloadComplete && bytesWritten > 0) {
+      try {
+        await onExplicitDownloadComplete({
+          project_id,
+          path,
+          request_path: url,
+          bytes: bytesWritten,
+          partial: partial || !streamCompleted,
+        });
+      } catch (err) {
+        logger.warn("ERROR recording download egress", {
+          project_id,
+          err: `${err}`,
+        });
+      }
     }
   }
 }

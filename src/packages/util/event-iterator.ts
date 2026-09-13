@@ -50,6 +50,10 @@ export interface EventIteratorOptions<V> {
   // Specifies the number of events to queue between iterations of the <AsyncIterator> returned.
   maxQueue?: number;
 
+  // Optional byte/weight bound in addition to the event-count bound.
+  maxQueueBytes?: number;
+  sizeOf?: (value: V) => number;
+
   // Either 'ignore' or 'throw' when there are more events to be queued than maxQueue allows.
   // 'ignore' means overflow events are dropped and a warning is emitted, while
   // 'throw' means to throw an exception. Default: 'ignore'.
@@ -95,6 +99,9 @@ export class EventIterator<
    * The queue of received values.
    */
   #queue: V[] = [];
+  #queueBytes = 0;
+  readonly #maxQueueBytes: number;
+  readonly #sizeOf: (value: V) => number;
 
   private err: any = undefined;
 
@@ -138,6 +145,18 @@ export class EventIterator<
     this.map = options.map ?? ((args) => args);
     this.#limit = options.limit ?? Infinity;
     this.#maxQueue = options.maxQueue ?? Infinity;
+    this.#maxQueueBytes = options.maxQueueBytes ?? Infinity;
+    if (
+      options.maxQueueBytes != null &&
+      (!Number.isFinite(options.maxQueueBytes) ||
+        options.maxQueueBytes < 0 ||
+        !options.sizeOf)
+    ) {
+      throw Error(
+        "maxQueueBytes requires a finite nonnegative limit and sizeOf",
+      );
+    }
+    this.#sizeOf = options.sizeOf ?? (() => 0);
     this.#overflow = options.overflow ?? "ignore";
     this.#idle = options.idle;
     this.filter = options.filter ?? ((): boolean => true);
@@ -168,8 +187,10 @@ export class EventIterator<
    */
   public end(): void {
     if (this.#ended) return;
-    this.resolveNext?.();
     this.#ended = true;
+    const resolveNext = this.resolveNext;
+    delete this.resolveNext;
+    resolveNext?.();
 
     this.emitter.off(this.event, this.#push);
     const maxListeners = this.emitter.getMaxListeners();
@@ -189,6 +210,15 @@ export class EventIterator<
   // requests like NATS did.  Probably this isn't the place for it...
   drain = this.end;
 
+  // Unlike graceful end(), cancellation must release buffered payloads even
+  // when the consumer is suspended outside next() (e.g. HTTP backpressure).
+  public cancel(err?: unknown): void {
+    this.#queue.length = 0;
+    this.#queueBytes = 0;
+    if (err != null) this.err = err;
+    this.end();
+  }
+
   /**
    * The next value that's received from the EventEmitter.
    */
@@ -205,6 +235,7 @@ export class EventIterator<
     // If there are elements in the queue, return an undone response:
     if (this.#queue.length) {
       const value = this.#queue.shift()!;
+      this.#queueBytes -= this.#sizeOf(value);
       if (!this.filter(value)) {
         return this.next();
       }
@@ -259,7 +290,7 @@ export class EventIterator<
         if (idleTimer) {
           clearTimeout(idleTimer);
         }
-        resolve({ done: true, value: undefined });
+        resolve(this.next());
       };
     });
   }
@@ -268,7 +299,7 @@ export class EventIterator<
    * Handles what happens when you break or return from a loop.
    */
   public return(): Promise<IteratorResult<V>> {
-    this.end();
+    this.cancel();
     return Promise.resolve({ done: true, value: undefined as never });
   }
 
@@ -305,24 +336,37 @@ export class EventIterator<
         if (value !== undefined) {
           // not undefined so at least give the user the opportunity to get this final value.
           this.#queue.push(value);
+          this.#queueBytes += this.#sizeOf(value);
         }
         return;
       }
       this.#queue.push(value);
-      while (this.#queue.length > this.#maxQueue && this.#queue.length > 0) {
+      this.#queueBytes += this.#sizeOf(value);
+      while (
+        this.#queue.length > 0 &&
+        (this.#queue.length > this.#maxQueue ||
+          this.#queueBytes > this.#maxQueueBytes)
+      ) {
         if (this.#overflow == "throw") {
           throw Error("maxQueue overflow");
         }
-        this.#queue.shift();
+        this.#queueBytes -= this.#sizeOf(this.#queue.shift()!);
       }
     } catch (err) {
       this.err = err;
+      this.#queue.length = 0;
+      this.#queueBytes = 0;
       // fake event to trigger handling of err
       this.emitter.emit(this.event);
+      this.end();
     }
   }
 
   public queueSize(): number {
     return this.#queue.length;
+  }
+
+  public queueBytes(): number {
+    return this.#queueBytes;
   }
 }
