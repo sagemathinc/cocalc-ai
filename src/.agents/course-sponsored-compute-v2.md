@@ -16,7 +16,31 @@ Metering and handoff maintenance start on the same worker tick and contend on
 the same nonblocking resource lock. Handoff now retries that contention briefly
 before financial work; normal metering remains nonblocking. PostgreSQL checks
 cover eventual acquisition, persistent contention, and callback-at-most-once
-behavior. A fresh unattended live run is still required.
+behavior. A subsequent fresh unattended run on VM
+`3388cc8a-4aa6-444f-8ee2-4ae52df31ce5` passed: the worker activated the
+expiry-only personal consent at 03:42 UTC, persisted personal runtime billing,
+and Python execution succeeded after restart. Its original stop and deletion
+deadlines remained effective. The personal segment charged USD 0.01 and closed
+with zero outstanding commitments. No manual handoff sweep was used in this run.
+
+A separate USD 2 manual-collection postpaid allowance funded GCP VM
+`f0f3d366-fcc7-4fce-81bc-3d32694d1a34`. SSH/Python succeeded, the worker stopped
+and deleted it on its bounded deadlines, the instructor was charged USD 0.01,
+and final network settlement closed the reservation. Independent GCP inventory
+at 04:10 UTC showed no instances, disks, or addresses in the isolated test
+namespace. The temporary instructor entitlement was restored. This does not
+verify Stripe collection or transferable captured-payment provenance.
+
+Course-credit reminders now have a separate opt-in and threshold in account
+communication settings. The home-bay worker obtains authoritative source
+snapshots outside account locks, then atomically records downward crossings and
+durable notifications. Unknown/stale balances do not fabricate alerts. Crossing
+state follows financial rehome; concurrent-worker and three-bay PostgreSQL tests
+pass. Browser checks verify keyboard controls, reload persistence and reflow at
+320/720/1440 pixels in light/dark themes. Narrow desktop settings now use the
+existing compact navigation. Essential resource-stop/deletion notices remain a
+separate incomplete requirement. Expired pools still need automatic final closure
+to return their unused backing after all resource liabilities have settled.
 
 The instructor and student budget surfaces now also have actual Chromium 200%
 zoom checks in light and dark mode, with keyboard interaction and scoped axe
@@ -247,17 +271,13 @@ browser zoom pass in both themes, including focus return and focused axe scans.
 The updated static build and 19 focused frontend tests pass. This covers VM
 funding details, not the entire instructor/student zoom/device matrix.
 
-A disposable GCP VM `c3da759c-7acd-4575-b927-de54c7b67fb6` is currently testing
-advance fallback with a separate USD 2 course allowance expiring at 03:12 UTC
-September 13. The student approved USD 1.50 personal fallback specifically for
-course expiry. The real worker stopped it at 03:08 within its reserved margin;
-network accounting and fallback activation remain under observation. Its
-independent scheduled stop is 03:21 and deletion deadline 03:26 UTC. This is an
-active test resource, not a completed cleanup assertion.
+The earlier diagnostic-assisted fallback VM
+`c3da759c-7acd-4575-b927-de54c7b67fb6` was deleted and settled. The fresh
+unattended run described at the top supersedes that attempt as fallback evidence.
 
 Remaining implementation/validation includes live independent personal home volumes,
-live volume retention expiry, automatic fallback/exhaustion, transfer/payment
-provenance validation, bounded postpaid workflows, and currency display. The
+live volume retention expiry, live exhaustion-triggered fallback, transfer/payment
+provenance validation, automatic payment collection, and optional currency display. The
 isolated hub has no Stripe configuration; the maintainer has been asked to
 configure test mode without sending keys in chat. Fictitious credits are correctly
 ineligible for credit transfer and are not a substitute for captured-payment

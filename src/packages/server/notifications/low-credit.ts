@@ -6,6 +6,7 @@ import getSpendableBalance from "@cocalc/server/purchases/get-spendable-balance"
 import { lowCreditThreshold } from "@cocalc/util/compute-notifications";
 import { toDecimal } from "@cocalc/util/money";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
+import { notifyLowCourseCredit } from "./course-credit";
 
 const logger = getLogger("notifications:low-credit");
 
@@ -97,7 +98,8 @@ export async function runLowCreditNotificationPass(
   const { rows } = await getPool().query<{ account_id: string }>(
     `SELECT account_id FROM accounts WHERE deleted IS NOT TRUE
       AND COALESCE(NULLIF(home_bay_id,''),$2)=$1
-      AND other_settings->'low_credit_notifications' = 'true'::jsonb
+      AND (other_settings->'low_credit_notifications' = 'true'::jsonb
+        OR other_settings->'low_course_credit_notifications' = 'true'::jsonb)
       AND ($3::uuid IS NULL OR account_id > $3)
      ORDER BY account_id LIMIT 100`,
     [getConfiguredBayId(), DEFAULT_BAY_ID, afterAccountId ?? null],
@@ -107,6 +109,11 @@ export async function runLowCreditNotificationPass(
       await notifyLowCredit(account_id);
     } catch (err) {
       logger.warn("low credit notification deferred", { account_id, err });
+    }
+    try {
+      await notifyLowCourseCredit(account_id);
+    } catch (err) {
+      logger.warn("course credit notification deferred", { account_id, err });
     }
   }
   return rows.length === 100 ? rows[rows.length - 1].account_id : undefined;

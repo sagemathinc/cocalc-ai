@@ -60,6 +60,7 @@ const tables: Record<string, { owner: string; key: string }> = {
   notification_targets: { owner: "target_account_id", key: "event_id" },
   notification_target_outbox: { owner: "target_account_id", key: "outbox_id" },
   notification_email_outbox: { owner: "target_account_id", key: "email_id" },
+  notification_course_credit_states: { owner: "account_id", key: "id" },
 };
 const transferOwners = {
   credit_payment_roots: "account_id",
@@ -85,6 +86,9 @@ async function exists(client: PoolClient, table: string) {
  * it must not be attempted while already holding an account spending lock.
  */
 export async function ensureFinancialRehomeSchema(): Promise<void> {
+  await (
+    await import("@cocalc/server/notifications/course-credit-state")
+  ).ensureCourseCreditNoticeSchema();
   await (
     await import("@cocalc/server/compute/funding/approvals")
   ).ensureCourseFundingApprovalSchema();

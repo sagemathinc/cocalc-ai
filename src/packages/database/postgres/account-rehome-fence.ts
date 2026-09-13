@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import type { PostgreSQLMethods } from "@cocalc/database/postgres/types";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
@@ -145,7 +145,7 @@ export async function withAccountRehomeWriteFence<T>({
 }: {
   account_id: string;
   action?: string;
-  fn: (db: Queryable) => Promise<T>;
+  fn: (db: PoolClient) => Promise<T>;
 }): Promise<T> {
   const client = await getPool().connect();
   try {

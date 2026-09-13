@@ -21,6 +21,7 @@ import {
   rehomeAccountOnHomeBay,
 } from "@cocalc/server/accounts/rehome";
 import { activateAccountFinancialState } from "@cocalc/server/accounts/financial-rehome";
+import { ensureCourseCreditNoticeSchema } from "@cocalc/server/notifications/course-credit-state";
 import getSpendableBalance, {
   getAccountFundingHolds,
 } from "@cocalc/server/purchases/get-spendable-balance";
@@ -651,12 +652,33 @@ describePg(
               newVolume.meter.running_started_at,
             );
           }
+          await ensureCourseCreditNoticeSchema();
+          const reminderId = randomUUID();
+          const reminderGrant = randomUUID();
+          await row(
+            resourceBay,
+            `INSERT INTO notification_course_credit_states
+            (id,account_id,grant_id,threshold_usd,below_threshold,generation,as_of)
+            VALUES ($1,$2,$3,10,true,2,now()) RETURNING id`,
+            [reminderId, f.student, reminderGrant],
+          );
           await rehomeAccountOnHomeBay({
             account_id: f.student,
             target_account_id: f.student,
             dest_bay_id: courseBay,
           });
           expect(mockHomes.get(f.student)).toBe(courseBay);
+          expect(
+            await row(
+              courseBay,
+              "SELECT grant_id,below_threshold,generation FROM notification_course_credit_states WHERE id=$1",
+              [reminderId],
+            ),
+          ).toEqual({
+            grant_id: reminderGrant,
+            below_threshold: true,
+            generation: 2,
+          });
           expect(
             await row(
               courseBay,
