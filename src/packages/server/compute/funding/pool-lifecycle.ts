@@ -39,7 +39,18 @@ export async function finalizeClosingCourseFundingPoolInTransaction(
       "funding_not_found",
       "Funding pool not found.",
     );
-  if (pool.state !== "closing" || !toDecimal(pool.reserved_usd).isZero())
+  const {
+    rows: [{ now }],
+  } = await db.query<{ now: Date }>("SELECT clock_timestamp() AS now");
+  const expired =
+    ["active", "scheduled", "suspended"].includes(pool.state) &&
+    pool.ends_at <= now;
+  // Keep live liabilities and pending fallback decisions untouched. Expiry
+  // closes the pool only after resource settlement proves its reserve is zero.
+  if (
+    (!expired && pool.state !== "closing") ||
+    !toDecimal(pool.reserved_usd).isZero()
+  )
     return false;
   const { rows: grants } = await db.query<CourseFundingGrantRow>(
     "SELECT * FROM compute_funding_grants WHERE pool_id=$1 ORDER BY id FOR UPDATE",
@@ -71,13 +82,13 @@ export async function finalizeClosingCourseFundingPoolInTransaction(
     [pool.id],
   );
   const { rows: revoked } = await db.query<CourseFundingGrantRow>(
-    "UPDATE compute_funding_grants SET state='revoked',released_usd=authorized_usd-spent_usd,version=version+1,updated_at=clock_timestamp() WHERE pool_id=$1 RETURNING *",
-    [pool.id],
+    "UPDATE compute_funding_grants SET state=CASE WHEN state='revoked' THEN 'revoked' ELSE $2 END,released_usd=authorized_usd-spent_usd,version=version+1,updated_at=clock_timestamp() WHERE pool_id=$1 RETURNING *",
+    [pool.id, expired ? "expired" : "revoked"],
   );
   await enqueueCourseFundingReceiptInTransaction(db, {
     ...opts,
     payer_account_id: payer,
-    action: "closed",
+    action: expired ? "expired" : "closed",
     pool: closed,
     grants: revoked,
   });

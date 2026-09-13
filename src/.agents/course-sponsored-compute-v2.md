@@ -39,8 +39,14 @@ state follows financial rehome; concurrent-worker and three-bay PostgreSQL tests
 pass. Browser checks verify keyboard controls, reload persistence and reflow at
 320/720/1440 pixels in light/dark themes. Narrow desktop settings now use the
 existing compact navigation. Essential resource-stop/deletion notices remain a
-separate incomplete requirement. Expired pools still need automatic final closure
-to return their unused backing after all resource liabilities have settled.
+separate incomplete requirement. Expired pools now automatically close and return
+unused backing after all resource liabilities have settled; outstanding
+reservations and pending fallback remain untouched. At 04:20 UTC the isolated
+worker closed the three expired live-test pools, released USD 1.99 from each,
+and emitted one expiry receipt per recipient/pool. The normal account worker
+also emitted course-credit reminders and persisted one crossing per active grant.
+The 78 focused PostgreSQL lifecycle/personal/worker tests passed. These results
+do not establish provider-independent release readiness.
 
 The instructor and student budget surfaces now also have actual Chromium 200%
 zoom checks in light and dark mode, with keyboard interaction and scoped axe

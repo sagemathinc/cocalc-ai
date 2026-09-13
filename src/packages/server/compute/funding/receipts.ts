@@ -24,7 +24,13 @@ export async function enqueueCourseFundingReceiptInTransaction(
   opts: {
     payer_account_id: string;
     operation_id: string;
-    action: "allocated" | "revised" | "revoked" | "closing" | "closed";
+    action:
+      | "allocated"
+      | "revised"
+      | "revoked"
+      | "closing"
+      | "closed"
+      | "expired";
     pool: CourseFundingPoolRow;
     grants: CourseFundingGrantRow[];
     home_bay_by_account_id: Record<string, string>;

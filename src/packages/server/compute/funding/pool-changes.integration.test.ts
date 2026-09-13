@@ -424,6 +424,70 @@ it("finalizes a closing pool only after trusted settlement and releases the unsp
   expect(rows).toHaveLength(2);
 });
 
+it("automatically closes expired, settled pools and returns instructor backing exactly once", async () => {
+  const f = await fixture();
+  await getPool().query(
+    "UPDATE compute_funding_pools SET starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour' WHERE id=$1",
+    [f.base.pool_id],
+  );
+  await getPool().query(
+    "UPDATE compute_funding_grants SET starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour' WHERE pool_id=$1",
+    [f.base.pool_id],
+  );
+  await finalizeSettledCourseFundingPools();
+  expect(await f.pool()).toMatchObject({
+    state: "closed",
+    released_usd: "100.0000000000",
+  });
+  expect((await f.backing()).prepaid_held_usd).toBe("0.0000000000");
+  await finalizeSettledCourseFundingPools();
+  const { rows } = await getPool().query(
+    `SELECT e.payload_json FROM notification_events e
+    JOIN notification_targets t USING(event_id) WHERE t.target_account_id=$1`,
+    [f.payer],
+  );
+  expect(rows).toHaveLength(1);
+  expect(rows[0].payload_json.funding_receipt.action).toBe("expired");
+  expect(
+    (
+      await getPool().query(
+        "SELECT state FROM compute_funding_grants WHERE pool_id=$1",
+        [f.base.pool_id],
+      )
+    ).rows.every((g) => g.state === "expired"),
+  ).toBe(true);
+});
+
+it("does not close unexpired pools or change expired pools with unsettled liabilities", async () => {
+  const f = await fixture();
+  const finish = () =>
+    withFundingAccountTransaction(f.payer, (db) =>
+      finalizeClosingCourseFundingPoolInTransaction(db, {
+        payer_account_id: f.payer,
+        pool_id: f.base.pool_id,
+        operation_id: randomUUID(),
+        home_bay_by_account_id: f.homes,
+      }),
+    );
+  expect(await finish()).toBe(false);
+  await getPool().query(
+    "UPDATE compute_funding_pools SET reserved_usd=20,starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour' WHERE id=$1",
+    [f.base.pool_id],
+  );
+  await getPool().query(
+    "UPDATE compute_funding_grants SET reserved_usd=20 WHERE id=$1",
+    [f.grant.id],
+  );
+  expect(await finish()).toBe(false);
+  await finalizeSettledCourseFundingPools();
+  expect(await f.pool()).toMatchObject({
+    state: "active",
+    reserved_usd: "20.0000000000",
+    released_usd: "0.0000000000",
+  });
+  expect((await f.backing()).prepaid_held_usd).toBe("100.0000000000");
+});
+
 it("the registered worker sweep returns backing and retries after unavailable recipient routing", async () => {
   const f = await fixture();
   await getPool().query(

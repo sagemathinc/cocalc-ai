@@ -20,7 +20,10 @@ export async function finalizeSettledCourseFundingPools(): Promise<number> {
     id: string;
     payer_account_id: string;
   }>(
-    "SELECT id,payer_account_id FROM compute_funding_pools WHERE state='closing' AND reserved_usd=0 AND id>$1 ORDER BY id LIMIT 100",
+    `SELECT id,payer_account_id FROM compute_funding_pools
+      WHERE reserved_usd=0 AND id>$1 AND
+        (state='closing' OR (state IN ('active','scheduled','suspended') AND ends_at<=clock_timestamp()))
+      ORDER BY id LIMIT 100`,
     [cursor],
   );
   cursor =
