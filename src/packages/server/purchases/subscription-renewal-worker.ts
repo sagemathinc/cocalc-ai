@@ -6,6 +6,7 @@
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import getConn from "@cocalc/server/stripe/connection";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import type { SubscriptionRenewalAttempt } from "@cocalc/util/db-schema/subscription-renewal-attempts";
 import createSubscriptionPayment, {
   processSubscriptionRenewalFailure,
@@ -103,6 +104,7 @@ async function processClaimedRenewalAttempt(
   attempt: SubscriptionRenewalAttempt,
 ): Promise<void> {
   try {
+    await registerBillingAuthorityAccount(attempt.account_id);
     let paymentIntentId = attempt.payment_intent_id;
     if (!paymentIntentId) {
       const result = await createSubscriptionPayment({

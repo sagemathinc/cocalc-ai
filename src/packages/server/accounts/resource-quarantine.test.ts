@@ -175,6 +175,7 @@ describe("account resource quarantine", () => {
     expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       frozen: true,
+      cause: "quarantine",
       reason: "ban",
       actor_account_id: "22222222-2222-4222-8222-222222222222",
     });
@@ -290,5 +291,40 @@ describe("account resource quarantine", () => {
     expect(result.errors).toEqual([
       "list solely owned active projects: Error: projection unavailable",
     ]);
+  });
+
+  it("continues containment when installing the billing fence fails", async () => {
+    listHostsMock.mockResolvedValue([
+      {
+        billing_owner_account_id: ACCOUNT_ID,
+        id: "host-1",
+        status: "running",
+      },
+    ]);
+    setBillingAccountFrozenMock.mockRejectedValueOnce(
+      new Error("authority unavailable"),
+    );
+
+    const { quarantineAccountBillingResourcesLocal } =
+      await import("./resource-quarantine");
+    const result = await quarantineAccountBillingResourcesLocal({
+      account_id: ACCOUNT_ID,
+      actor_account_id: "22222222-2222-4222-8222-222222222222",
+      reason: "ban",
+      home_bay_id: "bay-1",
+    });
+
+    expect(executeBillingAuthorityCommandMock).toHaveBeenCalledWith({
+      kind: "quarantine-account-stripe-cleanup",
+      account_id: ACCOUNT_ID,
+    });
+    expect(stopHostMock).toHaveBeenCalledWith({
+      account_id: "22222222-2222-4222-8222-222222222222",
+      id: "host-1",
+    });
+    expect(projectControlStopMock).toHaveBeenCalled();
+    expect(result.errors).toContain(
+      "freeze account billing: Error: authority unavailable",
+    );
   });
 });

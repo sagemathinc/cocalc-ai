@@ -14,6 +14,7 @@ import { setUsageSubscription } from "@cocalc/server/purchases/stripe-usage-base
 import getConn from "@cocalc/server/stripe/connection";
 import { acceptCommercialStripeWebhookEvent } from "@cocalc/server/commercial-orders/invoices/stripe";
 import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 import {
   alertUncreditedSucceededPayment,
@@ -315,6 +316,8 @@ async function processStripeWebhookPaidInvoice({
     });
   }
 
+  const account_id = `${invoiceMetadata(latest).account_id ?? ""}`.trim();
+  if (account_id) await registerBillingAuthorityAccount(account_id);
   const processed = await createCreditFromPaidStripeInvoice(latest);
   logger.info("Stripe webhook invoice processed", {
     event_type: eventType,
@@ -353,6 +356,7 @@ async function processStripeWebhookSubscription({
     });
     return { processed: false, type: eventType, action: "not-usage-credit" };
   }
+  await registerBillingAuthorityAccount(account_id);
   const active = ["active", "trialing"].includes(`${subscription.status}`);
   await setUsageSubscription({
     account_id,

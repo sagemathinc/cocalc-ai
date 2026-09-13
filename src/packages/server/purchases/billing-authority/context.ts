@@ -4,6 +4,20 @@
  */
 
 import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
+
+import { isBillingAuthorityEnabled } from "./config";
+
+export interface BillingAuthorityProviderMutationTracker {
+  sequence: number;
+  started: boolean;
+  successful: boolean;
+  ambiguous_keys: Set<string>;
+  known_keys: Set<string>;
+  caller_key_aliases: Map<string, string>;
+  anonymous_key_aliases: Map<string, string>;
+  anonymous_fingerprint_by_key: Map<string, string>;
+}
 
 interface BillingAuthorityContext {
   operation: string;
@@ -14,16 +28,19 @@ interface StoredBillingAuthorityContext extends BillingAuthorityContext {
   active: boolean;
   authority_active: () => boolean;
   assert_authority: () => Promise<void>;
+  register_account: (account_id: string) => Promise<void>;
+  provider_tracker: BillingAuthorityProviderMutationTracker;
 }
 
 const storage = new AsyncLocalStorage<StoredBillingAuthorityContext>();
-// Production and development processes fail closed even if a new caller forgets
-// to initialize the authority client. Tests opt in so existing unit tests can
-// continue to exercise isolated billing functions with mocked Stripe clients.
+// Once the rollout gate is enabled, production and development fail closed
+// even if a caller forgets to initialize the authority client. Tests opt in so
+// isolated billing functions can continue to use mocked Stripe clients.
 export function stripeMutationEnforcementDefault(
   nodeEnv: string | undefined,
+  authorityEnabled = isBillingAuthorityEnabled(),
 ): boolean {
-  return nodeEnv !== "test";
+  return authorityEnabled && nodeEnv !== "test";
 }
 
 let stripeMutationEnforcementEnabled = stripeMutationEnforcementDefault(
@@ -55,15 +72,42 @@ export function getBillingAuthorityContext():
   return { operation: context.operation, request_id: context.request_id };
 }
 
+export function createBillingAuthorityProviderMutationTracker(): BillingAuthorityProviderMutationTracker {
+  return {
+    sequence: 0,
+    started: false,
+    successful: false,
+    ambiguous_keys: new Set(),
+    known_keys: new Set(),
+    caller_key_aliases: new Map(),
+    anonymous_key_aliases: new Map(),
+    anonymous_fingerprint_by_key: new Map(),
+  };
+}
+
+export function getBillingAuthorityProviderMutationOutcome(
+  tracker: BillingAuthorityProviderMutationTracker,
+): { started: boolean; successful: boolean; ambiguous: boolean } {
+  return {
+    started: tracker.started,
+    successful: tracker.successful,
+    ambiguous: tracker.ambiguous_keys.size > 0,
+  };
+}
+
 export async function runInBillingAuthorityContext<T>({
   operation,
   request_id,
   authority_active = () => true,
   assert_authority = async () => undefined,
+  register_account = async () => undefined,
+  provider_tracker = createBillingAuthorityProviderMutationTracker(),
   fn,
 }: BillingAuthorityContext & {
   authority_active?: () => boolean;
   assert_authority?: () => Promise<void>;
+  register_account?: (account_id: string) => Promise<void>;
+  provider_tracker?: BillingAuthorityProviderMutationTracker;
   fn: () => Promise<T>;
 }): Promise<T> {
   if (activeContext() != null) {
@@ -75,6 +119,8 @@ export async function runInBillingAuthorityContext<T>({
     active: true,
     authority_active,
     assert_authority,
+    register_account,
+    provider_tracker,
   };
   try {
     return await storage.run(context, fn);
@@ -83,6 +129,142 @@ export async function runInBillingAuthorityContext<T>({
     // shared token prevents a fire-and-forget continuation from retaining the
     // Stripe mutation capability after its serialized command has completed.
     context.active = false;
+  }
+}
+
+export async function registerBillingAuthorityAccount(
+  account_id: string,
+): Promise<void> {
+  const context = activeContext();
+  if (context) await context.register_account(account_id);
+}
+
+function providerIdempotencyKey({
+  request_id,
+  sequence,
+  method,
+  path,
+  body,
+  caller_key,
+}: {
+  request_id: string;
+  sequence: number;
+  method: string;
+  path: string;
+  body: string;
+  caller_key?: string;
+}): string {
+  const hash = createHash("sha256")
+    .update(
+      JSON.stringify({
+        version: 1,
+        request_id,
+        sequence,
+        method: method.toUpperCase(),
+        path,
+        body,
+        caller_key: caller_key ?? null,
+      }),
+    )
+    .digest("hex");
+  return `cocalc-ba-v1-${hash}`;
+}
+
+export async function beginStripeMutation({
+  method,
+  path,
+  body,
+  existing_key,
+}: {
+  method: string;
+  path: string;
+  body: string;
+  existing_key?: string;
+}): Promise<string> {
+  await assertStripeMutationAuthorized({ method, path });
+  const context = activeContext();
+  if (!context) {
+    throw Object.assign(new Error("billing authority context expired"), {
+      code: 503,
+      status: 503,
+    });
+  }
+  const tracker = context.provider_tracker;
+  tracker.started = true;
+  if (existing_key && tracker.known_keys.has(existing_key)) {
+    return existing_key;
+  }
+  const anonymousFingerprint = existing_key
+    ? undefined
+    : createHash("sha256")
+        .update(
+          JSON.stringify({
+            method: method.toUpperCase(),
+            path,
+            body,
+          }),
+        )
+        .digest("hex");
+  const aliased = existing_key
+    ? tracker.caller_key_aliases.get(existing_key)
+    : tracker.anonymous_key_aliases.get(anonymousFingerprint!);
+  if (aliased) return aliased;
+  tracker.sequence += 1;
+  const key = providerIdempotencyKey({
+    request_id: context.request_id,
+    sequence: tracker.sequence,
+    method,
+    path,
+    body,
+    caller_key: existing_key,
+  });
+  tracker.known_keys.add(key);
+  if (existing_key) {
+    // Stripe copies its prepared headers for each network retry. Its original
+    // idempotency key is stable across those copies, so retain an alias to the
+    // authority key rather than relying on mutating one headers object.
+    tracker.caller_key_aliases.set(existing_key, key);
+  } else {
+    // V1 DELETE and a few nonstandard mutations have no Stripe-generated key.
+    // Reuse their fingerprint only while the outcome is unresolved; a
+    // definitive response removes it so a later intentional equal operation
+    // still receives a distinct key.
+    tracker.anonymous_key_aliases.set(anonymousFingerprint!, key);
+    tracker.anonymous_fingerprint_by_key.set(key, anonymousFingerprint!);
+  }
+  return key;
+}
+
+export function finishStripeMutation({
+  key,
+  status,
+  ambiguous = false,
+}: {
+  key: string;
+  status?: number;
+  ambiguous?: boolean;
+}): void {
+  const context = storage.getStore();
+  if (!context) return;
+  if (
+    ambiguous ||
+    status == null ||
+    status === 408 ||
+    status === 409 ||
+    status >= 500
+  ) {
+    context.provider_tracker.ambiguous_keys.add(key);
+    return;
+  }
+  const anonymousFingerprint =
+    context.provider_tracker.anonymous_fingerprint_by_key.get(key);
+  if (anonymousFingerprint) {
+    context.provider_tracker.anonymous_fingerprint_by_key.delete(key);
+    context.provider_tracker.anonymous_key_aliases.delete(anonymousFingerprint);
+  }
+  if (status != null && status >= 200 && status < 300) {
+    context.provider_tracker.successful = true;
+    context.provider_tracker.ambiguous_keys.delete(key);
   }
 }
 

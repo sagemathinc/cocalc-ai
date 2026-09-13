@@ -8,7 +8,10 @@ import {
   getSeedMembershipTierMap,
 } from "@cocalc/server/membership/tiers";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import type { BillingReadiness } from "@cocalc/server/purchases/stripe/billing-readiness";
 
 function trialSetupReason({
@@ -31,7 +34,10 @@ export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...billingAuthorityErrorAttrs(err),
+    });
     return;
   }
 }

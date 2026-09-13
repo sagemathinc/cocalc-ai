@@ -16,6 +16,7 @@ import {
   type AutoBalance,
   ensureAutoBalanceValid,
 } from "@cocalc/util/db-schema/accounts";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchase:maintain-auto-balance");
 
@@ -86,6 +87,7 @@ export default async function maintainAutoBalance({
     : Number.POSITIVE_INFINITY;
   for (const account_id of [...accounts].sort().slice(0, limit)) {
     try {
+      await registerBillingAuthorityAccount(account_id);
       const { reason, status } = await update({
         account_id,
         auto_balance: auto_balances[account_id],

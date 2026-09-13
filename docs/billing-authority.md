@@ -11,6 +11,10 @@ dedicated, narrowly authenticated authority transport. A generic inter-bay Hub
 RPC is intentionally not used because the current shared Hub identity is too
 broad for a financial mutation boundary.
 
+The authority is default-off. It is activated only when every relevant worker
+starts with `COCALC_BILLING_AUTHORITY_ENABLED=1`; deploying the code or schema
+alone does not alter billing execution.
+
 ## Scope
 
 Commands include:
@@ -39,11 +43,12 @@ the Stripe transport guard.
 ## Durable Command Journal
 
 `billing_authority_commands` records every command before execution. A command
-has a UUID, canonical request hash, operation, scheduling lane, optional account
-identity, expiry, lifecycle state, execution generation, bounded result or
-error, and timestamps. Sensitive command and result payloads are removed after
-48 hours; operation, request hash, account identity, status, generation, error,
-and timestamps are retained for 400 days.
+has a UUID, canonical request hash, operation, scheduling lane, affected and
+actor account identities, expiry, lifecycle state, execution generation,
+bounded result or error, and timestamps. Sensitive command and result payloads
+are removed after 48 hours; operation, request hash, account identities, status,
+generation, error, and timestamps are retained for 400 days. Successful Stripe
+webhook receipts retain their minimal result so provider retries remain valid.
 
 The lifecycle is:
 
@@ -52,13 +57,16 @@ The lifecycle is:
 3. one of `succeeded`, `failed`, `canceled`, `expired`, or `uncertain`
 
 Submitting the same UUID and command is an idempotent status lookup. Reusing a
-UUID with different input is rejected. Provider events, maintenance buckets,
-and commands carrying an explicit idempotency key derive stable UUIDs. For all
-other commands, the journal conservatively coalesces identical canonical input
-within a bounded window onto the existing durable result. Canceled and expired
-commands are excluded because they provably did not begin execution. Every
-uncertain-outcome error exposes the authoritative command UUID so an operator
-or caller can inspect that exact command rather than blindly retry it.
+UUID with different input is rejected. Provider events and commands carrying
+an explicit idempotency key derive stable UUIDs namespaced by protocol version,
+operation, affected accounts, and actor. Unkeyed commands receive random UUIDs:
+equal financial operations are not duplicates merely because their payloads
+match. Semantic coalescing is explicit, opt-in, and can reuse only currently
+queued or running work. A canceled or expired stable command that was never
+claimed can be requeued; anything that started is never replayed automatically.
+Every uncertain-outcome error exposes the authoritative command UUID through
+HTTP and Conat so an operator or caller can inspect that exact command rather
+than blindly retry it.
 
 Queued commands have bounded admission by lane: critical, interactive, and
 maintenance. Critical work is claimed first, then interactive work, then
@@ -80,31 +88,45 @@ or consume command slots.
 random process instance UUID, monotonically increasing generation, expiry,
 enabled state, and drain state.
 
-The elected worker renews a 12-second PostgreSQL lease every two seconds and
-also maintains an earlier monotonic local deadline. If renewal becomes
-ambiguous or the local deadline expires, the worker fail-stops. A replacement
-cannot acquire the lease until PostgreSQL's clock says the old lease expired.
-Each Stripe mutation performs a fresh database assertion of the instance,
-generation, and expiry before network I/O. A stale worker therefore cannot
-continue mutating Stripe after takeover, even if it retained asynchronous
-execution context.
+The elected worker renews a 12-second PostgreSQL lease every two seconds over a
+dedicated UTC PostgreSQL session and also maintains an earlier monotonic local
+deadline. If renewal becomes ambiguous or the local deadline expires, the
+worker fail-stops and destroys that session. Timed-out election queries are
+also canceled by destroying their dedicated connection, so they cannot acquire
+a ghost lease later. Stored health reports readiness only after the elected
+process marks its locally active lease as serving.
+
+Every command opens a dedicated database transaction, validates its generation,
+and holds a global transaction-scoped advisory lock until its journal outcome
+is committed. Lease takeover requires the same lock. Thus a replacement cannot
+become authority while an old financial command can still commit database work.
+Each Stripe mutation also performs a fresh lease assertion before network I/O.
+A stale worker therefore cannot overlap a successor even if it retained
+asynchronous execution context.
 
 Command completion is also generation-fenced. On takeover, any `running`
 command from another instance or generation becomes `uncertain`; it is never
 automatically replayed. Detached asynchronous work loses its mutation permit
 as soon as the parent command returns.
 
-This does not make Stripe and PostgreSQL one atomic transaction. Durable
-provider identifiers, Stripe idempotency keys, webhook handling, and
-domain-specific reconciliation remain necessary for failures between the two
-systems.
+This does not make Stripe and PostgreSQL one atomic transaction. Every Stripe
+write receives a deterministic authority-command-scoped idempotency key at the
+HTTP transport boundary. Lost responses and failures after a successful
+provider mutation are recorded as `uncertain`, not ordinary retryable failures.
+Durable provider identifiers, webhook handling, and domain-specific
+reconciliation remain necessary for failures between the two systems.
 
 ## Account Fences
 
-`billing_authority_account_fences` provides a monotonic per-account freeze.
-Deletion, abuse quarantine, and equivalent containment freeze billing before
-cleanup is queued. Freezing cancels all queued ordinary commands for that
-account and rejects new ones. Cleanup commands are the narrow exception.
+`billing_authority_account_fences` provides a monotonic per-account freeze with
+independent keyed causes for bans, deletion, quarantine, incident response, and
+operator action. Removing one cause cannot clear another. Commands durably
+index both actors and affected accounts; provider-resolved accounts are added
+and checked before mutation. Deletion, abuse quarantine, and equivalent
+containment freeze billing before cleanup is queued. Freezing cancels all
+queued ordinary commands involving that actor or target and rejects new ones.
+Cleanup commands are the narrow exception for their target, never for a frozen
+actor.
 
 An already-running command completes before the serialized cleanup command can
 run. This ordering lets cleanup remove resources created by that in-flight
@@ -128,7 +150,8 @@ authentication, and a second factor when enabled:
 - `drainBillingAuthority` disables admission, prevents new claims, waits for
   the active command, and releases the lease;
 - `resumeBillingAuthority` re-enables election and waits for readiness; and
-- `handoffBillingAuthority` drains, resumes, and verifies a newer generation.
+- `handoffBillingAuthority` drains, excludes the departing holder, resumes, and
+  verifies a newer generation owned by a different process.
 
 If a holder dies after drain starts, the drain path atomically clears the
 expired holder and records its running command as `uncertain`. Drain therefore
@@ -140,22 +163,26 @@ cutover and rollback gate rather than relying on timing or log inspection.
 Old workers can still execute financial code directly, so the first authority
 activation is a coordinated cutover, not a rolling deployment.
 
-1. Deploy the containment change that removes generic synchronized-table
-   financial writes.
-2. Disable externally initiated billing and automatic billing maintenance.
-3. Stop every old Hub and HTTP worker.
-4. Start the authority-enabled release on the authoritative standalone or seed
-   bay.
-5. Confirm status is `ready`, exactly one valid lease exists, and queue depth is
-   bounded.
-6. Smoke-test read-only billing, setup-intent creation, a test-mode payment,
+1. Deploy the containment and authority code with
+   `COCALC_BILLING_AUTHORITY_ENABLED` unset. Confirm legacy billing remains
+   healthy and the new schema converged everywhere.
+2. Confirm the deployment is standalone/one-bay and that no attached bay or old
+   binary can write the financial database. Do not activate on multibay.
+3. Disable externally initiated billing and automatic billing maintenance.
+4. Stop every old Hub and HTTP worker.
+5. Set `COCALC_BILLING_AUTHORITY_ENABLED=1` for every replacement worker and
+   start only the authority-enabled release on the authoritative bay.
+6. Confirm status is `ready`, exactly one serving lease exists, and queue depth
+   is bounded before reopening billing.
+7. Smoke-test read-only billing, setup-intent creation, a test-mode payment,
    webhook fulfillment, cancellation, refund authorization, and commercial
    diagnostics.
-7. Re-enable automatic maintenance and user billing.
+8. Re-enable automatic maintenance and user billing.
 
-Rollback uses the same gate: drain the authority, stop all authority-enabled
-workers, start the prior release, then deliberately restore billing. Never run
-old and authority-enabled workers concurrently.
+Rollback uses the same gate: disable new billing, drain the authority, stop all
+authority-enabled workers, unset the flag, start the prior release, then
+deliberately restore billing. Never run old and authority-enabled workers
+concurrently.
 
 There is no financial-data migration for the current one-bay production
 deployment. It continues using the existing authoritative PostgreSQL database
@@ -163,10 +190,11 @@ and Stripe account.
 
 ## Self-Hosted Deployments
 
-A standalone installation gets the same durable authority automatically. It
-requires PostgreSQL but no cloud-specific queue, lock service, or extra daemon.
-If PostgreSQL or the authority is unavailable, billing fails closed while
-unrelated product functionality can continue.
+A standalone installation can opt into the same durable authority by setting
+the activation flag for every Hub/HTTP worker. It requires PostgreSQL but no
+cloud-specific queue, lock service, or extra daemon. If PostgreSQL or the
+authority is unavailable after activation, billing fails closed while unrelated
+product functionality can continue.
 
 Operators must configure Stripe webhooks and alerting. Reconciliation is
 defense in depth, not a substitute for delivery. Scripts that mutate Stripe

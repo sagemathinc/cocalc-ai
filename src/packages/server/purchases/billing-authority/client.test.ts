@@ -25,6 +25,7 @@ jest.mock("@cocalc/server/bay-config", () => ({
 
 import {
   __test__,
+  billingAuthorityErrorAttrs,
   executeBillingAuthorityCommand,
   executeBillingHttpCommand,
   executeBillingHubApiCall,
@@ -34,6 +35,8 @@ import type {
   BillingAuthorityCommandRecord,
   BillingAuthorityTransportRequest,
 } from "./protocol";
+
+const originalAuthorityEnabled = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
 
 function record(
   status: BillingAuthorityCommandRecord["status"],
@@ -55,6 +58,7 @@ function record(
 
 describe("durable billing authority client", () => {
   beforeEach(() => {
+    process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
     mockClusterRole.mockReset().mockReturnValue("standalone");
     mockDispatch.mockReset().mockResolvedValue(8);
     mockHandleTransport
@@ -74,6 +78,23 @@ describe("durable billing authority client", () => {
   });
 
   afterEach(resetBillingAuthorityContextForTests);
+
+  afterAll(() => {
+    if (originalAuthorityEnabled == null) {
+      delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    } else {
+      process.env.COCALC_BILLING_AUTHORITY_ENABLED = originalAuthorityEnabled;
+    }
+  });
+
+  it("uses legacy direct execution while the rollout gate is disabled", async () => {
+    delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    await expect(
+      executeBillingAuthorityCommand({ kind: "commercial-maintenance" }),
+    ).resolves.toBe(8);
+    expect(mockDispatch).toHaveBeenCalledTimes(1);
+    expect(mockHandleTransport).not.toHaveBeenCalled();
+  });
 
   it("executes reviewed side-effect-free reads without entering the journal", async () => {
     await expect(
@@ -129,6 +150,34 @@ describe("durable billing authority client", () => {
     );
     expect(__test__.intrinsicCommandId(webhook)).not.toBe(
       __test__.intrinsicCommandId(local),
+    );
+
+    const sameCallerKey = "same-caller-key";
+    const first = {
+      kind: "http" as const,
+      operation: "admin-purchase" as const,
+      input: {
+        account_id: "11111111-1111-4111-8111-111111111111",
+        actor_account_id: "22222222-2222-4222-8222-222222222222",
+        idempotency_key: sameCallerKey,
+      },
+    };
+    const otherAccount = {
+      ...first,
+      input: {
+        ...first.input,
+        account_id: "33333333-3333-4333-8333-333333333333",
+      },
+    };
+    const otherOperation = {
+      ...first,
+      operation: "create-refund" as const,
+    };
+    expect(__test__.intrinsicCommandId(first)).not.toBe(
+      __test__.intrinsicCommandId(otherAccount),
+    );
+    expect(__test__.intrinsicCommandId(first)).not.toBe(
+      __test__.intrinsicCommandId(otherOperation),
     );
   });
 
@@ -255,5 +304,18 @@ describe("durable billing authority client", () => {
     await expect(
       executeBillingAuthorityCommand({ kind: "commercial-maintenance" }),
     ).rejects.toMatchObject({ message: "frozen", code: 423, status: 423 });
+  });
+
+  it("exports only stable command identity error attributes", () => {
+    expect(
+      billingAuthorityErrorAttrs({
+        billing_authority_command_id: "99999999-9999-4999-8999-999999999999",
+        billing_authority_status: "uncertain",
+        internal_secret: "not serialized",
+      }),
+    ).toEqual({
+      billing_authority_command_id: "99999999-9999-4999-8999-999999999999",
+      billing_authority_status: "uncertain",
+    });
   });
 });

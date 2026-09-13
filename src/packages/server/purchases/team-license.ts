@@ -508,6 +508,8 @@ export async function getDueTeamLicensesForRenewal(): Promise<
         FROM team_licenses
        WHERE status='active'
          AND current_period_end <= NOW()
+         AND (last_renewal_attempt_at IS NULL
+              OR last_renewal_attempt_at < NOW() - INTERVAL '15 minutes')
          AND COALESCE(payment#>>'{status}', '') != 'active'
          AND NOT EXISTS (
            SELECT 1 FROM accounts AS account

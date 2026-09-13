@@ -6,7 +6,10 @@ Null if nothing needed to be done.
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
-import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 
 // User-facing unpaid subscription renewal route. Keep the frontend caller wired
 // through useFreshAuthAction/FreshAuthModal when this requires fresh auth.
@@ -17,6 +20,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }

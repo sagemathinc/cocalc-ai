@@ -158,6 +158,7 @@ describe("delete account", () => {
     expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
       account_id: ACCOUNT_ID,
       frozen: true,
+      cause: "deletion",
       reason: "account deletion",
     });
     expect(

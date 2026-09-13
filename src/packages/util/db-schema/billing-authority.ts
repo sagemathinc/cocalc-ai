@@ -14,6 +14,7 @@ Table({
       "request_hash",
       "lane",
       "account_id",
+      "actor_account_id",
       "expires_at",
       "created_at",
       "finished_at",
@@ -58,6 +59,17 @@ Table({
     account_id: {
       type: "uuid",
       desc: "Account fenced at command start, when the command is account-bound.",
+    },
+    account_ids: {
+      type: "array",
+      pg_type: "UUID[]",
+      pg_default: "'{}'::uuid[]",
+      not_null: true,
+      desc: "All target and actor accounts whose fences govern this command.",
+    },
+    actor_account_id: {
+      type: "uuid",
+      desc: "Authenticated actor account, when the command acts across accounts.",
     },
     command: {
       type: "map",
@@ -156,6 +168,16 @@ Table({
       not_null: true,
       desc: "Whether the current holder has stopped claiming new commands.",
     },
+    serving: {
+      type: "boolean",
+      pg_default: "FALSE",
+      not_null: true,
+      desc: "Set only after the elected process has installed live local ownership.",
+    },
+    handoff_exclude_holder_id: {
+      type: "uuid",
+      desc: "Instance prohibited from reacquiring during an explicit handoff.",
+    },
     updated_at: {
       type: "timestamp",
       pg_default: "now()",
@@ -185,6 +207,12 @@ Table({
     reason: {
       type: "string",
       desc: "Bounded operator or lifecycle reason.",
+    },
+    causes: {
+      type: "map",
+      pg_default: "'{}'::jsonb",
+      not_null: true,
+      desc: "Independent active fence causes and their audit metadata.",
     },
     actor_account_id: {
       type: "uuid",

@@ -5,20 +5,27 @@
 
 import { randomUUID } from "node:crypto";
 
-import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import getPool, {
+  getClient,
+  initEphemeralDatabase,
+} from "@cocalc/database/pool";
 
 import type {
   BillingAuthorityCommand,
   BillingAuthoritySubmitRequest,
 } from "./protocol";
 import {
+  BILLING_AUTHORITY_EXECUTION_LOCK,
   acquireBillingAuthorityLease,
+  beginBillingAuthorityCommandExecution,
   cancelQueuedBillingAuthorityCommand,
   claimNextBillingAuthorityCommand,
   finishBillingAuthorityCommand,
   getBillingAuthorityCommand,
   getBillingAuthorityHealth,
+  markBillingAuthorityLeaseServing,
   pruneBillingAuthorityCommands,
+  registerBillingAuthorityCommandAccount,
   reconcileExpiredBillingAuthorityLease,
   releaseBillingAuthorityLease,
   requestBillingAuthorityDrain,
@@ -26,6 +33,7 @@ import {
   setBillingAuthorityAccountFrozen,
   submitBillingAuthorityCommand,
 } from "./store";
+import { __test__ as serviceTest } from "./service";
 
 const describePostgres =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe.skip : describe;
@@ -149,6 +157,81 @@ describePostgres("billing authority PostgreSQL journal", () => {
     expect(rows).toEqual([{ count: 1 }]);
   });
 
+  it("does not semantically reuse terminal commands", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const command = {
+      kind: "http" as const,
+      operation: "create-payment-intent" as const,
+      input: { account_id: ACCOUNT_ID, amount: 10, purpose: "credit" },
+    };
+    const first = { ...request(command), deduplicate_for_ms: 60_000 };
+    await submitBillingAuthorityCommand(first);
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: first.command_id,
+      result: { payment_intent: "pi_first" },
+    });
+    const second = await submitBillingAuthorityCommand({
+      ...request(command),
+      deduplicate_for_ms: 60_000,
+    });
+    expect(second).toMatchObject({ status: "queued" });
+    expect(second.command_id).not.toBe(first.command_id);
+  });
+
+  it("checks drain state before returning an exact or semantic outcome", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = {
+      ...request({
+        kind: "http" as const,
+        operation: "create-setup-intent" as const,
+        input: { account_id: ACCOUNT_ID },
+      }),
+      deduplicate_for_ms: 60_000,
+    };
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      result: { client_secret: "secret" },
+    });
+    await requestBillingAuthorityDrain();
+    await expect(submitBillingAuthorityCommand(item)).rejects.toMatchObject({
+      code: 503,
+      status: 503,
+    });
+  });
+
+  it("requeues a stable command canceled before its first claim", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const item = request(
+      {
+        kind: "stripe-webhook",
+        event: { id: "evt_retry", type: "invoice.paid" },
+      },
+      { command_id: "55555555-5555-4555-8555-555555555555" },
+    );
+    await submitBillingAuthorityCommand(item);
+    await cancelQueuedBillingAuthorityCommand(item.command_id);
+    await expect(submitBillingAuthorityCommand(item)).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+  });
+
   it("claims critical, interactive, then maintenance lanes", async () => {
     const lease = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
@@ -222,6 +305,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     await setBillingAuthorityAccountFrozen({
       account_id: ACCOUNT_ID,
       frozen: true,
+      cause: "quarantine",
       reason: "test quarantine",
     });
     await expect(
@@ -247,6 +331,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     await setBillingAuthorityAccountFrozen({
       account_id: ACCOUNT_ID,
       frozen: false,
+      cause: "quarantine",
       reason: "test recovery",
     });
     await expect(
@@ -291,6 +376,208 @@ describePostgres("billing authority PostgreSQL journal", () => {
     }
   });
 
+  it("cancels a cross-account command when its actor is frozen", async () => {
+    const actor = "44444444-4444-4444-8444-444444444444";
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const item = request({
+      kind: "http",
+      operation: "create-payment-intent",
+      input: {
+        account_id: ACCOUNT_ID,
+        metadata: { admin_account_id: actor },
+      },
+    });
+    await submitBillingAuthorityCommand(item);
+    await setBillingAuthorityAccountFrozen({
+      account_id: actor,
+      frozen: true,
+      cause: "incident-response",
+      reason: "administrator compromised",
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "canceled",
+      account_ids: expect.arrayContaining([actor, ACCOUNT_ID]),
+    });
+  });
+
+  it("keeps independent fence causes active", async () => {
+    await setBillingAuthorityAccountFrozen({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      cause: "deletion",
+      reason: "account deletion",
+    });
+    await setBillingAuthorityAccountFrozen({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      cause: "ban",
+      reason: "account ban",
+    });
+    const result = await setBillingAuthorityAccountFrozen({
+      account_id: ACCOUNT_ID,
+      frozen: false,
+      cause: "ban",
+      reason: "account ban removed",
+    });
+    expect(result.frozen).toBe(true);
+  });
+
+  it("does not report a raw lease acquisition as a live authority", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    await expect(getBillingAuthorityHealth()).resolves.toMatchObject({
+      ready: false,
+    });
+    expect((await getBillingAuthorityHealth()).instance_id).toBeUndefined();
+  });
+
+  it("rejects a provider-resolved account that was frozen during execution", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = request({
+      kind: "reconcile-legacy-credit",
+      source: { kind: "payment-intent", payment_intent_id: "pi_unknown" },
+    });
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+    await setBillingAuthorityAccountFrozen({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      cause: "incident-response",
+      reason: "provider account quarantined",
+    });
+    await expect(
+      registerBillingAuthorityCommandAccount({
+        ...identity,
+        command_id: item.command_id,
+        account_id: ACCOUNT_ID,
+      }),
+    ).rejects.toMatchObject({ status: 423 });
+  });
+
+  it("destroys a timed-out dedicated election query", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_B,
+      lease_ms: 5_000,
+    });
+    await getPool().query(
+      `UPDATE billing_authority_lease
+          SET lease_until=clock_timestamp() - INTERVAL '1 second'
+        WHERE name=$1`,
+      ["primary"],
+    );
+    const blocker = await getPool().connect();
+    const dedicated = getClient();
+    await dedicated.connect();
+    try {
+      await blocker.query("BEGIN");
+      await blocker.query("SELECT pg_advisory_xact_lock($1)", [
+        BILLING_AUTHORITY_EXECUTION_LOCK,
+      ]);
+      await expect(
+        serviceTest.boundedDedicatedQuery({
+          client: dedicated,
+          promise: acquireBillingAuthorityLease({
+            instance_id: INSTANCE_A,
+            lease_ms: 5_000,
+            db: dedicated,
+          }),
+          timeoutMs: 50,
+        }),
+      ).rejects.toThrow("lease query timed out");
+      await blocker.query("COMMIT");
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const { rows } = await getPool().query(
+        "SELECT holder_id FROM billing_authority_lease WHERE name=$1",
+        ["primary"],
+      );
+      expect(rows[0]?.holder_id).not.toBe(INSTANCE_A);
+    } finally {
+      await blocker.query("ROLLBACK").catch(() => undefined);
+      blocker.release();
+      await dedicated.end().catch(() => undefined);
+    }
+  });
+
+  it("holds generation fencing through an active financial transaction", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    await markBillingAuthorityLeaseServing(identity);
+    const item = request({ kind: "commercial-maintenance" });
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+
+    const execution = getClient();
+    const successor = getClient();
+    await execution.connect();
+    await successor.connect();
+    let successorSettled = false;
+    try {
+      await beginBillingAuthorityCommandExecution({
+        identity,
+        db: execution,
+      });
+      const { rows: expiredLease } = await getPool().query(
+        `UPDATE billing_authority_lease
+            SET lease_until=clock_timestamp() - INTERVAL '1 second'
+          WHERE name=$1
+          RETURNING holder_id, enabled,
+                    lease_until <= clock_timestamp() AS expired`,
+        ["primary"],
+      );
+      expect(expiredLease[0]).toMatchObject({
+        holder_id: INSTANCE_A,
+        enabled: true,
+        expired: true,
+      });
+      const { rows: visibleLease } = await successor.query(
+        `SELECT holder_id, enabled,
+                lease_until <= clock_timestamp() AS expired
+           FROM billing_authority_lease WHERE name=$1`,
+        ["primary"],
+      );
+      expect(visibleLease[0]).toMatchObject({
+        holder_id: INSTANCE_A,
+        enabled: true,
+        expired: true,
+      });
+      const acquireSuccessor = acquireBillingAuthorityLease({
+        instance_id: INSTANCE_B,
+        lease_ms: 5_000,
+        db: successor,
+      }).finally(() => {
+        successorSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(successorSettled).toBe(false);
+
+      await execution.query("ROLLBACK");
+      await expect(acquireSuccessor).resolves.toMatchObject({
+        generation: identity.generation + 1,
+      });
+      await expect(
+        getBillingAuthorityCommand(item.command_id),
+      ).resolves.toMatchObject({ status: "uncertain" });
+    } finally {
+      await execution.query("ROLLBACK").catch(() => undefined);
+      await execution.end().catch(() => undefined);
+      await successor.end().catch(() => undefined);
+    }
+  });
+
   it("fences completion and marks an interrupted generation uncertain", async () => {
     const first = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
@@ -310,6 +597,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
     const second = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_B,
       lease_ms: 5_000,
+    });
+    await markBillingAuthorityLeaseServing({
+      instance_id: INSTANCE_B,
+      generation: second!.generation,
     });
     expect(second!.generation).toBeGreaterThan(first!.generation);
     await expect(
@@ -357,6 +648,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
       instance_id: INSTANCE_B,
       lease_ms: 5_000,
     });
+    await markBillingAuthorityLeaseServing({
+      instance_id: INSTANCE_B,
+      generation: second!.generation,
+    });
     expect(second!.generation).toBeGreaterThan(first!.generation);
     await expect(getBillingAuthorityHealth()).resolves.toMatchObject({
       ready: true,
@@ -364,6 +659,31 @@ describePostgres("billing authority PostgreSQL journal", () => {
       draining: false,
       instance_id: INSTANCE_B,
     });
+  });
+
+  it("requires a different process for an explicit handoff", async () => {
+    const first = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    await requestBillingAuthorityDrain({ exclude_holder_id: INSTANCE_A });
+    await releaseBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      generation: first!.generation,
+    });
+    await resumeBillingAuthorityGlobally();
+
+    await expect(
+      acquireBillingAuthorityLease({
+        instance_id: INSTANCE_A,
+        lease_ms: 5_000,
+      }),
+    ).resolves.toBeUndefined();
+    const second = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_B,
+      lease_ms: 5_000,
+    });
+    expect(second!.generation).toBeGreaterThan(first!.generation);
   });
 
   it("increments generation when the same instance reacquires an expired lease", async () => {

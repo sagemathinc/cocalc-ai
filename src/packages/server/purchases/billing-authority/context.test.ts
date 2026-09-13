@@ -18,10 +18,11 @@ describe("billing authority context", () => {
   afterEach(resetBillingAuthorityContextForTests);
 
   it("enforces Stripe authority by default outside tests", () => {
-    expect(stripeMutationEnforcementDefault("production")).toBe(true);
-    expect(stripeMutationEnforcementDefault("development")).toBe(true);
-    expect(stripeMutationEnforcementDefault(undefined)).toBe(true);
-    expect(stripeMutationEnforcementDefault("test")).toBe(false);
+    expect(stripeMutationEnforcementDefault("production", true)).toBe(true);
+    expect(stripeMutationEnforcementDefault("development", true)).toBe(true);
+    expect(stripeMutationEnforcementDefault(undefined, true)).toBe(true);
+    expect(stripeMutationEnforcementDefault("test", true)).toBe(false);
+    expect(stripeMutationEnforcementDefault("production", false)).toBe(false);
   });
 
   it("allows legacy callers until enforcement is enabled", async () => {

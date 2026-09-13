@@ -93,6 +93,7 @@ export async function cancelStripeEverything(
   await setBillingAccountFrozen({
     account_id,
     frozen: true,
+    cause: "deletion",
     reason: "account deletion",
   });
   await executeBillingAuthorityCommand({

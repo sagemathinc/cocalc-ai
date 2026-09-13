@@ -215,6 +215,7 @@ describe("inter-bay account ban routing", () => {
     expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       actor_account_id: undefined,
+      fence_cause: "ban",
       reason: "account ban",
       home_bay_id: "bay-1",
     });
@@ -280,6 +281,7 @@ describe("inter-bay account ban routing", () => {
     expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       actor_account_id: "00000000-0000-4000-8000-000000000099",
+      fence_cause: "ban",
       reason: "spam campaign",
       home_bay_id: "bay-1",
     });
@@ -314,6 +316,7 @@ describe("inter-bay account ban routing", () => {
     expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       frozen: false,
+      cause: "ban",
       reason: "appeal accepted",
       actor_account_id: undefined,
     });

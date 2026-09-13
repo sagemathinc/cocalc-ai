@@ -7,7 +7,10 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
-import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 
 export default async function handle(req, res) {
   try {
@@ -53,6 +56,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
   }
 }

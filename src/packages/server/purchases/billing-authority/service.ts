@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 import { performance } from "node:perf_hooks";
 
 import getLogger from "@cocalc/backend/logger";
+import { getClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredClusterRole,
@@ -14,9 +15,12 @@ import {
 } from "@cocalc/server/cluster-config";
 
 import {
+  createBillingAuthorityProviderMutationTracker,
   enableStripeMutationAuthorityEnforcement,
+  getBillingAuthorityProviderMutationOutcome,
   runInBillingAuthorityContext,
 } from "./context";
+import { isBillingAuthorityEnabled } from "./config";
 import { dispatchBillingAuthorityCommand } from "./dispatch";
 import type {
   BillingAuthorityAccountLocalOperation,
@@ -34,18 +38,22 @@ import { isBillingAuthorityHubApiCall } from "./classification";
 import {
   acquireBillingAuthorityLease,
   assertBillingAuthorityLease,
+  beginBillingAuthorityCommandExecution,
   cancelQueuedBillingAuthorityCommand,
   claimNextBillingAuthorityCommand,
   finishBillingAuthorityCommand,
   getBillingAuthorityCommand,
   getBillingAuthorityHealth as getStoredHealth,
+  markBillingAuthorityLeaseServing,
   pruneBillingAuthorityCommands,
+  registerBillingAuthorityCommandAccount,
   reconcileExpiredBillingAuthorityLease,
   requestBillingAuthorityDrain,
   releaseBillingAuthorityLease,
   renewBillingAuthorityLease,
   resumeBillingAuthorityGlobally,
   setBillingAuthorityAccountFrozen,
+  setBillingAuthorityDraining,
   submitBillingAuthorityCommand,
 } from "./store";
 
@@ -71,6 +79,7 @@ interface ActiveLease {
 
 interface RuntimeState {
   lease?: ActiveLease;
+  lease_client?: ReturnType<typeof getClient>;
   local_deadline_ms: number;
   draining: boolean;
   stopping: boolean;
@@ -85,6 +94,8 @@ const runtime: RuntimeState = {
 
 let started = false;
 let electionPromise: Promise<void> | undefined;
+let pruneTimer: ReturnType<typeof setInterval> | undefined;
+let shutdownHooksInstalled = false;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -112,6 +123,32 @@ function serializeError(err: unknown): BillingAuthorityError {
   };
 }
 
+function classifyCommandOutcome({
+  error,
+  provider,
+}: {
+  error?: BillingAuthorityError;
+  provider: { successful: boolean; ambiguous: boolean };
+}): {
+  status: "succeeded" | "failed" | "uncertain";
+  error?: BillingAuthorityError;
+} {
+  const uncertain =
+    provider.ambiguous || (error != null && provider.successful);
+  if (uncertain) {
+    return {
+      status: "uncertain",
+      error: error ?? {
+        message:
+          "Stripe mutation outcome is ambiguous; reconcile this command before retrying",
+        code: "stripe_mutation_outcome_ambiguous",
+        status: 503,
+      },
+    };
+  }
+  return error ? { status: "failed", error } : { status: "succeeded" };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
@@ -123,6 +160,7 @@ function hasString(value: Record<string, unknown>, key: string): boolean {
 const ACCOUNT_LOCAL_OPERATIONS = new Set<BillingAuthorityAccountLocalOperation>(
   [
     "admin-create-membership-package-purchase",
+    "admin-provision-site-license",
     "legacy-apply-financial-home-bay",
     "legacy-apply-financial-migration",
     "legacy-configure-financial-renewal-home-bay",
@@ -256,16 +294,30 @@ function assertAuthorityBay(): void {
   }
 }
 
-async function bounded<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+async function boundedDedicatedQuery<T>({
+  client,
+  promise,
+  timeoutMs,
+}: {
+  client: ReturnType<typeof getClient>;
+  promise: Promise<T>;
+  timeoutMs: number;
+}): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       promise,
       new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error("billing authority lease query timed out")),
-          timeoutMs,
-        );
+        timer = setTimeout(() => {
+          // Closing the dedicated socket cancels the PostgreSQL operation. A
+          // plain Promise.race would permit a timed-out acquisition to succeed
+          // later and create a ghost authority.
+          reject(new Error("billing authority lease query timed out"));
+          // Settle the timeout first. Destroying an active pg query can settle
+          // its promise synchronously; letting that race win would report an
+          // arbitrary query outcome instead of the authoritative timeout.
+          void client.end().catch(() => undefined);
+        }, timeoutMs);
         timer.unref?.();
       }),
     ]);
@@ -290,7 +342,21 @@ async function assertAuthorityFenced(lease: ActiveLease): Promise<void> {
       status: 503,
     });
   }
-  await bounded(assertBillingAuthorityLease(lease), LEASE_QUERY_TIMEOUT_MS);
+  const client = runtime.lease_client;
+  if (!client) {
+    throw Object.assign(
+      new Error("billing authority lease session is absent"),
+      {
+        code: 503,
+        status: 503,
+      },
+    );
+  }
+  await boundedDedicatedQuery({
+    client,
+    promise: assertBillingAuthorityLease(lease, client),
+    timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+  });
   if (!authorityLocallyActive(lease)) {
     throw Object.assign(new Error("billing authority local lease expired"), {
       code: 503,
@@ -328,10 +394,13 @@ async function executeClaimedCommand({
   lane: keyof typeof COMMAND_RUNTIME_MS;
 }): Promise<void> {
   runtime.active_command_id = command_id;
+  const executionDb = getClient();
+  let executionTransactionOpen = false;
   const operation = billingAuthorityOperationName(command);
   const startedAt = Date.now();
   let result: unknown;
   let error: BillingAuthorityError | undefined;
+  const providerTracker = createBillingAuthorityProviderMutationTracker();
   const commandWatchdog = setTimeout(() => {
     failStopBillingAuthorityWorker({
       err: new Error(
@@ -341,24 +410,53 @@ async function executeClaimedCommand({
   }, COMMAND_RUNTIME_MS[lane]);
   commandWatchdog.unref?.();
   try {
+    await boundedDedicatedQuery({
+      client: executionDb,
+      promise: executionDb.connect(),
+      timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+    });
+    await boundedDedicatedQuery({
+      client: executionDb,
+      promise: beginBillingAuthorityCommandExecution({
+        identity: lease,
+        db: executionDb,
+      }),
+      timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+    });
+    executionTransactionOpen = true;
     await assertAuthorityFenced(lease);
     result = await runInBillingAuthorityContext({
       operation,
       request_id: command_id,
       authority_active: () => authorityLocallyActive(lease),
       assert_authority: async () => await assertAuthorityFenced(lease),
+      register_account: async (account_id) =>
+        await registerBillingAuthorityCommandAccount({
+          ...lease,
+          command_id,
+          account_id,
+        }),
+      provider_tracker: providerTracker,
       fn: async () => await dispatchBillingAuthorityCommand(command),
     });
   } catch (err) {
     error = serializeError(err);
   }
+  const provider = getBillingAuthorityProviderMutationOutcome(providerTracker);
+  const completion = classifyCommandOutcome({ error, provider });
+  error = completion.error;
   try {
     await assertAuthorityFenced(lease);
     await finishBillingAuthorityCommand({
       ...lease,
       command_id,
-      ...(error ? { error } : { result }),
+      db: executionDb,
+      ...(completion.status === "succeeded"
+        ? { result, status: completion.status }
+        : { error: completion.error!, status: completion.status }),
     });
+    await executionDb.query("COMMIT");
+    executionTransactionOpen = false;
     logger[error ? "warn" : "debug"]("billing authority command finished", {
       command_id,
       operation,
@@ -369,6 +467,10 @@ async function executeClaimedCommand({
   } catch (err) {
     failStopBillingAuthorityWorker({ err });
   } finally {
+    if (executionTransactionOpen) {
+      await executionDb.query("ROLLBACK").catch(() => undefined);
+    }
+    await executionDb.end().catch(() => undefined);
     clearTimeout(commandWatchdog);
     runtime.active_command_id = undefined;
   }
@@ -404,15 +506,22 @@ async function heartbeatLoop(lease: ActiveLease): Promise<void> {
     await delay(HEARTBEAT_MS);
     if (!authorityLocallyActive(lease)) break;
     try {
-      const renewed = await bounded(
-        renewBillingAuthorityLease({ ...lease, lease_ms: LEASE_MS }),
-        LEASE_QUERY_TIMEOUT_MS,
-      );
+      const client = runtime.lease_client;
+      if (!client) throw new Error("billing authority lease session is absent");
+      const renewed = await boundedDedicatedQuery({
+        client,
+        promise: renewBillingAuthorityLease({
+          ...lease,
+          lease_ms: LEASE_MS,
+          db: client,
+        }),
+        timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+      });
       runtime.draining = !renewed.enabled || renewed.draining;
       runtime.local_deadline_ms =
         performance.now() + LEASE_MS - LOCAL_LEASE_MARGIN_MS;
       if (runtime.draining && !runtime.active_command_id) {
-        await releaseBillingAuthorityLease(lease);
+        await releaseBillingAuthorityLease(lease, client);
         if (
           runtime.lease?.instance_id === lease.instance_id &&
           runtime.lease?.generation === lease.generation
@@ -456,14 +565,22 @@ async function runLease(lease: ActiveLease): Promise<void> {
 async function electionLoop(): Promise<void> {
   assertAuthorityBay();
   while (!runtime.stopping) {
+    const leaseClient = getClient();
     try {
-      const acquired = await bounded(
-        acquireBillingAuthorityLease({
+      await boundedDedicatedQuery({
+        client: leaseClient,
+        promise: leaseClient.connect(),
+        timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+      });
+      const acquired = await boundedDedicatedQuery({
+        client: leaseClient,
+        promise: acquireBillingAuthorityLease({
           instance_id: INSTANCE_ID,
           lease_ms: LEASE_MS,
+          db: leaseClient,
         }),
-        LEASE_QUERY_TIMEOUT_MS,
-      );
+        timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+      });
       if (!acquired) {
         await delay(ELECTION_RETRY_MS);
         continue;
@@ -472,12 +589,39 @@ async function electionLoop(): Promise<void> {
         instance_id: INSTANCE_ID,
         generation: acquired.generation,
       };
+      if (runtime.stopping) {
+        await boundedDedicatedQuery({
+          client: leaseClient,
+          promise: releaseBillingAuthorityLease(lease, leaseClient),
+          timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+        });
+        break;
+      }
+      runtime.lease_client = leaseClient;
+      await boundedDedicatedQuery({
+        client: leaseClient,
+        promise: markBillingAuthorityLeaseServing(lease, leaseClient),
+        timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+      });
+      // stopBillingAuthorityService can run while the serving update is in
+      // flight. Never leave a lease advertised as ready if shutdown won that
+      // race, even though no command loop has started yet.
+      if (runtime.stopping) {
+        await boundedDedicatedQuery({
+          client: leaseClient,
+          promise: releaseBillingAuthorityLease(lease, leaseClient),
+          timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+        });
+        break;
+      }
       await runLease(lease);
     } catch (err) {
       if (runtime.lease) failStopBillingAuthorityWorker({ err });
       logger.warn("billing authority election attempt failed", { err });
     } finally {
+      await leaseClient.end().catch(() => undefined);
       runtime.lease = undefined;
+      runtime.lease_client = undefined;
       runtime.local_deadline_ms = 0;
       runtime.draining = false;
       runtime.active_command_id = undefined;
@@ -499,9 +643,13 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
 
 export async function drainBillingAuthority({
   timeout_ms = DRAIN_TIMEOUT_MS,
-}: { timeout_ms?: number } = {}): Promise<BillingAuthorityHealth> {
+  exclude_holder_id,
+}: {
+  timeout_ms?: number;
+  exclude_holder_id?: string;
+} = {}): Promise<BillingAuthorityHealth> {
   assertAuthorityBay();
-  await requestBillingAuthorityDrain();
+  await requestBillingAuthorityDrain({ exclude_holder_id });
   const deadline = Date.now() + timeout_ms;
   while (Date.now() < deadline) {
     await reconcileExpiredBillingAuthorityLease();
@@ -535,13 +683,17 @@ export async function handoffBillingAuthority({
 }: { timeout_ms?: number } = {}): Promise<BillingAuthorityHealth> {
   assertAuthorityBay();
   const before = await getStoredHealth();
-  await drainBillingAuthority({ timeout_ms });
+  await drainBillingAuthority({
+    timeout_ms,
+    exclude_holder_id: before.instance_id,
+  });
   const deadline = Date.now() + timeout_ms;
   await resumeBillingAuthorityGlobally();
   while (Date.now() < deadline) {
     const health = await getStoredHealth();
     if (
       health.ready &&
+      health.instance_id !== before.instance_id &&
       (before.generation == null ||
         (health.generation ?? 0) > before.generation)
     ) {
@@ -559,6 +711,12 @@ export async function handleBillingAuthorityTransportRequest(
   request: BillingAuthorityTransportRequest,
 ): Promise<BillingAuthorityTransportResponse> {
   try {
+    if (!isBillingAuthorityEnabled()) {
+      throw Object.assign(new Error("billing authority is not enabled"), {
+        status: 503,
+        code: 503,
+      });
+    }
     assertAuthorityBay();
     switch (request.action) {
       case "submit":
@@ -590,6 +748,7 @@ export async function handleBillingAuthorityTransportRequest(
           value: await setBillingAuthorityAccountFrozen({
             account_id: request.account_id,
             frozen: true,
+            cause: request.cause,
             reason: request.reason,
             actor_account_id: request.actor_account_id,
           }),
@@ -600,6 +759,7 @@ export async function handleBillingAuthorityTransportRequest(
           value: await setBillingAuthorityAccountFrozen({
             account_id: request.account_id,
             frozen: false,
+            cause: request.cause,
             reason: request.reason,
             actor_account_id: request.actor_account_id,
           }),
@@ -618,16 +778,22 @@ export async function handleBillingAuthorityTransportRequest(
 }
 
 export function startBillingAuthorityService(): void {
-  enableStripeMutationAuthorityEnforcement();
   if (started) return;
   started = true;
+  if (!isBillingAuthorityEnabled()) {
+    logger.info(
+      "billing authority is disabled; using legacy direct billing execution",
+    );
+    return;
+  }
+  enableStripeMutationAuthorityEnforcement();
   if (getConfiguredClusterRole() === "attached") {
     logger.info("billing authority executor is seed-bay only");
     return;
   }
   electionPromise = electionLoop();
   void electionPromise;
-  const pruneTimer = setInterval(() => {
+  pruneTimer = setInterval(() => {
     if (runtime.lease && authorityLocallyActive(runtime.lease)) {
       void pruneBillingAuthorityCommands().catch((err) =>
         logger.warn("failed to prune billing authority journal", { err }),
@@ -635,10 +801,54 @@ export function startBillingAuthorityService(): void {
     }
   }, 60 * 60_000);
   pruneTimer.unref?.();
+  installBillingAuthorityShutdownHooks();
+}
+
+export async function stopBillingAuthorityService({
+  timeout_ms = 30_000,
+}: { timeout_ms?: number } = {}): Promise<void> {
+  if (!started || !isBillingAuthorityEnabled()) return;
+  const lease = runtime.lease;
+  const leaseClient = runtime.lease_client;
+  if (lease && leaseClient && authorityLocallyActive(lease)) {
+    runtime.draining = true;
+    await setBillingAuthorityDraining(lease, leaseClient);
+    const deadline = Date.now() + timeout_ms;
+    while (runtime.lease && Date.now() < deadline) {
+      await delay(50);
+    }
+    if (runtime.lease) {
+      throw Object.assign(
+        new Error("billing authority graceful shutdown timed out"),
+        { code: 408, status: 408 },
+      );
+    }
+  }
+  runtime.stopping = true;
+  runtime.local_deadline_ms = 0;
+  if (pruneTimer) clearInterval(pruneTimer);
+  pruneTimer = undefined;
+  await leaseClient?.end().catch(() => undefined);
+}
+
+function installBillingAuthorityShutdownHooks(): void {
+  if (shutdownHooksInstalled) return;
+  shutdownHooksInstalled = true;
+  for (const signal of ["SIGTERM", "SIGINT"] as const) {
+    process.once(signal, () => {
+      void stopBillingAuthorityService()
+        .catch((err) =>
+          logger.error("billing authority graceful shutdown failed", { err }),
+        )
+        .finally(() => process.exit(signal === "SIGINT" ? 130 : 0));
+    });
+  }
 }
 
 export const __test__ = {
   authorityLocallyActive,
+  boundedDedicatedQuery,
+  classifyCommandOutcome,
   failStopBillingAuthorityWorker,
   isSubmitRequest,
   runtime,

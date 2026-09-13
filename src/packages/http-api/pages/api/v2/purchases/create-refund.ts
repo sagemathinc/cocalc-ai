@@ -24,7 +24,10 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
-import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 
 export default async function handle(req, res) {
   try {
@@ -33,6 +36,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -59,6 +63,7 @@ async function get(req) {
   return {
     id: await executeBillingHttpCommand("create-refund", {
       account_id,
+      actor_account_id: account_id,
       purchase_id,
       reason,
       notes,

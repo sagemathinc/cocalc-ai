@@ -12,15 +12,16 @@ const logger = getLogger("purchases:statements-maintenance");
 // the 'day' and 'month' statements get created and statements get emailed out.
 export default async function statementMaintenance({
   max_emails = Number.POSITIVE_INFINITY,
-}: { max_emails?: number } = {}) {
+  max_statements = Number.POSITIVE_INFINITY,
+}: { max_emails?: number; max_statements?: number } = {}) {
   logger.debug("statementMaintenance -- updating statements");
   try {
-    await createDayStatements();
+    await createDayStatements({ max_statements });
   } catch (err) {
     logger.debug(`WARNING: Nonfatal error creating day statements -- ${err}`);
   }
   try {
-    await createMonthStatements();
+    await createMonthStatements({ max_statements });
   } catch (err) {
     logger.debug(`WARNING: Nonfatal error creating month statements -- ${err}`);
   }

@@ -41,6 +41,7 @@ import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-me
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchase:maintain-automatic-payments");
 
@@ -112,6 +113,7 @@ export default async function maintainAutomaticPayments({
     logger.debug(description);
     const amount = balanceValue.neg();
     try {
+      await registerBillingAuthorityAccount(account_id);
       // Set that automatic_payment has been *processed* for this statement.
       // This only means there was an actual payment attempt if the balance was negative.
       await pool.query(

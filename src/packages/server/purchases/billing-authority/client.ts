@@ -15,6 +15,7 @@ import {
   enableStripeMutationAuthorityEnforcement,
   isInBillingAuthorityContext,
 } from "./context";
+import { isBillingAuthorityEnabled } from "./config";
 import { dispatchBillingAuthorityCommand } from "./dispatch";
 import type {
   BillingAuthorityCommand,
@@ -25,7 +26,13 @@ import type {
   BillingAuthorityTransportRequest,
   BillingAuthorityTransportResponse,
 } from "./protocol";
-import { billingAuthorityLane } from "./protocol";
+import {
+  billingAuthorityAccountIds,
+  billingAuthorityActorAccountId,
+  billingAuthorityLane,
+  billingAuthorityOperationName,
+  type BillingAuthorityFenceCause,
+} from "./protocol";
 export {
   isBillingAuthorityHubApiCall,
   isBillingAuthorityHubApiRead,
@@ -39,7 +46,7 @@ import {
 const POLL_MS = 250;
 const REMOTE_POLL_MS = 750;
 const COMMAND_WAIT_MS = 10 * 60_000;
-const DEFAULT_DEDUPLICATION_MS = 15 * 60_000;
+const COMMAND_ID_PROTOCOL_VERSION = "v2";
 const QUEUE_TTL_MS = {
   critical: 5 * 60_000,
   interactive: 45_000,
@@ -119,9 +126,13 @@ function intrinsicCommandId(
       key = recordField(command.call.args[0], "idempotency_key");
       break;
   }
-  return key
-    ? deterministicUuid(`cocalc-billing-authority:${command.kind}:${key}`)
-    : undefined;
+  if (!key) return undefined;
+  const operation = billingAuthorityOperationName(command);
+  const accountIds = billingAuthorityAccountIds(command).sort().join(",");
+  const actor = billingAuthorityActorAccountId(command) ?? "-";
+  return deterministicUuid(
+    `cocalc-billing-authority:${COMMAND_ID_PROTOCOL_VERSION}:${operation}:${accountIds}:${actor}:${key}`,
+  );
 }
 
 function unwrapTransport(response: BillingAuthorityTransportResponse): unknown {
@@ -150,9 +161,10 @@ async function transport(
 }
 
 function throwTerminal(record: BillingAuthorityCommandRecord): never {
-  const message =
+  const detail =
     record.error?.message ??
     `billing authority command ended with status ${record.status}`;
+  const message = `${detail} [billing authority command ${record.command_id}; status ${record.status}]`;
   const err = new Error(message);
   Object.assign(err, {
     code: record.error?.code,
@@ -161,6 +173,20 @@ function throwTerminal(record: BillingAuthorityCommandRecord): never {
     billing_authority_status: record.status,
   });
   throw err;
+}
+
+export function billingAuthorityErrorAttrs(
+  error: unknown,
+): Record<string, unknown> {
+  const source =
+    error != null && typeof error === "object"
+      ? (error as Record<string, unknown>)
+      : {};
+  return Object.fromEntries(
+    ["billing_authority_command_id", "billing_authority_status"].flatMap(
+      (key) => (source[key] == null ? [] : [[key, source[key]]]),
+    ),
+  );
 }
 
 function terminalValue<T>(
@@ -187,6 +213,9 @@ export async function executeBillingAuthorityCommand<T>(
   command: BillingAuthorityCommand,
   options: CommandOptions = {},
 ): Promise<T> {
+  if (!isBillingAuthorityEnabled()) {
+    return (await dispatchBillingAuthorityCommand(command)) as T;
+  }
   enableStripeMutationAuthorityEnforcement();
   if (isInBillingAuthorityContext()) {
     return (await dispatchBillingAuthorityCommand(command)) as T;
@@ -206,8 +235,7 @@ export async function executeBillingAuthorityCommand<T>(
       command_id,
       command,
       expires_at,
-      deduplicate_for_ms:
-        options.deduplicate_for_ms ?? DEFAULT_DEDUPLICATION_MS,
+      deduplicate_for_ms: options.deduplicate_for_ms ?? 0,
     },
   })) as BillingAuthorityCommandRecord;
   // Semantic deduplication may bind this invocation to an earlier command ID.
@@ -276,21 +304,46 @@ export async function setBillingAccountFrozen({
   frozen,
   reason,
   actor_account_id,
+  cause,
 }: {
   account_id: string;
   frozen: boolean;
   reason: string;
   actor_account_id?: string;
+  cause?: BillingAuthorityFenceCause;
 }): Promise<{ account_id: string; frozen: boolean; generation: number }> {
+  if (!isBillingAuthorityEnabled()) {
+    return { account_id, frozen, generation: 0 };
+  }
   return (await transport({
     action: frozen ? "freeze-account" : "unfreeze-account",
     account_id,
+    cause: cause ?? inferFenceCause(reason),
     reason,
     actor_account_id,
   })) as { account_id: string; frozen: boolean; generation: number };
 }
 
+function inferFenceCause(reason: string): BillingAuthorityFenceCause {
+  const value = `${reason}`.toLowerCase();
+  if (value.includes("delet")) return "deletion";
+  if (value.includes("ban")) return "ban";
+  if (value.includes("quarant")) return "quarantine";
+  if (value.includes("incident")) return "incident-response";
+  return "operator";
+}
+
 export async function getBillingAuthorityStatus(): Promise<BillingAuthorityHealth> {
+  if (!isBillingAuthorityEnabled()) {
+    return {
+      ready: false,
+      enabled: false,
+      draining: true,
+      queue_depth: { critical: 0, interactive: 0, maintenance: 0 },
+      completed: 0,
+      failed: 0,
+    };
+  }
   return (await transport({ action: "health" })) as BillingAuthorityHealth;
 }
 

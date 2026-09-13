@@ -12,19 +12,22 @@ import type {
   BillingAuthorityCommand,
   BillingAuthorityCommandRecord,
   BillingAuthorityError,
+  BillingAuthorityFenceCause,
   BillingAuthorityHealth,
   BillingAuthorityLane,
   BillingAuthoritySubmitRequest,
 } from "./protocol";
 import {
-  billingAuthorityAccountId,
-  billingAuthorityCommandAllowedWhenFrozen,
+  billingAuthorityAccountIds,
+  billingAuthorityAccountsAllowedWhenFrozen,
+  billingAuthorityActorAccountId,
   billingAuthorityLane,
   billingAuthorityOperationName,
 } from "./protocol";
 
 const LEASE_NAME = "primary";
 const ADMISSION_LOCK = 1_111_575_378;
+export const BILLING_AUTHORITY_EXECUTION_LOCK = 1_111_575_379;
 const MAX_COMMAND_BYTES = 1024 * 1024;
 const MAX_REASON_LENGTH = 4000;
 const MAX_DEDUPLICATION_MS = 24 * 60 * 60_000;
@@ -36,10 +39,12 @@ const MAX_QUEUE_DEPTH: Record<BillingAuthorityLane, number> = {
   maintenance: 100,
 };
 
-interface LeaseIdentity {
+export interface BillingAuthorityLeaseIdentity {
   instance_id: string;
   generation: number;
 }
+
+type Queryable = Pick<PoolClient, "query">;
 
 interface LeaseRow {
   holder_id?: string | null;
@@ -47,6 +52,8 @@ interface LeaseRow {
   lease_until?: Date | string | null;
   enabled: boolean;
   draining: boolean;
+  serving?: boolean;
+  handoff_exclude_holder_id?: string | null;
   lease_valid?: boolean;
 }
 
@@ -56,6 +63,8 @@ interface CommandRow {
   operation: string;
   lane: BillingAuthorityLane;
   account_id?: string | null;
+  account_ids?: string[] | null;
+  actor_account_id?: string | null;
   command: BillingAuthorityCommand;
   status: BillingAuthorityCommandRecord["status"];
   result?: unknown;
@@ -66,6 +75,7 @@ interface CommandRow {
   finished_at?: Date | string | null;
   expires_at: Date | string;
   authority_generation?: number | null;
+  attempt_count: number;
 }
 
 function authorityError(message: string, status: number): Error {
@@ -86,6 +96,8 @@ function commandRecord(
     operation: row.operation,
     lane: row.lane,
     ...(row.account_id ? { account_id: row.account_id } : {}),
+    ...(row.account_ids?.length ? { account_ids: row.account_ids } : {}),
+    ...(row.actor_account_id ? { actor_account_id: row.actor_account_id } : {}),
     status: row.status,
     ...(row.result === undefined ? {} : { result: row.result }),
     ...(row.error == null ? {} : { error: row.error }),
@@ -165,9 +177,11 @@ function assertValidSubmission(request: BillingAuthoritySubmitRequest): {
 }
 
 async function withTransaction<T>(
-  fn: (db: PoolClient) => Promise<T>,
+  fn: (db: Queryable) => Promise<T>,
+  suppliedDb?: Queryable,
 ): Promise<T> {
-  const db = await getPool().connect();
+  const ownedDb = suppliedDb == null ? await getPool().connect() : undefined;
+  const db = suppliedDb ?? ownedDb!;
   try {
     await db.query("BEGIN");
     const value = await fn(db);
@@ -177,7 +191,7 @@ async function withTransaction<T>(
     await db.query("ROLLBACK").catch(() => undefined);
     throw err;
   } finally {
-    db.release();
+    ownedDb?.release();
   }
 }
 
@@ -199,32 +213,20 @@ export async function submitBillingAuthorityCommand(
   const { hash } = requestHash(request);
   const operation = billingAuthorityOperationName(request.command);
   const lane = billingAuthorityLane(request.command);
-  const accountId = billingAuthorityAccountId(request.command);
+  const accountIds = billingAuthorityAccountIds(request.command);
+  if (accountIds.length > 32 || accountIds.some((id) => !isValidUUID(id))) {
+    throw authorityError("invalid billing authority account attribution", 400);
+  }
+  const accountId = accountIds[0];
+  const actorAccountId = billingAuthorityActorAccountId(request.command);
+  if (actorAccountId && !isValidUUID(actorAccountId)) {
+    throw authorityError("invalid billing authority actor account", 400);
+  }
+  const allowedWhenFrozen = new Set(
+    billingAuthorityAccountsAllowedWhenFrozen(request.command),
+  );
   return await withTransaction(async (db) => {
     await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
-    const existing = await existingCommand(db, request.command_id);
-    if (existing) {
-      if (existing.request_hash !== hash) {
-        throw authorityError(
-          "billing authority command_id was reused with different input",
-          409,
-        );
-      }
-      return commandRecord(existing, true);
-    }
-    if (deduplicateForMs > 0) {
-      const { rows } = await db.query<CommandRow>(
-        `SELECT * FROM billing_authority_commands
-          WHERE request_hash=$1
-            AND created_at >=
-                clock_timestamp() - ($2::TEXT || ' milliseconds')::INTERVAL
-            AND status NOT IN ('canceled', 'expired')
-          ORDER BY created_at DESC, command_id
-          LIMIT 1`,
-        [hash, deduplicateForMs],
-      );
-      if (rows[0]) return commandRecord(rows[0], true);
-    }
     const { rows: leaseRows } = await db.query<LeaseRow>(
       `SELECT holder_id, generation, lease_until, enabled, draining
          FROM billing_authority_lease
@@ -238,19 +240,62 @@ export async function submitBillingAuthorityCommand(
     if (!leaseRows[0] || leaseRows[0].draining) {
       throw authorityError("billing authority is not ready", 503);
     }
-    if (
-      accountId &&
-      !billingAuthorityCommandAllowedWhenFrozen(request.command)
-    ) {
-      const { rows } = await db.query<{ frozen: boolean }>(
-        `SELECT frozen
+    const governedAccountIds = accountIds.filter(
+      (id) => !allowedWhenFrozen.has(id),
+    );
+    if (governedAccountIds.length > 0) {
+      const { rows } = await db.query<{ account_id: string }>(
+        `SELECT account_id
            FROM billing_authority_account_fences
-          WHERE account_id=$1`,
-        [accountId],
+          WHERE account_id=ANY($1::UUID[]) AND frozen
+          LIMIT 1`,
+        [governedAccountIds],
       );
-      if (rows[0]?.frozen) {
+      if (rows[0]) {
         throw authorityError("billing is frozen for this account", 423);
       }
+    }
+    const existing = await existingCommand(db, request.command_id);
+    if (existing) {
+      if (existing.request_hash !== hash) {
+        throw authorityError(
+          "billing authority command_id was reused with different input",
+          409,
+        );
+      }
+      if (
+        (existing.status === "canceled" || existing.status === "expired") &&
+        existing.attempt_count === 0
+      ) {
+        const { rows } = await db.query<CommandRow>(
+          `UPDATE billing_authority_commands
+              SET status=CASE WHEN $2::TIMESTAMPTZ <= clock_timestamp()
+                              THEN 'expired' ELSE 'queued' END,
+                  expires_at=$2, started_at=NULL, finished_at=NULL,
+                  authority_generation=NULL, authority_instance_id=NULL,
+                  result=NULL, error=NULL, updated_at=clock_timestamp()
+            WHERE command_id=$1
+              AND status IN ('canceled','expired')
+              AND attempt_count=0
+            RETURNING *`,
+          [request.command_id, expiresAt.toISOString()],
+        );
+        if (rows[0]) return commandRecord(rows[0]);
+      }
+      return commandRecord(existing, true);
+    }
+    if (deduplicateForMs > 0) {
+      const { rows } = await db.query<CommandRow>(
+        `SELECT * FROM billing_authority_commands
+          WHERE request_hash=$1
+            AND created_at >=
+                clock_timestamp() - ($2::TEXT || ' milliseconds')::INTERVAL
+            AND status IN ('queued', 'running')
+          ORDER BY created_at DESC, command_id
+          LIMIT 1`,
+        [hash, deduplicateForMs],
+      );
+      if (rows[0]) return commandRecord(rows[0], true);
     }
     const { rows: counts } = await db.query<{ count: string }>(
       `SELECT COUNT(*)::TEXT AS count
@@ -263,12 +308,13 @@ export async function submitBillingAuthorityCommand(
     }
     const { rows } = await db.query<CommandRow>(
       `INSERT INTO billing_authority_commands
-         (command_id, request_hash, operation, lane, account_id, command,
+         (command_id, request_hash, operation, lane, account_id, account_ids,
+          actor_account_id, command,
           status, expires_at, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6::JSONB,
-               CASE WHEN $7::TIMESTAMPTZ <= clock_timestamp()
+       VALUES ($1, $2, $3, $4, $5, $6::UUID[], $7, $8::JSONB,
+               CASE WHEN $9::TIMESTAMPTZ <= clock_timestamp()
                     THEN 'expired' ELSE 'queued' END,
-               $7, clock_timestamp(), clock_timestamp())
+               $9, clock_timestamp(), clock_timestamp())
        RETURNING *`,
       [
         request.command_id,
@@ -276,6 +322,8 @@ export async function submitBillingAuthorityCommand(
         operation,
         lane,
         accountId ?? null,
+        accountIds,
+        actorAccountId ?? null,
         JSON.stringify(request.command),
         expiresAt.toISOString(),
       ],
@@ -314,16 +362,66 @@ export async function cancelQueuedBillingAuthorityCommand(
   return row ? commandRecord(row) : undefined;
 }
 
+export async function registerBillingAuthorityCommandAccount({
+  ...identity
+}: BillingAuthorityLeaseIdentity & {
+  command_id: string;
+  account_id: string;
+}): Promise<void> {
+  if (!isValidUUID(identity.account_id)) {
+    throw authorityError("invalid dynamically resolved billing account", 400);
+  }
+  await withTransaction(async (db) => {
+    await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
+    const { rows } = await db.query<CommandRow>(
+      `SELECT * FROM billing_authority_commands
+        WHERE command_id=$1 AND status='running'
+          AND authority_instance_id=$2 AND authority_generation=$3
+        FOR UPDATE`,
+      [identity.command_id, identity.instance_id, identity.generation],
+    );
+    const command = rows[0];
+    if (!command) {
+      throw authorityError(
+        "billing authority command is no longer active",
+        503,
+      );
+    }
+    const allowed = billingAuthorityAccountsAllowedWhenFrozen(command.command);
+    if (!allowed.includes(identity.account_id)) {
+      const { rows: fences } = await db.query(
+        `SELECT 1 FROM billing_authority_account_fences
+          WHERE account_id=$1 AND frozen`,
+        [identity.account_id],
+      );
+      if (fences[0]) {
+        throw authorityError("billing is frozen for this account", 423);
+      }
+    }
+    await db.query(
+      `UPDATE billing_authority_commands
+          SET account_id=COALESCE(account_id, $2),
+              account_ids=CASE WHEN $2=ANY(account_ids) THEN account_ids
+                               ELSE array_append(account_ids, $2) END,
+              updated_at=clock_timestamp()
+        WHERE command_id=$1`,
+      [identity.command_id, identity.account_id],
+    );
+  });
+}
+
 export async function setBillingAuthorityAccountFrozen({
   account_id,
   frozen,
   reason,
   actor_account_id,
+  cause,
 }: {
   account_id: string;
   frozen: boolean;
   reason: string;
   actor_account_id?: string;
+  cause?: BillingAuthorityFenceCause;
 }): Promise<{ account_id: string; frozen: boolean; generation: number }> {
   if (!isValidUUID(account_id)) {
     throw authorityError("invalid billing account_id", 400);
@@ -335,27 +433,57 @@ export async function setBillingAuthorityAccountFrozen({
   if (!cleanedReason) {
     throw authorityError("billing fence reason is required", 400);
   }
+  const fenceCause = cause ?? inferFenceCause(cleanedReason);
   return await withTransaction(async (db) => {
     await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
+    await db.query(
+      `UPDATE billing_authority_account_fences
+          SET causes=jsonb_build_object(
+            'legacy', jsonb_build_object(
+              'reason', COALESCE(reason, 'pre-cause billing fence'),
+              'actor_account_id', actor_account_id,
+              'updated_at', updated_at))
+        WHERE account_id=$1 AND frozen
+          AND COALESCE(causes, '{}'::JSONB)='{}'::JSONB`,
+      [account_id],
+    );
     const { rows } = await db.query<{
       account_id: string;
       frozen: boolean;
       generation: number;
     }>(
       `INSERT INTO billing_authority_account_fences
-         (account_id, frozen, reason, actor_account_id, generation,
+         (account_id, frozen, reason, causes, actor_account_id, generation,
           created_at, updated_at)
-       VALUES ($1, $2, $3, $4, 1, clock_timestamp(), clock_timestamp())
+       VALUES ($1, $2, $3::TEXT,
+               CASE WHEN $2 THEN jsonb_build_object(
+                 $5::TEXT, jsonb_build_object(
+                   'reason', $3::TEXT, 'actor_account_id', $4::UUID,
+                   'updated_at', clock_timestamp()))
+               ELSE '{}'::JSONB END,
+               $4::UUID, 1, clock_timestamp(), clock_timestamp())
        ON CONFLICT (account_id) DO UPDATE
-         SET frozen=EXCLUDED.frozen,
+         SET causes=CASE
+               WHEN EXCLUDED.frozen THEN
+                 COALESCE(billing_authority_account_fences.causes, '{}'::JSONB)
+                   || EXCLUDED.causes
+               ELSE COALESCE(billing_authority_account_fences.causes, '{}'::JSONB)
+                   - $5::TEXT
+             END,
+             frozen=CASE
+               WHEN EXCLUDED.frozen THEN TRUE
+               ELSE (COALESCE(
+                 billing_authority_account_fences.causes, '{}'::JSONB) - $5::TEXT)
+                   <> '{}'::JSONB
+             END,
              reason=EXCLUDED.reason,
              actor_account_id=EXCLUDED.actor_account_id,
              generation=billing_authority_account_fences.generation + 1,
              updated_at=clock_timestamp()
        RETURNING account_id, frozen, generation`,
-      [account_id, frozen, cleanedReason, actor_account_id ?? null],
+      [account_id, frozen, cleanedReason, actor_account_id ?? null, fenceCause],
     );
-    if (frozen) {
+    if (rows[0].frozen) {
       await db.query(
         `UPDATE billing_authority_commands
             SET status='canceled', finished_at=clock_timestamp(),
@@ -363,7 +491,8 @@ export async function setBillingAuthorityAccountFrozen({
                 error=jsonb_build_object(
                   'message', 'account billing was frozen before execution',
                   'code', 423, 'status', 423)
-          WHERE account_id=$1 AND status='queued'`,
+          WHERE status='queued'
+            AND (account_id=$1 OR $1=ANY(account_ids))`,
         [account_id],
       );
     }
@@ -371,16 +500,30 @@ export async function setBillingAuthorityAccountFrozen({
   });
 }
 
+function inferFenceCause(reason: string): BillingAuthorityFenceCause {
+  const value = reason.toLowerCase();
+  if (value.includes("delet")) return "deletion";
+  if (value.includes("ban")) return "ban";
+  if (value.includes("quarant")) return "quarantine";
+  if (value.includes("incident")) return "incident-response";
+  return "operator";
+}
+
 export async function acquireBillingAuthorityLease({
   instance_id,
   lease_ms,
+  db,
 }: {
   instance_id: string;
   lease_ms: number;
+  db?: Queryable;
 }): Promise<{ generation: number; lease_until: string } | undefined> {
   if (!isValidUUID(instance_id))
     throw authorityError("invalid instance_id", 400);
   return await withTransaction(async (db) => {
+    await db.query("SELECT pg_advisory_xact_lock($1)", [
+      BILLING_AUTHORITY_EXECUTION_LOCK,
+    ]);
     await db.query(
       `INSERT INTO billing_authority_lease
          (name, generation, enabled, draining, updated_at)
@@ -399,9 +542,20 @@ export async function acquireBillingAuthorityLease({
               draining=CASE WHEN holder_id=$2
                                   AND lease_until > clock_timestamp()
                               THEN draining ELSE FALSE END,
+              serving=CASE WHEN holder_id=$2
+                                 AND lease_until > clock_timestamp()
+                            THEN serving ELSE FALSE END,
+              handoff_exclude_holder_id=CASE
+                WHEN handoff_exclude_holder_id IS NOT NULL
+                     AND handoff_exclude_holder_id <> $2
+                  THEN NULL
+                ELSE handoff_exclude_holder_id
+              END,
               updated_at=clock_timestamp()
         WHERE name=$1
           AND enabled
+          AND (handoff_exclude_holder_id IS NULL
+               OR handoff_exclude_holder_id <> $2)
           AND (holder_id=$2 OR holder_id IS NULL OR lease_until <= clock_timestamp())
         RETURNING holder_id, generation, lease_until, enabled, draining`,
       [LEASE_NAME, instance_id, lease_ms],
@@ -424,19 +578,39 @@ export async function acquireBillingAuthorityLease({
       generation: lease.generation,
       lease_until: iso(lease.lease_until)!,
     };
-  });
+  }, db);
+}
+
+export async function markBillingAuthorityLeaseServing(
+  identity: BillingAuthorityLeaseIdentity,
+  db: Queryable = getPool(),
+): Promise<void> {
+  const { rowCount } = await db.query(
+    `UPDATE billing_authority_lease
+        SET serving=TRUE, updated_at=clock_timestamp()
+      WHERE name=$1 AND holder_id=$2 AND generation=$3
+        AND enabled AND lease_until > clock_timestamp()`,
+    [LEASE_NAME, identity.instance_id, identity.generation],
+  );
+  if (rowCount !== 1) {
+    throw authorityError("billing authority lease was lost", 503);
+  }
 }
 
 export async function renewBillingAuthorityLease({
   instance_id,
   generation,
   lease_ms,
-}: LeaseIdentity & { lease_ms: number }): Promise<{
+  db = getPool(),
+}: BillingAuthorityLeaseIdentity & {
+  lease_ms: number;
+  db?: Queryable;
+}): Promise<{
   lease_until: string;
   enabled: boolean;
   draining: boolean;
 }> {
-  const { rows } = await getPool().query<LeaseRow>(
+  const { rows } = await db.query<LeaseRow>(
     `UPDATE billing_authority_lease
         SET lease_until=clock_timestamp() + ($4::TEXT || ' milliseconds')::INTERVAL,
             updated_at=clock_timestamp()
@@ -454,9 +628,10 @@ export async function renewBillingAuthorityLease({
 }
 
 export async function assertBillingAuthorityLease(
-  identity: LeaseIdentity,
+  identity: BillingAuthorityLeaseIdentity,
+  db: Queryable = getPool(),
 ): Promise<void> {
-  const { rows } = await getPool().query(
+  const { rows } = await db.query(
     `SELECT 1 FROM billing_authority_lease
       WHERE name=$1 AND holder_id=$2 AND generation=$3
         AND lease_until > clock_timestamp()`,
@@ -465,10 +640,11 @@ export async function assertBillingAuthorityLease(
   if (!rows[0]) throw authorityError("billing authority lease was lost", 503);
 }
 
-export async function setBillingAuthorityDraining({
-  ...identity
-}: LeaseIdentity): Promise<void> {
-  const { rowCount } = await getPool().query(
+export async function setBillingAuthorityDraining(
+  identity: BillingAuthorityLeaseIdentity,
+  db: Queryable = getPool(),
+): Promise<void> {
+  const { rowCount } = await db.query(
     `UPDATE billing_authority_lease
         SET draining=TRUE, updated_at=clock_timestamp()
       WHERE name=$1 AND holder_id=$2 AND generation=$3
@@ -480,7 +656,7 @@ export async function setBillingAuthorityDraining({
 }
 
 export async function resumeBillingAuthorityLease(
-  identity: LeaseIdentity,
+  identity: BillingAuthorityLeaseIdentity,
 ): Promise<void> {
   const { rowCount } = await getPool().query(
     `UPDATE billing_authority_lease
@@ -493,7 +669,12 @@ export async function resumeBillingAuthorityLease(
     throw authorityError("billing authority lease was lost", 503);
 }
 
-export async function requestBillingAuthorityDrain(): Promise<void> {
+export async function requestBillingAuthorityDrain({
+  exclude_holder_id,
+}: { exclude_holder_id?: string } = {}): Promise<void> {
+  if (exclude_holder_id && !isValidUUID(exclude_holder_id)) {
+    throw authorityError("invalid handoff excluded holder", 400);
+  }
   await withTransaction(async (db) => {
     await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
     await db.query(
@@ -514,8 +695,11 @@ export async function requestBillingAuthorityDrain(): Promise<void> {
                  THEN billing_authority_lease.lease_until
                ELSE NULL
              END,
+             serving=(billing_authority_lease.serving
+                      AND billing_authority_lease.lease_until > clock_timestamp()),
+             handoff_exclude_holder_id=$2,
              updated_at=clock_timestamp()`,
-      [LEASE_NAME],
+      [LEASE_NAME, exclude_holder_id ?? null],
     );
     await db.query(
       `UPDATE billing_authority_commands
@@ -531,6 +715,9 @@ export async function requestBillingAuthorityDrain(): Promise<void> {
 
 export async function reconcileExpiredBillingAuthorityLease(): Promise<boolean> {
   return await withTransaction(async (db) => {
+    await db.query("SELECT pg_advisory_xact_lock($1)", [
+      BILLING_AUTHORITY_EXECUTION_LOCK,
+    ]);
     const { rows } = await db.query<LeaseRow>(
       `SELECT holder_id, generation, lease_until, enabled, draining,
               (holder_id IS NOT NULL
@@ -553,7 +740,7 @@ export async function reconcileExpiredBillingAuthorityLease(): Promise<boolean> 
     );
     const released = await db.query(
       `UPDATE billing_authority_lease
-          SET holder_id=NULL, lease_until=NULL, draining=FALSE,
+        SET holder_id=NULL, lease_until=NULL, draining=FALSE, serving=FALSE,
               updated_at=clock_timestamp()
         WHERE name=$1 AND holder_id IS NOT NULL`,
       [LEASE_NAME],
@@ -574,19 +761,39 @@ export async function resumeBillingAuthorityGlobally(): Promise<void> {
 }
 
 export async function releaseBillingAuthorityLease(
-  identity: LeaseIdentity,
+  identity: BillingAuthorityLeaseIdentity,
+  db: Queryable = getPool(),
 ): Promise<void> {
-  await getPool().query(
+  await db.query(
     `UPDATE billing_authority_lease
-        SET holder_id=NULL, lease_until=NULL, draining=FALSE,
+        SET holder_id=NULL, lease_until=NULL, draining=FALSE, serving=FALSE,
             updated_at=clock_timestamp()
       WHERE name=$1 AND holder_id=$2 AND generation=$3`,
     [LEASE_NAME, identity.instance_id, identity.generation],
   );
 }
 
+export async function beginBillingAuthorityCommandExecution({
+  identity,
+  db,
+}: {
+  identity: BillingAuthorityLeaseIdentity;
+  db: Queryable;
+}): Promise<void> {
+  await db.query("BEGIN");
+  try {
+    await db.query("SELECT pg_advisory_xact_lock($1)", [
+      BILLING_AUTHORITY_EXECUTION_LOCK,
+    ]);
+    await assertBillingAuthorityLease(identity, db);
+  } catch (err) {
+    await db.query("ROLLBACK").catch(() => undefined);
+    throw err;
+  }
+}
+
 export async function claimNextBillingAuthorityCommand(
-  identity: LeaseIdentity,
+  identity: BillingAuthorityLeaseIdentity,
 ): Promise<
   | { record: BillingAuthorityCommandRecord; command: BillingAuthorityCommand }
   | undefined
@@ -614,7 +821,7 @@ export async function claimNextBillingAuthorityCommand(
     for (let skipped = 0; skipped < 8; skipped += 1) {
       const { rows } = await db.query<CommandRow>(
         `SELECT * FROM billing_authority_commands
-          WHERE status='queued'
+          WHERE status='queued' AND expires_at > clock_timestamp()
           ORDER BY CASE lane WHEN 'critical' THEN 0
                              WHEN 'interactive' THEN 1 ELSE 2 END,
                    created_at, command_id
@@ -623,16 +830,22 @@ export async function claimNextBillingAuthorityCommand(
       );
       const row = rows[0];
       if (!row) return undefined;
-      if (
-        row.account_id &&
-        !billingAuthorityCommandAllowedWhenFrozen(row.command)
-      ) {
-        const { rows: fences } = await db.query<{ frozen: boolean }>(
-          `SELECT frozen FROM billing_authority_account_fences
-            WHERE account_id=$1`,
-          [row.account_id],
+      const governedAccountIds = (row.account_ids ?? [row.account_id])
+        .filter((id): id is string => !!id)
+        .filter(
+          (id) =>
+            !billingAuthorityAccountsAllowedWhenFrozen(row.command).includes(
+              id,
+            ),
         );
-        if (fences[0]?.frozen) {
+      if (governedAccountIds.length > 0) {
+        const { rows: fences } = await db.query<{ account_id: string }>(
+          `SELECT account_id FROM billing_authority_account_fences
+            WHERE account_id=ANY($1::UUID[]) AND frozen
+            LIMIT 1`,
+          [governedAccountIds],
+        );
+        if (fences[0]) {
           await db.query(
             `UPDATE billing_authority_commands
                 SET status='canceled', finished_at=clock_timestamp(),
@@ -652,6 +865,7 @@ export async function claimNextBillingAuthorityCommand(
                 authority_generation=$2, authority_instance_id=$3,
                 started_at=clock_timestamp(), updated_at=clock_timestamp()
           WHERE command_id=$1 AND status='queued'
+            AND expires_at > clock_timestamp()
           RETURNING *`,
         [row.command_id, identity.generation, identity.instance_id],
       );
@@ -667,14 +881,19 @@ export async function claimNextBillingAuthorityCommand(
 }
 
 export async function finishBillingAuthorityCommand({
+  db = getPool(),
   ...identity
-}: LeaseIdentity & {
+}: BillingAuthorityLeaseIdentity & {
   command_id: string;
   result?: unknown;
   error?: BillingAuthorityError;
+  status?: "succeeded" | "failed" | "uncertain";
+  db?: Queryable;
 }): Promise<void> {
-  const succeeded = identity.error == null;
-  const { rowCount } = await getPool().query(
+  const status =
+    identity.status ?? (identity.error == null ? "succeeded" : "failed");
+  const succeeded = status === "succeeded";
+  const { rowCount } = await db.query(
     `UPDATE billing_authority_commands
         SET status=$4, result=$5::JSONB, error=$6::JSONB,
             finished_at=clock_timestamp(), updated_at=clock_timestamp()
@@ -689,7 +908,7 @@ export async function finishBillingAuthorityCommand({
       identity.command_id,
       identity.instance_id,
       identity.generation,
-      succeeded ? "succeeded" : "failed",
+      status,
       succeeded ? JSON.stringify(identity.result ?? null) : null,
       succeeded ? null : JSON.stringify(identity.error),
       LEASE_NAME,
@@ -708,7 +927,7 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
     { rows: running },
   ] = await Promise.all([
     getPool().query<LeaseRow>(
-      `SELECT holder_id, generation, lease_until, enabled, draining,
+      `SELECT holder_id, generation, lease_until, enabled, draining, serving,
                 (holder_id IS NOT NULL
                  AND lease_until > clock_timestamp()) AS lease_valid
            FROM billing_authority_lease WHERE name=$1`,
@@ -745,9 +964,10 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
     terminals.map(({ status, count }) => [status, Number(count)]),
   );
   const enabled = lease?.enabled ?? true;
-  const ready = !!lease?.lease_valid && enabled && !lease.draining;
+  const serving = !!lease?.lease_valid && lease.serving === true;
+  const ready = serving && enabled && !lease.draining;
   return {
-    ...(lease?.holder_id ? { instance_id: lease.holder_id } : {}),
+    ...(serving && lease?.holder_id ? { instance_id: lease.holder_id } : {}),
     ...(lease ? { generation: lease.generation } : {}),
     ...(iso(lease?.lease_until)
       ? { lease_until: iso(lease?.lease_until) }
@@ -755,7 +975,7 @@ export async function getBillingAuthorityHealth(): Promise<BillingAuthorityHealt
     ready,
     enabled,
     draining: !enabled || (lease?.draining ?? false),
-    ...(running[0]?.command_id
+    ...(serving && running[0]?.command_id
       ? { active_command_id: running[0].command_id }
       : {}),
     queue_depth,
@@ -769,7 +989,8 @@ export async function pruneBillingAuthorityCommands(): Promise<number> {
     await db.query(
       `UPDATE billing_authority_commands
           SET command=jsonb_build_object('redacted', TRUE),
-              result=NULL
+              result=CASE WHEN operation='stripe-webhook'
+                          THEN result ELSE NULL END
         WHERE finished_at < clock_timestamp() - $1::INTERVAL
           AND (command IS DISTINCT FROM jsonb_build_object('redacted', TRUE)
                OR result IS NOT NULL)

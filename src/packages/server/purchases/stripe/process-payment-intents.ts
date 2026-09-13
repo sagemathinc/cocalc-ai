@@ -1,4 +1,5 @@
 import getConn from "@cocalc/server/stripe/connection";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import {
   getStripeCustomerId,
   getAccountIdFromStripeCustomerId,
@@ -887,6 +888,8 @@ customer.  So we don't know what to do with this.  Please manually investigate.
       return;
     }
   }
+
+  await registerBillingAuthorityAccount(account_id);
 
   expectedCustomerId = await getStripeCustomerId({
     account_id,

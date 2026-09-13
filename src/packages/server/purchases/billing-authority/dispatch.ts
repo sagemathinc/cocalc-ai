@@ -55,6 +55,7 @@ import syncPaidInvoices from "@cocalc/server/purchases/sync-paid-invoices";
 import { reconcileLegacyPaymentIntentCredit } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
 import adminCreateMembershipPackagePurchase from "@cocalc/server/purchases/admin-membership-package";
+import { adminProvisionSiteLicense } from "@cocalc/server/membership/site-licenses";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
 
 import type {
@@ -166,6 +167,8 @@ async function dispatchAccountLocal(
   switch (operation) {
     case "admin-create-membership-package-purchase":
       return await adminCreateMembershipPackagePurchase(input as any);
+    case "admin-provision-site-license":
+      return await adminProvisionSiteLicense(input as any);
     case "legacy-apply-financial-home-bay":
       return await legacyMigration.applyFinancialMigrationHomeBay(input as any);
     case "legacy-apply-financial-migration":
@@ -194,7 +197,7 @@ async function dispatchMaintenance(
     case "payment-intents":
       return await maintainPaymentIntents({ max_payment_intents: 1 });
     case "statements":
-      return await maintainStatements({ max_emails: 1 });
+      return await maintainStatements({ max_emails: 1, max_statements: 1 });
     case "subscriptions":
       return await maintainSubscriptions({
         max_notifications: 1,

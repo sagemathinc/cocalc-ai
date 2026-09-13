@@ -248,7 +248,6 @@ import createProject, {
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   addSiteLicensePool,
-  adminProvisionSiteLicense,
   archiveSiteLicensePool,
   assignSiteLicensePoolSeat,
   cancelSiteLicensePoolRequest,
@@ -1365,7 +1364,11 @@ async function startAccountLocalService(): Promise<void> {
       }),
     adminProvisionSiteLicense: async (opts) =>
       isSeedSiteLicenseBay()
-        ? await adminProvisionSiteLicense({ ...opts, trusted_admin: true })
+        ? await executeBillingAuthorityCommand({
+            kind: "account-local",
+            operation: "admin-provision-site-license",
+            input: { ...opts, trusted_admin: true },
+          })
         : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
     adminCreateMembershipPackagePurchase: async (opts) =>
       await executeBillingAuthorityCommand({

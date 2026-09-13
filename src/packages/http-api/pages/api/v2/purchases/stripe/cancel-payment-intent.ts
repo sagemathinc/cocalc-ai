@@ -3,7 +3,10 @@ An admin can cancel anybody's payment intent, whereas a user can only cancel the
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
@@ -14,7 +17,10 @@ export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...billingAuthorityErrorAttrs(err),
+    });
     return;
   }
 }
@@ -34,7 +40,7 @@ async function get(req) {
   const { id, reason } = getParams(req);
   const owner_id = await executeBillingHttpCommand<string>(
     "get-payment-intent-account-id",
-    { id },
+    { id, actor_account_id: account_id },
   );
   if (owner_id != account_id) {
     if (!(await userIsInGroup(account_id, "admin"))) {
@@ -51,6 +57,8 @@ async function get(req) {
   await executeBillingHttpCommand("cancel-payment-intent", {
     id,
     reason,
+    actor_account_id: account_id,
+    target_account_id: owner_id,
     ...(owner_id === account_id ? { expected_account_id: account_id } : {}),
   });
   return { success: true };

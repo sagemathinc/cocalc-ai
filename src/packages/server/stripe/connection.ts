@@ -16,7 +16,10 @@ and if so will return new stripe object.
 
 import Stripe from "stripe";
 import { getServerSettings } from "@cocalc/database/settings";
-import { assertStripeMutationAuthorized } from "@cocalc/server/purchases/billing-authority/context";
+import {
+  beginStripeMutation,
+  finishStripeMutation,
+} from "@cocalc/server/purchases/billing-authority/context";
 
 // See https://stripe.com/docs/api/versioning
 const apiVersion = "2026-04-22.dahlia";
@@ -41,7 +44,34 @@ export function createAuthorityGuardedStripeHttpClient(
     ) => {
       const [, , path, method] = args;
       if (!["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) {
-        await assertStripeMutationAuthorized({ method, path });
+        const headers = (args[4] ?? {}) as Exclude<(typeof args)[4], undefined>;
+        args[4] = headers;
+        const existingHeader = Object.keys(headers).find(
+          (name) => name.toLowerCase() === "idempotency-key",
+        );
+        const key = await beginStripeMutation({
+          method,
+          path,
+          body: `${args[5] ?? ""}`,
+          existing_key: existingHeader
+            ? `${headers[existingHeader] ?? ""}`
+            : undefined,
+        });
+        if (existingHeader && existingHeader !== "Idempotency-Key") {
+          delete headers[existingHeader];
+        }
+        headers["Idempotency-Key"] = key;
+        try {
+          const response = await delegate.makeRequest(...args);
+          finishStripeMutation({
+            key,
+            status: response.getStatusCode?.(),
+          });
+          return response;
+        } catch (err) {
+          finishStripeMutation({ key, ambiguous: true });
+          throw err;
+        }
       }
       return await delegate.makeRequest(...args);
     },

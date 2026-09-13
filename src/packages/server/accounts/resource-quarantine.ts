@@ -13,6 +13,7 @@ import {
   executeBillingAuthorityCommand,
   setBillingAccountFrozen,
 } from "@cocalc/server/purchases/billing-authority/client";
+import type { BillingAuthorityFenceCause } from "@cocalc/server/purchases/billing-authority/protocol";
 import type { ProjectRuntimeSlotReportSlot } from "@cocalc/conat/hub/api/system";
 import { recordAccountResourceQuarantineAuditEvent } from "./resource-quarantine-audit";
 
@@ -329,21 +330,30 @@ export async function quarantineAccountBillingResourcesLocal({
   actor_account_id,
   reason,
   home_bay_id,
+  fence_cause = "quarantine",
 }: {
   account_id: string;
   actor_account_id?: string | null;
   reason?: string | null;
   home_bay_id: string;
+  fence_cause?: BillingAuthorityFenceCause;
 }): Promise<AccountResourceQuarantineResult> {
   const normalizedReason =
     normalizeReason(reason) || "admin billing/resource quarantine";
   const errors: string[] = [];
 
-  await setBillingAccountFrozen({
-    account_id,
-    frozen: true,
-    reason: normalizedReason,
-    actor_account_id: actor_account_id ?? undefined,
+  await attempt({
+    errors,
+    label: "freeze account billing",
+    fallback: undefined,
+    fn: async () =>
+      await setBillingAccountFrozen({
+        account_id,
+        frozen: true,
+        cause: fence_cause,
+        reason: normalizedReason,
+        actor_account_id: actor_account_id ?? undefined,
+      }),
   });
 
   const automaticBilling = await disableAutomaticBillingState(account_id);

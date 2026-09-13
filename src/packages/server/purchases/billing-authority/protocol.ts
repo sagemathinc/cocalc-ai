@@ -41,6 +41,7 @@ export type BillingAuthorityMaintenanceTask =
 
 export type BillingAuthorityAccountLocalOperation =
   | "admin-create-membership-package-purchase"
+  | "admin-provision-site-license"
   | "legacy-apply-financial-home-bay"
   | "legacy-apply-financial-migration"
   | "legacy-configure-financial-renewal-home-bay"
@@ -121,11 +122,20 @@ export interface BillingAuthoritySubmitRequest {
   deduplicate_for_ms?: number;
 }
 
+export type BillingAuthorityFenceCause =
+  | "ban"
+  | "deletion"
+  | "incident-response"
+  | "operator"
+  | "quarantine";
+
 export interface BillingAuthorityCommandRecord {
   command_id: string;
   operation: string;
   lane: BillingAuthorityLane;
   account_id?: string;
+  account_ids?: string[];
+  actor_account_id?: string;
   status: BillingAuthorityCommandStatus;
   result?: unknown;
   error?: BillingAuthorityError;
@@ -158,12 +168,14 @@ export type BillingAuthorityTransportRequest =
   | {
       action: "freeze-account";
       account_id: string;
+      cause: BillingAuthorityFenceCause;
       reason: string;
       actor_account_id?: string;
     }
   | {
       action: "unfreeze-account";
       account_id: string;
+      cause: BillingAuthorityFenceCause;
       reason: string;
       actor_account_id?: string;
     }
@@ -224,61 +236,149 @@ function stringField(
   return undefined;
 }
 
-export function billingAuthorityAccountId(
+function stringFields(value: unknown, names: readonly string[]): string[] {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return [];
+  }
+  const record = value as Record<string, unknown>;
+  return names
+    .map((name) => `${record[name] ?? ""}`.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function metadata(value: unknown): unknown {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return (value as Record<string, unknown>).metadata;
+}
+
+function unique(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => !!value))];
+}
+
+export function billingAuthorityActorAccountId(
   command: BillingAuthorityCommand,
 ): string | undefined {
+  switch (command.kind) {
+    case "http":
+    case "account-local":
+      return (
+        stringField(command.input, ["admin_account_id", "actor_account_id"]) ??
+        stringField(metadata(command.input), [
+          "admin_account_id",
+          "actor_account_id",
+        ])
+      );
+    case "hub-api":
+      return stringField(command.call, ["account_id"]);
+    case "commercial-seed":
+      return command.request.actor_account_id.trim().toLowerCase();
+    default:
+      return undefined;
+  }
+}
+
+export function billingAuthorityAccountIds(
+  command: BillingAuthorityCommand,
+): string[] {
+  const values: Array<string | undefined> = [];
   switch (command.kind) {
     case "account-stripe-cleanup":
     case "cancel-usage-subscription":
     case "quarantine-account-stripe-cleanup":
     case "quarantine-stripe-resources":
-      return command.account_id;
+      values.push(command.account_id);
+      break;
     case "reconcile-legacy-credit":
-      return command.source.kind === "paid-invoices"
-        ? command.source.account_id
-        : undefined;
+      if (command.source.kind === "paid-invoices") {
+        values.push(command.source.account_id);
+      }
+      break;
     case "http":
-      return stringField(command.input, [
-        "user_account_id",
-        "customer_account_id",
-        "owner_account_id",
-        "account_id",
-      ]);
     case "account-local":
-      return stringField(command.input, [
-        "user_account_id",
-        "customer_account_id",
-        "owner_account_id",
-        "account_id",
-      ]);
-    case "hub-api": {
-      const explicit = stringField(command.call, ["account_id"]);
-      return (
-        stringField(command.call.args[0], [
+      values.push(
+        ...stringFields(command.input, [
           "user_account_id",
           "customer_account_id",
           "owner_account_id",
           "target_account_id",
           "account_id",
-        ]) ?? explicit
+        ]),
+        ...stringFields(metadata(command.input), [
+          "account_id",
+          "user_account_id",
+          "admin_account_id",
+          "actor_account_id",
+        ]),
       );
-    }
+      break;
+    case "hub-api":
+      values.push(
+        ...stringFields(command.call.args[0], [
+          "user_account_id",
+          "customer_account_id",
+          "owner_account_id",
+          "target_account_id",
+          "account_id",
+        ]),
+      );
+      break;
     case "commercial-seed":
-      return stringField(command.request.payload, [
-        "user_account_id",
-        "customer_account_id",
-        "owner_account_id",
-        "account_id",
-      ]);
+      values.push(
+        ...stringFields(command.request.payload, [
+          "user_account_id",
+          "customer_account_id",
+          "owner_account_id",
+          "account_id",
+        ]),
+      );
+      break;
     case "stripe-webhook": {
-      const event = command.event as any;
-      return stringField(event?.data?.object?.metadata, [
-        "account_id",
-        "user_account_id",
-      ]);
+      const object = (command.event as any)?.data?.object;
+      const metadataSources = [
+        object?.metadata,
+        object?.parent?.invoice_details?.metadata,
+        object?.parent?.subscription_details?.metadata,
+        object?.subscription_details?.metadata,
+        ...(Array.isArray(object?.lines?.data)
+          ? object.lines.data.map((line: unknown) => metadata(line))
+          : []),
+      ];
+      for (const source of metadataSources) {
+        values.push(
+          ...stringFields(source, [
+            "account_id",
+            "user_account_id",
+            "admin_account_id",
+            "actor_account_id",
+          ]),
+        );
+      }
+      break;
     }
+  }
+  values.push(billingAuthorityActorAccountId(command));
+  return unique(values);
+}
+
+export function billingAuthorityAccountId(
+  command: BillingAuthorityCommand,
+): string | undefined {
+  return billingAuthorityAccountIds(command)[0];
+}
+
+export function billingAuthorityAccountsAllowedWhenFrozen(
+  command: BillingAuthorityCommand,
+): string[] {
+  switch (command.kind) {
+    case "account-stripe-cleanup":
+    case "cancel-usage-subscription":
+    case "quarantine-account-stripe-cleanup":
+    case "quarantine-stripe-resources":
+      return [command.account_id];
     default:
-      return undefined;
+      return [];
   }
 }
 

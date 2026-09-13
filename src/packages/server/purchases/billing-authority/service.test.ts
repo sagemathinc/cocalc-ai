@@ -23,8 +23,13 @@ import {
 } from "./service";
 
 const INSTANCE_ID = "11111111-1111-4111-8111-111111111111";
+const originalAuthorityEnabled = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
 
 describe("billing authority service boundary", () => {
+  beforeEach(() => {
+    process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+  });
+
   afterEach(() => {
     Object.assign(__test__.runtime, {
       lease: undefined,
@@ -33,6 +38,14 @@ describe("billing authority service boundary", () => {
       stopping: false,
       active_command_id: undefined,
     });
+  });
+
+  afterAll(() => {
+    if (originalAuthorityEnabled == null) {
+      delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    } else {
+      process.env.COCALC_BILLING_AUTHORITY_ENABLED = originalAuthorityEnabled;
+    }
   });
 
   it("accepts only explicit operation unions", () => {
@@ -122,5 +135,34 @@ describe("billing authority service boundary", () => {
     expect(calls).toEqual([1]);
     expect(__test__.runtime.stopping).toBe(true);
     expect(__test__.runtime.local_deadline_ms).toBe(0);
+  });
+
+  it("marks provider ambiguity and post-provider failures uncertain", () => {
+    expect(
+      __test__.classifyCommandOutcome({
+        provider: { successful: false, ambiguous: true },
+      }),
+    ).toMatchObject({
+      status: "uncertain",
+      error: { code: "stripe_mutation_outcome_ambiguous" },
+    });
+    expect(
+      __test__.classifyCommandOutcome({
+        error: { message: "local commit failed" },
+        provider: { successful: true, ambiguous: false },
+      }),
+    ).toEqual({
+      status: "uncertain",
+      error: { message: "local commit failed" },
+    });
+    expect(
+      __test__.classifyCommandOutcome({
+        error: { message: "card declined" },
+        provider: { successful: false, ambiguous: false },
+      }),
+    ).toEqual({
+      status: "failed",
+      error: { message: "card declined" },
+    });
   });
 });
