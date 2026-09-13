@@ -276,7 +276,7 @@ export async function getVolumePersonalFunding(
 ) {
   const payer = fundingId(opts.account_id, "Account");
   await assertFundingPayerHomeBay(payer);
-  await ownedVolume(payer, opts.volume_id);
+  fundingId(opts.volume_id, "Volume");
   const {
     rows: [row],
   } = await getPool().query<ConsentRow>(
@@ -392,8 +392,11 @@ export async function clearVolumePersonalFunding(
   const payer = fundingId(opts.account_id, "Account");
   await assertFundingPayerHomeBay(payer);
   fundingId(opts.operation_id, "Operation");
+  fundingId(opts.volume_id, "Volume");
   return withFundingAccountTransaction(payer, async (db) => {
-    await ownedVolume(payer, opts.volume_id, db);
+    // Revoking a payer's own consent must also work after account rehome.
+    // Resource enforcement consults this authority; cancellation releases no
+    // storage backing and never deletes a disk here.
     const {
       rows: [row],
     } = await db.query<ConsentRow>(

@@ -18,6 +18,21 @@ before financial work; normal metering remains nonblocking. PostgreSQL checks
 cover eventual acquisition, persistent contention, and callback-at-most-once
 behavior. A fresh unattended live run is still required.
 
+The instructor and student budget surfaces now also have actual Chromium 200%
+zoom checks in light and dark mode, with keyboard interaction and scoped axe
+audits. The student totals fit without horizontal overflow; the instructor
+table remains keyboard-scrollable. This does not extend the claim to every
+application page or browser.
+
+Reading and withdrawing an existing personal consent now depend on its payer's
+financial authority, not a local VM/disk row. Three-bay PostgreSQL/Conat tests
+move the student's account after handoff, keep the resources in their original
+bay, cancel from the new payer bay, preserve outstanding cleanup backing, and
+verify that VM and attached-disk service checks reject the cancelled consent.
+The local VM path retains its immediate stop; remote enforcement observes the
+authoritative cancellation on its normal sweep. New personal approvals and
+handoffs after the student moves away from the resource bay remain incomplete.
+
 The course budget tab, allocation preview and approval-intent APIs, student
 funding selection, VM admission/billing integration, and separate financial
 approval service are implemented on this branch. Focused tests exercise these

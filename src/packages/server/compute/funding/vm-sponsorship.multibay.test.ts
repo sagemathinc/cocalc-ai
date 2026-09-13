@@ -39,6 +39,8 @@ import {
 import {
   switchVmPersonalFunding,
   processVmPersonalFundingHandoffs,
+  getVmPersonalFunding,
+  clearVmPersonalFunding,
 } from "./vm-personal";
 import { withFundingAccountTransaction } from "./backing";
 import { createCourseFundingPoolInTransaction } from "./pools";
@@ -541,7 +543,7 @@ describePg(
               f.vm.id,
               randomUUID(),
               terms,
-              { home_volumes: homeReview },
+              { home_volumes: homeReview, owning_bay_id: resourceBay },
             ],
           );
           const opts = {
@@ -648,6 +650,54 @@ describePg(
             expect(oldVolume.meter.transferred_at).toBe(
               newVolume.meter.running_started_at,
             );
+          }
+          await rehomeAccountOnHomeBay({
+            account_id: f.student,
+            target_account_id: f.student,
+            dest_bay_id: courseBay,
+          });
+          expect(mockHomes.get(f.student)).toBe(courseBay);
+          expect(
+            await row(
+              courseBay,
+              "SELECT count(*)::int AS n FROM compute_vms WHERE id=$1",
+              [vm.id],
+            ),
+          ).toEqual({ n: 0 });
+          const consent = await onBay(courseBay, () =>
+            getVmPersonalFunding({ account_id: f.student, vm_id: vm.id }),
+          );
+          expect(consent!.state).toBe("active");
+          const cancel = {
+            account_id: f.student,
+            vm_id: vm.id,
+            consent_id: consentId,
+            expected_version: consent!.version,
+            operation_id: randomUUID(),
+          };
+          const cancelled = await onBay(courseBay, () =>
+            clearVmPersonalFunding(cancel),
+          );
+          expect(cancelled.state).toBe("cancelled");
+          expect(cancelled.committed_usd).toBe(consent!.committed_usd);
+          expect(
+            await onBay(courseBay, () => clearVmPersonalFunding(cancel)),
+          ).toEqual(cancelled);
+          await expect(
+            requireCourseVmService((await getComputeVmById(vm.id))!, true),
+          ).rejects.toThrow(/authorization ended/);
+          await expect(
+            onBay(courseBay, () =>
+              clearVmPersonalFunding({ ...cancel, account_id: f.payer }),
+            ),
+          ).rejects.toThrow();
+          if (volumeId) {
+            await expect(
+              requireCourseVolumeService(
+                (await getComputeVolumeById(volumeId))!,
+                true,
+              ),
+            ).rejects.toThrow(/authorization ended/);
           }
         });
       },

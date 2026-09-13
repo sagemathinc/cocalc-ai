@@ -598,6 +598,41 @@ it("funds detached storage after VM deletion through proposal, approval, one cut
   ).toBe(0);
 });
 
+it("reads and withdraws personal storage consent without requiring a local resource row", async () => {
+  const f = await standaloneVolumeConsent();
+  const request = await approveStandalone(f);
+  const applied = await switchVolumePersonalFunding(request);
+  await getPool().query(
+    "UPDATE compute_volumes SET owning_bay_id='remote-resource-bay' WHERE id=$1",
+    [f.volumeId],
+  );
+  const before = await getComputeVolumeById(f.volumeId);
+  const read = await getVolumePersonalFunding({
+    account_id: f.student,
+    volume_id: f.volumeId,
+  });
+  expect(read).toEqual(applied);
+  const cancel = {
+    ...request,
+    expected_version: applied.version,
+    operation_id: randomUUID(),
+  };
+  const result = await clearVolumePersonalFunding(cancel);
+  expect(result.state).toBe("cancelled");
+  expect(result.committed_usd).toBe(applied.committed_usd);
+  expect(await clearVolumePersonalFunding(cancel)).toEqual(result);
+  expect(await getComputeVolumeById(f.volumeId)).toEqual(before);
+  expect(
+    await getVolumePersonalFunding({
+      account_id: f.payer,
+      volume_id: f.volumeId,
+    }),
+  ).toBeNull();
+  await expect(
+    clearVolumePersonalFunding({ ...cancel, account_id: f.payer }),
+  ).rejects.toThrow("Storage consent not found");
+});
+
 it.each(["attachment", "size", "epoch", "deletion"])(
   "rejects a changed standalone storage approval: %s",
   async (change) => {

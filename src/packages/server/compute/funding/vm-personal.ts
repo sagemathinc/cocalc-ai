@@ -610,7 +610,7 @@ export async function getVmPersonalFunding(
 ): Promise<VmPersonalFundingConsent | null> {
   const payer = account(opts);
   await assertFundingPayerHomeBay(payer);
-  await ownedVm(payer, opts.vm_id);
+  fundingId(opts.vm_id, "VM");
   const {
     rows: [row],
   } = await getPool().query<ConsentRow>(
@@ -628,8 +628,17 @@ export async function clearVmPersonalFunding(
   await assertFundingPayerHomeBay(payer);
   fundingId(opts.operation_id, "Operation");
   fundingId(opts.consent_id, "Consent");
+  fundingId(opts.vm_id, "VM");
   return withFundingAccountTransaction(payer, async (db) => {
-    const vm = await ownedVm(payer, opts.vm_id, db);
+    // Consent follows the payer on rehome; the VM stays at its owning bay.
+    // Preserve the immediate local stop without making withdrawal depend on
+    // resource locality. A remote meter sees the authoritative cancellation
+    // and refuses further service; existing cleanup liabilities remain held.
+    const { rows: local } = await db.query(
+      "SELECT id FROM compute_vms WHERE id=$1 AND owner_account_id=$2 AND owning_bay_id=$3",
+      [opts.vm_id, payer, getConfiguredBayId()],
+    );
+    const vm = local.length ? await ownedVm(payer, opts.vm_id, db) : undefined;
     const {
       rows: [row],
     } = await db.query<ConsentRow>(
@@ -640,7 +649,7 @@ export async function clearVmPersonalFunding(
     if (row.cleared_operation_id === opts.operation_id) return view(row);
     if (row.version !== opts.expected_version)
       fundingConflict("Personal funding consent changed.");
-    if (["active", "preparing"].includes(row.state))
+    if (vm && ["active", "preparing"].includes(row.state))
       await enqueuePersonalTransition(
         db,
         row.vm_id,
