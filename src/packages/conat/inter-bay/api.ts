@@ -4228,6 +4228,9 @@ export interface InterBayAccountDirectoryApi {
 }
 
 export interface InterBayComputeFundingApi {
+  computeFundingReceiveResourceNotice: (
+    opts: import("@cocalc/util/compute-notifications").ComputeResourceNotice,
+  ) => Promise<void>;
   computeFundingGetOwnedPools: (opts: {
     account_id: string;
   }) => Promise<
@@ -8130,6 +8133,8 @@ export function createInterBayAccountLocalClient({
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
       await computeFundingClient.computeFundingGetOwnedPools(opts),
+    computeFundingReceiveResourceNotice: (opts) =>
+      computeFundingClient.computeFundingReceiveResourceNotice(opts),
     computeFundingGetCourseVmRecommendations: (opts) =>
       computeFundingClient.computeFundingGetCourseVmRecommendations(opts),
     computeFundingSetCourseVmRecommendations: (opts) =>
@@ -8627,6 +8632,8 @@ export function createInterBayAccountLocalHandler({
           await impl.computeFundingGetCourseSummary(opts),
         computeFundingGetOwnedPools: async (opts) =>
           await impl.computeFundingGetOwnedPools(opts),
+        computeFundingReceiveResourceNotice: (opts) =>
+          impl.computeFundingReceiveResourceNotice(opts),
         computeFundingGetCourseVmRecommendations: (opts) =>
           impl.computeFundingGetCourseVmRecommendations(opts),
         computeFundingSetCourseVmRecommendations: (opts) =>

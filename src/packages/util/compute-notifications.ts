@@ -6,6 +6,18 @@ export const LOW_COURSE_CREDIT_THRESHOLD_USD =
   "low_course_credit_threshold_usd";
 export const DEFAULT_LOW_CREDIT_THRESHOLD_USD = 10;
 
+// Private bay-service transport, not a public account mutation.
+export interface ComputeResourceNotice {
+  id: string;
+  account_id: string;
+  resource_id: string;
+  resource_kind: "vm" | "volume";
+  resource_name: string;
+  action: "stop" | "delete";
+  phase: "requested" | "completed";
+  observed_at: string;
+}
+
 export function lowCreditThreshold(
   settings: Record<string, unknown> | null | undefined,
   source: "personal" | "course" = "personal",

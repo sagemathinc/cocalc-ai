@@ -14,6 +14,7 @@ import * as funding from "./funding/vm-funding";
 import { recoverTerminalCourseVmFunding } from "./funding/vm-worker-recovery";
 import { recoverTerminalCourseVolumeFunding } from "./funding/volume-recovery";
 import { finalizeSettledCourseFundingPools } from "./funding/pool-lifecycle-worker";
+import { deliverComputeResourceNotices } from "./funding/resource-notices";
 import { processVmPersonalFundingHandoffs } from "./funding/vm-personal";
 import { enqueueScheduledComputeStops } from "./scheduled-stop";
 import { getComputeVmConfig } from "./config";
@@ -46,6 +47,9 @@ jest.mock("./funding/vm-personal", () => ({
 }));
 jest.mock("./funding/pool-lifecycle-worker", () => ({
   finalizeSettledCourseFundingPools: jest.fn(async () => {}),
+}));
+jest.mock("./funding/resource-notices", () => ({
+  deliverComputeResourceNotices: jest.fn(async () => {}),
 }));
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -89,6 +93,7 @@ beforeEach(() => {
   jest.mocked(recoverTerminalCourseVolumeFunding).mockResolvedValue(undefined);
   jest.mocked(processVmPersonalFundingHandoffs).mockResolvedValue(undefined);
   jest.mocked(finalizeSettledCourseFundingPools).mockResolvedValue(0);
+  jest.mocked(deliverComputeResourceNotices).mockResolvedValue(undefined);
   jest.mocked(enqueueScheduledComputeStops).mockResolvedValue(0);
   jest.mocked(db.listComputeVmsForBillingEnforcement).mockResolvedValue([]);
   jest.mocked(db.listComputeVmsForEgressMetering).mockResolvedValue([]);
@@ -148,6 +153,7 @@ it("claims queued cleanup while funding is pending and never overlaps the pendin
   try {
     await jest.advanceTimersByTimeAsync(2_000);
     expect(funding.enforceCourseVmFunding).toHaveBeenCalledTimes(1);
+    expect(deliverComputeResourceNotices).toHaveBeenCalled();
     const claims = jest.mocked(db.claimComputeWork).mock.calls.length;
     let deleting = {
       ...pendingVm(),

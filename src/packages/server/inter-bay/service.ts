@@ -1114,6 +1114,10 @@ async function startAccountLocalService(): Promise<void> {
     creditTransferDeliver,
     computeFundingGetCourseSummary: computeFunding.getCourseSummary,
     computeFundingGetOwnedPools: computeFunding.getOwnedPools,
+    computeFundingReceiveResourceNotice: async (opts) =>
+      await (
+        await import("@cocalc/server/notifications/compute-resource")
+      ).receiveComputeResourceNotice(opts),
     computeFundingGetCourseVmRecommendations:
       getCourseVmRecommendationsOnOwningBay,
     computeFundingSetCourseVmRecommendations:

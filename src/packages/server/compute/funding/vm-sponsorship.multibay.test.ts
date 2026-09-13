@@ -22,6 +22,8 @@ import {
 } from "@cocalc/server/accounts/rehome";
 import { activateAccountFinancialState } from "@cocalc/server/accounts/financial-rehome";
 import { ensureCourseCreditNoticeSchema } from "@cocalc/server/notifications/course-credit-state";
+import { receiveComputeResourceNotice } from "@cocalc/server/notifications/compute-resource";
+import type { ComputeResourceNotice } from "@cocalc/util/compute-notifications";
 import getSpendableBalance, {
   getAccountFundingHolds,
 } from "@cocalc/server/purchases/get-spendable-balance";
@@ -199,6 +201,9 @@ describePg(
               method: "compute-funding",
             }),
             impl: {
+              computeFundingReceiveResourceNotice: (
+                opts: ComputeResourceNotice,
+              ) => onBay(bay, () => receiveComputeResourceNotice(opts)),
               reserveComputeVmFunding: (opts: ReserveComputeVmFundingRequest) =>
                 onBay(bay, async () => {
                   calls.push({ bay, method: "reserve" });
@@ -653,6 +658,19 @@ describePg(
             );
           }
           await ensureCourseCreditNoticeSchema();
+          const resourceNotice: ComputeResourceNotice = {
+            id: randomUUID(),
+            account_id: f.student,
+            resource_id: vm.id,
+            resource_kind: "vm",
+            resource_name: "Student VM",
+            action: "stop",
+            phase: "requested",
+            observed_at: new Date().toISOString(),
+          };
+          await remote(resourceBay).computeFundingReceiveResourceNotice(
+            resourceNotice,
+          );
           const reminderId = randomUUID();
           const reminderGrant = randomUUID();
           await row(
@@ -668,6 +686,31 @@ describePg(
             dest_bay_id: courseBay,
           });
           expect(mockHomes.get(f.student)).toBe(courseBay);
+          await remote(courseBay).computeFundingReceiveResourceNotice(
+            resourceNotice,
+          );
+          expect(
+            await row(
+              courseBay,
+              "SELECT count(*)::int AS n FROM notification_targets WHERE event_id=$1 AND target_account_id=$2",
+              [resourceNotice.id, f.student],
+            ),
+          ).toEqual({ n: 1 });
+          const completedNotice = {
+            ...resourceNotice,
+            id: randomUUID(),
+            phase: "completed" as const,
+          };
+          await remote(courseBay).computeFundingReceiveResourceNotice(
+            completedNotice,
+          );
+          expect(
+            await row(
+              courseBay,
+              "SELECT count(*)::int AS n FROM notification_targets WHERE event_id=$1 AND target_account_id=$2",
+              [completedNotice.id, f.student],
+            ),
+          ).toEqual({ n: 1 });
           expect(
             await row(
               courseBay,

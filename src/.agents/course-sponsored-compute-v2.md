@@ -38,8 +38,18 @@ durable notifications. Unknown/stale balances do not fabricate alerts. Crossing
 state follows financial rehome; concurrent-worker and three-bay PostgreSQL tests
 pass. Browser checks verify keyboard controls, reload persistence and reflow at
 320/720/1440 pixels in light/dark themes. Narrow desktop settings now use the
-existing compact navigation. Essential resource-stop/deletion notices remain a
-separate incomplete requirement. Expired pools now automatically close and return
+existing compact navigation. Resource-stop/deletion notices now use the durable
+compute work queue, deliver at the owner's current account home, and distinguish
+requests from physically confirmed completion. Failed or superseded no-op work
+is not labeled completed. Multiple intents converging on one confirmed resource
+edge share one completion event; lost acknowledgements retry the same event.
+Three-bay tests cover notification delivery/replay after account rehome. A fresh
+browser saw the real postpaid VM's deletion notice, including after reload.
+This live check backfilled existing test work; it is not a new cloud run with
+the notice worker installed before VM creation. The broader 42-suite PostgreSQL
+run passed 447 tests (12 database-mode skips); server typecheck also passed.
+
+Expired pools now automatically close and return
 unused backing after all resource liabilities have settled; outstanding
 reservations and pending fallback remain untouched. At 04:20 UTC the isolated
 worker closed the three expired live-test pools, released USD 1.99 from each,

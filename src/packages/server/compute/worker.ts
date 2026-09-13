@@ -48,6 +48,7 @@ import {
   computeVmDnsLabelIsOwned,
 } from "./resource-names";
 import { finalizeSettledCourseFundingPools } from "./funding/pool-lifecycle-worker";
+import { deliverComputeResourceNotices } from "./funding/resource-notices";
 import {
   hasCourseVmFunding,
   denyCourseVmMutation,
@@ -3362,6 +3363,18 @@ export function startComputeVmWorker(
   }, intervalMs);
   let stopSweepRunning = false;
   let closureSweepRunning = false;
+  let noticeSweepRunning = false;
+  const noticeTimer = setInterval(() => {
+    if (stopped || !queueSchemaReady || noticeSweepRunning) return;
+    noticeSweepRunning = true;
+    void deliverComputeResourceNotices()
+      .catch((err) =>
+        logger.warn("compute lifecycle notices deferred", { err }),
+      )
+      .finally(() => {
+        noticeSweepRunning = false;
+      });
+  }, intervalMs);
   const closureTimer = setInterval(() => {
     if (stopped || !queueSchemaReady || closureSweepRunning) return;
     closureSweepRunning = true;
@@ -3393,6 +3406,7 @@ export function startComputeVmWorker(
     stopped = true;
     clearInterval(timer);
     clearInterval(maintenanceTimer);
+    clearInterval(noticeTimer);
     clearInterval(fundingTimer);
     clearInterval(closureTimer);
     clearInterval(stopTimer);
