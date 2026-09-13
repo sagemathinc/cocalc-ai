@@ -8,6 +8,7 @@ import type { ComputeVolume, ComputeVm } from "@cocalc/conat/hub/api/compute";
 import type {
   ComputeOwnerResourcesRequest,
   ComputeOwnerResourcesResult,
+  ComputeProjectResourcesRequest,
 } from "@cocalc/conat/inter-bay/api";
 import {
   getConfiguredBayId,
@@ -70,6 +71,54 @@ export async function listComputeOwnerResources(
   request: ComputeOwnerResourcesRequest,
 ): Promise<(ComputeVm | ComputeVolume)[]> {
   fundingId(request.account_id, "Account");
+  return collectComputeResources(request);
+}
+
+/** Private delegated project read. The calling hub has checked project/host
+ * identity and agent scope; this bay filters by live VM project-access grants. */
+export async function computeProjectResourcesOnBay(
+  request: ComputeProjectResourcesRequest,
+): Promise<ComputeOwnerResourcesResult> {
+  fundingId(request.project_id, "Project");
+  if (request.kind !== "vm" && request.kind !== "volume")
+    throw Error("Unknown compute resource kind.");
+  return withLocalComputeResource(async () => {
+    const api = await import("@cocalc/server/conat/api/compute");
+    const opts = {
+      project_id: request.project_id,
+      include_deleted: request.include_deleted === true,
+    };
+    if (request.kind === "vm")
+      return {
+        kind: "vm",
+        resources: (await api.listProjectVms(opts)).filter(
+          (v) => v.owning_bay_id === getConfiguredBayId(),
+        ),
+      };
+    return {
+      kind: "volume",
+      resources: (await api.listProjectVolumes(opts)).filter(
+        (v) => v.owning_bay_id === getConfiguredBayId(),
+      ),
+    };
+  });
+}
+export async function listComputeProjectResources(
+  request: ComputeProjectResourcesRequest & { kind: "vm" },
+): Promise<ComputeVm[]>;
+export async function listComputeProjectResources(
+  request: ComputeProjectResourcesRequest & { kind: "volume" },
+): Promise<ComputeVolume[]>;
+export async function listComputeProjectResources(
+  request: ComputeProjectResourcesRequest,
+): Promise<(ComputeVm | ComputeVolume)[]> {
+  fundingId(request.project_id, "Project");
+  return collectComputeResources(request);
+}
+
+async function collectComputeResources(
+  request: ComputeOwnerResourcesRequest | ComputeProjectResourcesRequest,
+): Promise<(ComputeVm | ComputeVolume)[]> {
   const local = getConfiguredBayId();
   const registered = isMultiBayCluster() ? await listClusterBayRegistry() : [];
   if (isMultiBayCluster() && !registered.some((b) => b.bay_id === local))
@@ -89,12 +138,19 @@ export async function listComputeOwnerResources(
     async (bay) => {
       const response =
         bay === local
-          ? await computeOwnerResourcesOnBay(request)
-          : await createInterBayAccountLocalClient({
-              client: getInterBayFabricClient(),
-              dest_bay: bay,
-              timeout: 5_000,
-            }).computeOwnerResources(request);
+          ? await ("account_id" in request
+              ? computeOwnerResourcesOnBay(request)
+              : computeProjectResourcesOnBay(request))
+          : await (async () => {
+              const api = createInterBayAccountLocalClient({
+                client: getInterBayFabricClient(),
+                dest_bay: bay,
+                timeout: 5_000,
+              });
+              return "account_id" in request
+                ? api.computeOwnerResources(request)
+                : api.computeProjectResources(request);
+            })();
       if (
         response.kind !== request.kind ||
         !Array.isArray(response.resources) ||
@@ -106,7 +162,8 @@ export async function listComputeOwnerResources(
       for (const resource of response.resources) {
         fundingId(resource.id, "Resource");
         if (
-          resource.owner_account_id !== request.account_id ||
+          ("account_id" in request &&
+            resource.owner_account_id !== request.account_id) ||
           resource.owning_bay_id !== bay ||
           (request.kind === "volume" &&
             request.project_id &&

@@ -11,6 +11,7 @@ import {
 import {
   routeComputeOwnerRead,
   listComputeOwnerResources,
+  listComputeProjectResources,
   selectOwnedComputeResource,
 } from "@cocalc/server/compute/owner-resource-routing";
 import {
@@ -1945,6 +1946,12 @@ export async function listProjectVms(opts: {
     action: "read",
     project_id: projectId,
   });
+  if (routeComputeOwnerRead())
+    return listComputeProjectResources({
+      project_id: projectId,
+      kind: "vm",
+      include_deleted: opts.include_deleted,
+    });
   return await publicVms(
     await listProjectComputeVms({
       project_id: projectId,
@@ -1981,6 +1988,19 @@ export async function getProjectVm(opts: {
   agent_auth?: ComputeAgentAuth;
 }) {
   const projectId = await requireComputeProjectReadIdentity(opts);
+  if (routeComputeOwnerRead()) {
+    const vm = selectOwnedComputeResource(
+      await listProjectVms(opts),
+      opts.id_or_name,
+    );
+    await requireAgentComputeGrant({
+      auth: opts.agent_auth,
+      action: "read",
+      project_id: projectId,
+      vm_id: vm.id,
+    });
+    return vm;
+  }
   const vm = await resolveProjectComputeVm({
     project_id: projectId,
     id_or_name: `${opts.id_or_name ?? ""}`.trim(),
@@ -2008,6 +2028,12 @@ export async function listProjectVolumes(opts: {
     action: "read",
     project_id: projectId,
   });
+  if (routeComputeOwnerRead())
+    return listComputeProjectResources({
+      project_id: projectId,
+      kind: "volume",
+      include_deleted: opts.include_deleted,
+    });
   return (
     await listProjectComputeVolumes({
       project_id: projectId,
@@ -2024,6 +2050,11 @@ export async function getProjectVolume(opts: {
   agent_auth?: ComputeAgentAuth;
 }) {
   const projectId = await requireComputeProjectReadIdentity(opts);
+  if (routeComputeOwnerRead())
+    return selectOwnedComputeResource(
+      await listProjectVolumes({ ...opts, include_deleted: true }),
+      opts.id_or_name,
+    );
   const volume = await resolveProjectComputeVolume({
     project_id: projectId,
     id_or_name: `${opts.id_or_name ?? ""}`.trim(),

@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import {
   computeOwnerResourcesOnBay,
   listComputeOwnerResources,
+  listComputeProjectResources,
   routeComputeOwnerRead,
   selectOwnedComputeResource,
 } from "./owner-resource-routing";
@@ -29,11 +30,14 @@ jest.mock("@cocalc/server/inter-bay/fabric", () => ({
 jest.mock("@cocalc/conat/inter-bay/api", () => ({
   createInterBayAccountLocalClient: () => ({
     computeOwnerResources: (r) => mockRemote(r),
+    computeProjectResources: (r) => mockRemote(r),
   }),
 }));
 jest.mock("@cocalc/server/conat/api/compute", () => ({
   listVms: (r) => mockLocal(r),
   listVolumes: (r) => mockLocal(r),
+  listProjectVms: (r) => mockLocal(r),
+  listProjectVolumes: (r) => mockLocal(r),
 }));
 
 const owner = randomUUID();
@@ -118,6 +122,15 @@ it("keeps independent volume project filtering intact", async () => {
       project_id: project,
     }),
   ).rejects.toThrow(/ownership/);
+});
+
+it("uses delegated project discovery without substituting a payer or project collaborator as VM owner", async () => {
+  const vm = { ...resource(), owner_account_id: randomUUID() };
+  mockRemote.mockResolvedValue({ kind: "vm", resources: [vm] });
+  expect(
+    await listComputeProjectResources({ project_id: project, kind: "vm" }),
+  ).toEqual([vm]);
+  expect(mockRemote).toHaveBeenCalledWith({ project_id: project, kind: "vm" });
 });
 
 it("requires a complete bounded bay registry", async () => {

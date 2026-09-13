@@ -231,6 +231,12 @@ describePg(
               method: "compute-funding",
             }),
             impl: {
+              computeProjectResources: (opts) =>
+                onBay(bay, async () =>
+                  (
+                    await import("../owner-resource-routing")
+                  ).computeProjectResourcesOnBay(opts),
+                ),
               computeOwnerMutate: (opts) =>
                 onBay(bay, async () =>
                   (
@@ -646,7 +652,58 @@ describePg(
           [f.vm.id],
         );
       const api = await import("@cocalc/server/conat/api/compute");
+      await pools
+        .get(resourceBay)!
+        .query("UPDATE compute_vms SET project_id=$2 WHERE id=$1", [
+          f.vm.id,
+          f.project,
+        ]);
       await onBay(courseBay, async () => {
+        await expect(
+          api.listProjectVms({ account_id: f.student, project_id: f.project }),
+        ).rejects.toThrow(/access|not found/);
+        await pools
+          .get(courseBay)!
+          .query(
+            "UPDATE projects SET users=users || jsonb_build_object($2::text,jsonb_build_object('group','collaborator')) WHERE project_id=$1",
+            [f.project, f.student],
+          );
+        expect(
+          (
+            await api.listProjectVms({
+              account_id: f.student,
+              project_id: f.project,
+            })
+          ).map((v) => v.id),
+        ).toEqual([f.vm.id]);
+        expect(
+          (
+            await api.getProjectVm({
+              account_id: f.student,
+              project_id: f.project,
+              id_or_name: f.vm.id,
+            })
+          ).id,
+        ).toBe(f.vm.id);
+        await pools
+          .get(resourceBay)!
+          .query(
+            "INSERT INTO compute_vm_project_access(vm_id,project_id,owner_account_id,owning_bay_id,revoked_at) VALUES($1,$2,$3,$4,NOW())",
+            [f.vm.id, f.project, f.student, resourceBay],
+          );
+        expect(
+          await api.listProjectVms({
+            account_id: f.student,
+            project_id: f.project,
+          }),
+        ).toEqual([]);
+        await expect(
+          api.getProjectVm({
+            account_id: f.student,
+            project_id: f.project,
+            id_or_name: f.vm.id,
+          }),
+        ).rejects.toThrow(/access|not found/);
         const vms = await api.listVms({ account_id: f.student });
         expect(vms.map((v) => v.id)).toEqual([f.vm.id]);
         const vm = await api.getVm({

@@ -4233,6 +4233,11 @@ export interface ComputeOwnerResourcesRequest {
   project_id?: string;
   include_deleted?: boolean;
 }
+export interface ComputeProjectResourcesRequest {
+  project_id: string;
+  kind: "vm" | "volume";
+  include_deleted?: boolean;
+}
 export type ComputeOwnerResourcesResult =
   | {
       kind: "vm";
@@ -4267,6 +4272,9 @@ export type ComputeOwnerMutationRequest = {
 }[ComputeOwnerMutationMethod];
 
 export interface InterBayComputeFundingApi {
+  computeProjectResources: (
+    opts: ComputeProjectResourcesRequest,
+  ) => Promise<ComputeOwnerResourcesResult>;
   computeOwnerMutate: (
     opts: ComputeOwnerMutationRequest,
   ) => Promise<
@@ -8203,6 +8211,8 @@ export function createInterBayAccountLocalClient({
       await computeFundingClient.computeFundingGetOwnedPools(opts),
     computeOwnerResources: (opts) =>
       computeFundingClient.computeOwnerResources(opts),
+    computeProjectResources: (opts) =>
+      computeFundingClient.computeProjectResources(opts),
     computeOwnerMutate: (opts) => computeFundingClient.computeOwnerMutate(opts),
     computeOwnerCheckFreshAuth: (opts) =>
       computeFundingClient.computeOwnerCheckFreshAuth(opts),
@@ -8712,6 +8722,7 @@ export function createInterBayAccountLocalHandler({
         computeFundingGetOwnedPools: async (opts) =>
           await impl.computeFundingGetOwnedPools(opts),
         computeOwnerResources: (opts) => impl.computeOwnerResources(opts),
+        computeProjectResources: (opts) => impl.computeProjectResources(opts),
         computeOwnerMutate: (opts) => impl.computeOwnerMutate(opts),
         computeOwnerCheckFreshAuth: (opts) =>
           impl.computeOwnerCheckFreshAuth(opts),
