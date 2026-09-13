@@ -43,10 +43,13 @@ export function CodexDefaultsPanel({ other_settings }: Readonly<Props>) {
   const effectiveDefaults = storedDefaults ?? getDefaultCodexNewChatDefaults();
   const [draft, setDraft] = useState<CodexNewChatDefaults>(effectiveDefaults);
   const builtInDefaults = useMemo(() => normalizeCodexNewChatDefaults({}), []);
+  const { model, reasoning, serviceTier, sessionMode } = effectiveDefaults;
 
+  // Normalization can return a new object without changing any saved values.
+  // Only actual settings changes should replace an unsaved draft.
   useEffect(() => {
-    setDraft(effectiveDefaults);
-  }, [effectiveDefaults]);
+    setDraft({ model, reasoning, serviceTier, sessionMode });
+  }, [model, reasoning, serviceTier, sessionMode]);
 
   const reasoningOptions = useMemo(() => {
     const model =
