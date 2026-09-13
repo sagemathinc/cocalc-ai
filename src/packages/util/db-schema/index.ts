@@ -20,6 +20,7 @@ export * from "./domain-api-only";
 // The tables
 import "./active-user-map-history";
 import "./account-managed-egress";
+import "./admin-membership-package-intents";
 import "./account-collaborator-index";
 import "./account-ban-audit-log";
 import "./account-admin-audit-log";

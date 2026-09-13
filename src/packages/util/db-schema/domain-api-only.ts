@@ -10,6 +10,7 @@
 export const DOMAIN_API_ONLY_USER_QUERY_MUTATION_TABLES = new Set<string>([
   "account_entitlement_overrides",
   "admin_assigned_memberships",
+  "admin_membership_package_intents",
   "billing_authority_account_fences",
   "billing_authority_commands",
   "billing_authority_lease",

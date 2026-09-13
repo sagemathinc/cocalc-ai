@@ -225,6 +225,91 @@ describe("admin membership package purchase", () => {
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
   });
 
+  it("fulfills the immutable approved quote when tier configuration changes after funding", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const mutableMembershipClass = `admin-package-mutable-${uuid()}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await createTestMembershipTier({
+      id: mutableMembershipClass,
+      priority: 25,
+      price_monthly: 20,
+      price_yearly: 200,
+      team_visible: true,
+    });
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    mockCreatePaymentIntent.mockImplementation(async ({ account_id }) => {
+      const payment_intent = `pi_${uuid()}`;
+      await getPool().query(
+        `INSERT INTO purchases
+           (service, time, account_id, cost, description, invoice_id)
+         VALUES ('credit', NOW(), $1, -25, $2::jsonb, $3)`,
+        [
+          account_id,
+          { type: "credit", purpose: "admin-membership-package-purchase" },
+          payment_intent,
+        ],
+      );
+      await getPool().query(
+        "UPDATE membership_tiers SET disabled=TRUE, updated=NOW() WHERE id=$1",
+        [mutableMembershipClass],
+      );
+      return {
+        payment_intent,
+        hosted_invoice_url: `https://stripe.test/${payment_intent}`,
+      };
+    });
+
+    try {
+      const created = await adminCreateMembershipPackagePurchase({
+        admin_account_id,
+        user_account_id,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: mutableMembershipClass,
+          seat_count: 5,
+          interval: "month",
+        },
+        price: 25,
+        source: "card",
+        reason: "approved quote must survive post-funding configuration drift",
+        idempotency_key: "post-funding-tier-drift",
+      });
+
+      expect(created).toMatchObject({
+        price: 25,
+        standard_price: 100,
+        existing: false,
+      });
+      const pkg = await getPool().query(
+        `SELECT membership_class, seat_count, metadata
+           FROM membership_packages
+          WHERE id=$1`,
+        [created.package_id],
+      );
+      expect(pkg.rows[0]).toMatchObject({
+        membership_class: mutableMembershipClass,
+        seat_count: 5,
+        metadata: expect.objectContaining({ standard_total_price: 100 }),
+      });
+      const intents = await getPool().query(
+        "SELECT invoice_id FROM admin_membership_package_intents WHERE account_id=$1",
+        [user_account_id],
+      );
+      expect(intents.rows).toHaveLength(0);
+    } finally {
+      await getPool().query(
+        "UPDATE membership_tiers SET disabled=FALSE, updated=NOW() WHERE id=$1",
+        [mutableMembershipClass],
+      );
+    }
+  });
+
   it("validates package dates before attempting card funding", async () => {
     const admin_account_id = uuid();
     const user_account_id = uuid();
@@ -306,5 +391,10 @@ describe("admin membership package purchase", () => {
       [user_account_id],
     );
     expect(purchases.rows).toHaveLength(0);
+    const intents = await getPool().query(
+      "SELECT invoice_id FROM admin_membership_package_intents WHERE account_id=$1",
+      [user_account_id],
+    );
+    expect(intents.rows).toHaveLength(1);
   });
 });
