@@ -40,6 +40,11 @@ No filesystem data moves through a new hub proxy or direct filesystem shortcut.
   and `COCALC_FILE_READ_MAX_ACTIVE_TOTAL`. Denials carry project/principal and
   limit attribution. Consumers that stop iterating must return/close their
   iterator; the HTTP handler does this on cancellation.
+- Workspace readers default to that same per-project limit, not a separate
+  16-stream allowance. `COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE` can lower it;
+  raising workspace concurrency requires raising
+  `COCALC_PROJECT_FILE_READ_MAX_ACTIVE` as well. Reader registration passes the
+  effective minimum explicitly. Principal and process-wide caps still apply.
 - The router stamps the principal from authenticated socket identity. It ignores
   identities supplied by ordinary clients, including forged headers. Trusted
   hub/host HTTP clients forward the account from their verified auth context;
@@ -47,6 +52,14 @@ No filesystem data moves through a new hub proxy or direct filesystem shortcut.
   share one limited bucket. Project-authenticated shells are project principals,
   not assumed to be their owner account. These are isolation bounds, not a
   guarantee against many independently authorized identities exhausting capacity.
+- Routers validate transport headers before stamping or delivery: a plain JSON
+  record, at most 100,000 serialized UTF-8 bytes, 128 total keys/array entries,
+  and nesting depth 8. The added principal field counts toward these bounds.
+  A present `CN-Reply` must be a nonempty non-wildcard subject. Malformed headers
+  fail publication with code 400, without allocating a stamped copy. File-reader
+  error replies are best-effort; their failure cannot end the shared reader
+  loop or prevent transfer admission release. Unexpected subscription/task
+  failures are observed and logged.
 - Response close/error and request abort cancel the transfer, including while
   waiting for HTTP drain, inbox readiness, interest discovery, source reads, or
   acknowledgement. The control channel remains available while source I/O is
@@ -88,6 +101,8 @@ retain a bounded receive window for old producers during coordinated rollout;
 this is not permission for a strict producer to send without ACKs. Update
 hub/workspace/Lite, project-host, and project runtime bundles. Host HTTP uses
 the new reader and sender together, including account, viewer, and share paths.
+Workspace HTTP forwards the verified account, rather than a client-supplied
+identity, and Lite forwards its local account identity too.
 
 Validate on a staging/canary host with a large synthetic file: throttle, cancel,
 and retry repeatedly; verify an intact completed download; monitor RSS/external
@@ -105,10 +120,15 @@ pnpm -C src/packages/conat exec tsc --build
 pnpm -C src/packages/backend exec tsc --build
 pnpm -C src/packages/project exec tsc --build
 pnpm -C src/packages/project-host exec tsc --build
+pnpm -C src/packages/server exec tsc --build
+pnpm -C src/packages/hub exec tsc --build
+pnpm -C src/packages/lite exec tsc --build
 pnpm -C src/packages/util exec jest --runInBand event-iterator.test.ts
-pnpm -C src/packages/conat exec jest --runInBand files core/abort.test.ts core/message-bytes.test.ts
+pnpm -C src/packages/conat exec jest --runInBand files core/abort.test.ts core/message-bytes.test.ts core/message-headers.test.ts
 pnpm -C src/packages/conat exec jest --runInBand core/server.inbound-admission.test.ts core/server.egress.integration.test.ts
 pnpm -C src/packages/backend exec jest --runInBand conat/test/files/read.test.ts conat/test/files/write.test.ts conat/test/core/core-stream.test.ts conat/test/core/core-stream-break.test.ts conat/test/core/core-stream-recovery.test.ts
+pnpm -C src/packages/hub exec jest --runInBand proxy/handle-request.test.ts
+pnpm -C src/packages/server exec jest --runInBand conat/project/workspace-filesystem.test.ts
 ```
 
 Real-socket regressions cover 64 MiB, 512 MiB, and 8 GiB stalled reads; HTTP close
@@ -119,3 +139,6 @@ Unit and integration tests also cover strict protocol rejection, short abandoned
 handshake recovery, idle refresh versus duplicate ACKs, principal spoofing and
 cross-project fairness, ArrayBuffer/invalid-weight bounds, and blocked/failing
 write destinations including delayed finish/commit.
+Header rejection tests use small local fixtures and confirm subsequent reads
+remain available. Workspace HTTP coverage checks verified identity across
+projects, isolation between accounts, and configured versus effective limits.

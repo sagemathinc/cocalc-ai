@@ -222,6 +222,11 @@ import {
 import { EventIterator } from "@cocalc/util/event-iterator";
 import type { ConnectionStats, ServerInfo } from "./types";
 import { DataEncoding, decode, encode } from "./codec";
+import {
+  MAX_MESSAGE_HEADER_BYTES,
+  REPLY_HEADER,
+  validateReplySubject,
+} from "./message-headers";
 export { DataEncoding, decode, encode } from "./codec";
 import { randomId } from "@cocalc/conat/names";
 import type { JSONValue } from "@cocalc/util/types";
@@ -351,8 +356,7 @@ export type ClientOptions = Options & {
   Partial<ManagerOptions>;
 
 const INBOX_PREFIX = "_INBOX";
-const REPLY_HEADER = "CN-Reply";
-const MAX_HEADER_SIZE = 100000;
+const MAX_HEADER_SIZE = MAX_MESSAGE_HEADER_BYTES;
 
 const STATS_LOOP = 45 * 1000;
 const IDLE_STATS_LOOP = 5 * 60 * 1000;
@@ -2341,22 +2345,23 @@ export class Client extends EventEmitter {
       }
       if (confirm) {
         const f = async () => {
-          if (timeout) {
-            try {
-              const response = await this.conn
-                .timeout(timeout)
-                .emitWithAck("publish", v);
-              if (response?.error) {
-                throw new ConatError(response.error, { code: response.code });
-              } else {
-                return response;
-              }
-            } catch (err) {
-              throw toConatError(err, { subject });
-            }
-          } else {
-            return await this.conn.emitWithAck("publish", v);
+          let response;
+          try {
+            response = timeout
+              ? await this.conn.timeout(timeout).emitWithAck("publish", v)
+              : await this.conn.emitWithAck("publish", v);
+          } catch (err) {
+            throw toConatError(err, { subject });
           }
+          // Server rejections are not Socket.IO timeouts. Preserve their code
+          // for callers, including header validation (400) and admission (429).
+          if (response?.error) {
+            throw new ConatError(response.error, {
+              code: response.code,
+              subject,
+            });
+          }
+          return response;
         };
         const promise = (async () => {
           try {
@@ -3106,13 +3111,9 @@ export class Message<T = any> extends MessageData<T> {
 
   private respondSubject = () => {
     const subject = this.headers?.[REPLY_HEADER];
-    if (!subject) {
-      console.log(
-        `WARNING: respond -- message to '${this.subject}' is not a request`,
-      );
-      return;
-    }
-    return `${subject}`;
+    if (subject == null) return;
+    validateReplySubject(subject);
+    return subject;
   };
 
   respondSync = (mesg, opts?: PublishOptions): { bytes: number } => {

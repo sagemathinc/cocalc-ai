@@ -1,3 +1,5 @@
+import { validateMessageHeaders } from "../core/message-headers";
+
 // Set by the authenticated router, never taken from a file request's body.
 export const FILE_READ_PRINCIPAL_HEADER = "CN-File-Read-Principal";
 
@@ -25,7 +27,9 @@ export function stampFileReadPrincipal({
   trusted: boolean;
 }): void {
   if (!/^project\.[^.]+\.files:read[^.]*\./.test(subject) || !data[2]) return;
-  const supplied = data[5]?.[FILE_READ_PRINCIPAL_HEADER];
+  validateMessageHeaders(data[5]);
+  const headers = data[5] ?? (data[5] = Object.create(null));
+  const supplied = headers[FILE_READ_PRINCIPAL_HEADER];
   // Host HTTP handlers may forward an identity they have authenticated. Cluster
   // links preserve the originating router's stamp. Ordinary sockets cannot.
   const principal =
@@ -36,5 +40,7 @@ export function stampFileReadPrincipal({
       ? supplied
       : (fileReadPrincipal(user) ??
         (trusted ? `project:${subject.split(".")[1]}` : "unattributed"));
-  data[5] = { ...data[5], [FILE_READ_PRINCIPAL_HEADER]: principal };
+  headers[FILE_READ_PRINCIPAL_HEADER] = principal;
+  // The outgoing stamp counts toward the same bounds on every cluster hop.
+  validateMessageHeaders(headers);
 }

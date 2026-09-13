@@ -14,6 +14,7 @@ import {
   type FilesystemJupyterHandlers,
 } from "@cocalc/conat/files/fs";
 import { createServer as createReadServer } from "@cocalc/conat/files/read";
+import { MAX_PROJECT_READS } from "@cocalc/conat/files/read-admission";
 import {
   importJupyterIpynb,
   saveJupyterIpynb,
@@ -87,16 +88,13 @@ export const WORKSPACE_FILE_DOWNLOAD_READ_SERVICE = ":workspace";
 // register those subjects.
 const WORKSPACE_FILE_DOWNLOAD_READ_QUEUE = "workspace-file-download-read";
 
-// Workspace readers have an explicit per-project limit so local deployments can
-// tune PDF and large-file concurrency independently of hosted project readers.
-const WORKSPACE_FILE_DOWNLOAD_MAX_ACTIVE_STREAMS = parsePositiveInt(
-  process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE,
-  16,
-);
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const n = parseInt(value ?? "", 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
+// The workspace override can lower, not bypass, the shared per-project limit.
+// Raising workspace concurrency also requires raising the global project limit.
+export function getWorkspaceFileDownloadReadLimit(): number {
+  const n = Number(process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE);
+  return Number.isSafeInteger(n) && n > 0
+    ? Math.min(n, MAX_PROJECT_READS)
+    : MAX_PROJECT_READS;
 }
 
 function requireProjectPath(path?: string): string {
@@ -147,7 +145,7 @@ export async function ensureWorkspaceFileDownloadReadServer({
       project_id,
       name: readServiceName,
       queue: WORKSPACE_FILE_DOWNLOAD_READ_QUEUE,
-      maxActiveStreams: WORKSPACE_FILE_DOWNLOAD_MAX_ACTIVE_STREAMS,
+      maxActiveStreams: getWorkspaceFileDownloadReadLimit(),
       // Stream through the sandbox's own verified handle.  Resolving to an
       // absolute path and reopening it by name would leave a window in which
       // the file could be swapped for a symlink pointing outside the project.

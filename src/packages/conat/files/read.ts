@@ -146,12 +146,26 @@ export async function createServer({
   const cn = requireExplicitConatClient(client);
   const sub = await cn.subscribe(subject, queue ? { queue } : undefined);
   subs[subject] = sub;
-  listen({
+  void listen({
     sub,
     createReadStream,
     project_id,
     maxActiveStreams: maxActiveStreams ?? MAX_PROJECT_READS,
+  }).catch((err) => {
+    logger.error("reader subscription failed", { subject, err });
+    if (subs[subject] === sub) delete subs[subject];
+    sub.cancel();
   });
+}
+
+function replyWithError(mesg: Message, headers: Record<string, string>) {
+  try {
+    mesg.respondSync(null, { headers });
+  } catch {
+    // A disconnected client or invalid reply from an older router must not
+    // terminate the shared subscription, or reject a detached transfer task.
+    logger.debug("unable to deliver file read error reply");
+  }
 }
 
 async function listen({ sub, createReadStream, project_id, maxActiveStreams }) {
@@ -164,11 +178,9 @@ async function listen({ sub, createReadStream, project_id, maxActiveStreams }) {
       // the shared reader's subscription loop.
     }
     if (protocol !== READ_PROTOCOL) {
-      mesg.respondSync(null, {
-        headers: {
-          error: FILE_READ_UPGRADE_MESSAGE,
-          code: FILE_READ_PROTOCOL_REQUIRED,
-        },
+      replyWithError(mesg, {
+        error: FILE_READ_UPGRADE_MESSAGE,
+        code: FILE_READ_PROTOCOL_REQUIRED,
       });
       continue;
     }
@@ -183,10 +195,12 @@ async function listen({ sub, createReadStream, project_id, maxActiveStreams }) {
         maxActiveStreams,
       );
     } catch (err) {
-      mesg.respondSync(null, { headers: { error: (err as Error).message } });
+      replyWithError(mesg, { error: (err as Error).message });
       continue;
     }
-    void handleMessage(mesg, createReadStream).finally(release);
+    void handleMessage(mesg, createReadStream)
+      .finally(release)
+      .catch((err) => logger.error("file read task failed", err));
   }
 }
 
@@ -198,11 +212,9 @@ async function handleMessage(mesg, createReadStream) {
   } catch (err) {
     logger.debug("handleMessage: ERROR", err);
     const code = (err as { code?: unknown } | null)?.code;
-    mesg.respondSync(null, {
-      headers: {
-        error: `${err}`,
-        ...(typeof code === "string" ? { code } : {}),
-      },
+    replyWithError(mesg, {
+      error: `${err}`,
+      ...(typeof code === "string" ? { code } : {}),
     });
   }
 }
