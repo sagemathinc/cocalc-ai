@@ -158,6 +158,7 @@ async function prepareAutomaticVmPersonalFallbacks(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND c.state='approved' AND c.terms->>'activation'='fallback' AND v.owning_bay_id=$1
+      AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
       AND v.state='stopped' AND v.desired_state='stopped' AND v.metadata#>'{billing,course_funding,stop_intent}' IS NOT NULL
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), fallbackCursor],
@@ -790,7 +791,9 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
   await prepareAutomaticVmPersonalFallbacks();
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
-    WHERE c.id>$2 AND c.state='preparing' AND v.owning_bay_id=$1 AND v.state='stopped' AND v.desired_state='stopped' ORDER BY c.id LIMIT 20`,
+    WHERE c.id>$2 AND c.state='preparing' AND v.owning_bay_id=$1 AND v.state='stopped' AND v.desired_state='stopped'
+      AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
+    ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), handoffCursor],
   );
   handoffCursor =
@@ -929,6 +932,7 @@ async function closeEndedPersonalConsents(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','preparing','active')
+      AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
       AND (v.desired_state='deleted' OR v.deleted_at IS NOT NULL OR (c.terms->>'ends_at')::timestamptz<=clock_timestamp())
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), closedConsentCursor],

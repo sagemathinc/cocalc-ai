@@ -18,9 +18,17 @@ operation does not advance the generation again.
 The public VM/volume list and detail APIs now discover owner-filtered resources
 across bays. They reject incomplete or contradictory responses and ambiguous
 display names instead of hiding resource state. The current account home decorates
-the VM with the student's personal consent. General lifecycle mutation routing
-after account rehome remains work in progress; read discovery alone does not
-establish that the complete remote VM control interface works.
+the VM with the student's personal consent. Owner start/stop/delete, VM settings,
+and volume resize/funding/deletion now route to the existing owning-bay handlers.
+Fresh auth is validated at the current account home, not accepted as a forwarded
+boolean. Funding and agent checks still execute through the normal handlers.
+The real three-bay API test verifies Stop, deletion denied without fresh auth,
+and deletion accepted with a session present only at the new account home.
+Copied consent rows on old bays are excluded from local financial sweeps.
+The focused real-PostgreSQL run passed 148 checks, including local funding,
+storage, schedule and routing regressions. This is not yet the complete live
+cross-bay browser or agent workflow; SSH/project-association operations and
+project-scoped discovery need a separate routing audit.
 
 The latest real-PostgreSQL run passed 533 tests across 47 suites, with 12
 database-mode skips. It includes normal explicit-stop fencing/replay, remote

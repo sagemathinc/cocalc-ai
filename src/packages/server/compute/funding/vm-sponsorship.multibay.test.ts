@@ -231,6 +231,18 @@ describePg(
               method: "compute-funding",
             }),
             impl: {
+              computeOwnerMutate: (opts) =>
+                onBay(bay, async () =>
+                  (
+                    await import("../owner-resource-mutation")
+                  ).computeOwnerMutationOnBay(opts),
+                ),
+              computeOwnerCheckFreshAuth: (opts) =>
+                onBay(bay, async () =>
+                  (
+                    await import("../owner-resource-mutation")
+                  ).checkComputeOwnerFreshAuthOnHome(opts),
+                ),
               computeOwnerResources: (opts) =>
                 onBay(bay, async () =>
                   (
@@ -643,6 +655,52 @@ describePg(
         });
         expect(vm.owning_bay_id).toBe(resourceBay);
         expect(vm.funding_status?.personal_consent?.id).toBe(f.consentId);
+        const stopped = await api.stopVm({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+          idempotency_key: randomUUID(),
+        });
+        expect(stopped.desired_state).toBe("stopped");
+        expect(stopped.stop_generation).toBe(2);
+        await expect(
+          api.deleteVm({
+            account_id: f.student,
+            id_or_name: f.vm.id,
+            idempotency_key: randomUUID(),
+          }),
+        ).rejects.toThrow(/fresh auth/);
+        expect(
+          (
+            await pools
+              .get(resourceBay)!
+              .query("SELECT desired_state FROM compute_vms WHERE id=$1", [
+                f.vm.id,
+              ])
+          ).rows[0].desired_state,
+        ).toBe("stopped");
+        const session_hash = randomUUID();
+        await (
+          await import("@cocalc/server/auth/auth-sessions")
+        ).recordNewAuthSession({
+          account_id: f.student,
+          session_hash,
+          expire: new Date(Date.now() + 3600_000),
+          fresh_auth_until: new Date(Date.now() + 60_000),
+        });
+        const deleted = await api.deleteVm({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+          session_hash,
+          idempotency_key: randomUUID(),
+        });
+        expect(deleted.desired_state).toBe("deleted");
+        expect(
+          await row(
+            resourceBay,
+            "SELECT count(*)::int AS n FROM compute_resource_work WHERE resource_id=$1 AND action='delete'",
+            [f.vm.id],
+          ),
+        ).toEqual({ n: 1 });
         expect(await api.listVms({ account_id: randomUUID() })).toEqual([]);
         await expect(
           api.getVm({ account_id: randomUUID(), id_or_name: f.vm.id }),

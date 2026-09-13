@@ -22,6 +22,9 @@ import { fundingId } from "@cocalc/util/compute-funding";
 // Only the private owning-bay handler can select local-only reads. A public
 // caller cannot disable routing with an option in its request.
 const localRead = new AsyncLocalStorage<boolean>();
+export function withLocalComputeResource<T>(fn: () => Promise<T>): Promise<T> {
+  return localRead.run(true, fn);
+}
 export function routeComputeOwnerRead(): boolean {
   return isMultiBayCluster() && localRead.getStore() !== true;
 }

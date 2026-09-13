@@ -475,6 +475,7 @@ export async function closeEndedVolumePersonalConsents(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_volumes v ON v.id=c.volume_id
       WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','active')
+        AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
         AND (v.desired_state='deleted' OR v.deleted_at IS NOT NULL OR (c.terms->>'ends_at')::timestamptz<=clock_timestamp()
           OR (c.state='active' AND v.metadata#>>'{billing,course_funding,source,consent_id}' IS DISTINCT FROM c.id::text))
       ORDER BY c.id LIMIT 20`,

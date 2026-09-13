@@ -1118,6 +1118,14 @@ async function startAccountLocalService(): Promise<void> {
       (
         await import("@cocalc/server/compute/owner-resource-routing")
       ).computeOwnerResourcesOnBay(opts),
+    computeOwnerMutate: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-mutation")
+      ).computeOwnerMutationOnBay(opts),
+    computeOwnerCheckFreshAuth: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-mutation")
+      ).checkComputeOwnerFreshAuthOnHome(opts),
     computeFundingReviewPersonalResource: async (opts) =>
       (
         await import("@cocalc/server/compute/funding/resource-review")

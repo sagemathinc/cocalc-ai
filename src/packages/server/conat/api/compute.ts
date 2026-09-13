@@ -5,6 +5,10 @@
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
+  routeComputeOwnerMutation,
+  requireComputeOwnerFreshAuth,
+} from "@cocalc/server/compute/owner-resource-mutation";
+import {
   routeComputeOwnerRead,
   listComputeOwnerResources,
   selectOwnedComputeResource,
@@ -287,11 +291,10 @@ async function authorizeComputeMutation(opts: {
     });
   }
   if (opts.require_fresh_auth) {
-    await requireDangerousSessionAuth({
+    await requireComputeOwnerFreshAuth({
       account_id: requireAccount(opts.actor.account_id),
       browser_id: opts.actor.browser_id,
       session_hash: opts.actor.session_hash,
-      require_second_factor: "if_enabled",
     });
   }
 }
@@ -1503,7 +1506,7 @@ export async function getVolume(opts: {
   );
 }
 
-export async function resizeVolume(opts: {
+async function resizeVolumeLocal(opts: {
   expected_funding_version?: string;
   account_id?: string;
   browser_id?: string;
@@ -1663,7 +1666,7 @@ export async function resizeVolume(opts: {
   return publicVolume(next);
 }
 
-export async function setVolumeFundingMode(opts: {
+async function setVolumeFundingModeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -1742,7 +1745,7 @@ export async function setVolumeFundingMode(opts: {
   return publicVolume(next);
 }
 
-export async function deleteVolume(opts: {
+async function deleteVolumeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2478,7 +2481,7 @@ async function requestState(opts: {
   return publicVm(next);
 }
 
-export async function startVm(opts: {
+async function startVmLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2490,7 +2493,7 @@ export async function startVm(opts: {
   return await requestState({ ...opts, desired_state: "running" });
 }
 
-export async function stopVm(opts: {
+async function stopVmLocal(opts: {
   account_id?: string;
   id_or_name: string;
   idempotency_key: string;
@@ -2499,7 +2502,7 @@ export async function stopVm(opts: {
   return await requestState({ ...opts, desired_state: "stopped" });
 }
 
-export async function setVmTtl(opts: {
+async function setVmTtlLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2628,7 +2631,7 @@ export async function setVmTtl(opts: {
   return publicVm(next);
 }
 
-export async function setVmFundingMode(opts: {
+async function setVmFundingModeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2731,7 +2734,7 @@ export async function setVmFundingMode(opts: {
   return publicVm(next);
 }
 
-export async function setVmMachineType(opts: {
+async function setVmMachineTypeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2929,7 +2932,7 @@ export async function setVmMachineType(opts: {
   return await publicVm(next);
 }
 
-export async function setVmPricingModel(opts: {
+async function setVmPricingModelLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -3003,7 +3006,7 @@ export async function setVmPricingModel(opts: {
   return publicVm(next);
 }
 
-export async function deleteVm(opts: {
+async function deleteVmLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -3048,6 +3051,73 @@ export async function deleteVm(opts: {
     idempotency_key: opts.idempotency_key,
   });
   return publicVm(next);
+}
+
+export async function startVm(opts: Parameters<typeof startVmLocal>[0]) {
+  return (
+    (await routeComputeOwnerMutation("startVm", opts)) ?? startVmLocal(opts)
+  );
+}
+export async function stopVm(opts: Parameters<typeof stopVmLocal>[0]) {
+  return (await routeComputeOwnerMutation("stopVm", opts)) ?? stopVmLocal(opts);
+}
+export async function deleteVm(opts: Parameters<typeof deleteVmLocal>[0]) {
+  return (
+    (await routeComputeOwnerMutation("deleteVm", opts)) ?? deleteVmLocal(opts)
+  );
+}
+export async function setVmTtl(opts: Parameters<typeof setVmTtlLocal>[0]) {
+  return (
+    (await routeComputeOwnerMutation("setVmTtl", opts)) ?? setVmTtlLocal(opts)
+  );
+}
+export async function setVmFundingMode(
+  opts: Parameters<typeof setVmFundingModeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVmFundingMode", opts)) ??
+    setVmFundingModeLocal(opts)
+  );
+}
+export async function setVmMachineType(
+  opts: Parameters<typeof setVmMachineTypeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVmMachineType", opts)) ??
+    setVmMachineTypeLocal(opts)
+  );
+}
+export async function setVmPricingModel(
+  opts: Parameters<typeof setVmPricingModelLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVmPricingModel", opts)) ??
+    setVmPricingModelLocal(opts)
+  );
+}
+export async function resizeVolume(
+  opts: Parameters<typeof resizeVolumeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("resizeVolume", opts)) ??
+    resizeVolumeLocal(opts)
+  );
+}
+export async function setVolumeFundingMode(
+  opts: Parameters<typeof setVolumeFundingModeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVolumeFundingMode", opts)) ??
+    setVolumeFundingModeLocal(opts)
+  );
+}
+export async function deleteVolume(
+  opts: Parameters<typeof deleteVolumeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("deleteVolume", opts)) ??
+    deleteVolumeLocal(opts)
+  );
 }
 
 export async function listOrphans(opts: {

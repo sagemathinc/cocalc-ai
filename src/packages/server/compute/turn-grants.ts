@@ -10,13 +10,8 @@ import { COMPUTE_AGENT_GRANTS_PROJECT_DETAIL_FIELD } from "@cocalc/conat/hub/api
 import { publishProjectDetailInvalidationBestEffort } from "@cocalc/server/account/project-detail-feed";
 import siteUrl from "../hub/site-url";
 
-export interface ComputeAgentAuth {
-  account_id: string;
-  project_id: string;
-  token_fingerprint: string;
-  issued_at_s: number;
-  expires_at_s: number;
-}
+import type { ComputeAgentAuth } from "@cocalc/util/compute-agent-auth";
+export type { ComputeAgentAuth } from "@cocalc/util/compute-agent-auth";
 
 export type ComputeAgentAction =
   | "read"

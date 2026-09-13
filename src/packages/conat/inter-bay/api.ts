@@ -4243,7 +4243,40 @@ export type ComputeOwnerResourcesResult =
       resources: import("@cocalc/conat/hub/api/compute").ComputeVolume[];
     };
 
+export type ComputeOwnerMutationMethod =
+  | "startVm"
+  | "stopVm"
+  | "deleteVm"
+  | "setVmTtl"
+  | "setVmFundingMode"
+  | "setVmMachineType"
+  | "setVmPricingModel"
+  | "resizeVolume"
+  | "setVolumeFundingMode"
+  | "deleteVolume";
+export type ComputeOwnerMutationRequest = {
+  [M in ComputeOwnerMutationMethod]: {
+    method: M;
+    account_home_bay: string;
+    opts: Parameters<
+      import("@cocalc/conat/hub/api/compute").ComputeApi[M]
+    >[0] & {
+      agent_auth?: import("@cocalc/util/compute-agent-auth").ComputeAgentAuth;
+    };
+  };
+}[ComputeOwnerMutationMethod];
+
 export interface InterBayComputeFundingApi {
+  computeOwnerMutate: (
+    opts: ComputeOwnerMutationRequest,
+  ) => Promise<
+    | import("@cocalc/conat/hub/api/compute").ComputeVm
+    | import("@cocalc/conat/hub/api/compute").ComputeVolume
+  >;
+  computeOwnerCheckFreshAuth: (opts: {
+    account_id: string;
+    session_hash: string;
+  }) => Promise<void>;
   computeOwnerResources: (
     opts: ComputeOwnerResourcesRequest,
   ) => Promise<ComputeOwnerResourcesResult>;
@@ -8170,6 +8203,9 @@ export function createInterBayAccountLocalClient({
       await computeFundingClient.computeFundingGetOwnedPools(opts),
     computeOwnerResources: (opts) =>
       computeFundingClient.computeOwnerResources(opts),
+    computeOwnerMutate: (opts) => computeFundingClient.computeOwnerMutate(opts),
+    computeOwnerCheckFreshAuth: (opts) =>
+      computeFundingClient.computeOwnerCheckFreshAuth(opts),
     computeFundingReviewPersonalResource: (opts) =>
       computeFundingClient.computeFundingReviewPersonalResource(opts),
     computeFundingApplyPersonalVolumeHandoff: (opts) =>
@@ -8676,6 +8712,9 @@ export function createInterBayAccountLocalHandler({
         computeFundingGetOwnedPools: async (opts) =>
           await impl.computeFundingGetOwnedPools(opts),
         computeOwnerResources: (opts) => impl.computeOwnerResources(opts),
+        computeOwnerMutate: (opts) => impl.computeOwnerMutate(opts),
+        computeOwnerCheckFreshAuth: (opts) =>
+          impl.computeOwnerCheckFreshAuth(opts),
         computeFundingReviewPersonalResource: (opts) =>
           impl.computeFundingReviewPersonalResource(opts),
         computeFundingApplyPersonalVolumeHandoff: (opts) =>
