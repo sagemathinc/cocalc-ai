@@ -36,6 +36,7 @@ import {
   assertValidStripePaymentInput,
   assertValidUserMetadata,
   getStripeCustomerId,
+  normalizeStripeLineItems,
 } from "./util";
 
 describe("Stripe user input validation", () => {
@@ -87,6 +88,21 @@ describe("Stripe user input validation", () => {
           { description: "Included seat", amount: 0 },
           { description: "Paid seat", amount: 120 },
         ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("bounds legacy server-generated line item descriptions", () => {
+    const normalized = normalizeStripeLineItems([
+      { description: "x".repeat(500), amount: 72 },
+    ]);
+    expect(normalized).toEqual([
+      { description: `${"x".repeat(177)}...`, amount: 72 },
+    ]);
+    expect(() =>
+      assertValidStripePaymentInput({
+        ...validInput,
+        lineItems: normalized,
       }),
     ).not.toThrow();
   });

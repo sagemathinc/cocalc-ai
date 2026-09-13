@@ -3,10 +3,11 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { resolveProjectBay } from "@cocalc/server/inter-bay/directory";
+import { assertProjectNotRehoming } from "@cocalc/database/postgres/project-rehome-fence";
 import type { TrustedCourseProjectQuoteContext } from "@cocalc/server/membership/packages";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { isValidUUID } from "@cocalc/util/misc";
@@ -76,5 +77,52 @@ export async function resolveAdminCourseProjectQuoteContext({
     ownership_epoch: ownership.epoch,
     course_path: coursePath,
     course_title: courseTitle,
+  };
+}
+
+export async function resolveLockedLocalAdminCourseProjectQuoteContext({
+  client,
+  product,
+}: {
+  client: PoolClient;
+  product: MembershipPackageProduct;
+}): Promise<TrustedCourseProjectQuoteContext | undefined> {
+  if (product.kind !== "course") return undefined;
+  const projectId = `${product.course_project_id ?? ""}`.trim();
+  if (!isValidUUID(projectId)) {
+    throw Error("course_project_id is required for course packages");
+  }
+  await assertProjectNotRehoming({
+    db: client,
+    project_id: projectId,
+    action: "create admin course membership package",
+  });
+  const localBayId = getConfiguredBayId();
+  const { rows } = await client.query<{
+    title: string | null;
+    course: { path?: string | null } | null;
+    owning_bay_id: string | null;
+  }>(
+    `SELECT title, course, owning_bay_id
+       FROM projects
+      WHERE project_id=$1
+        AND deleted IS NOT TRUE
+      FOR SHARE`,
+    [projectId],
+  );
+  const row = rows[0];
+  if (!row) throw Error("course project not found");
+  const owningBayId = `${row.owning_bay_id ?? localBayId}`.trim();
+  if (owningBayId !== localBayId) {
+    throw Error(
+      "cross-bay admin course purchases require a transactional project-ownership protocol",
+    );
+  }
+  return {
+    project_id: projectId,
+    owning_bay_id: localBayId,
+    ownership_epoch: 0,
+    course_path: `${row.course?.path ?? ""}`.trim() || undefined,
+    course_title: `${row.title ?? ""}`.trim() || undefined,
   };
 }

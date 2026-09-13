@@ -57,6 +57,7 @@ export async function loadProjectReadDetailsDirect(
         course
       FROM projects
       WHERE project_id = $1
+        AND deleted IS NOT TRUE
       LIMIT 1
     `,
     [project_id],

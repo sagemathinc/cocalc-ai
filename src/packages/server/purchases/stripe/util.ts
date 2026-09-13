@@ -54,6 +54,29 @@ const RESERVED_USER_METADATA_KEYS = new Set([
 
 const logger = getLogger("purchases:stripe:util");
 
+export function normalizeStripeLineItems(lineItems: unknown): unknown {
+  if (!Array.isArray(lineItems)) return lineItems;
+  return lineItems.map((item) => {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) {
+      return item;
+    }
+    const description = (item as { description?: unknown }).description;
+    if (
+      typeof description !== "string" ||
+      description.length <= MAX_LINE_ITEM_DESCRIPTION_LENGTH
+    ) {
+      return item;
+    }
+    return {
+      ...item,
+      description: `${description.slice(
+        0,
+        MAX_LINE_ITEM_DESCRIPTION_LENGTH - 3,
+      )}...`,
+    };
+  });
+}
+
 async function setStripeCustomerId({
   account_id,
   id,

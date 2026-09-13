@@ -6,6 +6,7 @@
 const resolveProjectBayMock = jest.fn();
 const projectDetailsGetMock = jest.fn();
 const queryMock = jest.fn();
+const assertProjectNotRehomingMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -28,7 +29,15 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
   resolveProjectBay: (...args: any[]) => resolveProjectBayMock(...args),
 }));
 
-import { resolveAdminCourseProjectQuoteContext } from "./admin-course-project";
+jest.mock("@cocalc/database/postgres/project-rehome-fence", () => ({
+  assertProjectNotRehoming: (...args: any[]) =>
+    assertProjectNotRehomingMock(...args),
+}));
+
+import {
+  resolveAdminCourseProjectQuoteContext,
+  resolveLockedLocalAdminCourseProjectQuoteContext,
+} from "./admin-course-project";
 
 const COURSE_PROJECT_ID = "00000000-2000-4000-8000-000000000001";
 
@@ -42,6 +51,7 @@ describe("admin course project quote context", () => {
     projectDetailsGetMock.mockResolvedValue({
       course: { path: "assignments/course.conf" },
     });
+    assertProjectNotRehomingMock.mockResolvedValue(undefined);
   });
 
   it("loads course facts from the owning bay with trusted admin routing", async () => {
@@ -89,5 +99,60 @@ describe("admin course project quote context", () => {
         },
       }),
     ).rejects.toThrow("ownership changed");
+  });
+
+  it("revalidates and locks local course facts at transactional use", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        {
+          title: "Calculus I",
+          course: { path: "assignments/course.conf" },
+          owning_bay_id: "account-bay",
+        },
+      ],
+    });
+    await expect(
+      resolveLockedLocalAdminCourseProjectQuoteContext({
+        client: { query: queryMock } as any,
+        product: {
+          type: "membership-package",
+          kind: "course",
+          membership_class: "student",
+          seat_count: 10,
+          course_project_id: COURSE_PROJECT_ID,
+        },
+      }),
+    ).resolves.toMatchObject({
+      project_id: COURSE_PROJECT_ID,
+      owning_bay_id: "account-bay",
+      course_title: "Calculus I",
+    });
+    expect(assertProjectNotRehomingMock).toHaveBeenCalled();
+    expect(queryMock.mock.calls[0][0]).toContain("deleted IS NOT TRUE");
+    expect(queryMock.mock.calls[0][0]).toContain("FOR SHARE");
+  });
+
+  it("rejects a remote course at transactional use", async () => {
+    queryMock.mockResolvedValue({
+      rows: [
+        {
+          title: "Remote Course",
+          course: { path: "course.conf" },
+          owning_bay_id: "project-bay",
+        },
+      ],
+    });
+    await expect(
+      resolveLockedLocalAdminCourseProjectQuoteContext({
+        client: { query: queryMock } as any,
+        product: {
+          type: "membership-package",
+          kind: "course",
+          membership_class: "student",
+          seat_count: 10,
+          course_project_id: COURSE_PROJECT_ID,
+        },
+      }),
+    ).rejects.toThrow("transactional project-ownership protocol");
   });
 });
