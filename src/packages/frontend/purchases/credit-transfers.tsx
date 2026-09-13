@@ -291,46 +291,52 @@ export default function CreditTransfers({
         </section>
       )}
       {!!data?.receipts.length && (
-        <Table
-          size="small"
-          rowKey="purchase_id"
-          dataSource={data.receipts}
-          pagination={false}
-          scroll={{ x: 560 }}
-          style={{ marginTop: 16 }}
-          columns={[
-            { title: "Direction", dataIndex: "direction" },
-            {
-              title: "Account",
-              dataIndex: "counterpart_account_id",
-              render: (value: string) => (
-                <span style={{ overflowWrap: "anywhere" }}>{value}</span>
-              ),
-            },
-            {
-              title: "Date",
-              dataIndex: "created_at",
-              render: (value: string) => new Date(value).toLocaleString(),
-            },
-            {
-              title: "Transfer",
-              dataIndex: "transfer_id",
-              render: (value: string) => (
-                <span style={{ overflowWrap: "anywhere" }}>{value}</span>
-              ),
-            },
-            {
-              title: "Amount (USD)",
-              dataIndex: "amount_usd",
-              render: (value: string) => moneyToCurrency(value),
-            },
-            {
-              title: "Status",
-              dataIndex: "state",
-              render: (value: string) => <Tag>{value}</Tag>,
-            },
-          ]}
-        />
+        <div
+          role="region"
+          aria-label="Transfer receipts"
+          tabIndex={0}
+          style={{ overflowX: "auto", maxWidth: "100%", marginTop: 16 }}
+        >
+          <Table
+            size="small"
+            rowKey="purchase_id"
+            dataSource={data.receipts}
+            pagination={false}
+            style={{ minWidth: 560 }}
+            columns={[
+              { title: "Direction", dataIndex: "direction" },
+              {
+                title: "Account",
+                dataIndex: "counterpart_account_id",
+                render: (value: string) => (
+                  <span style={{ overflowWrap: "anywhere" }}>{value}</span>
+                ),
+              },
+              {
+                title: "Date",
+                dataIndex: "created_at",
+                render: (value: string) => new Date(value).toLocaleString(),
+              },
+              {
+                title: "Transfer",
+                dataIndex: "transfer_id",
+                render: (value: string) => (
+                  <span style={{ overflowWrap: "anywhere" }}>{value}</span>
+                ),
+              },
+              {
+                title: "Amount (USD)",
+                dataIndex: "amount_usd",
+                render: (value: string) => moneyToCurrency(value),
+              },
+              {
+                title: "Status",
+                dataIndex: "state",
+                render: (value: string) => <Tag>{value}</Tag>,
+              },
+            ]}
+          />
+        </div>
       )}
     </section>
   );

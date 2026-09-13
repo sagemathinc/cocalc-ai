@@ -1,4 +1,10 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import CreditTransfers from "./credit-transfers";
 import type { CreditTransferApi } from "@cocalc/util/credit-transfers";
@@ -43,6 +49,34 @@ function api(): jest.Mocked<CreditTransferApi> {
       })),
   };
 }
+it("makes the horizontally scrollable receipts keyboard accessible", async () => {
+  const service = api();
+  service.listCreditTransfers.mockResolvedValue({
+    enabled: true,
+    receipts: [
+      {
+        purchase_id: 1,
+        direction: "sent",
+        counterpart_account_id: recipient,
+        created_at: "2026-09-13T17:00:00Z",
+        transfer_id: "33333333-3333-4333-8333-333333333333",
+        operation_id: "44444444-4444-4444-8444-444444444444",
+        amount_usd: "1.00",
+        state: "received",
+      },
+    ],
+  });
+  render(<CreditTransfers api={service} />);
+  const receipts = await screen.findByRole("region", {
+    name: "Transfer receipts",
+  });
+  expect(receipts).toHaveAttribute("tabindex", "0");
+  expect(within(receipts).getByRole("table")).toBeVisible();
+  const user = userEvent.setup();
+  screen.getByRole("textbox", { name: "Amount (USD)" }).focus();
+  await user.tab();
+  expect(receipts).toHaveFocus();
+});
 async function fill() {
   const user = userEvent.setup();
   const input = await screen.findByRole("textbox", {

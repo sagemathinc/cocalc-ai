@@ -5,6 +5,42 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+Stripe test-mode validation is now connected (2026-09-13, 17:11-17:26 UTC).
+The main lite2b hub was already configured; the earlier missing-key observation
+applied only to the isolated QA hub. Its test-mode settings were configured
+through the normal admin API, without changing the main hub or using the
+maintainer's account. A dedicated QA customer purchased USD 10 of prepaid credit
+through the authenticated payment API. Stripe confirmed successful capture and
+an available balance transaction; the normal transferable-credit verifier
+accepted the actual purchase, including its account/site and tax-exclusive amount.
+The test payment method deliberately bypassed pending settlement; this is not
+evidence of waiting through a real settlement delay.
+
+The instructor then approved a USD 2 direct transfer on the independent approval
+origin; both accounts received matching receipts, and replay did not duplicate
+the transfer. A second USD 1 transfer went through the visible billing form,
+preview, isolated sign-in/MFA approval, completion, and student receipt. Receipts
+survived reload. Narrow-screen auditing found an unfocusable horizontal table;
+the receipts now use a labeled keyboard-focusable scroll region, matching the
+course budget table. Chromium checks at 320/720/1440 pixels in light and dark
+themes passed scoped axe, focus order/restoration, and actual arrow-key scrolling.
+The six focused frontend tests, frontend lint/typecheck, and static development
+build passed. The three transfer suites passed 39 checks using fresh PostgreSQL,
+including multibay and concurrency cases. This is not independent review.
+
+A separate automatic-deposit test configured the QA instructor through the normal
+fresh-auth API, invoked the existing maintenance function, and purchased USD 10
+in Stripe test mode. Its real `auto-credit` purchase passed transferable-payment
+verification; a second maintenance invocation created no duplicate credit.
+The original automatic-deposit settings were restored. This was an invoked
+maintenance test, not an unattended calendar/month-end collection test.
+Normal postpaid admission and monthly statement collection still depend on
+`stripe_usage_subscription`; its legacy enrollment helper currently has no
+public API/UI callers in this checkout. The maintainer has been asked whether
+enrollment is external or an explicit monthly-collection opt-in should be added.
+Do not substitute automatic deposits or a fabricated subscription flag for that
+remaining validation. No new cloud resources were created for these payment tests.
+
 Latest local validation (2026-09-13): unattended **exhaustion** fallback
 passed on GCP VM `249401db-c964-4634-8f31-3c6674d7d120`. The instructor approved
 a grant ceiling equal to existing spent/reserved commitments, preventing further
@@ -415,16 +451,15 @@ The earlier diagnostic-assisted fallback VM
 unattended run described at the top supersedes that attempt as fallback evidence.
 
 Remaining implementation/validation includes live volume retention expiry,
-transfer/payment provenance validation, automatic payment collection, and the
+automatic monthly payment collection/enrollment, and the
 complete live cross-bay/device/GPU validation matrix. Creating a new VM with an
 existing home disk on another bay after account rehome still needs a co-placement
 implementation decision and validation; remote owner controls and existing
 resource handoff do not prove that creation path. Optional currency display is
-not a USD pilot prerequisite. The
-isolated hub has no Stripe configuration; the maintainer has been asked to
-configure test mode without sending keys in chat. Fictitious credits are correctly
-ineligible for credit transfer and are not a substitute for captured-payment
-validation. Nothing in this checkpoint enables production.
+not a USD pilot prerequisite. Stripe-backed purchase, automatic deposit, and
+direct-transfer validation is recorded above. Fictitious credits remain
+ineligible for credit transfer; the new tests use actual test-mode provider
+capture/settlement evidence. Nothing in this checkpoint enables production.
 
 Pool changes, nonbinding recommendations, historical student balances, personal
 funding handoff, transfers, sponsored storage, and multibay/rehome behavior have
