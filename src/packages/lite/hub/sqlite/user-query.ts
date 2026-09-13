@@ -3,6 +3,7 @@ import { cloneDeep, isEqual } from "lodash";
 import { account_id } from "@cocalc/backend/data";
 import { project_id } from "@cocalc/project/data";
 import * as misc from "@cocalc/util/misc";
+import { userQueryMutationRequiresDomainApi } from "@cocalc/util/db-schema/domain-api-only";
 import { client_db, SCHEMA } from "@cocalc/util/schema";
 
 import {
@@ -281,6 +282,14 @@ function userSetQuery(query: any, options: Option[]): any {
   }
   const table = Object.keys(query)[0];
   const dbTable = resolveTableName(query);
+  if (
+    userQueryMutationRequiresDomainApi(table) ||
+    userQueryMutationRequiresDomainApi(dbTable)
+  ) {
+    throw Error(
+      `mutating '${table}' through user_query is disabled; use its dedicated domain API`,
+    );
+  }
   const payload = query[table];
   const pk = buildPrimaryKey(dbTable, payload);
   if (pk == null) {

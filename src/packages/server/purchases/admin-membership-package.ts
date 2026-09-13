@@ -30,6 +30,7 @@ import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import { resolveAdminCourseProjectQuoteContext } from "./admin-course-project";
 
 export type AdminMembershipPackageSource = "card" | "credit" | "free";
 
@@ -78,7 +79,15 @@ export async function adminGetMembershipPackageQuote({
   if (product?.type !== "membership-package" || product.package_id) {
     throw Error("product must create a new membership package");
   }
-  return await resolveAdminMembershipPackageQuote(product);
+  const courseProject = await resolveAdminCourseProjectQuoteContext({
+    admin_account_id,
+    product,
+  });
+  return await resolveAdminMembershipPackageQuote(
+    product,
+    undefined,
+    courseProject,
+  );
 }
 
 function normalizeRequiredText(
@@ -259,6 +268,10 @@ export default async function adminCreateMembershipPackagePurchase({
     invoice_id,
   });
   if (existing) return existing;
+  const courseProject = await resolveAdminCourseProjectQuoteContext({
+    admin_account_id,
+    product,
+  });
 
   const cardFunding =
     source === "card" && customPrice.gt(0)
@@ -291,7 +304,11 @@ export default async function adminCreateMembershipPackagePurchase({
       return existing;
     }
 
-    const quote = await resolveAdminMembershipPackageQuote(product, client);
+    const quote = await resolveAdminMembershipPackageQuote(
+      product,
+      client,
+      courseProject,
+    );
     const starts_at = product.starts_at
       ? normalizeDate(product.starts_at, "starts_at")
       : quote.starts_at;

@@ -5,6 +5,7 @@
 
 import membershipTiersQuery, {
   getMembershipTierUsageReport,
+  upsertMembershipTier,
 } from "./membership-tiers";
 
 type QueryCall = {
@@ -130,6 +131,17 @@ function createDb({
 }
 
 describe("membershipTiersQuery", () => {
+  it("rejects tier labels that cannot fit billing descriptions", async () => {
+    const { db, calls } = createDb();
+    await expect(
+      upsertMembershipTier(db, {
+        id: "oversized-label",
+        label: "x".repeat(101),
+      }),
+    ).rejects.toThrow("at most 100 characters");
+    expect(calls).toHaveLength(0);
+  });
+
   it("includes usage counts by membership tier", async () => {
     const { db } = createDb({
       siteLicenseRows: [{ tier_id: "instructor", site_license_count: 2 }],

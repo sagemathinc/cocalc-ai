@@ -78,6 +78,7 @@ import { promisify } from "node:util";
 import { setSshUi, ssh } from "./ssh";
 import { setReflectUi, reflect } from "./reflect";
 import * as agent from "./agent";
+import { consumeLiteSiteSettingsFreshAuth } from "../site-settings-fresh-auth";
 import {
   history as syncHistory,
   purgeHistory as syncPurgeHistory,
@@ -231,9 +232,13 @@ function requireLiteAccountId(value?: string): string {
 
 async function setSiteSettingsLite({
   account_id,
+  browser_id,
+  fresh_auth_token,
   settings,
 }: {
   account_id?: string;
+  browser_id?: string | null;
+  fresh_auth_token?: string | null;
   settings: { name: string; value: string }[];
 }): Promise<SiteSettingsSyncResult> {
   const caller = requireLiteAccountId(account_id);
@@ -250,6 +255,11 @@ async function setSiteSettingsLite({
   if (typeof value !== "string" || value.length > 65_536) {
     throw Error("OpenAI API key must be a string of at most 65536 characters");
   }
+  consumeLiteSiteSettingsFreshAuth({
+    fresh_auth_token,
+    account_id: caller,
+    browser_id,
+  });
   upsertRow("server_settings", JSON.stringify({ name }), { name, value });
   const local_bay_id = getLiteBayId();
   return {
