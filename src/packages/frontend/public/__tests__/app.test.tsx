@@ -790,8 +790,33 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Launchpad · Last Updated: June 9, 2026"),
+      screen.getByText("Launchpad · Last Updated: September 13, 2026"),
     ).not.toBeNull();
+    const productionData = screen.getByText("Production data").closest("li");
+    expect(productionData).toHaveTextContent(
+      "Host cleanup may complete later if a host is unavailable or cleanup fails.",
+    );
+    expect(productionData).toHaveTextContent(
+      "Deletion records and associated metadata are retained",
+    );
+    const onlineBackups = screen.getByText("Online backups").closest("li");
+    expect(onlineBackups).toHaveTextContent(
+      /By default,.*scheduled for removal after a seven-day retention period/,
+    );
+    expect(onlineBackups).toHaveTextContent(
+      "A different retention period may be requested",
+    );
+    expect(onlineBackups).toHaveTextContent(
+      "Processing failures can delay removal and may require operator intervention.",
+    );
+    expect(
+      screen.getByText("Disaster-recovery backups").closest("li"),
+    ).toHaveTextContent("for no longer than four months");
+    expect(
+      screen.getByText("Restoration safeguards").closest("li"),
+    ).toHaveTextContent(
+      "recorded deletion requests are reapplied before the restored data is made available for ordinary processing",
+    );
     expect(
       screen.getByText(/The Controller \(User\) provides/i),
     ).not.toBeNull();

@@ -16,7 +16,7 @@ export const dpaPolicy: PublicPolicy = {
   navLabel: "DPA",
   slug: "dpa",
   title: "Data Processing Addendum",
-  updated: "June 9, 2026",
+  updated: "September 13, 2026",
   content: (
     <>
       <p>
@@ -163,10 +163,39 @@ export const dpaPolicy: PublicPolicy = {
       <PolicySection title="7. Data Deletion and Return">
         <p>
           Upon termination of the Agreement or at the Controller&apos;s request,
-          SageMath, Inc. shall delete or return all Customer Data in its
-          possession, unless applicable law requires continued storage. Data is
-          typically deleted within 60 days of contract termination.
+          SageMath, Inc. shall delete or return Customer Data in accordance with
+          the Controller&apos;s instructions, unless applicable law or an agreed
+          legal hold requires continued storage.
         </p>
+        <ul>
+          <li>
+            <b>Production data</b>: Permanent project deletion removes the
+            active project record and initiates cleanup of its live data. Host
+            cleanup may complete later if a host is unavailable or cleanup
+            fails. Deletion records and associated metadata are retained to
+            document and enforce deletion.
+          </li>
+          <li>
+            <b>Online backups</b>: By default, references to the project&apos;s
+            ordinary online backups are scheduled for removal after a seven-day
+            retention period. A different retention period may be requested when
+            deleting the project. Processing failures can delay removal and may
+            require operator intervention. Once removed, those backups cannot be
+            restored through the Service.
+          </li>
+          <li>
+            <b>Disaster-recovery backups</b>: Customer Data may remain in
+            isolated, encrypted disaster-recovery backups until scheduled media
+            rotation, but for no longer than four months. This data is beyond
+            ordinary use, is not processed for any other purpose, and is
+            accessible only when required for disaster recovery.
+          </li>
+          <li>
+            <b>Restoration safeguards</b>: If SageMath, Inc. restores a backup,
+            recorded deletion requests are reapplied before the restored data is
+            made available for ordinary processing.
+          </li>
+        </ul>
       </PolicySection>
       <PolicySection title="8. Audit and Compliance">
         <p>
