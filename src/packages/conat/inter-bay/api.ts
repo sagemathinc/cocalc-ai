@@ -4256,6 +4256,13 @@ export type ComputeOwnerMutationMethod =
   | "setVmFundingMode"
   | "setVmMachineType"
   | "setVmPricingModel"
+  | "authorizeSshKey"
+  | "listVmSshKeys"
+  | "revokeSshKey"
+  | "listVmProjectAccess"
+  | "grantVmProjectAccess"
+  | "revokeVmProjectAccess"
+  | "prepareWindowsRdp"
   | "resizeVolume"
   | "setVolumeFundingMode"
   | "deleteVolume";
@@ -4270,6 +4277,16 @@ export type ComputeOwnerMutationRequest = {
     };
   };
 }[ComputeOwnerMutationMethod];
+export type ComputeOwnerMutationResult = {
+  id: string;
+  owner_account_id: string;
+  owning_bay_id: string;
+  value: Awaited<
+    ReturnType<
+      import("@cocalc/conat/hub/api/compute").ComputeApi[ComputeOwnerMutationMethod]
+    >
+  >;
+};
 
 export interface InterBayComputeFundingApi {
   computeProjectResources: (
@@ -4277,10 +4294,7 @@ export interface InterBayComputeFundingApi {
   ) => Promise<ComputeOwnerResourcesResult>;
   computeOwnerMutate: (
     opts: ComputeOwnerMutationRequest,
-  ) => Promise<
-    | import("@cocalc/conat/hub/api/compute").ComputeVm
-    | import("@cocalc/conat/hub/api/compute").ComputeVolume
-  >;
+  ) => Promise<ComputeOwnerMutationResult>;
   computeOwnerCheckFreshAuth: (opts: {
     account_id: string;
     session_hash: string;

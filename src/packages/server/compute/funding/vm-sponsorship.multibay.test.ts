@@ -736,6 +736,15 @@ describePg(
           ).rows[0].desired_state,
         ).toBe("stopped");
         const session_hash = randomUUID();
+        const ssh_public_key = "ssh-ed25519 AAAAREHOMETEST rehome-test";
+        await expect(
+          api.authorizeSshKey({
+            account_id: f.student,
+            id_or_name: f.vm.id,
+            ssh_public_key,
+            idempotency_key: randomUUID(),
+          }),
+        ).rejects.toThrow(/fresh auth/);
         await (
           await import("@cocalc/server/auth/auth-sessions")
         ).recordNewAuthSession({
@@ -744,6 +753,66 @@ describePg(
           expire: new Date(Date.now() + 3600_000),
           fresh_auth_until: new Date(Date.now() + 60_000),
         });
+        await api.authorizeSshKey({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+          session_hash,
+          ssh_public_key,
+          idempotency_key: randomUUID(),
+        });
+        expect(
+          await api.listVmSshKeys({
+            account_id: f.student,
+            id_or_name: f.vm.id,
+          }),
+        ).toEqual(
+          expect.arrayContaining([expect.objectContaining({ ssh_public_key })]),
+        );
+        const remainingKeys = await api.revokeSshKey({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+          ssh_public_key,
+          idempotency_key: randomUUID(),
+        });
+        expect(
+          remainingKeys.some((k) => k.ssh_public_key === ssh_public_key),
+        ).toBe(false);
+        await api.grantVmProjectAccess({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+          project_id: f.project,
+          ssh_public_key,
+          session_hash,
+          idempotency_key: randomUUID(),
+        });
+        expect(
+          await api.listVmProjectAccess({ account_id: f.student }),
+        ).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ vm_id: f.vm.id, project_id: f.project }),
+          ]),
+        );
+        await api.revokeVmProjectAccess({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+          project_id: f.project,
+          idempotency_key: randomUUID(),
+        });
+        expect(
+          await api.listVmProjectAccess({ account_id: f.student }),
+        ).toEqual([
+          expect.objectContaining({
+            vm_id: f.vm.id,
+            state: "revoking",
+            revoked_at: expect.anything(),
+          }),
+        ]);
+        expect(
+          await api.listProjectVms({
+            account_id: f.student,
+            project_id: f.project,
+          }),
+        ).toEqual([]);
         const deleted = await api.deleteVm({
           account_id: f.student,
           id_or_name: f.vm.id,

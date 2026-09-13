@@ -12,6 +12,7 @@ import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import type {
   ComputeOwnerMutationMethod,
   ComputeOwnerMutationRequest,
+  ComputeOwnerMutationResult,
 } from "@cocalc/conat/inter-bay/api";
 import type { ComputeAgentAuth } from "@cocalc/util/compute-agent-auth";
 import { fundingId } from "@cocalc/util/compute-funding";
@@ -36,6 +37,13 @@ const kinds = {
   setVmFundingMode: "vm",
   setVmMachineType: "vm",
   setVmPricingModel: "vm",
+  authorizeSshKey: "vm",
+  listVmSshKeys: "vm",
+  revokeSshKey: "vm",
+  listVmProjectAccess: "vm",
+  grantVmProjectAccess: "vm",
+  revokeVmProjectAccess: "vm",
+  prepareWindowsRdp: "vm",
   resizeVolume: "volume",
   setVolumeFundingMode: "volume",
   deleteVolume: "volume",
@@ -108,7 +116,7 @@ export async function requireComputeOwnerFreshAuth(opts: {
  * bay. Only routing is suppressed; funding, agent and fresh-auth checks remain. */
 export async function computeOwnerMutationOnBay(
   request: ComputeOwnerMutationRequest,
-) {
+): Promise<ComputeOwnerMutationResult> {
   if (!Object.hasOwn(kinds, request.method))
     throw Error("Unsupported compute resource operation.");
   const account_id = fundingId(
@@ -126,7 +134,7 @@ export async function computeOwnerMutationOnBay(
   );
   if (rows.length !== 1)
     throw Error("Compute resource not found or access denied.");
-  return withLocalComputeResource(async () => {
+  const value = await withLocalComputeResource(async () => {
     const api = await import("@cocalc/server/conat/api/compute");
     switch (request.method) {
       case "startVm":
@@ -143,6 +151,20 @@ export async function computeOwnerMutationOnBay(
         return api.setVmMachineType(request.opts);
       case "setVmPricingModel":
         return api.setVmPricingModel(request.opts);
+      case "authorizeSshKey":
+        return api.authorizeSshKey(request.opts);
+      case "listVmSshKeys":
+        return api.listVmSshKeys(request.opts);
+      case "revokeSshKey":
+        return api.revokeSshKey(request.opts);
+      case "listVmProjectAccess":
+        return api.listVmProjectAccess(request.opts);
+      case "grantVmProjectAccess":
+        return api.grantVmProjectAccess(request.opts);
+      case "revokeVmProjectAccess":
+        return api.revokeVmProjectAccess(request.opts);
+      case "prepareWindowsRdp":
+        return api.prepareWindowsRdp(request.opts);
       case "resizeVolume":
         return api.resizeVolume(request.opts);
       case "setVolumeFundingMode":
@@ -151,13 +173,23 @@ export async function computeOwnerMutationOnBay(
         return api.deleteVolume(request.opts);
     }
   });
+  return {
+    id,
+    owner_account_id: account_id,
+    owning_bay_id: getConfiguredBayId(),
+    value,
+  };
 }
 
 export async function routeComputeOwnerMutation<
   M extends ComputeOwnerMutationMethod,
 >(
   method: M,
-  opts: Parameters<ComputeApi[M]>[0] & { agent_auth?: ComputeAgentAuth },
+  opts: Parameters<ComputeApi[M]>[0] & {
+    agent_auth?: ComputeAgentAuth;
+    id_or_name: string;
+  },
+  knownResource?: ComputeVm | ComputeVolume,
 ): Promise<Awaited<ReturnType<ComputeApi[M]>> | undefined> {
   if (!routeComputeOwnerRead()) return;
   const account_id = fundingId(
@@ -167,14 +199,23 @@ export async function routeComputeOwnerMutation<
   const account_home_bay = await home(account_id);
   if (account_home_bay !== getConfiguredBayId())
     throw Error("Compute account home changed; refresh and retry.");
-  const resources =
-    kinds[method] === "vm"
-      ? await listComputeOwnerResources({ account_id, kind: "vm" })
+  const resources = knownResource
+    ? [knownResource]
+    : kinds[method] === "vm"
+      ? await listComputeOwnerResources({
+          account_id,
+          kind: "vm",
+          include_deleted:
+            method === "listVmProjectAccess" ||
+            method === "revokeVmProjectAccess",
+        })
       : await listComputeOwnerResources({ account_id, kind: "volume" });
   const resource = selectOwnedComputeResource<ComputeVm | ComputeVolume>(
     resources,
     opts.id_or_name,
   );
+  if (resource.owner_account_id !== account_id)
+    throw Error("Compute resource not found or access denied.");
   if (resource.owning_bay_id === getConfiguredBayId()) return;
   const actor = opts as { browser_id?: string; session_hash?: string };
   const request = {
@@ -202,5 +243,5 @@ export async function routeComputeOwnerMutation<
     result.owning_bay_id !== resource.owning_bay_id
   )
     throw Error("Compute resource authority changed; refresh and retry.");
-  return result as Awaited<ReturnType<ComputeApi[M]>>;
+  return result.value as Awaited<ReturnType<ComputeApi[M]>>;
 }

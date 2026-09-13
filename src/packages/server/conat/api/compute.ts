@@ -13,7 +13,9 @@ import {
   listComputeOwnerResources,
   listComputeProjectResources,
   selectOwnedComputeResource,
+  withLocalComputeResource,
 } from "@cocalc/server/compute/owner-resource-routing";
+import { mapParallelLimit } from "@cocalc/util/async-utils";
 import {
   normalizeVmFundingSource,
   requireSponsoredVmAdmission,
@@ -1828,6 +1830,32 @@ export async function listVmProjectAccess(opts: {
   include_revoked?: boolean;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead()) {
+    const resources = await listComputeOwnerResources({
+      account_id: accountId,
+      kind: "vm",
+      include_deleted: true,
+    });
+    const selected = opts.id_or_name
+      ? [selectOwnedComputeResource(resources, opts.id_or_name)]
+      : resources;
+    return (
+      await mapParallelLimit(
+        selected,
+        async (vm) => {
+          const request = { ...opts, account_id: accountId, id_or_name: vm.id };
+          return (
+            (await routeComputeOwnerMutation(
+              "listVmProjectAccess",
+              request,
+              vm,
+            )) ?? withLocalComputeResource(() => listVmProjectAccess(request))
+          );
+        },
+        4,
+      )
+    ).flat();
+  }
   const vm = opts.id_or_name
     ? await resolveOwned(accountId, opts.id_or_name, true)
     : undefined;
@@ -1849,14 +1877,15 @@ export async function grantVmProjectAccess(opts: {
   ssh_public_key?: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("grantVmProjectAccess", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const projectId = `${opts.project_id ?? ""}`.trim();
   if (!projectId) throw new Error("project_id is required");
-  await requireDangerousSessionAuth({
+  await requireComputeOwnerFreshAuth({
     account_id: accountId,
     browser_id: opts.browser_id,
     session_hash: opts.session_hash,
-    require_second_factor: "if_enabled",
   });
   await requireProjectMembership(accountId, projectId);
   const vm = await resolveOwned(accountId, opts.id_or_name);
@@ -1905,6 +1934,8 @@ export async function revokeVmProjectAccess(opts: {
   project_id: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("revokeVmProjectAccess", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const projectId = `${opts.project_id ?? ""}`.trim();
   if (!projectId) throw new Error("project_id is required");
@@ -2099,6 +2130,8 @@ export async function authorizeSshKey(opts: {
   ssh_public_key: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("authorizeSshKey", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
   if (!key) throw new Error("ssh_public_key is required");
@@ -2110,11 +2143,10 @@ export async function authorizeSshKey(opts: {
     actor_account_id: accountId,
     actor_kind: "human",
     beforeAdd: async () => {
-      await requireDangerousSessionAuth({
+      await requireComputeOwnerFreshAuth({
         account_id: accountId,
         browser_id: opts.browser_id,
         session_hash: opts.session_hash,
-        require_second_factor: "if_enabled",
       });
     },
   });
@@ -2140,6 +2172,8 @@ export async function listVmSshKeys(opts: {
   account_id?: string;
   id_or_name: string;
 }) {
+  const routed = await routeComputeOwnerMutation("listVmSshKeys", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const vm = await resolveOwned(accountId, opts.id_or_name);
   return computeVmSshPublicKeys(vm).map(publicVmSshKey);
@@ -2151,6 +2185,8 @@ export async function revokeSshKey(opts: {
   ssh_public_key: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("revokeSshKey", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
   if (!key) throw new Error("ssh_public_key is required");
@@ -2190,12 +2226,13 @@ export async function prepareWindowsRdp(opts: {
   session_hash?: string;
   id_or_name: string;
 }) {
+  const routed = await routeComputeOwnerMutation("prepareWindowsRdp", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
-  await requireDangerousSessionAuth({
+  await requireComputeOwnerFreshAuth({
     account_id: accountId,
     browser_id: opts.browser_id,
     session_hash: opts.session_hash,
-    require_second_factor: "if_enabled",
   });
   const vm = await resolveOwned(accountId, opts.id_or_name);
   if ((vm.operating_system ?? "linux") !== "windows") {

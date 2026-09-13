@@ -70,7 +70,7 @@ beforeEach(() => {
   mockMulti = true;
   mockHome.mockResolvedValue({ home_bay_id: "home" });
   mockResources.mockResolvedValue([vm]);
-  mockMutate.mockResolvedValue(vm);
+  mockMutate.mockResolvedValue({ ...vm, value: vm });
   mockQuery.mockResolvedValue({ rows: [{ id }] });
   mockAuth.mockResolvedValue(undefined);
   mockRemoteAuth.mockResolvedValue(undefined);
@@ -106,6 +106,23 @@ it("rejects stale account-home routing before dispatch", async () => {
     }),
   ).rejects.toThrow(/home changed/);
   expect(mockMutate).not.toHaveBeenCalled();
+});
+it("returns non-resource SSH results only with the expected resource identity", async () => {
+  const value = [
+    {
+      fingerprint: "SHA256:test",
+      key_type: "ssh-ed25519",
+      ssh_public_key: "ssh-ed25519 AAAATEST",
+    },
+  ];
+  mockMutate.mockResolvedValue({ ...vm, value });
+  await expect(
+    routeComputeOwnerMutation("listVmSshKeys", { account_id, id_or_name: id }),
+  ).resolves.toEqual(value);
+  mockMutate.mockResolvedValue({ ...vm, id: randomUUID(), value });
+  await expect(
+    routeComputeOwnerMutation("listVmSshKeys", { account_id, id_or_name: id }),
+  ).rejects.toThrow(/authority changed/);
 });
 it("checks fresh authentication at the current home, not the resource bay", async () => {
   mockBay = "resource";
