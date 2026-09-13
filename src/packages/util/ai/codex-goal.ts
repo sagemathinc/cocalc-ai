@@ -53,15 +53,18 @@ const statuses = new Set<string>([
 
 export function normalizeCodexGoal(value: any): CodexGoal | undefined {
   if (value?.toJS) value = value.toJS();
-  if (
-    !value ||
-    typeof value.objective !== "string" ||
-    !statuses.has(value.status)
-  )
+  // App-server uses camelCase; keep existing persisted/display statuses stable.
+  const status =
+    value?.status === "usageLimited"
+      ? "usage_limited"
+      : value?.status === "budgetLimited"
+        ? "budget_limited"
+        : value?.status;
+  if (!value || typeof value.objective !== "string" || !statuses.has(status))
     return;
   return {
     objective: value.objective,
-    status: value.status,
+    status,
     tokenBudget:
       Number.isSafeInteger(value.tokenBudget) && value.tokenBudget > 0
         ? value.tokenBudget
