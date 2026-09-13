@@ -299,6 +299,72 @@ it("requires approved consent, reserves personal backing before worker restart, 
   ).rejects.toThrow(/authorization ended/);
 });
 
+it.each(["pending", "approved", "preparing"])(
+  "ends %s personal consent when VM deletion is requested",
+  async (state) => {
+    const f = await fixture();
+    await getPool().query(
+      "UPDATE compute_vm_personal_consents SET state=$2 WHERE id=$1",
+      [f.consentId, state],
+    );
+    await getPool().query(
+      "UPDATE compute_vms SET desired_state='deleted' WHERE id=$1",
+      [f.vmId],
+    );
+    await processVmPersonalFundingHandoffs();
+    const consent = await getVmPersonalFunding({
+      account_id: f.student,
+      vm_id: f.vmId,
+    });
+    expect(consent!.state).toBe("cancelled");
+    expect(
+      (
+        await getPool().query(
+          "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1",
+          [f.student],
+        )
+      ).rows[0].n,
+    ).toBe(0);
+    await processVmPersonalFundingHandoffs();
+    expect(
+      (await getVmPersonalFunding({ account_id: f.student, vm_id: f.vmId }))!
+        .version,
+    ).toBe(consent!.version);
+  },
+);
+
+it("expires active personal consent without releasing its existing commitments", async () => {
+  const f = await fixture();
+  await switchVmPersonalFunding(f.opts);
+  await getPool().query(
+    "UPDATE compute_vms SET state='stopped',stopped_at=NOW() WHERE id=$1",
+    [f.vmId],
+  );
+  await processVmPersonalFundingHandoffs();
+  const before = (await getVmPersonalFunding({
+    account_id: f.student,
+    vm_id: f.vmId,
+  }))!;
+  await getPool().query(
+    "UPDATE compute_vm_personal_consents SET terms=jsonb_set(terms,'{ends_at}',to_jsonb((NOW()-interval '1 second')::text)) WHERE id=$1",
+    [f.consentId],
+  );
+  await processVmPersonalFundingHandoffs();
+  const after = (await getVmPersonalFunding({
+    account_id: f.student,
+    vm_id: f.vmId,
+  }))!;
+  expect(after.state).toBe("expired");
+  expect(after.committed_usd).toBe(before.committed_usd);
+  expect(Number(after.committed_usd)).toBeGreaterThan(0);
+  await expect(
+    checkComputeVmFundingLocal({
+      account_id: f.student,
+      binding: courseVmBinding((await getComputeVmById(f.vmId))!),
+    }),
+  ).rejects.toThrow(/authorization ended/);
+});
+
 it("cannot start personal compute while old GCP egress is unmeasured", async () => {
   const f = await fixture("gcp");
   await switchVmPersonalFunding(f.opts);

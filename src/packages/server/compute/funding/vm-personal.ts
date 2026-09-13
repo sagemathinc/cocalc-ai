@@ -67,6 +67,7 @@ interface ConsentRow {
 const logger = getLogger("compute:funding:personal-handoff");
 let fallbackCursor = "00000000-0000-0000-0000-000000000000";
 let handoffCursor = "00000000-0000-0000-0000-000000000000";
+let closedConsentCursor = "00000000-0000-0000-0000-000000000000";
 
 async function fallbackDecision(
   consent: ConsentRow,
@@ -559,6 +560,7 @@ async function enqueuePersonalTransition(
 
 /** Owning-bay reconciliation. No account lock or DB transaction spans provider work. */
 export async function processVmPersonalFundingHandoffs(): Promise<void> {
+  await closeEndedPersonalConsents();
   await prepareAutomaticVmPersonalFallbacks();
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
@@ -690,6 +692,47 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
     } catch (err) {
       logger.warn("personal funding handoff remains pending", {
         consent_id: pending.id,
+        err,
+      });
+    }
+  }
+}
+
+/** End future authority without releasing any unsettled resource obligation. */
+async function closeEndedPersonalConsents(): Promise<void> {
+  const { rows } = await getPool().query<ConsentRow>(
+    `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
+    WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','preparing','active')
+      AND (v.desired_state='deleted' OR v.deleted_at IS NOT NULL OR (c.terms->>'ends_at')::timestamptz<=clock_timestamp())
+    ORDER BY c.id LIMIT 20`,
+    [getConfiguredBayId(), closedConsentCursor],
+  );
+  closedConsentCursor =
+    rows.length === 20
+      ? rows[rows.length - 1].id
+      : "00000000-0000-0000-0000-000000000000";
+  for (const consent of rows) {
+    try {
+      await withFundingAccountTransaction(
+        consent.payer_account_id,
+        async (db) => {
+          const vm = await ownedVm(consent.payer_account_id, consent.vm_id, db);
+          await db.query(
+            `UPDATE compute_vm_personal_consents SET state=CASE WHEN $3 THEN 'cancelled' ELSE 'expired' END,
+          version=version+1,updated_at=clock_timestamp()
+          WHERE id=$1 AND version=$2 AND state IN ('pending','approved','preparing','active')
+            AND ($3 OR (terms->>'ends_at')::timestamptz<=clock_timestamp())`,
+            [
+              consent.id,
+              consent.version,
+              vm.desired_state === "deleted" || vm.deleted_at != null,
+            ],
+          );
+        },
+      );
+    } catch (err) {
+      logger.warn("ended personal consent remains pending", {
+        consent_id: consent.id,
         err,
       });
     }

@@ -7,6 +7,7 @@ import { Pool } from "pg";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema";
 import { before, after } from "@cocalc/server/test";
+import { ensureAccountUsageWindowSchema } from "@cocalc/server/membership/usage-windows";
 
 export const bays = [
   "sponsor-payer",
@@ -90,6 +91,9 @@ export function independentBayDatabases() {
         names.push(database);
         pools.set(bay, new Pool({ ...options, database, max: 6 }));
         await onBay(bay, () => syncSchema());
+        // This runtime schema is outside syncSchema and its default cache is
+        // process-wide; provision it explicitly in each independent database.
+        await ensureAccountUsageWindowSchema(pools.get(bay)!);
       }
     },
     async stop() {

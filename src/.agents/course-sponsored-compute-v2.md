@@ -1,6 +1,6 @@
 # Course-Sponsored Compute: Fresh Implementation
 
-Date: 2026-09-12. Status: implementation and local validation in progress;
+Date: 2026-09-13. Status: implementation and local validation in progress;
 not release-ready.
 
 ## Implementation Checkpoint
@@ -79,12 +79,37 @@ regressions, and the updated VM/personal suites pass 42 tests. Three-bay tests
 use real PostgreSQL and Conat with controlled directory/rollout fixtures, not
 actual cloud instances in multiple bays.
 
-Remaining implementation/validation includes cross-bay personal handoff,
-personal home-volume takeover, live sponsored-volume lifecycle, transfer/payment
-provenance validation, bounded postpaid workflows, and currency display. A
-phone-width screenshot caught wrapped amounts/dates missed by the automated
-accessibility scan; funding details now use vertical label/value layout and
-await a fresh rendered check. Nothing in this checkpoint enables production.
+Follow-up validation on September 13 used a fresh real GCP VM
+`3bb18c62-fc2c-463b-ba80-fa29c19f082c`. It switched through separate-origin
+personal approval, restarted with a persisted generation-2 timing row, executed
+Python over SSH, and charged the student's personal purchase ledger USD 0.01.
+Its scheduled stop completed at 00:31 UTC. Student-requested deletion completed
+at 00:38 UTC; provider inventory independently showed no instance, disk, or
+address. Both source reservations settled: the short course segment rounded to
+zero and released USD 1.25; the personal segment released USD 1.24 after its
+USD 0.01 charge. Fresh-browser and reload checks preserved the project notebook,
+including its saved marker and unchanged disk timestamp. These are fictitious
+account credits with real, now-cleaned-up cloud resources, not payment tests.
+
+Seven three-bay PostgreSQL/Conat tests now include personal handoff from an
+instructor's remote payer bay to the student's VM/account bay, with a lost
+settlement reply and retry. Successor reservation confirmation routes to its
+payer before taking the old payer's financial lock. The 30 personal integration
+checks also cover ending deleted/expired consents without prematurely releasing
+unsettled liabilities. Account rehome away from a VM's owning bay is still a
+separate incomplete personal-handoff case.
+
+Fresh 320/720/1440-pixel light/dark checks verified the vertical funding detail
+layout, including screenshot inspection after the earlier narrow-label issue.
+This is not yet the full required zoom/device/accessibility matrix.
+
+Remaining implementation/validation includes personal home-volume takeover,
+live sponsored-volume lifecycle, automatic fallback/exhaustion, transfer/payment
+provenance validation, bounded postpaid workflows, and currency display. The
+isolated hub has no Stripe configuration; the maintainer has been asked to
+configure test mode without sending keys in chat. Fictitious credits are correctly
+ineligible for credit transfer and are not a substitute for captured-payment
+validation. Nothing in this checkpoint enables production.
 
 Other work in progress includes pool changes, nonbinding recommendations,
 historical student balances, personal funding handoff, transfers, sponsored

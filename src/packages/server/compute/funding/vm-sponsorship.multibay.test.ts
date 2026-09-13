@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { getLogger } from "@cocalc/backend/logger";
 import { client as fabric } from "@cocalc/server/test";
 import { createServiceHandler } from "@cocalc/conat/service/typed";
 import {
@@ -27,7 +28,11 @@ import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spend
 import createCredit from "@cocalc/server/purchases/create-credit";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type { ReserveComputeVmFundingRequest } from "@cocalc/util/compute-vm-funding";
-import { getComputeVmById } from "../db";
+import { getComputeVmById, updateComputeInstance } from "../db";
+import {
+  switchVmPersonalFunding,
+  processVmPersonalFundingHandoffs,
+} from "./vm-personal";
 import { withFundingAccountTransaction } from "./backing";
 import { createCourseFundingPoolInTransaction } from "./pools";
 import { assertCourseAccess } from "./course-access";
@@ -430,6 +435,117 @@ describePg(
       ).toEqual({ state: "settled" });
     });
 
+    it("hands approved personal funding from a remote instructor to the student bay and retries lost settlement", async () => {
+      const f = await fixture();
+      const consentId = randomUUID();
+      setPolicy(f.student, {});
+      await pools
+        .get(resourceBay)!
+        .query(
+          "INSERT INTO purchases(account_id,cost,service,time) VALUES($1,-10,'credit',NOW())",
+          [f.student],
+        );
+      await onBay(resourceBay, async () => {
+        const bound = await reserveCourseVmLaunch(f.vm);
+        await requireCourseVmService(bound, true);
+        await pools
+          .get(resourceBay)!
+          .query(
+            "UPDATE compute_vms SET state='ready',stop_generation=1 WHERE id=$1",
+            [f.vm.id],
+          );
+        const terms = {
+          vm_id: f.vm.id,
+          expected_funding_version: f.request.funding_epoch,
+          home_volume_ids: [],
+          lane: "prepaid",
+          cap_usd: "10",
+          ends_at: new Date(Date.now() + 3600000).toISOString(),
+          activation: "immediate",
+          fallback_reasons: [],
+        };
+        // Start at the independently approved boundary; no test approval RPC.
+        await pools.get(resourceBay)!.query(
+          `INSERT INTO compute_vm_personal_consents
+          (id,payer_account_id,vm_id,operation_id,terms,review,state,version,approval_url,approval_expires_at)
+          VALUES($1,$2,$3,$4,$5,'{}','approved',2,'https://approval.example/test',NOW()+interval '15 minutes')`,
+          [consentId, f.student, f.vm.id, randomUUID(), terms],
+        );
+        const opts = {
+          account_id: f.student,
+          vm_id: f.vm.id,
+          consent_id: consentId,
+          expected_version: 2,
+          expected_funding_version: f.request.funding_epoch,
+          operation_id: randomUUID(),
+        };
+        await switchVmPersonalFunding(opts);
+        await pools
+          .get(resourceBay)!
+          .query(
+            "UPDATE compute_vms SET state='stopped',stopped_at=NOW() WHERE id=$1",
+            [f.vm.id],
+          );
+        const warnings = jest.spyOn(
+          getLogger("compute:funding:personal-handoff"),
+          "warn",
+        );
+        await processVmPersonalFundingHandoffs();
+        expect(warnings.mock.calls).toEqual([]);
+        warnings.mockRestore();
+        let vm = (await getComputeVmById(f.vm.id))!;
+        const binding = vm.metadata.billing.course_funding.binding;
+        expect(binding.source).toEqual({
+          kind: "personal",
+          consent_id: consentId,
+        });
+        expect(vm.desired_state).toBe("running");
+        expect((await switchVmPersonalFunding(opts)).state).toBe("active");
+        await (
+          await payerApi(f.student)
+        ).checkComputeVmFunding({
+          account_id: f.student,
+          binding,
+          dispatch: true,
+        });
+        await updateComputeInstance(vm, { running: true, ready: true });
+        loseSettlement = true;
+        await expect(meterCourseVm(vm)).rejects.toThrow(
+          /lost committed settlement reply/,
+        );
+        vm = (await getComputeVmById(f.vm.id))!;
+        await meterCourseVm(vm);
+        const old = await row(
+          payerBay,
+          "SELECT state,pricing_snapshot->'meter' AS meter FROM compute_funding_reservations WHERE operation_id=$1",
+          [f.request.funding_epoch],
+        );
+        const next = await row(
+          resourceBay,
+          "SELECT pricing_snapshot->'meter' AS meter FROM compute_funding_reservations WHERE id=$1",
+          [consentId],
+        );
+        expect(old.state).toBe("settled");
+        expect(Date.parse(old.meter.transferred_at)).toBeLessThanOrEqual(
+          Date.parse(next.meter.running_started_at),
+        );
+        expect(
+          await row(
+            payerBay,
+            "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1",
+            [f.student],
+          ),
+        ).toEqual({ n: 0 });
+        expect(
+          await row(
+            resourceBay,
+            "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1",
+            [f.student],
+          ),
+        ).toEqual({ n: 1 });
+      });
+    });
+
     it.each(["prepaid", "postpaid"] as const)(
       "routes %s grants, recovers a lost reserve reply, and settles only the payer after rehome",
       async (lane) => {
@@ -647,7 +763,8 @@ describePg(
           (
             await row(
               resourceBay,
-              "SELECT count(*)::int AS n FROM compute_funding_reservations",
+              "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE resource_id=$1",
+              [f.vm.id],
             )
           ).n,
         ).toBe(0);
