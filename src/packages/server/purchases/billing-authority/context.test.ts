@@ -4,10 +4,12 @@
  */
 
 import {
+  assertBillingAuthorityAccountRegistered,
   assertStripeMutationAuthorized,
   enableStripeMutationAuthorityEnforcement,
   getBillingAuthorityContext,
   isInBillingAuthorityContext,
+  registerBillingAuthorityAccount,
   resetBillingAuthorityContextForTests,
   runInBillingAuthorityContext,
   stripeMutationEnforcementDefault,
@@ -110,6 +112,105 @@ describe("billing authority context", () => {
             path: "/v1/invoices",
           }),
         ).rejects.toThrow("must run through the billing authority");
+      },
+    });
+  });
+
+  it("registers each dynamically resolved account once per command", async () => {
+    const registerAccount = jest.fn(async () => undefined);
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "request-dynamic-account",
+      register_account: registerAccount,
+      fn: async () => {
+        await registerBillingAuthorityAccount(
+          "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        );
+        await registerBillingAuthorityAccount(
+          "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        );
+        await expect(
+          assertBillingAuthorityAccountRegistered(
+            "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+          ),
+        ).resolves.toBeUndefined();
+      },
+    });
+    expect(registerAccount).toHaveBeenCalledTimes(1);
+    expect(registerAccount).toHaveBeenCalledWith(
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    );
+  });
+
+  it("rejects account registration after the authority context expires", async () => {
+    let authorityActive = true;
+    const registerAccount = jest.fn();
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "request-expired-registration",
+      authority_active: () => authorityActive,
+      register_account: registerAccount,
+      fn: async () => {
+        authorityActive = false;
+        await expect(
+          registerBillingAuthorityAccount(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          ),
+        ).rejects.toMatchObject({ code: 503, status: 503 });
+      },
+    });
+    expect(registerAccount).not.toHaveBeenCalled();
+  });
+
+  it("rejects direct financial writes after authority activation", async () => {
+    const previous = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    process.env.COCALC_BILLING_AUTHORITY_ENABLED = "true";
+    try {
+      await expect(
+        registerBillingAuthorityAccount("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+      ).rejects.toMatchObject({ code: 503, status: 503 });
+      await expect(
+        registerBillingAuthorityAccount(
+          "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          { allow_direct_execution: true },
+        ),
+      ).resolves.toBeUndefined();
+      await expect(
+        assertBillingAuthorityAccountRegistered(
+          "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        ),
+      ).rejects.toMatchObject({ code: 503, status: 503 });
+      await expect(
+        assertBillingAuthorityAccountRegistered(
+          "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          { allow_direct_execution: true },
+        ),
+      ).resolves.toBeUndefined();
+    } finally {
+      if (previous == null) {
+        delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+      } else {
+        process.env.COCALC_BILLING_AUTHORITY_ENABLED = previous;
+      }
+    }
+  });
+
+  it("fails closed when a ledger account was never fenced", async () => {
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "request-ledger-fence",
+      pre_registered_accounts: ["AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"],
+      fn: async () => {
+        await expect(
+          assertBillingAuthorityAccountRegistered(
+            "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          ),
+        ).resolves.toBeUndefined();
+        await expect(
+          assertBillingAuthorityAccountRegistered(
+            "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          ),
+        ).rejects.toMatchObject({ code: 503, status: 503 });
       },
     });
   });

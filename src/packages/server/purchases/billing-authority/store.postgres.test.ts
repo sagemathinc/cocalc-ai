@@ -17,6 +17,7 @@ import type {
 import {
   BILLING_AUTHORITY_EXECUTION_LOCK,
   acquireBillingAuthorityLease,
+  advanceBillingAuthorityActivation,
   beginBillingAuthorityCommandExecution,
   cancelQueuedBillingAuthorityCommand,
   claimNextBillingAuthorityCommand,
@@ -41,6 +42,11 @@ const describePostgres =
 const INSTANCE_A = "11111111-1111-4111-8111-111111111111";
 const INSTANCE_B = "22222222-2222-4222-8222-222222222222";
 const ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
+const ACTIVATION_ACCOUNT_IDS = [
+  "10000000-0000-4000-8000-000000000001",
+  "20000000-0000-4000-8000-000000000002",
+  "30000000-0000-4000-8000-000000000003",
+];
 
 function request(
   command: BillingAuthorityCommand,
@@ -60,9 +66,18 @@ async function resetTables(): Promise<void> {
   await getPool().query("DELETE FROM billing_authority_commands");
   await getPool().query("DELETE FROM billing_authority_account_fences");
   await getPool().query("DELETE FROM billing_authority_lease");
-  await getPool().query("DELETE FROM accounts WHERE account_id=$1", [
-    ACCOUNT_ID,
-  ]);
+  await getPool().query("DELETE FROM billing_authority_migrations");
+  await getPool().query(
+    "DELETE FROM accounts WHERE account_id=ANY($1::UUID[])",
+    [[ACCOUNT_ID, ...ACTIVATION_ACCOUNT_IDS]],
+  );
+  await getPool().query(
+    `INSERT INTO billing_authority_migrations
+       (name, phase, processed_count, complete, started_at, updated_at,
+        completed_at)
+     VALUES ('account-security-fences-v1', 'complete', 0, TRUE,
+             clock_timestamp(), clock_timestamp(), clock_timestamp())`,
+  );
 }
 
 describePostgres("billing authority PostgreSQL journal", () => {
@@ -260,6 +275,12 @@ describePostgres("billing authority PostgreSQL journal", () => {
          VALUES ($1, clock_timestamp(), $2, $3)`,
         [ACCOUNT_ID, banned, deleted],
       );
+      await getPool().query("DELETE FROM billing_authority_migrations");
+
+      let progress;
+      do {
+        progress = await advanceBillingAuthorityActivation({ batch_size: 1 });
+      } while (!progress.complete);
 
       await expect(
         acquireBillingAuthorityLease({
@@ -288,6 +309,62 @@ describePostgres("billing authority PostgreSQL journal", () => {
       ).rejects.toMatchObject({ code: 423, status: 423 });
     },
   );
+
+  it("refuses to expose a lease before durable activation completes", async () => {
+    await getPool().query("DELETE FROM billing_authority_migrations");
+    await expect(
+      acquireBillingAuthorityLease({
+        instance_id: INSTANCE_A,
+        lease_ms: 5_000,
+      }),
+    ).rejects.toMatchObject({ code: 503, status: 503 });
+    const { rows } = await getPool().query(
+      "SELECT holder_id FROM billing_authority_lease WHERE name='primary'",
+    );
+    expect(rows[0]?.holder_id).toBeFalsy();
+  });
+
+  it("verifies restricted accounts added behind a durable scan cursor", async () => {
+    const [behindCursor, first, second] = ACTIVATION_ACCOUNT_IDS;
+    await getPool().query(
+      `INSERT INTO accounts (account_id, created, banned, deleted)
+       VALUES ($1, clock_timestamp(), TRUE, FALSE),
+              ($2, clock_timestamp(), TRUE, FALSE)`,
+      [first, second],
+    );
+    await getPool().query("DELETE FROM billing_authority_migrations");
+
+    await expect(
+      advanceBillingAuthorityActivation({ batch_size: 1 }),
+    ).resolves.toMatchObject({ phase: "scan", complete: false });
+    await getPool().query(
+      `INSERT INTO accounts (account_id, created, banned, deleted)
+       VALUES ($1, clock_timestamp(), TRUE, FALSE)`,
+      [behindCursor],
+    );
+
+    let progress;
+    do {
+      progress = await advanceBillingAuthorityActivation({ batch_size: 1 });
+    } while (!progress.complete);
+
+    const { rows } = await getPool().query<{ account_id: string }>(
+      `SELECT account_id::TEXT
+         FROM billing_authority_account_fences
+        WHERE account_id=ANY($1::UUID[]) AND frozen
+        ORDER BY account_id`,
+      [ACTIVATION_ACCOUNT_IDS],
+    );
+    expect(rows.map(({ account_id }) => account_id)).toEqual(
+      ACTIVATION_ACCOUNT_IDS,
+    );
+    await expect(
+      acquireBillingAuthorityLease({
+        instance_id: INSTANCE_A,
+        lease_ms: 5_000,
+      }),
+    ).resolves.toMatchObject({ generation: 1 });
+  });
 
   it("claims critical, interactive, then maintenance lanes", async () => {
     const lease = await acquireBillingAuthorityLease({
@@ -433,6 +510,57 @@ describePostgres("billing authority PostgreSQL journal", () => {
     }
   });
 
+  it("orders command claims after an in-flight account freeze", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const queued = request({
+      kind: "http",
+      operation: "create-setup-intent",
+      input: { account_id: ACCOUNT_ID },
+    });
+    await submitBillingAuthorityCommand(queued);
+
+    const freezing = await getPool().connect();
+    let claimSettled = false;
+    try {
+      await freezing.query("BEGIN");
+      await freezing.query("SELECT pg_advisory_xact_lock($1)", [1_111_575_378]);
+      const claim = claimNextBillingAuthorityCommand(identity).finally(() => {
+        claimSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(claimSettled).toBe(false);
+
+      await freezing.query(
+        `INSERT INTO billing_authority_account_fences
+           (account_id, frozen, reason, causes, generation, created_at, updated_at)
+         VALUES ($1, TRUE, 'concurrent freeze',
+                 '{"quarantine":{"reason":"concurrent freeze"}}'::JSONB,
+                 1, clock_timestamp(), clock_timestamp())`,
+        [ACCOUNT_ID],
+      );
+      await freezing.query(
+        `UPDATE billing_authority_commands
+            SET status='canceled', finished_at=clock_timestamp(),
+                updated_at=clock_timestamp()
+          WHERE command_id=$1 AND status='queued'`,
+        [queued.command_id],
+      );
+      await freezing.query("COMMIT");
+
+      await expect(claim).resolves.toBeUndefined();
+      await expect(
+        getBillingAuthorityCommand(queued.command_id),
+      ).resolves.toMatchObject({ status: "canceled" });
+    } finally {
+      await freezing.query("ROLLBACK").catch(() => undefined);
+      freezing.release();
+    }
+  });
+
   it("cancels a cross-account command when its actor is frozen", async () => {
     const actor = "44444444-4444-4444-8444-444444444444";
     await acquireBillingAuthorityLease({
@@ -522,6 +650,34 @@ describePostgres("billing authority PostgreSQL journal", () => {
     ).rejects.toMatchObject({ status: 423 });
   });
 
+  it("rejects dynamic account registration after lease expiry", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = request({
+      kind: "reconcile-legacy-credit",
+      source: { kind: "payment-intent", payment_intent_id: "pi_expired" },
+    });
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+    await getPool().query(
+      `UPDATE billing_authority_lease
+          SET lease_until=clock_timestamp() - INTERVAL '1 second'
+        WHERE name=$1`,
+      ["primary"],
+    );
+
+    await expect(
+      registerBillingAuthorityCommandAccount({
+        ...identity,
+        command_id: item.command_id,
+        account_id: ACCOUNT_ID,
+      }),
+    ).rejects.toMatchObject({ status: 503 });
+  });
+
   it("destroys a timed-out dedicated election query", async () => {
     await acquireBillingAuthorityLease({
       instance_id: INSTANCE_B,
@@ -573,7 +729,10 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
     const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
     await markBillingAuthorityLeaseServing(identity);
-    const item = request({ kind: "commercial-maintenance" });
+    const item = request({
+      kind: "commercial-maintenance",
+      task: "stripe-events",
+    });
     await submitBillingAuthorityCommand(item);
     await claimNextBillingAuthorityCommand(identity);
 

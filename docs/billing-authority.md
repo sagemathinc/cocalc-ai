@@ -256,9 +256,13 @@ submits a replacement.
 Only one command executes at a time. Fleet maintenance commands process at
 most one customer, statement, renewal, notification, license, payment intent,
 commercial event, commercial invoice, or commercial quote per journal entry.
-This prevents an unbounded maintenance scan from holding the authority while
-payments wait. Health and command-status reads query PostgreSQL directly and
-therefore cannot be blocked by command admission or consume command slots.
+Commercial work durably rotates among event, invoice, and quote units every ten
+seconds, so one busy class cannot starve another. Its scheduler lease is
+renewed while an authority command is queued or running. This prevents an
+unbounded maintenance scan from holding the authority while payments wait
+without allowing overlapping schedulers during a queue delay. Health and
+command-status reads query PostgreSQL directly and therefore cannot be blocked
+by command admission or consume command slots.
 
 ## Lease And Fencing
 
@@ -281,6 +285,14 @@ become authority while an old financial command can still commit database work.
 Each Stripe mutation also performs a fresh lease assertion before network I/O.
 A stale worker therefore cannot overlap a successor even if it retained
 asynchronous execution context.
+
+The purchase and credit ledger primitives additionally require the account to
+have been checked at claim time or dynamically registered by the active
+command. Direct financial-ledger execution also fails once the authority gate
+is enabled; high-volume dedicated-host metering is the explicit exception.
+This assertion uses the authority's dedicated lease session rather than
+another application-pool connection, so it fails closed without creating a
+transaction/pool lock inversion.
 
 Command completion is also generation-fenced. On takeover, any `running`
 command from another instance or generation becomes `uncertain`; it is never
@@ -306,13 +318,18 @@ queued ordinary commands involving that actor or target and rejects new ones.
 Cleanup commands are the narrow exception for their target, never for a frozen
 actor.
 
-Before acquiring a lease, a candidate authority backfills fences from the
-authoritative `accounts.banned` and `accounts.deleted` state under the admission
-lock and verifies that no such account is missing its corresponding cause. New
-admission, dynamic account registration, and command claim also check the
-authoritative account row directly. Thus an account restricted before feature
-activation cannot slip through an empty new fence table, and a missed event is
-defense in depth rather than the sole security control.
+Before acquiring the first lease, candidates cooperatively backfill fences from
+the authoritative `accounts.banned` and `accounts.deleted` state in bounded,
+committed batches. A durable migration cursor survives worker restart. A final
+locked verification records completion only after no restricted account is
+missing its corresponding cause; later lease acquisition checks only that
+indexed completion marker. New admission, dynamic account registration, and
+command claim also check the authoritative account row directly. Provider
+objects and stored commercial orders register any account discovered during
+execution before provider or financial-database mutation. Thus an account
+restricted before feature activation cannot slip through an empty new fence
+table, and a missed event is defense in depth rather than the sole security
+control.
 
 An already-running command completes before the serialized cleanup command can
 run. This ordering lets cleanup remove resources created by that in-flight
@@ -373,6 +390,12 @@ concurrently.
 There is no financial-data migration for the current one-bay production
 deployment. It continues using the existing authoritative PostgreSQL database
 and Stripe account.
+
+Commercial maintenance submits one bounded financial work item per authority
+command and rotates durably among Stripe events, invoices, and quotes. The
+fleet-wide diagnostics scan runs afterward under the scheduler lease, outside
+the serialized authority queue. This keeps observability from consuming the
+financial fail-stop watchdog or blocking payment and webhook commands.
 
 ## Self-Hosted Deployments
 

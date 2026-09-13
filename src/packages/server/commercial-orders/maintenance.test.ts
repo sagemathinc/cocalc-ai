@@ -14,6 +14,8 @@ const mockReconcileQuotes = jest.fn();
 const mockBayId = jest.fn();
 const mockSeedBayId = jest.fn();
 const mockExecuteBillingAuthorityCommand = jest.fn();
+let workerLastResult: Record<string, unknown> = {};
+let lastDailyDigestAt: Date | null = null;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -103,17 +105,33 @@ describe("commercial receivables maintenance", () => {
     mockReconcileQuotes.mockResolvedValue({ reconciled: 3, failed: 0 });
     mockDiagnostics.mockResolvedValue(diagnostics);
     mockCentralLog.mockResolvedValue(undefined);
+    workerLastResult = {};
+    lastDailyDigestAt = null;
     mockExecuteBillingAuthorityCommand
       .mockReset()
       .mockImplementation(async (command) => {
-        expect(command).toEqual({ kind: "commercial-maintenance" });
-        return await runCommercialReceivablesAuthorityTask();
+        expect(command).toEqual({
+          kind: "commercial-maintenance",
+          task: expect.stringMatching(/^(stripe-events|invoices|quotes)$/),
+        });
+        return await runCommercialReceivablesAuthorityTask(command.task);
       });
-    mockQuery.mockImplementation(async (sql: string) => {
+    mockQuery.mockImplementation(async (sql: string, params: unknown[]) => {
       if (sql.includes("RETURNING last_daily_digest_at")) {
-        return { rows: [{ last_daily_digest_at: null }] };
+        return {
+          rows: [
+            {
+              last_daily_digest_at: lastDailyDigestAt,
+              last_result: workerLastResult,
+            },
+          ],
+        };
       }
-      return { rows: [] };
+      if (sql.includes("UPDATE commercial_worker_state SET")) {
+        workerLastResult = (params[1] ?? {}) as Record<string, unknown>;
+        if (params[3] === true) lastDailyDigestAt = new Date();
+      }
+      return { rows: [], rowCount: 1 };
     });
   });
 
@@ -130,12 +148,15 @@ describe("commercial receivables maintenance", () => {
     expect(mockUpdateMetrics).toHaveBeenCalledWith(diagnostics);
     expect(mockCentralLog).toHaveBeenCalledWith({
       event: "commercial_receivables_maintenance",
-      value: {
+      value: expect.objectContaining({
+        task: "stripe-events",
+        next_task: "invoices",
         webhook: { processed: 1, failed: 0, disabled: false },
         reconciliation: { reconciled: 0, failed: 0, disabled: true },
         quoteReconciliation: { reconciled: 0, failed: 0, disabled: true },
         diagnostics,
-      },
+        diagnostics_collected_at: expect.any(String),
+      }),
     });
     expect(mockCentralLog).toHaveBeenCalledWith({
       event: "commercial_receivables_daily_digest",
@@ -148,16 +169,36 @@ describe("commercial receivables maintenance", () => {
     ).toBe(true);
   });
 
-  it("probes each empty queue with a one-unit bound", async () => {
-    mockProcessWebhookQueue.mockResolvedValue({ processed: 0, failed: 0 });
-    mockReconcileInvoices.mockResolvedValue({ reconciled: 0, failed: 0 });
-    mockReconcileQuotes.mockResolvedValue({ reconciled: 0, failed: 0 });
-
+  it("durably rotates one bounded unit through every work class", async () => {
+    await runCommercialReceivablesMaintenanceOnceForTests();
+    await runCommercialReceivablesMaintenanceOnceForTests();
     await runCommercialReceivablesMaintenanceOnceForTests();
 
     expect(mockProcessWebhookQueue).toHaveBeenCalledWith(1);
     expect(mockReconcileInvoices).toHaveBeenCalledWith({ limit: 1 });
     expect(mockReconcileQuotes).toHaveBeenCalledWith({ limit: 1 });
+    expect(
+      mockExecuteBillingAuthorityCommand.mock.calls.map(
+        ([command]) => command.task,
+      ),
+    ).toEqual(["stripe-events", "invoices", "quotes"]);
+    expect(workerLastResult.next_task).toBe("stripe-events");
+  });
+
+  it("advances the durable rotation when one work class fails", async () => {
+    mockExecuteBillingAuthorityCommand.mockRejectedValueOnce(
+      new Error("poison webhook"),
+    );
+
+    await runCommercialReceivablesMaintenanceOnceForTests();
+    await runCommercialReceivablesMaintenanceOnceForTests();
+
+    expect(
+      mockExecuteBillingAuthorityCommand.mock.calls.map(
+        ([command]) => command.task,
+      ),
+    ).toEqual(["stripe-events", "invoices"]);
+    expect(mockReconcileInvoices).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("does nothing outside the seed bay", async () => {
@@ -171,12 +212,8 @@ describe("commercial receivables maintenance", () => {
   });
 
   it("skips the daily digest when today was already recorded", async () => {
-    mockQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("RETURNING last_daily_digest_at")) {
-        return { rows: [{ last_daily_digest_at: new Date() }] };
-      }
-      return { rows: [] };
-    });
+    lastDailyDigestAt = new Date();
+    workerLastResult = { diagnostics_collected_at: new Date().toISOString() };
 
     await runCommercialReceivablesMaintenanceOnceForTests();
 
@@ -185,5 +222,17 @@ describe("commercial receivables maintenance", () => {
         ([entry]) => entry.event === "commercial_receivables_daily_digest",
       ),
     ).toHaveLength(0);
+  });
+
+  it("retries the daily digest when durable logging fails", async () => {
+    mockCentralLog.mockImplementation(async ({ event }) => {
+      if (event === "commercial_receivables_daily_digest") {
+        throw new Error("central log unavailable");
+      }
+    });
+
+    await runCommercialReceivablesMaintenanceOnceForTests();
+
+    expect(lastDailyDigestAt).toBeNull();
   });
 });

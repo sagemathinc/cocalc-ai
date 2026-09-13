@@ -39,6 +39,11 @@ export type BillingAuthorityMaintenanceTask =
   | "subscriptions"
   | "team-licenses";
 
+export type BillingAuthorityCommercialMaintenanceTask =
+  | "invoices"
+  | "quotes"
+  | "stripe-events";
+
 export type BillingAuthorityAccountLocalOperation =
   | "admin-create-membership-package-purchase"
   | "admin-provision-site-license"
@@ -75,7 +80,10 @@ export type BillingAuthorityCommand =
       account_id: string;
       action: "cancel-payment-intents" | "detach-payment-methods";
     }
-  | { kind: "commercial-maintenance" }
+  | {
+      kind: "commercial-maintenance";
+      task: BillingAuthorityCommercialMaintenanceTask;
+    }
   | {
       kind: "commercial-seed";
       request: {
@@ -199,6 +207,8 @@ export function billingAuthorityOperationName(
       return `hub-api:${command.call.name}`;
     case "maintenance":
       return `maintenance:${command.task}`;
+    case "commercial-maintenance":
+      return `commercial-maintenance:${command.task}`;
     default:
       return command.kind;
   }

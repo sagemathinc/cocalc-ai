@@ -26,6 +26,7 @@ import {
 } from "./protocol";
 
 const LEASE_NAME = "primary";
+const ACCOUNT_FENCE_MIGRATION = "account-security-fences-v1";
 const ADMISSION_LOCK = 1_111_575_378;
 export const BILLING_AUTHORITY_EXECUTION_LOCK = 1_111_575_379;
 const MAX_COMMAND_BYTES = 1024 * 1024;
@@ -76,6 +77,20 @@ interface CommandRow {
   expires_at: Date | string;
   authority_generation?: number | null;
   attempt_count: number;
+}
+
+interface MigrationRow {
+  phase: "scan" | "verify" | "complete";
+  cursor_account_id?: string | null;
+  processed_count: number | string;
+  complete: boolean;
+}
+
+export interface BillingAuthorityActivationProgress {
+  phase: MigrationRow["phase"];
+  complete: boolean;
+  processed_in_batch: number;
+  processed_count: number;
 }
 
 function authorityError(message: string, status: number): Error {
@@ -231,77 +246,236 @@ async function assertBillingAccountsAllowed(
   }
 }
 
-async function backfillBillingAuthorityAccountSecurityFences(
-  db: Queryable,
-): Promise<number> {
-  const { rowCount } = await db.query(
-    `INSERT INTO billing_authority_account_fences
-       (account_id, frozen, reason, causes, actor_account_id, generation,
-        created_at, updated_at)
-     SELECT account_id, TRUE,
-            CASE WHEN banned IS TRUE AND deleted IS TRUE
-                   THEN 'account was banned and deleted before authority activation'
-                 WHEN banned IS TRUE
-                   THEN 'account was banned before authority activation'
-                 ELSE 'account was deleted before authority activation'
-             END,
-            (CASE WHEN banned IS TRUE THEN
-               jsonb_build_object(
-                 'ban', jsonb_build_object(
-                   'reason', 'authoritative account ban',
-                   'actor_account_id', NULL,
-                   'updated_at', COALESCE(banned_at, clock_timestamp())))
-             ELSE '{}'::JSONB END)
-            ||
-            (CASE WHEN deleted IS TRUE THEN
-               jsonb_build_object(
-                 'deletion', jsonb_build_object(
-                   'reason', 'authoritative account deletion',
-                   'actor_account_id', NULL,
-                   'updated_at', clock_timestamp()))
-             ELSE '{}'::JSONB END),
-            NULL, 1, clock_timestamp(), clock_timestamp()
-       FROM accounts
-      WHERE banned IS TRUE OR deleted IS TRUE
-     ON CONFLICT (account_id) DO UPDATE
-       SET frozen=TRUE,
-           causes=EXCLUDED.causes
-                    || COALESCE(
-                         billing_authority_account_fences.causes,
-                         '{}'::JSONB),
-           reason=EXCLUDED.reason,
-           generation=billing_authority_account_fences.generation + 1,
-           updated_at=clock_timestamp()
-     WHERE NOT billing_authority_account_fences.frozen
-        OR (EXCLUDED.causes ? 'ban'
-            AND NOT (COALESCE(
-              billing_authority_account_fences.causes,
-              '{}'::JSONB) ? 'ban'))
-        OR (EXCLUDED.causes ? 'deletion'
-            AND NOT (COALESCE(
-              billing_authority_account_fences.causes,
-              '{}'::JSONB) ? 'deletion'))`,
+const MISSING_ACCOUNT_FENCE_SQL = `
+  (accounts.banned IS TRUE
+   AND (NOT COALESCE(fences.frozen, FALSE)
+        OR NOT (COALESCE(fences.causes, '{}'::JSONB) ? 'ban')))
+  OR
+  (accounts.deleted IS TRUE
+   AND (NOT COALESCE(fences.frozen, FALSE)
+        OR NOT (COALESCE(fences.causes, '{}'::JSONB) ? 'deletion')))`;
+
+async function migrateAccountFenceBatch({
+  db,
+  phase,
+  cursor,
+  batchSize,
+}: {
+  db: Queryable;
+  phase: "scan" | "verify";
+  cursor?: string | null;
+  batchSize: number;
+}): Promise<{ candidate_count: number; last_account_id?: string }> {
+  const phasePredicate =
+    phase === "scan"
+      ? "AND ($2::UUID IS NULL OR accounts.account_id > $2::UUID)"
+      : `AND (${MISSING_ACCOUNT_FENCE_SQL})`;
+  const params = phase === "scan" ? [batchSize, cursor ?? null] : [batchSize];
+  const { rows } = await db.query<{
+    candidate_count: number | string;
+    last_account_id?: string | null;
+  }>(
+    `WITH candidates AS MATERIALIZED (
+       SELECT accounts.account_id, accounts.banned, accounts.deleted,
+              accounts.banned_at
+         FROM accounts
+         LEFT JOIN billing_authority_account_fences AS fences
+           ON fences.account_id=accounts.account_id
+        WHERE (accounts.banned IS TRUE OR accounts.deleted IS TRUE)
+          ${phasePredicate}
+        ORDER BY accounts.account_id
+        LIMIT $1
+     ), upserted AS (
+       INSERT INTO billing_authority_account_fences
+         (account_id, frozen, reason, causes, actor_account_id, generation,
+          created_at, updated_at)
+       SELECT account_id, TRUE,
+              CASE WHEN banned IS TRUE AND deleted IS TRUE
+                     THEN 'account was banned and deleted before authority activation'
+                   WHEN banned IS TRUE
+                     THEN 'account was banned before authority activation'
+                   ELSE 'account was deleted before authority activation'
+               END,
+              (CASE WHEN banned IS TRUE THEN
+                 jsonb_build_object(
+                   'ban', jsonb_build_object(
+                     'reason', 'authoritative account ban',
+                     'actor_account_id', NULL,
+                     'updated_at', COALESCE(banned_at, clock_timestamp())))
+               ELSE '{}'::JSONB END)
+              ||
+              (CASE WHEN deleted IS TRUE THEN
+                 jsonb_build_object(
+                   'deletion', jsonb_build_object(
+                     'reason', 'authoritative account deletion',
+                     'actor_account_id', NULL,
+                     'updated_at', clock_timestamp()))
+               ELSE '{}'::JSONB END),
+              NULL, 1, clock_timestamp(), clock_timestamp()
+         FROM candidates
+       ON CONFLICT (account_id) DO UPDATE
+         SET frozen=TRUE,
+             causes=EXCLUDED.causes
+                      || COALESCE(
+                           billing_authority_account_fences.causes,
+                           '{}'::JSONB),
+             reason=EXCLUDED.reason,
+             generation=billing_authority_account_fences.generation + 1,
+             updated_at=clock_timestamp()
+       WHERE NOT billing_authority_account_fences.frozen
+          OR (EXCLUDED.causes ? 'ban'
+              AND NOT (COALESCE(
+                billing_authority_account_fences.causes,
+                '{}'::JSONB) ? 'ban'))
+          OR (EXCLUDED.causes ? 'deletion'
+              AND NOT (COALESCE(
+                billing_authority_account_fences.causes,
+                '{}'::JSONB) ? 'deletion'))
+       RETURNING account_id
+     )
+     SELECT COUNT(*)::INT AS candidate_count,
+            (SELECT account_id::TEXT
+               FROM candidates
+              ORDER BY account_id DESC LIMIT 1) AS last_account_id
+       FROM candidates`,
+    params,
   );
-  const { rows: missing } = await db.query<{ account_id: string }>(
-    `SELECT accounts.account_id
+  return {
+    candidate_count: Number(rows[0]?.candidate_count ?? 0),
+    ...(rows[0]?.last_account_id
+      ? { last_account_id: rows[0].last_account_id }
+      : {}),
+  };
+}
+
+async function hasMissingAccountSecurityFence(db: Queryable): Promise<boolean> {
+  const { rows } = await db.query(
+    `SELECT 1
        FROM accounts
        LEFT JOIN billing_authority_account_fences AS fences
          ON fences.account_id=accounts.account_id
-      WHERE (accounts.banned IS TRUE
-             AND (NOT COALESCE(fences.frozen, FALSE)
-                  OR NOT (COALESCE(fences.causes, '{}'::JSONB) ? 'ban')))
-         OR (accounts.deleted IS TRUE
-             AND (NOT COALESCE(fences.frozen, FALSE)
-                  OR NOT (COALESCE(fences.causes, '{}'::JSONB) ? 'deletion')))
+      WHERE ${MISSING_ACCOUNT_FENCE_SQL}
       LIMIT 1`,
   );
-  if (missing[0]) {
+  return !!rows[0];
+}
+
+export async function advanceBillingAuthorityActivation({
+  batch_size = 5_000,
+  db,
+}: {
+  batch_size?: number;
+  db?: Queryable;
+} = {}): Promise<BillingAuthorityActivationProgress> {
+  const batchSize = Math.floor(Number(batch_size));
+  if (!Number.isSafeInteger(batchSize) || batchSize < 1 || batchSize > 25_000) {
+    throw authorityError("invalid billing authority migration batch size", 400);
+  }
+  return await withTransaction(async (db) => {
+    await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
+    await db.query(
+      `INSERT INTO billing_authority_migrations
+         (name, phase, processed_count, complete, started_at, updated_at)
+       VALUES ($1, 'scan', 0, FALSE, clock_timestamp(), clock_timestamp())
+       ON CONFLICT (name) DO NOTHING`,
+      [ACCOUNT_FENCE_MIGRATION],
+    );
+    const { rows } = await db.query<MigrationRow>(
+      `SELECT phase, cursor_account_id, processed_count, complete
+         FROM billing_authority_migrations
+        WHERE name=$1
+        FOR UPDATE`,
+      [ACCOUNT_FENCE_MIGRATION],
+    );
+    const progress = rows[0];
+    if (!progress) {
+      throw authorityError("billing authority migration state is missing", 503);
+    }
+    if (progress.complete) {
+      return {
+        phase: "complete",
+        complete: true,
+        processed_in_batch: 0,
+        processed_count: Number(progress.processed_count),
+      };
+    }
+    const phase = progress.phase === "scan" ? "scan" : "verify";
+    const batch = await migrateAccountFenceBatch({
+      db,
+      phase,
+      cursor: progress.cursor_account_id,
+      batchSize,
+    });
+    let nextPhase: MigrationRow["phase"] = phase;
+    if (phase === "scan" && batch.candidate_count < batchSize) {
+      nextPhase = "verify";
+    }
+    const processedCount =
+      Number(progress.processed_count) + batch.candidate_count;
+    await db.query(
+      `UPDATE billing_authority_migrations
+          SET phase=$2::TEXT,
+              cursor_account_id=CASE
+                WHEN $2::TEXT='scan' THEN $3::UUID
+                ELSE cursor_account_id
+              END,
+              processed_count=$4::BIGINT,
+              updated_at=clock_timestamp()
+        WHERE name=$1`,
+      [
+        ACCOUNT_FENCE_MIGRATION,
+        nextPhase,
+        batch.last_account_id ?? progress.cursor_account_id ?? null,
+        processedCount,
+      ],
+    );
+
+    if (nextPhase === "verify" && batch.candidate_count === 0) {
+      // Account lifecycle writes take ROW EXCLUSIVE. This final SHARE lock and
+      // the admission lock make the no-missing-row observation and completion
+      // marker one atomic activation boundary.
+      await db.query("LOCK TABLE accounts IN SHARE MODE");
+      if (!(await hasMissingAccountSecurityFence(db))) {
+        await db.query(
+          `UPDATE billing_authority_migrations
+              SET phase='complete', complete=TRUE,
+                  completed_at=clock_timestamp(), updated_at=clock_timestamp()
+            WHERE name=$1`,
+          [ACCOUNT_FENCE_MIGRATION],
+        );
+        return {
+          phase: "complete",
+          complete: true,
+          processed_in_batch: 0,
+          processed_count: processedCount,
+        };
+      }
+    }
+    return {
+      phase: nextPhase,
+      complete: false,
+      processed_in_batch: batch.candidate_count,
+      processed_count: processedCount,
+    };
+  }, db);
+}
+
+async function assertBillingAuthorityActivationComplete(
+  db: Queryable,
+): Promise<void> {
+  const { rows } = await db.query(
+    `SELECT 1
+       FROM billing_authority_migrations
+      WHERE name=$1 AND complete AND phase='complete'
+      FOR SHARE`,
+    [ACCOUNT_FENCE_MIGRATION],
+  );
+  if (!rows[0]) {
     throw authorityError(
-      "billing authority account security fence backfill is incomplete",
+      "billing authority preactivation migration is incomplete",
       503,
     );
   }
-  return rowCount ?? 0;
 }
 
 export async function submitBillingAuthorityCommand(
@@ -472,6 +646,7 @@ export async function registerBillingAuthorityCommandAccount({
   }
   await withTransaction(async (db) => {
     await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
+    await assertBillingAuthorityLease(identity, db);
     const { rows } = await db.query<CommandRow>(
       `SELECT * FROM billing_authority_commands
         WHERE command_id=$1 AND status='running'
@@ -617,7 +792,7 @@ export async function acquireBillingAuthorityLease({
       BILLING_AUTHORITY_EXECUTION_LOCK,
     ]);
     await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
-    await backfillBillingAuthorityAccountSecurityFences(db);
+    await assertBillingAuthorityActivationComplete(db);
     await db.query(
       `INSERT INTO billing_authority_lease
          (name, generation, enabled, draining, updated_at)
@@ -893,6 +1068,10 @@ export async function claimNextBillingAuthorityCommand(
   | undefined
 > {
   return await withTransaction(async (db) => {
+    // Establish a total order with account freezes and global drains. Without
+    // this lock, a claim could authorize queued work while an earlier freeze
+    // transaction was still installing its fence.
+    await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
     const { rows: leaseRows } = await db.query<LeaseRow>(
       `SELECT holder_id, generation, lease_until, enabled, draining
          FROM billing_authority_lease

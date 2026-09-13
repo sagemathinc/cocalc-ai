@@ -66,6 +66,7 @@ export const TABLE_OWNERSHIP = {
       "billing_authority_account_fences",
       "billing_authority_commands",
       "billing_authority_lease",
+      "billing_authority_migrations",
     ],
     {
       ownership: "seed-global",

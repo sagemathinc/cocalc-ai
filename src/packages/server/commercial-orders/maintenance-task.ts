@@ -4,56 +4,53 @@
  */
 
 import { isCommercialReceivablesCapabilityEnabled } from "./feature-flags";
-import type { CommercialOrderDiagnostics } from "@cocalc/util/commercial-orders";
-import { updateCommercialQueueMetrics } from "./observability";
+import type { BillingAuthorityCommercialMaintenanceTask } from "@cocalc/server/purchases/billing-authority/protocol";
 import {
   processCommercialStripeEventQueue,
   reconcileStaleCommercialInvoices,
   reconcileStaleCommercialQuotes,
 } from "./reconcile";
-import { getCommercialOrderDiagnostics } from "./store";
 
 export interface CommercialReceivablesAuthorityResult extends Record<
   string,
   unknown
 > {
+  task: BillingAuthorityCommercialMaintenanceTask;
   webhook: unknown;
   reconciliation: unknown;
   quoteReconciliation: unknown;
-  diagnostics: CommercialOrderDiagnostics;
 }
 
-export async function runCommercialReceivablesAuthorityTask(): Promise<CommercialReceivablesAuthorityResult> {
+export async function runCommercialReceivablesAuthorityTask(
+  task: BillingAuthorityCommercialMaintenanceTask,
+): Promise<CommercialReceivablesAuthorityResult> {
   const reconciliationEnabled =
     await isCommercialReceivablesCapabilityEnabled("reconciliation");
   let webhook = { processed: 0, failed: 0, disabled: true };
   let reconciliation = { reconciled: 0, failed: 0, disabled: true };
   let quoteReconciliation = { reconciled: 0, failed: 0, disabled: true };
   if (reconciliationEnabled) {
-    webhook = {
-      ...(await processCommercialStripeEventQueue(1)),
-      disabled: false,
-    };
-    if (webhook.processed + webhook.failed === 0) {
+    if (task === "stripe-events") {
+      webhook = {
+        ...(await processCommercialStripeEventQueue(1)),
+        disabled: false,
+      };
+    } else if (task === "invoices") {
       reconciliation = {
         ...(await reconcileStaleCommercialInvoices({ limit: 1 })),
         disabled: false,
       };
-    }
-    if (
-      webhook.processed +
-        webhook.failed +
-        reconciliation.reconciled +
-        reconciliation.failed ===
-      0
-    ) {
+    } else {
       quoteReconciliation = {
         ...(await reconcileStaleCommercialQuotes({ limit: 1 })),
         disabled: false,
       };
     }
   }
-  const diagnostics = await getCommercialOrderDiagnostics();
-  updateCommercialQueueMetrics(diagnostics);
-  return { webhook, reconciliation, quoteReconciliation, diagnostics };
+  return {
+    task,
+    webhook,
+    reconciliation,
+    quoteReconciliation,
+  };
 }

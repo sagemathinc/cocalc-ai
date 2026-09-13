@@ -21,6 +21,7 @@ import {
   recordCommercialReconciliation,
   recordCommercialWebhookLatency,
 } from "./observability";
+import { registerCommercialOrderBillingAccount } from "./billing-authority";
 
 const logger = getLogger("server:commercial-orders:reconcile");
 const LEASE_MS = 5 * 60_000;
@@ -261,9 +262,11 @@ export async function reconcileStaleCommercialQuotes(
         [quoteId],
       );
       if (!rows[0]) throw Error("commercial quote not found");
+      const order = await getCommercialOrder(rows[0].commercial_order_id);
+      await registerCommercialOrderBillingAccount(order);
       const bucket = Math.floor(Date.now() / (15 * 60_000));
       await reconcileStripeCommercialQuoteById({
-        order_id: rows[0].commercial_order_id,
+        order_id: order.id,
         commercial_quote_id: quoteId,
         reason: "Scheduled Stripe quote reconciliation",
         source: "reconciler",
@@ -297,6 +300,7 @@ export async function reconcileStaleCommercialInvoices(
     try {
       const invoice = await getCommercialInvoiceById(invoiceId);
       const order = await getCommercialOrder(invoice.commercial_order_id);
+      await registerCommercialOrderBillingAccount(order);
       const bucket = Math.floor(Date.now() / (15 * 60_000));
       await reconcileStripeCommercialInvoice({
         id: order.id,

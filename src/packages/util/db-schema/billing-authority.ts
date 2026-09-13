@@ -238,3 +238,64 @@ Table({
     },
   },
 });
+
+Table({
+  name: "billing_authority_migrations",
+  rules: {
+    primary_key: "name",
+    pg_constraints: [
+      {
+        name: "billing_authority_migrations_phase_check",
+        type: "check",
+        expression: "phase IN ('scan','verify','complete')",
+      },
+    ],
+  },
+  fields: {
+    name: {
+      type: "string",
+      pg_type: "varchar(64)",
+      desc: "Stable identity of a resumable authority preactivation migration.",
+    },
+    phase: {
+      type: "string",
+      pg_type: "varchar(16)",
+      pg_default: "'scan'::character varying",
+      not_null: true,
+      desc: "Current bounded migration phase.",
+    },
+    cursor_account_id: {
+      type: "uuid",
+      desc: "Last account visited by the ordered historical scan.",
+    },
+    processed_count: {
+      type: "number",
+      pg_type: "bigint",
+      pg_default: "0",
+      not_null: true,
+      desc: "Durable count of candidate account rows examined across batches.",
+    },
+    complete: {
+      type: "boolean",
+      pg_default: "FALSE",
+      not_null: true,
+      desc: "True only after a locked final verification finds no missing fence.",
+    },
+    started_at: {
+      type: "timestamp",
+      pg_default: "now()",
+      not_null: true,
+      desc: "When the first migration batch started.",
+    },
+    updated_at: {
+      type: "timestamp",
+      pg_default: "now()",
+      not_null: true,
+      desc: "When durable migration progress last advanced.",
+    },
+    completed_at: {
+      type: "timestamp",
+      desc: "When final locked verification completed.",
+    },
+  },
+});

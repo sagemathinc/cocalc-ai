@@ -90,7 +90,10 @@ describe("durable billing authority client", () => {
   it("uses legacy direct execution while the rollout gate is disabled", async () => {
     delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
     await expect(
-      executeBillingAuthorityCommand({ kind: "commercial-maintenance" }),
+      executeBillingAuthorityCommand({
+        kind: "commercial-maintenance",
+        task: "stripe-events",
+      }),
     ).resolves.toBe(8);
     expect(mockDispatch).toHaveBeenCalledTimes(1);
     expect(mockHandleTransport).not.toHaveBeenCalled();
@@ -268,7 +271,7 @@ describe("durable billing authority client", () => {
 
     await expect(
       executeBillingAuthorityCommand(
-        { kind: "commercial-maintenance" },
+        { kind: "commercial-maintenance", task: "stripe-events" },
         { command_id: commandId, wait_timeout_ms: 0 },
       ),
     ).rejects.toMatchObject({
@@ -306,7 +309,7 @@ describe("durable billing authority client", () => {
 
     await expect(
       executeBillingAuthorityCommand(
-        { kind: "commercial-maintenance" },
+        { kind: "commercial-maintenance", task: "stripe-events" },
         { command_id: requestedId, wait_timeout_ms: 0 },
       ),
     ).rejects.toMatchObject({
@@ -333,7 +336,7 @@ describe("durable billing authority client", () => {
 
     await expect(
       executeBillingAuthorityCommand(
-        { kind: "commercial-maintenance" },
+        { kind: "commercial-maintenance", task: "stripe-events" },
         { command_id: commandId, wait_timeout_ms: 0 },
       ),
     ).rejects.toMatchObject({
@@ -347,7 +350,10 @@ describe("durable billing authority client", () => {
   it("fails closed on attached bays without a dedicated authenticated transport", async () => {
     mockClusterRole.mockReturnValue("attached");
     await expect(
-      executeBillingAuthorityCommand({ kind: "commercial-maintenance" }),
+      executeBillingAuthorityCommand({
+        kind: "commercial-maintenance",
+        task: "stripe-events",
+      }),
     ).rejects.toMatchObject({ code: 503, status: 503 });
     await expect(
       executeBillingHubApiCall({
@@ -365,7 +371,10 @@ describe("durable billing authority client", () => {
       error: { message: "frozen", code: 423, status: 423 },
     });
     await expect(
-      executeBillingAuthorityCommand({ kind: "commercial-maintenance" }),
+      executeBillingAuthorityCommand({
+        kind: "commercial-maintenance",
+        task: "stripe-events",
+      }),
     ).rejects.toMatchObject({ message: "frozen", code: 423, status: 423 });
   });
 

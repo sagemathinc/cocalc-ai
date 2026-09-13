@@ -59,6 +59,7 @@ import {
 } from "./create-stripe-checkout-session";
 import type { Checkout } from "stripe";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import { createCreditFromPaidStripePaymentIntent } from "./create-invoice";
 import { isValidUUID } from "@cocalc/util/misc";
 import dayjs from "dayjs";
@@ -441,6 +442,13 @@ export async function reconcileLegacyPaymentIntentCredit(
   const stripe = await getConn();
   const intent = await stripe.paymentIntents.retrieve(payment_intent_id);
   if (intent.status !== "succeeded") return false;
+  if (
+    intent.metadata?.service === "credit" &&
+    !intent.metadata.purpose &&
+    intent.metadata.account_id
+  ) {
+    await registerBillingAuthorityAccount(intent.metadata.account_id);
+  }
   await createCreditFromPaidStripePaymentIntent(intent);
   return true;
 }

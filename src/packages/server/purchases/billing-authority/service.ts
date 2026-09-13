@@ -24,6 +24,7 @@ import { isBillingAuthorityEnabled } from "./config";
 import { dispatchBillingAuthorityCommand } from "./dispatch";
 import type {
   BillingAuthorityAccountLocalOperation,
+  BillingAuthorityCommercialMaintenanceTask,
   BillingAuthorityCommand,
   BillingAuthorityError,
   BillingAuthorityHealth,
@@ -37,6 +38,7 @@ import { billingAuthorityOperationName } from "./protocol";
 import { isBillingAuthorityHubApiCall } from "./classification";
 import {
   acquireBillingAuthorityLease,
+  advanceBillingAuthorityActivation,
   assertBillingAuthorityLease,
   beginBillingAuthorityCommandExecution,
   cancelQueuedBillingAuthorityCommand,
@@ -63,6 +65,7 @@ const LEASE_MS = 12_000;
 const LOCAL_LEASE_MARGIN_MS = 4_000;
 const HEARTBEAT_MS = 2_000;
 const LEASE_QUERY_TIMEOUT_MS = 2_500;
+const ACTIVATION_QUERY_TIMEOUT_MS = 30_000;
 const IDLE_POLL_MS = 250;
 const ELECTION_RETRY_MS = 1_000;
 const DRAIN_TIMEOUT_MS = 10 * 60_000;
@@ -206,6 +209,13 @@ const MAINTENANCE_TASKS = new Set<BillingAuthorityMaintenanceTask>([
   "team-licenses",
 ]);
 
+const COMMERCIAL_MAINTENANCE_TASKS =
+  new Set<BillingAuthorityCommercialMaintenanceTask>([
+    "invoices",
+    "quotes",
+    "stripe-events",
+  ]);
+
 export function isBillingAuthorityCommand(
   command: unknown,
 ): command is BillingAuthorityCommand {
@@ -228,7 +238,9 @@ export function isBillingAuthorityCommand(
           command.action === "detach-payment-methods")
       );
     case "commercial-maintenance":
-      return true;
+      return COMMERCIAL_MAINTENANCE_TASKS.has(
+        command.task as BillingAuthorityCommercialMaintenanceTask,
+      );
     case "commercial-seed":
       return (
         isRecord(command.request) &&
@@ -387,11 +399,13 @@ async function executeClaimedCommand({
   command_id,
   command,
   lane,
+  account_ids,
 }: {
   lease: ActiveLease;
   command_id: string;
   command: BillingAuthorityCommand;
   lane: keyof typeof COMMAND_RUNTIME_MS;
+  account_ids: string[];
 }): Promise<void> {
   runtime.active_command_id = command_id;
   const executionDb = getClient();
@@ -436,6 +450,7 @@ async function executeClaimedCommand({
           command_id,
           account_id,
         }),
+      pre_registered_accounts: account_ids,
       provider_tracker: providerTracker,
       fn: async () => await dispatchBillingAuthorityCommand(command),
     });
@@ -497,6 +512,9 @@ async function processingLoop(lease: ActiveLease): Promise<void> {
       command_id: claimed.record.command_id,
       command: claimed.command,
       lane: claimed.record.lane,
+      account_ids:
+        claimed.record.account_ids ??
+        (claimed.record.account_id ? [claimed.record.account_id] : []),
     });
   }
 }
@@ -572,6 +590,23 @@ async function electionLoop(): Promise<void> {
         promise: leaseClient.connect(),
         timeoutMs: LEASE_QUERY_TIMEOUT_MS,
       });
+      let activation;
+      do {
+        activation = await boundedDedicatedQuery({
+          client: leaseClient,
+          promise: advanceBillingAuthorityActivation({ db: leaseClient }),
+          timeoutMs: ACTIVATION_QUERY_TIMEOUT_MS,
+        });
+        if (!activation.complete) {
+          logger.info("billing authority preactivation migration advanced", {
+            phase: activation.phase,
+            processed_in_batch: activation.processed_in_batch,
+            processed_count: activation.processed_count,
+          });
+          await delay(10);
+        }
+      } while (!activation.complete && !runtime.stopping);
+      if (runtime.stopping) break;
       const acquired = await boundedDedicatedQuery({
         client: leaseClient,
         promise: acquireBillingAuthorityLease({

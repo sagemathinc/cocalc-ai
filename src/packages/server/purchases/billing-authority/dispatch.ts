@@ -240,7 +240,7 @@ export async function dispatchBillingAuthorityCommand(
         ? await cancelOpenPaymentIntentsForQuarantine(command.account_id)
         : await detachPaymentMethodsForQuarantine(command.account_id);
     case "commercial-maintenance":
-      return await runCommercialReceivablesAuthorityTask();
+      return await runCommercialReceivablesAuthorityTask(command.task);
     case "commercial-seed":
       return await dispatchCommercialSeedRequest(command.request);
     case "http":

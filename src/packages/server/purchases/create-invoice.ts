@@ -16,6 +16,7 @@ Use case:
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import createCredit from "./create-credit";
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -171,6 +172,7 @@ export async function createCreditFromPaidStripeInvoice(
     // definitely should never happen
     throw Error(`invalid account_id in metadata '${account_id}'`);
   }
+  await registerBillingAuthorityAccount(account_id);
 
   let amountValue;
   if (invoice.currency == "usd") {
@@ -270,6 +272,7 @@ intent = {
     // definitely should never happen
     throw Error(`invalid account_id in metadata '${account_id}'`);
   }
+  await registerBillingAuthorityAccount(account_id);
 
   // See comment about "total_excluding_tax" below.
   const amountValue = stripeToMoney(intent.amount_received);

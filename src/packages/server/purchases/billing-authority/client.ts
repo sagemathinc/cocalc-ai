@@ -119,7 +119,7 @@ function intrinsicCommandId(
       key = `${command.task}:${Math.floor(Date.now() / (5 * 60_000))}`;
       break;
     case "commercial-maintenance":
-      key = `commercial:${Math.floor(Date.now() / (5 * 60_000))}`;
+      key = `commercial:${command.task}:${Math.floor(Date.now() / 10_000)}`;
       break;
     case "commercial-seed":
       key = recordField(command.request.payload, "idempotency_key");

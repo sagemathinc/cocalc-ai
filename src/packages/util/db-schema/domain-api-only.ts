@@ -14,6 +14,7 @@ export const DOMAIN_API_ONLY_USER_QUERY_MUTATION_TABLES = new Set<string>([
   "billing_authority_account_fences",
   "billing_authority_commands",
   "billing_authority_lease",
+  "billing_authority_migrations",
   "crm_accounts",
   "crm_purchases",
   "crm_subscriptions",

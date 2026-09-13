@@ -73,6 +73,7 @@ import type {
   CommercialInvoice,
   CommercialOrder,
 } from "@cocalc/util/commercial-orders";
+import { runInBillingAuthorityContext } from "@cocalc/server/purchases/billing-authority/context";
 import {
   acceptCommercialStripeWebhookEvent,
   createStripeCommercialInvoiceDraft,
@@ -1548,6 +1549,38 @@ describe("commercial Stripe invoices", () => {
     ).rejects.toThrow("mode does not match");
 
     expect(mockUpdateCommercialInvoiceProvider).not.toHaveBeenCalled();
+  });
+
+  it("stops webhook reconciliation when its resolved customer is frozen", async () => {
+    const customerAccountId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ customer_account_id: customerAccountId }),
+    );
+    const registerAccount = jest.fn(async () => {
+      throw Object.assign(new Error("billing is frozen for this account"), {
+        status: 423,
+      });
+    });
+
+    await expect(
+      runInBillingAuthorityContext({
+        operation: "commercial-maintenance",
+        request_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        register_account: registerAccount,
+        fn: async () =>
+          await reconcileStripeCommercialInvoice({
+            id: "co_1",
+            commercial_invoice_id: "ci_1",
+            reason: "Reconcile Stripe webhook",
+            event_source: "stripe-webhook",
+            event_idempotency_key: "evt_frozen_invoice",
+          }),
+      }),
+    ).rejects.toMatchObject({ status: 423 });
+
+    expect(registerAccount).toHaveBeenCalledWith(customerAccountId);
+    expect(mockGetCommercialInvoice).not.toHaveBeenCalled();
+    expect(stripe.invoices.retrieve).not.toHaveBeenCalled();
   });
 
   it("fails closed when the provider amount differs from the approved order", async () => {

@@ -29,6 +29,7 @@ interface StoredBillingAuthorityContext extends BillingAuthorityContext {
   authority_active: () => boolean;
   assert_authority: () => Promise<void>;
   register_account: (account_id: string) => Promise<void>;
+  registered_accounts: Set<string>;
   provider_tracker: BillingAuthorityProviderMutationTracker;
 }
 
@@ -101,12 +102,14 @@ export async function runInBillingAuthorityContext<T>({
   authority_active = () => true,
   assert_authority = async () => undefined,
   register_account = async () => undefined,
+  pre_registered_accounts = [],
   provider_tracker = createBillingAuthorityProviderMutationTracker(),
   fn,
 }: BillingAuthorityContext & {
   authority_active?: () => boolean;
   assert_authority?: () => Promise<void>;
   register_account?: (account_id: string) => Promise<void>;
+  pre_registered_accounts?: Iterable<string>;
   provider_tracker?: BillingAuthorityProviderMutationTracker;
   fn: () => Promise<T>;
 }): Promise<T> {
@@ -120,6 +123,11 @@ export async function runInBillingAuthorityContext<T>({
     authority_active,
     assert_authority,
     register_account,
+    registered_accounts: new Set(
+      [...pre_registered_accounts].map((account_id) =>
+        `${account_id}`.trim().toLowerCase(),
+      ),
+    ),
     provider_tracker,
   };
   try {
@@ -134,9 +142,69 @@ export async function runInBillingAuthorityContext<T>({
 
 export async function registerBillingAuthorityAccount(
   account_id: string,
+  { allow_direct_execution = false }: { allow_direct_execution?: boolean } = {},
 ): Promise<void> {
-  const context = activeContext();
-  if (context) await context.register_account(account_id);
+  const context = storage.getStore();
+  if (!context) {
+    if (isBillingAuthorityEnabled() && !allow_direct_execution) {
+      throw Object.assign(
+        new Error("billing account registration requires the authority"),
+        { code: 503, status: 503 },
+      );
+    }
+    return;
+  }
+  if (!context.active || !context.authority_active()) {
+    throw Object.assign(new Error("billing authority context expired"), {
+      code: 503,
+      status: 503,
+    });
+  }
+  await context.assert_authority();
+  if (!context.active || !context.authority_active()) {
+    throw Object.assign(new Error("billing authority context expired"), {
+      code: 503,
+      status: 503,
+    });
+  }
+  const normalized = `${account_id}`.trim().toLowerCase();
+  if (context.registered_accounts.has(normalized)) return;
+  await context.register_account(normalized);
+  context.registered_accounts.add(normalized);
+}
+
+export async function assertBillingAuthorityAccountRegistered(
+  account_id: string,
+  { allow_direct_execution = false }: { allow_direct_execution?: boolean } = {},
+): Promise<void> {
+  const context = storage.getStore();
+  if (!context) {
+    if (isBillingAuthorityEnabled() && !allow_direct_execution) {
+      throw Object.assign(
+        new Error("financial ledger mutation requires the billing authority"),
+        { code: 503, status: 503 },
+      );
+    }
+    return;
+  }
+  if (!context.active || !context.authority_active()) {
+    throw Object.assign(new Error("billing authority context expired"), {
+      code: 503,
+      status: 503,
+    });
+  }
+  await context.assert_authority();
+  const normalized = `${account_id}`.trim().toLowerCase();
+  if (
+    !context.active ||
+    !context.authority_active() ||
+    !context.registered_accounts.has(normalized)
+  ) {
+    throw Object.assign(
+      new Error("billing account was not fenced before ledger mutation"),
+      { code: 503, status: 503 },
+    );
+  }
 }
 
 function providerIdempotencyKey({

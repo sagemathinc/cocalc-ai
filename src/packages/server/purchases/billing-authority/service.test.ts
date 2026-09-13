@@ -71,6 +71,12 @@ describe("billing authority service boundary", () => {
     ).toBe(true);
     expect(
       isBillingAuthorityCommand({
+        kind: "commercial-maintenance",
+        task: "stripe-events",
+      }),
+    ).toBe(true);
+    expect(
+      isBillingAuthorityCommand({
         kind: "hub-api",
         call: { name: "purchases.getBalance", args: [] },
       }),
@@ -80,6 +86,8 @@ describe("billing authority service boundary", () => {
       { kind: "http", operation: "future-unreviewed-operation", input: {} },
       { kind: "account-local", operation: "raw-query", input: {} },
       { kind: "maintenance", task: "arbitrary-script" },
+      { kind: "commercial-maintenance" },
+      { kind: "commercial-maintenance", task: "arbitrary-script" },
       {
         kind: "hub-api",
         call: { name: "system.setSiteSettings", args: [] },
