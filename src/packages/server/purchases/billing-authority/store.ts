@@ -6,7 +6,11 @@
 import { createHash } from "node:crypto";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
-import { adminMembershipPackageInvoiceId } from "@cocalc/server/purchases/admin-membership-package-identity";
+import {
+  adminMembershipPackageInvoiceId,
+  normalizeAdminMembershipPackageProduct,
+} from "@cocalc/server/purchases/admin-membership-package-identity";
+import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { isValidUUID } from "@cocalc/util/misc";
 
 import type {
@@ -36,6 +40,8 @@ const MAX_DEDUPLICATION_MS = 24 * 60 * 60_000;
 const PAYLOAD_RETENTION = "48 hours";
 const AUDIT_RETENTION = "400 days";
 const STRIPE_IDEMPOTENCY_RECOVERY_WINDOW = "23 hours";
+const ADMIN_PACKAGE_HUB_METHOD =
+  "purchases.adminCreateMembershipPackagePurchase";
 const MAX_QUEUE_DEPTH: Record<BillingAuthorityLane, number> = {
   critical: 1000,
   interactive: 500,
@@ -152,6 +158,72 @@ function requestJson(request: BillingAuthoritySubmitRequest): string {
   return JSON.stringify(canonical(request.command));
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return;
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizedUuidField(value: unknown): unknown {
+  const normalized = `${value ?? ""}`.trim().toLowerCase();
+  return isValidUUID(normalized) ? normalized : value;
+}
+
+function adminPackageHubSemanticCommand(
+  command: BillingAuthorityCommand,
+): BillingAuthorityCommand {
+  if (
+    command.kind !== "hub-api" ||
+    command.call.name !== ADMIN_PACKAGE_HUB_METHOD ||
+    command.call.args.length !== 1
+  ) {
+    return command;
+  }
+  const input = record(command.call.args[0]);
+  if (!input) return command;
+  const actor = normalizedUuidField(command.call.account_id);
+  if (typeof actor !== "string" || !isValidUUID(actor)) return command;
+  let product = input.product;
+  if (record(product)) {
+    try {
+      product = normalizeAdminMembershipPackageProduct(
+        product as MembershipPackageProduct,
+      );
+    } catch {
+      // Invalid products remain byte-for-byte distinct and fail in the API.
+    }
+  }
+  const call = { ...command.call };
+  // Credential instances may rotate between retries. The full payload remains
+  // journaled and is replayed so the Hub API revalidates the current session.
+  delete call.auth_session_hash;
+  delete call.auth_token_fingerprint;
+  delete call.auth_iat_s;
+  delete call.auth_exp_s;
+  return {
+    kind: "hub-api",
+    call: {
+      ...call,
+      account_id: actor,
+      args: [
+        {
+          user_account_id: normalizedUuidField(input.user_account_id),
+          product,
+          price: input.price,
+          source: input.source,
+          reason: input.reason,
+          idempotency_key:
+            typeof input.idempotency_key === "string"
+              ? input.idempotency_key.trim()
+              : input.idempotency_key,
+          pricing_note: input.pricing_note,
+        },
+      ],
+    },
+  };
+}
+
 function requestHash(request: BillingAuthoritySubmitRequest): {
   hash: string;
   json: string;
@@ -160,8 +232,11 @@ function requestHash(request: BillingAuthoritySubmitRequest): {
   if (Buffer.byteLength(json) > MAX_COMMAND_BYTES) {
     throw authorityError("billing authority command is too large", 413);
   }
+  const semanticJson = JSON.stringify(
+    canonical(adminPackageHubSemanticCommand(request.command)),
+  );
   return {
-    hash: createHash("sha256").update(json).digest("hex"),
+    hash: createHash("sha256").update(semanticJson).digest("hex"),
     json,
   };
 }
@@ -232,16 +307,33 @@ function adminPackageRecoveryIdentity(command: BillingAuthorityCommand):
       source: "card" | "credit" | "free";
     }
   | undefined {
+  let input: Record<string, unknown>;
+  let adminAccountId: unknown;
   if (
-    command.kind !== "account-local" ||
-    command.operation !== "admin-create-membership-package-purchase"
+    command.kind === "account-local" &&
+    command.operation === "admin-create-membership-package-purchase"
   ) {
+    input = command.input;
+    adminAccountId = input.admin_account_id;
+  } else if (
+    command.kind === "hub-api" &&
+    command.call.name === ADMIN_PACKAGE_HUB_METHOD &&
+    command.call.args.length === 1 &&
+    !command.call.project_id &&
+    !command.call.host_id &&
+    !command.call.auth_actor
+  ) {
+    const hubInput = record(command.call.args[0]);
+    if (!hubInput) return;
+    input = hubInput;
+    adminAccountId = command.call.account_id;
+  } else {
     return;
   }
-  const source = `${command.input.source ?? ""}`;
-  const account_id = `${command.input.user_account_id ?? ""}`.trim();
-  const admin_account_id = `${command.input.admin_account_id ?? ""}`.trim();
-  const idempotency_key = `${command.input.idempotency_key ?? ""}`.trim();
+  const source = `${input.source ?? ""}`;
+  const account_id = `${input.user_account_id ?? ""}`.trim().toLowerCase();
+  const admin_account_id = `${adminAccountId ?? ""}`.trim().toLowerCase();
+  const idempotency_key = `${input.idempotency_key ?? ""}`.trim();
   const actor = billingAuthorityActorAccountId(command);
   if (
     !isValidUUID(account_id) ||
@@ -304,7 +396,10 @@ async function canRecoverAdminPackage(
   const state = rows[0];
   if (state?.has_purchase) return true;
   if (!state?.has_intent) return false;
-  if (existing.status === "failed" || identity.source !== "card") return true;
+  if (identity.source !== "card") return true;
+  // A first-attempt failure is known not to have an ambiguous provider result.
+  // Later failures must not erase ambiguity retained from an earlier attempt.
+  if (existing.status === "failed" && existing.attempt_count === 1) return true;
   return state.provider_key_retained;
 }
 

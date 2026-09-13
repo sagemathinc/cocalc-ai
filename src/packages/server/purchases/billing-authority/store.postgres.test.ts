@@ -43,6 +43,8 @@ const INSTANCE_A = "11111111-1111-4111-8111-111111111111";
 const INSTANCE_B = "22222222-2222-4222-8222-222222222222";
 const ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
 const ADMIN_ACCOUNT_ID = "44444444-4444-4444-8444-444444444444";
+const ADMIN_PACKAGE_HUB_METHOD =
+  "purchases.adminCreateMembershipPackagePurchase";
 const ACTIVATION_ACCOUNT_IDS = [
   "10000000-0000-4000-8000-000000000001",
   "20000000-0000-4000-8000-000000000002",
@@ -280,6 +282,141 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
   });
 
+  it("recovers the real Hub API package envelope with renewed fresh auth", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const idempotencyKey = "recover-hub-card-package";
+    const command = {
+      kind: "hub-api" as const,
+      call: {
+        name: ADMIN_PACKAGE_HUB_METHOD,
+        account_id: ADMIN_ACCOUNT_ID.toUpperCase(),
+        auth_session_hash: "original-fresh-auth-session",
+        args: [
+          {
+            account_id: ADMIN_ACCOUNT_ID.toUpperCase(),
+            user_account_id: ACCOUNT_ID.toUpperCase(),
+            product: {
+              type: "membership-package",
+              kind: "team",
+              membership_class: "standard",
+              seat_count: 1,
+              interval: "month",
+            },
+            price: 25,
+            source: "card",
+            reason: "recover a real Hub API package request",
+            idempotency_key: idempotencyKey,
+          },
+        ],
+      },
+    } satisfies BillingAuthorityCommand;
+    const item = request(command);
+    await submitBillingAuthorityCommand(item);
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+      [
+        `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+        ACCOUNT_ID,
+        ADMIN_ACCOUNT_ID,
+        "d".repeat(64),
+      ],
+    );
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: { message: "complete the existing invoice and retry" },
+    });
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: {
+          ...command,
+          call: {
+            ...command.call,
+            args: [
+              {
+                ...command.call.args[0],
+                reason: "changed financial request",
+              },
+            ],
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 409, status: 409 });
+
+    const refreshedCommand = {
+      ...command,
+      call: {
+        ...command.call,
+        account_id: ADMIN_ACCOUNT_ID,
+        auth_session_hash: "replacement-fresh-auth-session",
+        args: [
+          {
+            ...command.call.args[0],
+            account_id: ADMIN_ACCOUNT_ID,
+            user_account_id: ACCOUNT_ID,
+            session_hash: "ignored-stale-input-session",
+          },
+        ],
+      },
+    } satisfies BillingAuthorityCommand;
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: refreshedCommand,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+    const recovered = await claimNextBillingAuthorityCommand(identity);
+    expect(recovered).toMatchObject({
+      record: { command_id: item.command_id, status: "running" },
+      command: refreshedCommand,
+    });
+  });
+
+  it("does not ignore credential changes for other Hub API methods", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const command = {
+      kind: "hub-api",
+      call: {
+        name: "purchases.purchaseMembershipPackage",
+        account_id: ACCOUNT_ID,
+        auth_session_hash: "first-session",
+        args: [{ package_id: randomUUID() }],
+      },
+    } satisfies BillingAuthorityCommand;
+    const item = request(command);
+    await submitBillingAuthorityCommand(item);
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: {
+          ...command,
+          call: {
+            ...command.call,
+            auth_session_hash: "second-session",
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 409, status: 409 });
+  });
+
   it("keeps unrelated or stale uncertain commands terminal", async () => {
     const lease = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
@@ -384,6 +521,12 @@ describePostgres("billing authority PostgreSQL journal", () => {
       status: "failed",
       error: { message: "Stripe was unavailable before the first mutation" },
     });
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET first_started_at=clock_timestamp() - INTERVAL '30 days'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
 
     await expect(
       submitBillingAuthorityCommand({
@@ -394,6 +537,69 @@ describePostgres("billing authority PostgreSQL journal", () => {
       command_id: item.command_id,
       status: "queued",
     });
+  });
+
+  it("does not let a later failure erase an earlier provider ambiguity", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const idempotencyKey = "preserve-card-ambiguity";
+    const item = request({
+      kind: "account-local",
+      operation: "admin-create-membership-package-purchase",
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        source: "card",
+        idempotency_key: idempotencyKey,
+      },
+    });
+    await submitBillingAuthorityCommand(item);
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+      [
+        `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+        ACCOUNT_ID,
+        ADMIN_ACCOUNT_ID,
+        "e".repeat(64),
+      ],
+    );
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: { message: "the first provider outcome was ambiguous" },
+    });
+    await submitBillingAuthorityCommand({
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+      error: { message: "renewed authentication was rejected before replay" },
+    });
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET first_started_at=clock_timestamp() - INTERVAL '24 hours'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: "failed", reused: true });
   });
 
   it("recovers a committed package after the provider replay window", async () => {

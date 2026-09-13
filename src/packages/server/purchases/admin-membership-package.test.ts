@@ -7,6 +7,7 @@ import { getPool } from "@cocalc/server/test";
 import { after, before } from "@cocalc/server/test";
 import { uuid } from "@cocalc/util/misc";
 import adminCreateMembershipPackagePurchase from "./admin-membership-package";
+import { normalizeAdminMembershipPackageProduct } from "./admin-membership-package-identity";
 import { createTestAccount, createTestMembershipTier } from "./test-data";
 
 const mockCreatePaymentIntent = jest.fn();
@@ -37,6 +38,28 @@ describe("admin membership package purchase", () => {
 
   beforeEach(() => {
     mockCreatePaymentIntent.mockReset();
+  });
+
+  it("canonicalizes and validates course project identity", () => {
+    const course_project_id = uuid();
+    expect(
+      normalizeAdminMembershipPackageProduct({
+        type: "membership-package",
+        kind: "course",
+        membership_class: membershipClass,
+        seat_count: 1,
+        course_project_id: course_project_id.toUpperCase(),
+      }),
+    ).toMatchObject({ course_project_id });
+    expect(() =>
+      normalizeAdminMembershipPackageProduct({
+        type: "membership-package",
+        kind: "course",
+        membership_class: membershipClass,
+        seat_count: 1,
+        course_project_id: "not-a-project-id",
+      }),
+    ).toThrow("course_project_id must be a valid UUID");
   });
 
   it("atomically creates a custom-price package and reuses its idempotency key", async () => {
@@ -280,7 +303,7 @@ describe("admin membership package purchase", () => {
     expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: user_account_id,
-        metadata: expect.objectContaining({ admin_account_id }),
+        idempotencyKeyPrefix: `admin-membership-package:${admin_account_id}:${idempotency_key}`,
       }),
     );
     const { rows } = await getPool().query(
