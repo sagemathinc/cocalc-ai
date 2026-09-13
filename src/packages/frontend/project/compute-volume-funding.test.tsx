@@ -14,6 +14,7 @@ import {
   VolumeCreateModal,
   VolumeResizeModal,
   VmCreateModal,
+  VmDetailsModal,
 } from "./compute-vms";
 import VolumeFundingStatus from "./compute-volume-funding-status";
 import {
@@ -314,6 +315,47 @@ it("Escape cancels the volume dialog and restores focus to its opener", async ()
   render(<Harness />);
   const opener = screen.getByRole("button", { name: "New home volume" });
   await user.click(opener);
+  await screen.findByRole("dialog");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+  );
+  await waitFor(() => expect(opener).toHaveFocus());
+});
+
+it("closing VM funding details restores keyboard focus after the modal transition", async () => {
+  const user = userEvent.setup();
+  const vm = {
+    id: "vm-details",
+    name: "Student GPU",
+    provider: "gcp",
+    machine_type: "e2-standard-2",
+    effective_pricing_model: "on_demand",
+    state: "ready",
+    desired_state: "running",
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    boot_disk_gb: 20,
+    cpu: 2,
+    ram_gb: 8,
+  } as any;
+  function Harness() {
+    const [open, setOpen] = useState(false);
+    return (
+      <>
+        <button onClick={() => setOpen(true)}>
+          View configuration for Student GPU
+        </button>
+        <VmDetailsModal open={open} vm={vm} onClose={() => setOpen(false)} />
+      </>
+    );
+  }
+  render(<Harness />);
+  const opener = screen.getByRole("button", {
+    name: "View configuration for Student GPU",
+  });
+  opener.focus();
+  await user.keyboard("{Enter}");
   await screen.findByRole("dialog");
   await user.keyboard("{Escape}");
   await waitFor(() =>

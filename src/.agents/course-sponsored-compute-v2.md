@@ -211,6 +211,22 @@ cloud disk. Server/frontend typechecks, frontend lint, 68 funding/approval tests
 13 updated isolated approval tests, 6 frontend tests, 13 CLI tests and 8 docs
 tests pass (these overlapping sets are not a combined unique-test count).
 
+Fresh browser validation found and fixed VM-details focus restoration and a
+320-pixel cancellation-button overflow. The modal now stays mounted through its
+close transition, uses a keyboard boundary, and wraps its title/status clear of
+the close button. Normal Chromium checks at 320/720/1440 pixels and actual 200%
+browser zoom pass in both themes, including focus return and focused axe scans.
+The updated static build and 19 focused frontend tests pass. This covers VM
+funding details, not the entire instructor/student zoom/device matrix.
+
+A disposable GCP VM `c3da759c-7acd-4575-b927-de54c7b67fb6` is currently testing
+advance fallback with a separate USD 2 course allowance expiring at 03:12 UTC
+September 13. The student approved USD 1.50 personal fallback specifically for
+course expiry. The real worker stopped it at 03:08 within its reserved margin;
+network accounting and fallback activation remain under observation. Its
+independent scheduled stop is 03:21 and deletion deadline 03:26 UTC. This is an
+active test resource, not a completed cleanup assertion.
+
 Remaining implementation/validation includes live independent personal home volumes,
 live volume retention expiry, automatic fallback/exhaustion, transfer/payment
 provenance validation, bounded postpaid workflows, and currency display. The

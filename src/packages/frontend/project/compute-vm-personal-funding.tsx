@@ -246,6 +246,12 @@ export default function VmPersonalFunding({
           {consent.state === "pending" && consent.approval_url && (
             <Button
               type="primary"
+              style={{
+                whiteSpace: "normal",
+                height: "auto",
+                minHeight: 32,
+                maxWidth: "100%",
+              }}
               href={consent.approval_url}
               target="_blank"
               rel="noopener noreferrer"
@@ -256,6 +262,12 @@ export default function VmPersonalFunding({
           )}
           {outstanding && (
             <Button
+              style={{
+                whiteSpace: "normal",
+                height: "auto",
+                minHeight: 32,
+                maxWidth: "100%",
+              }}
               onClick={() => void changeConsent("cancel")}
               disabled={busy || !!loadError}
               icon={<Icon name="stop" />}
@@ -267,6 +279,12 @@ export default function VmPersonalFunding({
             consent.terms.activation === "immediate" && (
               <Button
                 type="primary"
+                style={{
+                  whiteSpace: "normal",
+                  height: "auto",
+                  minHeight: 32,
+                  maxWidth: "100%",
+                }}
                 onClick={() => void changeConsent("apply")}
                 disabled={
                   busy ||

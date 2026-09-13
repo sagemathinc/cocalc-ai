@@ -28,6 +28,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useRef, useState } from "react";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useComputeVmCatalog } from "./use-compute-vm-catalog";
 
 import type {
@@ -2590,12 +2591,14 @@ function VmStartModal({
   );
 }
 
-function VmDetailsModal({
+export function VmDetailsModal({
+  open,
   vm,
   homeVolume,
   accountId,
   onClose,
 }: {
+  open: boolean;
   vm?: ComputeVm;
   homeVolume?: ComputeVolume;
   accountId?: string;
@@ -2607,13 +2610,19 @@ function VmDetailsModal({
     : vm.machine_type;
   return (
     <Modal
-      open
+      open={open}
+      modalRender={(node) => (
+        <KeyboardBoundary boundary="vm-details">{node}</KeyboardBoundary>
+      )}
+      destroyOnHidden
       title={
-        <Space>
+        <Flex wrap align="center" gap={8} style={{ paddingRight: 32 }}>
           <Icon name="server" />
-          <span>{vm.name}</span>
+          <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
+            {vm.name}
+          </span>
           <Tag>{vmDisplayState(vm)}</Tag>
-        </Space>
+        </Flex>
       }
       footer={<Button onClick={onClose}>Close</Button>}
       onCancel={onClose}
@@ -2941,7 +2950,12 @@ export function ProjectComputeVms({
     [],
   );
   const [accessVm, setAccessVm] = useState<ComputeVm>();
-  const [detailsVm, setDetailsVm] = useState<ComputeVm>();
+  const [detailsVm, setDetailsVmValue] = useState<ComputeVm>();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const setDetailsVm = (vm: ComputeVm) => {
+    setDetailsVmValue(vm);
+    setDetailsOpen(true);
+  };
   const [directSshKeys, setDirectSshKeys] = useState<ComputeVmSshKey[]>([]);
   const [loadingDirectSshKeys, setLoadingDirectSshKeys] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -4777,6 +4791,7 @@ export function ProjectComputeVms({
       )}
       <FreshAuthModal {...freshAuthModalProps} />
       <VmDetailsModal
+        open={detailsOpen}
         vm={
           detailsVm && (rows.find((vm) => vm.id === detailsVm.id) ?? detailsVm)
         }
@@ -4786,7 +4801,7 @@ export function ProjectComputeVms({
             ? volumesById.get(detailsVm.home_volume_id)
             : undefined
         }
-        onClose={() => setDetailsVm(undefined)}
+        onClose={() => setDetailsOpen(false)}
       />
       <VmAccessModal
         vm={accessVm}
