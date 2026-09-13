@@ -12,6 +12,7 @@ const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
 const cancelEverythingMock = jest.fn();
+const executeBillingAuthorityCommandMock = jest.fn();
 const deleteClusterAccountDirectoryEntryMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -66,6 +67,11 @@ jest.mock("@cocalc/server/stripe/client", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingAuthorityCommand: (...args: any[]) =>
+    executeBillingAuthorityCommandMock(...args),
+}));
+
 jest.mock("./cluster-directory", () => ({
   __esModule: true,
   deleteClusterAccountDirectoryEntry: (...args: any[]) =>
@@ -88,6 +94,15 @@ describe("delete account", () => {
     cancelEverythingMock.mockReset();
     deleteClusterAccountDirectoryEntryMock.mockReset();
     cancelEverythingMock.mockResolvedValue(undefined);
+    executeBillingAuthorityCommandMock
+      .mockReset()
+      .mockImplementation(async (command) => {
+        expect(command).toEqual({
+          kind: "account-stripe-cleanup",
+          account_id: ACCOUNT_ID,
+        });
+        return await cancelEverythingMock();
+      });
     deleteClusterAccountDirectoryEntryMock.mockResolvedValue(undefined);
     deleteAllRememberMeMock.mockResolvedValue(undefined);
     revokeAllAuthSessionsMock.mockResolvedValue(undefined);

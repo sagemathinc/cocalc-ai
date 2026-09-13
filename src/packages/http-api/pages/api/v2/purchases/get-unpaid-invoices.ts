@@ -3,7 +3,7 @@ Get all unpaid invoices
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import getUnpaidInvoices from "@cocalc/server/purchases/get-unpaid-invoices";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 
 export default async function handle(req, res) {
   try {
@@ -22,5 +22,7 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
-  return await getUnpaidInvoices(account_id);
+  return await executeBillingHttpCommand("get-unpaid-invoices", {
+    account_id,
+  });
 }

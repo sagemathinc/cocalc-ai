@@ -13,6 +13,7 @@ const mockReconcileInvoices = jest.fn();
 const mockReconcileQuotes = jest.fn();
 const mockBayId = jest.fn();
 const mockSeedBayId = jest.fn();
+const mockExecuteBillingAuthorityCommand = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -30,6 +31,11 @@ jest.mock("@cocalc/server/bay-config", () => ({
 
 jest.mock("@cocalc/server/cluster-config", () => ({
   getConfiguredClusterSeedBayId: () => mockSeedBayId(),
+}));
+
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingAuthorityCommand: (...args: unknown[]) =>
+    mockExecuteBillingAuthorityCommand(...args),
 }));
 
 jest.mock("./feature-flags", () => ({
@@ -60,6 +66,7 @@ import {
   runCommercialReceivablesMaintenanceOnceForTests,
   stopCommercialReceivablesMaintenanceForTests,
 } from "./maintenance";
+import { runCommercialReceivablesAuthorityTask } from "./maintenance-task";
 
 describe("commercial receivables maintenance", () => {
   const diagnostics = {
@@ -96,6 +103,12 @@ describe("commercial receivables maintenance", () => {
     mockReconcileQuotes.mockResolvedValue({ reconciled: 3, failed: 0 });
     mockDiagnostics.mockResolvedValue(diagnostics);
     mockCentralLog.mockResolvedValue(undefined);
+    mockExecuteBillingAuthorityCommand
+      .mockReset()
+      .mockImplementation(async (command) => {
+        expect(command).toEqual({ kind: "commercial-maintenance" });
+        return await runCommercialReceivablesAuthorityTask();
+      });
     mockQuery.mockImplementation(async (sql: string) => {
       if (sql.includes("RETURNING last_daily_digest_at")) {
         return { rows: [{ last_daily_digest_at: null }] };

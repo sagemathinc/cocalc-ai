@@ -9,14 +9,8 @@ import getPool from "@cocalc/database/pool";
 import centralLog from "@cocalc/database/postgres/central-log";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
-import { isCommercialReceivablesCapabilityEnabled } from "./feature-flags";
-import { updateCommercialQueueMetrics } from "./observability";
-import { getCommercialOrderDiagnostics } from "./store";
-import {
-  processCommercialStripeEventQueue,
-  reconcileStaleCommercialQuotes,
-  reconcileStaleCommercialInvoices,
-} from "./reconcile";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import type { CommercialReceivablesAuthorityResult } from "./maintenance-task";
 
 const logger = getLogger("server:commercial-orders:maintenance");
 const INTERVAL_MS = 5 * 60_000;
@@ -91,24 +85,16 @@ async function run(): Promise<void> {
   }
   if (lease == null) return;
   running = true;
-  let result: Record<string, unknown> | undefined;
+  let result: CommercialReceivablesAuthorityResult | undefined;
   let error: unknown;
   let dailyDigest = false;
   try {
-    const reconciliationEnabled =
-      await isCommercialReceivablesCapabilityEnabled("reconciliation");
-    const webhook = reconciliationEnabled
-      ? await processCommercialStripeEventQueue(100)
-      : { processed: 0, failed: 0, disabled: true };
-    const reconciliation = reconciliationEnabled
-      ? await reconcileStaleCommercialInvoices({ limit: 100 })
-      : { reconciled: 0, failed: 0, disabled: true };
-    const quoteReconciliation = reconciliationEnabled
-      ? await reconcileStaleCommercialQuotes({ limit: 100 })
-      : { reconciled: 0, failed: 0, disabled: true };
-    const diagnostics = await getCommercialOrderDiagnostics();
-    updateCommercialQueueMetrics(diagnostics);
-    result = { webhook, reconciliation, quoteReconciliation, diagnostics };
+    result =
+      await executeBillingAuthorityCommand<CommercialReceivablesAuthorityResult>(
+        {
+          kind: "commercial-maintenance",
+        },
+      );
     await centralLog({
       event: "commercial_receivables_maintenance",
       value: result,
@@ -117,7 +103,7 @@ async function run(): Promise<void> {
     if (dailyDigest) {
       await centralLog({
         event: "commercial_receivables_daily_digest",
-        value: diagnostics,
+        value: result.diagnostics,
       });
     }
   } catch (err) {

@@ -5,7 +5,7 @@ Cancel a subscription.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import cancelSubscription from "@cocalc/server/purchases/cancel-subscription";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { OkStatus } from "@cocalc/http-api/lib/api/status";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
@@ -29,7 +29,7 @@ async function get(req) {
   }
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { subscription_id, reason } = getParams(req);
-  await cancelSubscription({
+  await executeBillingHttpCommand("cancel-subscription", {
     account_id,
     subscription_id,
     reason,

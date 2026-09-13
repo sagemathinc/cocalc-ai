@@ -202,6 +202,24 @@ describe("createPaymentIntent", () => {
     );
   });
 
+  it("rechecks self-service ownership before canceling", async () => {
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      id: "pi_other",
+      metadata: { account_id: "other-account" },
+      status: "requires_payment_method",
+    });
+
+    await expect(
+      cancelPaymentIntent({
+        id: "pi_other",
+        reason: "abandoned",
+        expected_account_id: "self-account",
+      }),
+    ).rejects.toMatchObject({ code: 403, status: 403 });
+
+    expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
+  });
+
   it("creates an invoice and returns the default invoice payment intent", async () => {
     stripe.invoices.finalizeInvoice.mockResolvedValue({
       id: "in_123",

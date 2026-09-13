@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import getCheckoutSession from "@cocalc/server/purchases/stripe/get-checkout-session";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
@@ -31,7 +31,7 @@ async function get(req) {
   const { purpose, description, lineItems, metadata } = getParams(req);
   assertInteractivePaymentPurpose(purpose);
 
-  return await getCheckoutSession({
+  return await executeBillingHttpCommand("get-checkout-session", {
     account_id,
     purpose,
     description,

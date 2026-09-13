@@ -15,6 +15,7 @@ const recordAccountResourceQuarantineAuditEventMock = jest.fn();
 const projectControlStopMock = jest.fn();
 const bayOpsGetProjectRuntimeSlotReportMock = jest.fn();
 const listClusterBayInfosMock = jest.fn();
+const executeBillingAuthorityCommandMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -44,6 +45,11 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         bayOpsGetProjectRuntimeSlotReportMock({ bay_id, ...opts }),
     }),
   }),
+}));
+
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingAuthorityCommand: (...args: any[]) =>
+    executeBillingAuthorityCommandMock(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe-usage-based-subscription", () => ({
@@ -112,6 +118,15 @@ describe("account resource quarantine", () => {
       .mockReset()
       .mockResolvedValue({ data: [], has_more: false });
     deletePaymentMethodMock.mockReset().mockResolvedValue(undefined);
+    executeBillingAuthorityCommandMock
+      .mockReset()
+      .mockImplementation(async (command) => {
+        if (command.kind === "cancel-usage-subscription") {
+          return await cancelUsageSubscriptionMock(command.account_id);
+        }
+        if (command.kind === "quarantine-stripe-resources") return 0;
+        throw Error(`unexpected billing command '${command.kind}'`);
+      });
     recordAccountResourceQuarantineAuditEventMock
       .mockReset()
       .mockResolvedValue(undefined);

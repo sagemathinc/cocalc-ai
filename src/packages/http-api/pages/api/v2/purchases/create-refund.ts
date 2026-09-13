@@ -24,7 +24,7 @@ import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
-import createRefund from "@cocalc/server/purchases/create-refund";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 
 export default async function handle(req, res) {
   try {
@@ -57,6 +57,11 @@ async function get(req) {
 
   const { purchase_id, reason, notes } = getParams(req);
   return {
-    id: await createRefund({ account_id, purchase_id, reason, notes }),
+    id: await executeBillingHttpCommand("create-refund", {
+      account_id,
+      purchase_id,
+      reason,
+      notes,
+    }),
   };
 }

@@ -1,6 +1,6 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import processPaymentIntents from "@cocalc/server/purchases/stripe/process-payment-intents";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -41,7 +41,7 @@ async function get(req) {
     opts.strict = strict === true || strict === "true";
   }
   return {
-    count: await processPaymentIntents(opts),
+    count: await executeBillingHttpCommand("process-payment-intents", opts),
     success: true,
   };
 }

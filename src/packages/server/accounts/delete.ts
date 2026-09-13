@@ -7,7 +7,7 @@ import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
 import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-limits";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
-import { StripeClient } from "@cocalc/server/stripe/client";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
@@ -87,7 +87,8 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
 export async function cancelStripeEverything(
   account_id: string,
 ): Promise<void> {
-  // TODO
-  const stripe = new StripeClient({ account_id });
-  await stripe.cancelEverything();
+  await executeBillingAuthorityCommand({
+    kind: "account-stripe-cleanup",
+    account_id,
+  });
 }

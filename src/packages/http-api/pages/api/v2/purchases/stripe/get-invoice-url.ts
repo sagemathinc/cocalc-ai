@@ -5,7 +5,7 @@
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
-import { getInvoiceUrl } from "@cocalc/server/purchases/stripe/invoices";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -30,5 +30,10 @@ async function get(req): Promise<{ url: string | null | undefined }> {
   if (!invoice_id) {
     throw Error("invoice_id must be specified");
   }
-  return { url: await getInvoiceUrl({ account_id, invoice_id }) };
+  return {
+    url: await executeBillingHttpCommand("get-invoice-url", {
+      account_id,
+      invoice_id,
+    }),
+  };
 }

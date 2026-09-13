@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
@@ -29,13 +29,13 @@ async function get(req) {
     if (!(await userIsInGroup(account_id, "admin"))) {
       throw Error("only admins can get other user's payment methods");
     }
-    return await getPaymentMethod({
+    return await executeBillingHttpCommand("get-payment-method", {
       account_id: user_account_id,
       id,
     });
   }
 
-  return await getPaymentMethod({
+  return await executeBillingHttpCommand("get-payment-method", {
     account_id,
     id,
   });

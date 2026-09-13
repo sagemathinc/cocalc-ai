@@ -13,6 +13,7 @@ import { createCreditFromPaidStripeInvoice } from "@cocalc/server/purchases/crea
 import { setUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import getConn from "@cocalc/server/stripe/connection";
 import { acceptCommercialStripeWebhookEvent } from "@cocalc/server/commercial-orders/invoices/stripe";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
 
 import {
   alertUncreditedSucceededPayment,
@@ -72,7 +73,14 @@ export default async function stripeWebhookHandler(
   logger.info("Stripe webhook event verified", eventLogContext);
 
   try {
-    const result = await processStripeWebhookEvent(event);
+    const result = await executeBillingAuthorityCommand<{
+      processed: boolean;
+      type: string;
+      action: string;
+    }>({
+      kind: "stripe-webhook",
+      event,
+    });
     logger.info("Stripe webhook event handled", {
       ...eventLogContext,
       action: result.action,

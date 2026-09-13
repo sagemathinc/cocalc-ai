@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getAllOpenPayments } from "@cocalc/server/purchases/stripe/get-payments";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
@@ -31,7 +31,9 @@ async function get(req) {
     if (!(await userIsInGroup(account_id, "admin"))) {
       throw Error("only admins can get other user's open payments");
     }
-    return await getAllOpenPayments(user_account_id);
+    return await executeBillingHttpCommand("get-open-payments", {
+      account_id: user_account_id,
+    });
   }
-  return await getAllOpenPayments(account_id);
+  return await executeBillingHttpCommand("get-open-payments", { account_id });
 }

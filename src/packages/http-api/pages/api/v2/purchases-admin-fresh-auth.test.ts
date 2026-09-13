@@ -14,6 +14,7 @@ const mockRequireDangerousSessionAuth = jest.fn();
 const mockUserIsInGroup = jest.fn();
 const mockAdminPurchase = jest.fn();
 const mockCreateRefund = jest.fn();
+const mockExecuteBillingHttpCommand = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -49,6 +50,11 @@ jest.mock("@cocalc/server/purchases/create-refund", () => ({
   default: (...args: any[]) => mockCreateRefund(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingHttpCommand: (...args: any[]) =>
+    mockExecuteBillingHttpCommand(...args),
+}));
+
 describe("admin purchase/refund fresh auth", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -71,6 +77,14 @@ describe("admin purchase/refund fresh auth", () => {
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockAdminPurchase.mockReset().mockResolvedValue({ purchase_id: 456 });
     mockCreateRefund.mockReset().mockResolvedValue(789);
+    mockExecuteBillingHttpCommand
+      .mockReset()
+      .mockImplementation(async (operation: string, input: any) => {
+        if (operation === "admin-purchase")
+          return await mockAdminPurchase(input);
+        if (operation === "create-refund") return await mockCreateRefund(input);
+        throw Error(`unexpected billing operation '${operation}'`);
+      });
   });
 
   it("requires recent dangerous auth before admin-assisted purchase", async () => {

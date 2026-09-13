@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import createSubscriptionPayment from "@cocalc/server/purchases/stripe/create-subscription-payment";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
@@ -34,7 +34,7 @@ async function get(req) {
   await assertPaymentCheckoutAllowed();
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { subscription_id } = getParams(req);
-  await createSubscriptionPayment({
+  await executeBillingHttpCommand("create-subscription-payment", {
     account_id,
     subscription_id,
   });

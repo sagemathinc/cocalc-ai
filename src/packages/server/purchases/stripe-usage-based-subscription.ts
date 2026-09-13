@@ -59,9 +59,7 @@ import {
 } from "./create-stripe-checkout-session";
 import type { Checkout } from "stripe";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
-import { delay } from "awaiting";
 import { createCreditFromPaidStripePaymentIntent } from "./create-invoice";
-import syncPaidInvoices from "./sync-paid-invoices";
 import { isValidUUID } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import { moneyToStripe, toDecimal, type MoneyValue } from "@cocalc/util/money";
@@ -341,19 +339,13 @@ export async function collectPayment({
   });
   await stripe.subscriptions.update(sub.id, { billing_cycle_anchor: "now" });
 
-  // if they pay soon, then create credit in our system.
-  // Like below, this is ONLY relevant when webhooks aren't configured,
-  // so basically for limited dev use.
-  (async () => {
-    try {
-      for (const d of [10, 60, 180]) {
-        if (await syncPaidInvoices(account_id)) {
-          return;
-        }
-        await delay(1000 * d);
-      }
-    } catch (_) {}
-  })();
+  // This is only a fallback for sites without reliable webhooks. Re-enter the
+  // authority for each delayed check instead of mutating the purchase ledger
+  // from detached work inherited from the current authority command.
+  scheduleLegacyCreditReconciliation(
+    { kind: "paid-invoices", account_id },
+    [0, 10, 60],
+  );
 }
 
 export async function hasUsageSubscription(
@@ -405,23 +397,52 @@ async function collectPaymentUsingCreditCard({
   if (intent.status == "succeeded") {
     await createCreditFromPaidStripePaymentIntent(intent);
   } else {
-    // if they pay soon, then create credit in our system.
-    // This is ONLY relevant when webhooks aren't configured,
-    // so basically for limited dev use.
-    const { id } = intent;
-    (async () => {
-      try {
-        for (const d of [10, 60, 180]) {
-          await delay(1000 * d);
-          const intent = await stripe.paymentIntents.retrieve(id);
-          if (intent.status == "succeeded") {
-            await createCreditFromPaidStripePaymentIntent(intent);
-            return;
-          }
-        }
-      } catch (_) {}
-    })();
+    scheduleLegacyCreditReconciliation(
+      { kind: "payment-intent", payment_intent_id: intent.id },
+      [10, 60, 180],
+    );
   }
+}
+
+type LegacyCreditReconciliationSource =
+  | { kind: "paid-invoices"; account_id: string }
+  | { kind: "payment-intent"; payment_intent_id: string };
+
+function scheduleLegacyCreditReconciliation(
+  source: LegacyCreditReconciliationSource,
+  delaysSeconds: number[],
+): void {
+  const run = (index: number) => {
+    if (index >= delaysSeconds.length) return;
+    const timer = setTimeout(async () => {
+      try {
+        const { executeBillingAuthorityCommand } =
+          await import("./billing-authority/client");
+        const reconciled = await executeBillingAuthorityCommand<
+          number | boolean
+        >({
+          kind: "reconcile-legacy-credit",
+          source,
+        });
+        if (!reconciled) run(index + 1);
+      } catch (err) {
+        logger.warn("legacy credit reconciliation failed", { source, err });
+        run(index + 1);
+      }
+    }, delaysSeconds[index] * 1_000);
+    timer.unref?.();
+  };
+  run(0);
+}
+
+export async function reconcileLegacyPaymentIntentCredit(
+  payment_intent_id: string,
+): Promise<boolean> {
+  const stripe = await getConn();
+  const intent = await stripe.paymentIntents.retrieve(payment_intent_id);
+  if (intent.status !== "succeeded") return false;
+  await createCreditFromPaidStripePaymentIntent(intent);
+  return true;
 }
 
 /*

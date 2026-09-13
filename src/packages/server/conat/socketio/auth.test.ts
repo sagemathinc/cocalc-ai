@@ -163,6 +163,32 @@ describe("test isAllowed for hub", () => {
   });
 });
 
+describe("internal service subjects", () => {
+  const subjects = [
+    "internal.billing-authority.v1",
+    "internal.billing-authority.v1.executeCommand",
+  ];
+
+  it("allows only a hub identity to publish or subscribe", async () => {
+    for (const subject of subjects) {
+      for (const type of PUBSUB) {
+        await expect(
+          isAllowed({ user: { hub_id: "hub" }, type, subject }),
+        ).resolves.toBe(true);
+        await expect(
+          isAllowed({ user: { account_id }, type, subject }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({ user: { project_id }, type, subject }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({ user: { host_id }, type, subject }),
+        ).resolves.toBe(false);
+      }
+    }
+  });
+});
+
 describe("hub-password account impersonation", () => {
   it("authenticates as the requested account in development", async () => {
     const socket = {

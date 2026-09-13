@@ -12,6 +12,7 @@ const mockGetParams = jest.fn();
 const mockRequireFreshAuth = jest.fn();
 const mockCancelSubscription = jest.fn();
 const mockResumeSubscription = jest.fn();
+const mockExecuteBillingHttpCommand = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -37,6 +38,11 @@ jest.mock("@cocalc/server/purchases/resume-subscription", () => ({
   default: (...args: any[]) => mockResumeSubscription(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingHttpCommand: (...args: any[]) =>
+    mockExecuteBillingHttpCommand(...args),
+}));
+
 describe("subscription state mutation fresh auth", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -47,6 +53,17 @@ describe("subscription state mutation fresh auth", () => {
     mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
     mockCancelSubscription.mockReset().mockResolvedValue(undefined);
     mockResumeSubscription.mockReset().mockResolvedValue(undefined);
+    mockExecuteBillingHttpCommand
+      .mockReset()
+      .mockImplementation(async (operation: string, input: any) => {
+        if (operation === "cancel-subscription") {
+          return await mockCancelSubscription(input);
+        }
+        if (operation === "resume-subscription") {
+          return await mockResumeSubscription(input);
+        }
+        throw Error(`unexpected billing operation '${operation}'`);
+      });
   });
 
   it("requires fresh auth before canceling a subscription", async () => {

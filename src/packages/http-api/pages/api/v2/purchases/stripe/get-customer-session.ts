@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import getCustomerSession from "@cocalc/server/purchases/stripe/get-customer-session";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 
@@ -25,5 +25,7 @@ async function get(req) {
   }
   throttle({ account_id, endpoint: "purchases/stripe/get-customer-session" });
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
-  return await getCustomerSession(account_id);
+  return await executeBillingHttpCommand("get-customer-session", {
+    account_id,
+  });
 }

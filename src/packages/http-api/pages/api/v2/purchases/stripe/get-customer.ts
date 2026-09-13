@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getCustomer } from "@cocalc/server/purchases/stripe/customer";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 
 export default async function handle(req, res) {
@@ -20,5 +20,5 @@ async function get(req) {
     throw Error("must be signed in");
   }
   throttle({ account_id, endpoint: "purchases/stripe/get-customer" });
-  return await getCustomer(account_id);
+  return await executeBillingHttpCommand("get-customer", { account_id });
 }

@@ -187,7 +187,7 @@ import {
   getMembershipAnalyticsEventsLocal,
   getMembershipAnalyticsOverviewLocal,
 } from "@cocalc/server/membership/analytics";
-import { dispatchCommercialSeedRequest } from "@cocalc/server/commercial-orders/dispatch";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
 import { dispatchCrmSeedRequest } from "@cocalc/server/crm/dispatch";
 import { applyOutreachOptOut } from "@cocalc/server/crm/outreach/opt-out";
 import { enqueueOutreachZendeskEvent } from "@cocalc/server/crm/outreach/webhook";
@@ -838,7 +838,10 @@ async function startBayOpsService(): Promise<void> {
         }
         await assertCommercialReceivablesCapability(capability);
       }
-      return await dispatchCommercialSeedRequest(opts);
+      return await executeBillingAuthorityCommand({
+        kind: "commercial-seed",
+        request: opts,
+      });
     },
     ingestCrmOutreachZendeskEventInternal: async ({ event }) => {
       if (bay_id !== getConfiguredClusterSeedBayId()) {

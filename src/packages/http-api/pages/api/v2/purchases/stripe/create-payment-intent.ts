@@ -1,5 +1,5 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import {
@@ -54,7 +54,7 @@ async function get(req) {
       require_second_factor: true,
       allow_actor_impersonation: false,
     });
-    result = await createPaymentIntent({
+    result = await executeBillingHttpCommand("create-payment-intent", {
       account_id: user_account_id,
       lineItems,
       description,
@@ -76,7 +76,7 @@ async function get(req) {
       allow_actor_impersonation: true,
     });
     assertInteractivePaymentPurpose(purpose);
-    result = await createPaymentIntent({
+    result = await executeBillingHttpCommand("create-payment-intent", {
       account_id,
       description,
       lineItems,

@@ -442,11 +442,23 @@ async function getPaymentMethods({
 export async function cancelPaymentIntent({
   id,
   reason,
+  expected_account_id,
 }: {
   id: string;
   reason: PaymentIntentCancelReason;
+  // Self-service callers set this so ownership is checked in the same
+  // serialized authority command as the cancellation.
+  expected_account_id?: string;
 }) {
   const stripe = await getConn();
+  if (expected_account_id) {
+    const paymentIntent = await stripe.paymentIntents.retrieve(id);
+    if (paymentIntent.metadata?.account_id !== expected_account_id) {
+      const err = new Error("payment intent does not belong to this account");
+      Object.assign(err, { code: 403, status: 403 });
+      throw err;
+    }
+  }
   try {
     await stripe.paymentIntents.cancel(id, {
       cancellation_reason: reason as any,

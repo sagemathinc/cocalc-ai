@@ -1,4 +1,4 @@
-import deletePaymentMethod from "@cocalc/server/purchases/stripe/delete-payment-method";
+import { executeBillingHttpCommand } from "@cocalc/server/purchases/billing-authority/client";
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
@@ -30,6 +30,9 @@ async function set(req): Promise<{ success: true }> {
   if (!payment_method) {
     throw Error("must specify the payment method to delete");
   }
-  await deletePaymentMethod({ account_id, payment_method });
+  await executeBillingHttpCommand("delete-payment-method", {
+    account_id,
+    payment_method,
+  });
   return { success: true };
 }
