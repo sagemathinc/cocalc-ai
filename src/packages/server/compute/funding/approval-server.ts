@@ -100,6 +100,22 @@ function fundingReview(
       <dt>Approval expires (UTC)</dt><dd>${escapeHtml(intent.expires_at)}</dd><dt>Status</dt><dd>${intent.status}</dd></dl>
       <p>Payment evidence, recipient identity and available credit are checked again at approval. Delivery between bays can remain pending; a timeout is not a refund or permission to transfer twice.</p>`;
   }
+  if ("kind" in intent.terms && intent.terms.kind === "personalVolumeFunding") {
+    const terms = intent.terms;
+    const volume = review.personal_volume;
+    if (!volume || volume.volume_id !== terms.volume_id)
+      throw Error("Personal storage review unavailable.");
+    return `<p>This authorizes only the named disk, not a VM or GPU. Its current size is fixed by this approval. Deleting a VM does not delete this disk. There is no automatic backup.</p>
+      <dl><dt>Personal payer</dt><dd>${identity(review.payer)}</dd>
+      <dt>Volume</dt><dd>${escapeHtml(volume.volume_name)}</dd><dt>Volume ID</dt><dd>${escapeHtml(volume.volume_id)}</dd>
+      <dt>Size (GB)</dt><dd>${volume.size_gb}</dd><dt>USD per hour</dt><dd>${escapeHtml(volume.hourly_usd)}</dd>
+      <dt>Maximum additional personal charges</dt><dd>${usd(terms.cap_usd)}</dd>
+      <dt>Funding lane</dt><dd>${terms.lane === "prepaid" ? "Prepaid personal account balance" : "Approved personal postpaid capacity"}</dd>
+      <dt>Funding ends (UTC)</dt><dd>${escapeHtml(terms.ends_at)}</dd>
+      <dt>Reserved storage and cleanup</dt><dd>${usd(volume.protected_storage_usd)}</dd>
+      <dt>Latest deletion (UTC)</dt><dd>${escapeHtml(volume.storage_delete_at)}</dd></dl>
+      <p>The cap includes storage and cleanup. Exhaustion or cancellation can end usable storage earlier; retained storage remains billable through its funded deletion deadline. Approval does not authorize a VM restart, a larger disk, or another payment source.</p>`;
+  }
   if ("kind" in intent.terms && intent.terms.kind === "personalVMfallback") {
     const terms = intent.terms;
     const vm = review.personal_vm_fallback;
@@ -353,7 +369,9 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       "kind" in intent.terms
         ? intent.terms.kind === "creditTransfer"
           ? "Approve Credit Transfer"
-          : "Approve Personal VM Funding"
+          : intent.terms.kind === "personalVolumeFunding"
+            ? "Approve Personal Storage Funding"
+            : "Approve Personal VM Funding"
         : "Approve Course Funding",
       `${fundingReview(intent)}
       ${

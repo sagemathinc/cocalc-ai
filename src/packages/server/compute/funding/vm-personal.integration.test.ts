@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { SCHEMA } from "@cocalc/util/schema";
+import { syncTableSchemaColumnInvariants } from "@cocalc/database/postgres/schema/column-invariants";
 import getPool, { getClient } from "@cocalc/database/pool";
 import { before, after } from "@cocalc/server/test";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -35,6 +37,16 @@ import type { VmPersonalFundingTerms } from "@cocalc/util/compute-vm-funding";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import * as exposure from "./exposure";
 import { withFundingResourceMeterLock } from "./resource-meter-lock";
+import {
+  previewVolumePersonalFunding,
+  proposeVolumePersonalFunding,
+  getVolumePersonalFunding,
+  approvePersonalVolumeFunding,
+  reviewPersonalVolumeFunding,
+  switchVolumePersonalFunding,
+  clearVolumePersonalFunding,
+  closeEndedVolumePersonalConsents,
+} from "./volume-personal";
 import { settleComputeVmFundingLocal } from "./vm-settlement";
 import { recoverTerminalCourseVmFunding } from "./vm-worker-recovery";
 import { getComputeVolumeById } from "../volume-db";
@@ -57,6 +69,11 @@ jest.mock("@cocalc/server/project-host/admission", () =>
 jest.mock("./approvals", () => ({
   assertFundingPayerHomeBay: async () => {},
   proposeVmPersonalFundingApproval: jest.fn(),
+  proposeVolumePersonalFundingApproval: jest.fn(async () => ({
+    intent_id: require("node:crypto").randomUUID(),
+    approval_url: "https://approval.example/storage",
+    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
+  })),
 }));
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({ compute_vm_course_funding_enabled: true }),
@@ -277,6 +294,194 @@ async function stopForHomeHandoff(
     [f.vmId],
   );
 }
+
+async function standaloneVolumeConsent() {
+  const f = await fixtureWithHome();
+  await getPool().query(
+    "UPDATE compute_vms SET home_volume_id=NULL,desired_state='deleted',deleted_at=NOW() WHERE id=$1",
+    [f.vmId],
+  );
+  await getPool().query(
+    "UPDATE compute_volumes SET attached_vm_id=NULL,attachment_state='detached',attachment_generation=attachment_generation+1 WHERE id=$1",
+    [f.volumeId],
+  );
+  const terms = {
+    volume_id: f.volumeId,
+    expected_funding_version: f.volumeBinding.funding_epoch,
+    lane: "prepaid" as const,
+    cap_usd: "2",
+    ends_at: new Date(Date.now() + 20 * 60_000).toISOString(),
+  };
+  const opts = { account_id: f.student, terms, operation_id: randomUUID() };
+  const preview = await previewVolumePersonalFunding(opts);
+  const consent = await proposeVolumePersonalFunding(opts);
+  const review = await reviewPersonalVolumeFunding(f.student, terms);
+  return { ...f, terms, preview, consent, review };
+}
+
+it("upgrades existing VM-only consents to permit exactly one standalone volume", async () => {
+  const db = getClient();
+  await db.connect();
+  try {
+    await db.query("BEGIN");
+    await db.query(
+      "ALTER TABLE compute_vm_personal_consents ALTER COLUMN vm_id SET NOT NULL",
+    );
+    await syncTableSchemaColumnInvariants(db, {
+      name: "compute_vm_personal_consents",
+      primary_key: "id",
+      fields: SCHEMA.compute_vm_personal_consents.fields,
+    });
+    expect(
+      (
+        await db.query(
+          "SELECT is_nullable FROM information_schema.columns WHERE table_name='compute_vm_personal_consents' AND column_name='vm_id'",
+        )
+      ).rows[0].is_nullable,
+    ).toBe("YES");
+    expect(
+      (
+        await db.query(
+          "SELECT convalidated FROM pg_constraint WHERE conrelid='compute_vm_personal_consents'::regclass AND conname='compute_personal_consents_resource'",
+        )
+      ).rows[0].convalidated,
+    ).toBe(true);
+  } finally {
+    await db.query("ROLLBACK");
+    await db.end();
+  }
+});
+
+async function approveStandalone(
+  f: Awaited<ReturnType<typeof standaloneVolumeConsent>>,
+) {
+  await withFundingAccountTransaction(f.student, (db) =>
+    approvePersonalVolumeFunding({
+      db,
+      payer_account_id: f.student,
+      intent_id: f.consent.id,
+      terms: f.terms,
+      review: f.review,
+    }),
+  );
+  const approved = (await getVolumePersonalFunding({
+    account_id: f.student,
+    volume_id: f.volumeId,
+  }))!;
+  return {
+    account_id: f.student,
+    volume_id: f.volumeId,
+    consent_id: approved.id,
+    expected_version: approved.version,
+    operation_id: randomUUID(),
+  };
+}
+
+it("funds detached storage after VM deletion through proposal, approval, one cutover, and cancellation", async () => {
+  const f = await standaloneVolumeConsent();
+  expect(f.preview.volume_name).toBe(f.volume.name);
+  expect(f.consent.state).toBe("pending");
+  const request = await approveStandalone(f);
+  const applied = await switchVolumePersonalFunding(request);
+  expect(applied.state).toBe("active");
+  expect(await switchVolumePersonalFunding(request)).toEqual(applied);
+  const volume = (await getComputeVolumeById(f.volumeId))!;
+  const binding = courseVolumeBinding(volume);
+  expect(binding.source).toEqual({
+    kind: "personal",
+    consent_id: f.consent.id,
+  });
+  expect(Date.parse(binding.storage_delete_at)).toBeLessThanOrEqual(
+    Date.parse(f.preview.storage_delete_at),
+  );
+  expect((await getComputeVmById(f.vmId))!.desired_state).toBe("deleted");
+  await meterCourseVolume(volume);
+  expect(
+    (
+      await getPool().query(
+        "SELECT state FROM compute_funding_reservations WHERE id=$1",
+        [f.volumeBinding.reservation_id],
+      )
+    ).rows[0].state,
+  ).toBe("settled");
+  const cancel = {
+    ...request,
+    expected_version: applied.version,
+    operation_id: randomUUID(),
+  };
+  expect((await clearVolumePersonalFunding(cancel)).state).toBe("cancelled");
+  await expect(requireCourseVolumeService(volume)).rejects.toThrow(
+    "authorization ended",
+  );
+  expect((await getComputeVolumeById(f.volumeId))!.desired_state).toBe("ready");
+  await getPool().query(
+    "UPDATE compute_volumes SET deleted_at=NOW(),desired_state='deleted' WHERE id=$1",
+    [f.volumeId],
+  );
+  await meterCourseVolume((await getComputeVolumeById(f.volumeId))!);
+  expect(
+    Number(
+      (await getVolumePersonalFunding({
+        account_id: f.student,
+        volume_id: f.volumeId,
+      }))!.committed_usd,
+    ),
+  ).toBe(0);
+});
+
+it.each(["attachment", "size", "epoch", "deletion"])(
+  "rejects a changed standalone storage approval: %s",
+  async (change) => {
+    const f = await standaloneVolumeConsent();
+    const request = await approveStandalone(f);
+    const update = {
+      attachment: "attachment_generation=attachment_generation+1",
+      size: "size_gb=20,desired_size_gb=20",
+      epoch: `metadata=jsonb_set(metadata,'{billing,course_funding,funding_epoch}',to_jsonb('${randomUUID()}'::text))`,
+      deletion: "desired_state='deleted'",
+    }[change]!;
+    await getPool().query(`UPDATE compute_volumes SET ${update} WHERE id=$1`, [
+      f.volumeId,
+    ]);
+    await expect(switchVolumePersonalFunding(request)).rejects.toThrow();
+    expect(
+      (
+        await getPool().query(
+          "SELECT id FROM compute_funding_reservations WHERE payer_account_id=$1",
+          [f.student],
+        )
+      ).rows,
+    ).toHaveLength(0);
+  },
+);
+
+it("requires isolated approval and ownership for standalone storage and ends deleted consent without new service", async () => {
+  const f = await standaloneVolumeConsent();
+  const request = {
+    account_id: f.student,
+    volume_id: f.volumeId,
+    consent_id: f.consent.id,
+    expected_version: f.consent.version,
+    operation_id: randomUUID(),
+  };
+  await expect(switchVolumePersonalFunding(request)).rejects.toThrow(
+    "approved",
+  );
+  await expect(
+    previewVolumePersonalFunding({ account_id: f.payer, terms: f.terms }),
+  ).rejects.toThrow("owner");
+  await getPool().query(
+    "UPDATE compute_volumes SET desired_state='deleted',deleted_at=NOW() WHERE id=$1",
+    [f.volumeId],
+  );
+  await closeEndedVolumePersonalConsents();
+  expect(
+    (await getVolumePersonalFunding({
+      account_id: f.student,
+      volume_id: f.volumeId,
+    }))!.state,
+  ).toBe("cancelled");
+});
 
 it("hands off the reviewed home disk once, settles its old payer, and retains independent storage after VM deletion", async () => {
   const f = await fixtureWithHome();

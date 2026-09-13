@@ -163,8 +163,45 @@ build passed before the final server-only meter locking fix; server typecheck
 also passed afterward. This is not the complete zoom/device matrix or an
 independent review.
 
-Remaining implementation/validation includes standalone volume extension or
-takeover after VM deletion, pre-existing independent personal home volumes,
+Standalone volume retention is now connected through the student storage dialog,
+account-only APIs, separate-origin approval, personal reservations, metering,
+and cancellation/expiry maintenance. A fixed-size detached disk can replace its
+course or bounded personal agreement without authorizing any VM. Cancellation
+remains available after attachment; changing funding still requires detachment.
+The existing consent table supports exactly one VM or standalone volume. Its
+explicit nullable-column declaration upgrades existing databases, not just fresh
+test schemas.
+
+Live validation used 10 GB GCP volume
+`c1d5d54e-e82a-49f7-9bf3-52a2212ca494`, with no VM. At 02:40 UTC the student
+previewed and approved USD 0.50 on the isolated financial origin, then applied
+the storage switch in the browser. Cancellation ended service without discarding
+its protected cleanup obligation. A second separate approval extended that same
+retained disk at 02:45. Student-requested deletion completed, and independent
+provider inventory at 02:47 showed no disk, instance, or address. All three payer
+segments settled and released USD 0.12 apiece. These short storage charges rounded
+to zero; this is not evidence of a nonzero storage purchase. The instructor audit
+reported no discrepancies, and account balances remained unchanged.
+
+Two live boundary cases were corrected. Admission now clips service to an
+approaching payer-window or allowance boundary while retaining its minimum-runway
+and cleanup backing. The live creation occurred before the instructor's 5-hour
+reset and stopped its authorization at that reset; real-PostgreSQL checks also
+cover the 7-day boundary. Retained-volume reconciliation now observes provider
+state without provisioning/resizing or treating protected retention as a failed
+disk. Its update is fenced by funding epoch and attachment generation. The normal
+worker recovered the live disk so the second funding review could proceed.
+
+The updated focused PostgreSQL/approval set passes 96 tests; worker tests pass 8,
+frontend funding tests 21, CLI tests 13, and docs tests 8. Dependency consistency,
+frontend lint and server typecheck pass. The full development build passed before
+the final server-only corrections, which were subsequently compiled. Browser
+preview/approval/apply/cancel, keyboard entry and focus return, and focused axe
+checks ran at 320/720/1440 pixels in light/dark mode. The dev stale-build overlay
+obscured parts of some captured screenshots: those captures are not complete
+visual sign-off, and the 200% zoom/device matrix remains outstanding.
+
+Remaining implementation/validation includes pre-existing independent personal home volumes,
 live volume retention expiry, automatic fallback/exhaustion, transfer/payment
 provenance validation, bounded postpaid workflows, and currency display. The
 isolated hub has no Stripe configuration; the maintainer has been asked to

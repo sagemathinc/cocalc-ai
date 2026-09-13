@@ -27,11 +27,17 @@ import type {
   PersonalVmApprovalTerms,
   PersonalVmApprovalReview,
 } from "./approval-personal";
+import type {
+  PersonalVolumeApprovalTerms,
+  PersonalVolumeApprovalReview,
+} from "./approval-volume-personal";
+import { validatePersonalVolumeApprovalReview } from "./approval-volume-personal";
 
 export type CourseFundingApprovalTerms =
   | CourseFundingDraft
   | CourseFundingPoolChangeDraft
   | PersonalVmApprovalTerms
+  | PersonalVolumeApprovalTerms
   | CreditTransferApprovalTerms;
 
 export interface FundingApprovalIdentity {
@@ -46,6 +52,7 @@ export interface FundingApprovalReview {
   storage_retention_hours: number;
   pool_change?: CourseFundingPoolChangePreview;
   personal_vm_fallback?: PersonalVmApprovalReview;
+  personal_volume?: PersonalVolumeApprovalReview;
   credit_transfer?: CreditTransferApprovalReview;
 }
 
@@ -53,6 +60,16 @@ export async function resolveCourseFundingReview(
   payer: string,
   terms: CourseFundingApprovalTerms,
 ): Promise<FundingApprovalReview> {
+  const personalVolume =
+    "kind" in terms && terms.kind === "personalVolumeFunding"
+      ? validatePersonalVolumeApprovalReview(
+          payer,
+          terms,
+          await (
+            await import("./volume-personal")
+          ).reviewPersonalVolumeFunding(payer, terms),
+        )
+      : undefined;
   const transfer =
     "kind" in terms && terms.kind === "creditTransfer"
       ? await resolveTransferApprovalReview(payer, terms)
@@ -87,7 +104,7 @@ export async function resolveCourseFundingReview(
   const recipientIds =
     "kind" in terms && terms.kind === "creditTransfer"
       ? [terms.recipient.account_id]
-      : personal
+      : personal || personalVolume
         ? []
         : poolChange
           ? poolChange.pool.grants.map((g) => g.beneficiary_account_id)
@@ -124,6 +141,7 @@ export async function resolveCourseFundingReview(
     storage_retention_hours: COURSE_COMPUTE_RETENTION_HOURS,
     ...(poolChange ? { pool_change: poolChange } : {}),
     ...(personal ? { personal_vm_fallback: personal } : {}),
+    ...(personalVolume ? { personal_volume: personalVolume } : {}),
     ...(transfer ? { credit_transfer: transfer } : {}),
   };
 }

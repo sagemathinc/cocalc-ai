@@ -30,6 +30,7 @@ import {
 import { getComputeVmById } from "../db";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import { getComputeFundingPolicyInTransaction } from "./policy";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -110,6 +111,29 @@ async function fixture(provider: "gcp" | "nebius" = "gcp") {
 }
 
 describe("actual sponsored VM reservation and settlement", () => {
+  it.each(["5h", "7d"] as const)(
+    "bounds new service at a nearby %s reset without dropping protected backing",
+    async (window) => {
+      const { payer, request } = await fixture("nebius");
+      const policy = await withFundingAccountTransaction(payer, (db) =>
+        getComputeFundingPolicyInTransaction(db, {
+          payer_account_id: payer,
+          lane: "prepaid",
+          for_service: true,
+        }),
+      );
+      const reset = new Date(Date.now() + 10 * 60_000);
+      await getPool().query(
+        "UPDATE account_usage_windows SET resets_at=$2 WHERE id=$1",
+        [policy.windows[window].window!.id, reset],
+      );
+      const binding = await reserveComputeVmFundingLocal(request);
+      expect(Date.parse(binding.authorized_until)).toBe(reset.valueOf());
+      expect(Date.parse(binding.stop_at)).toBe(reset.valueOf() - 5 * 60_000);
+      expect(Number(binding.protected_usd)).toBeGreaterThan(0);
+      expect(await reserveComputeVmFundingLocal(request)).toEqual(binding);
+    },
+  );
   it("serializes two payers competing for the last site exposure allocation", async () => {
     const first = await fixture();
     const second = await fixture();

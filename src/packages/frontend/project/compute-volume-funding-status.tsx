@@ -4,6 +4,8 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import type { ComputeVolume } from "@cocalc/conat/hub/api/compute";
 import { moneyToCurrency } from "@cocalc/util/money";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import type { VolumePersonalFundingApi } from "@cocalc/util/compute-volume-personal-funding";
+import VolumePersonalFunding from "./compute-volume-personal-funding";
 import {
   volumeCourseSource,
   volumeFundingLabel,
@@ -39,9 +41,11 @@ export function VolumeRetentionNotice() {
 export function VolumeFundingDetailsButton({
   volume,
   label,
+  personalApi,
 }: {
   volume: ComputeVolume;
   label?: string;
+  personalApi?: VolumePersonalFundingApi;
 }) {
   const [open, setOpen] = useState(false);
   return (
@@ -70,6 +74,21 @@ export function VolumeFundingDetailsButton({
         )}
       >
         <VolumeFundingStatus volume={volume} />
+        {personalApi &&
+          volume.funding_status?.funding_version &&
+          volume.state !== "deleted" && (
+            <VolumePersonalFunding
+              key={volume.id}
+              volumeId={volume.id}
+              fundingVersion={volume.funding_status.funding_version}
+              canSwitch={
+                volume.state === "ready" &&
+                !volume.attached_vm_id &&
+                volume.attachment_state === "detached"
+              }
+              api={personalApi}
+            />
+          )}
       </Modal>
     </>
   );

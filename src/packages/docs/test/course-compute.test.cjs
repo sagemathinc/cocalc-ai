@@ -28,7 +28,9 @@ test("course compute guide distinguishes authorization, reservations, and remote
     "--expected-funding-version REVIEWED_FUNDING_VERSION",
     "--operation APPLY_UUID --json",
     "--operation CANCEL_UUID --json",
-    "Personal handoff of attached home volumes is still backend work",
+    "receive separate reservations within the approved combined cap",
+    "Retain a disk without a VM",
+    "Cancellation remains available while the disk is attached",
     "never remove the three course-source flags",
   ]) {
     assert.ok(guide.body.replace(/\s+/g, " ").includes(phrase), phrase);

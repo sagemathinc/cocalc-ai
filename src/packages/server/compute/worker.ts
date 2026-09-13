@@ -2725,6 +2725,51 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
   if (next && hasCourseVolumeFunding(next)) await reconcileVolumeBilling(next);
 }
 
+async function reconcileRetainedVolume(volume: ComputeVolumeRow) {
+  // Observation is allowed after service ends, but must never provision or
+  // resize. Fence the result against a concurrent reauthorization or attach.
+  const observed = await inspectProviderComputeVolume(volume);
+  const valid =
+    observed &&
+    observed.size_gb >=
+      effectiveComputeVolumeSizeGb(volume.provider, volume.size_gb);
+  const attachedVm = volume.attached_vm_id
+    ? await getComputeVmById(volume.attached_vm_id)
+    : undefined;
+  const attached = !!(
+    observed &&
+    attachedVm &&
+    volumeAttachedToVm(observed.users, attachedVm)
+  );
+  const attachment =
+    !valid || (observed.users.length > 0 && !attached)
+      ? "unknown"
+      : attached
+        ? "attached"
+        : volume.attached_vm_id
+          ? "reserved"
+          : "detached";
+  await getPool().query(
+    `UPDATE compute_volumes SET state=$2,attachment_state=$3,error=$4,
+      metadata=jsonb_set(metadata,'{provider}',$5::jsonb),updated_at=clock_timestamp()
+      WHERE id=$1 AND desired_state='ready' AND deleted_at IS NULL
+        AND attachment_generation=$6
+        AND metadata#>>'{billing,course_funding,funding_epoch}'=$7
+        AND metadata#>>'{billing,course_funding,service_ended_at}' IS NOT NULL`,
+    [
+      volume.id,
+      valid ? "ready" : "failed",
+      attachment,
+      valid
+        ? null
+        : "Retained volume is missing or smaller than expected at the provider; reconciliation is required.",
+      JSON.stringify(observed ?? {}),
+      volume.attachment_generation,
+      volume.metadata.billing.course_funding.funding_epoch,
+    ],
+  );
+}
+
 async function reconcile(vm: ComputeVmRow) {
   if (
     (vm.expires_at && vm.expires_at.valueOf() <= Date.now()) ||
@@ -2920,6 +2965,14 @@ export async function handleComputeWork(row: ComputeWorkRow) {
         await requireCourseVolumeService(volume);
       } catch (err) {
         await endCourseVolumeService(volume);
+        if (row.action === "reconcile_volume" && volume.ready_at) {
+          const current = await getComputeVolumeById(volume.id);
+          if (
+            current?.desired_state === "ready" &&
+            current.metadata?.billing?.course_funding?.service_ended_at
+          )
+            return await reconcileRetainedVolume(current);
+        }
         throw err;
       }
     }

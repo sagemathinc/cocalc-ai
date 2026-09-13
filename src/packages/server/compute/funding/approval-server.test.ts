@@ -365,6 +365,69 @@ describe("isolated financial browser approval", () => {
       ).toBe(true);
     }
   });
+  it("reviews storage alone without granting VM authority", async () => {
+    const volume_id = randomUUID();
+    approvals.retrieve.mockResolvedValue({
+      ...intent,
+      terms: {
+        kind: "personalVolumeFunding",
+        volume_id,
+        expected_funding_version: randomUUID(),
+        lane: "prepaid",
+        cap_usd: "2.00",
+        ends_at: "2099-10-01T12:00:00Z",
+      },
+      review: {
+        ...intent.review,
+        recipients: [],
+        personal_volume: {
+          volume_id,
+          volume_name: "Data <script>alert(1)</script>",
+          owner_account_id: payer,
+          owning_bay_id: "bay-0",
+          resource_generation: 2,
+          attachment_generation: 3,
+          funding_epoch: randomUUID(),
+          size_gb: 20,
+          hourly_usd: "0.003",
+          protected_storage_usd: "0.22",
+          storage_delete_at: "2099-10-04T12:00:00Z",
+        },
+      },
+    });
+    await login("Approve Personal Storage Funding");
+    const body = await page.locator("main").innerText();
+    for (const text of [
+      volume_id,
+      "USD 2.00",
+      "0.003",
+      "payer@example.test",
+      "2099-10-04",
+      "not a VM or GPU",
+      "no automatic backup",
+    ])
+      expect(body).toContain(text);
+    expect(await page.locator("script").count()).toBe(0);
+    await page.setViewportSize({ width: 320, height: 900 });
+    expect(
+      await page.evaluate("document.documentElement.scrollWidth <= innerWidth"),
+    ).toBe(true);
+    await page.evaluate(
+      readFileSync(
+        require.resolve("axe-core/axe.min.js", {
+          paths: [resolve(__dirname, "../../../..")],
+        }),
+        "utf8",
+      ),
+    );
+    expect(
+      (
+        await page.evaluate(
+          "axe.run(document, {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}})",
+        )
+      ).violations,
+    ).toEqual([]);
+  });
   it("renders verified transfer identities, exact USD and remaining transferable balance", async () => {
     approvals.retrieve.mockResolvedValue({
       ...intent,

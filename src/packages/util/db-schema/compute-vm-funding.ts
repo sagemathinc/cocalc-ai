@@ -36,8 +36,13 @@ Table({
   name: "compute_vm_personal_consents",
   rules: {
     primary_key: "id",
-    pg_indexes: ["payer_account_id", "vm_id"],
+    pg_indexes: ["payer_account_id", "vm_id", "volume_id"],
     pg_constraints: [
+      {
+        name: "compute_personal_consents_resource",
+        type: "check",
+        expression: "(vm_id IS NOT NULL) <> (volume_id IS NOT NULL)",
+      },
       {
         name: "compute_vm_personal_consents_operation",
         type: "unique",
@@ -48,7 +53,8 @@ Table({
   fields: {
     id: { type: "uuid", not_null: true },
     payer_account_id: { type: "uuid", not_null: true },
-    vm_id: { type: "uuid", not_null: true },
+    vm_id: { type: "uuid", not_null: false },
+    volume_id: { type: "uuid" },
     operation_id: { type: "uuid", not_null: true },
     terms: { type: "map", not_null: true },
     review: { type: "map", not_null: true },

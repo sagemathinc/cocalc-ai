@@ -4339,7 +4339,16 @@ export function ProjectComputeVms({
     },
     {
       title: "Payer and retention",
-      render: (_, volume) => <VolumeFundingDetailsButton volume={volume} />,
+      render: (_, volume) => (
+        <VolumeFundingDetailsButton
+          volume={volume}
+          personalApi={
+            volume.owner_account_id === accountId
+              ? webapp_client.conat_client.hub.compute
+              : undefined
+          }
+        />
+      ),
     },
     {
       title: "Actions",

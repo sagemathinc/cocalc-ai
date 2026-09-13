@@ -16,6 +16,7 @@ import type {
   ComputeVmFundingStatus,
 } from "@cocalc/util/compute-vm-funding";
 import type { VmPersonalFundingApi } from "@cocalc/util/compute-vm-funding";
+import type { VolumePersonalFundingApi } from "@cocalc/util/compute-volume-personal-funding";
 import type { ComputeVolumeFundingStatus } from "@cocalc/util/compute-volume-funding";
 
 export const COMPUTE_AGENT_GRANTS_PROJECT_DETAIL_FIELD = "compute_agent_grants";
@@ -330,6 +331,11 @@ export interface PrepareComputeWindowsRdpResult {
 }
 
 export const compute = {
+  previewVolumePersonalFunding: authFirstRequireAccount,
+  proposeVolumePersonalFunding: authFirstRequireAccount,
+  getVolumePersonalFunding: authFirstRequireAccount,
+  switchVolumePersonalFunding: authFirstRequireAccount,
+  clearVolumePersonalFunding: authFirstRequireAccount,
   previewVmPersonalFunding: authFirstRequireAccount,
   proposeVmPersonalFunding: authFirstRequireAccount,
   getVmPersonalFunding: authFirstRequireAccount,
@@ -372,7 +378,8 @@ export const compute = {
   resolveOrphan: authFirstRequireAccount,
 };
 
-export interface ComputeApi extends VmPersonalFundingApi {
+export interface ComputeApi
+  extends VmPersonalFundingApi, VolumePersonalFundingApi {
   getCatalog: (opts: { account_id?: string }) => Promise<ComputeCatalog>;
   createVm: (opts: CreateComputeVmRequest) => Promise<ComputeVm>;
   listVms: (opts: {

@@ -709,6 +709,7 @@ async function enqueuePersonalTransition(
 
 /** Owning-bay reconciliation. No account lock or DB transaction spans provider work. */
 export async function processVmPersonalFundingHandoffs(): Promise<void> {
+  await (await import("./volume-personal")).closeEndedVolumePersonalConsents();
   await closeEndedPersonalConsents();
   await prepareAutomaticVmPersonalFallbacks();
   const { rows } = await getPool().query<ConsentRow>(

@@ -43,6 +43,8 @@ import {
 } from "./approval-transfer";
 import type { CreditTransferApprovalTerms } from "./approval-transfer";
 import { prepareSponsorshipApproval } from "./approval-sponsorship";
+import { normalizePersonalVolumeApprovalTerms } from "./approval-volume-personal";
+import type { PersonalVolumeApprovalTerms } from "./approval-volume-personal";
 
 const logger = getLogger("compute:funding:approval-startup");
 let starting: Promise<void> | undefined;
@@ -74,6 +76,19 @@ export function initCourseFundingApprovalService({
         throw new Error("Storage policy changed; create a new funding intent");
       }
       if ("kind" in terms) {
+        if (terms.kind === "personalVolumeFunding") {
+          if (!review.personal_volume)
+            throw Error("Personal storage review unavailable.");
+          return (
+            await import("./volume-personal")
+          ).approvePersonalVolumeFunding({
+            db,
+            payer_account_id,
+            intent_id,
+            terms,
+            review: review.personal_volume,
+          });
+        }
         if (terms.kind === "creditTransfer")
           throw new Error(
             "Transfer approval requires sorted transaction preflight",
@@ -129,7 +144,13 @@ export function initCourseFundingApprovalService({
             ? normalizeTransferApprovalTerms(
                 input as CreditTransferApprovalTerms,
               )
-            : normalizePersonalVmApprovalTerms(input as PersonalVmApprovalTerms)
+            : input.kind === "personalVolumeFunding"
+              ? normalizePersonalVolumeApprovalTerms(
+                  input as PersonalVolumeApprovalTerms,
+                )
+              : normalizePersonalVmApprovalTerms(
+                  input as PersonalVmApprovalTerms,
+                )
           : input != null && typeof input === "object" && "action" in input
             ? normalizeCourseFundingPoolChangeDraft(
                 input as CourseFundingPoolChangeDraft,

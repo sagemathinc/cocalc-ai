@@ -311,7 +311,34 @@ export async function reserveComputeVmFundingLocal(
       fundingConflict(
         "A sponsored VM authorization must use a bounded service horizon.",
       );
-    const baseQuote = quoteVmFundingAdmission(request, now);
+    const policy = await getComputeFundingPolicyInTransaction(client, {
+      payer_account_id: payer,
+      lane: pool.lane,
+      for_service: true,
+    });
+    // Keep the minimum-runway backing, but do not promise service across a
+    // payer window or allowance boundary. Renewals recheck the next window.
+    const boundary = Math.min(
+      pool.ends_at.valueOf(),
+      grant.ends_at.valueOf(),
+      ...Object.values(policy.windows).map(({ window }) =>
+        window ? window.resets_at.valueOf() : now.valueOf(),
+      ),
+    );
+    const baseQuote = quoteVmFundingAdmission(
+      {
+        ...request,
+        requested_stop_at: new Date(
+          Math.min(
+            request.requested_stop_at == null
+              ? Infinity
+              : Date.parse(request.requested_stop_at),
+            boundary - VM_FUNDING_MARGIN_MS,
+          ),
+        ).toISOString(),
+      },
+      now,
+    );
     const until = new Date(baseQuote.authorized_until);
     requireSourceService(pool, grant, request.owner_account_id, now, until);
     const egressUsd =
@@ -333,11 +360,6 @@ export async function reserveComputeVmFundingLocal(
       exposureBudget,
       quote.authorized_usd,
     );
-    const policy = await getComputeFundingPolicyInTransaction(client, {
-      payer_account_id: payer,
-      lane: pool.lane,
-      for_service: true,
-    });
     assertComputeFundingServicePolicy(policy, {
       ...quote,
       authorized_until: until.toISOString(),

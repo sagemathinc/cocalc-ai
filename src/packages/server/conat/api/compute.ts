@@ -177,6 +177,14 @@ function requireAccount(accountId?: string) {
 }
 
 export {
+  previewVolumePersonalFunding,
+  proposeVolumePersonalFunding,
+  getVolumePersonalFunding,
+  switchVolumePersonalFunding,
+  clearVolumePersonalFunding,
+} from "@cocalc/server/compute/funding/volume-personal";
+
+export {
   previewVmPersonalFunding,
   proposeVmPersonalFunding,
   getVmPersonalFunding,

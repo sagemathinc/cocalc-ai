@@ -219,11 +219,28 @@ An unknown funding error, manual stop, or reached scheduled stop is not a
 fallback reason. This path still needs deployment-specific live acceptance;
 do not force it using a CLI workaround.
 
-Personal handoff of attached home volumes is still backend work. The current
-backend rejects a nonempty home-volume scope and VMs that have an attached home
-volume even if the array is empty. Do not remove scope or use **vm funding --set**
-to bypass a rejection. Separately sponsored home-volume creation and resize are
-also capability-gated; VM-only personal handoff readiness does not enable them.
+Include an attached course-funded home volume in **home_volume_ids**. Its size,
+rate, and latest deletion date appear in the same personal approval. VM and disk
+receive separate reservations within the approved combined cap; deleting the VM
+does not delete that disk. Automatic fallback requires both to use the same
+course allowance. Independently personal-funded home volumes are not yet supported
+in this VM handoff. Do not omit scope or use **vm funding --set** to bypass a
+rejected review.
+
+### Retain a disk without a VM
+
+For a detached home volume with a bounded funding agreement, open its **Funding
+and retention** details and choose **Retain with my credit**. Preview a personal
+limit and end time, approve on the separate financial page, then apply the
+approved storage funding. This names one disk at its current size; it does not
+authorize a VM, GPU, or larger disk. You can replace an expiring bounded personal
+agreement the same way. Additional capacity remains subject to account limits.
+
+The old payer remains responsible only for its authorized interval and unsettled
+charges. New storage and protected cleanup use the additional personal cap.
+Cancellation remains available while the disk is attached; a new funding switch
+requires detaching it. Cancellation does not erase prior usage or reserved
+cleanup costs. Deletion removes the remote disk, not your project notebook.
 
 ### Denials and agent context
 

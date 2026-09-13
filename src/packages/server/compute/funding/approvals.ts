@@ -500,6 +500,19 @@ export async function proposeVmPersonalFundingApproval(opts: {
   });
 }
 
+export async function proposeVolumePersonalFundingApproval(opts: {
+  payer_account_id: string;
+  operation_id: string;
+  terms: import("@cocalc/util/compute-volume-personal-funding").VolumePersonalFundingTerms;
+}): Promise<FundingIntentStatus<FinancialApprovalResult>> {
+  if (!active)
+    throw Error("Trusted financial approval is not configured on this bay");
+  return active.propose({
+    ...opts,
+    terms: { ...opts.terms, kind: "personalVolumeFunding" },
+  });
+}
+
 export async function getVmPersonalFundingApprovalStatus(opts: {
   payer_account_id: string;
   intent_id: string;

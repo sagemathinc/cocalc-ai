@@ -154,7 +154,10 @@ has changed. Apply is only for approved immediate consent. It returns preparing;
 the backend stops the VM, checks settlement/backing, switches funding and queues
 a restart. Poll status and vm get; an accepted request is not completed cutover.
 Cancel active/preparing consent can stop the VM; it does not refund prior usage.
-Home-volume personal handoff is still backend work and is currently rejected.
+Include an attached course-funded home volume in the review. It receives its
+own reservation within the same cap and survives VM deletion under its own
+retention deadline. Independently personal-funded home volumes are not yet
+supported in this VM handoff; never silently replace their funding agreement.
 Never remove volume scope, change versions automatically, or use vm funding --set
 to bypass a rejected proposal. No command here approves consent or extends timers.
 `,
@@ -208,8 +211,9 @@ Terms JSON (all fields required):
 
 The cap includes compute, egress and protected storage. Review the returned
 terms and costs; only the isolated browser approval page can authorize them.
-Home-volume scope is currently rejected by the backend, including VMs with an
-attached home volume. Do not omit an attached volume to bypass that restriction.
+Include the attached course-funded home volume in home_volume_ids. Automatic
+fallback requires the VM and its home disk to use the same course allowance.
+Do not omit an attached volume to bypass a rejected review.
 `,
       );
     if (action === "propose")

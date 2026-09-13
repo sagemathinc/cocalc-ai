@@ -20,7 +20,8 @@ import { getComputeVmConfig } from "./config";
 import * as volumes from "./volume-db";
 import * as access from "./project-access";
 import { listManagedVmDnsRecords } from "../cloud/dns";
-import { withSessionAdvisoryLock } from "@cocalc/database/pool";
+import getPool, { withSessionAdvisoryLock } from "@cocalc/database/pool";
+import * as volumeFunding from "./funding/volume-funding";
 
 jest.mock("./db");
 jest.mock("./provider");
@@ -257,3 +258,64 @@ it("ignores cleanup work carrying an obsolete funding epoch", async () => {
   expect(provider.deleteProviderComputeVm).not.toHaveBeenCalled();
   expect(funding.reserveCourseVmLaunch).not.toHaveBeenCalled();
 });
+
+it.each([true, false])(
+  "observes retained storage without provisioning or resizing (present=%s)",
+  async (present) => {
+    const volume = {
+      id: "volume",
+      role: "home",
+      funding_mode: "account-prepaid",
+      owner_account_id: "owner",
+      owning_bay_id: "bay",
+      provider: "gcp",
+      state: "failed",
+      desired_state: "ready",
+      size_gb: 10,
+      desired_size_gb: 10,
+      ready_at: new Date(),
+      attached_vm_id: null,
+      attachment_generation: 2,
+      metadata: {
+        billing: {
+          course_funding: {
+            funding_epoch: "epoch",
+            binding: {},
+            service_ended_at: new Date().toISOString(),
+          },
+        },
+      },
+    } as any;
+    const query = jest.fn().mockResolvedValue({ rows: [] });
+    jest.mocked(getPool).mockReturnValue({ query } as any);
+    jest.mocked(volumes.getComputeVolumeById).mockResolvedValue(volume);
+    jest.mocked(volumeFunding.hasCourseVolumeFunding).mockReturnValue(true);
+    jest
+      .mocked(volumeFunding.requireCourseVolumeService)
+      .mockRejectedValue(Error("Protected storage"));
+    jest
+      .mocked(provider.inspectProviderComputeVolume)
+      .mockResolvedValue(
+        present ? ({ size_gb: 10, users: [] } as any) : undefined,
+      );
+    await handleComputeWork({
+      resource_kind: "volume",
+      resource_id: volume.id,
+      action: "reconcile_volume",
+    } as any);
+    expect(volumeFunding.endCourseVolumeService).toHaveBeenCalledWith(volume);
+    expect(provider.inspectProviderComputeVolume).toHaveBeenCalledWith(volume);
+    expect(provider.ensureProviderComputeVolume).not.toHaveBeenCalled();
+    expect(provider.resizeProviderComputeVolume).not.toHaveBeenCalled();
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("AND attachment_generation=$6"),
+      expect.arrayContaining([
+        volume.id,
+        present ? "ready" : "failed",
+        "epoch",
+        2,
+      ]),
+    );
+    expect(query.mock.calls[0][0]).toContain("service_ended_at}' IS NOT NULL");
+  },
+);
