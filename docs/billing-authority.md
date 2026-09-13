@@ -15,6 +15,171 @@ The authority is default-off. It is activated only when every relevant worker
 starts with `COCALC_BILLING_AUTHORITY_ENABLED=1`; deploying the code or schema
 alone does not alter billing execution.
 
+## Architecture Review Map
+
+The diagram below separates authenticated ingress, the logical authority,
+durable PostgreSQL state, and the external Stripe provider. Solid arrows are
+mutation or state-transition paths. Dotted arrows are checks or explicitly
+audited read-only paths.
+
+```mermaid
+flowchart LR
+  subgraph ingress["INGRESS - authenticated callers"]
+    direction TB
+    http["HTTP API"]
+    conat["Conat RPC"]
+    webhook["Stripe webhooks"]
+    maintenance["Maintenance"]
+    old["Attached bay or old worker"]
+  end
+
+  gate{"ENABLED ON ALL WORKERS?<br/>standalone / one bay only"}
+  reject["503 / FAIL CLOSED"]
+  readonly["Audited side-effect-free read"]
+
+  subgraph authority["LOGICAL BILLING AUTHORITY"]
+    direction TB
+    admission["Admission<br/>operation + identity + affected accounts"]
+    critical["CRITICAL lane"]
+    interactive["INTERACTIVE lane"]
+    background["MAINTENANCE lane"]
+    scheduler["Bounded priority scheduler"]
+    executor["SINGLE EXECUTOR<br/>one command at a time"]
+    transport["Stripe transport guard<br/>command-scoped mutation permit"]
+    lifecycle["DRAIN / HANDOFF"]
+  end
+
+  subgraph postgres["POSTGRESQL TRUST ANCHOR - durable source of truth"]
+    direction TB
+    journal["Command journal<br/>request hash + status + generation"]
+    lease["Lease<br/>instance + generation + DB expiry"]
+    lock["Global transaction advisory lock"]
+    fences["Composable account fences<br/>ban / deletion / quarantine / incident"]
+    financial["Financial rows"]
+  end
+
+  subgraph provider["EXTERNAL STRIPE PROVIDER BOUNDARY"]
+    direction TB
+    stripe["STRIPE"]
+    uncertain["UNCERTAIN<br/>never blindly retried"]
+    reconcile["Reconcile<br/>provider ID / webhook / operator"]
+  end
+
+  limitation["CURRENT LIMIT<br/>logical boundary only; Hub workers still hold the Stripe secret"]
+
+  http -->|mutation| gate
+  conat -->|mutation| gate
+  webhook -->|verified event| gate
+  maintenance -->|bounded unit of work| gate
+  old --> reject
+  gate -->|disabled or wrong topology| reject
+  gate -->|enabled| admission
+
+  http -.->|explicitly classified read| readonly
+  conat -.->|explicitly classified read| readonly
+  readonly --> financial
+
+  admission -->|insert before work| journal
+  journal --> critical
+  journal --> interactive
+  journal --> background
+  critical --> scheduler
+  interactive --> scheduler
+  background --> scheduler
+  scheduler --> executor
+
+  lease -.->|current generation + local deadline| executor
+  lock -.->|fences execution and takeover| executor
+  fences -.->|check actor + every target| admission
+  fences -.->|recheck before effects| executor
+  fences -->|cancel queued / reject new| journal
+  lifecycle -->|close admission| admission
+  lifecycle -->|release or replace generation| lease
+
+  executor -->|transactional domain effects| financial
+  executor -->|known final outcome| journal
+  executor --> transport
+  transport -->|deterministic command-scoped idempotency key| stripe
+  stripe -->|confirmed response| executor
+  transport -->|lost or ambiguous response| uncertain
+  uncertain -->|durable status| journal
+  uncertain --> reconcile
+  reconcile -.->|read or observe; not blind replay| stripe
+  reconcile -->|proven outcome| journal
+  authority -.-> limitation
+
+  classDef entry fill:#12263a,stroke:#38bdf8,color:#f8fafc,stroke-width:1.5px;
+  classDef gate fill:#3b2f12,stroke:#fbbf24,color:#fff7d6,stroke-width:2px;
+  classDef allowed fill:#0f3b3a,stroke:#2dd4bf,color:#ecfeff,stroke-width:1.5px;
+  classDef durable fill:#16213e,stroke:#818cf8,color:#eef2ff,stroke-width:2px;
+  classDef blocked fill:#481a1a,stroke:#fb7185,color:#fff1f2,stroke-width:2px;
+  classDef warning fill:#422006,stroke:#f59e0b,color:#fffbeb,stroke-width:2px;
+
+  class http,conat,webhook,maintenance,old entry;
+  class gate gate;
+  class admission,critical,interactive,background,scheduler,executor,transport,lifecycle,readonly allowed;
+  class journal,lease,lock,fences,financial durable;
+  class reject,uncertain blocked;
+  class stripe,reconcile warning;
+  class limitation warning;
+
+  style ingress fill:#071522,stroke:#38bdf8,stroke-width:2px,stroke-dasharray:6 4,color:#f8fafc
+  style authority fill:#071f20,stroke:#2dd4bf,stroke-width:3px,stroke-dasharray:8 5,color:#f8fafc
+  style postgres fill:#10152d,stroke:#818cf8,stroke-width:3px,stroke-dasharray:8 5,color:#f8fafc
+  style provider fill:#2b1707,stroke:#f59e0b,stroke-width:3px,stroke-dasharray:8 5,color:#f8fafc
+```
+
+The external Stripe call and the PostgreSQL transaction are intentionally not
+presented as atomic. A response that does not prove whether Stripe accepted a
+write ends in `uncertain`; reconciliation observes provider state rather than
+automatically issuing another write.
+
+```mermaid
+stateDiagram-v2
+  direction LR
+  [*] --> queued: durable insert
+  queued --> running: generation-fenced claim
+  queued --> canceled: timeout or fence before claim
+  queued --> expired: admission deadline
+  running --> succeeded: outcome committed
+  running --> failed: provider effect proven absent
+  running --> uncertain: ambiguous Stripe result or lease takeover
+  uncertain --> succeeded: reconciliation proves effect
+  uncertain --> failed: reconciliation proves no effect
+  canceled --> queued: stable command never claimed
+  expired --> queued: stable command never claimed
+  succeeded --> [*]
+  failed --> [*]
+
+  note right of uncertain
+    No automatic transition back to running.
+    Keep the command UUID and reconcile.
+  end note
+
+  note left of running
+    Account cleanup waits behind in-flight work,
+    then removes anything that work created.
+  end note
+```
+
+### Suggested Review Order
+
+| Invariant                                                                  | Primary implementation                                                                                                                                                       |
+| -------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Activation is explicit and unsupported topologies fail closed              | [`config.ts`](../src/packages/server/purchases/billing-authority/config.ts), [`client.ts`](../src/packages/server/purchases/billing-authority/client.ts)                     |
+| Command identity, lifecycle, lanes, and bounded result protocol are stable | [`protocol.ts`](../src/packages/server/purchases/billing-authority/protocol.ts), [`classification.ts`](../src/packages/server/purchases/billing-authority/classification.ts) |
+| A command is durable before execution and terminal transitions are fenced  | [`store.ts`](../src/packages/server/purchases/billing-authority/store.ts)                                                                                                    |
+| Exactly one current lease generation can execute or complete a command     | [`service.ts`](../src/packages/server/purchases/billing-authority/service.ts), [`store.ts`](../src/packages/server/purchases/billing-authority/store.ts)                     |
+| Every operation reaches the centralized dispatcher                         | [`dispatch.ts`](../src/packages/server/purchases/billing-authority/dispatch.ts)                                                                                              |
+| Stripe writes require authority context and deterministic idempotency      | [`context.ts`](../src/packages/server/purchases/billing-authority/context.ts), [`connection.ts`](../src/packages/server/stripe/connection.ts)                                |
+| Actor and target freezes compose without one cause clearing another        | [`store.ts`](../src/packages/server/purchases/billing-authority/store.ts), [`billing-authority.ts`](../src/packages/util/db-schema/billing-authority.ts)                     |
+| Drain and handoff close admission before lease replacement                 | [`service.ts`](../src/packages/server/purchases/billing-authority/service.ts)                                                                                                |
+
+The most important remaining boundary limitation is explicit in the diagram:
+this PR creates one logical authority inside the trusted Hub deployment, but it
+does not yet isolate the Stripe secret or financial write role in a separate
+process identity.
+
 ## Scope
 
 Commands include:
