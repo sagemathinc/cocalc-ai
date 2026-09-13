@@ -4256,6 +4256,14 @@ export type ComputeOwnerResourcesResult =
       resources: import("@cocalc/conat/hub/api/compute").ComputeVolume[];
     };
 
+export interface ComputeCreateVmWithVolumeRequest {
+  account_home_bay: string;
+  opts: import("@cocalc/conat/hub/api/compute").CreateComputeVmRequest & {
+    agent_auth?: import("@cocalc/util/compute-agent-auth").ComputeAgentAuth;
+    home_volume: string;
+  };
+}
+
 export type ComputeOwnerMutationMethod =
   | "startVm"
   | "stopVm"
@@ -4304,6 +4312,9 @@ export type ComputeOwnerMutationResult = {
 );
 
 export interface InterBayComputeFundingApi extends MonthlyCollectionApi {
+  computeCreateVmWithVolume: (
+    opts: ComputeCreateVmWithVolumeRequest,
+  ) => Promise<ComputeOwnerMutationResult>;
   computeProjectAuthorizeSsh: (
     opts: ComputeProjectSshRequest,
   ) => Promise<import("@cocalc/conat/hub/api/compute").ComputeVm>;
@@ -8257,6 +8268,8 @@ export function createInterBayAccountLocalClient({
     computeOwnerMutate: (opts) => computeFundingClient.computeOwnerMutate(opts),
     getMonthlyCollection: (opts) =>
       computeFundingClient.getMonthlyCollection(opts),
+    computeCreateVmWithVolume: (opts) =>
+      computeFundingClient.computeCreateVmWithVolume(opts),
     proposeMonthlyCollection: (opts) =>
       computeFundingClient.proposeMonthlyCollection(opts),
     computeOwnerCheckFreshAuth: (opts) =>
@@ -8774,6 +8787,8 @@ export function createInterBayAccountLocalHandler({
           impl.computeProjectAuthorizeSsh(opts),
         computeOwnerMutate: (opts) => impl.computeOwnerMutate(opts),
         getMonthlyCollection: (opts) => impl.getMonthlyCollection(opts),
+        computeCreateVmWithVolume: (opts) =>
+          impl.computeCreateVmWithVolume(opts),
         proposeMonthlyCollection: (opts) => impl.proposeMonthlyCollection(opts),
         computeOwnerCheckFreshAuth: (opts) =>
           impl.computeOwnerCheckFreshAuth(opts),

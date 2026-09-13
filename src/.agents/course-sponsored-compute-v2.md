@@ -5,6 +5,23 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+New VM creation with a retained home disk now follows the disk's owning bay,
+including after an account moves to another bay. The home bay resolves a disk
+owned by the authenticated account and forwards its canonical ID, original
+operation key and session identity. The resource bay rechecks account home and
+disk ownership, then invokes normal VM creation; it does not copy the disk or
+skip provider-location, fresh-auth, funding, retention or creation-policy checks.
+
+A three-bay PostgreSQL/Conat regression performed an actual account rehome,
+verified that destination creation policy still blocks admission, then created a
+new VM record through the normal API with controlled catalog/price observations.
+The VM and home disk stayed on the resource bay, the instructor's reservation
+was recorded on the payer bay, and a retry produced the same VM and one
+reservation. This is not live cloud provisioning across multiple running hubs.
+The full focused set passed 74 checks, including twenty placement/owner-command
+tests, the three-bay suite and the public funding/volume callers. Server typecheck
+passed. No live cloud resource was created for this routing increment.
+
 Explicit monthly-collection opt-in was requested by the maintainer and is now
 connected (2026-09-13, 18:19-18:21 UTC). Balance settings propose versioned
 account-wide consent; the independent approval origin performs sign-in/MFA and
@@ -492,9 +509,9 @@ unattended run described at the top supersedes that attempt as fallback evidence
 
 Remaining implementation/validation includes live volume retention expiry and the
 complete live cross-bay/device/GPU validation matrix. Creating a new VM with an
-existing home disk on another bay after account rehome still needs a co-placement
-implementation decision and validation; remote owner controls and existing
-resource handoff do not prove that creation path. Optional currency display is
+existing home disk on another bay after account rehome now has co-placement
+implementation and a connected PostgreSQL/Conat regression, but still needs live
+cloud validation. Optional currency display is
 not a USD pilot prerequisite. Stripe-backed purchase, automatic deposit, and
 direct-transfer validation is recorded above. Fictitious credits remain
 ineligible for credit transfer; the new tests use actual test-mode provider

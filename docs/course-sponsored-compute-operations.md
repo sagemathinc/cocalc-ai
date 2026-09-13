@@ -140,6 +140,13 @@ are sufficient to declare a pilot reconciled.
 
 ## Investigating Reserved Credit
 
+Account rehome does not move compute resources or copy disk contents. A new VM
+using an existing home disk is placed on that disk's owning bay, with normal
+provider/region/zone compatibility and funding checks. The account home still
+authorizes the session and its personal funds; sponsored reservations still
+belong to the instructor's payer bay. Inspect all three authorities when they
+differ. The existing operation key is preserved across forwarding and retry.
+
 1. Inspect the pool and student allowance in the course Compute budget view.
 2. Run the payer audit and identify the reservation/resource UUID holding credit.
 3. Inspect the resource on its owning bay, its current provider identity and

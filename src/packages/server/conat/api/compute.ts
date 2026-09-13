@@ -7,6 +7,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import type { ComputeProjectSshRequest } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { routeVmToHomeVolume } from "@cocalc/server/compute/volume-placement";
 import {
   routeComputeOwnerMutation,
   requireComputeOwnerFreshAuth,
@@ -818,6 +819,8 @@ export async function createVm(
   opts: CreateComputeVmRequest & { agent_auth?: ComputeAgentAuth },
 ) {
   const { accountId, actorKind } = resolveComputeActor(opts, opts.project_id);
+  const placed = await routeVmToHomeVolume(opts);
+  if (placed !== undefined) return placed;
   const fundingSource = normalizeVmFundingSource(opts.funding_source);
   if (fundingSource) {
     await requireSponsoredVmAdmission();

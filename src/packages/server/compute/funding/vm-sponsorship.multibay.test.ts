@@ -100,6 +100,7 @@ jest.mock("@cocalc/database/pool", () =>
 // Explicit environment hooks: directory STORAGE and membership/payment evidence.
 // resolveAccountHomeBay, payerApi, project routing/access, SQL and locks are real.
 const mockHomes = new Map<string, string>();
+let mockComputeMode: string | undefined;
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
   getClusterAccountById: async (account_id) =>
     mockHomes.has(account_id)
@@ -132,6 +133,7 @@ jest.mock("@cocalc/server/project-host/admission", () =>
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({
     compute_vm_course_funding_enabled: true,
+    compute_vm_mode: mockComputeMode,
     dns: "funding.test",
   }),
 }));
@@ -249,6 +251,13 @@ describePg(
                     await import("@cocalc/server/conat/api/compute")
                   ).authorizeProjectSshKeyOnBay(opts),
                 ),
+              computeCreateVmWithVolume: (opts) =>
+                onBay(bay, async () => {
+                  calls.push({ bay, method: "create-with-volume" });
+                  return (
+                    await import("../volume-placement")
+                  ).createVmWithVolumeOnBay(opts);
+                }),
               computeOwnerMutate: (opts) =>
                 onBay(bay, async () =>
                   (
@@ -422,6 +431,7 @@ describePg(
       else process.env.COCALC_COURSE_VM_SITE_EXPOSURE_USD = originalExposure;
     }, 60000);
     beforeEach(() => {
+      mockComputeMode = undefined;
       calls.length = 0;
       loseReserve = false;
       loseSettlement = false;
@@ -609,6 +619,160 @@ describePg(
         },
       };
     }
+
+    it("routes new VM creation to a retained disk after real account rehome and retains destination admission checks", async () => {
+      const f = await fixture();
+      const volumeId = randomUUID();
+      await pools.get(resourceBay)!.query(
+        `INSERT INTO compute_volumes (id,name,owner_account_id,owning_bay_id,provider,region,role,funding_mode,size_gb,desired_size_gb,effective_size_gb,state,desired_state,attachment_state,attachment_generation,created_at,metadata)
+         VALUES($1,'Existing home',$2,$3,'gcp','us-central1','home','account-prepaid',10,10,10,'ready','ready','detached',1,NOW(),'{}')`,
+        [volumeId, f.student, resourceBay],
+      );
+      await pools
+        .get(resourceBay)!
+        .query("UPDATE compute_volumes SET zone='us-central1-a' WHERE id=$1", [
+          volumeId,
+        ]);
+      await onBay(resourceBay, async () => {
+        await ensureCourseCreditNoticeSchema();
+        await rehomeAccountOnHomeBay({
+          account_id: f.student,
+          target_account_id: f.student,
+          dest_bay_id: courseBay,
+        });
+      });
+      mockComputeMode = "disabled";
+      await expect(
+        onBay(courseBay, async () =>
+          (await import("@cocalc/server/conat/api/compute")).createVm({
+            account_id: f.student,
+            name: "After move",
+            provider: "nebius",
+            region: "eu-north1",
+            machine_type: "cpu",
+            pricing_model: "on_demand",
+            home_volume: volumeId,
+            idempotency_key: randomUUID(),
+          }),
+        ),
+      ).rejects.toThrow("creation is disabled");
+      expect(calls).toContainEqual({
+        bay: resourceBay,
+        method: "create-with-volume",
+      });
+      expect(
+        await row(
+          resourceBay,
+          "SELECT owner_account_id,owning_bay_id FROM compute_volumes WHERE id=$1",
+          [volumeId],
+        ),
+      ).toEqual({ owner_account_id: f.student, owning_bay_id: resourceBay });
+      expect(
+        (
+          await row(
+            courseBay,
+            "SELECT count(*)::int AS n FROM compute_volumes WHERE id=$1",
+            [volumeId],
+          )
+        ).n,
+      ).toBe(0);
+      // Provider catalog and price observations are controlled fixtures. The
+      // caller, rehome, dispatch, authorization, SQL and payer reservation are real.
+      const provider = await import("../provider");
+      const hosts = await import("@cocalc/server/conat/api/hosts");
+      const spend = await import("@cocalc/server/project-host/spend");
+      const spies = [
+        jest
+          .spyOn(provider, "getProviderComputeRegions")
+          .mockResolvedValue(new Set(["us-central1"])),
+        jest
+          .spyOn(provider, "requireProviderComputeSubnetwork")
+          .mockResolvedValue("test-subnetwork"),
+        jest.spyOn(hosts, "getCatalog").mockResolvedValue({
+          entries: [
+            {
+              kind: "machine_types",
+              scope: "zone/us-central1-a",
+              payload: [
+                { name: "e2-standard-2", guestCpus: 2, memoryMb: 8192 },
+              ],
+            },
+          ],
+        } as any),
+        jest.spyOn(spend, "estimateDedicatedHostRate").mockResolvedValue({
+          hourly_cost_usd: "0.02",
+          pricing_snapshot: { provider: "gcp", components: [] },
+        } as any),
+      ];
+      try {
+        mockComputeMode = "enabled";
+        const session_hash = randomUUID();
+        const request = {
+          account_id: f.student,
+          session_hash,
+          name: "new-vm-with-retained-disk",
+          provider: "gcp" as const,
+          region: "us-central1",
+          zone: "us-central1-a",
+          machine_type: "e2-standard-2",
+          pricing_model: "on_demand" as const,
+          home_volume: volumeId,
+          idempotency_key: randomUUID(),
+          ttl_minutes: 10,
+          stop_after_minutes: 5,
+          ssh_public_key: "ssh-ed25519 AAAAREHOMETEST rehome-test",
+          funding_source: f.request.source,
+        };
+        await onBay(courseBay, async () =>
+          (
+            await import("@cocalc/server/auth/auth-sessions")
+          ).recordNewAuthSession({
+            account_id: f.student,
+            session_hash,
+            expire: new Date(Date.now() + 3600_000),
+            fresh_auth_until: new Date(Date.now() + 60_000),
+          }),
+        );
+        const api = await import("@cocalc/server/conat/api/compute");
+        const created = await onBay(courseBay, () => api.createVm(request));
+        expect(created).toMatchObject({
+          owner_account_id: f.student,
+          owning_bay_id: resourceBay,
+          home_volume_id: volumeId,
+        });
+        const replay = await onBay(courseBay, () => api.createVm(request));
+        expect(replay.id).toBe(created.id);
+        expect(
+          (
+            await row(
+              resourceBay,
+              "SELECT count(*)::int AS n FROM compute_vms WHERE owner_account_id=$1 AND idempotency_key=$2",
+              [f.student, request.idempotency_key],
+            )
+          ).n,
+        ).toBe(1);
+        expect(
+          (
+            await row(
+              courseBay,
+              "SELECT count(*)::int AS n FROM compute_vms WHERE id=$1",
+              [created.id],
+            )
+          ).n,
+        ).toBe(0);
+        expect(
+          (
+            await row(
+              payerBay,
+              "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE resource_id=$1",
+              [created.id],
+            )
+          ).n,
+        ).toBe(1);
+      } finally {
+        for (const spy of spies) spy.mockRestore();
+      }
+    });
 
     it.each(["owner-stop", "withdraw-consent"])(
       "does not restart a remote VM after %s wins the handoff race",

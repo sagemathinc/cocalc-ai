@@ -1132,6 +1132,10 @@ async function startAccountLocalService(): Promise<void> {
       (
         await import("@cocalc/server/conat/api/compute")
       ).authorizeProjectSshKeyOnBay(opts),
+    computeCreateVmWithVolume: async (opts) =>
+      (
+        await import("@cocalc/server/compute/volume-placement")
+      ).createVmWithVolumeOnBay(opts),
     computeOwnerMutate: async (opts) =>
       (
         await import("@cocalc/server/compute/owner-resource-mutation")
