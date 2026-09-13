@@ -222,7 +222,7 @@ it("dispatches personal consent to its registered core using the exact approval 
       owner_account_id: payer,
       owning_bay_id: "bay-0",
       resource_generation: 3,
-      funding_epoch: "epoch-1",
+      funding_epoch: terms.expected_funding_version,
       hourly_usd: "0.25",
       protected_storage_usd: "0.75",
       egress_cap_usd: "0.50",

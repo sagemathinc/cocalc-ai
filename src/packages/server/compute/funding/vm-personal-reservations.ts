@@ -48,6 +48,31 @@ interface PersonalConsent {
   spent_usd: string;
 }
 
+type PersonalVolumeReservationInput = Pick<
+  ComputeVolumeRow,
+  "id" | "owner_account_id" | "owning_bay_id" | "provider" | "metadata"
+>;
+
+/** A remote handoff reserves before its owning-bay commit; it has not started
+ * a new metered interval merely because funding was prepared. */
+export async function reserveUndispatchedPersonalVolumeInTransaction(
+  client: PoolClient,
+  volume: PersonalVolumeReservationInput,
+  consentId: string,
+  reservationId: string,
+  until: Date,
+  exposureBudget: FundingExposureBudget,
+): Promise<ComputeVmFundingBinding> {
+  return reservePersonalResourceInTransaction(
+    client,
+    undefined,
+    consentId,
+    until,
+    exposureBudget,
+    { volume, reservationId },
+  );
+}
+
 export async function reservePersonalVmInTransaction(
   client: PoolClient,
   vm: ComputeVmRow,
@@ -103,7 +128,7 @@ async function reservePersonalResourceInTransaction(
   consentId: string,
   until: Date,
   exposureBudget: FundingExposureBudget,
-  home?: { volume: ComputeVolumeRow; reservationId: string },
+  home?: { volume: PersonalVolumeReservationInput; reservationId: string },
 ): Promise<ComputeVmFundingBinding> {
   const resource = home?.volume ?? vm;
   if (!resource) fundingConflict("Missing personal funding resource.");

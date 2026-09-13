@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { Pool } from "pg";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema";
@@ -16,18 +17,13 @@ export const bays = [
 ] as const;
 export const pools = new Map<string, Pool>();
 
-// One process emulates bay configuration, NOT bay storage. Cross-bay calls must
-// be awaited sequentially, including nested Conat handlers. Concurrent financial
-// transactions are supported inside a single onBay scope, never across scopes.
+const bayContext = new AsyncLocalStorage<string>();
+export const currentBay = () => bayContext.getStore();
+
+// Each handler has independent bay configuration as well as a physical DB.
+// Nested RPCs and concurrent discovery must not change another request's bay.
 export async function onBay<T>(bay: string, fn: () => Promise<T>): Promise<T> {
-  const old = process.env.COCALC_BAY_ID;
-  process.env.COCALC_BAY_ID = bay;
-  try {
-    return await fn();
-  } finally {
-    if (old == null) delete process.env.COCALC_BAY_ID;
-    else process.env.COCALC_BAY_ID = old;
-  }
+  return bayContext.run(bay, fn);
 }
 
 // Lazy exports avoid schema/pool import cycles. No query, transaction or lock is
@@ -39,7 +35,7 @@ export function poolModule() {
       get: (_target, key) => {
         if (key === "__esModule") return true;
         const actual = () => jest.requireActual("@cocalc/database/pool");
-        const selected = () => pools.get(process.env.COCALC_BAY_ID ?? "");
+        const selected = () => pools.get(currentBay() ?? "");
         if (key === "default")
           return (...args) => selected() ?? actual().default(...args);
         if (key === "getClient")
@@ -67,8 +63,18 @@ export function independentBayDatabases() {
   const names: string[] = [];
   let admin: Pool | undefined;
   const saved = new Map<string, string | undefined>();
+  let originalEnv: NodeJS.ProcessEnv;
   return {
     async start() {
+      originalEnv = process.env;
+      // Database and server packages each read this environment key. Keep those
+      // real authority checks while emulating separate processes per request.
+      process.env = new Proxy(originalEnv, {
+        get: (target, key) =>
+          key === "COCALC_BAY_ID" && currentBay() != null
+            ? currentBay()
+            : Reflect.get(target, key),
+      });
       for (const [key, value] of Object.entries({
         COCALC_DB_SKIP_ENSURE_EXISTS: "1",
         COCALC_CLUSTER_BAY_IDS: bays.join(","),
@@ -104,6 +110,7 @@ export function independentBayDatabases() {
         await admin?.end();
         await after();
       } finally {
+        process.env = originalEnv;
         for (const [key, value] of saved) {
           if (value == null) delete process.env[key];
           else process.env[key] = value;

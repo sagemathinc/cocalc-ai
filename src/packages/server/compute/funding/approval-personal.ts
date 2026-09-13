@@ -5,6 +5,8 @@
 
 import type { PoolClient } from "@cocalc/database/pool";
 import type { VmPersonalFundingTerms } from "@cocalc/util/compute-vm-funding";
+import type { PersonalVmApprovalReview } from "@cocalc/util/compute-personal-funding-review";
+export type { PersonalVmApprovalReview } from "@cocalc/util/compute-personal-funding-review";
 import {
   fundingAmount,
   fundingDate,
@@ -14,32 +16,6 @@ import {
 export type PersonalVmApprovalTerms = VmPersonalFundingTerms & {
   kind: "personalVMfallback";
 };
-
-/** Resolved by the VM authority, never accepted from the browser proposal. */
-export interface PersonalVmApprovalReview {
-  vm_id: string;
-  vm_name: string;
-  owner_account_id: string;
-  owning_bay_id: string;
-  resource_generation: number;
-  funding_epoch: string;
-  hourly_usd: string;
-  protected_storage_usd: string;
-  egress_cap_usd: string;
-  storage_delete_at: string;
-  home_volumes: {
-    id: string;
-    name: string;
-    funding_action?: "switch" | "preserve";
-    funding_mode?: string;
-    funding_epoch?: string;
-    resource_generation?: number;
-    attachment_generation: number;
-    size_gb: number;
-    hourly_usd: string;
-    storage_delete_at?: string;
-  }[];
-}
 
 export interface VmPersonalFundingApprovalHandler {
   resolveReview(opts: {
@@ -130,7 +106,7 @@ export function validatePersonalVmApprovalReview(
     !review.owning_bay_id?.trim() ||
     !Number.isSafeInteger(review.resource_generation) ||
     review.resource_generation < 0 ||
-    !review.funding_epoch?.trim() ||
+    review.funding_epoch !== terms.expected_funding_version ||
     !Array.isArray(review.home_volumes) ||
     review.home_volumes.length !== terms.home_volume_ids.length ||
     new Set(review.home_volumes.map((v) => v.id)).size !==

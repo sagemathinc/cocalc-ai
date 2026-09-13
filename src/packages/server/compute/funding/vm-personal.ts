@@ -42,6 +42,7 @@ import { withFundingAccountTransaction } from "./backing";
 import { withFundingResourceMeterLock } from "./resource-meter-lock";
 import { getComputeFundingPolicyInTransaction } from "./policy";
 import { loadFundingExposureBudget } from "./exposure";
+import { resolvePersonalResourceReview } from "./resource-review";
 import {
   quoteVmFundingAdmission,
   fundingConflict,
@@ -502,7 +503,7 @@ export async function previewPersonalVmFunding(
 ): Promise<VmPersonalFundingPreview> {
   await assertFundingPayerHomeBay(account);
   const terms = normalize(input);
-  const review = await reviewVm(await ownedVm(account, terms.vm_id), terms);
+  const review = await resolvePersonalVmReview(account, terms);
   const policy = await withFundingAccountTransaction(account, (db) =>
     getComputeFundingPolicyInTransaction(db, {
       payer_account_id: account,
@@ -521,17 +522,43 @@ export async function previewPersonalVmFunding(
 }
 
 let registered = false;
+export async function reviewPersonalVmFundingOnBay(
+  payer: string,
+  input: VmPersonalFundingTerms,
+): Promise<PersonalVmApprovalReview> {
+  const terms = normalize(input);
+  return reviewVm(await ownedVm(payer, terms.vm_id), terms);
+}
+
+async function resolvePersonalVmReview(
+  payer: string,
+  terms: VmPersonalFundingTerms,
+): Promise<PersonalVmApprovalReview> {
+  const result = await resolvePersonalResourceReview({
+    account_id: payer,
+    kind: "vm",
+    terms,
+  });
+  if (result.kind !== "vm") throw Error("VM review unavailable.");
+  return result.review;
+}
+
 export function initVmPersonalFundingApprovalHandler(): void {
   if (registered) return;
   registerVmPersonalFundingApprovalHandler({
     resolveReview: async ({ payer_account_id, terms }) =>
-      reviewVm(await ownedVm(payer_account_id, terms.vm_id), normalize(terms)),
+      resolvePersonalVmReview(payer_account_id, normalize(terms)),
     apply: async ({ db, payer_account_id, intent_id, terms, review }) => {
-      const current = await reviewVm(
-        await ownedVm(payer_account_id, terms.vm_id, db),
-        normalize(terms),
-        db,
-      );
+      // Approval records consent, not service. Remote resource changes are
+      // fenced at handoff; no inter-bay call may run under this account lock.
+      const current =
+        review.owning_bay_id === getConfiguredBayId()
+          ? await reviewVm(
+              await ownedVm(payer_account_id, terms.vm_id, db),
+              normalize(terms),
+              db,
+            )
+          : review;
       if (
         current.resource_generation !== review.resource_generation ||
         current.hourly_usd !== review.hourly_usd ||
@@ -545,9 +572,15 @@ export function initVmPersonalFundingApprovalHandler(): void {
         lane: terms.lane,
       });
       const { rows } = await db.query(
-        `UPDATE compute_vm_personal_consents SET state='approved',version=version+1,updated_at=clock_timestamp()
-        WHERE id=$1 AND payer_account_id=$2 AND state='pending' RETURNING id`,
-        [intent_id, payer_account_id],
+        `UPDATE compute_vm_personal_consents SET state='approved',review=$5::jsonb,version=version+1,updated_at=clock_timestamp()
+        WHERE id=$1 AND payer_account_id=$2 AND vm_id=$3 AND terms=$4::jsonb AND state='pending' RETURNING id`,
+        [
+          intent_id,
+          payer_account_id,
+          terms.vm_id,
+          JSON.stringify(normalize(terms)),
+          JSON.stringify(review),
+        ],
       );
       if (rows.length !== 1)
         fundingConflict("Personal funding intent was cancelled or changed.");
@@ -581,28 +614,27 @@ export async function proposeVmPersonalFunding(
     operation_id: fundingId(opts.operation_id, "Operation"),
     terms: preview.terms,
   });
-  const review = await reviewVm(
-    await ownedVm(payer, preview.terms.vm_id),
-    preview.terms,
-  );
-  const {
-    rows: [row],
-  } = await getPool().query<ConsentRow>(
-    `INSERT INTO compute_vm_personal_consents
+  const review = await resolvePersonalVmReview(payer, preview.terms);
+  return withFundingAccountTransaction(payer, async (db) => {
+    const {
+      rows: [row],
+    } = await db.query<ConsentRow>(
+      `INSERT INTO compute_vm_personal_consents
     (id,payer_account_id,vm_id,operation_id,terms,review,state,approval_url,approval_expires_at)
     VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8) ON CONFLICT (payer_account_id,operation_id) DO UPDATE SET operation_id=EXCLUDED.operation_id RETURNING *`,
-    [
-      intent.intent_id,
-      payer,
-      preview.terms.vm_id,
-      opts.operation_id,
-      preview.terms,
-      review,
-      intent.approval_url,
-      intent.expires_at,
-    ],
-  );
-  return view(row);
+      [
+        intent.intent_id,
+        payer,
+        preview.terms.vm_id,
+        opts.operation_id,
+        preview.terms,
+        review,
+        intent.approval_url,
+        intent.expires_at,
+      ],
+    );
+    return view(row);
+  });
 }
 
 export async function getVmPersonalFunding(
@@ -746,6 +778,7 @@ async function enqueuePersonalTransition(
 
 /** Owning-bay reconciliation. No account lock or DB transaction spans provider work. */
 export async function processVmPersonalFundingHandoffs(): Promise<void> {
+  await (await import("./personal-expiry")).expirePersonalFundingConsents();
   await (await import("./volume-personal")).closeEndedVolumePersonalConsents();
   await closeEndedPersonalConsents();
   await prepareAutomaticVmPersonalFallbacks();

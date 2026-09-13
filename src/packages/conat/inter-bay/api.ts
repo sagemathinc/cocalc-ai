@@ -4228,6 +4228,17 @@ export interface InterBayAccountDirectoryApi {
 }
 
 export interface InterBayComputeFundingApi {
+  computeFundingApplyPersonalVolumeHandoff: (
+    opts: import("@cocalc/util/compute-personal-funding-review").ApplyPersonalVolumeHandoffRequest,
+  ) => Promise<
+    import("@cocalc/util/compute-personal-funding-review").PersonalVolumeHandoffReceipt
+  >;
+  computeFundingReviewPersonalResource: (
+    opts: import("@cocalc/util/compute-personal-funding-review").PersonalResourceReviewRequest,
+  ) => Promise<
+    | import("@cocalc/util/compute-personal-funding-review").PersonalResourceReview
+    | null
+  >;
   computeFundingReceiveResourceNotice: (
     opts: import("@cocalc/util/compute-notifications").ComputeResourceNotice,
   ) => Promise<void>;
@@ -8133,6 +8144,10 @@ export function createInterBayAccountLocalClient({
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
       await computeFundingClient.computeFundingGetOwnedPools(opts),
+    computeFundingReviewPersonalResource: (opts) =>
+      computeFundingClient.computeFundingReviewPersonalResource(opts),
+    computeFundingApplyPersonalVolumeHandoff: (opts) =>
+      computeFundingClient.computeFundingApplyPersonalVolumeHandoff(opts),
     computeFundingReceiveResourceNotice: (opts) =>
       computeFundingClient.computeFundingReceiveResourceNotice(opts),
     computeFundingGetCourseVmRecommendations: (opts) =>
@@ -8632,6 +8647,10 @@ export function createInterBayAccountLocalHandler({
           await impl.computeFundingGetCourseSummary(opts),
         computeFundingGetOwnedPools: async (opts) =>
           await impl.computeFundingGetOwnedPools(opts),
+        computeFundingReviewPersonalResource: (opts) =>
+          impl.computeFundingReviewPersonalResource(opts),
+        computeFundingApplyPersonalVolumeHandoff: (opts) =>
+          impl.computeFundingApplyPersonalVolumeHandoff(opts),
         computeFundingReceiveResourceNotice: (opts) =>
           impl.computeFundingReceiveResourceNotice(opts),
         computeFundingGetCourseVmRecommendations: (opts) =>

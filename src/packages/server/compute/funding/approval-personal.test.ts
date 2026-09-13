@@ -33,7 +33,7 @@ const review: PersonalVmApprovalReview = {
   owner_account_id: payer,
   owning_bay_id: "bay-1",
   resource_generation: 3,
-  funding_epoch: "epoch:1",
+  funding_epoch: terms.expected_funding_version,
   hourly_usd: "0.25",
   protected_storage_usd: "0.75",
   egress_cap_usd: "0.50",
@@ -75,6 +75,7 @@ it("requires authoritative owner, named resources and generation/epoch in review
     { resource_generation: -1 },
     { resource_generation: 1.5 },
     { funding_epoch: "" },
+    { funding_epoch: "different-but-valid-epoch" },
     { hourly_usd: "NaN" },
     { storage_delete_at: "tomorrow" },
     {

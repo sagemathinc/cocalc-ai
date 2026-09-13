@@ -24,6 +24,20 @@ import { activateAccountFinancialState } from "@cocalc/server/accounts/financial
 import { ensureCourseCreditNoticeSchema } from "@cocalc/server/notifications/course-credit-state";
 import { receiveComputeResourceNotice } from "@cocalc/server/notifications/compute-resource";
 import type { ComputeResourceNotice } from "@cocalc/util/compute-notifications";
+import type { PersonalResourceReviewRequest } from "@cocalc/util/compute-personal-funding-review";
+import { reviewPersonalResourceOnBay } from "./resource-review";
+import { expirePersonalFundingConsents } from "./personal-expiry";
+import {
+  applyRemotePersonalVolumeHandoff,
+  processRemotePersonalVolumeHandoffs,
+} from "./volume-personal-remote";
+import {
+  approvePersonalVolumeFunding,
+  reviewPersonalVolumeFunding,
+  switchVolumePersonalFunding,
+  getVolumePersonalFunding,
+  clearVolumePersonalFunding,
+} from "./volume-personal";
 import getSpendableBalance, {
   getAccountFundingHolds,
 } from "@cocalc/server/purchases/get-spendable-balance";
@@ -44,6 +58,7 @@ import {
   processVmPersonalFundingHandoffs,
   getVmPersonalFunding,
   clearVmPersonalFunding,
+  previewPersonalVmFunding,
 } from "./vm-personal";
 import { withFundingAccountTransaction } from "./backing";
 import { createCourseFundingPoolInTransaction } from "./pools";
@@ -158,6 +173,9 @@ describePg(
     const calls: { bay: string; method: string }[] = [];
     let loseReserve = false;
     let loseSettlement = false;
+    let losePersonalVolumeReceipt = false;
+    let changeVolumeBeforeCommit: string | undefined;
+    let dropPersonalVolumeCommand = false;
     const remote = (bay: string) =>
       createInterBayAccountLocalClient({
         client: fabric,
@@ -201,6 +219,46 @@ describePg(
               method: "compute-funding",
             }),
             impl: {
+              computeFundingApplyPersonalVolumeHandoff: (opts) =>
+                onBay(bay, async () => {
+                  // The payer's reserve transaction must finish before this
+                  // RPC. Exercise its real lock, not a mocked transaction flag.
+                  await onBay(mockHomes.get(opts.account_id)!, async () => {
+                    const db = await pools
+                      .get(mockHomes.get(opts.account_id)!)!
+                      .connect();
+                    try {
+                      await db.query("BEGIN");
+                      await db.query("SET LOCAL lock_timeout='1s'");
+                      await lockAccountSpending(db, opts.account_id);
+                    } finally {
+                      await db.query("ROLLBACK");
+                      db.release();
+                    }
+                  });
+                  if (dropPersonalVolumeCommand) {
+                    dropPersonalVolumeCommand = false;
+                    throw Error("injected lost personal volume commit receipt");
+                  }
+                  if (changeVolumeBeforeCommit) {
+                    await pools
+                      .get(bay)!
+                      .query(
+                        "UPDATE compute_volumes SET desired_size_gb=20 WHERE id=$1",
+                        [changeVolumeBeforeCommit],
+                      );
+                    changeVolumeBeforeCommit = undefined;
+                  }
+                  const receipt = await applyRemotePersonalVolumeHandoff(opts);
+                  if (losePersonalVolumeReceipt) {
+                    losePersonalVolumeReceipt = false;
+                    throw Error("injected lost personal volume commit receipt");
+                  }
+                  return receipt;
+                }),
+              computeFundingReviewPersonalResource: (
+                opts: PersonalResourceReviewRequest,
+              ) => onBay(bay, () => reviewPersonalResourceOnBay(opts)),
               computeFundingReceiveResourceNotice: (
                 opts: ComputeResourceNotice,
               ) => onBay(bay, () => receiveComputeResourceNotice(opts)),
@@ -272,6 +330,9 @@ describePg(
       calls.length = 0;
       loseReserve = false;
       loseSettlement = false;
+      losePersonalVolumeReceipt = false;
+      changeVolumeBeforeCommit = undefined;
+      dropPersonalVolumeCommand = false;
     });
 
     async function fixture(
@@ -356,8 +417,8 @@ describePg(
       };
       await pools.get(resourceBay)!.query(
         `INSERT INTO compute_vms
-      (id,owner_account_id,owning_bay_id,provider,instance_generation,state,desired_state,metadata,effective_pricing_model,created_at)
-      VALUES($1,$2,$3,'nebius',1,'requested','running',$4,'spot',now())`,
+      (id,name,owner_account_id,owning_bay_id,provider,instance_generation,state,desired_state,metadata,effective_pricing_model,created_at)
+      VALUES($1,'Student VM',$2,$3,'nebius',1,'requested','running',$4,'spot',now())`,
         [
           request.resource_id,
           student,
@@ -733,6 +794,19 @@ describePg(
             getVmPersonalFunding({ account_id: f.student, vm_id: vm.id }),
           );
           expect(consent!.state).toBe("active");
+          const remotePreview = await onBay(courseBay, () =>
+            previewPersonalVmFunding(f.student, {
+              ...consent!.terms,
+              expected_funding_version:
+                vm.metadata.billing.course_funding.funding_epoch,
+            }),
+          );
+          expect(remotePreview.hourly_usd).toBe("6");
+          expect(remotePreview.home_volumes).toHaveLength(withHome ? 1 : 0);
+          if (withHome)
+            expect(remotePreview.home_volumes?.[0].funding_action).toBe(
+              "preserve",
+            );
           const cancel = {
             account_id: f.student,
             vm_id: vm.id,
@@ -765,6 +839,236 @@ describePg(
             ).rejects.toThrow(/authorization ended/);
           }
         });
+      },
+    );
+
+    it.each(["committed", "aborted", "cancelled"] as const)(
+      "reviews and hands off a retained disk after student rehome, recovering a lost %s receipt",
+      async (outcome) => {
+        const f = await fixture();
+        const volumeId = randomUUID(),
+          epoch = randomUUID(),
+          consentId = randomUUID();
+        setPolicy(f.student, {});
+        await pools
+          .get(resourceBay)!
+          .query(
+            "INSERT INTO purchases(account_id,cost,service,time) VALUES($1,-10,'credit',NOW())",
+            [f.student],
+          );
+        await pools.get(resourceBay)!.query(
+          `INSERT INTO compute_volumes (id,name,owner_account_id,owning_bay_id,provider,region,role,funding_mode,
+           size_gb,desired_size_gb,effective_size_gb,state,desired_state,attachment_state,attachment_generation,created_at,metadata)
+           VALUES ($1,'Retained study data',$2,$3,'nebius','eu-north1','home','account-prepaid',10,10,10,'ready','ready','detached',1,NOW(),$4)`,
+          [
+            volumeId,
+            f.student,
+            resourceBay,
+            {
+              billing: {
+                rate: {
+                  hourly_cost_usd: "0.01",
+                  pricing_snapshot: { provider: "nebius" },
+                },
+                course_funding: {
+                  source: { ...f.request.source, payer_account_id: f.payer },
+                  funding_epoch: epoch,
+                },
+              },
+            },
+          ],
+        );
+        await onBay(resourceBay, async () => {
+          const volume = await reserveCourseVolume(
+            (await getComputeVolumeById(volumeId))!,
+          );
+          await requireCourseVolumeService(volume, true);
+          await pools
+            .get(resourceBay)!
+            .query(
+              "UPDATE compute_volumes SET ready_at=clock_timestamp() WHERE id=$1",
+              [volumeId],
+            );
+          await ensureCourseCreditNoticeSchema();
+          await rehomeAccountOnHomeBay({
+            account_id: f.student,
+            target_account_id: f.student,
+            dest_bay_id: courseBay,
+          });
+        });
+        const terms = {
+          volume_id: volumeId,
+          expected_funding_version: epoch,
+          lane: "prepaid" as const,
+          cap_usd: "2.0000000000",
+          ends_at: new Date(Date.now() + 3600_000).toISOString(),
+        };
+        await onBay(courseBay, async () => {
+          const review = await reviewPersonalVolumeFunding(f.student, terms);
+          expect(review.owning_bay_id).toBe(resourceBay);
+          expect(review.provider).toBe("nebius");
+          await pools.get(courseBay)!.query(
+            `INSERT INTO compute_vm_personal_consents
+             (id,payer_account_id,volume_id,operation_id,terms,review,state,version,approval_url,approval_expires_at)
+             VALUES($1,$2,$3,$4,$5,$6,'pending',1,'https://approval.example/test',NOW()+interval '15 minutes')`,
+            [consentId, f.student, volumeId, randomUUID(), terms, review],
+          );
+          // Independently approved boundary, using the actual approval callback
+          // on a payer bay with no local storage row.
+          await withFundingAccountTransaction(f.student, (db) =>
+            approvePersonalVolumeFunding({
+              db,
+              payer_account_id: f.student,
+              intent_id: consentId,
+              terms,
+              review,
+            }),
+          );
+          const consent = (await getVolumePersonalFunding({
+            account_id: f.student,
+            volume_id: volumeId,
+          }))!;
+          expect(consent.state).toBe("approved");
+          losePersonalVolumeReceipt = outcome !== "cancelled";
+          dropPersonalVolumeCommand = outcome === "cancelled";
+          if (outcome === "aborted") changeVolumeBeforeCommit = volumeId;
+          await expect(
+            switchVolumePersonalFunding({
+              account_id: f.student,
+              volume_id: volumeId,
+              consent_id: consentId,
+              expected_version: consent.version,
+              operation_id: randomUUID(),
+            }),
+          ).rejects.toThrow("lost personal volume commit receipt");
+          expect(
+            (await getVolumePersonalFunding({
+              account_id: f.student,
+              volume_id: volumeId,
+            }))!.state,
+          ).toBe("preparing");
+          expect(
+            (
+              await row(
+                courseBay,
+                "SELECT committed_usd::numeric>0 AS held FROM compute_vm_personal_consents WHERE id=$1",
+                [consentId],
+              )
+            ).held,
+          ).toBe(true);
+          if (outcome === "cancelled") {
+            const pending = (await getVolumePersonalFunding({
+              account_id: f.student,
+              volume_id: volumeId,
+            }))!;
+            const cancelled = await clearVolumePersonalFunding({
+              account_id: f.student,
+              volume_id: volumeId,
+              consent_id: consentId,
+              expected_version: pending.version,
+              operation_id: randomUUID(),
+            });
+            expect(cancelled.state).toBe("cancelled");
+            expect(toDecimal(cancelled.committed_usd).gt(0)).toBe(true);
+          }
+          // A second account move must carry the pending command and its hold.
+          await rehomeAccountOnHomeBay({
+            account_id: f.student,
+            target_account_id: f.student,
+            dest_bay_id: payerBay,
+          });
+        });
+        await onBay(payerBay, async () => {
+          await processRemotePersonalVolumeHandoffs();
+          await processRemotePersonalVolumeHandoffs();
+          const consent = (await getVolumePersonalFunding({
+            account_id: f.student,
+            volume_id: volumeId,
+          }))!;
+          expect(consent.state).toBe(
+            outcome === "committed"
+              ? "active"
+              : outcome === "cancelled"
+                ? "cancelled"
+                : "rejected",
+          );
+          if (outcome !== "committed")
+            expect(toDecimal(consent.committed_usd).eq(0)).toBe(true);
+          expect(
+            await row(
+              payerBay,
+              "SELECT count(*)::int AS n FROM compute_volumes WHERE id=$1",
+              [volumeId],
+            ),
+          ).toEqual({ n: 0 });
+          expect(
+            await row(
+              payerBay,
+              "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1 AND resource_id=$2",
+              [f.student, volumeId],
+            ),
+          ).toEqual({ n: 1 });
+        });
+        const receipt = (
+          await row(
+            resourceBay,
+            "SELECT payload FROM compute_resource_work WHERE id=$1",
+            [consentId],
+          )
+        ).payload.receipt;
+        expect(receipt.outcome).toBe(
+          outcome === "committed" ? "committed" : "aborted",
+        );
+        const originalRequest = (
+          await row(
+            payerBay,
+            "SELECT handoff FROM compute_vm_personal_consents WHERE id=$1",
+            [consentId],
+          )
+        ).handoff.remote_volume.request;
+        // Replaying a delayed commit, even after an abort and a resource repair,
+        // returns the same receipt and cannot resurrect service.
+        await pools
+          .get(resourceBay)!
+          .query("UPDATE compute_volumes SET desired_size_gb=10 WHERE id=$1", [
+            volumeId,
+          ]);
+        expect(
+          await remote(resourceBay).computeFundingApplyPersonalVolumeHandoff(
+            originalRequest,
+          ),
+        ).toEqual(receipt);
+        await onBay(resourceBay, async () => {
+          const volume = (await getComputeVolumeById(volumeId))!;
+          expect(volume.metadata.billing.course_funding.source.kind).toBe(
+            outcome === "committed" ? "personal" : "course",
+          );
+          if (outcome === "committed") {
+            await requireCourseVolumeService(volume, true);
+            await meterCourseVolume(volume);
+          }
+        });
+        if (outcome === "committed") {
+          await pools
+            .get(payerBay)!
+            .query(
+              "UPDATE compute_vm_personal_consents SET terms=jsonb_set(terms,'{ends_at}',to_jsonb((clock_timestamp()-interval '1 second')::text)) WHERE id=$1",
+              [consentId],
+            );
+          const before = await row(
+            payerBay,
+            "SELECT committed_usd FROM compute_vm_personal_consents WHERE id=$1",
+            [consentId],
+          );
+          await onBay(payerBay, () => expirePersonalFundingConsents());
+          expect(
+            await row(
+              payerBay,
+              "SELECT state,committed_usd FROM compute_vm_personal_consents WHERE id=$1",
+              [consentId],
+            ),
+          ).toEqual({ state: "expired", ...before });
+        }
       },
     );
 

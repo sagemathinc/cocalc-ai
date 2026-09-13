@@ -15,6 +15,7 @@ import type {
   VolumePersonalFundingTerms,
 } from "@cocalc/util/compute-volume-personal-funding";
 import type { ComputeVolumeRow } from "../types";
+import type { ComputeVmFundingBinding } from "@cocalc/util/compute-vm-funding";
 import {
   assertFundingPayerHomeBay,
   proposeVolumePersonalFundingApproval,
@@ -42,11 +43,12 @@ import {
   volumeFundingDeadline,
 } from "./volume-funding";
 import { requireSponsoredVmAdmission } from "./vm-funding";
+import { resolvePersonalResourceReview } from "./resource-review";
 
 type Opts<K extends keyof VolumePersonalFundingApi> = Parameters<
   VolumePersonalFundingApi[K]
 >[0] & { account_id?: string };
-interface ConsentRow extends Omit<
+export interface PersonalVolumeConsentRow extends Omit<
   VolumePersonalFundingConsent,
   "as_of" | "approval_expires_at" | "activated_at"
 > {
@@ -58,7 +60,9 @@ interface ConsentRow extends Omit<
   activated_at?: Date;
   handoff_operation_id?: string;
   cleared_operation_id?: string;
+  handoff?: { remote_volume?: { state: "pending" | "committed" | "aborted" } };
 }
+type ConsentRow = PersonalVolumeConsentRow;
 
 const normalize = (
   input: VolumePersonalFundingTerms,
@@ -69,10 +73,15 @@ const normalize = (
   });
   return terms;
 };
-const view = (row: ConsentRow): VolumePersonalFundingConsent => ({
+export const personalVolumeConsentView = (
+  row: ConsentRow,
+): VolumePersonalFundingConsent => ({
   id: row.id,
   version: row.version,
-  state: row.state,
+  state:
+    row.state === "active" && row.handoff?.remote_volume?.state === "pending"
+      ? "preparing"
+      : row.state,
   terms: row.terms,
   spent_usd: row.spent_usd,
   committed_usd: row.committed_usd,
@@ -84,8 +93,9 @@ const view = (row: ConsentRow): VolumePersonalFundingConsent => ({
   activated_at: row.activated_at?.toISOString(),
   as_of: row.updated_at.toISOString(),
 });
+const view = personalVolumeConsentView;
 
-async function ownedVolume(
+export async function ownedPersonalVolume(
   payer: string,
   id: string,
   db?: PoolClient,
@@ -100,8 +110,9 @@ async function ownedVolume(
     fundingConflict("Personal storage requires its owner on the owning bay.");
   return volume;
 }
+const ownedVolume = ownedPersonalVolume;
 
-function reviewVolume(
+export function reviewPersonalVolumeRow(
   volume: ComputeVolumeRow,
   terms: VolumePersonalFundingTerms,
 ): PersonalVolumeApprovalReview {
@@ -159,21 +170,36 @@ function reviewVolume(
     hourly_usd: rate,
     protected_storage_usd: quote.protected_usd,
     storage_delete_at: deletion,
+    provider: volume.provider,
   };
 }
+const reviewVolume = reviewPersonalVolumeRow;
 
 export async function reviewPersonalVolumeFunding(
   payer: string,
   input: VolumePersonalFundingTerms,
 ) {
   await assertFundingPayerHomeBay(payer);
+  const result = await resolvePersonalResourceReview({
+    account_id: payer,
+    kind: "volume",
+    terms: normalize(input),
+  });
+  if (result.kind !== "volume") throw Error("Storage review unavailable.");
+  return result.review;
+}
+
+export async function reviewPersonalVolumeFundingOnBay(
+  payer: string,
+  input: VolumePersonalFundingTerms,
+) {
   return reviewVolume(
     await ownedVolume(payer, input.volume_id),
     normalize(input),
   );
 }
 
-function sameReview(
+export function samePersonalVolumeReview(
   a: PersonalVolumeApprovalReview,
   b: PersonalVolumeApprovalReview,
 ) {
@@ -187,8 +213,10 @@ function sameReview(
     "size_gb",
     "hourly_usd",
     "storage_delete_at",
+    "provider",
   ].every((k) => a[k] === b[k]);
 }
+const sameReview = samePersonalVolumeReview;
 
 export async function approvePersonalVolumeFunding(opts: {
   db: PoolClient;
@@ -199,17 +227,25 @@ export async function approvePersonalVolumeFunding(opts: {
 }): Promise<{ consent_id: string }> {
   const { db, payer_account_id: payer, terms } = opts;
   validatePersonalVolumeApprovalReview(payer, terms, opts.review);
-  const current = reviewVolume(
-    await ownedVolume(payer, terms.volume_id, db),
-    terms,
-  );
+  // Saving a remote consent does not dispatch or reserve service. The owning
+  // bay must compare this approved generation/quote again before a handoff.
+  const current =
+    opts.review.owning_bay_id === getConfiguredBayId()
+      ? reviewVolume(await ownedVolume(payer, terms.volume_id, db), terms)
+      : opts.review;
   if (!sameReview(current, opts.review))
     fundingConflict("Storage changed; request a new approval.");
   const {
     rows: [row],
   } = await db.query(
-    "UPDATE compute_vm_personal_consents SET state='approved',version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND payer_account_id=$2 AND volume_id=$3 AND state='pending' AND terms=$4::jsonb RETURNING id",
-    [opts.intent_id, payer, terms.volume_id, JSON.stringify(normalize(terms))],
+    "UPDATE compute_vm_personal_consents SET state='approved',review=$5::jsonb,version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND payer_account_id=$2 AND volume_id=$3 AND state='pending' AND terms=$4::jsonb RETURNING id",
+    [
+      opts.intent_id,
+      payer,
+      terms.volume_id,
+      JSON.stringify(normalize(terms)),
+      JSON.stringify(opts.review),
+    ],
   );
   if (!row) fundingConflict("Storage approval is no longer pending.");
   return { consent_id: row.id };
@@ -251,24 +287,26 @@ export async function proposeVolumePersonalFunding(
     terms: preview.terms,
   });
   const review = await reviewPersonalVolumeFunding(payer, preview.terms);
-  const {
-    rows: [row],
-  } = await getPool().query<ConsentRow>(
-    `INSERT INTO compute_vm_personal_consents (id,payer_account_id,volume_id,operation_id,terms,review,state,approval_url,approval_expires_at)
+  return withFundingAccountTransaction(payer, async (db) => {
+    const {
+      rows: [row],
+    } = await db.query<ConsentRow>(
+      `INSERT INTO compute_vm_personal_consents (id,payer_account_id,volume_id,operation_id,terms,review,state,approval_url,approval_expires_at)
       VALUES ($1,$2,$3,$4,$5,$6,'pending',$7,$8)
       ON CONFLICT (payer_account_id,operation_id) DO UPDATE SET operation_id=EXCLUDED.operation_id RETURNING *`,
-    [
-      intent.intent_id,
-      payer,
-      preview.terms.volume_id,
-      opts.operation_id,
-      preview.terms,
-      review,
-      intent.approval_url,
-      intent.expires_at,
-    ],
-  );
-  return view(row);
+      [
+        intent.intent_id,
+        payer,
+        preview.terms.volume_id,
+        opts.operation_id,
+        preview.terms,
+        review,
+        intent.approval_url,
+        intent.expires_at,
+      ],
+    );
+    return view(row);
+  });
 }
 
 export async function getVolumePersonalFunding(
@@ -293,6 +331,10 @@ export async function switchVolumePersonalFunding(
   await assertFundingPayerHomeBay(payer);
   await requireSponsoredVmAdmission();
   fundingId(opts.operation_id, "Operation");
+  const remote = await (
+    await import("./volume-personal-remote")
+  ).switchRemotePersonalVolume(payer, opts);
+  if (remote) return remote;
   const budget = await loadFundingExposureBudget(getConfiguredBayId());
   const result = await withFundingResourceMeterLock(
     "volume",
@@ -338,40 +380,7 @@ export async function switchVolumePersonalFunding(
           budget,
           cutover,
         );
-        const previous = volumeFunding(volume);
-        const history = volumeFundingBindings(volume).map((old) => {
-          const slice = (previous.growth ?? []).find(
-            (s) => s.binding?.reservation_id === old.reservation_id,
-          );
-          return {
-            binding: old,
-            started_at: new Date(
-              slice
-                ? slice.started_at
-                : (previous.started_at ?? volume.ready_at!),
-            ).toISOString(),
-            service_ended_at:
-              previous.service_ended_at ??
-              volumeFundingDeadline(volume, "stop_at"),
-            transferred_at: cutover.toISOString(),
-            successor_binding: binding,
-          };
-        });
-        await db.query(
-          `UPDATE compute_volumes SET funding_mode=$2,billing_state='pending',billing_updated_at=NULL,
-        metadata=jsonb_set(jsonb_set(metadata,'{billing,course_funding}',$3::jsonb),'{billing,funding_mode}',to_jsonb($2::text)),updated_at=clock_timestamp() WHERE id=$1`,
-          [
-            volume.id,
-            binding.lane === "prepaid" ? "account-prepaid" : "account-postpaid",
-            {
-              source: binding.source,
-              funding_epoch: binding.funding_epoch,
-              binding,
-              started_at: cutover.toISOString(),
-              history: [...(previous.history ?? []), ...history],
-            },
-          ],
-        );
+        await applyPersonalVolumeBinding(db, volume, binding, cutover);
         const {
           rows: [updated],
         } = await db.query<ConsentRow>(
@@ -384,6 +393,46 @@ export async function switchVolumePersonalFunding(
   if (!result)
     fundingConflict("Storage metering is busy; retry this same request.");
   return result;
+}
+
+/** Called only under the owning volume's row and metering locks. */
+export async function applyPersonalVolumeBinding(
+  db: PoolClient,
+  volume: ComputeVolumeRow,
+  binding: ComputeVmFundingBinding,
+  cutover: Date,
+): Promise<void> {
+  const previous = volumeFunding(volume);
+  const history = volumeFundingBindings(volume).map((old) => {
+    const slice = (previous.growth ?? []).find(
+      (s) => s.binding?.reservation_id === old.reservation_id,
+    );
+    return {
+      binding: old,
+      started_at: new Date(
+        slice ? slice.started_at : (previous.started_at ?? volume.ready_at!),
+      ).toISOString(),
+      service_ended_at:
+        previous.service_ended_at ?? volumeFundingDeadline(volume, "stop_at"),
+      transferred_at: cutover.toISOString(),
+      successor_binding: binding,
+    };
+  });
+  await db.query(
+    `UPDATE compute_volumes SET funding_mode=$2,billing_state='pending',billing_updated_at=NULL,
+    metadata=jsonb_set(jsonb_set(metadata,'{billing,course_funding}',$3::jsonb),'{billing,funding_mode}',to_jsonb($2::text)),updated_at=clock_timestamp() WHERE id=$1`,
+    [
+      volume.id,
+      binding.lane === "prepaid" ? "account-prepaid" : "account-postpaid",
+      {
+        source: binding.source,
+        funding_epoch: binding.funding_epoch,
+        binding,
+        started_at: cutover.toISOString(),
+        history: [...(previous.history ?? []), ...history],
+      },
+    ],
+  );
 }
 
 export async function clearVolumePersonalFunding(
@@ -420,6 +469,9 @@ export async function clearVolumePersonalFunding(
 const logger = getLogger("compute:funding:personal-storage");
 let closingCursor = "00000000-0000-0000-0000-000000000000";
 export async function closeEndedVolumePersonalConsents(): Promise<void> {
+  await (
+    await import("./volume-personal-remote")
+  ).processRemotePersonalVolumeHandoffs();
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_volumes v ON v.id=c.volume_id
       WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','active')

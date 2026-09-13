@@ -5,6 +5,31 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+Personal previews now discover the resource's authoritative bay rather than
+requiring a local VM/disk row at the student's current account home. Discovery
+is bounded and fails closed on incomplete, unavailable or contradictory bay
+responses. Approval stores the exact signed review; it does not dispatch work.
+Saving the consent is fenced against account rehome after the remote lookup.
+
+A standalone retained disk can now switch to personal funding after account
+rehome. The payer commits a bounded reservation and durable pending command,
+then the resource bay atomically installs the reviewed generation or records an
+abort tombstone in `compute_resource_work`. Lost replies retry the same command;
+an abort cannot later become a commit. Personal backing is released only after
+that authoritative abort receipt, not on a timeout. An interrupted command and
+its hold survive another financial rehome. Consent expiry is now enforced at
+account home even when neither the VM nor disk is stored there.
+
+Focused real-PostgreSQL/Conat checks cover successful and changed-resource
+handoffs after two account moves, lost replies, cancellation before delivery,
+and delayed replay after an abort. This is protocol validation with synthetic
+resource rows, not a new live cloud run. The three-bay harness now isolates bay
+configuration per async request so concurrent discovery cannot switch another
+request's database. The broader 43-suite PostgreSQL run passed 459 tests with
+12 database-mode skips; server and frontend typechecks passed.
+Remote VM handoff, including the combined VM/home-volume case, remains unfinished;
+do not interpret remote preview or storage support as completing that workflow.
+
 A later live automatic-fallback test approved only the `course_expired` reason.
 The worker stopped the sponsored instance before the financial deadline and
 prepared the personal handoff, but activation stalled after the network usage
@@ -70,8 +95,9 @@ move the student's account after handoff, keep the resources in their original
 bay, cancel from the new payer bay, preserve outstanding cleanup backing, and
 verify that VM and attached-disk service checks reject the cancelled consent.
 The local VM path retains its immediate stop; remote enforcement observes the
-authoritative cancellation on its normal sweep. New personal approvals and
-handoffs after the student moves away from the resource bay remain incomplete.
+authoritative cancellation on its normal sweep. New remote previews, approvals
+and standalone disk handoffs are covered above; VM handoffs after the student
+moves away from the resource bay remain incomplete.
 
 The course budget tab, allocation preview and approval-intent APIs, student
 funding selection, VM admission/billing integration, and separate financial

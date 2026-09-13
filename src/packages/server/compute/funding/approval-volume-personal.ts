@@ -3,6 +3,8 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import type { VolumePersonalFundingTerms } from "@cocalc/util/compute-volume-personal-funding";
+import type { PersonalVolumeApprovalReview } from "@cocalc/util/compute-personal-funding-review";
+export type { PersonalVolumeApprovalReview } from "@cocalc/util/compute-personal-funding-review";
 import {
   fundingAmount,
   fundingDate,
@@ -12,20 +14,6 @@ import {
 export type PersonalVolumeApprovalTerms = VolumePersonalFundingTerms & {
   kind: "personalVolumeFunding";
 };
-
-export interface PersonalVolumeApprovalReview {
-  volume_id: string;
-  volume_name: string;
-  owner_account_id: string;
-  owning_bay_id: string;
-  funding_epoch: string;
-  resource_generation: number;
-  attachment_generation: number;
-  size_gb: number;
-  hourly_usd: string;
-  protected_storage_usd: string;
-  storage_delete_at: string;
-}
 
 export function normalizePersonalVolumeApprovalTerms(
   input: PersonalVolumeApprovalTerms,
