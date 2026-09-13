@@ -524,6 +524,41 @@ describe("sendChat identity fields", () => {
     expect(replySet.message_id.length).toBeGreaterThan(0);
   });
 
+  it("replies to the latest conversation rather than an old side branch", () => {
+    const rows = [
+      ["root", 0, undefined],
+      ["main", 1, "root"],
+      ["old-side-prompt", 2, "root"],
+      ["old-interrupted-reply", 3, "old-side-prompt"],
+      ["latest-prompt", 4, "main"],
+      ["latest-reply", 5, "latest-prompt"],
+    ].map(([id, offset, parent]) => ({
+      event: "chat",
+      sender_id: "00000000-1000-4000-8000-000000000001",
+      date: new Date(Date.parse("2026-02-21T17:00:00Z") + Number(offset)),
+      message_id: id,
+      thread_id: "thread-branched",
+      parent_message_id: parent,
+      history: [],
+    }));
+    const actions = makeActions(
+      new Map(rows.map((row) => [`${row.date.valueOf()}`, row])),
+    );
+    // The composer uses this same list's last row as its explicit parent.
+    expect(
+      actions.getMessagesInThread("thread-branched").at(-1).message_id,
+    ).toBe("latest-reply");
+    actions.sendChat({
+      input: "follow up",
+      reply_thread_id: "thread-branched",
+      skipModelDispatch: true,
+    });
+    const sent = actions.syncdb.set.mock.calls
+      .map(([row]) => row)
+      .find((row) => row.event === "chat");
+    expect(sent.parent_message_id).toBe("latest-reply");
+  });
+
   it("treats legacy reply_to-only sends as new threads", async () => {
     const rootDate = new Date("2026-02-21T17:59:00.000Z");
     const rootMs = rootDate.valueOf();
