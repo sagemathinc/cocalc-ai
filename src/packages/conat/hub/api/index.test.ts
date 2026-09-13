@@ -230,6 +230,27 @@ describe("hub API argument transforms", () => {
     });
   });
 
+  it("binds admin package fresh auth to the authenticated session", async () => {
+    const args = await transformArgs({
+      name: "purchases.adminCreateMembershipPackagePurchase",
+      args: [
+        {
+          account_id: "another-account",
+          user_account_id: "target-account",
+          session_hash: "stale-session",
+        },
+      ],
+      account_id: "admin-account",
+      auth_session_hash: "current-session",
+    });
+
+    expect(args[0]).toMatchObject({
+      account_id: "admin-account",
+      user_account_id: "target-account",
+      session_hash: "current-session",
+    });
+  });
+
   it("forces browser sign-in cookie issuance to the authenticated account", async () => {
     const args = await transformArgs({
       name: "system.issueBrowserSignInCookie",

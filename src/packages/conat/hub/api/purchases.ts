@@ -1,4 +1,7 @@
-import { authFirstRequireAccount } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
+} from "./util";
 import type { MoneyValue } from "@cocalc/util/money";
 import type { AutoBalanceConfig } from "@cocalc/util/db-schema/accounts";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
@@ -2013,7 +2016,7 @@ export const purchases = {
   getClaimableMembershipPackages: authFirstRequireAccount,
   claimMembershipPackageSeat: authFirstRequireAccount,
   adminProvisionSiteLicense: authFirstRequireAccount,
-  adminCreateMembershipPackagePurchase: authFirstRequireAccount,
+  adminCreateMembershipPackagePurchase: authFirstRequireAccountWithBoundSession,
   listSiteLicenseOverviews: authFirstRequireAccount,
   getSiteLicenseOverview: authFirstRequireAccount,
   updateSiteLicense: authFirstRequireAccount,
