@@ -52,12 +52,16 @@ def terminate_owned_group(process, grace_seconds=0.25):
     Reap the direct child and signal its group, including descendants that keep
     pipes open or ignore TERM. This cannot handle an uncatchable runner SIGKILL.
     Return cleanup errors so cancellation never gets replaced by a cleanup error.
+    BaseException is intentional here: a second interruption must not prevent
+    the remaining bounded cleanup steps. The caller re-raises its original
+    exception with these secondary failures attached (or reports cleanup failure).
     """
     errors = []
     for signum in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(process.pid, signum)
         except ProcessLookupError:
+            # The owned group is already absent; continue reaping the child.
             pass
         except BaseException as error:
             errors.append(error)
@@ -107,6 +111,7 @@ def owned_process(command):
                 if hasattr(original, "add_note"):
                     original.add_note("Owned process-group cleanup: " + "; ".join(diagnostics))
             except BaseException:
+                # Optional diagnostics must never replace the original exception.
                 pass
         raise
     else:
