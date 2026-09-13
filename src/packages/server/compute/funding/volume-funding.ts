@@ -93,6 +93,7 @@ export function publicVolumeFundingStatus(
   const sum = (key: "authorized_usd" | "protected_usd") =>
     moneyToDbString(all.reduce((n, b) => n.plus(b[key]), toDecimal(0)));
   const spent = data.spent_usd ?? "0";
+  const committed = data.committed_usd ?? undefined;
   return {
     source: {
       kind: "course",
@@ -102,7 +103,9 @@ export function publicVolumeFundingStatus(
     label: "Course funding",
     funding_version: data.funding_epoch,
     state: volume.deleted_at
-      ? "closed"
+      ? committed != null && toDecimal(committed).eq(0)
+        ? "closed"
+        : "settling"
       : !data.binding
         ? "pending"
         : data.service_ended_at
@@ -110,11 +113,16 @@ export function publicVolumeFundingStatus(
           : "ready",
     lane: all[0]?.lane,
     spent_usd: spent,
-    committed_usd: all.length ? sum("authorized_usd") : undefined,
-    remaining_usd: all.length
-      ? moneyToDbString(toDecimal(sum("authorized_usd")).minus(spent))
-      : undefined,
-    protected_storage_usd: all.length ? sum("protected_usd") : undefined,
+    committed_usd: committed,
+    remaining_usd: committed,
+    protected_storage_usd:
+      all.length && committed != null
+        ? moneyToDbString(
+            toDecimal(sum("protected_usd")).lt(committed)
+              ? sum("protected_usd")
+              : committed,
+          )
+        : undefined,
     authorized_until: all.length
       ? volumeFundingDeadline(volume, "authorized_until")
       : undefined,
@@ -297,6 +305,10 @@ export async function meterCourseVolume(
     Math.min(end.valueOf(), new Date(protectedAt).valueOf()),
   );
   let spent = toDecimal(0);
+  let committed = toDecimal(0);
+  let commitmentKnown = !(volumeFunding(volume).growth ?? []).some(
+    (slice) => !slice.binding,
+  );
   for (const binding of volumeFundingBindings(volume)) {
     const slice = (volumeFunding(volume).growth ?? []).find(
       (s) => s.binding?.reservation_id === binding.reservation_id,
@@ -323,9 +335,12 @@ export async function meterCourseVolume(
       deleted: volume.deleted_at != null,
     });
     spent = spent.plus(result.charged_usd);
+    if (result.committed_usd == null) commitmentKnown = false;
+    else committed = committed.plus(result.committed_usd);
   }
   await getPool().query(
-    `UPDATE compute_volumes SET metadata=jsonb_set(metadata,'{billing,course_funding,spent_usd}',to_jsonb($3::text)),
+    `UPDATE compute_volumes SET metadata=jsonb_set(jsonb_set(metadata,'{billing,course_funding,spent_usd}',to_jsonb($3::text)),
+    '{billing,course_funding,committed_usd}',$6::jsonb),
     billing_updated_at=$4,billing_state=$5 WHERE id=$1 AND metadata#>>'{billing,course_funding,funding_epoch}'=$2
       AND (billing_updated_at IS NULL OR billing_updated_at<=$4)`,
     [
@@ -334,6 +349,7 @@ export async function meterCourseVolume(
       moneyToDbString(spent),
       current.meter_as_of,
       volume.deleted_at ? "closed" : "course-storage",
+      JSON.stringify(commitmentKnown ? moneyToDbString(committed) : null),
     ],
   );
 }

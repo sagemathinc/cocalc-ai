@@ -103,8 +103,30 @@ Fresh 320/720/1440-pixel light/dark checks verified the vertical funding detail
 layout, including screenshot inspection after the earlier narrow-label issue.
 This is not yet the full required zoom/device/accessibility matrix.
 
+The live sponsored-storage path now also covers normal API creation of a 10 GB
+GCP home volume, reserved growth to 20 GB, and attachment to a disposable
+course-funded VM. SSH confirmed `/home/user` was mounted from that disk and Python
+execution succeeded. The VM stopped on its five-minute timer and was deleted at
+its ten-minute deadline. At 01:01 UTC provider inventory showed the VM and boot
+disk gone but the independent 20 GB home volume still present and detached.
+Explicit student deletion then removed that disk; at 01:05 UTC inventory showed
+no remaining instances, disks, or addresses for either resource. Both volume
+reservation slices settled and released their unused USD 0.26 total. The VM
+charged the instructor USD 0.01 and released its unused backing separately.
+This verifies manual volume deletion, not a live 72-hour retention-expiry test
+or personal takeover of that volume.
+
+Storage funding dialogs passed keyboard opening, Escape/focus return, and focused
+axe checks at 320/720/1440 pixels in both themes. Screenshot inspection found and
+fixed the narrow-screen section header: the Create volume command now wraps
+below the heading. Resource settlement responses now project current outstanding
+commitments, not original authorizations. Missing payer totals remain unknown;
+deleted resources remain financially "settling" until release is confirmed.
+The bounded recovery sweep refreshes older closed projections without new holds
+or charges. This was verified on the deleted live VM and volume above.
+
 Remaining implementation/validation includes personal home-volume takeover,
-live sponsored-volume lifecycle, automatic fallback/exhaustion, transfer/payment
+live volume retention expiry, automatic fallback/exhaustion, transfer/payment
 provenance validation, bounded postpaid workflows, and currency display. The
 isolated hub has no Stripe configuration; the maintainer has been asked to
 configure test mode without sending keys in chat. Fictitious credits are correctly

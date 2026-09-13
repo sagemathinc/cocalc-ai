@@ -18,6 +18,7 @@ import {
   courseVmBinding,
   enqueueCourseFundingDeadlines,
   payerApi,
+  publicVmFundingStatus,
 } from "./vm-funding";
 import { getComputeVmFallbackDecisionLocal } from "./vm-fallback-reason";
 import {
@@ -34,6 +35,7 @@ import type { VmPersonalFundingTerms } from "@cocalc/util/compute-vm-funding";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import * as exposure from "./exposure";
 import { settleComputeVmFundingLocal } from "./vm-settlement";
+import { recoverTerminalCourseVmFunding } from "./vm-worker-recovery";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -297,6 +299,33 @@ it("requires approved consent, reserves personal backing before worker restart, 
       dispatch: true,
     }),
   ).rejects.toThrow(/authorization ended/);
+  await getPool().query(
+    "UPDATE compute_vms SET desired_state='deleted',stopped_at=clock_timestamp(),deleted_at=clock_timestamp() WHERE id=$1",
+    [f.vmId],
+  );
+  await meterCourseVm((await getComputeVmById(f.vmId))!);
+  const settled = publicVmFundingStatus((await getComputeVmById(f.vmId))!);
+  expect(settled).toMatchObject({
+    state: "closed",
+    committed_usd: "0.0000000000",
+    remaining_usd: "0.0000000000",
+    protected_storage_usd: "0.0000000000",
+  });
+  await meterCourseVm((await getComputeVmById(f.vmId))!);
+  expect(
+    publicVmFundingStatus((await getComputeVmById(f.vmId))!)!.committed_usd,
+  ).toBe(settled!.committed_usd);
+  await getPool().query(
+    "UPDATE compute_vms SET metadata=metadata #- '{billing,course_funding,committed_usd}' WHERE id=$1",
+    [f.vmId],
+  );
+  expect(publicVmFundingStatus((await getComputeVmById(f.vmId))!)!.state).toBe(
+    "settling",
+  );
+  await recoverTerminalCourseVmFunding();
+  expect(
+    publicVmFundingStatus((await getComputeVmById(f.vmId))!)!.committed_usd,
+  ).toBe("0.0000000000");
 });
 
 it.each(["pending", "approved", "preparing"])(

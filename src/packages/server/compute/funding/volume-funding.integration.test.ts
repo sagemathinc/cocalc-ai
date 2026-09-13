@@ -368,6 +368,21 @@ it("recovers an existing lost reservation after cancellation without minting ano
   expect(reservation.state).toBe("settled");
   expect(Number(reservation.spent_usd)).toBe(0);
   expect(Number(reservation.released_usd)).toBeGreaterThan(0);
+  expect(publicVolumeFundingStatus(recovered)).toMatchObject({
+    state: "closed",
+    committed_usd: "0.0000000000",
+    remaining_usd: "0.0000000000",
+    protected_storage_usd: "0.0000000000",
+  });
+  await getPool().query(
+    "UPDATE compute_volumes SET metadata=metadata #- '{billing,course_funding,committed_usd}' WHERE id=$1",
+    [f.id],
+  );
+  await recoverTerminalCourseVolumeFunding();
+  expect(
+    publicVolumeFundingStatus((await getComputeVolumeById(f.id))!)!
+      .committed_usd,
+  ).toBe("0.0000000000");
 });
 
 it("enqueues expiry from local state, refuses uncertain attachment deletion, then detaches a confirmed stopped VM without deleting its boot disk", async () => {
@@ -430,6 +445,12 @@ it("finds a late growth commitment even after deletion settled the known base re
   );
   await meterCourseVolume((await getComputeVolumeById(f.id))!);
   expect((await getComputeVolumeById(f.id))!.billing_state).toBe("closed");
+  expect(
+    publicVolumeFundingStatus((await getComputeVolumeById(f.id))!),
+  ).toMatchObject({
+    state: "settling",
+    committed_usd: undefined,
+  });
   await recoverTerminalCourseVolumeFunding();
   expect(
     (await getComputeVolumeById(f.id))!.metadata.billing.course_funding

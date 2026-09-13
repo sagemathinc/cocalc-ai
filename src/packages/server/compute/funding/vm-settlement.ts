@@ -86,6 +86,11 @@ export async function settleComputeVmFundingLocal(
         ? await lockPersonalVmReservation(client, opts)
         : await lockVmFundingReservation(client, opts);
     const { pool, grant, reservation: row, binding } = source;
+    const currentCommitment = moneyToDbString(
+      toDecimal(row.authorized_usd)
+        .minus(row.spent_usd)
+        .minus(row.released_usd),
+    );
     const {
       rows: [{ now }],
     } = await client.query<{ now: Date }>("SELECT clock_timestamp() AS now");
@@ -123,6 +128,7 @@ export async function settleComputeVmFundingLocal(
       return {
         charged_usd: row.spent_usd,
         authorized_usd: row.authorized_usd,
+        committed_usd: currentCommitment,
         overrun: toDecimal(previous.platform_overrun_usd ?? 0).gt(0),
       };
     if (
@@ -190,6 +196,7 @@ export async function settleComputeVmFundingLocal(
         return {
           charged_usd: row.spent_usd,
           authorized_usd: row.authorized_usd,
+          committed_usd: currentCommitment,
           overrun: toDecimal(previous.platform_overrun_usd ?? 0).gt(0),
         };
     }
@@ -197,6 +204,7 @@ export async function settleComputeVmFundingLocal(
       return {
         charged_usd: row.spent_usd,
         authorized_usd: row.authorized_usd,
+        committed_usd: currentCommitment,
         overrun: false,
       };
     const request = row.pricing_snapshot.request;
@@ -413,6 +421,12 @@ export async function settleComputeVmFundingLocal(
     return {
       charged_usd: moneyToDbString(charged),
       authorized_usd: row.authorized_usd,
+      committed_usd: moneyToDbString(
+        toDecimal(row.authorized_usd)
+          .minus(charged)
+          .minus(row.released_usd)
+          .minus(release),
+      ),
       overrun,
     };
   });

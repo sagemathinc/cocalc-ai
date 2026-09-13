@@ -94,6 +94,7 @@ export async function recoverTerminalCourseVolumeFunding(): Promise<void> {
     `SELECT * FROM compute_volumes WHERE owning_bay_id=$1 AND id>$2
     AND metadata#>'{billing,course_funding}' IS NOT NULL AND (desired_state='deleted' OR deleted_at IS NOT NULL)
     AND (billing_state IS DISTINCT FROM 'closed'
+      OR metadata#>>'{billing,course_funding,committed_usd}' IS DISTINCT FROM '0.0000000000'
       OR metadata#>'{billing,course_funding,binding}' IS NULL
       OR EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(metadata#>'{billing,course_funding,growth}','[]'::jsonb)) AS slice
         WHERE slice->'binding' IS NULL)) ORDER BY id LIMIT 20`,

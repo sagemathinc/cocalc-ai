@@ -143,6 +143,7 @@ export function publicVmFundingStatus(
   const course = vm.metadata.billing.course_funding;
   const binding = course.binding as ComputeVmFundingBinding | undefined;
   const spent = vm.accrued_cost ?? "0";
+  const committed = course.committed_usd ?? undefined;
   return {
     source:
       course.source.kind === "personal"
@@ -158,17 +159,24 @@ export function publicVmFundingStatus(
     state: !binding
       ? "pending"
       : vm.deleted_at
-        ? "closed"
+        ? committed != null && toDecimal(committed).eq(0)
+          ? "closed"
+          : "settling"
         : vm.stopped_at
           ? "stopped"
           : "running",
     lane: binding?.lane,
-    committed_usd: binding?.authorized_usd,
-    remaining_usd: binding
-      ? moneyToDbString(toDecimal(binding.authorized_usd).minus(spent))
-      : undefined,
+    committed_usd: committed,
+    remaining_usd: committed,
     spent_usd: spent,
-    protected_storage_usd: binding?.protected_usd,
+    protected_storage_usd:
+      binding && committed != null
+        ? moneyToDbString(
+            toDecimal(binding.protected_usd).lt(committed)
+              ? binding.protected_usd
+              : committed,
+          )
+        : undefined,
     egress_cap_usd: binding?.egress_usd,
     authorized_until: binding?.authorized_until,
     stop_at: binding?.stop_at,
@@ -469,7 +477,8 @@ export async function meterCourseVm(
     egress_finalized: egress?.finalized,
   });
   await getPool().query(
-    `UPDATE compute_vms SET accrued_cost=$3,billing_updated_at=$5,billing_state=$4
+    `UPDATE compute_vms SET accrued_cost=$3,billing_updated_at=$5,billing_state=$4,
+    metadata=jsonb_set(metadata,'{billing,course_funding,committed_usd}',$6::jsonb)
     WHERE id=$1 AND metadata#>>'{billing,course_funding,funding_epoch}'=$2
       AND (billing_updated_at IS NULL OR billing_updated_at <= $5)`,
     [
@@ -482,6 +491,7 @@ export async function meterCourseVm(
           ? "course-stopped"
           : "course-running",
       asOf,
+      JSON.stringify(result.committed_usd ?? null),
     ],
   );
   return result;

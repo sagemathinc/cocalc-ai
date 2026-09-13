@@ -177,6 +177,9 @@ export interface SettleComputeVmFundingRequest {
 export interface ComputeVmFundingSettlement {
   charged_usd: string;
   authorized_usd: string;
+  // Outstanding liability after charges and releases, not original authority.
+  // Missing on older payer bays means unknown to the status projection.
+  committed_usd?: string;
   overrun: boolean;
 }
 
@@ -185,7 +188,7 @@ export interface ComputeVmFundingStatus {
   personal_consent?: VmPersonalFundingConsent;
   source: ComputeVmFundingSource;
   label: string;
-  state: "pending" | "running" | "stopped" | "closed";
+  state: "pending" | "running" | "stopped" | "settling" | "closed";
   lane?: "prepaid" | "postpaid";
   committed_usd?: string;
   remaining_usd?: string;

@@ -4614,9 +4614,11 @@ export function ProjectComputeVms({
           <Flex
             align="center"
             justify="space-between"
+            wrap
+            gap={12}
             style={{ marginTop: 28 }}
           >
-            <div>
+            <div style={{ flex: "1 1 260px", minWidth: 0 }}>
               <Flex align="center" gap={4}>
                 <Title level={4} style={{ marginBottom: 0 }}>
                   Persistent home volumes

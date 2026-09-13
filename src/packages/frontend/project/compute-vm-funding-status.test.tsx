@@ -36,6 +36,26 @@ test("does not present stale funding as current", () => {
   expect(screen.getByRole("alert").textContent).toContain("out of date");
 });
 
+test("distinguishes unavailable commitments from settled zero", () => {
+  const { rerender } = render(
+    <VmFundingStatus
+      funding={{ ...funding, state: "settling", committed_usd: undefined }}
+      now={now}
+    />,
+  );
+  expect(screen.getByText("Finalizing charges")).toBeTruthy();
+  expect(screen.getByText("Unavailable")).toBeTruthy();
+  expect(screen.queryByText("$0.00")).toBeNull();
+  rerender(
+    <VmFundingStatus
+      funding={{ ...funding, state: "closed", committed_usd: "0" }}
+      now={now}
+    />,
+  );
+  expect(screen.getByText("Settled")).toBeTruthy();
+  expect(screen.getByText("$0.00")).toBeTruthy();
+});
+
 test("does not label personal VMs as sponsored", () => {
   const { container } = render(<VmFundingStatus />);
   expect(container.textContent).toBe("");

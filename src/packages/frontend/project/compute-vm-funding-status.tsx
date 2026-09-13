@@ -28,14 +28,25 @@ export default function VmFundingStatus({
         <Alert type="warning" showIcon title="Funding status is out of date." />
       )}
       <Descriptions size="small" column={1} layout="vertical">
+        <Descriptions.Item label="Funding state">
+          {
+            {
+              pending: "Pending",
+              running: "Running",
+              stopped: "Stopped",
+              settling: "Finalizing charges",
+              closed: "Settled",
+            }[funding.state]
+          }
+        </Descriptions.Item>
         <Descriptions.Item label="Spent">
           {moneyToCurrency(funding.spent_usd)}
         </Descriptions.Item>
-        {funding.committed_usd != null && (
-          <Descriptions.Item label="Committed to this VM">
-            {moneyToCurrency(funding.committed_usd)}
-          </Descriptions.Item>
-        )}
+        <Descriptions.Item label="Committed to this VM">
+          {funding.committed_usd == null
+            ? "Unavailable"
+            : moneyToCurrency(funding.committed_usd)}
+        </Descriptions.Item>
         {funding.protected_storage_usd != null && (
           <Descriptions.Item label="Protected storage and cleanup">
             {moneyToCurrency(funding.protected_storage_usd)}

@@ -89,7 +89,8 @@ export async function recoverTerminalCourseVmFunding(): Promise<void> {
        AND ${COMPUTE_VM_V2_SQL}
        AND metadata#>'{billing,course_funding}' IS NOT NULL
        AND ((deleted_at IS NOT NULL AND
-         (billing_state IS DISTINCT FROM 'closed' OR metadata#>'{billing,course_funding,binding}' IS NULL))
+         (billing_state IS DISTINCT FROM 'closed' OR metadata#>'{billing,course_funding,binding}' IS NULL
+          OR metadata#>>'{billing,course_funding,committed_usd}' IS DISTINCT FROM '0.0000000000'))
          OR (desired_state IN ('stopped','deleted') AND metadata#>'{billing,course_funding,binding}' IS NULL))
      ORDER BY id LIMIT $3`,
     [getConfiguredBayId(), cursor, BATCH_SIZE],
