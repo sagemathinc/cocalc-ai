@@ -790,7 +790,7 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Launchpad · Last Updated: June 9, 2026"),
+      screen.getByText("Launchpad · Last Updated: September 13, 2026"),
     ).not.toBeNull();
     expect(
       screen.getByText(/The Controller \(User\) provides/i),
