@@ -138,7 +138,6 @@ automatically issuing another write.
 
 ```mermaid
 stateDiagram-v2
-  direction TD
   [*] --> queued: durable insert
   queued --> running: generation-fenced claim
   queued --> canceled: timeout or fence before claim
