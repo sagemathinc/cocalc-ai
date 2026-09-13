@@ -242,7 +242,7 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
-import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import { validateHostActionAuth } from "@cocalc/server/auth/host-action-auth";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
@@ -262,7 +262,6 @@ import {
 } from "@cocalc/server/project-host/spend";
 import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
-import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
@@ -1301,17 +1300,13 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
       code: "fresh_auth_required",
     });
   }
-  await requireFreshAuthForSessionHash({
+  const auth = await validateHostActionAuth({
     account_id: owner,
     session_hash: resolvedSessionHash,
-    allow_actor_impersonation: true,
-  });
-  const impersonation = await getImpersonationSessionBySessionHash({
-    session_hash: resolvedSessionHash,
-    subject_account_id: owner,
   });
   return {
-    allow_second_factor_override: impersonation ? true : undefined,
+    allow_second_factor_override:
+      auth.allow_second_factor_override || undefined,
     session_hash: resolvedSessionHash,
   };
 }

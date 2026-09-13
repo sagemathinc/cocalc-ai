@@ -9,9 +9,43 @@ Who calls this:
   `transformArgs` in `conat/hub/api/index.ts` to enforce account auth and
   shape typed request/response signatures.
 */
-import { authFirstRequireAccount } from "./util";
+import {
+  authFirstRequireAccount,
+  authFirstRequireAccountWithBoundSession,
+  authFirstRequireHostWithAccountTarget,
+} from "./util";
+import type {
+  AgentIdentity,
+  AgentCredential,
+  AgentPage,
+  AgentPageOptions,
+  AgentMessageHistoryEntry,
+} from "@cocalc/conat/agents/protocol";
+import type {
+  AgentEndpoint,
+  AgentRpcEnvelope,
+  AgentRpcLink,
+} from "@cocalc/conat/agents/rpc";
+import type { AgentRpcLinkApproval } from "@cocalc/conat/inter-bay/agent-rpc";
 
 export const agent = {
+  grantRpcLink: authFirstRequireAccountWithBoundSession,
+  revokeRpcLink: authFirstRequireAccountWithBoundSession,
+  listRpcLinks: authFirstRequireAccount,
+  authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
+  registerIdentity: authFirstRequireAccountWithBoundSession,
+  listIdentities: authFirstRequireAccount,
+  getIdentity: authFirstRequireAccount,
+  resolveIdentity: authFirstRequireAccount,
+  listGrants: authFirstRequireAccount,
+  listMessageReceipts: authFirstRequireAccount,
+  grantMessaging: authFirstRequireAccountWithBoundSession,
+  revokeMessaging: authFirstRequireAccountWithBoundSession,
+  disableIdentity: authFirstRequireAccountWithBoundSession,
+  issueIdentity: authFirstRequireHostWithAccountTarget,
+  endIdentityRun: authFirstRequireHostWithAccountTarget,
+  authorizeDelivery: authFirstRequireHostWithAccountTarget,
+  beginMessageAdmission: authFirstRequireHostWithAccountTarget,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -135,7 +169,113 @@ export type AgentRunResponse = {
   error?: string;
 };
 
+export interface AgentHumanAuth {
+  account_id?: string;
+  session_hash?: string;
+}
+export interface AgentHostAuth {
+  account_id?: string;
+  host_id?: string;
+}
+export interface AgentGrant {
+  grant_id: string;
+  source_agent_id: string;
+  target_agent_id: string;
+  allow_guidance: boolean;
+  approved_by: string;
+  reason: string;
+  expires_at: Date | string;
+  revoked_at?: Date | string | null;
+}
+
+export interface AgentIdentityLocator {
+  account_id?: string;
+  agent_id: string;
+  /** Owning project for routing. Omitted only for legacy, bay-local callers. */
+  project_id?: string;
+}
+
 export interface AgentApi {
+  grantRpcLink(
+    opts: AgentHumanAuth & AgentRpcLinkApproval,
+  ): Promise<AgentRpcLink>;
+  revokeRpcLink(
+    opts: AgentHumanAuth & { source: AgentEndpoint; link_id: string },
+  ): Promise<void>;
+  listRpcLinks(opts: {
+    account_id?: string;
+    source: AgentEndpoint;
+  }): Promise<AgentRpcLink[]>;
+  authorizeRpcAdmission(
+    opts: AgentHostAuth & { envelope: AgentRpcEnvelope },
+  ): Promise<void>;
+  resolveIdentity(opts: {
+    account_id?: string;
+    project_id: string;
+    path: string;
+    thread_id: string;
+  }): Promise<AgentIdentity | undefined>;
+  getIdentity(opts: AgentIdentityLocator): Promise<AgentIdentity>;
+  listGrants(
+    opts: AgentIdentityLocator & AgentPageOptions,
+  ): Promise<AgentPage<AgentGrant>>;
+  listMessageReceipts(
+    opts: AgentIdentityLocator & AgentPageOptions,
+  ): Promise<AgentPage<AgentMessageHistoryEntry>>;
+  registerIdentity(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+    },
+  ): Promise<AgentIdentity>;
+  listIdentities(opts: {
+    account_id?: string;
+    project_id: string;
+  }): Promise<AgentIdentity[]>;
+  grantMessaging(
+    opts: AgentHumanAuth & {
+      grant_id?: string;
+      source_agent_id: string;
+      target_agent_id: string;
+      ttl_seconds: number;
+      reason: string;
+      allow_guidance?: boolean;
+    },
+  ): Promise<AgentGrant>;
+  revokeMessaging(opts: AgentHumanAuth & { grant_id: string }): Promise<void>;
+  disableIdentity(opts: AgentHumanAuth & { agent_id: string }): Promise<void>;
+  issueIdentity(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      run_id: string;
+    },
+  ): Promise<AgentCredential | undefined>;
+  endIdentityRun(
+    opts: AgentHostAuth & { agent_id: string; run_id: string },
+  ): Promise<void>;
+  authorizeDelivery(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      message_id: string;
+      recovery_generation?: string;
+    },
+  ): Promise<void>;
+  /** One-use queue attempt, not a replayable capability. False means observe only. */
+  beginMessageAdmission(
+    opts: AgentHostAuth & {
+      project_id: string;
+      path: string;
+      thread_id: string;
+      message_id: string;
+      recovery_generation: string;
+      operation_id: string;
+    },
+  ): Promise<boolean>;
   execute: (opts: AgentExecuteRequest) => Promise<AgentExecuteResponse>;
   manifest: (opts?: { account_id?: string }) => Promise<AgentManifestEntry[]>;
   plan: (opts: AgentPlanRequest) => Promise<AgentPlanResponse>;

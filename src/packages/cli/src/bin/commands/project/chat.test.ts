@@ -10,7 +10,17 @@ function setup() {
   const project = program.command("project");
   const calls: any[] = [];
   let output: any;
-  const ctx = { accountId: "actor" };
+  const ctx = {
+    accountId: "actor",
+    hub: {
+      agent: {
+        listMessageReceipts: async (options: unknown) => {
+          calls.push(options);
+          return { items: [] };
+        },
+      },
+    },
+  };
   registerProjectChatCommands(project, {
     withContext: async (
       _command: Command,
@@ -72,6 +82,28 @@ test("chat send targets the exact project/path/thread and defaults to queued del
     },
   ]);
   assert.equal(f.output().state, "accepted");
+});
+
+test("human receipt inspection forwards only the chosen endpoint and page", async () => {
+  const f = setup();
+  await f.program.parseAsync(
+    [
+      "project",
+      "chat",
+      "agent",
+      "receipts",
+      "source",
+      "--limit",
+      "7",
+      "--cursor",
+      "cursor",
+    ],
+    { from: "user" },
+  );
+  assert.deepEqual(f.calls, [
+    { agent_id: "source", project_id: undefined, limit: 7, cursor: "cursor" },
+  ]);
+  assert.deepEqual(f.output(), { items: [] });
 });
 
 test("chat send --stdin --guidance preserves JSON and newlines", async () => {

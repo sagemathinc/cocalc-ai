@@ -29,6 +29,12 @@ export async function getRoutedHostControlClient({
       timeout_ms: timeout,
     });
     return {
+      submitAgentRpc: async () => {
+        throw new Error("agent RPC must route through the target owner");
+      },
+      inspectAgentRpc: async () => {
+        throw new Error("agent RPC must route through the target owner");
+      },
       probePublicRouteOrigin: async () =>
         await bridge.probePublicRouteOrigin({ host_id }),
       restartCloudflared: async (restart) =>

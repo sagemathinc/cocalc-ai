@@ -68,6 +68,7 @@ import "./hub-servers";
 import "./instances"; // probably deprecated
 import "./listings";
 import "./ai-log";
+import "./agent-messaging";
 import "./lti";
 import "./mentions";
 import "./account-entitlement-overrides";

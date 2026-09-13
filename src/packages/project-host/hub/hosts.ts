@@ -32,6 +32,17 @@ export function wireHostsApi(): void {
   if (!hubApi.hosts) {
     (hubApi as any).hosts = {};
   }
+  if (!hubApi.agent) (hubApi as any).agent = {};
+  hubApi.agent.issueIdentity = (opts) =>
+    forwardHost("agent.issueIdentity", [opts]);
+  hubApi.agent.endIdentityRun = (opts) =>
+    forwardHost("agent.endIdentityRun", [opts]);
+  hubApi.agent.authorizeDelivery = (opts) =>
+    forwardHost("agent.authorizeDelivery", [opts]);
+  hubApi.agent.beginMessageAdmission = (opts) =>
+    forwardHost("agent.beginMessageAdmission", [opts]);
+  hubApi.agent.authorizeRpcAdmission = (opts) =>
+    forwardHost("agent.authorizeRpcAdmission", [opts]);
 
   hubApi.hosts.issueProjectHostAgentAuthToken = async (opts: {
     host_id?: string;

@@ -13,6 +13,7 @@ import {
 } from "@cocalc/database/postgres/project-host-metrics";
 import { createLro, ensureLroSchema } from "@cocalc/server/lro/lro-db";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { runProjectHostRuntimeMaintenance } from "./runtime-maintenance";
 import {
   persistenceAlert,
@@ -943,11 +944,12 @@ async function getRunningStaleHosts(): Promise<RunningStaleHostRow[]> {
       FROM project_hosts
       WHERE deleted IS NULL
         AND status = 'running'
+        AND COALESCE(NULLIF(BTRIM(bay_id), ''), $3) = $3
         AND COALESCE(last_seen, to_timestamp(0)) < NOW() - ($1::double precision * INTERVAL '1 millisecond')
       ORDER BY last_seen ASC NULLS FIRST
       LIMIT $2
     `,
-    [HOST_RUNNING_STALE_ALERT_MS, STALE_SCAN_LIMIT],
+    [HOST_RUNNING_STALE_ALERT_MS, STALE_SCAN_LIMIT, getConfiguredBayId()],
   );
   return rows;
 }
@@ -2007,6 +2009,7 @@ export async function annotateHostAvailabilityEvent({
 }
 
 export const _test = {
+  getRunningStaleHosts,
   conatPersistAlertRow,
   formatConatPersistAlertBody,
   formatHostPressureAlertBody,

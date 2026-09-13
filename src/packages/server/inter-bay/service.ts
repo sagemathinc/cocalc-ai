@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
+import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
+import { agentRpcControl } from "@cocalc/server/agents/rpc";
+
 import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
@@ -291,6 +296,7 @@ import {
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
+import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import { recordSiteFundedCodexAccountUsage } from "@cocalc/server/ai/save-response";
@@ -594,6 +600,18 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    services.push(
+      createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
+        client: getInterBayFabricClient({ noCache: true }),
+        parallel: true,
+      }),
+      createInterBayAgentIdentityHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: agentIdentityControl,
+      }),
+    );
     await startProjectSecretsService();
     await startExternalCredentialsService();
     await startHostConnectionService();
@@ -1232,6 +1250,7 @@ async function startAccountLocalService(): Promise<void> {
         revoked_at: normalizeOptionalDateLike(revoked_at),
       });
     },
+    validateHostActionAuth: validateHostActionAuthLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>

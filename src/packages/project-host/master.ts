@@ -1376,6 +1376,33 @@ export async function startMasterRegistration({
 
   // Control plane for this host (master can ask us to create/start/stop projects).
   const controlImpl: HostControlApi = {
+    async submitAgentRpc(envelope) {
+      await awaitReadyForControl("submitAgentRpc", waitUntilReady);
+      if (!controlClient)
+        throw new Error("host messaging transport unavailable");
+      const { createLocalAgentRpcService } =
+        await import("@cocalc/lite/hub/acp/agent-rpc-service");
+      const { ensureProjectContainerRunning } =
+        await import("./codex/codex-project");
+      return createLocalAgentRpcService(controlClient, hubApi.agent, (e) =>
+        ensureProjectContainerRunning({
+          projectId: e.target.project_id,
+          accountId: e.account_id,
+          timeout: Math.max(1, e.deadline - Date.now()),
+        }),
+      ).submit(envelope);
+    },
+    async inspectAgentRpc(opts) {
+      await awaitReadyForControl("inspectAgentRpc", waitUntilReady);
+      if (!controlClient)
+        throw new Error("host messaging transport unavailable");
+      const { createLocalAgentRpcService } =
+        await import("@cocalc/lite/hub/acp/agent-rpc-service");
+      return createLocalAgentRpcService(controlClient, hubApi.agent).inspect(
+        opts.source,
+        opts.request,
+      );
+    },
     async applyExamRun(opts) {
       await awaitReadyForControl("applyExamRun", waitUntilReady);
       return await applyExamRunLocal(opts);

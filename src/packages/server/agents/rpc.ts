@@ -1,0 +1,475 @@
+import { randomUUID } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
+import type { AgentApi, AgentHumanAuth } from "@cocalc/conat/hub/api/agent";
+import type {
+  AgentRpcControlApi,
+  RpcRoute,
+} from "@cocalc/conat/inter-bay/agent-rpc";
+import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
+import {
+  rpcOutcome,
+  validateAgentEndpoint,
+  validateAgentRpcRequest,
+  validateAgentRpcOutcome,
+  type AgentEndpoint,
+  type AgentRpcEnvelope,
+  type AgentRpcLink,
+  type AgentRpcRequest,
+} from "@cocalc/conat/agents/rpc";
+import {
+  requireUuid,
+  parseAgentMessagingSubject,
+} from "@cocalc/conat/agents/protocol";
+import { createHostControlClient } from "@cocalc/conat/project-host/api";
+import { getExplicitHostControlClient } from "@cocalc/server/conat/route-client";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import {
+  resolveProjectBay,
+  resolveHostBayAcrossCluster,
+} from "@cocalc/server/inter-bay/directory";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
+import { agentStore } from "./store";
+import { assertActor, assertAgent, assertRun } from "./access";
+import { getIdentity } from "./api";
+
+const logger = getLogger("agents:rpc");
+
+function enabled() {
+  if (process.env.COCALC_AGENT_MESSAGING_RPC_ENABLED !== "1")
+    throw new Error("agent RPC messaging is not enabled on this bay");
+}
+
+async function owner(project_id: string) {
+  requireUuid(project_id, "project_id");
+  const route = await resolveProjectBay(project_id);
+  if (!route) throw new Error("project owner unavailable");
+  return { bay_id: route.bay_id, epoch: route.epoch };
+}
+
+async function routed<T>(
+  project_id: string,
+  fn: (api: AgentRpcControlApi, route: RpcRoute) => Promise<T>,
+): Promise<T> {
+  enabled();
+  const route = await owner(project_id);
+  return fn(
+    route.bay_id === getConfiguredBayId()
+      ? agentRpcControl
+      : createAgentRpcControlClient(getInterBayFabricClient(), route.bay_id),
+    { project_id, route },
+  );
+}
+
+async function local(opts: RpcRoute, endpoint: AgentEndpoint) {
+  enabled();
+  validateAgentEndpoint(endpoint);
+  const route = await owner(endpoint.project_id);
+  if (
+    opts.project_id !== endpoint.project_id ||
+    route.bay_id !== getConfiguredBayId() ||
+    opts.route?.bay_id !== route.bay_id ||
+    opts.route?.epoch !== route.epoch
+  )
+    throw new Error("stale agent RPC route");
+}
+
+function fresh(at: number) {
+  if (
+    !Number.isFinite(at) ||
+    Date.now() - at > 30_000 ||
+    at > Date.now() + 5000
+  )
+    throw new Error("fresh human approval attestation expired");
+}
+async function human(opts: AgentHumanAuth) {
+  requireUuid(opts.account_id, "account_id");
+  await requireDangerousSessionAuth({
+    account_id: opts.account_id,
+    session_hash: opts.session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+  return opts.account_id;
+}
+
+function link(row: any, source: AgentEndpoint): AgentRpcLink {
+  return {
+    link_id: row.link_id,
+    source,
+    target: {
+      project_id: row.target_project_id,
+      agent_id: row.target_agent_id,
+    },
+    approved_by: row.approved_by,
+    reason: row.reason,
+    allow_guidance: row.allow_guidance,
+    expires_at: new Date(row.expires_at).toISOString(),
+    revoked_at: row.revoked_at ? new Date(row.revoked_at).toISOString() : null,
+  };
+}
+async function sourceIdentity(source: AgentEndpoint) {
+  validateAgentEndpoint(source);
+  const identity = await agentStore().get(source.agent_id);
+  if (identity.project_id !== source.project_id)
+    throw new Error("source mismatch");
+  await assertAgent(identity);
+  return identity;
+}
+async function sourceRun(source: AgentEndpoint, run_id: string) {
+  requireUuid(run_id, "run_id");
+  await sourceIdentity(source);
+  await assertRun(await agentStore().activeRun(source.agent_id, run_id));
+}
+
+const permits = new Map<
+  string,
+  { envelope: string; expires: number; host_id: string }
+>();
+function prunePermits() {
+  for (const [key, value] of permits)
+    if (value.expires <= Date.now()) permits.delete(key);
+}
+async function hostFor(endpoint: AgentEndpoint) {
+  const project = (
+    await agentStore().query(
+      "SELECT host_id,state FROM projects WHERE project_id=$1 AND deleted IS NOT TRUE",
+      [endpoint.project_id],
+    )
+  ).rows[0];
+  // The host can serve chat files while the project is stopped. It performs
+  // authorized autostart before admission; the hub must not reject that case.
+  if (!project?.host_id)
+    throw new Error("recipient project has no assigned host");
+  const hostOwner = await resolveHostBayAcrossCluster(project.host_id);
+  if (!hostOwner || hostOwner.bay_id !== getConfiguredBayId())
+    throw new Error("host ownership mismatch");
+  return {
+    host_id: project.host_id as string,
+    api: createHostControlClient({
+      host_id: project.host_id,
+      client: await getExplicitHostControlClient({ host_id: project.host_id }),
+      timeout: 35_000,
+      noRetry: true,
+    }),
+  };
+}
+
+export const agentRpcControl: AgentRpcControlApi = {
+  grant: async (opts) => {
+    await local(opts, opts.source);
+    fresh(opts.fresh_auth_at);
+    requireUuid(opts.link_id, "link_id");
+    validateAgentEndpoint(opts.target);
+    if (
+      !Number.isInteger(opts.ttl_seconds) ||
+      opts.ttl_seconds < 1 ||
+      opts.ttl_seconds > 30 * 86400
+    )
+      throw new Error("link expiry must be between 1 second and 30 days");
+    if (
+      typeof opts.reason !== "string" ||
+      !opts.reason.trim() ||
+      opts.reason.length > 2000
+    )
+      throw new Error("approval reason required (maximum 2000 characters)");
+    if (
+      opts.allow_guidance !== undefined &&
+      typeof opts.allow_guidance !== "boolean"
+    )
+      throw new Error("invalid guidance permission");
+    await sourceIdentity(opts.source);
+    await assertActor(opts.account_id, opts.source.project_id);
+    const target = await getIdentity({
+      account_id: opts.account_id,
+      ...opts.target,
+    });
+    if (target.disabled_at || target.created_by !== opts.account_id)
+      throw new Error("the target registrant must approve this link");
+    const db = agentStore();
+    await db.query(
+      `INSERT INTO agent_rpc_links(link_id,source_agent_id,target_agent_id,target_project_id,approved_by,reason,allow_guidance,expires_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8*interval '1 second') ON CONFLICT(link_id) DO NOTHING`,
+      [
+        opts.link_id,
+        opts.source.agent_id,
+        opts.target.agent_id,
+        opts.target.project_id,
+        opts.account_id,
+        opts.reason.trim(),
+        opts.allow_guidance === true,
+        opts.ttl_seconds,
+      ],
+    );
+    const row = (
+      await db.query("SELECT * FROM agent_rpc_links WHERE link_id=$1", [
+        opts.link_id,
+      ])
+    ).rows[0];
+    if (
+      row.source_agent_id !== opts.source.agent_id ||
+      row.target_agent_id !== opts.target.agent_id ||
+      row.target_project_id !== opts.target.project_id ||
+      row.approved_by !== opts.account_id ||
+      row.reason !== opts.reason.trim() ||
+      row.allow_guidance !== (opts.allow_guidance === true)
+    )
+      throw new Error("link ID already used for a different approval");
+    return link(row, opts.source);
+  },
+  revoke: async (opts) => {
+    await local(opts, opts.source);
+    fresh(opts.fresh_auth_at);
+    requireUuid(opts.link_id, "link_id");
+    const source = await sourceIdentity(opts.source);
+    await assertActor(opts.account_id, opts.source.project_id);
+    const row = (
+      await agentStore().query(
+        "SELECT * FROM agent_rpc_links WHERE link_id=$1 AND source_agent_id=$2",
+        [opts.link_id, opts.source.agent_id],
+      )
+    ).rows[0];
+    if (
+      !row ||
+      (row.approved_by !== opts.account_id &&
+        source.created_by !== opts.account_id)
+    )
+      throw new Error("not authorized to revoke link");
+    await agentStore().query(
+      "UPDATE agent_rpc_links SET revoked_at=COALESCE(revoked_at,now()) WHERE link_id=$1",
+      [opts.link_id],
+    );
+  },
+  links: async (opts) => {
+    await local(opts, opts.source);
+    const source = await sourceIdentity(opts.source);
+    if (opts.run_id) await sourceRun(opts.source, opts.run_id);
+    else {
+      requireUuid(opts.account_id, "account_id");
+      await assertActor(opts.account_id, opts.source.project_id);
+    }
+    const rows = (
+      await agentStore().query(
+        `SELECT * FROM agent_rpc_links WHERE source_agent_id=$1
+      AND ($2::uuid IS NULL OR approved_by=$2 OR $3::boolean)
+      AND revoked_at IS NULL AND expires_at>now() ORDER BY expires_at DESC LIMIT 100`,
+        [
+          opts.source.agent_id,
+          opts.run_id ? null : opts.account_id,
+          source.created_by === opts.account_id,
+        ],
+      )
+    ).rows;
+    return rows.map((row) => link(row, opts.source));
+  },
+  check: async (opts) => {
+    await local(opts, opts.source);
+    validateAgentEndpoint(opts.target);
+    await sourceRun(opts.source, opts.run_id);
+    const row = (
+      await agentStore().query(
+        `SELECT * FROM agent_rpc_links
+      WHERE source_agent_id=$1 AND target_project_id=$2 AND target_agent_id=$3
+      AND revoked_at IS NULL AND expires_at>now() AND (NOT $4::boolean OR allow_guidance)
+      ORDER BY expires_at DESC LIMIT 1`,
+        [
+          opts.source.agent_id,
+          opts.target.project_id,
+          opts.target.agent_id,
+          opts.guidance,
+        ],
+      )
+    ).rows[0];
+    if (!row) throw new Error("no active send-only link");
+    await assertActor(row.approved_by, opts.source.project_id);
+    return {
+      source: await sourceIdentity(opts.source),
+      link: link(row, opts.source),
+    };
+  },
+  submit: async (opts) => {
+    await local(opts, opts.request.target);
+    validateAgentRpcRequest({ ...opts.request, action: "send" });
+    let submissionStarted = false;
+    try {
+      const proof = await routed(opts.source.project_id, (api, route) =>
+        api.check({
+          ...route,
+          source: opts.source,
+          run_id: opts.run_id,
+          target: opts.request.target,
+          guidance: opts.request.guidance === true,
+        }),
+      );
+      const target = await sourceIdentity(opts.request.target);
+      if (target.created_by !== proof.link.approved_by)
+        throw new Error("target approver changed");
+      await assertActor(proof.link.approved_by, target.project_id);
+      const host = await hostFor(opts.request.target);
+      prunePermits();
+      if (permits.size >= 1000)
+        throw new Error("too many in-flight submissions");
+      const envelope: AgentRpcEnvelope = {
+        ...opts.request,
+        source: opts.source,
+        run_id: opts.run_id,
+        permit_id: randomUUID(),
+        link_id: proof.link.link_id,
+        account_id: target.created_by,
+        path: target.path,
+        thread_id: target.thread_id,
+        deadline: Date.now() + 30_000,
+      };
+      permits.set(envelope.permit_id, {
+        envelope: JSON.stringify(envelope),
+        expires: envelope.deadline,
+        host_id: host.host_id,
+      });
+      submissionStarted = true;
+      const outcome = await host.api.submitAgentRpc(envelope);
+      validateAgentRpcOutcome(outcome, opts.request);
+      return outcome;
+    } catch (error) {
+      logger.warn("recipient submission failed", {
+        attempt_id: opts.request.attempt_id,
+        target: opts.request.target,
+        submissionStarted,
+        error: `${error}`,
+      });
+      return rpcOutcome(
+        opts.request,
+        submissionStarted ? "unknown" : "rejected",
+        {
+          reason: submissionStarted
+            ? "Recipient acknowledgment unavailable"
+            : "Link, execution account or target host unavailable",
+        },
+      );
+    }
+  },
+  inspect: async (opts) => {
+    await local(opts, opts.request.target);
+    validateAgentRpcRequest({ ...opts.request, action: "inspect" });
+    // Source authentication is checked at its owning bay. The host returns only
+    // evidence for this exact source/target/attempt, never receiver content.
+    await routed(opts.source.project_id, async (api, route) => {
+      await api.links({ ...route, source: opts.source, run_id: opts.run_id });
+    });
+    try {
+      const outcome = await (
+        await hostFor(opts.request.target)
+      ).api.inspectAgentRpc({ source: opts.source, request: opts.request });
+      validateAgentRpcOutcome(outcome, opts.request);
+      return outcome;
+    } catch {
+      return rpcOutcome(opts.request, "unknown", {
+        reason: "Recipient evidence unavailable",
+      });
+    }
+  },
+};
+
+export const grantRpcLink: AgentApi["grantRpcLink"] = async (opts) => {
+  const account_id = await human(opts);
+  const request = {
+    source: opts.source,
+    target: opts.target,
+    link_id: opts.link_id,
+    ttl_seconds: opts.ttl_seconds,
+    reason: opts.reason,
+    allow_guidance: opts.allow_guidance,
+    account_id,
+    fresh_auth_at: Date.now(),
+  };
+  return routed(opts.source.project_id, (api, route) =>
+    api.grant({ ...request, ...route }),
+  );
+};
+export const revokeRpcLink: AgentApi["revokeRpcLink"] = async (opts) => {
+  const account_id = await human(opts);
+  return routed(opts.source.project_id, (api, route) =>
+    api.revoke({
+      ...route,
+      source: opts.source,
+      link_id: opts.link_id,
+      account_id,
+      fresh_auth_at: Date.now(),
+    }),
+  );
+};
+export const listRpcLinks: AgentApi["listRpcLinks"] = async (opts) => {
+  requireUuid(opts.account_id, "account_id");
+  return routed(opts.source.project_id, (api, route) =>
+    api.links({ ...route, source: opts.source, account_id: opts.account_id }),
+  );
+};
+export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
+  opts,
+) => {
+  enabled();
+  const e = opts.envelope;
+  prunePermits();
+  const permit = permits.get(e.permit_id);
+  if (
+    !permit ||
+    permit.envelope !== JSON.stringify(e) ||
+    permit.host_id !== opts.host_id ||
+    e.account_id !== opts.account_id
+  )
+    throw new Error("RPC admission permit unavailable or mismatched");
+  await assertProjectHostAgentTokenAccess({
+    account_id: e.account_id,
+    host_id: permit.host_id,
+    project_id: e.target.project_id,
+  });
+  const target = await sourceIdentity(e.target);
+  if (
+    target.created_by !== e.account_id ||
+    target.path !== e.path ||
+    target.thread_id !== e.thread_id
+  )
+    throw new Error("target identity changed");
+  const proof = await routed(e.source.project_id, (api, route) =>
+    api.check({
+      ...route,
+      source: e.source,
+      run_id: e.run_id,
+      target: e.target,
+      guidance: e.guidance === true,
+    }),
+  );
+  if (
+    proof.link.link_id !== e.link_id ||
+    proof.link.approved_by !== e.account_id ||
+    Date.now() >= e.deadline
+  )
+    throw new Error("RPC link authorization changed or expired");
+};
+
+export async function acceptAgentRpc(
+  subject: string,
+  request: AgentRpcRequest,
+) {
+  enabled();
+  validateAgentRpcRequest(request);
+  const { agent_id, run_id } = parseAgentMessagingSubject(subject);
+  const identity = await agentStore().get(agent_id);
+  const source = { agent_id, project_id: identity.project_id };
+  await sourceRun(source, run_id);
+  if (request.action === "destinations")
+    return routed(source.project_id, (api, route) =>
+      api.links({ ...route, source, run_id }),
+    );
+  const { action, ...attempt } = request;
+  return routed(request.target.project_id, (api, route) =>
+    action === "send"
+      ? api.submit({
+          ...route,
+          source,
+          run_id,
+          request: attempt as import("@cocalc/conat/agents/rpc").AgentRpcSend,
+        })
+      : api.inspect({ ...route, source, run_id, request: attempt }),
+  );
+}

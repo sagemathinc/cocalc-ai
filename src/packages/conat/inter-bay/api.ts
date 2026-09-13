@@ -2785,6 +2785,7 @@ export type AccountLocalMethod =
   | "save-blob"
   | "get-blob"
   | "create-cli-login-session"
+  | "validate-host-action-auth"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
   | "get-chat-speech-capabilities"
@@ -4230,6 +4231,10 @@ export interface InterBayAccountLocalApi {
   createCliLoginSession: (
     opts: AccountLocalCreateCliLoginSessionRequest,
   ) => Promise<AccountLocalCreateCliLoginSessionResult>;
+  validateHostActionAuth: (opts: {
+    account_id: string;
+    session_hash: string;
+  }) => Promise<{ allow_second_factor_override: boolean }>;
   startCodexFreshAuth: (
     opts: AccountLocalStartCodexFreshAuthRequest,
   ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
@@ -6807,6 +6812,15 @@ export function createInterBayAccountLocalClient({
       method: "create-cli-login-session",
     }),
   });
+  const validateHostActionAuthClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "validateHostActionAuth">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "validate-host-action-auth",
+    }),
+  });
   const startCodexFreshAuthClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "startCodexFreshAuth">
   >({
@@ -8007,6 +8021,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     createCliLoginSession: async (opts) =>
       await createCliLoginSessionClient.createCliLoginSession(opts),
+    validateHostActionAuth: async (opts) =>
+      await validateHostActionAuthClient.validateHostActionAuth(opts),
     startCodexFreshAuth: async (opts) =>
       await startCodexFreshAuthClient.startCodexFreshAuth(opts),
     getCodexFreshAuthStatus: async (opts) =>
@@ -8556,6 +8572,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         createCliLoginSession: async (opts) =>
           await impl.createCliLoginSession(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "validateHostActionAuth">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "validate-host-action-auth",
+      }),
+      impl: {
+        validateHostActionAuth: async (opts) =>
+          await impl.validateHostActionAuth(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "startCodexFreshAuth">>({
