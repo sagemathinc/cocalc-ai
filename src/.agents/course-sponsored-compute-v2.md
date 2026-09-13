@@ -5,6 +5,61 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+Live sponsored GCP GPU validation passed on 2026-09-13 (18:45-19:00 UTC).
+The isolated instructor approved a USD 2 prepaid allowance; the student created
+`50c373e9-ce71-4480-a5b1-0183ee0b9db0`, a `g2-standard-4` in `us-central1-a`.
+SSH, with its host key independently checked against the GCP serial console,
+confirmed an NVIDIA L4, 23034 MiB, driver 580.173.02. The actual student browser
+showed the running-GPU reminder. Keyboard activation, collapse, focus return,
+scoped axe and layout checks passed at 320/720/1440 pixels in both themes;
+screenshots were inspected after modal transitions completed.
+
+The student shortened the scheduled stop to one minute through the normal API.
+With browser and SSH disconnected, the worker stopped the VM; both spending
+projections changed from compute to storage-only rates. Explicit deletion removed
+its instance, boot disk and address. Normal egress finalization subsequently
+settled USD 0.06 and released USD 1.65 of unused reservation. Purchase attribution
+confirmed all six one-cent charges belong to the instructor, not the student.
+The temporary isolated boot-disk limit was restored. Main-hub settings and
+real-customer sponsorship were not changed.
+
+A separate 10 GB GCP course volume,
+`8fbf3111-1fa8-422f-8296-4c84d072e431`, provisioned through the normal student API
+with USD 0.12 backing, including USD 0.11 protected storage. A deliberately
+accelerated, journaled local deadline fixture made its retention deadline past;
+the running worker then deleted the actual provider disk without a delete API
+call and released all backing. Independent inventory found no remaining test
+instances, disks or addresses at 18:55:53 UTC. This verifies the live deadline
+worker/provider/settlement path, **not** passage of the full 72-hour grace period
+or a signed retention-policy change. The original binding is retained in the
+protected QA journal and explicitly labeled fixture metadata. The existing
+project notebook marker survived a live notebook save/reload after both deletes.
+
+Live sponsored Nebius GPU validation also passed (19:00-19:08 UTC). The
+maintainer configured the main dev hub; the isolated QA hub received the same
+region configuration through its admin API, retained its separate resource
+namespace, and refreshed its catalog. The student reused the same grant only
+after GCP settlement released the earlier reservation. VM
+`3d9d9c3e-2d86-44b2-951a-31bb34ac3724` used a single L40S (`gpu-l40s-a`,
+`1gpu-8vcpu-32gb`) in `eu-north1`. SSH confirmed 46068 MiB and driver 580.173.02;
+CUDA initialized successfully and found one device. SSH used per-instance TOFU,
+not the GCP serial-console verification method. The running-GPU browser checks
+passed again in both themes at all three widths.
+
+Its original five-minute timer stopped the provider VM without a browser or
+guest shutdown action. The student renewed fresh auth through normal password/MFA
+before deletion. Provider inspection confirmed the instance and boot disk gone,
+with no remaining test instances, disks or addresses. The temporary QA disk
+limit was restored to 30 GB. Normal settlement charged USD 0.11 with zero egress
+charge. The instructor approved closure of the shared USD 2 pool; its total
+CoCalc charges were USD 0.17, with USD 1.83 released, no student-personal charges
+and no remaining resource reservations. Direct purchase queries confirmed both
+providers' charges against the instructor account. A payer-home audit returned
+no findings, and the project
+notebook marker again survived backend save/reload after Nebius deletion.
+This is two bounded live provider tests, not a long-running GPU workload,
+independent accounting review, cross-bay cloud deployment or pilot sign-off.
+
 New VM creation with a retained home disk now follows the disk's owning bay,
 including after an account moves to another bay. The home bay resolves a disk
 owned by the authenticated account and forwards its canonical ID, original
@@ -507,8 +562,9 @@ The earlier diagnostic-assisted fallback VM
 `c3da759c-7acd-4575-b927-de54c7b67fb6` was deleted and settled. The fresh
 unattended run described at the top supersedes that attempt as fallback evidence.
 
-Remaining implementation/validation includes live volume retention expiry and the
-complete live cross-bay/device/GPU validation matrix. Creating a new VM with an
+Remaining validation includes the full elapsed retention grace period and the
+complete live cross-bay/device/provider validation matrix. GCP/Nebius GPU and
+accelerated live volume deadline cleanup evidence is recorded above. Creating a new VM with an
 existing home disk on another bay after account rehome now has co-placement
 implementation and a connected PostgreSQL/Conat regression, but still needs live
 cloud validation. Optional currency display is
