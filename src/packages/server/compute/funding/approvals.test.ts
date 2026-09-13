@@ -118,10 +118,11 @@ describeDb("durable course funding intents", () => {
     }),
     apply,
   });
-  const pool = getPool();
+  let pool: ReturnType<typeof getPool>;
   const oldBay = process.env.COCALC_BAY_ID;
   beforeAll(async () => {
     process.env.COCALC_BAY_ID = "bay-0";
+    pool = getPool();
     await pool.query(
       "CREATE TABLE accounts (account_id UUID PRIMARY KEY, home_bay_id TEXT, deleted BOOLEAN, banned BOOLEAN)",
     );

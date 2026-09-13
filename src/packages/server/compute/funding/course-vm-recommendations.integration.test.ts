@@ -332,9 +332,10 @@ postgresIt(
       const deadline = Date.now() + 3000;
       let blocked = false;
       while (Date.now() < deadline) {
+        await db.query("SELECT pg_stat_clear_snapshot()");
         const { rows } =
           await db.query(`SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
-          AND wait_event_type='Lock' AND query LIKE 'SELECT owning_bay_id,%' AND query LIKE '%FOR UPDATE%'`);
+          AND pg_backend_pid()=ANY(pg_blocking_pids(pid))`);
         if (rows.length) {
           blocked = true;
           break;

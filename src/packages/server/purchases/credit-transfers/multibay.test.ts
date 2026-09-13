@@ -123,6 +123,33 @@ jest.mock("@cocalc/server/bay-registry", () => ({
   listClusterBayRegistry: async () =>
     ["transfer-a", "transfer-b", "transfer-c"].map((bay_id) => ({ bay_id })),
 }));
+jest.mock("@cocalc/server/cluster-config", () => ({
+  ...jest.requireActual("@cocalc/server/cluster-config"),
+  isMultiBayCluster: () => true,
+}));
+// External deployment attestations are test inputs. Exposure arithmetic,
+// database quota pinning and the account-move coordinator remain real.
+jest.mock("@cocalc/server/compute/funding/production-rollout-manifest", () => ({
+  loadProductionFundingRollout: async () => ({
+    manifest: {
+      bays: ["transfer-a", "transfer-b", "transfer-c"].map((bay_id) => ({
+        bay_id,
+      })),
+      expires_at: new Date(Date.now() + 3600000).toISOString(),
+      exposure_allocation: {
+        id: "transfer-test-static-allocation",
+        site_ceiling_usd: "100",
+        bay_quotas: ["transfer-a", "transfer-b", "transfer-c"].map(
+          (bay_id) => ({ bay_id, amount_usd: "30" }),
+        ),
+      },
+    },
+  }),
+}));
+jest.mock("@cocalc/server/compute/funding/rollout", () => ({
+  assertSponsorshipAdmission: async () => ({ expires_at: Date.now() + 30000 }),
+  assertSponsorshipAdmissionInTransaction: async () => {},
+}));
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
   default: async () => ({
