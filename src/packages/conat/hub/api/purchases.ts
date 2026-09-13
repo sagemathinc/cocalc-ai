@@ -1,5 +1,6 @@
 import { authFirstRequireAccount } from "./util";
 import type { CreditTransferApi } from "@cocalc/util/credit-transfers";
+import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
 import type { MoneyValue } from "@cocalc/util/money";
 import type { AutoBalanceConfig } from "@cocalc/util/db-schema/accounts";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
@@ -1558,7 +1559,7 @@ export interface AccountUsageOverview {
   measurement_warnings: string[];
 }
 
-export interface Purchases extends CreditTransferApi {
+export interface Purchases extends CreditTransferApi, MonthlyCollectionApi {
   getBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   getMinBalance: (opts?: { account_id?: string }) => Promise<MoneyValue>;
   setAutoBalance: (opts?: {
@@ -1975,6 +1976,8 @@ export interface Purchases extends CreditTransferApi {
 // Public purchase RPCs act on account-owned billing and entitlement state.
 // Internal and inter-bay callers use separate service contracts.
 export const purchases = {
+  getMonthlyCollection: authFirstRequireAccount,
+  proposeMonthlyCollection: authFirstRequireAccount,
   previewCreditTransfer: authFirstRequireAccount,
   proposeCreditTransfer: authFirstRequireAccount,
   getCreditTransferStatus: authFirstRequireAccount,

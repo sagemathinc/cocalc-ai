@@ -246,6 +246,14 @@ export async function freezeAccountFinancialState(
   op: Operation,
 ): Promise<AccountFinancialHandoff> {
   await lock(client, op.account_id);
+  const { rows: collecting } = await client.query(
+    "SELECT 1 FROM statements WHERE account_id=$1 AND (monthly_collection->>'state'='claimed' OR (monthly_collection->>'state'='requires_review' AND automatic_payment_intent_id IS NULL AND paid_purchase_id IS NULL)) LIMIT 1",
+    [op.account_id],
+  );
+  if (collecting.length)
+    throw Error(
+      "Monthly collection is in flight; reconcile the payment before moving the account.",
+    );
   if (
     op.source_bay_id !== getConfiguredBayId() ||
     op.source_bay_id === op.dest_bay_id

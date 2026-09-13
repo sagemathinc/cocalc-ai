@@ -11,6 +11,30 @@ const maps = {
 };
 
 describe("financial rehome typed local references", () => {
+  it("preserves monthly collection identity when a statement moves", () => {
+    const monthly_collection = {
+      attempt_id: "stable-attempt",
+      state: "issued",
+      consent_version: 2,
+    };
+    expect(
+      remapFinancialRow(
+        "statements",
+        {
+          id: 1,
+          paid_purchase_id: 2,
+          automatic_payment_intent_id: "pi_stable",
+          monthly_collection,
+        },
+        maps,
+      ),
+    ).toEqual({
+      id: 301,
+      paid_purchase_id: 102,
+      automatic_payment_intent_id: "pi_stable",
+      monthly_collection,
+    });
+  });
   it("remaps ledger links without recursively changing arbitrary metadata", () => {
     const original = {
       id: 1,

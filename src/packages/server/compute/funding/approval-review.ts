@@ -34,6 +34,7 @@ import type {
 import { validatePersonalVolumeApprovalReview } from "./approval-volume-personal";
 
 export type CourseFundingApprovalTerms =
+  | import("@cocalc/util/monthly-collection").MonthlyCollectionTerms
   | CourseFundingDraft
   | CourseFundingPoolChangeDraft
   | PersonalVmApprovalTerms
@@ -60,6 +61,11 @@ export async function resolveCourseFundingReview(
   payer: string,
   terms: CourseFundingApprovalTerms,
 ): Promise<FundingApprovalReview> {
+  const monthly = "kind" in terms && terms.kind === "monthlyCollection";
+  if (monthly)
+    await (
+      await import("@cocalc/server/purchases/monthly-collection")
+    ).reviewMonthlyCollection(payer, terms);
   const personalVolume =
     "kind" in terms && terms.kind === "personalVolumeFunding"
       ? validatePersonalVolumeApprovalReview(
@@ -104,7 +110,7 @@ export async function resolveCourseFundingReview(
   const recipientIds =
     "kind" in terms && terms.kind === "creditTransfer"
       ? [terms.recipient.account_id]
-      : personal || personalVolume
+      : personal || personalVolume || monthly
         ? []
         : poolChange
           ? poolChange.pool.grants.map((g) => g.beneficiary_account_id)

@@ -45,6 +45,12 @@ import type { CreditTransferApprovalTerms } from "./approval-transfer";
 import { prepareSponsorshipApproval } from "./approval-sponsorship";
 import { normalizePersonalVolumeApprovalTerms } from "./approval-volume-personal";
 import type { PersonalVolumeApprovalTerms } from "./approval-volume-personal";
+import { normalizeMonthlyCollectionTerms } from "@cocalc/util/monthly-collection";
+import type { MonthlyCollectionTerms } from "@cocalc/util/monthly-collection";
+import {
+  applyMonthlyCollection,
+  reviewMonthlyCollection,
+} from "@cocalc/server/purchases/monthly-collection";
 
 const logger = getLogger("compute:funding:approval-startup");
 let starting: Promise<void> | undefined;
@@ -76,6 +82,8 @@ export function initCourseFundingApprovalService({
         throw new Error("Storage policy changed; create a new funding intent");
       }
       if ("kind" in terms) {
+        if (terms.kind === "monthlyCollection")
+          return applyMonthlyCollection(db, payer_account_id, terms, intent_id);
         if (terms.kind === "personalVolumeFunding") {
           if (!review.personal_volume)
             throw Error("Personal storage review unavailable.");
@@ -140,17 +148,19 @@ export function initCourseFundingApprovalService({
       approval_origin: config.origin,
       validateTerms: (input: unknown) =>
         input != null && typeof input === "object" && "kind" in input
-          ? input.kind === "creditTransfer"
-            ? normalizeTransferApprovalTerms(
-                input as CreditTransferApprovalTerms,
-              )
-            : input.kind === "personalVolumeFunding"
-              ? normalizePersonalVolumeApprovalTerms(
-                  input as PersonalVolumeApprovalTerms,
+          ? input.kind === "monthlyCollection"
+            ? normalizeMonthlyCollectionTerms(input as MonthlyCollectionTerms)
+            : input.kind === "creditTransfer"
+              ? normalizeTransferApprovalTerms(
+                  input as CreditTransferApprovalTerms,
                 )
-              : normalizePersonalVmApprovalTerms(
-                  input as PersonalVmApprovalTerms,
-                )
+              : input.kind === "personalVolumeFunding"
+                ? normalizePersonalVolumeApprovalTerms(
+                    input as PersonalVolumeApprovalTerms,
+                  )
+                : normalizePersonalVmApprovalTerms(
+                    input as PersonalVmApprovalTerms,
+                  )
           : input != null && typeof input === "object" && "action" in input
             ? normalizeCourseFundingPoolChangeDraft(
                 input as CourseFundingPoolChangeDraft,
@@ -159,6 +169,17 @@ export function initCourseFundingApprovalService({
       resolveReview: resolveCourseFundingReview,
       apply,
       prepare: async (intent) => {
+        if (
+          "kind" in intent.terms &&
+          intent.terms.kind === "monthlyCollection"
+        ) {
+          await reviewMonthlyCollection(intent.payer_account_id, intent.terms);
+          return {
+            withTransaction: (fn) =>
+              withFundingAccountTransaction(intent.payer_account_id, fn),
+            apply,
+          };
+        }
         const transfer = await prepareTransferApproval(intent);
         if (transfer || "kind" in intent.terms) return transfer;
         const sponsorship = await prepareSponsorshipApproval(

@@ -4,6 +4,7 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { MONTHLY_COLLECTION_TERMS } from "@cocalc/util/monthly-collection";
 import { createServer } from "node:http";
 import express from "express";
 import type { Request, Response } from "express";
@@ -85,6 +86,11 @@ function fundingReview(
     `<strong>${escapeHtml(person.name)}</strong> &lt;${escapeHtml(person.email)}&gt;`;
   const usd = (value: string) => `USD ${toDecimal(value).toFixed(2)}`;
   const { review } = intent;
+  if ("kind" in intent.terms && intent.terms.kind === "monthlyCollection") {
+    return `<dl><dt>Account</dt><dd>${identity(review.payer)}</dd><dt>Monthly collection</dt><dd>${intent.terms.enabled ? "Enable" : "Disable"}</dd></dl>
+    <p>${escapeHtml(MONTHLY_COLLECTION_TERMS)}</p>
+    <p>Disabling blocks future automatic payment attempts, not outstanding debts or already-started payments. Postpaid service may stop if it no longer has eligible billing. This is account-wide, not restricted to one course.</p>`;
+  }
   if ("kind" in intent.terms && intent.terms.kind === "creditTransfer") {
     const terms = intent.terms;
     const recipient = review.recipients.find(
@@ -367,11 +373,13 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     page(
       res,
       "kind" in intent.terms
-        ? intent.terms.kind === "creditTransfer"
-          ? "Approve Credit Transfer"
-          : intent.terms.kind === "personalVolumeFunding"
-            ? "Approve Personal Storage Funding"
-            : "Approve Personal VM Funding"
+        ? intent.terms.kind === "monthlyCollection"
+          ? "Approve Monthly Collection"
+          : intent.terms.kind === "creditTransfer"
+            ? "Approve Credit Transfer"
+            : intent.terms.kind === "personalVolumeFunding"
+              ? "Approve Personal Storage Funding"
+              : "Approve Personal VM Funding"
         : "Approve Course Funding",
       `${fundingReview(intent)}
       ${

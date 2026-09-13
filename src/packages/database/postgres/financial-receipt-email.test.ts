@@ -103,4 +103,7 @@ it("leaves legacy notices unchanged and recognizes only explicit financial recei
   expect(
     isFinancialReceipt({ notice_type: "billing_credit_transfer_receipt" }),
   ).toBe(true);
+  expect(
+    isFinancialReceipt({ notice_type: "billing_monthly_collection" }),
+  ).toBe(true);
 });

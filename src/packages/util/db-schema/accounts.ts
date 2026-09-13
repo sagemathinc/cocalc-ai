@@ -427,6 +427,10 @@ Table({
       pg_type: "varchar(256)",
       desc: "Id of this user's stripe metered usage subscription, if they have one.",
     },
+    monthly_collection: {
+      type: "map",
+      desc: "Versioned monthly statement collection consent. Written only by isolated financial approval; not a spending entitlement. An explicit disabled consent overrides legacy automatic collection.",
+    },
     email_daily_statements: {
       type: "boolean",
       desc: "If true, try to send daily statements to user showing all of their purchases.  If false or not set, then do not.  NOTE: we always try to email monthly statements to users.",

@@ -5,6 +5,48 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+Explicit monthly-collection opt-in was requested by the maintainer and is now
+connected (2026-09-13, 18:19-18:21 UTC). Balance settings propose versioned
+account-wide consent; the independent approval origin performs sign-in/MFA and
+authorizes the change. The account-home API exposes consent, resumable pending
+reviews and statements needing attention. Enabling requires a saved card;
+invoice collection requires a billing address. This is not automatic deposits
+or an increase in membership spending capacity. Explicit opt-out overrides legacy
+enrollment, while approved manual-collection policy remains separate.
+
+The existing maintenance caller now claims statements under the same financial
+locks as consent/spending/rehome, commits before Stripe work, and uses a stable
+attempt UUID for provider idempotency. Unknown outcomes prevent another automatic
+invoice, including via a later cumulative statement. Failed or stalled attempts
+suspend ordinary postpaid readiness; unpaid debts and already-claimed payments
+survive opt-out. Unresolved provider identity blocks account rehome. Recovery of
+unknown outcomes is deliberately operator-assisted, not blind automatic retry.
+
+Live local validation enabled then disabled consent through the actual browser
+and isolated approval page, and both states survived reload. A clearly labeled
+synthetic debit brought the isolated QA instructor balance to USD -10; the normal
+statement builder generated statement 4. Stripe test-mode payment
+`pi_3UFI0WGbwvoRbeYx19yCm9DQ` paid USD 10 plus USD 1.06 tax. The normal processor
+created purchase 24 and marked the statement paid. A second maintenance pass
+produced no duplicate credit. The synthetic debit (purchase 23) was reversed by
+purchase 25, and monthly collection was disabled again (consent version 2).
+This is real test-mode provider processing with a synthetic debt fixture, not
+new VM usage or an unattended calendar month-end run. No cloud resource was
+created. No main-hub or real-customer settings were changed.
+
+The connected settings and approval paths have focused keyboard/focus coverage,
+five frontend tests, three account-auth RPC tests, and 39 focused server checks
+using fresh PostgreSQL where required, including concurrent claims, stale consent,
+opt-out, unresolved payments and rehome guards. Chromium checks at 320/720/1440
+pixels in light/dark themes passed scoped axe and width checks; screenshot review
+confirmed the corrected wrapping of the long opt-out button. This is not a full
+device matrix, independent review or pilot authorization. Actual 200% Chromium
+zoom also passed keyboard and scoped axe checks in both themes. Two additional
+tests cover account-home routing and saved-card preflight; ten receipt-policy
+checks and 112 existing purchase/rehome tests pass. Server/frontend typechecks,
+frontend lint, the static development build, dependency consistency and the
+eight docs tests pass.
+
 Stripe test-mode validation is now connected (2026-09-13, 17:11-17:26 UTC).
 The main lite2b hub was already configured; the earlier missing-key observation
 applied only to the isolated QA hub. Its test-mode settings were configured
@@ -34,12 +76,10 @@ in Stripe test mode. Its real `auto-credit` purchase passed transferable-payment
 verification; a second maintenance invocation created no duplicate credit.
 The original automatic-deposit settings were restored. This was an invoked
 maintenance test, not an unattended calendar/month-end collection test.
-Normal postpaid admission and monthly statement collection still depend on
-`stripe_usage_subscription`; its legacy enrollment helper currently has no
-public API/UI callers in this checkout. The maintainer has been asked whether
-enrollment is external or an explicit monthly-collection opt-in should be added.
-Do not substitute automatic deposits or a fabricated subscription flag for that
-remaining validation. No new cloud resources were created for these payment tests.
+At that checkpoint normal postpaid enrollment still depended on the legacy
+`stripe_usage_subscription` helper without a public enrollment caller. The explicit
+opt-in and collection work above supersedes that gap; automatic deposits remain
+separate. No new cloud resources were created for these payment tests.
 
 Latest local validation (2026-09-13): unattended **exhaustion** fallback
 passed on GCP VM `249401db-c964-4634-8f31-3c6674d7d120`. The instructor approved
@@ -450,8 +490,7 @@ The earlier diagnostic-assisted fallback VM
 `c3da759c-7acd-4575-b927-de54c7b67fb6` was deleted and settled. The fresh
 unattended run described at the top supersedes that attempt as fallback evidence.
 
-Remaining implementation/validation includes live volume retention expiry,
-automatic monthly payment collection/enrollment, and the
+Remaining implementation/validation includes live volume retention expiry and the
 complete live cross-bay/device/GPU validation matrix. Creating a new VM with an
 existing home disk on another bay after account rehome still needs a co-placement
 implementation decision and validation; remote owner controls and existing

@@ -68,6 +68,44 @@ Do not enable a production pilot merely because offline verification succeeds.
 Review the live capability results across all bays and complete the independent
 review, bounded pilot authorization, and reconciliation gates first.
 
+## Monthly Collection
+
+Normal postpaid enrollment now has explicit account consent in Balance settings.
+The application can propose consent but only the isolated financial approval
+service can enable or disable it. Both actions are versioned and emit a durable
+financial receipt/email event. An explicit opt-out supersedes legacy enrollment.
+Existing trusted manual-collection overrides remain distinct from this opt-in.
+Membership spending windows and course backing limits remain authoritative.
+
+The existing automatic-payment maintenance loop calls the consent-aware collector.
+It claims a monthly statement under account-home, spending and rehome locks before
+contacting Stripe. The claim retains a UUID, consent version and amount; every
+provider mutation uses that UUID as its idempotency prefix. Applicable taxes are
+calculated through the normal invoice flow, which requires a billing address.
+The normal payment processor records the payment and marks the statement paid.
+The initial collector uses saved cards, not delayed bank-payment methods.
+
+Failed or unknown attempts are retained, not reissued on the next sweep or hidden
+by a newer cumulative statement. Failed attempts and attempts unconfirmed after
+ten minutes suspend normal postpaid eligibility until settlement is confirmed.
+Already-claimed work can complete after opt-out. A later deposit that partially
+covers a closed statement prevents automatic collection of its stale full amount;
+it remains for explicit settlement or the next statement.
+
+For an uncertain attempt, inspect the authoritative statement's
+\`monthly_collection\`, \`automatic_payment_intent_id\`, and \`paid_purchase_id\`,
+then compare the matching Stripe invoice/payment. Invoice metadata includes
+\`monthly_collection_attempt\`, account, site, purpose and tax-exclusive amount.
+Do not clear the claim or start another invoice merely because an HTTP response
+was lost. Use the existing payment-processing path for a confirmed paid invoice;
+an unbound/unfinished provider attempt requires operator reconciliation first.
+Account rehome is blocked while provider work is in flight or its payment identity
+is unresolved. A bound payment identity and consent survive financial rehome.
+
+The first implementation deliberately does not automatically retry failed cards
+or infer that an absent local payment ID proves there is no provider invoice.
+Operations must inspect and resolve these cases before a production pilot.
+
 ## Payer Audit
 
 Use an account-authenticated administrator CLI against the payer's authoritative

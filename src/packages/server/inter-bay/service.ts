@@ -504,6 +504,10 @@ import {
   creditTransferOutgoing,
   creditTransferDeliver,
 } from "@cocalc/server/purchases/credit-transfers/api";
+import {
+  getMonthlyCollection,
+  proposeMonthlyCollection,
+} from "@cocalc/server/purchases/monthly-collection";
 import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/sources";
 import {
   copyEmailProjectInviteLink,
@@ -1106,6 +1110,8 @@ async function startAccountLocalService(): Promise<void> {
     settleComputeVmFunding: settleComputeVmFundingLocal,
     previewCreditTransfer,
     proposeCreditTransfer,
+    getMonthlyCollection,
+    proposeMonthlyCollection,
     getCreditTransferStatus,
     listCreditTransfers,
     creditTransferRecipient,

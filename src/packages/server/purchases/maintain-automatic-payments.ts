@@ -41,6 +41,7 @@ import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-me
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
+import { maintainMonthlyCollections } from "./monthly-collection-worker";
 
 const logger = getLogger("purchase:maintain-automatic-payments");
 
@@ -71,6 +72,7 @@ WITH latest_statements AS (
     ON a.account_id = s.account_id
   WHERE
     a.stripe_usage_subscription IS NOT NULL
+    AND a.monthly_collection IS NULL
     AND s.interval = 'month'
 )
 SELECT
@@ -89,6 +91,7 @@ WHERE
 `;
 
 export default async function maintainAutomaticPayments() {
+  await maintainMonthlyCollections();
   const { pay_as_you_go_min_payment, site_name } = await getServerSettings();
 
   const pool = getPool();

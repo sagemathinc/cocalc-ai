@@ -460,6 +460,33 @@ describe("isolated financial browser approval", () => {
       ).violations,
     ).toEqual([]);
   });
+  it("reviews monthly collection separately from spending capacity and deposits", async () => {
+    approvals.retrieve.mockResolvedValue({
+      ...intent,
+      terms: {
+        kind: "monthlyCollection",
+        enabled: true,
+        expected_version: 0,
+        terms_version: 1,
+      },
+    });
+    await login("Approve Monthly Collection");
+    const body = await page.locator("main").innerText();
+    for (const text of [
+      "payer@example.test",
+      "sponsored compute charges",
+      "applicable taxes",
+      "does not increase",
+      "automatic deposits",
+      "already started",
+    ])
+      expect(body).toContain(text);
+    expect(await page.locator("script,img").count()).toBe(0);
+    await page.setViewportSize({ width: 320, height: 900 });
+    expect(
+      await page.evaluate("document.documentElement.scrollWidth <= innerWidth"),
+    ).toBe(true);
+  });
   it("renders verified transfer identities, exact USD and remaining transferable balance", async () => {
     approvals.retrieve.mockResolvedValue({
       ...intent,

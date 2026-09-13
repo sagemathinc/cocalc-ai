@@ -6,6 +6,7 @@
 // Explicit allowlist: legacy billing and other notices retain their policy.
 export const FINANCIAL_RECEIPT_NOTICE_TYPES = [
   "billing_course_funding_receipt",
+  "billing_monthly_collection",
   "billing_credit_transfer_receipt",
   "billing_personal_funding_receipt",
 ];

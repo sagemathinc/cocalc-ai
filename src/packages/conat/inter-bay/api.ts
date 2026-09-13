@@ -4,6 +4,7 @@
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type { MonthlyCollectionApi } from "@cocalc/util/monthly-collection";
 import type {
   AccountFinancialHandoff,
   AccountFinancialActivation,
@@ -4302,7 +4303,7 @@ export type ComputeOwnerMutationResult = {
     >
 );
 
-export interface InterBayComputeFundingApi {
+export interface InterBayComputeFundingApi extends MonthlyCollectionApi {
   computeProjectAuthorizeSsh: (
     opts: ComputeProjectSshRequest,
   ) => Promise<import("@cocalc/conat/hub/api/compute").ComputeVm>;
@@ -8254,6 +8255,10 @@ export function createInterBayAccountLocalClient({
     computeProjectAuthorizeSsh: (opts) =>
       computeFundingClient.computeProjectAuthorizeSsh(opts),
     computeOwnerMutate: (opts) => computeFundingClient.computeOwnerMutate(opts),
+    getMonthlyCollection: (opts) =>
+      computeFundingClient.getMonthlyCollection(opts),
+    proposeMonthlyCollection: (opts) =>
+      computeFundingClient.proposeMonthlyCollection(opts),
     computeOwnerCheckFreshAuth: (opts) =>
       computeFundingClient.computeOwnerCheckFreshAuth(opts),
     computeFundingReviewPersonalResource: (opts) =>
@@ -8768,6 +8773,8 @@ export function createInterBayAccountLocalHandler({
         computeProjectAuthorizeSsh: (opts) =>
           impl.computeProjectAuthorizeSsh(opts),
         computeOwnerMutate: (opts) => impl.computeOwnerMutate(opts),
+        getMonthlyCollection: (opts) => impl.getMonthlyCollection(opts),
+        proposeMonthlyCollection: (opts) => impl.proposeMonthlyCollection(opts),
         computeOwnerCheckFreshAuth: (opts) =>
           impl.computeOwnerCheckFreshAuth(opts),
         computeFundingReviewPersonalResource: (opts) =>

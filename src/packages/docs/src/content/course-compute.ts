@@ -29,6 +29,20 @@ collaboration by itself does not authorize spending another person's credit.
    financial approval page, sign in, and review the exact recipients, amounts,
    dates, and storage obligations before approving.
 
+For normal postpaid billing, first add a saved card and billing address under
+**Payment methods**, then open **Monthly collection** under **Balance**. Check the
+authorization box and confirm on the separate financial approval page.
+This account-wide opt-in pays unpaid monthly statements, including sponsored
+compute and applicable taxes. It does not increase membership limits or turn on
+automatic deposits. Explicit administrator-approved manual collection remains
+a separate eligibility path.
+
+You can request disabling monthly collection from the same panel. Disabling
+prevents future automatic attempts, but does not cancel payments already started
+or money owed. Postpaid compute may stop if billing is no longer eligible.
+If a payment needs attention, inspect your statements and contact support before
+paying again; an uncertain payment is not automatically submitted a second time.
+
 For example, 20 allowances of $50 fit a $1,000 pool. Allocating prepaid funding
 locks that backing: it is not simultaneously available for personal purchases,
 another course, or a credit transfer. Unused backing is released only when the

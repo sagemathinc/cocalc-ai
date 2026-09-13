@@ -424,6 +424,9 @@ export type CourseFundingApprovals<Terms extends object, Result> = ReturnType<
 >;
 
 export type FinancialApprovalResult =
+  | {
+      monthly_collection: import("@cocalc/util/monthly-collection").MonthlyCollectionConsent;
+    }
   | { pool_id: string }
   | { consent_id: string }
   | { receipt: CreditTransferReceipt };
@@ -431,6 +434,30 @@ export type FinancialApprovalResult =
 let active:
   | CourseFundingApprovals<CourseFundingApprovalTerms, FinancialApprovalResult>
   | undefined;
+
+export function monthlyCollectionApprovalAvailable(): boolean {
+  return active != null;
+}
+export async function proposeMonthlyCollectionApproval(opts: {
+  payer_account_id: string;
+  operation_id: string;
+  terms: import("@cocalc/util/monthly-collection").MonthlyCollectionTerms;
+}) {
+  if (!active)
+    throw Error("Trusted financial approval is not configured on this bay");
+  return active.propose(opts);
+}
+export async function getMonthlyCollectionApproval(opts: {
+  payer_account_id: string;
+  intent_id: string;
+}) {
+  if (!active)
+    throw Error("Trusted financial approval is not configured on this bay");
+  const intent = await active.retrieve(opts);
+  if (!("kind" in intent.terms) || intent.terms.kind !== "monthlyCollection")
+    throw Error("Not a monthly collection approval");
+  return active.status(opts);
+}
 
 // Startup installs this only after its dedicated listener is accepting requests.
 export function registerCourseFundingApprovalService(
