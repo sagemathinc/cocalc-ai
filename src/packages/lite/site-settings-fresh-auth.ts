@@ -16,6 +16,7 @@ interface Grant {
 }
 
 let accessTokenHash: Buffer | undefined;
+let allowTokenlessLocal = false;
 const grants = new Map<string, Grant>();
 
 function hash(value: string): Buffer {
@@ -42,8 +43,11 @@ function pruneExpired(now = Date.now()): void {
 
 export function configureLiteSiteSettingsFreshAuth(
   authToken: string | undefined,
+  options: { allow_tokenless_local?: boolean } = {},
 ): void {
   accessTokenHash = authToken ? hash(authToken) : undefined;
+  allowTokenlessLocal =
+    accessTokenHash == null && options.allow_tokenless_local === true;
   grants.clear();
 }
 
@@ -65,11 +69,14 @@ export function authorizeLiteSiteSettings({
   );
   const candidate =
     typeof access_token === "string" ? hash(access_token) : null;
-  if (
-    accessTokenHash == null ||
-    candidate == null ||
-    !timingSafeEqual(accessTokenHash, candidate)
-  ) {
+  const tokenMatches =
+    accessTokenHash != null &&
+    candidate != null &&
+    timingSafeEqual(accessTokenHash, candidate);
+  const tokenlessLocal =
+    allowTokenlessLocal &&
+    (access_token == null || `${access_token}`.trim() === "");
+  if (!tokenMatches && !tokenlessLocal) {
     throw Error("Lite access token is invalid or unavailable");
   }
 

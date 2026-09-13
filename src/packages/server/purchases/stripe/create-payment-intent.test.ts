@@ -33,6 +33,7 @@ jest.mock("./util", () => ({
   defaultReturnUrl: (...args: any[]) => mockDefaultReturnUrl(...args),
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
   getStripeLineItems: (...args: any[]) => mockGetStripeLineItems(...args),
+  normalizeStripeLineItems: (lineItems: unknown) => lineItems,
   sanityCheckAmount: (...args: any[]) => mockSanityCheckAmount(...args),
   currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
 }));

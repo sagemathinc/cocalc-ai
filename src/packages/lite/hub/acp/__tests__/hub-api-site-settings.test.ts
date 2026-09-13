@@ -115,6 +115,34 @@ describe("lite hub site settings", () => {
     ).toThrow("invalid or unavailable");
   });
 
+  it("permits tokenless grants only for an explicitly loopback deployment", async () => {
+    const freshAuth = await import("../../../site-settings-fresh-auth");
+    freshAuth.configureLiteSiteSettingsFreshAuth(undefined, {
+      allow_tokenless_local: true,
+    });
+    const grant = freshAuth.authorizeLiteSiteSettings({
+      access_token: undefined,
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+    });
+    expect(() =>
+      freshAuth.consumeLiteSiteSettingsFreshAuth({
+        ...grant,
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+      }),
+    ).not.toThrow();
+
+    freshAuth.configureLiteSiteSettingsFreshAuth(undefined);
+    expect(() =>
+      freshAuth.authorizeLiteSiteSettings({
+        access_token: undefined,
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+      }),
+    ).toThrow("invalid or unavailable");
+  });
+
   it("blocks account and project principals from mutating protected tables", async () => {
     const { getRow, userQuery } = await setup();
     for (const principal of [

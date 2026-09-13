@@ -34,7 +34,10 @@ import { initAuth } from "./auth-token";
 import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
 import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
-import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
+import {
+  assertLocalBindOrInsecure,
+  isLoopbackHost,
+} from "@cocalc/backend/network/policy";
 import { maybeHandleLiteStaticAppRequest } from "./static-apps";
 import { isApiV2Enabled } from "./api-v2";
 import {
@@ -128,9 +131,17 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
   return { httpServer, app, port: actualPort, isHttps, hostname };
 }
 
-export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
+export async function initApp({
+  app,
+  conatClient,
+  AUTH_TOKEN,
+  isHttps,
+  hostname = "",
+}) {
   initAuth({ app, AUTH_TOKEN, isHttps });
-  configureLiteSiteSettingsFreshAuth(AUTH_TOKEN);
+  configureLiteSiteSettingsFreshAuth(AUTH_TOKEN, {
+    allow_tokenless_local: !AUTH_TOKEN && isLoopbackHost(hostname),
+  });
   app.post(
     "/api/v2/auth/lite-site-settings-authorize",
     express.json({ limit: "4kb", strict: true }),

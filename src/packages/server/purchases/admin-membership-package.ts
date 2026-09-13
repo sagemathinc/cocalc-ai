@@ -3,10 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool, {
-  getTransactionClient,
-  type PoolClient,
-} from "@cocalc/database/pool";
+import getPool, { getClient, type PoolClient } from "@cocalc/database/pool";
 import { recordAccountAdminAuditEvent } from "@cocalc/server/accounts/admin-audit";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
@@ -30,7 +27,10 @@ import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
-import { resolveAdminCourseProjectQuoteContext } from "./admin-course-project";
+import {
+  resolveAdminCourseProjectQuoteContext,
+  resolveLockedLocalAdminCourseProjectQuoteContext,
+} from "./admin-course-project";
 
 export type AdminMembershipPackageSource = "card" | "credit" | "free";
 
@@ -170,11 +170,13 @@ async function fundPurchaseFromCard({
   account_id,
   admin_account_id,
   amount,
+  client,
   idempotency_key,
 }: {
   account_id: string;
   admin_account_id: string;
   amount: number;
+  client: PoolClient;
   idempotency_key: string;
 }): Promise<{
   credit_id: number;
@@ -201,7 +203,7 @@ async function fundPurchaseFromCard({
     idempotencyKeyPrefix: `admin-membership-package:${admin_account_id}:${idempotency_key}`,
     allowedPaymentMethodTypes: ["card"],
   });
-  const { rows } = await getPool("medium").query(
+  const { rows } = await client.query(
     `SELECT id, -cost AS amount
        FROM purchases
       WHERE account_id=$1
@@ -268,22 +270,35 @@ export default async function adminCreateMembershipPackagePurchase({
     invoice_id,
   });
   if (existing) return existing;
-  const courseProject = await resolveAdminCourseProjectQuoteContext({
-    admin_account_id,
-    product,
-  });
-
-  const cardFunding =
-    source === "card" && customPrice.gt(0)
-      ? await fundPurchaseFromCard({
-          account_id: user_account_id,
-          admin_account_id,
-          amount: customPrice.toNumber(),
-          idempotency_key: idempotencyKey,
-        })
+  // Use a dedicated session rather than consuming the bounded application
+  // pool while Stripe and its fulfillment callbacks use ordinary clients.
+  const sessionClient = getClient();
+  await sessionClient.connect();
+  const client = sessionClient as unknown as PoolClient;
+  const courseProjectId =
+    product.kind === "course"
+      ? `${product.course_project_id ?? ""}`.trim()
       : undefined;
-  const client = await getTransactionClient();
+  let accountFenceLocked = false;
+  let projectFenceLocked = false;
   try {
+    await client.query(
+      "SELECT pg_advisory_lock(hashtext($1::text), hashtext($2::text))",
+      ["account-rehome", user_account_id],
+    );
+    accountFenceLocked = true;
+    if (courseProjectId) {
+      await client.query(
+        "SELECT pg_advisory_lock(hashtext($1::text), hashtext($2::text))",
+        ["project-rehome", courseProjectId],
+      );
+      projectFenceLocked = true;
+    }
+
+    // Validate before contacting Stripe, but do not hold a database
+    // transaction open across provider I/O. The session locks still prevent
+    // account or project rehome while funding is in flight.
+    await client.query("BEGIN");
     await assertAccountNotRehoming({
       db: client,
       account_id: user_account_id,
@@ -294,6 +309,14 @@ export default async function adminCreateMembershipPackagePurchase({
       account_id: user_account_id,
       action: "create admin membership package purchase",
     });
+    await resolveLockedLocalAdminCourseProjectQuoteContext({
+      client,
+      product,
+    });
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+      ["admin-membership-package", invoice_id],
+    );
     const existing = await getExistingPurchase({
       account_id: user_account_id,
       invoice_id,
@@ -303,6 +326,51 @@ export default async function adminCreateMembershipPackagePurchase({
       await client.query("COMMIT");
       return existing;
     }
+    await client.query("COMMIT");
+
+    const cardFunding =
+      source === "card" && customPrice.gt(0)
+        ? await fundPurchaseFromCard({
+            account_id: user_account_id,
+            admin_account_id,
+            amount: customPrice.toNumber(),
+            client,
+            idempotency_key: idempotencyKey,
+          })
+        : undefined;
+
+    // Revalidate after provider funding and keep the final course row lock
+    // through fulfillment. If the process died after funding, the same key
+    // recovers the existing invoice credit on retry.
+    await client.query("BEGIN");
+    await assertAccountNotRehoming({
+      db: client,
+      account_id: user_account_id,
+      action: "create admin membership package purchase",
+    });
+    await assertAccountWriteOnHomeBay({
+      db: client,
+      account_id: user_account_id,
+      action: "create admin membership package purchase",
+    });
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))",
+      ["admin-membership-package", invoice_id],
+    );
+    const existingAfterFunding = await getExistingPurchase({
+      account_id: user_account_id,
+      invoice_id,
+      client,
+    });
+    if (existingAfterFunding) {
+      await client.query("COMMIT");
+      return existingAfterFunding;
+    }
+    const courseProject =
+      await resolveLockedLocalAdminCourseProjectQuoteContext({
+        client,
+        product,
+      });
 
     const quote = await resolveAdminMembershipPackageQuote(
       product,
@@ -457,6 +525,22 @@ export default async function adminCreateMembershipPackagePurchase({
     }
     throw err;
   } finally {
-    client.release();
+    if (projectFenceLocked) {
+      await sessionClient
+        .query(
+          "SELECT pg_advisory_unlock(hashtext($1::text), hashtext($2::text))",
+          ["project-rehome", courseProjectId],
+        )
+        .catch(() => undefined);
+    }
+    if (accountFenceLocked) {
+      await sessionClient
+        .query(
+          "SELECT pg_advisory_unlock(hashtext($1::text), hashtext($2::text))",
+          ["account-rehome", user_account_id],
+        )
+        .catch(() => undefined);
+    }
+    await sessionClient.end();
   }
 }
