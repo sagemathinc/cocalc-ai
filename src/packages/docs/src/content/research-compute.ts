@@ -8,15 +8,15 @@ Summarize a CSV one row at a time, then check the saved count, mean, and sample
 variance against an independent calculation. This example keeps four statistical
 state values per group for three known groups.
 
-**Validation scope:** on September 13, 2026, these commands ran in a CoCalc
-project on Linux with Python 3.14.4, using the CLI to execute each project-shell
-command. The two guides produced all expected results and failure statuses;
-the companion suite passed all 12 tests. Subsequent changes prevent output-file
-overwrites, bound artifact verification, and improve test interruption and
-cleanup. The revised files passed local checks on macOS with Python 3.9.6 and
-3.12.14; they have not been rerun in CoCalc. The numerical algorithms and guide
-commands are unchanged. These checks validate the small examples, not a
-performance or capacity guarantee.
+**Validation scope:** on September 13, 2026, the current files and all 19
+command units across these two guides ran in a CoCalc Basic 1.7 project on
+Linux x86_64 with Python 3.14.4. The CLI executed each project-shell command;
+17 succeeded and both intended invalid/incomplete-data checks failed. The
+companion suite passed all 14 tests, including output-file preservation,
+bounded artifact verification, real interruption, and stalled-worker cleanup.
+Independent comparisons verified all expected scientific results. The files
+also passed local checks on macOS with Python 3.9.6 and 3.12.14. These checks
+validate the small examples, not a performance or capacity guarantee.
 
 ## Prepare a project terminal
 
@@ -171,7 +171,7 @@ A \`.started.json\` or \`.partial.jsonl\` file alone is not a completed result.
 | Missing Python, permission error, or filesystem sync error | Stop and inspect the selected runtime and writable directory before retrying. |
 
 The streaming calculation holds four state values per group. The hosted test
-measured peak traced Python allocations of 285,131 and 285,164 bytes for 6,000
+measured peak traced Python allocations of 285,221 and 285,326 bytes for 6,000
 and 60,000 rows with the same three groups;
 that does not measure total process memory or establish a CoCalc memory quota.
 The input hash identifies bytes consumed by the reader, not an atomic snapshot
@@ -204,15 +204,15 @@ processes. A single coordinator writes the results; independent serial and
 analytic checks test the calculation. This is a bounded process-pool example,
 not a speedup benchmark.
 
-**Validation scope:** on September 13, 2026, these commands ran in a CoCalc
-project on Linux with Python 3.14.4, using the CLI to execute each project-shell
-command. The two guides produced all expected results and failure statuses;
-the companion suite passed all 12 tests. Subsequent changes prevent output-file
-overwrites, bound artifact verification, and improve test interruption and
-cleanup. The revised files passed local checks on macOS with Python 3.9.6 and
-3.12.14; they have not been rerun in CoCalc. The numerical algorithms and guide
-commands are unchanged. These checks validate the small examples, not a
-performance or capacity guarantee.
+**Validation scope:** on September 13, 2026, the current files and all 19
+command units across these two guides ran in a CoCalc Basic 1.7 project on
+Linux x86_64 with Python 3.14.4. The CLI executed each project-shell command;
+17 succeeded and both intended invalid/incomplete-data checks failed. The
+companion suite passed all 14 tests, including output-file preservation,
+bounded artifact verification, real interruption, and stalled-worker cleanup.
+Independent comparisons verified all expected scientific results. The files
+also passed local checks on macOS with Python 3.9.6 and 3.12.14. These checks
+validate the small examples, not a performance or capacity guarantee.
 
 ## Prepare a project terminal
 
@@ -365,14 +365,13 @@ folder, with both files beside one another:
 python3 -B scientific-prototype-v2-tests.py
 ~~~
 
-The recorded hosted result was \`Ran 12 tests\` followed by \`OK\`. The suite writes
+The recorded hosted result was \`Ran 14 tests in 12.472s\` followed by \`OK\`. The suite writes
 PID-prefixed synthetic fixtures beside itself, checks malformed inputs and
 42 checksum-consistent corruptions, simulates a worker failure, and interrupts
 a real child run. It includes a two-worker interruption case with 16 rates and
 500,000 intervals. Per-process CPU limits and subprocess timeouts bound that
 test; they do not impose a total RAM limit. Its \`resource\` module requires a
-compatible Unix-like runtime. The hosted suite completed in about nine seconds;
-your runtime and elapsed time can differ.
+compatible Unix-like runtime. Your runtime and elapsed time can differ.
 
 \`verify\` checks schema, expected cases, counts, and checksums; it does not
 independently recompute the science or authenticate the artifacts. The

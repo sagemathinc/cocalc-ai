@@ -99,16 +99,15 @@ subprocess timeouts, not a total memory cap. Wait for it to exit before deleting
 only that disposable folder. The package's `test:examples` command also runs
 this suite from a temporary copy, so its fixtures stay out of the source tree.
 
-On September 13, 2026, the two guides passed 19 project-shell command checks
-(17 successful commands and two expected failures) in CoCalc on Linux with
-Python 3.14.4. The companion suite passed all 12 tests. Fifteen downloaded
-result files and receipts matched their remote hashes; the downloaded results
-also passed the independent numerical comparisons. Local tests passed on macOS
-with Python 3.12.14. After the hosted run, changes added exclusive output-file
-publication, bounded artifact verification, deterministic interruption tests,
-and bounded test-process cleanup. The revised files passed locally on Python
-3.9.6 and 3.12.14; they were not rerun in CoCalc. The numerical algorithms and
-guide commands are unchanged. Output directories must support hard links;
+On September 13, 2026, the current files and both guides passed 19 project-shell
+command checks (17 successful commands and two intended failures) in a CoCalc
+Basic 1.7 project on Linux x86_64 with Python 3.14.4. One companion-suite run
+passed all 14 tests, including exclusive output publication, bounded artifact
+verification, deterministic interruption, and stalled-worker cleanup. All 15
+scientific input/result/receipt downloads matched remote hashes, and the guide
+commands independently checked complete 3/8/8-result artifacts. The test folders
+were removed and the disposable project stopped. The current files also passed
+locally on Python 3.9.6 and 3.12.14. Output directories must support hard links;
 unsupported filesystems fail without falling back to replacing existing files.
 Pre-publication testing uploaded the candidate files through the CLI; public
 main-download navigation requires the files to be merged. Saved checksums and
