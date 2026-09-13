@@ -9,18 +9,16 @@ import LiteAISettings from "./lite-ai-settings";
 
 const queryMock = jest.fn();
 const setSiteSettingsMock = jest.fn();
-const runFreshAuthActionMock = jest.fn(async (action: () => Promise<void>) => {
-  await action();
-  return true;
-});
+const postAuthApiMock = jest.fn();
 const clearOpenAICacheMock = jest.fn();
 const reloadCustomizeMock = jest.fn();
 
 jest.mock("antd", () => {
   const Input = {
-    Password: ({ "aria-label": ariaLabel, onChange, value }: any) => (
+    Password: ({ "aria-label": ariaLabel, id, onChange, value }: any) => (
       <input
         aria-label={ariaLabel}
+        id={id}
         type="password"
         value={value}
         onChange={onChange}
@@ -40,6 +38,22 @@ jest.mock("antd", () => {
       </button>
     ),
     Input,
+    Modal: ({ children, okButtonProps, okText, onCancel, onOk, open }: any) =>
+      open ? (
+        <div role="dialog" aria-label="Authorize site setting change">
+          {children}
+          <button
+            type="button"
+            disabled={okButtonProps?.disabled}
+            onClick={onOk}
+          >
+            {okText}
+          </button>
+          <button type="button" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      ) : null,
     Space: ({ children }: any) => <div>{children}</div>,
     Typography: {
       Paragraph: ({ children }: any) => <p>{children}</p>,
@@ -55,12 +69,8 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   },
 }));
 
-jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
-  FreshAuthModal: () => <div data-testid="fresh-auth-modal" />,
-  useFreshAuthAction: () => ({
-    runFreshAuthAction: runFreshAuthActionMock,
-    freshAuthModalProps: {},
-  }),
+jest.mock("@cocalc/frontend/auth/api", () => ({
+  postAuthApi: (...args: any[]) => postAuthApiMock(...args),
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -89,6 +99,7 @@ describe("LiteAISettings", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     queryMock.mockResolvedValue({ query: { site_settings: [] } });
+    postAuthApiMock.mockResolvedValue({ fresh_auth_token: "fresh-token" });
     setSiteSettingsMock.mockResolvedValue({
       local_bay_id: "bay-0",
       count: 1,
@@ -96,23 +107,39 @@ describe("LiteAISettings", () => {
     });
   });
 
-  it("writes the shared API key through fresh auth and the domain API", async () => {
+  it("proves the Lite access token before using the domain API", async () => {
     render(<LiteAISettings />);
 
     const input = await screen.findByLabelText("OpenAI API Key");
     fireEvent.change(input, { target: { value: "sk-test" } });
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(
+      screen.getByRole("dialog", { name: "Authorize site setting change" }),
+    ).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("CoCalc Lite access token"), {
+      target: { value: "lite-access-token" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Authorize and save" }));
 
     await waitFor(() => {
+      expect(postAuthApiMock).toHaveBeenCalledWith({
+        endpoint: "auth/lite-site-settings-authorize",
+        body: {
+          access_token: "lite-access-token",
+          browser_id: "browser-1",
+        },
+      });
       expect(setSiteSettingsMock).toHaveBeenCalledWith({
         settings: [{ name: "openai_api_key", value: "sk-test" }],
         browser_id: "browser-1",
+        fresh_auth_token: "fresh-token",
       });
     });
-    expect(runFreshAuthActionMock).toHaveBeenCalledTimes(1);
     expect(queryMock).toHaveBeenCalledTimes(1);
     expect(clearOpenAICacheMock).toHaveBeenCalledTimes(1);
     expect(reloadCustomizeMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("fresh-auth-modal")).toBeTruthy();
+    expect(
+      screen.queryByRole("dialog", { name: "Authorize site setting change" }),
+    ).toBeNull();
   });
 });

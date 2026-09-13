@@ -3,12 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { before, after } from "@cocalc/server/test";
+import { before, after, getPool } from "@cocalc/server/test";
 import {
   createTestAccount,
   createTestMembershipTier,
 } from "@cocalc/server/purchases/test-data";
 import { uuid } from "@cocalc/util/misc";
+import { MAX_MEMBERSHIP_TIER_LABEL_LENGTH } from "@cocalc/util/membership-tier-label";
 import { assignMembershipPackageSeat } from "./packages";
 import { resolveMembershipForAccount } from "./resolve";
 import {
@@ -162,5 +163,32 @@ describe("team licenses", () => {
         },
       }),
     ).rejects.toThrow("team license seat reductions are not supported yet");
+  });
+
+  it("bounds legacy tier labels in Stripe line-item descriptions", async () => {
+    const owner_account_id = uuid();
+    const tier = `legacy-long-label-${uuid()}`;
+    await createTestAccount(owner_account_id);
+    await createTestMembershipTier({
+      id: tier,
+      price_yearly: 120,
+      team_visible: true,
+    });
+    await getPool().query("UPDATE membership_tiers SET label=$2 WHERE id=$1", [
+      tier,
+      "x".repeat(500),
+    ]);
+
+    const quote = await resolveTeamLicenseQuote({
+      owner_account_id,
+      target_seats: { [tier]: 1 },
+    });
+    expect(quote.line_items[0].description).toContain(
+      "x".repeat(MAX_MEMBERSHIP_TIER_LABEL_LENGTH),
+    );
+    expect(quote.line_items[0].description).not.toContain(
+      "x".repeat(MAX_MEMBERSHIP_TIER_LABEL_LENGTH + 1),
+    );
+    expect(quote.line_items[0].description.length).toBeLessThanOrEqual(180);
   });
 });

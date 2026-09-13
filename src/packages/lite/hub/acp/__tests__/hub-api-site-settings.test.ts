@@ -26,20 +26,32 @@ describe("lite hub site settings", () => {
   async function setup() {
     const tmp = await fs.mkdtemp(path.join(os.tmpdir(), "lite-settings-api-"));
     process.env.COCALC_LITE_SQLITE_FILENAME = path.join(tmp, "lite.sqlite3");
-    const { init } = await import("../../sqlite/user-query");
+    const userQueryModule = await import("../../sqlite/user-query");
+    const { init } = userQueryModule;
     init({ filename: process.env.COCALC_LITE_SQLITE_FILENAME, seed: false });
+    const freshAuth = await import("../../../site-settings-fresh-auth");
+    freshAuth.configureLiteSiteSettingsFreshAuth("lite-access-token");
     return {
       ...(await import("../../api")),
       ...(await import("../../sqlite/database")),
+      userQuery: userQueryModule.default,
+      ...freshAuth,
     };
   }
 
   it("persists the local OpenAI API key through the actual dispatcher", async () => {
-    const { hubApi, getRow } = await setup();
+    const { authorizeLiteSiteSettings, hubApi, getRow } = await setup();
+    const { fresh_auth_token } = authorizeLiteSiteSettings({
+      access_token: "lite-access-token",
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+    });
 
     await expect(
       hubApi.system.setSiteSettings({
         account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        fresh_auth_token,
         settings: [{ name: "openai_api_key", value: "sk-test" }],
       }),
     ).resolves.toMatchObject({ count: 1 });
@@ -64,5 +76,66 @@ describe("lite hub site settings", () => {
         settings: [{ name: "openai_api_key", value: "sk-test" }],
       }),
     ).rejects.toThrow("local lite account");
+  });
+
+  it("requires a one-use authorization grant bound to the browser", async () => {
+    const { authorizeLiteSiteSettings, hubApi } = await setup();
+    const { fresh_auth_token } = authorizeLiteSiteSettings({
+      access_token: "lite-access-token",
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+    });
+
+    await expect(
+      hubApi.system.setSiteSettings({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-2",
+        fresh_auth_token,
+        settings: [{ name: "openai_api_key", value: "sk-test" }],
+      }),
+    ).rejects.toThrow("fresh Lite authorization");
+    await expect(
+      hubApi.system.setSiteSettings({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        fresh_auth_token,
+        settings: [{ name: "openai_api_key", value: "sk-test" }],
+      }),
+    ).rejects.toThrow("fresh Lite authorization");
+  });
+
+  it("rejects an incorrect Lite access token", async () => {
+    const { authorizeLiteSiteSettings } = await setup();
+    expect(() =>
+      authorizeLiteSiteSettings({
+        access_token: "incorrect-token",
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+      }),
+    ).toThrow("invalid or unavailable");
+  });
+
+  it("blocks account and project principals from mutating protected tables", async () => {
+    const { getRow, userQuery } = await setup();
+    for (const principal of [
+      { account_id: ACCOUNT_ID },
+      { project_id: "00000000-2000-4000-8000-000000000001" },
+    ]) {
+      expect(() =>
+        userQuery({
+          ...principal,
+          query: {
+            site_settings: {
+              name: "openai_api_key",
+              value: "attacker-controlled",
+            },
+          },
+          options: [{ set: true }],
+        }),
+      ).toThrow("dedicated domain API");
+    }
+    expect(
+      getRow("server_settings", JSON.stringify({ name: "openai_api_key" })),
+    ).toBeUndefined();
   });
 });

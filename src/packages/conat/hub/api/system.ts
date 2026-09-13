@@ -2668,6 +2668,7 @@ export interface System {
     account_id?: string;
     browser_id?: string | null;
     session_hash?: string | null;
+    fresh_auth_token?: string | null;
     settings: { name: string; value: string }[];
   }) => Promise<SiteSettingsSyncResult>;
 
