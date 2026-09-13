@@ -338,8 +338,10 @@ export async function handleApiRequest({ request, mesg }) {
     } = getUserId(mesg.subject);
     const { name, args, auth_session_hash } = request as any;
     const principalPolicy = getHubApiPrincipalPolicy(name);
+    if (principalPolicy == null) {
+      throw Error(`unknown function '${name}'`);
+    }
     if (
-      principalPolicy != null &&
       !isHubApiPrincipalAllowed({
         policy: principalPolicy,
         account_id,

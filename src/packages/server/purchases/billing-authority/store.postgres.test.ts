@@ -60,6 +60,9 @@ async function resetTables(): Promise<void> {
   await getPool().query("DELETE FROM billing_authority_commands");
   await getPool().query("DELETE FROM billing_authority_account_fences");
   await getPool().query("DELETE FROM billing_authority_lease");
+  await getPool().query("DELETE FROM accounts WHERE account_id=$1", [
+    ACCOUNT_ID,
+  ]);
 }
 
 describePostgres("billing authority PostgreSQL journal", () => {
@@ -213,10 +216,11 @@ describePostgres("billing authority PostgreSQL journal", () => {
   });
 
   it("requeues a stable command canceled before its first claim", async () => {
-    await acquireBillingAuthorityLease({
+    const lease = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
       lease_ms: 5_000,
     });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
     const item = request(
       {
         kind: "stripe-webhook",
@@ -226,11 +230,64 @@ describePostgres("billing authority PostgreSQL journal", () => {
     );
     await submitBillingAuthorityCommand(item);
     await cancelQueuedBillingAuthorityCommand(item.command_id);
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET finished_at=clock_timestamp() - INTERVAL '49 hours'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
+    await pruneBillingAuthorityCommands();
+    await expect(getBillingAuthorityCommand(item.command_id)).resolves.toEqual(
+      expect.objectContaining({ status: "canceled" }),
+    );
     await expect(submitBillingAuthorityCommand(item)).resolves.toMatchObject({
       command_id: item.command_id,
       status: "queued",
     });
+    await expect(claimNextBillingAuthorityCommand(identity)).resolves.toEqual(
+      expect.objectContaining({ command: item.command }),
+    );
   });
+
+  it.each([
+    ["banned", true, false, "ban"],
+    ["deleted", false, true, "deletion"],
+  ])(
+    "backfills an account %s before exposing the first authority lease",
+    async (_state, banned, deleted, cause) => {
+      await getPool().query(
+        `INSERT INTO accounts (account_id, created, banned, deleted)
+         VALUES ($1, clock_timestamp(), $2, $3)`,
+        [ACCOUNT_ID, banned, deleted],
+      );
+
+      await expect(
+        acquireBillingAuthorityLease({
+          instance_id: INSTANCE_A,
+          lease_ms: 5_000,
+        }),
+      ).resolves.toMatchObject({ generation: 1 });
+      const { rows } = await getPool().query(
+        `SELECT frozen, causes
+           FROM billing_authority_account_fences
+          WHERE account_id=$1`,
+        [ACCOUNT_ID],
+      );
+      expect(rows[0]).toMatchObject({
+        frozen: true,
+        causes: expect.objectContaining({ [cause]: expect.any(Object) }),
+      });
+      await expect(
+        submitBillingAuthorityCommand(
+          request({
+            kind: "http",
+            operation: "create-setup-intent",
+            input: { account_id: ACCOUNT_ID },
+          }),
+        ),
+      ).rejects.toMatchObject({ code: 423, status: 423 });
+    },
+  );
 
   it("claims critical, interactive, then maintenance lanes", async () => {
     const lease = await acquireBillingAuthorityLease({
@@ -385,9 +442,9 @@ describePostgres("billing authority PostgreSQL journal", () => {
     const item = request({
       kind: "http",
       operation: "create-payment-intent",
+      actor_account_id: actor,
       input: {
         account_id: ACCOUNT_ID,
-        metadata: { admin_account_id: actor },
       },
     });
     await submitBillingAuthorityCommand(item);
@@ -729,7 +786,7 @@ describePostgres("billing authority PostgreSQL journal", () => {
     ).toBeUndefined();
   });
 
-  it("redacts sensitive payloads before deleting retained audit metadata", async () => {
+  it("expires typed results before deleting retained audit metadata", async () => {
     const lease = await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,
       lease_ms: 5_000,
@@ -759,13 +816,26 @@ describePostgres("billing authority PostgreSQL journal", () => {
 
     await expect(pruneBillingAuthorityCommands()).resolves.toBe(0);
     const { rows } = await getPool().query(
-      `SELECT command, result
+      `SELECT command, status, result, error
          FROM billing_authority_commands WHERE command_id=$1`,
       [item.command_id],
     );
     expect(rows[0]).toMatchObject({
       command: { redacted: true },
+      status: "expired",
       result: null,
+      error: {
+        code: "billing_authority_result_expired",
+        status: 410,
+      },
+    });
+    await expect(submitBillingAuthorityCommand(item)).resolves.toMatchObject({
+      status: "expired",
+      reused: true,
+      error: {
+        code: "billing_authority_result_expired",
+        status: 410,
+      },
     });
     await getPool().query(
       `UPDATE billing_authority_commands
@@ -777,5 +847,45 @@ describePostgres("billing authority PostgreSQL journal", () => {
     await expect(
       getBillingAuthorityCommand(item.command_id),
     ).resolves.toBeUndefined();
+  });
+
+  it("does not rewrite an already-redacted webhook receipt", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = request({
+      kind: "stripe-webhook",
+      event: { id: "evt_retention", type: "invoice.paid" },
+    });
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      result: { processed: true },
+    });
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET finished_at=clock_timestamp() - INTERVAL '49 hours'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
+
+    await pruneBillingAuthorityCommands();
+    const first = await getPool().query<{ xmin: string }>(
+      `SELECT xmin::TEXT AS xmin
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    await pruneBillingAuthorityCommands();
+    const second = await getPool().query<{ xmin: string }>(
+      `SELECT xmin::TEXT AS xmin
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+
+    expect(second.rows[0].xmin).toBe(first.rows[0].xmin);
   });
 });

@@ -39,6 +39,7 @@ jest.mock("@cocalc/server/purchases/resume-subscription", () => ({
 }));
 
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
   executeBillingHttpCommand: (...args: any[]) =>
     mockExecuteBillingHttpCommand(...args),
 }));

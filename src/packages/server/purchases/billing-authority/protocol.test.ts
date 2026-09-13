@@ -16,14 +16,31 @@ describe("billing authority account attribution", () => {
     const command = {
       kind: "http" as const,
       operation: "cancel-payment-intent" as const,
+      actor_account_id: ACTOR,
       input: {
-        actor_account_id: ACTOR,
         target_account_id: TARGET,
         id: "pi_1",
       },
     };
     expect(billingAuthorityActorAccountId(command)).toBe(ACTOR);
     expect(billingAuthorityAccountIds(command)).toEqual([TARGET, ACTOR]);
+  });
+
+  it("does not trust business metadata as actor or account identity", () => {
+    const command = {
+      kind: "http" as const,
+      operation: "create-payment-intent" as const,
+      input: {
+        account_id: TARGET,
+        metadata: {
+          admin_account_id: ACTOR,
+          actor_account_id: ACTOR,
+          user_account_id: ACTOR,
+        },
+      },
+    };
+    expect(billingAuthorityActorAccountId(command)).toBeUndefined();
+    expect(billingAuthorityAccountIds(command)).toEqual([TARGET]);
   });
 
   it("finds account metadata nested in modern Stripe invoices", () => {

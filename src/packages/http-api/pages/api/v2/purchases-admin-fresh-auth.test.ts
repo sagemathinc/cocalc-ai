@@ -51,6 +51,7 @@ jest.mock("@cocalc/server/purchases/create-refund", () => ({
 }));
 
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
   executeBillingHttpCommand: (...args: any[]) =>
     mockExecuteBillingHttpCommand(...args),
 }));
@@ -151,6 +152,7 @@ describe("admin purchase/refund fresh auth", () => {
     expect(mockAdminPurchase).toHaveBeenCalledWith(
       expect.objectContaining({
         admin_account_id: "admin-1",
+        actor_account_id: "admin-1",
         user_account_id: "user-1",
       }),
     );
@@ -198,6 +200,7 @@ describe("admin purchase/refund fresh auth", () => {
     });
     expect(mockCreateRefund).toHaveBeenCalledWith({
       account_id: "admin-1",
+      actor_account_id: "admin-1",
       notes: undefined,
       purchase_id: 123,
       reason: "requested_by_customer",

@@ -29,6 +29,12 @@ describe("billing authority operation classification", () => {
       isBillingAuthorityHubApiCall("legacyMigration.previewFinancialMigration"),
     ).toBe(false);
     expect(isBillingAuthorityHubApiCall("system.getCustomize")).toBe(false);
+    expect(isBillingAuthorityHubApiCall("purchases.notARealMethod")).toBe(
+      false,
+    );
+    expect(
+      isBillingAuthorityHubApiCall("commercialOrders.notARealMethod"),
+    ).toBe(false);
   });
 
   it("defaults new and side-effecting methods to serialized commands", () => {

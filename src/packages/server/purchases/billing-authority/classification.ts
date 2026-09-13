@@ -3,6 +3,8 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { getHubApiPrincipalPolicy } from "@cocalc/conat/hub/api";
+
 import type { BillingAuthorityCommand } from "./protocol";
 
 // Stripe-facing reads may recover a missing customer mapping in PostgreSQL.
@@ -77,6 +79,7 @@ const ADMIN_CRM_FINANCIAL_METHODS = new Set([
 
 export function isBillingAuthorityHubApiCall(name: string): boolean {
   const [group, method] = name.split(".");
+  if (getHubApiPrincipalPolicy(name) == null) return false;
   return (
     group === "purchases" ||
     group === "commercialOrders" ||

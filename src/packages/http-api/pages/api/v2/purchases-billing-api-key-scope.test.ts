@@ -126,6 +126,7 @@ jest.mock(
 );
 
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
   executeBillingHttpCommand: (...args: any[]) =>
     mockExecuteBillingHttpCommand(...args),
 }));
@@ -231,7 +232,10 @@ describe("billing account read routes API-key scope", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({ balance: 12 });
-    expect(mockGetBalance).toHaveBeenCalledWith({ account_id: "acct-1" });
+    expect(mockGetBalance).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      noSave: true,
+    });
   });
 
   it("keeps browser-session statement email requests", async () => {

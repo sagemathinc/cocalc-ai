@@ -176,6 +176,9 @@ describe("admin membership package purchase", () => {
             amount: 25,
           }),
         ],
+        metadata: {
+          admin_purchase_idempotency_key: "ticket-20443-card-test",
+        },
       }),
     );
     expect(created).toMatchObject({

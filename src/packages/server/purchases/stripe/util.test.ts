@@ -118,6 +118,19 @@ describe("Stripe user input validation", () => {
       "metadata key 'purpose' is reserved",
     );
   });
+
+  it.each([
+    "actor_account_id",
+    "admin_account_id",
+    "customer_account_id",
+    "owner_account_id",
+    "target_account_id",
+    "user_account_id",
+  ])("reserves authority-owned metadata identity %s", (key) => {
+    expect(() => assertValidUserMetadata({ [key]: "forged" })).toThrow(
+      `metadata key '${key}' is reserved`,
+    );
+  });
 });
 
 describe("getStripeCustomerId", () => {

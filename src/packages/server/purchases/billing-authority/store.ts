@@ -206,11 +206,109 @@ async function existingCommand(
   return rows[0];
 }
 
+async function assertBillingAccountsAllowed(
+  db: Queryable,
+  accountIds: string[],
+): Promise<void> {
+  if (accountIds.length === 0) return;
+  const { rows } = await db.query<{ account_id: string }>(
+    `SELECT account_id
+       FROM (
+         SELECT account_id
+           FROM billing_authority_account_fences
+          WHERE account_id=ANY($1::UUID[]) AND frozen
+         UNION ALL
+         SELECT account_id
+           FROM accounts
+          WHERE account_id=ANY($1::UUID[])
+            AND (banned IS TRUE OR deleted IS TRUE)
+       ) AS blocked
+      LIMIT 1`,
+    [accountIds],
+  );
+  if (rows[0]) {
+    throw authorityError("billing is frozen for this account", 423);
+  }
+}
+
+async function backfillBillingAuthorityAccountSecurityFences(
+  db: Queryable,
+): Promise<number> {
+  const { rowCount } = await db.query(
+    `INSERT INTO billing_authority_account_fences
+       (account_id, frozen, reason, causes, actor_account_id, generation,
+        created_at, updated_at)
+     SELECT account_id, TRUE,
+            CASE WHEN banned IS TRUE AND deleted IS TRUE
+                   THEN 'account was banned and deleted before authority activation'
+                 WHEN banned IS TRUE
+                   THEN 'account was banned before authority activation'
+                 ELSE 'account was deleted before authority activation'
+             END,
+            (CASE WHEN banned IS TRUE THEN
+               jsonb_build_object(
+                 'ban', jsonb_build_object(
+                   'reason', 'authoritative account ban',
+                   'actor_account_id', NULL,
+                   'updated_at', COALESCE(banned_at, clock_timestamp())))
+             ELSE '{}'::JSONB END)
+            ||
+            (CASE WHEN deleted IS TRUE THEN
+               jsonb_build_object(
+                 'deletion', jsonb_build_object(
+                   'reason', 'authoritative account deletion',
+                   'actor_account_id', NULL,
+                   'updated_at', clock_timestamp()))
+             ELSE '{}'::JSONB END),
+            NULL, 1, clock_timestamp(), clock_timestamp()
+       FROM accounts
+      WHERE banned IS TRUE OR deleted IS TRUE
+     ON CONFLICT (account_id) DO UPDATE
+       SET frozen=TRUE,
+           causes=EXCLUDED.causes
+                    || COALESCE(
+                         billing_authority_account_fences.causes,
+                         '{}'::JSONB),
+           reason=EXCLUDED.reason,
+           generation=billing_authority_account_fences.generation + 1,
+           updated_at=clock_timestamp()
+     WHERE NOT billing_authority_account_fences.frozen
+        OR (EXCLUDED.causes ? 'ban'
+            AND NOT (COALESCE(
+              billing_authority_account_fences.causes,
+              '{}'::JSONB) ? 'ban'))
+        OR (EXCLUDED.causes ? 'deletion'
+            AND NOT (COALESCE(
+              billing_authority_account_fences.causes,
+              '{}'::JSONB) ? 'deletion'))`,
+  );
+  const { rows: missing } = await db.query<{ account_id: string }>(
+    `SELECT accounts.account_id
+       FROM accounts
+       LEFT JOIN billing_authority_account_fences AS fences
+         ON fences.account_id=accounts.account_id
+      WHERE (accounts.banned IS TRUE
+             AND (NOT COALESCE(fences.frozen, FALSE)
+                  OR NOT (COALESCE(fences.causes, '{}'::JSONB) ? 'ban')))
+         OR (accounts.deleted IS TRUE
+             AND (NOT COALESCE(fences.frozen, FALSE)
+                  OR NOT (COALESCE(fences.causes, '{}'::JSONB) ? 'deletion')))
+      LIMIT 1`,
+  );
+  if (missing[0]) {
+    throw authorityError(
+      "billing authority account security fence backfill is incomplete",
+      503,
+    );
+  }
+  return rowCount ?? 0;
+}
+
 export async function submitBillingAuthorityCommand(
   request: BillingAuthoritySubmitRequest,
 ): Promise<BillingAuthorityCommandRecord> {
   const { expiresAt, deduplicateForMs } = assertValidSubmission(request);
-  const { hash } = requestHash(request);
+  const { hash, json } = requestHash(request);
   const operation = billingAuthorityOperationName(request.command);
   const lane = billingAuthorityLane(request.command);
   const accountIds = billingAuthorityAccountIds(request.command);
@@ -243,18 +341,7 @@ export async function submitBillingAuthorityCommand(
     const governedAccountIds = accountIds.filter(
       (id) => !allowedWhenFrozen.has(id),
     );
-    if (governedAccountIds.length > 0) {
-      const { rows } = await db.query<{ account_id: string }>(
-        `SELECT account_id
-           FROM billing_authority_account_fences
-          WHERE account_id=ANY($1::UUID[]) AND frozen
-          LIMIT 1`,
-        [governedAccountIds],
-      );
-      if (rows[0]) {
-        throw authorityError("billing is frozen for this account", 423);
-      }
-    }
+    await assertBillingAccountsAllowed(db, governedAccountIds);
     const existing = await existingCommand(db, request.command_id);
     if (existing) {
       if (existing.request_hash !== hash) {
@@ -273,12 +360,24 @@ export async function submitBillingAuthorityCommand(
                               THEN 'expired' ELSE 'queued' END,
                   expires_at=$2, started_at=NULL, finished_at=NULL,
                   authority_generation=NULL, authority_instance_id=NULL,
-                  result=NULL, error=NULL, updated_at=clock_timestamp()
+                  operation=$3, lane=$4, account_id=$5,
+                  account_ids=$6::UUID[], actor_account_id=$7,
+                  command=$8::JSONB, result=NULL, error=NULL,
+                  updated_at=clock_timestamp()
             WHERE command_id=$1
               AND status IN ('canceled','expired')
               AND attempt_count=0
             RETURNING *`,
-          [request.command_id, expiresAt.toISOString()],
+          [
+            request.command_id,
+            expiresAt.toISOString(),
+            operation,
+            lane,
+            accountId ?? null,
+            accountIds,
+            actorAccountId ?? null,
+            json,
+          ],
         );
         if (rows[0]) return commandRecord(rows[0]);
       }
@@ -324,7 +423,7 @@ export async function submitBillingAuthorityCommand(
         accountId ?? null,
         accountIds,
         actorAccountId ?? null,
-        JSON.stringify(request.command),
+        json,
         expiresAt.toISOString(),
       ],
     );
@@ -389,14 +488,7 @@ export async function registerBillingAuthorityCommandAccount({
     }
     const allowed = billingAuthorityAccountsAllowedWhenFrozen(command.command);
     if (!allowed.includes(identity.account_id)) {
-      const { rows: fences } = await db.query(
-        `SELECT 1 FROM billing_authority_account_fences
-          WHERE account_id=$1 AND frozen`,
-        [identity.account_id],
-      );
-      if (fences[0]) {
-        throw authorityError("billing is frozen for this account", 423);
-      }
+      await assertBillingAccountsAllowed(db, [identity.account_id]);
     }
     await db.query(
       `UPDATE billing_authority_commands
@@ -524,6 +616,8 @@ export async function acquireBillingAuthorityLease({
     await db.query("SELECT pg_advisory_xact_lock($1)", [
       BILLING_AUTHORITY_EXECUTION_LOCK,
     ]);
+    await db.query("SELECT pg_advisory_xact_lock($1)", [ADMISSION_LOCK]);
+    await backfillBillingAuthorityAccountSecurityFences(db);
     await db.query(
       `INSERT INTO billing_authority_lease
          (name, generation, enabled, draining, updated_at)
@@ -838,26 +932,21 @@ export async function claimNextBillingAuthorityCommand(
               id,
             ),
         );
-      if (governedAccountIds.length > 0) {
-        const { rows: fences } = await db.query<{ account_id: string }>(
-          `SELECT account_id FROM billing_authority_account_fences
-            WHERE account_id=ANY($1::UUID[]) AND frozen
-            LIMIT 1`,
-          [governedAccountIds],
+      try {
+        await assertBillingAccountsAllowed(db, governedAccountIds);
+      } catch (err) {
+        if ((err as { status?: number })?.status !== 423) throw err;
+        await db.query(
+          `UPDATE billing_authority_commands
+              SET status='canceled', finished_at=clock_timestamp(),
+                  updated_at=clock_timestamp(),
+                  error=jsonb_build_object(
+                    'message', 'account billing is frozen',
+                    'code', 423, 'status', 423)
+            WHERE command_id=$1 AND status='queued'`,
+          [row.command_id],
         );
-        if (fences[0]) {
-          await db.query(
-            `UPDATE billing_authority_commands
-                SET status='canceled', finished_at=clock_timestamp(),
-                    updated_at=clock_timestamp(),
-                    error=jsonb_build_object(
-                      'message', 'account billing is frozen',
-                      'code', 423, 'status', 423)
-              WHERE command_id=$1 AND status='queued'`,
-            [row.command_id],
-          );
-          continue;
-        }
+        continue;
       }
       const { rows: claimed } = await db.query<CommandRow>(
         `UPDATE billing_authority_commands
@@ -989,11 +1078,29 @@ export async function pruneBillingAuthorityCommands(): Promise<number> {
     await db.query(
       `UPDATE billing_authority_commands
           SET command=jsonb_build_object('redacted', TRUE),
+              status=CASE
+                WHEN status='succeeded'
+                     AND operation <> 'stripe-webhook'
+                     AND result IS NOT NULL
+                  THEN 'expired'
+                ELSE status
+              END,
               result=CASE WHEN operation='stripe-webhook'
-                          THEN result ELSE NULL END
+                          THEN result ELSE NULL END,
+              error=CASE
+                WHEN status='succeeded'
+                     AND operation <> 'stripe-webhook'
+                     AND result IS NOT NULL
+                  THEN jsonb_build_object(
+                    'message', 'successful command result expired; reconcile by command identity',
+                    'code', 'billing_authority_result_expired',
+                    'status', 410)
+                ELSE error
+              END,
+              updated_at=clock_timestamp()
         WHERE finished_at < clock_timestamp() - $1::INTERVAL
           AND (command IS DISTINCT FROM jsonb_build_object('redacted', TRUE)
-               OR result IS NOT NULL)
+               OR (operation <> 'stripe-webhook' AND result IS NOT NULL))
           AND status IN ('succeeded','failed','canceled','expired','uncertain')`,
       [PAYLOAD_RETENTION],
     );

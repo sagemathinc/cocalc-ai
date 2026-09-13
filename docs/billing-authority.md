@@ -23,7 +23,7 @@ mutation or state-transition paths. Dotted arrows are checks or explicitly
 audited read-only paths.
 
 ```mermaid
-flowchart LR
+flowchart TD
   subgraph ingress["INGRESS - authenticated callers"]
     direction TB
     http["HTTP API"]
@@ -55,6 +55,7 @@ flowchart LR
     lease["Lease<br/>instance + generation + DB expiry"]
     lock["Global transaction advisory lock"]
     fences["Composable account fences<br/>ban / deletion / quarantine / incident"]
+    accounts["Authoritative account state<br/>banned / deleted"]
     financial["Financial rows"]
   end
 
@@ -93,6 +94,7 @@ flowchart LR
   fences -.->|check actor + every target| admission
   fences -.->|recheck before effects| executor
   fences -->|cancel queued / reject new| journal
+  accounts -->|backfill before first lease<br/>and direct admission check| fences
   lifecycle -->|close admission| admission
   lifecycle -->|release or replace generation| lease
 
@@ -118,7 +120,7 @@ flowchart LR
   class http,conat,webhook,maintenance,old entry;
   class gate gate;
   class admission,critical,interactive,background,scheduler,executor,transport,lifecycle,readonly allowed;
-  class journal,lease,lock,fences,financial durable;
+  class journal,lease,lock,fences,accounts,financial durable;
   class reject,uncertain blocked;
   class stripe,reconcile warning;
   class limitation warning;
@@ -136,7 +138,7 @@ automatically issuing another write.
 
 ```mermaid
 stateDiagram-v2
-  direction LR
+  direction TD
   [*] --> queued: durable insert
   queued --> running: generation-fenced claim
   queued --> canceled: timeout or fence before claim
@@ -148,6 +150,7 @@ stateDiagram-v2
   uncertain --> failed: reconciliation proves no effect
   canceled --> queued: stable command never claimed
   expired --> queued: stable command never claimed
+  succeeded --> expired: retained typed result removed
   succeeded --> [*]
   failed --> [*]
 
@@ -159,6 +162,11 @@ stateDiagram-v2
   note left of running
     Account cleanup waits behind in-flight work,
     then removes anything that work created.
+  end note
+
+  note right of expired
+    A command that previously ran is never requeued.
+    Error code 410 requires operation-specific recovery.
   end note
 ```
 
@@ -200,7 +208,8 @@ It does not possess Stripe credentials or perform external collection.
 Explicitly reviewed side-effect-free local billing reads execute directly and
 do not enter the journal. Stripe-facing HTTP operations remain serialized
 because customer lookup can recover a missing PostgreSQL mapping. Unknown Hub
-methods and HTTP operations default to commands. `getBalance` uses
+methods are rejected before authority admission; known operations default to
+commands unless explicitly reviewed as reads. `getBalance` uses
 `noSave: true`, so a concurrent read cannot overwrite the authoritative cached
 balance. A read that unexpectedly attempts a Stripe mutation is rejected by
 the Stripe transport guard.
@@ -212,7 +221,10 @@ has a UUID, canonical request hash, operation, scheduling lane, affected and
 actor account identities, expiry, lifecycle state, execution generation,
 bounded result or error, and timestamps. Sensitive command and result payloads
 are removed after 48 hours; operation, request hash, account identities, status,
-generation, error, and timestamps are retained for 400 days. Successful Stripe
+generation, error, and timestamps are retained for 400 days. A succeeded
+command whose typed result expires becomes an explicit `expired` outcome with a
+`410 billing_authority_result_expired` error. It is never returned as a
+fabricated successful `null` result and is never re-executed. Successful Stripe
 webhook receipts retain their minimal result so provider retries remain valid.
 
 The lifecycle is:
@@ -228,7 +240,8 @@ operation, affected accounts, and actor. Unkeyed commands receive random UUIDs:
 equal financial operations are not duplicates merely because their payloads
 match. Semantic coalescing is explicit, opt-in, and can reuse only currently
 queued or running work. A canceled or expired stable command that was never
-claimed can be requeued; anything that started is never replayed automatically.
+claimed can be requeued from the newly validated request; anything that started
+is never replayed automatically.
 Every uncertain-outcome error exposes the authoritative command UUID through
 HTTP and Conat so an operator or caller can inspect that exact command rather
 than blindly retry it.
@@ -241,11 +254,11 @@ and command UUID; it never pretends cancellation succeeded and never silently
 submits a replacement.
 
 Only one command executes at a time. Fleet maintenance commands process at
-most one customer, statement, renewal, notification, license, or payment
-intent per journal entry. This prevents an unbounded maintenance scan from
-holding the authority while payments wait. Health and command-status reads
-query PostgreSQL directly and therefore cannot be blocked by command admission
-or consume command slots.
+most one customer, statement, renewal, notification, license, payment intent,
+commercial event, commercial invoice, or commercial quote per journal entry.
+This prevents an unbounded maintenance scan from holding the authority while
+payments wait. Health and command-status reads query PostgreSQL directly and
+therefore cannot be blocked by command admission or consume command slots.
 
 ## Lease And Fencing
 
@@ -292,6 +305,14 @@ containment freeze billing before cleanup is queued. Freezing cancels all
 queued ordinary commands involving that actor or target and rejects new ones.
 Cleanup commands are the narrow exception for their target, never for a frozen
 actor.
+
+Before acquiring a lease, a candidate authority backfills fences from the
+authoritative `accounts.banned` and `accounts.deleted` state under the admission
+lock and verifies that no such account is missing its corresponding cause. New
+admission, dynamic account registration, and command claim also check the
+authoritative account row directly. Thus an account restricted before feature
+activation cannot slip through an empty new fence table, and a missed event is
+defense in depth rather than the sole security control.
 
 An already-running command completes before the serialized cleanup command can
 run. This ordering lets cleanup remove resources created by that in-flight

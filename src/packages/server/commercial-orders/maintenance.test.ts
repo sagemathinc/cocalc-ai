@@ -121,19 +121,19 @@ describe("commercial receivables maintenance", () => {
     stopCommercialReceivablesMaintenanceForTests();
   });
 
-  it("runs reconciliation, metrics, and one durable daily digest under the seed lease", async () => {
+  it("processes one remote unit and records one durable daily digest", async () => {
     await runCommercialReceivablesMaintenanceOnceForTests();
 
-    expect(mockProcessWebhookQueue).toHaveBeenCalledWith(100);
-    expect(mockReconcileInvoices).toHaveBeenCalledWith({ limit: 100 });
-    expect(mockReconcileQuotes).toHaveBeenCalledWith({ limit: 100 });
+    expect(mockProcessWebhookQueue).toHaveBeenCalledWith(1);
+    expect(mockReconcileInvoices).not.toHaveBeenCalled();
+    expect(mockReconcileQuotes).not.toHaveBeenCalled();
     expect(mockUpdateMetrics).toHaveBeenCalledWith(diagnostics);
     expect(mockCentralLog).toHaveBeenCalledWith({
       event: "commercial_receivables_maintenance",
       value: {
-        webhook: { processed: 1, failed: 0 },
-        reconciliation: { reconciled: 2, failed: 0 },
-        quoteReconciliation: { reconciled: 3, failed: 0 },
+        webhook: { processed: 1, failed: 0, disabled: false },
+        reconciliation: { reconciled: 0, failed: 0, disabled: true },
+        quoteReconciliation: { reconciled: 0, failed: 0, disabled: true },
         diagnostics,
       },
     });
@@ -146,6 +146,18 @@ describe("commercial receivables maintenance", () => {
         `${sql}`.includes("last_daily_digest_at=CASE"),
       ),
     ).toBe(true);
+  });
+
+  it("probes each empty queue with a one-unit bound", async () => {
+    mockProcessWebhookQueue.mockResolvedValue({ processed: 0, failed: 0 });
+    mockReconcileInvoices.mockResolvedValue({ reconciled: 0, failed: 0 });
+    mockReconcileQuotes.mockResolvedValue({ reconciled: 0, failed: 0 });
+
+    await runCommercialReceivablesMaintenanceOnceForTests();
+
+    expect(mockProcessWebhookQueue).toHaveBeenCalledWith(1);
+    expect(mockReconcileInvoices).toHaveBeenCalledWith({ limit: 1 });
+    expect(mockReconcileQuotes).toHaveBeenCalledWith({ limit: 1 });
   });
 
   it("does nothing outside the seed bay", async () => {

@@ -1361,6 +1361,7 @@ async function startAccountLocalService(): Promise<void> {
         kind: "account-local",
         operation: "purchase-team-license-change",
         input: { account_id, target_seats: target_seats ?? {} },
+        actor_account_id: account_id,
       }),
     adminProvisionSiteLicense: async (opts) =>
       isSeedSiteLicenseBay()
@@ -1368,12 +1369,14 @@ async function startAccountLocalService(): Promise<void> {
             kind: "account-local",
             operation: "admin-provision-site-license",
             input: { ...opts, trusted_admin: true },
+            actor_account_id: opts.actor_account_id,
           })
         : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
     adminCreateMembershipPackagePurchase: async (opts) =>
       await executeBillingAuthorityCommand({
         kind: "account-local",
         operation: "admin-create-membership-package-purchase",
+        actor_account_id: opts.actor_account_id,
         input: {
           admin_account_id: opts.actor_account_id,
           user_account_id: opts.user_account_id,

@@ -66,6 +66,7 @@ export type BillingAuthorityCommand =
       kind: "account-local";
       operation: BillingAuthorityAccountLocalOperation;
       input: Record<string, unknown>;
+      actor_account_id?: string;
     }
   | { kind: "cancel-usage-subscription"; account_id: string }
   | { kind: "quarantine-account-stripe-cleanup"; account_id: string }
@@ -87,6 +88,7 @@ export type BillingAuthorityCommand =
       kind: "http";
       operation: BillingAuthorityHttpOperation;
       input: Record<string, unknown>;
+      actor_account_id?: string;
     }
   | { kind: "hub-api"; call: BillingAuthorityHubApiCall }
   | { kind: "maintenance"; task: BillingAuthorityMaintenanceTask }
@@ -263,13 +265,7 @@ export function billingAuthorityActorAccountId(
   switch (command.kind) {
     case "http":
     case "account-local":
-      return (
-        stringField(command.input, ["admin_account_id", "actor_account_id"]) ??
-        stringField(metadata(command.input), [
-          "admin_account_id",
-          "actor_account_id",
-        ])
-      );
+      return stringField(command, ["actor_account_id"]);
     case "hub-api":
       return stringField(command.call, ["account_id"]);
     case "commercial-seed":
@@ -304,12 +300,6 @@ export function billingAuthorityAccountIds(
           "owner_account_id",
           "target_account_id",
           "account_id",
-        ]),
-        ...stringFields(metadata(command.input), [
-          "account_id",
-          "user_account_id",
-          "admin_account_id",
-          "actor_account_id",
         ]),
       );
       break;
@@ -346,14 +336,7 @@ export function billingAuthorityAccountIds(
           : []),
       ];
       for (const source of metadataSources) {
-        values.push(
-          ...stringFields(source, [
-            "account_id",
-            "user_account_id",
-            "admin_account_id",
-            "actor_account_id",
-          ]),
-        );
+        values.push(...stringFields(source, ["account_id"]));
       }
       break;
     }

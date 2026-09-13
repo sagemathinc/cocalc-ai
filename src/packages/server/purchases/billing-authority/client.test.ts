@@ -156,9 +156,9 @@ describe("durable billing authority client", () => {
     const first = {
       kind: "http" as const,
       operation: "admin-purchase" as const,
+      actor_account_id: "22222222-2222-4222-8222-222222222222",
       input: {
         account_id: "11111111-1111-4111-8111-111111111111",
-        actor_account_id: "22222222-2222-4222-8222-222222222222",
         idempotency_key: sameCallerKey,
       },
     };
@@ -179,6 +179,69 @@ describe("durable billing authority client", () => {
     expect(__test__.intrinsicCommandId(first)).not.toBe(
       __test__.intrinsicCommandId(otherOperation),
     );
+  });
+
+  it("copies only trusted top-level HTTP identity into the command envelope", async () => {
+    const actor = "22222222-2222-4222-8222-222222222222";
+    await executeBillingHttpCommand("create-payment-intent", {
+      account_id: "11111111-1111-4111-8111-111111111111",
+      actor_account_id: actor,
+      admin_account_id: "44444444-4444-4444-8444-444444444444",
+      metadata: { admin_account_id: "33333333-3333-4333-8333-333333333333" },
+    });
+    expect(mockHandleTransport).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "submit",
+        request: expect.objectContaining({
+          command: expect.objectContaining({ actor_account_id: actor }),
+        }),
+      }),
+    );
+  });
+
+  it("does not infer an administrator actor from request data", () => {
+    expect(
+      __test__.trustedHttpActorAccountId({
+        account_id: "11111111-1111-4111-8111-111111111111",
+        admin_account_id: "22222222-2222-4222-8222-222222222222",
+        metadata: {
+          actor_account_id: "33333333-3333-4333-8333-333333333333",
+        },
+      }),
+    ).toBe("11111111-1111-4111-8111-111111111111");
+  });
+
+  it("fails closed when a retained successful result has expired", () => {
+    const commandId = "88888888-8888-4888-8888-888888888888";
+    expect(() =>
+      __test__.terminalValue(
+        record("expired", commandId, {
+          error: {
+            message: "successful command result expired",
+            code: "billing_authority_result_expired",
+            status: 410,
+          },
+        }),
+      ),
+    ).toThrow(`billing authority command ${commandId}`);
+    try {
+      __test__.terminalValue(
+        record("expired", commandId, {
+          error: {
+            message: "successful command result expired",
+            code: "billing_authority_result_expired",
+            status: 410,
+          },
+        }),
+      );
+    } catch (err) {
+      expect(err).toMatchObject({
+        code: "billing_authority_result_expired",
+        status: 410,
+        billing_authority_command_id: commandId,
+        billing_authority_status: "expired",
+      });
+    }
   });
 
   it("cancels an abandoned queued command so it cannot execute later", async () => {

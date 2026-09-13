@@ -232,7 +232,6 @@ async function fundPurchaseFromCard({
       },
     ],
     metadata: {
-      admin_account_id,
       admin_purchase_idempotency_key: idempotency_key,
     },
     force: true,

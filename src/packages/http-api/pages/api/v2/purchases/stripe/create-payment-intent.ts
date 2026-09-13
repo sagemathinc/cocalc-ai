@@ -60,10 +60,11 @@ async function get(req) {
     });
     result = await executeBillingHttpCommand("create-payment-intent", {
       account_id: user_account_id,
+      actor_account_id: admin_account_id,
       lineItems,
       description,
       purpose,
-      metadata: { ...metadata, admin_account_id },
+      metadata,
     });
   } else {
     const account_id = await getAccountId(req);

@@ -61,6 +61,7 @@ jest.mock("@cocalc/server/launch/kill-switches", () => ({
 }));
 
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
   executeBillingHttpCommand: (...args: any[]) =>
     mockExecuteBillingHttpCommand(...args),
 }));
@@ -279,13 +280,11 @@ describe("purchases Stripe fresh-auth routes", () => {
     });
     expect(mockCreatePaymentIntent).toHaveBeenCalledWith({
       account_id: "user-1",
+      actor_account_id: "acct-1",
       purpose: "admin-payment",
       description: "Manual charge",
       lineItems: [{ description: "Credit", amount: 10 }],
-      metadata: {
-        support_case: "case-1",
-        admin_account_id: "acct-1",
-      },
+      metadata: { support_case: "case-1" },
     });
   });
 
@@ -336,9 +335,11 @@ describe("purchases Stripe fresh-auth routes", () => {
     expect(res._getJSONData()).toEqual({ success: true });
     expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
     expect(mockCancelPaymentIntent).toHaveBeenCalledWith({
+      actor_account_id: "acct-1",
       id: "pi_123",
       reason: "requested_by_customer",
       expected_account_id: "acct-1",
+      target_account_id: "acct-1",
     });
   });
 

@@ -40,6 +40,7 @@ export default async function handle(req, res) {
     res.json(
       await executeBillingHttpCommand("admin-purchase", {
         admin_account_id: account_id,
+        actor_account_id: account_id,
         comment,
         interval,
         membership_class,

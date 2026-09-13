@@ -68,6 +68,7 @@ jest.mock("@cocalc/server/launch/kill-switches", () => ({
 }));
 
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
   executeBillingHttpCommand: (...args: any[]) =>
     mockExecuteBillingHttpCommand(...args),
 }));
@@ -405,9 +406,11 @@ describe("Stripe billing read routes API-key scope", () => {
 
     expect(res._getJSONData()).toEqual({ success: true });
     expect(mockCancelPaymentIntent).toHaveBeenCalledWith({
+      actor_account_id: "acct-1",
       id: "pi_123",
       reason: "requested_by_customer",
       expected_account_id: "acct-1",
+      target_account_id: "acct-1",
     });
   });
 

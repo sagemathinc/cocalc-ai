@@ -26,15 +26,33 @@ export interface CommercialReceivablesAuthorityResult extends Record<
 export async function runCommercialReceivablesAuthorityTask(): Promise<CommercialReceivablesAuthorityResult> {
   const reconciliationEnabled =
     await isCommercialReceivablesCapabilityEnabled("reconciliation");
-  const webhook = reconciliationEnabled
-    ? await processCommercialStripeEventQueue(100)
-    : { processed: 0, failed: 0, disabled: true };
-  const reconciliation = reconciliationEnabled
-    ? await reconcileStaleCommercialInvoices({ limit: 100 })
-    : { reconciled: 0, failed: 0, disabled: true };
-  const quoteReconciliation = reconciliationEnabled
-    ? await reconcileStaleCommercialQuotes({ limit: 100 })
-    : { reconciled: 0, failed: 0, disabled: true };
+  let webhook = { processed: 0, failed: 0, disabled: true };
+  let reconciliation = { reconciled: 0, failed: 0, disabled: true };
+  let quoteReconciliation = { reconciled: 0, failed: 0, disabled: true };
+  if (reconciliationEnabled) {
+    webhook = {
+      ...(await processCommercialStripeEventQueue(1)),
+      disabled: false,
+    };
+    if (webhook.processed + webhook.failed === 0) {
+      reconciliation = {
+        ...(await reconcileStaleCommercialInvoices({ limit: 1 })),
+        disabled: false,
+      };
+    }
+    if (
+      webhook.processed +
+        webhook.failed +
+        reconciliation.reconciled +
+        reconciliation.failed ===
+      0
+    ) {
+      quoteReconciliation = {
+        ...(await reconcileStaleCommercialQuotes({ limit: 1 })),
+        disabled: false,
+      };
+    }
+  }
   const diagnostics = await getCommercialOrderDiagnostics();
   updateCommercialQueueMetrics(diagnostics);
   return { webhook, reconciliation, quoteReconciliation, diagnostics };

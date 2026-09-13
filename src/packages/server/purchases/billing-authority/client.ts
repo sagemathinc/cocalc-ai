@@ -93,6 +93,14 @@ function recordField(value: unknown, key: string): string | undefined {
   return candidate || undefined;
 }
 
+function trustedHttpActorAccountId(
+  input: Record<string, unknown>,
+): string | undefined {
+  return (
+    recordField(input, "actor_account_id") ?? recordField(input, "account_id")
+  );
+}
+
 function intrinsicCommandId(
   command: BillingAuthorityCommand,
 ): string | undefined {
@@ -284,7 +292,12 @@ export async function executeBillingHttpCommand<T>(
   options: Omit<CommandOptions, "read"> = {},
 ): Promise<T> {
   return await executeBillingAuthorityCommand<T>(
-    { kind: "http", operation, input },
+    {
+      kind: "http",
+      operation,
+      input,
+      actor_account_id: trustedHttpActorAccountId(input),
+    },
     { ...options, read: isBillingAuthorityHttpRead(operation) },
   );
 }
@@ -355,4 +368,5 @@ export const __test__ = {
   deterministicUuid,
   intrinsicCommandId,
   terminalValue,
+  trustedHttpActorAccountId,
 };
