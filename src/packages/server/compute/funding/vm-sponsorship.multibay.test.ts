@@ -27,6 +27,9 @@ import type { ComputeResourceNotice } from "@cocalc/util/compute-notifications";
 import type { PersonalResourceReviewRequest } from "@cocalc/util/compute-personal-funding-review";
 import { reviewPersonalResourceOnBay } from "./resource-review";
 import { expirePersonalFundingConsents } from "./personal-expiry";
+import { canonicalFundingTerms } from "./approvals";
+import { processPersonalVmHandoffOnBay } from "./vm-personal-remote-resource";
+import { getComputeVmFallbackDecisionLocal } from "./vm-fallback-reason";
 import {
   applyRemotePersonalVolumeHandoff,
   processRemotePersonalVolumeHandoffs,
@@ -45,6 +48,7 @@ import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spend
 import createCredit from "@cocalc/server/purchases/create-credit";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type { ReserveComputeVmFundingRequest } from "@cocalc/util/compute-vm-funding";
+import type { VmPersonalFundingTerms } from "@cocalc/util/compute-vm-funding";
 import { getComputeVmById, updateComputeInstance } from "../db";
 import { getComputeVolumeById } from "../volume-db";
 import {
@@ -59,6 +63,7 @@ import {
   getVmPersonalFunding,
   clearVmPersonalFunding,
   previewPersonalVmFunding,
+  reviewPersonalVmFundingOnBay,
 } from "./vm-personal";
 import { withFundingAccountTransaction } from "./backing";
 import { createCourseFundingPoolInTransaction } from "./pools";
@@ -139,9 +144,11 @@ jest.mock("./production-rollout-manifest", () => ({
       expires_at: new Date(Date.now() + 3600000).toISOString(),
       exposure_allocation: {
         id: "sponsorship-test-static-allocation",
-        site_ceiling_usd: "100",
+        // Cases retain separate accounts and reservations for replay assertions.
+        // Dedicated exposure tests exercise small quotas and their exhaustion.
+        site_ceiling_usd: "1000",
         bay_quotas: require("./__tests__/multibay-postgres").bays.map(
-          (bay_id) => ({ bay_id, amount_usd: "30" }),
+          (bay_id) => ({ bay_id, amount_usd: "300" }),
         ),
       },
     },
@@ -169,6 +176,7 @@ describePg(
   "VM sponsorship with three independent PostgreSQL bays and Conat",
   () => {
     const databases = independentBayDatabases();
+    const originalExposure = process.env.COCALC_COURSE_VM_SITE_EXPOSURE_USD;
     const handlers: ReturnType<typeof createServiceHandler>[] = [];
     const calls: { bay: string; method: string }[] = [];
     let loseReserve = false;
@@ -176,6 +184,9 @@ describePg(
     let losePersonalVolumeReceipt = false;
     let changeVolumeBeforeCommit: string | undefined;
     let dropPersonalVolumeCommand = false;
+    let loseVmHandoffReceipt = false;
+    let invalidateVmBeforeCommit = false;
+    let cancelVmBeforeCommit = false;
     const remote = (bay: string) =>
       createInterBayAccountLocalClient({
         client: fabric,
@@ -184,6 +195,7 @@ describePg(
       });
 
     beforeAll(async () => {
+      process.env.COCALC_COURSE_VM_SITE_EXPOSURE_USD = "1000";
       await databases.start();
       handlers.push(
         createServiceHandler({
@@ -219,6 +231,48 @@ describePg(
               method: "compute-funding",
             }),
             impl: {
+              computeOwnerResources: (opts) =>
+                onBay(bay, async () =>
+                  (
+                    await import("../owner-resource-routing")
+                  ).computeOwnerResourcesOnBay(opts),
+                ),
+              computeFundingPersonalVmHandoff: (opts) =>
+                onBay(bay, async () => {
+                  if (opts.phase === "commit" && invalidateVmBeforeCommit) {
+                    invalidateVmBeforeCommit = false;
+                    await (
+                      await import("../scheduled-stop")
+                    ).requestScheduledVmState({
+                      vm: (await getComputeVmById(opts.terms.vm_id))!,
+                      desired_state: "stopped",
+                      actor_kind: "human",
+                      idempotency_key: randomUUID(),
+                    });
+                  }
+                  if (opts.phase === "commit" && cancelVmBeforeCommit) {
+                    cancelVmBeforeCommit = false;
+                    await onBay(mockHomes.get(opts.account_id)!, async () => {
+                      const consent = (await getVmPersonalFunding({
+                        account_id: opts.account_id,
+                        vm_id: opts.terms.vm_id,
+                      }))!;
+                      await clearVmPersonalFunding({
+                        account_id: opts.account_id,
+                        vm_id: opts.terms.vm_id,
+                        consent_id: opts.consent_id,
+                        expected_version: consent.version,
+                        operation_id: randomUUID(),
+                      });
+                    });
+                  }
+                  const result = await processPersonalVmHandoffOnBay(opts);
+                  if (loseVmHandoffReceipt && result.state === "committed") {
+                    loseVmHandoffReceipt = false;
+                    throw Error("injected lost VM handoff receipt");
+                  }
+                  return result;
+                }),
               computeFundingApplyPersonalVolumeHandoff: (opts) =>
                 onBay(bay, async () => {
                   // The payer's reserve transaction must finish before this
@@ -262,6 +316,8 @@ describePg(
               computeFundingReceiveResourceNotice: (
                 opts: ComputeResourceNotice,
               ) => onBay(bay, () => receiveComputeResourceNotice(opts)),
+              getComputeVmFallbackDecision: (opts) =>
+                onBay(bay, () => getComputeVmFallbackDecisionLocal(opts)),
               reserveComputeVmFunding: (opts: ReserveComputeVmFundingRequest) =>
                 onBay(bay, async () => {
                   calls.push({ bay, method: "reserve" });
@@ -325,6 +381,9 @@ describePg(
     afterAll(async () => {
       for (const handler of handlers) handler.close();
       await databases.stop();
+      if (originalExposure == null)
+        delete process.env.COCALC_COURSE_VM_SITE_EXPOSURE_USD;
+      else process.env.COCALC_COURSE_VM_SITE_EXPOSURE_USD = originalExposure;
     }, 60000);
     beforeEach(() => {
       calls.length = 0;
@@ -333,6 +392,9 @@ describePg(
       losePersonalVolumeReceipt = false;
       changeVolumeBeforeCommit = undefined;
       dropPersonalVolumeCommand = false;
+      loseVmHandoffReceipt = false;
+      invalidateVmBeforeCommit = false;
+      cancelVmBeforeCommit = false;
     });
 
     async function fixture(
@@ -450,6 +512,217 @@ describePg(
       return (await pools.get(bay)!.query(sql, params)).rows[0];
     }
 
+    async function approvedMovedVm(
+      activation: "immediate" | "fallback" = "immediate",
+      provider: "gcp" | "nebius" = "nebius",
+    ) {
+      const f = await fixture();
+      const consentId = randomUUID();
+      setPolicy(f.student, {});
+      await pools
+        .get(resourceBay)!
+        .query(
+          "INSERT INTO purchases(account_id,cost,service,time) VALUES($1,-10,'credit',NOW())",
+          [f.student],
+        );
+      await onBay(resourceBay, async () => {
+        await pools
+          .get(resourceBay)!
+          .query(
+            "UPDATE compute_vms SET provider=$2,state='ready',stop_generation=1 WHERE id=$1",
+            [f.vm.id, provider],
+          );
+        const vm = await reserveCourseVmLaunch(
+          (await getComputeVmById(f.vm.id))!,
+        );
+        await requireCourseVmService(vm, true);
+        const terms: VmPersonalFundingTerms = {
+          vm_id: vm.id,
+          expected_funding_version: f.request.funding_epoch,
+          home_volume_ids: [],
+          lane: "prepaid",
+          cap_usd: "10",
+          ends_at: new Date(Date.now() + 3600_000).toISOString(),
+          activation,
+          fallback_reasons: activation === "fallback" ? ["course_expired"] : [],
+        };
+        const review = await reviewPersonalVmFundingOnBay(f.student, terms);
+        expect(() => canonicalFundingTerms(review)).not.toThrow();
+        await pools.get(resourceBay)!.query(
+          `INSERT INTO compute_vm_personal_consents (id,payer_account_id,vm_id,operation_id,terms,review,state,version,approval_url,approval_expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,'approved',2,'https://approval.example/test',NOW()+interval '15 minutes')`,
+          [consentId, f.student, vm.id, randomUUID(), terms, review],
+        );
+        await ensureCourseCreditNoticeSchema();
+        await rehomeAccountOnHomeBay({
+          account_id: f.student,
+          target_account_id: f.student,
+          dest_bay_id: courseBay,
+        });
+      });
+      return {
+        ...f,
+        consentId,
+        switch: {
+          account_id: f.student,
+          vm_id: f.vm.id,
+          consent_id: consentId,
+          expected_version: 2,
+          expected_funding_version: f.request.funding_epoch,
+          operation_id: randomUUID(),
+        },
+      };
+    }
+
+    it.each(["owner-stop", "withdraw-consent"])(
+      "does not restart a remote VM after %s wins the handoff race",
+      async (cause) => {
+        const f = await approvedMovedVm();
+        await onBay(courseBay, () => switchVmPersonalFunding(f.switch));
+        await pools
+          .get(resourceBay)!
+          .query(
+            "UPDATE compute_vms SET state='stopped',stopped_at=clock_timestamp() WHERE id=$1",
+            [f.vm.id],
+          );
+        invalidateVmBeforeCommit = cause === "owner-stop";
+        cancelVmBeforeCommit = cause === "withdraw-consent";
+        await onBay(courseBay, () => processVmPersonalFundingHandoffs());
+        await onBay(courseBay, () => processVmPersonalFundingHandoffs());
+        const consent = (await onBay(courseBay, () =>
+          getVmPersonalFunding({ account_id: f.student, vm_id: f.vm.id }),
+        ))!;
+        expect(consent.state).toBe(
+          cause === "owner-stop" ? "rejected" : "cancelled",
+        );
+        expect(toDecimal(consent.committed_usd).eq(0)).toBe(true);
+        expect(toDecimal(consent.spent_usd).eq(0)).toBe(true);
+        const vm = await onBay(resourceBay, () => getComputeVmById(f.vm.id));
+        expect(vm!.instance_generation).toBe(1);
+        expect(vm!.desired_state).toBe("stopped");
+        const handoff = (
+          await row(
+            courseBay,
+            "SELECT handoff FROM compute_vm_personal_consents WHERE id=$1",
+            [f.consentId],
+          )
+        ).handoff.remote_vm;
+        const replay = await remote(
+          resourceBay,
+        ).computeFundingPersonalVmHandoff({
+          ...handoff.identity,
+          phase: "commit",
+          binding: handoff.binding,
+        });
+        expect(replay.state).toBe("aborted");
+        expect(
+          await row(
+            resourceBay,
+            "SELECT count(*)::int AS n FROM compute_resource_work WHERE resource_id=$1 AND action='start'",
+            [f.vm.id],
+          ),
+        ).toEqual({ n: 0 });
+      },
+    );
+
+    it("lists and opens the student's existing VM through the public API after account rehome", async () => {
+      const f = await approvedMovedVm();
+      await pools
+        .get(resourceBay)!
+        .query(
+          "UPDATE compute_vms SET public_hostname='student-vm.example',bootstrap_revision=1,funding_mode='account-prepaid' WHERE id=$1",
+          [f.vm.id],
+        );
+      const api = await import("@cocalc/server/conat/api/compute");
+      await onBay(courseBay, async () => {
+        const vms = await api.listVms({ account_id: f.student });
+        expect(vms.map((v) => v.id)).toEqual([f.vm.id]);
+        const vm = await api.getVm({
+          account_id: f.student,
+          id_or_name: f.vm.id,
+        });
+        expect(vm.owning_bay_id).toBe(resourceBay);
+        expect(vm.funding_status?.personal_consent?.id).toBe(f.consentId);
+        expect(await api.listVms({ account_id: randomUUID() })).toEqual([]);
+        await expect(
+          api.getVm({ account_id: randomUUID(), id_or_name: f.vm.id }),
+        ).rejects.toThrow(/not found|access denied/);
+      });
+    });
+
+    it("waits for the GCP network watermark on the resource bay before reserving personal funding", async () => {
+      const f = await approvedMovedVm("immediate", "gcp");
+      await onBay(courseBay, () => switchVmPersonalFunding(f.switch));
+      await pools
+        .get(resourceBay)!
+        .query(
+          "UPDATE compute_vms SET state='stopped',stopped_at=clock_timestamp() WHERE id=$1",
+          [f.vm.id],
+        );
+      await onBay(courseBay, () => processVmPersonalFundingHandoffs());
+      expect(
+        await row(
+          courseBay,
+          "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1",
+          [f.student],
+        ),
+      ).toEqual({ n: 0 });
+      await pools
+        .get(resourceBay)!
+        .query(
+          "UPDATE compute_vms SET metadata=jsonb_set(metadata,'{billing,egress}',jsonb_build_object('metered_through_at',stopped_at)) WHERE id=$1",
+          [f.vm.id],
+        );
+      await onBay(courseBay, () => processVmPersonalFundingHandoffs());
+      expect(
+        (await onBay(courseBay, () =>
+          getVmPersonalFunding({ account_id: f.student, vm_id: f.vm.id }),
+        ))!.state,
+      ).toBe("active");
+      expect(
+        (await onBay(resourceBay, () => getComputeVmById(f.vm.id)))!
+          .instance_generation,
+      ).toBe(2);
+    });
+
+    it.each([false, true])(
+      "activates only approved remote expiry fallback, never suspension (suspended: %s)",
+      async (suspended) => {
+        const f = await approvedMovedVm("fallback");
+        const past = new Date(Date.now() - 1_000).toISOString();
+        await pools
+          .get(payerBay)!
+          .query(
+            "UPDATE compute_funding_pools SET ends_at=$2,state=$3 WHERE id=$1",
+            [f.allocation.pool.id, past, suspended ? "suspended" : "active"],
+          );
+        await pools
+          .get(payerBay)!
+          .query(
+            "UPDATE compute_funding_reservations SET pricing_snapshot=jsonb_set(pricing_snapshot,'{binding,stop_at}',to_jsonb($2::text)) WHERE operation_id=$1",
+            [f.request.funding_epoch, past],
+          );
+        await pools.get(resourceBay)!.query(
+          `UPDATE compute_vms SET state='stopped',desired_state='stopped',stopped_at=clock_timestamp(),
+          metadata=jsonb_set(jsonb_set(metadata,'{billing,course_funding,binding,stop_at}',to_jsonb($2::text)),
+            '{billing,course_funding,stop_intent}',jsonb_build_object('stop_generation',stop_generation,'requested_at',clock_timestamp())) WHERE id=$1`,
+          [f.vm.id, past],
+        );
+        await onBay(courseBay, () => processVmPersonalFundingHandoffs());
+        const consent = (await onBay(courseBay, () =>
+          getVmPersonalFunding({ account_id: f.student, vm_id: f.vm.id }),
+        ))!;
+        expect(consent.state).toBe(suspended ? "approved" : "active");
+        expect(
+          await row(
+            courseBay,
+            "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1",
+            [f.student],
+          ),
+        ).toEqual({ n: suspended ? 0 : 1 });
+      },
+    );
+
     it("settles a sponsored restart without a VM row on the payer bay", async () => {
       const f = await fixture();
       await onBay(resourceBay, async () => {
@@ -511,10 +784,16 @@ describePg(
       ).toEqual({ state: "settled" });
     });
 
-    it.each([false, true])(
-      "hands approved personal funding from a remote instructor to the student bay and retries lost settlement (home volume: %s)",
-      async (withHome) => {
+    it.each([
+      [false, false],
+      [true, false],
+      [false, true],
+      [true, true],
+    ])(
+      "hands approved personal funding from a remote instructor and retries lost settlement (home volume: %s, student moved: %s)",
+      async (withHome, moved) => {
         const f = await fixture();
+        const studentBay = moved ? courseBay : resourceBay;
         const consentId = randomUUID();
         setPolicy(f.student, {});
         await pools
@@ -527,7 +806,6 @@ describePg(
           const bound = await reserveCourseVmLaunch(f.vm);
           await requireCourseVmService(bound, true);
           const volumeId = withHome ? randomUUID() : undefined;
-          let homeReview: Record<string, unknown>[] = [];
           if (volumeId) {
             const epoch = randomUUID();
             await pools.get(resourceBay)!.query(
@@ -572,16 +850,6 @@ describePg(
                 f.vm.id,
                 volumeId,
               ]);
-            homeReview = [
-              {
-                id: volumeId,
-                funding_epoch: epoch,
-                resource_generation: 1,
-                attachment_generation: 1,
-                size_gb: 10,
-                hourly_usd: "0.01",
-              },
-            ];
           }
           await pools
             .get(resourceBay)!
@@ -593,25 +861,24 @@ describePg(
             vm_id: f.vm.id,
             expected_funding_version: f.request.funding_epoch,
             home_volume_ids: volumeId ? [volumeId] : [],
-            lane: "prepaid",
+            lane: "prepaid" as const,
             cap_usd: "10",
             ends_at: new Date(Date.now() + 3600000).toISOString(),
-            activation: "immediate",
+            activation: "immediate" as const,
             fallback_reasons: [],
           };
+          expect(() => canonicalFundingTerms(terms)).not.toThrow();
+          const signedReview = await reviewPersonalVmFundingOnBay(
+            f.student,
+            terms,
+          );
+          expect(() => canonicalFundingTerms(signedReview)).not.toThrow();
           // Start at the independently approved boundary; no test approval RPC.
           await pools.get(resourceBay)!.query(
             `INSERT INTO compute_vm_personal_consents
           (id,payer_account_id,vm_id,operation_id,terms,review,state,version,approval_url,approval_expires_at)
           VALUES($1,$2,$3,$4,$5,$6,'approved',2,'https://approval.example/test',NOW()+interval '15 minutes')`,
-            [
-              consentId,
-              f.student,
-              f.vm.id,
-              randomUUID(),
-              terms,
-              { home_volumes: homeReview, owning_bay_id: resourceBay },
-            ],
+            [consentId, f.student, f.vm.id, randomUUID(), terms, signedReview],
           );
           const opts = {
             account_id: f.student,
@@ -621,7 +888,15 @@ describePg(
             expected_funding_version: f.request.funding_epoch,
             operation_id: randomUUID(),
           };
-          await switchVmPersonalFunding(opts);
+          if (moved) {
+            await ensureCourseCreditNoticeSchema();
+            await rehomeAccountOnHomeBay({
+              account_id: f.student,
+              target_account_id: f.student,
+              dest_bay_id: courseBay,
+            });
+          }
+          await onBay(studentBay, () => switchVmPersonalFunding(opts));
           await pools
             .get(resourceBay)!
             .query(
@@ -632,7 +907,16 @@ describePg(
             getLogger("compute:funding:personal-handoff"),
             "warn",
           );
-          await processVmPersonalFundingHandoffs();
+          loseVmHandoffReceipt = moved;
+          await onBay(studentBay, () => processVmPersonalFundingHandoffs());
+          if (moved) {
+            expect(
+              (await onBay(studentBay, () =>
+                getVmPersonalFunding({ account_id: f.student, vm_id: f.vm.id }),
+              ))!.state,
+            ).toBe("preparing");
+            await onBay(studentBay, () => processVmPersonalFundingHandoffs());
+          }
           expect(warnings.mock.calls).toEqual([]);
           warnings.mockRestore();
           let vm = (await getComputeVmById(f.vm.id))!;
@@ -642,7 +926,10 @@ describePg(
             consent_id: consentId,
           });
           expect(vm.desired_state).toBe("running");
-          expect((await switchVmPersonalFunding(opts)).state).toBe("active");
+          expect(
+            (await onBay(studentBay, () => switchVmPersonalFunding(opts)))
+              .state,
+          ).toBe("active");
           await (
             await payerApi(f.student)
           ).checkComputeVmFunding({
@@ -663,7 +950,7 @@ describePg(
             [f.request.funding_epoch],
           );
           const next = await row(
-            resourceBay,
+            studentBay,
             "SELECT pricing_snapshot->'meter' AS meter FROM compute_funding_reservations WHERE id=$1",
             [consentId],
           );
@@ -680,7 +967,7 @@ describePg(
           ).toEqual({ n: 0 });
           expect(
             await row(
-              resourceBay,
+              studentBay,
               "SELECT count(*)::int AS n FROM compute_funding_reservations WHERE payer_account_id=$1",
               [f.student],
             ),
@@ -709,7 +996,7 @@ describePg(
               [volumeId],
             );
             const newVolume = await row(
-              resourceBay,
+              studentBay,
               "SELECT pricing_snapshot->'meter' AS meter FROM compute_funding_reservations WHERE resource_id=$1",
               [volumeId],
             );
@@ -717,6 +1004,16 @@ describePg(
             expect(oldVolume.meter.transferred_at).toBe(
               newVolume.meter.running_started_at,
             );
+          }
+          if (moved) {
+            expect(
+              await row(
+                studentBay,
+                "SELECT count(*)::int AS n FROM compute_vms WHERE id=$1",
+                [vm.id],
+              ),
+            ).toEqual({ n: 0 });
+            return;
           }
           await ensureCourseCreditNoticeSchema();
           const resourceNotice: ComputeResourceNotice = {

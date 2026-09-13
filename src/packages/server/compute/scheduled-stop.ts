@@ -135,7 +135,9 @@ export async function requestScheduledVmState(opts: {
         : {
             stop_at: vm.stop_at ?? null,
             stop_after_minutes: vm.stop_after_minutes ?? null,
-            stop_generation: vm.stop_generation ?? 0,
+            // An explicit stop supersedes pending starts and personal handoffs.
+            // Idempotent replay returns above without advancing this twice.
+            stop_generation: (vm.stop_generation ?? 0) + 1,
           };
     if (opts.prepared_funding)
       vm = await applyPreparedCourseRestart(client, vm, opts.prepared_funding);

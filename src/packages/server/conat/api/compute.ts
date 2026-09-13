@@ -5,6 +5,11 @@
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import {
+  routeComputeOwnerRead,
+  listComputeOwnerResources,
+  selectOwnedComputeResource,
+} from "@cocalc/server/compute/owner-resource-routing";
+import {
   normalizeVmFundingSource,
   requireSponsoredVmAdmission,
   hasCourseVmFunding,
@@ -1468,6 +1473,12 @@ export async function listVolumes(opts: {
   include_deleted?: boolean;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead())
+    return listComputeOwnerResources({
+      ...opts,
+      account_id: accountId,
+      kind: "volume",
+    });
   return (
     await listOwnedComputeVolumes({
       owner_account_id: accountId,
@@ -1482,6 +1493,11 @@ export async function getVolume(opts: {
   id_or_name: string;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead())
+    return selectOwnedComputeResource(
+      await listVolumes({ account_id: accountId, include_deleted: true }),
+      opts.id_or_name,
+    );
   return publicVolume(
     await resolveOwnedVolume(accountId, opts.id_or_name, true),
   );
@@ -1788,6 +1804,12 @@ export async function listVms(opts: {
   include_deleted?: boolean;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead())
+    return listComputeOwnerResources({
+      ...opts,
+      account_id: accountId,
+      kind: "vm",
+    });
   const rows = await listOwnedComputeVms({
     owner_account_id: accountId,
     project_id: opts.project_id,
@@ -1930,14 +1952,20 @@ export async function listProjectVms(opts: {
 
 export async function getVm(opts: { account_id?: string; id_or_name: string }) {
   const accountId = requireAccount(opts.account_id);
-  const vm = await resolveOwned(accountId, opts.id_or_name, true);
-  const result = await publicVm(vm);
-  if (result.funding_status && vm.owner_account_id === accountId) {
+  const result = routeComputeOwnerRead()
+    ? selectOwnedComputeResource(
+        await listVms({ account_id: accountId, include_deleted: true }),
+        opts.id_or_name,
+      )
+    : await publicVm(await resolveOwned(accountId, opts.id_or_name, true));
+  if (result.funding_status && result.owner_account_id === accountId) {
     const { getVmPersonalFunding } =
       await import("@cocalc/server/compute/funding/vm-personal");
     result.funding_status.personal_consent =
-      (await getVmPersonalFunding({ account_id: accountId, vm_id: vm.id })) ??
-      undefined;
+      (await getVmPersonalFunding({
+        account_id: accountId,
+        vm_id: result.id,
+      })) ?? undefined;
   }
   return result;
 }

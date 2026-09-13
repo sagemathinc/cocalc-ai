@@ -16,7 +16,11 @@ import type {
   VmPersonalFallbackReason,
 } from "@cocalc/util/compute-vm-funding";
 import type { ComputeVmRow, ComputeVolumeRow } from "../types";
-import { insertComputeInstance } from "../db";
+import type { PersonalVmRemoteHandoff } from "@cocalc/util/compute-personal-funding-review";
+import {
+  enqueuePersonalTransition,
+  installPersonalVmFunding,
+} from "./vm-personal-cutover";
 import { randomUUID } from "node:crypto";
 import { getLogger } from "@cocalc/backend/logger";
 import { payerApi } from "./vm-funding";
@@ -24,11 +28,6 @@ import {
   reservePersonalVmInTransaction,
   reservePersonalVolumeInTransaction,
 } from "./vm-personal-reservations";
-import {
-  volumeFunding,
-  volumeFundingBindings,
-  volumeFundingDeadline,
-} from "./volume-funding";
 import {
   assertFundingPayerHomeBay,
   proposeVmPersonalFundingApproval,
@@ -50,7 +49,7 @@ import {
   VM_FUNDING_MARGIN_MS,
 } from "./vm-reservations";
 
-interface ConsentRow {
+export interface ConsentRow {
   id: string;
   payer_account_id: string;
   vm_id: string;
@@ -68,9 +67,10 @@ interface ConsentRow {
   cleared_operation_id?: string;
   handoff_operation_id?: string;
   handoff?: {
-    stop_generation: number;
+    stop_generation?: number;
     reason?: VmPersonalFallbackReason;
     stop_requested_at?: string;
+    remote_vm?: PersonalVmRemoteHandoff;
   };
 }
 
@@ -79,8 +79,8 @@ let fallbackCursor = "00000000-0000-0000-0000-000000000000";
 let handoffCursor = "00000000-0000-0000-0000-000000000000";
 let closedConsentCursor = "00000000-0000-0000-0000-000000000000";
 
-async function fallbackDecision(
-  consent: ConsentRow,
+export async function fallbackDecision(
+  consent: Pick<ConsentRow, "terms">,
   vm: ComputeVmRow,
 ): Promise<ComputeVmFallbackDecision | undefined> {
   const course = vm.metadata?.billing?.course_funding;
@@ -108,9 +108,9 @@ async function fallbackDecision(
   });
 }
 
-async function reviewedFallbackStillApplies(
+export async function reviewedFallbackStillApplies(
   db: PoolClient,
-  consent: ConsentRow,
+  consent: Pick<ConsentRow, "terms" | "review" | "handoff">,
   vm: ComputeVmRow,
   decision?: ComputeVmFallbackDecision,
 ): Promise<boolean> {
@@ -215,7 +215,9 @@ async function prepareAutomaticVmPersonalFallbacks(): Promise<void> {
   }
 }
 
-function view(row: ConsentRow): VmPersonalFundingConsent {
+export function personalVmConsentView(
+  row: ConsentRow,
+): VmPersonalFundingConsent {
   const expired =
     row.state === "pending"
       ? row.approval_expires_at.valueOf() <= Date.now()
@@ -227,7 +229,9 @@ function view(row: ConsentRow): VmPersonalFundingConsent {
     state:
       expired && ["pending", "approved"].includes(row.state)
         ? "expired"
-        : row.state,
+        : row.state === "active" && row.handoff?.remote_vm?.state === "pending"
+          ? "preparing"
+          : row.state,
     spent_usd: row.spent_usd,
     committed_usd: row.committed_usd,
     remaining_usd: moneyToDbString(
@@ -242,8 +246,9 @@ function view(row: ConsentRow): VmPersonalFundingConsent {
     as_of: row.updated_at.toISOString(),
   };
 }
+const view = personalVmConsentView;
 
-async function ownedVm(
+export async function ownedVm(
   payer: string,
   id: string,
   db?: PoolClient,
@@ -286,7 +291,7 @@ function normalize(terms: VmPersonalFundingTerms): VmPersonalFundingTerms {
   return normalized;
 }
 
-async function reviewedHomeVolume(
+export async function reviewedHomeVolume(
   vm: ComputeVmRow,
   terms: VmPersonalFundingTerms,
   db?: PoolClient,
@@ -350,7 +355,7 @@ async function reviewedHomeVolume(
   return volume;
 }
 
-function sameHomeVolumeReview(
+export function sameHomeVolumeReview(
   a: PersonalVmApprovalReview,
   b: PersonalVmApprovalReview,
 ): boolean {
@@ -382,7 +387,7 @@ function sameHomeVolumeReview(
   return JSON.stringify(identity(a)) === JSON.stringify(identity(b));
 }
 
-async function reviewVm(
+export async function reviewVm(
   vm: ComputeVmRow,
   terms: VmPersonalFundingTerms,
   db?: PoolClient,
@@ -472,25 +477,47 @@ async function reviewVm(
         vm.expires_at?.valueOf() ?? Infinity,
       ),
     ).toISOString(),
+    provider: vm.provider,
+    stopped_hourly_usd: storage.hourly_cost_usd,
+    stop_generation: vm.stop_generation ?? 0,
+    ...(vm.stop_at ? { stop_at: vm.stop_at.toISOString() } : {}),
+    ...(vm.expires_at ? { expires_at: vm.expires_at.toISOString() } : {}),
     home_volumes: volume
       ? [
           {
             id: volume.id,
             name: volume.name,
             funding_action: changeVolumeFunding ? "switch" : "preserve",
-            funding_mode: changeVolumeFunding ? undefined : volume.funding_mode,
-            funding_epoch:
-              volume.metadata.billing.course_funding?.binding?.funding_epoch,
-            resource_generation:
-              volume.metadata.billing.course_funding?.binding
-                ?.resource_generation,
+            ...(!changeVolumeFunding
+              ? { funding_mode: volume.funding_mode }
+              : {}),
+            ...(volume.metadata.billing.course_funding?.binding
+              ? {
+                  funding_epoch:
+                    volume.metadata.billing.course_funding.binding
+                      .funding_epoch,
+                  resource_generation:
+                    volume.metadata.billing.course_funding.binding
+                      .resource_generation,
+                }
+              : {}),
             attachment_generation: volume.attachment_generation,
             size_gb: volume.size_gb,
             hourly_usd: volume.metadata.billing.rate.hourly_cost_usd,
-            storage_delete_at: changeVolumeFunding
-              ? new Date(end.valueOf() + VM_FUNDING_STORAGE_MS).toISOString()
+            ...(changeVolumeFunding
+              ? {
+                  storage_delete_at: new Date(
+                    end.valueOf() + VM_FUNDING_STORAGE_MS,
+                  ).toISOString(),
+                }
               : volume.metadata.billing.course_funding?.binding
-                  ?.storage_delete_at,
+                    ?.storage_delete_at
+                ? {
+                    storage_delete_at:
+                      volume.metadata.billing.course_funding.binding
+                        .storage_delete_at,
+                  }
+                : {}),
           },
         ]
       : [],
@@ -706,6 +733,10 @@ export async function switchVmPersonalFunding(
   await assertFundingPayerHomeBay(payer);
   fundingId(opts.operation_id, "Operation");
   fundingId(opts.consent_id, "Consent");
+  const remote = await (
+    await import("./vm-personal-remote")
+  ).switchRemotePersonalVm(payer, opts);
+  if (remote) return remote;
   return withFundingAccountTransaction(payer, async (db) => {
     const vm = await ownedVm(payer, opts.vm_id, db);
     const {
@@ -748,37 +779,12 @@ export async function switchVmPersonalFunding(
   });
 }
 
-async function enqueuePersonalTransition(
-  db: PoolClient,
-  vmId: string,
-  action: "stop" | "start",
-  epoch: string,
-  operation: string,
-): Promise<void> {
-  await db.query(
-    `UPDATE compute_vms SET desired_state=$2,state=CASE WHEN state='stopped' AND $2='stopped' THEN state ELSE $3 END,updated_at=clock_timestamp() WHERE id=$1 AND desired_state<>'deleted'`,
-    [
-      vmId,
-      action === "stop" ? "stopped" : "running",
-      action === "stop" ? "stopping" : "starting",
-    ],
-  );
-  await db.query(
-    `INSERT INTO compute_resource_work (id,resource_kind,resource_id,action,idempotency_key,payload,state,attempt,not_before,created_at,updated_at)
-    VALUES ($1,'vm',$2,$3,$4,$5,'queued',0,NOW(),NOW(),NOW())`,
-    [
-      randomUUID(),
-      vmId,
-      action,
-      `personal-${action}:${operation}`,
-      { funding_epoch: epoch },
-    ],
-  );
-}
-
 /** Owning-bay reconciliation. No account lock or DB transaction spans provider work. */
 export async function processVmPersonalFundingHandoffs(): Promise<void> {
   await (await import("./personal-expiry")).expirePersonalFundingConsents();
+  await (
+    await import("./vm-personal-remote")
+  ).processRemotePersonalVmHandoffs();
   await (await import("./volume-personal")).closeEndedVolumePersonalConsents();
   await closeEndedPersonalConsents();
   await prepareAutomaticVmPersonalFallbacks();
@@ -833,7 +839,6 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             fundingConflict(
               "Home volume quote changed; create a new personal funding intent.",
             );
-          const old = vm.metadata.billing.course_funding;
           const oldEgress = vm.metadata.billing.egress ?? {};
           // Do not move a GCP run until the measured watermark covers its confirmed stop.
           if (
@@ -859,6 +864,7 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             exposureBudget,
           );
           const volume = await reviewedHomeVolume(vm, consent.terms, db);
+          let home: Parameters<typeof installPersonalVmFunding>[5];
           if (
             volume?.metadata.billing.course_funding?.binding?.source.kind ===
             "course"
@@ -879,93 +885,19 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
               exposureBudget,
               cutover,
             );
-            const previous = volumeFunding(volume);
-            const history = volumeFundingBindings(volume).map((oldBinding) => {
-              const slice = (previous.growth ?? []).find(
-                (s) => s.binding?.reservation_id === oldBinding.reservation_id,
-              );
-              const start = slice
-                ? slice.started_at
-                : (previous.started_at ?? volume.ready_at!.toISOString());
-              return {
-                binding: oldBinding,
-                started_at: new Date(start).toISOString(),
-                service_ended_at:
-                  previous.service_ended_at ??
-                  volumeFundingDeadline(volume, "stop_at"),
-                transferred_at: cutover.toISOString(),
-                successor_binding: successor,
-              };
-            });
-            await db.query(
-              `UPDATE compute_volumes SET funding_mode=$2,billing_state='pending',billing_updated_at=NULL,
-              metadata=jsonb_set(jsonb_set(metadata,'{billing,course_funding}',$3::jsonb),'{billing,funding_mode}',to_jsonb($2::text)),updated_at=clock_timestamp() WHERE id=$1`,
-              [
-                volume.id,
-                successor.lane === "prepaid"
-                  ? "account-prepaid"
-                  : "account-postpaid",
-                JSON.stringify({
-                  source: successor.source,
-                  funding_epoch: successor.funding_epoch,
-                  binding: successor,
-                  started_at: cutover.toISOString(),
-                  history: [...(previous.history ?? []), ...history],
-                }),
-              ],
-            );
+            home = { volume, binding: successor };
           }
-          const history = [
-            ...(old.history ?? []),
-            {
-              binding: old.binding,
-              running_until: vm.stopped_at.toISOString(),
-              transferred_at: cutover.toISOString(),
-              successor_reservation_id: binding.reservation_id,
-              successor_binding: binding,
-              egress: oldEgress,
-            },
-          ];
-          const course = {
-            source: binding.source,
-            funding_epoch: binding.funding_epoch,
+          await installPersonalVmFunding(
+            db,
+            vm,
             binding,
-            history,
-          };
-          await db.query(
-            `UPDATE compute_vms SET instance_generation=$2,stopped_at=NULL,accrued_cost=0,funding_mode=$3,
-        metadata=jsonb_set(jsonb_set(jsonb_set(jsonb_set(metadata,'{billing,course_funding}',$4::jsonb),'{billing,egress}',$5::jsonb),'{billing,funding_mode}',to_jsonb($3::text)),'{provider_generation_provisioning}','true'::jsonb),updated_at=clock_timestamp()
-        WHERE id=$1`,
-            [
-              vm.id,
-              binding.resource_generation,
-              binding.lane === "prepaid"
-                ? "account-prepaid"
-                : "account-postpaid",
-              JSON.stringify(course),
-              JSON.stringify({
-                total_bytes: 0,
-                metered_through_at: cutover.toISOString(),
-                finalized: false,
-              }),
-            ],
+            consent.handoff_operation_id!,
+            cutover,
+            home,
           );
           await db.query(
             "UPDATE compute_vm_personal_consents SET state='active',version=version+1,activated_at=$2,updated_at=clock_timestamp() WHERE id=$1",
             [consent.id, cutover],
-          );
-          // GCP can restart its retained instance without entering provision().
-          // Persist the new metering generation before queuing provider work.
-          await insertComputeInstance(
-            { ...vm, instance_generation: binding.resource_generation },
-            db,
-          );
-          await enqueuePersonalTransition(
-            db,
-            vm.id,
-            "start",
-            binding.funding_epoch,
-            consent.handoff_operation_id!,
           );
         });
       await withFundingResourceMeterLock(

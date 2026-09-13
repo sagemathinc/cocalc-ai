@@ -52,6 +52,18 @@ type PersonalVolumeReservationInput = Pick<
   ComputeVolumeRow,
   "id" | "owner_account_id" | "owning_bay_id" | "provider" | "metadata"
 >;
+export type PersonalVmReservationInput = Pick<
+  ComputeVmRow,
+  | "id"
+  | "owner_account_id"
+  | "owning_bay_id"
+  | "provider"
+  | "metadata"
+  | "instance_generation"
+  | "effective_pricing_model"
+  | "stop_at"
+  | "expires_at"
+>;
 
 /** A remote handoff reserves before its owning-bay commit; it has not started
  * a new metered interval merely because funding was prepared. */
@@ -62,10 +74,11 @@ export async function reserveUndispatchedPersonalVolumeInTransaction(
   reservationId: string,
   until: Date,
   exposureBudget: FundingExposureBudget,
+  vm?: PersonalVmReservationInput,
 ): Promise<ComputeVmFundingBinding> {
   return reservePersonalResourceInTransaction(
     client,
-    undefined,
+    vm,
     consentId,
     until,
     exposureBudget,
@@ -75,7 +88,7 @@ export async function reserveUndispatchedPersonalVolumeInTransaction(
 
 export async function reservePersonalVmInTransaction(
   client: PoolClient,
-  vm: ComputeVmRow,
+  vm: PersonalVmReservationInput,
   consentId: string,
   until: Date,
   exposureBudget: FundingExposureBudget,
@@ -124,7 +137,7 @@ export async function reservePersonalVolumeInTransaction(
 
 async function reservePersonalResourceInTransaction(
   client: PoolClient,
-  vm: ComputeVmRow | undefined,
+  vm: PersonalVmReservationInput | undefined,
   consentId: string,
   until: Date,
   exposureBudget: FundingExposureBudget,

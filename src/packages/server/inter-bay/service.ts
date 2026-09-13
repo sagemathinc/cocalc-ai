@@ -1114,6 +1114,10 @@ async function startAccountLocalService(): Promise<void> {
     creditTransferDeliver,
     computeFundingGetCourseSummary: computeFunding.getCourseSummary,
     computeFundingGetOwnedPools: computeFunding.getOwnedPools,
+    computeOwnerResources: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-routing")
+      ).computeOwnerResourcesOnBay(opts),
     computeFundingReviewPersonalResource: async (opts) =>
       (
         await import("@cocalc/server/compute/funding/resource-review")
@@ -1122,6 +1126,10 @@ async function startAccountLocalService(): Promise<void> {
       (
         await import("@cocalc/server/compute/funding/volume-personal-remote")
       ).applyRemotePersonalVolumeHandoff(opts),
+    computeFundingPersonalVmHandoff: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/vm-personal-remote-resource")
+      ).processPersonalVmHandoffOnBay(opts),
     computeFundingReceiveResourceNotice: async (opts) =>
       await (
         await import("@cocalc/server/notifications/compute-resource")

@@ -5,6 +5,30 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+Personal VM handoff now has a payer-home coordinator and a resource-bay
+prepare/commit/abort protocol. It stops the old generation, waits for physical
+stop and GCP network accounting, reserves the combined VM/disk personal cap,
+then atomically installs the next generation and queues restart on the resource
+bay. Lost replies replay a durable receipt. Cancellation does not free uncertain
+provider exposure; confirmed abort does. An explicit user/agent Stop now advances
+the stop generation, including when the VM is already stopping, so a previously
+prepared personal handoff cannot override that stop. Replaying the same Stop
+operation does not advance the generation again.
+
+The public VM/volume list and detail APIs now discover owner-filtered resources
+across bays. They reject incomplete or contradictory responses and ambiguous
+display names instead of hiding resource state. The current account home decorates
+the VM with the student's personal consent. General lifecycle mutation routing
+after account rehome remains work in progress; read discovery alone does not
+establish that the complete remote VM control interface works.
+
+The latest real-PostgreSQL run passed 533 tests across 47 suites, with 12
+database-mode skips. It includes normal explicit-stop fencing/replay, remote
+VM plus home-disk cutover, lost replies, withdrawn consent, allowed expiry
+fallback versus suspension, GCP-watermark gating, and public API discovery
+after account rehome. Server typecheck passed. These synthetic multi-bay
+provider fixtures are not live cloud or independent-review evidence.
+
 Personal previews now discover the resource's authoritative bay rather than
 requiring a local VM/disk row at the student's current account home. Discovery
 is bounded and fails closed on incomplete, unavailable or contradictory bay
@@ -27,8 +51,8 @@ resource rows, not a new live cloud run. The three-bay harness now isolates bay
 configuration per async request so concurrent discovery cannot switch another
 request's database. The broader 43-suite PostgreSQL run passed 459 tests with
 12 database-mode skips; server and frontend typechecks passed.
-Remote VM handoff, including the combined VM/home-volume case, remains unfinished;
-do not interpret remote preview or storage support as completing that workflow.
+Remote VM handoff, including the combined VM/home-volume case, is now connected
+as described above; new live cross-bay cloud validation remains outstanding.
 
 A later live automatic-fallback test approved only the `course_expired` reason.
 The worker stopped the sponsored instance before the financial deadline and
@@ -96,8 +120,8 @@ bay, cancel from the new payer bay, preserve outstanding cleanup backing, and
 verify that VM and attached-disk service checks reject the cancelled consent.
 The local VM path retains its immediate stop; remote enforcement observes the
 authoritative cancellation on its normal sweep. New remote previews, approvals
-and standalone disk handoffs are covered above; VM handoffs after the student
-moves away from the resource bay remain incomplete.
+and standalone disk handoffs are covered above; the subsequent remote VM protocol
+also covers handoffs after the student moves away from the resource bay.
 
 The course budget tab, allocation preview and approval-intent APIs, student
 funding selection, VM admission/billing integration, and separate financial

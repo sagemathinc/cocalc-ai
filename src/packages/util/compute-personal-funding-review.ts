@@ -5,6 +5,7 @@
 import type { VmPersonalFundingTerms } from "./compute-vm-funding";
 import type { VolumePersonalFundingTerms } from "./compute-volume-personal-funding";
 import type { ComputeVmFundingBinding } from "./compute-vm-funding";
+import type { VmPersonalFallbackReason } from "./compute-vm-funding";
 
 /** Private owning-bay evidence. Browser proposals cannot supply these values. */
 export interface PersonalVmApprovalReview {
@@ -18,6 +19,11 @@ export interface PersonalVmApprovalReview {
   protected_storage_usd: string;
   egress_cap_usd: string;
   storage_delete_at: string;
+  provider?: "gcp" | "nebius";
+  stopped_hourly_usd?: string;
+  stop_generation?: number;
+  stop_at?: string;
+  expires_at?: string;
   home_volumes: {
     id: string;
     name: string;
@@ -62,6 +68,47 @@ export interface PersonalVolumeHandoffReceipt {
   reservation_id: string;
   outcome: "committed" | "aborted";
   as_of: string;
+}
+
+export interface PersonalVmHandoffIdentity {
+  account_id: string;
+  operation_id: string;
+  consent_id: string;
+  terms: VmPersonalFundingTerms;
+  review: PersonalVmApprovalReview;
+}
+
+export type PersonalVmHandoffRequest = PersonalVmHandoffIdentity &
+  (
+    | { phase: "prepare" | "abort" }
+    | {
+        phase: "commit";
+        binding: ComputeVmFundingBinding;
+        home_binding?: ComputeVmFundingBinding;
+      }
+  );
+
+export type PersonalVmHandoffResult =
+  | { state: "waiting" }
+  | {
+      state: "ready";
+      stopped_at: string;
+      stop_generation: number;
+      reason?: VmPersonalFallbackReason;
+      as_of: string;
+    }
+  | {
+      state: "committed" | "aborted";
+      as_of: string;
+      reservation_ids: string[];
+    };
+
+export interface PersonalVmRemoteHandoff {
+  identity: PersonalVmHandoffIdentity;
+  state: "pending" | "committed" | "aborted";
+  binding?: ComputeVmFundingBinding;
+  home_binding?: ComputeVmFundingBinding;
+  receipt?: PersonalVmHandoffResult;
 }
 
 export type PersonalResourceReviewRequest = { account_id: string } & (

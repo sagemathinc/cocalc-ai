@@ -348,8 +348,8 @@ async function fixtureWithPersonalHome() {
   expect(preview.home_volumes![0]).toMatchObject({
     id: volumeId,
     funding_action: "preserve",
-    storage_delete_at: undefined,
   });
+  expect(preview.home_volumes![0].storage_delete_at).toBeUndefined();
   const volume = (await getComputeVolumeById(volumeId))!;
   await getPool().query(
     "UPDATE compute_vm_personal_consents SET terms=$2,review=$3 WHERE id=$1",

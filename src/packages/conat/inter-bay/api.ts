@@ -4227,7 +4227,31 @@ export interface InterBayAccountDirectoryApi {
   ) => Promise<void>;
 }
 
+export interface ComputeOwnerResourcesRequest {
+  account_id: string;
+  kind: "vm" | "volume";
+  project_id?: string;
+  include_deleted?: boolean;
+}
+export type ComputeOwnerResourcesResult =
+  | {
+      kind: "vm";
+      resources: import("@cocalc/conat/hub/api/compute").ComputeVm[];
+    }
+  | {
+      kind: "volume";
+      resources: import("@cocalc/conat/hub/api/compute").ComputeVolume[];
+    };
+
 export interface InterBayComputeFundingApi {
+  computeOwnerResources: (
+    opts: ComputeOwnerResourcesRequest,
+  ) => Promise<ComputeOwnerResourcesResult>;
+  computeFundingPersonalVmHandoff: (
+    opts: import("@cocalc/util/compute-personal-funding-review").PersonalVmHandoffRequest,
+  ) => Promise<
+    import("@cocalc/util/compute-personal-funding-review").PersonalVmHandoffResult
+  >;
   computeFundingApplyPersonalVolumeHandoff: (
     opts: import("@cocalc/util/compute-personal-funding-review").ApplyPersonalVolumeHandoffRequest,
   ) => Promise<
@@ -8144,10 +8168,14 @@ export function createInterBayAccountLocalClient({
       await computeFundingClient.computeFundingGetCourseSummary(opts),
     computeFundingGetOwnedPools: async (opts) =>
       await computeFundingClient.computeFundingGetOwnedPools(opts),
+    computeOwnerResources: (opts) =>
+      computeFundingClient.computeOwnerResources(opts),
     computeFundingReviewPersonalResource: (opts) =>
       computeFundingClient.computeFundingReviewPersonalResource(opts),
     computeFundingApplyPersonalVolumeHandoff: (opts) =>
       computeFundingClient.computeFundingApplyPersonalVolumeHandoff(opts),
+    computeFundingPersonalVmHandoff: (opts) =>
+      computeFundingClient.computeFundingPersonalVmHandoff(opts),
     computeFundingReceiveResourceNotice: (opts) =>
       computeFundingClient.computeFundingReceiveResourceNotice(opts),
     computeFundingGetCourseVmRecommendations: (opts) =>
@@ -8647,10 +8675,13 @@ export function createInterBayAccountLocalHandler({
           await impl.computeFundingGetCourseSummary(opts),
         computeFundingGetOwnedPools: async (opts) =>
           await impl.computeFundingGetOwnedPools(opts),
+        computeOwnerResources: (opts) => impl.computeOwnerResources(opts),
         computeFundingReviewPersonalResource: (opts) =>
           impl.computeFundingReviewPersonalResource(opts),
         computeFundingApplyPersonalVolumeHandoff: (opts) =>
           impl.computeFundingApplyPersonalVolumeHandoff(opts),
+        computeFundingPersonalVmHandoff: (opts) =>
+          impl.computeFundingPersonalVmHandoff(opts),
         computeFundingReceiveResourceNotice: (opts) =>
           impl.computeFundingReceiveResourceNotice(opts),
         computeFundingGetCourseVmRecommendations: (opts) =>

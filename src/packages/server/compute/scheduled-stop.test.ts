@@ -186,13 +186,22 @@ describe("durable scheduled stops", () => {
       getConfiguredBayId(),
       new Date(Date.now() + 3600000),
     );
+    const operation = randomUUID();
     const stopped = await requestScheduledVmState({
       vm: running,
       desired_state: "stopped",
       actor_kind: "human",
-      idempotency_key: randomUUID(),
+      idempotency_key: operation,
     });
     expect(stopped.stop_at).toEqual(running.stop_at);
+    expect(stopped.stop_generation).toBe((running.stop_generation ?? 0) + 1);
+    const replay = await requestScheduledVmState({
+      vm: running,
+      desired_state: "stopped",
+      actor_kind: "human",
+      idempotency_key: operation,
+    });
+    expect(replay.stop_generation).toBe(stopped.stop_generation);
     const started = await requestScheduledVmState({
       vm: stopped,
       desired_state: "running",
