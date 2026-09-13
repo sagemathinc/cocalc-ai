@@ -87,6 +87,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { disablePublicDirectorySharesForBannedAccountAcrossCluster } from "@cocalc/server/public-directory-shares/ban-containment";
+import { setBillingAccountFrozen } from "@cocalc/server/purchases/billing-authority/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   displayNameFromParts,
@@ -667,6 +668,12 @@ export async function setLocalClusterAccountBan({
     });
   } else {
     await removeUserBan(account_id);
+    await setBillingAccountFrozen({
+      account_id,
+      frozen: false,
+      reason: reason ?? "account ban removed",
+      actor_account_id: actor_account_id ?? undefined,
+    });
   }
   await recordAccountBanAuditEvent({
     account_id,

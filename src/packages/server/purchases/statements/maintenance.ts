@@ -10,7 +10,9 @@ const logger = getLogger("purchases:statements-maintenance");
 // The default expore -- statementMaintenance -- gets called automatically
 // every few minutes all day long.   It is responsible for ensuring that
 // the 'day' and 'month' statements get created and statements get emailed out.
-export default async function statementMaintenance() {
+export default async function statementMaintenance({
+  max_emails = Number.POSITIVE_INFINITY,
+}: { max_emails?: number } = {}) {
   logger.debug("statementMaintenance -- updating statements");
   try {
     await createDayStatements();
@@ -24,7 +26,7 @@ export default async function statementMaintenance() {
   }
 
   try {
-    await emailNewStatements();
+    await emailNewStatements({ limit: max_emails });
   } catch (err) {
     logger.debug(
       `WARNING: Nonfatal error emailing out new statements -- ${err}`,

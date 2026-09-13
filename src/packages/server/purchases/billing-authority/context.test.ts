@@ -24,17 +24,17 @@ describe("billing authority context", () => {
     expect(stripeMutationEnforcementDefault("test")).toBe(false);
   });
 
-  it("allows legacy callers until enforcement is enabled", () => {
-    expect(() =>
+  it("allows legacy callers until enforcement is enabled", async () => {
+    await expect(
       assertStripeMutationAuthorized({ method: "POST", path: "/v1/invoices" }),
-    ).not.toThrow();
+    ).resolves.toBeUndefined();
   });
 
-  it("rejects Stripe mutations outside the authority", () => {
+  it("rejects Stripe mutations outside the authority", async () => {
     enableStripeMutationAuthorityEnforcement();
-    expect(() =>
+    await expect(
       assertStripeMutationAuthorized({ method: "POST", path: "/v1/invoices" }),
-    ).toThrow("must run through the billing authority");
+    ).rejects.toThrow("must run through the billing authority");
   });
 
   it("authorizes only the asynchronous authority execution chain", async () => {
@@ -49,18 +49,18 @@ describe("billing authority context", () => {
           request_id: "request-1",
         });
         await Promise.resolve();
-        expect(() =>
+        await expect(
           assertStripeMutationAuthorized({
             method: "DELETE",
             path: "/v1/payment_methods/pm_1",
           }),
-        ).not.toThrow();
+        ).resolves.toBeUndefined();
       },
     });
     expect(isInBillingAuthorityContext()).toBe(false);
-    expect(() =>
+    await expect(
       assertStripeMutationAuthorized({ method: "POST", path: "/v1/invoices" }),
-    ).toThrow();
+    ).rejects.toThrow();
   });
 
   it("expires authority inherited by detached asynchronous work", async () => {
@@ -77,12 +77,12 @@ describe("billing authority context", () => {
           await gate;
           expect(isInBillingAuthorityContext()).toBe(false);
           expect(getBillingAuthorityContext()).toBeUndefined();
-          expect(() =>
+          await expect(
             assertStripeMutationAuthorized({
               method: "POST",
               path: "/v1/payment_intents",
             }),
-          ).toThrow("must run through the billing authority");
+          ).rejects.toThrow("must run through the billing authority");
           return true;
         })();
       },
@@ -103,12 +103,12 @@ describe("billing authority context", () => {
         expect(isInBillingAuthorityContext()).toBe(true);
         authorityActive = false;
         expect(isInBillingAuthorityContext()).toBe(false);
-        expect(() =>
+        await expect(
           assertStripeMutationAuthorized({
             method: "POST",
             path: "/v1/invoices",
           }),
-        ).toThrow("must run through the billing authority");
+        ).rejects.toThrow("must run through the billing authority");
       },
     });
   });

@@ -139,8 +139,19 @@ async function processClaimedRenewalAttempt(
   }
 }
 
-export default async function maintainSubscriptionRenewals(): Promise<void> {
+export default async function maintainSubscriptionRenewals({
+  max_attempts = MAX_ATTEMPTS_PER_RUN,
+}: { max_attempts?: number } = {}): Promise<void> {
   const { mode, concurrency } = await renewalConfiguration();
+  const maxAttempts = Math.max(
+    0,
+    Math.min(
+      MAX_ATTEMPTS_PER_RUN,
+      Number.isFinite(max_attempts)
+        ? Math.floor(max_attempts)
+        : MAX_ATTEMPTS_PER_RUN,
+    ),
+  );
   if (mode === "disabled") {
     logger.debug("subscription renewal maintenance is disabled");
     return;
@@ -154,9 +165,9 @@ export default async function maintainSubscriptionRenewals(): Promise<void> {
     return;
   }
   let processed = 0;
-  while (processed < MAX_ATTEMPTS_PER_RUN) {
+  while (processed < maxAttempts) {
     const attempts = await claimDueSubscriptionRenewalAttempts({
-      limit: Math.min(concurrency, MAX_ATTEMPTS_PER_RUN - processed),
+      limit: Math.min(concurrency, maxAttempts - processed),
     });
     if (attempts.length === 0) {
       break;
@@ -168,7 +179,7 @@ export default async function maintainSubscriptionRenewals(): Promise<void> {
     scheduled,
     processed,
     concurrency,
-    capped: processed >= MAX_ATTEMPTS_PER_RUN,
+    capped: processed >= maxAttempts,
   });
 }
 

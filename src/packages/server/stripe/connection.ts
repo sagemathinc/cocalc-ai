@@ -41,7 +41,7 @@ export function createAuthorityGuardedStripeHttpClient(
     ) => {
       const [, , path, method] = args;
       if (!["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) {
-        assertStripeMutationAuthorized({ method, path });
+        await assertStripeMutationAuthorized({ method, path });
       }
       return await delegate.makeRequest(...args);
     },

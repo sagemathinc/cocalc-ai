@@ -12,9 +12,11 @@ import emailStatement from "./email-statement";
 
 const logger = getLogger("purchases:email-new-statements");
 
-export default async function emailNewStatements() {
+export default async function emailNewStatements({
+  limit = Number.POSITIVE_INFINITY,
+}: { limit?: number } = {}) {
   logger.debug("emailNewStatements");
-  const statements = await getRecentStatements();
+  const statements = await getRecentStatements(limit);
   logger.debug("considering ", statements.length, " new statements");
   const emailDaily: { [account_id: string]: boolean } = {};
   for (const statement of statements) {
@@ -54,10 +56,16 @@ export default async function emailNewStatements() {
   }
 }
 
-async function getRecentStatements() {
+async function getRecentStatements(limit: number) {
   const pool = getPool();
+  const bounded = Number.isFinite(limit);
   const { rows } = await pool.query(
-    "SELECT id, interval, account_id FROM statements WHERE time >= NOW() - interval '1 day' AND last_sent IS NULL",
+    `SELECT id, interval, account_id
+       FROM statements
+      WHERE time >= NOW() - interval '1 day' AND last_sent IS NULL
+      ORDER BY time, id
+      ${bounded ? "LIMIT $1" : ""}`,
+    bounded ? [Math.max(0, Math.floor(limit))] : [],
   );
   return rows;
 }

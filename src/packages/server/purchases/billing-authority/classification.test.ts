@@ -15,6 +15,14 @@ describe("billing authority operation classification", () => {
     expect(isBillingAuthorityHubApiCall("purchases.getBalance")).toBe(true);
     expect(isBillingAuthorityHubApiCall("commercialOrders.list")).toBe(true);
     expect(
+      isBillingAuthorityHubApiCall(
+        "adminCrm.createCommercialOrderFromOpportunity",
+      ),
+    ).toBe(true);
+    expect(isBillingAuthorityHubApiCall("adminCrm.updateOrganization")).toBe(
+      false,
+    );
+    expect(
       isBillingAuthorityHubApiCall("legacyMigration.applyFinancialMigration"),
     ).toBe(true);
     expect(
@@ -29,7 +37,7 @@ describe("billing authority operation classification", () => {
       true,
     );
     expect(isBillingAuthorityHubApiRead("purchases.getMembershipDetails")).toBe(
-      false,
+      true,
     );
     expect(
       isBillingAuthorityHubApiRead("purchases.purchaseMembershipPackage"),
@@ -51,14 +59,14 @@ describe("billing authority operation classification", () => {
         input: {},
       }),
     ).toBe(false);
-    expect(isBillingAuthorityHttpRead("get-invoice")).toBe(true);
+    expect(isBillingAuthorityHttpRead("get-invoice")).toBe(false);
     expect(
       isBillingAuthorityReadCommand({
         kind: "http",
         operation: "get-invoice",
         input: {},
       }),
-    ).toBe(true);
+    ).toBe(false);
     expect(isBillingAuthorityHttpRead("get-payments")).toBe(false);
   });
 });

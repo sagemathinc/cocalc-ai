@@ -16,6 +16,7 @@ const projectControlStopMock = jest.fn();
 const bayOpsGetProjectRuntimeSlotReportMock = jest.fn();
 const listClusterBayInfosMock = jest.fn();
 const executeBillingAuthorityCommandMock = jest.fn();
+const setBillingAccountFrozenMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -50,6 +51,8 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
   executeBillingAuthorityCommand: (...args: any[]) =>
     executeBillingAuthorityCommandMock(...args),
+  setBillingAccountFrozen: (...args: any[]) =>
+    setBillingAccountFrozenMock(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe-usage-based-subscription", () => ({
@@ -121,12 +124,21 @@ describe("account resource quarantine", () => {
     executeBillingAuthorityCommandMock
       .mockReset()
       .mockImplementation(async (command) => {
-        if (command.kind === "cancel-usage-subscription") {
-          return await cancelUsageSubscriptionMock(command.account_id);
+        if (command.kind === "quarantine-account-stripe-cleanup") {
+          await cancelUsageSubscriptionMock(command.account_id);
+          return {
+            usage_subscription_canceled: true,
+            payment_intents_canceled: 0,
+            payment_methods_detached: 0,
+          };
         }
-        if (command.kind === "quarantine-stripe-resources") return 0;
         throw Error(`unexpected billing command '${command.kind}'`);
       });
+    setBillingAccountFrozenMock.mockReset().mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      generation: 1,
+    });
     recordAccountResourceQuarantineAuditEventMock
       .mockReset()
       .mockResolvedValue(undefined);
@@ -160,6 +172,17 @@ describe("account resource quarantine", () => {
     });
     expect(result.projects_stop_requested).toBe(2);
     expect(result.project_ids).toEqual(["project-1", "project-2"]);
+    expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      reason: "ban",
+      actor_account_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(
+      setBillingAccountFrozenMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      executeBillingAuthorityCommandMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("stops active solely owned free projects and deduplicates slot projects", async () => {

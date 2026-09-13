@@ -5,16 +5,10 @@
 
 import type { BillingAuthorityCommand } from "./protocol";
 
-const HTTP_READ_OPERATIONS = new Set([
-  "get-billing-readiness",
-  "get-customer",
-  "get-invoice",
-  "get-invoice-url",
-  "get-payment-intent-account-id",
-  "get-payment-method",
-  "get-payment-methods",
-  "get-unpaid-invoices",
-]);
+// Stripe-facing reads may recover a missing customer mapping in PostgreSQL.
+// Keep them serialized until they have a separately audited, strictly
+// side-effect-free implementation.
+const HTTP_READ_OPERATIONS = new Set<string>();
 
 // New methods are commands unless they are deliberately reviewed and added
 // here. All calls execute in the authority process; this allowlist only permits
@@ -34,6 +28,7 @@ const PURCHASE_READ_METHODS = new Set([
   "getManagedEgressAdminOverview",
   "getManagedEgressHistory",
   "getMembership",
+  "getMembershipDetails",
   "getMembershipAllocationSeries",
   "getMembershipAnalyticsEvents",
   "getMembershipAnalyticsOverview",
@@ -76,11 +71,16 @@ const LEGACY_MIGRATION_FINANCIAL_METHODS = new Set([
   "configureFinancialMembershipRenewal",
 ]);
 
+const ADMIN_CRM_FINANCIAL_METHODS = new Set([
+  "createCommercialOrderFromOpportunity",
+]);
+
 export function isBillingAuthorityHubApiCall(name: string): boolean {
   const [group, method] = name.split(".");
   return (
     group === "purchases" ||
     group === "commercialOrders" ||
+    (group === "adminCrm" && ADMIN_CRM_FINANCIAL_METHODS.has(method)) ||
     (group === "legacyMigration" &&
       LEGACY_MIGRATION_FINANCIAL_METHODS.has(method))
   );

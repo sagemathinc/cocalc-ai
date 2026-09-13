@@ -7,7 +7,10 @@ import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
 import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-limits";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
-import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  executeBillingAuthorityCommand,
+  setBillingAccountFrozen,
+} from "@cocalc/server/purchases/billing-authority/client";
 import { deleteClusterAccountDirectoryEntry } from "./cluster-directory";
 
 export default async function deleteAccount(account_id: string): Promise<void> {
@@ -87,6 +90,11 @@ export async function markAccountDeleted(account_id: string): Promise<void> {
 export async function cancelStripeEverything(
   account_id: string,
 ): Promise<void> {
+  await setBillingAccountFrozen({
+    account_id,
+    frozen: true,
+    reason: "account deletion",
+  });
   await executeBillingAuthorityCommand({
     kind: "account-stripe-cleanup",
     account_id,

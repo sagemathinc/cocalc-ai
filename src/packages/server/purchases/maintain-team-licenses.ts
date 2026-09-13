@@ -12,10 +12,15 @@ import {
 
 const logger = getLogger("purchases:maintain-team-licenses");
 
-export default async function maintainTeamLicenses() {
+export default async function maintainTeamLicenses({
+  max_licenses = Number.POSITIVE_INFINITY,
+}: { max_licenses?: number } = {}) {
   logger.debug("maintaining team licenses");
   const licenses = await getDueTeamLicensesForRenewal();
-  for (const { id, owner_account_id } of licenses) {
+  const limit = Number.isFinite(max_licenses)
+    ? Math.max(0, Math.floor(max_licenses))
+    : Number.POSITIVE_INFINITY;
+  for (const { id, owner_account_id } of licenses.slice(0, limit)) {
     try {
       await createTeamLicenseRenewalPayment({
         team_license_id: id,

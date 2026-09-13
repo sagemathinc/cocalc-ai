@@ -9,7 +9,10 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayInfos } from "@cocalc/server/bay-registry";
 import { listHosts, stopHost } from "@cocalc/server/conat/api/hosts";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  executeBillingAuthorityCommand,
+  setBillingAccountFrozen,
+} from "@cocalc/server/purchases/billing-authority/client";
 import type { ProjectRuntimeSlotReportSlot } from "@cocalc/conat/hub/api/system";
 import { recordAccountResourceQuarantineAuditEvent } from "./resource-quarantine-audit";
 
@@ -336,48 +339,49 @@ export async function quarantineAccountBillingResourcesLocal({
     normalizeReason(reason) || "admin billing/resource quarantine";
   const errors: string[] = [];
 
+  await setBillingAccountFrozen({
+    account_id,
+    frozen: true,
+    reason: normalizedReason,
+    actor_account_id: actor_account_id ?? undefined,
+  });
+
   const automaticBilling = await disableAutomaticBillingState(account_id);
-  const local_subscriptions_canceled = await cancelLocalSubscriptions({
+  let local_subscriptions_canceled = await cancelLocalSubscriptions({
     account_id,
     reason: normalizedReason,
   });
-  const usage_subscription_canceled = await attempt({
+  const stripeCleanup = await attempt({
     errors,
-    label: "cancel Stripe usage subscription",
-    fallback: false,
-    fn: async () => {
-      await executeBillingAuthorityCommand({
-        kind: "cancel-usage-subscription",
-        account_id,
-      });
-      await getPool().query(
-        "UPDATE accounts SET stripe_usage_subscription='' WHERE account_id=$1",
-        [account_id],
-      );
-      return true;
+    label: "clean up quarantined Stripe resources",
+    fallback: {
+      usage_subscription_canceled: false,
+      payment_intents_canceled: 0,
+      payment_methods_detached: 0,
     },
-  });
-  const payment_intents_canceled = await attempt({
-    errors,
-    label: "cancel open Stripe payment intents",
-    fallback: 0,
     fn: async () =>
-      await executeBillingAuthorityCommand<number>({
-        kind: "quarantine-stripe-resources",
+      await executeBillingAuthorityCommand<{
+        usage_subscription_canceled: boolean;
+        payment_intents_canceled: number;
+        payment_methods_detached: number;
+      }>({
+        kind: "quarantine-account-stripe-cleanup",
         account_id,
-        action: "cancel-payment-intents",
       }),
   });
-  const payment_methods_detached = await attempt({
-    errors,
-    label: "detach Stripe payment methods",
-    fallback: 0,
-    fn: async () =>
-      await executeBillingAuthorityCommand<number>({
-        kind: "quarantine-stripe-resources",
-        account_id,
-        action: "detach-payment-methods",
-      }),
+  if (stripeCleanup.usage_subscription_canceled) {
+    await getPool().query(
+      "UPDATE accounts SET stripe_usage_subscription='' WHERE account_id=$1",
+      [account_id],
+    );
+  }
+  // A command that was already running when the account was frozen is allowed
+  // to finish before the serialized cleanup. Reapply local containment after
+  // that command so it cannot leave a renewed subscription behind.
+  await disableAutomaticBillingState(account_id);
+  local_subscriptions_canceled += await cancelLocalSubscriptions({
+    account_id,
+    reason: normalizedReason,
   });
   const stoppedHosts = await attempt({
     errors,
@@ -399,10 +403,10 @@ export async function quarantineAccountBillingResourcesLocal({
     account_id,
     home_bay_id,
     ...automaticBilling,
-    usage_subscription_canceled,
+    usage_subscription_canceled: stripeCleanup.usage_subscription_canceled,
     local_subscriptions_canceled,
-    payment_intents_canceled,
-    payment_methods_detached,
+    payment_intents_canceled: stripeCleanup.payment_intents_canceled,
+    payment_methods_detached: stripeCleanup.payment_methods_detached,
     hosts_stop_requested: stoppedHosts.count,
     host_ids: stoppedHosts.host_ids,
     projects_stop_requested: stoppedProjects.count,

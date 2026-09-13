@@ -32,6 +32,7 @@ import "./accounts";
 import "./api-keys";
 import "./auth";
 import "./blobs";
+import "./billing-authority";
 import "./bookmarks";
 import "./buckets";
 import "./central-log";

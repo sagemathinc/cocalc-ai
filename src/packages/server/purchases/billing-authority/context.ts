@@ -13,6 +13,7 @@ interface BillingAuthorityContext {
 interface StoredBillingAuthorityContext extends BillingAuthorityContext {
   active: boolean;
   authority_active: () => boolean;
+  assert_authority: () => Promise<void>;
 }
 
 const storage = new AsyncLocalStorage<StoredBillingAuthorityContext>();
@@ -58,15 +59,23 @@ export async function runInBillingAuthorityContext<T>({
   operation,
   request_id,
   authority_active = () => true,
+  assert_authority = async () => undefined,
   fn,
 }: BillingAuthorityContext & {
   authority_active?: () => boolean;
+  assert_authority?: () => Promise<void>;
   fn: () => Promise<T>;
 }): Promise<T> {
   if (activeContext() != null) {
     return await fn();
   }
-  const context = { operation, request_id, active: true, authority_active };
+  const context = {
+    operation,
+    request_id,
+    active: true,
+    authority_active,
+    assert_authority,
+  };
   try {
     return await storage.run(context, fn);
   } finally {
@@ -77,15 +86,20 @@ export async function runInBillingAuthorityContext<T>({
   }
 }
 
-export function assertStripeMutationAuthorized({
+export async function assertStripeMutationAuthorized({
   method,
   path,
 }: {
   method: string;
   path: string;
-}): void {
-  if (!stripeMutationEnforcementEnabled || activeContext() != null) {
+}): Promise<void> {
+  if (!stripeMutationEnforcementEnabled) {
     return;
+  }
+  const context = activeContext();
+  if (context != null) {
+    await context.assert_authority();
+    if (activeContext() != null) return;
   }
   const err = new Error(
     `Stripe ${method.toUpperCase()} ${path} must run through the billing authority`,

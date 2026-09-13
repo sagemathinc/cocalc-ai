@@ -53,6 +53,9 @@ import {
 } from "@cocalc/server/accounts/resource-quarantine-stripe";
 import syncPaidInvoices from "@cocalc/server/purchases/sync-paid-invoices";
 import { reconcileLegacyPaymentIntentCredit } from "@cocalc/server/purchases/stripe-usage-based-subscription";
+import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
+import adminCreateMembershipPackagePurchase from "@cocalc/server/purchases/admin-membership-package";
+import * as legacyMigration from "@cocalc/server/legacy-migration";
 
 import type {
   BillingAuthorityCommand,
@@ -153,22 +156,52 @@ async function dispatchHttp(
   }
 }
 
+async function dispatchAccountLocal(
+  operation: Extract<
+    BillingAuthorityCommand,
+    { kind: "account-local" }
+  >["operation"],
+  input: Record<string, unknown>,
+): Promise<unknown> {
+  switch (operation) {
+    case "admin-create-membership-package-purchase":
+      return await adminCreateMembershipPackagePurchase(input as any);
+    case "legacy-apply-financial-home-bay":
+      return await legacyMigration.applyFinancialMigrationHomeBay(input as any);
+    case "legacy-apply-financial-migration":
+      return await legacyMigration.applyFinancialMigration(input as any);
+    case "legacy-configure-financial-renewal-home-bay":
+      return await legacyMigration.configureFinancialMembershipRenewalHomeBay(
+        input as any,
+      );
+    case "purchase-team-license-change":
+      return await purchaseTeamLicenseChange(input as any);
+    default:
+      throw new Error(
+        `unsupported account-local billing operation '${operation}'`,
+      );
+  }
+}
+
 async function dispatchMaintenance(
   task: Extract<BillingAuthorityCommand, { kind: "maintenance" }>["task"],
 ): Promise<void> {
   switch (task) {
     case "automatic-payments":
-      return await maintainAutomaticPayments();
+      return await maintainAutomaticPayments({ max_statements: 1 });
     case "auto-balance":
-      return await maintainAutoBalance();
+      return await maintainAutoBalance({ max_accounts: 1 });
     case "payment-intents":
-      return await maintainPaymentIntents();
+      return await maintainPaymentIntents({ max_payment_intents: 1 });
     case "statements":
-      return await maintainStatements();
+      return await maintainStatements({ max_emails: 1 });
     case "subscriptions":
-      return await maintainSubscriptions();
+      return await maintainSubscriptions({
+        max_notifications: 1,
+        max_renewals: 1,
+      });
     case "team-licenses":
-      return await maintainTeamLicenses();
+      return await maintainTeamLicenses({ max_licenses: 1 });
     default:
       throw new Error(`unsupported billing maintenance task '${task}'`);
   }
@@ -178,12 +211,27 @@ export async function dispatchBillingAuthorityCommand(
   command: BillingAuthorityCommand,
 ): Promise<unknown> {
   switch (command.kind) {
+    case "account-local":
+      return await dispatchAccountLocal(command.operation, command.input);
     case "account-stripe-cleanup":
       return await new StripeClient({
         account_id: command.account_id,
       }).cancelEverything();
     case "cancel-usage-subscription":
       return await cancelUsageSubscription(command.account_id);
+    case "quarantine-account-stripe-cleanup": {
+      await cancelUsageSubscription(command.account_id);
+      const payment_intents_canceled =
+        await cancelOpenPaymentIntentsForQuarantine(command.account_id);
+      const payment_methods_detached = await detachPaymentMethodsForQuarantine(
+        command.account_id,
+      );
+      return {
+        usage_subscription_canceled: true,
+        payment_intents_canceled,
+        payment_methods_detached,
+      };
+    }
     case "quarantine-stripe-resources":
       return command.action === "cancel-payment-intents"
         ? await cancelOpenPaymentIntentsForQuarantine(command.account_id)

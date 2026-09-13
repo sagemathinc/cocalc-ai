@@ -130,6 +130,15 @@ export async function scheduleMissingSubscriptionRenewalAttempts(): Promise<numb
        FROM subscriptions s
       WHERE s.metadata->>'type'='membership'
         AND s.status='active'
+        AND NOT EXISTS (
+          SELECT 1 FROM accounts AS account
+           WHERE account.account_id=s.account_id
+             AND (account.banned IS TRUE OR account.deleted IS TRUE)
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM billing_authority_account_fences AS fence
+           WHERE fence.account_id=s.account_id AND fence.frozen
+        )
      ON CONFLICT DO NOTHING`,
   );
   return rowCount ?? 0;
@@ -144,14 +153,20 @@ export async function cancelStaleSubscriptionRenewalAttempts(): Promise<number> 
             completed_at=NOW(),
             updated_at=NOW()
       WHERE a.state IN ('scheduled','processing')
-        AND NOT EXISTS (
-          SELECT 1
-            FROM subscriptions s
-           WHERE s.id=a.subscription_id
-             AND s.account_id=a.account_id
-             AND s.metadata->>'type'='membership'
-             AND s.status='active'
-             AND s.current_period_end=a.period_end
+        AND (
+          NOT EXISTS (
+            SELECT 1
+              FROM subscriptions s
+             WHERE s.id=a.subscription_id
+               AND s.account_id=a.account_id
+               AND s.metadata->>'type'='membership'
+               AND s.status='active'
+               AND s.current_period_end=a.period_end
+          )
+          OR EXISTS (
+            SELECT 1 FROM billing_authority_account_fences AS fence
+             WHERE fence.account_id=a.account_id AND fence.frozen
+          )
         )`,
   );
   return rowCount ?? 0;
@@ -202,6 +217,15 @@ export async function claimDueSubscriptionRenewalAttempts({
           AND a.not_before <= NOW()
           AND a.next_attempt_at <= NOW()
           AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= NOW())
+          AND NOT EXISTS (
+            SELECT 1 FROM accounts AS account
+             WHERE account.account_id=a.account_id
+               AND (account.banned IS TRUE OR account.deleted IS TRUE)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM billing_authority_account_fences AS fence
+             WHERE fence.account_id=a.account_id AND fence.frozen
+          )
         ORDER BY a.not_before, a.subscription_id
         LIMIT $1
         FOR UPDATE OF a SKIP LOCKED

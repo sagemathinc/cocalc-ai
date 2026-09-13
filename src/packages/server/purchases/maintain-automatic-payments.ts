@@ -71,6 +71,12 @@ WITH latest_statements AS (
     ON a.account_id = s.account_id
   WHERE
     a.stripe_usage_subscription IS NOT NULL
+    AND a.banned IS NOT TRUE
+    AND a.deleted IS NOT TRUE
+    AND NOT EXISTS (
+      SELECT 1 FROM billing_authority_account_fences AS fence
+       WHERE fence.account_id=a.account_id AND fence.frozen
+    )
     AND s.interval = 'month'
 )
 SELECT
@@ -85,14 +91,20 @@ WHERE
   AND automatic_payment IS NULL
   AND automatic_payment_intent_id IS NULL
   AND paid_purchase_id IS NULL
-  AND balance < 0;
+  AND balance < 0
 `;
 
-export default async function maintainAutomaticPayments() {
+export default async function maintainAutomaticPayments({
+  max_statements = Number.POSITIVE_INFINITY,
+}: { max_statements?: number } = {}) {
   const { pay_as_you_go_min_payment, site_name } = await getServerSettings();
 
   const pool = getPool();
-  const { rows } = await pool.query(QUERY);
+  const bounded = Number.isFinite(max_statements);
+  const { rows } = await pool.query(
+    `${QUERY} ORDER BY time, statement_id${bounded ? " LIMIT $1" : ""}`,
+    bounded ? [Math.max(0, Math.floor(max_statements))] : [],
+  );
   logger.debug("Got ", rows.length, " statements to automatically pay");
   for (const { time, account_id, balance, statement_id } of rows) {
     const balanceValue = toDecimal(balance);

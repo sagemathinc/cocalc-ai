@@ -18,6 +18,7 @@ const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
 const disablePublicDirectorySharesForBannedAccountAcrossClusterMock = jest.fn();
+const setBillingAccountFrozenMock = jest.fn();
 const unexpectedDependencyCall = jest.fn((name: string) => {
   throw Error(`unexpected dependency in account ban routing test: ${name}`);
 });
@@ -132,6 +133,11 @@ jest.mock("@cocalc/server/public-directory-shares/ban-containment", () => ({
     disablePublicDirectorySharesForBannedAccountAcrossClusterMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  setBillingAccountFrozen: (...args: any[]) =>
+    setBillingAccountFrozenMock(...args),
+}));
+
 describe("inter-bay account ban routing", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -174,6 +180,11 @@ describe("inter-bay account ban routing", () => {
     disablePublicDirectorySharesForBannedAccountAcrossClusterMock
       .mockReset()
       .mockResolvedValue({ disabled_count: 0, share_ids: [] });
+    setBillingAccountFrozenMock.mockReset().mockResolvedValue({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      frozen: false,
+      generation: 2,
+    });
   });
 
   afterEach(() => {
@@ -300,6 +311,12 @@ describe("inter-bay account ban routing", () => {
     expect(
       disablePublicDirectorySharesForBannedAccountAcrossClusterMock,
     ).not.toHaveBeenCalled();
+    expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      frozen: false,
+      reason: "appeal accepted",
+      actor_account_id: undefined,
+    });
   });
 
   it("blocks new or changed Gmail-equivalent identities when an equivalent account is banned", async () => {

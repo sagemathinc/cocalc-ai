@@ -241,10 +241,7 @@ import {
   getTeamLicenseOverviewForOwner,
   resolveTeamLicenseQuote,
 } from "@cocalc/server/membership/team-licenses";
-import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
-import adminCreateMembershipPackagePurchase, {
-  adminGetMembershipPackageQuote,
-} from "@cocalc/server/purchases/admin-membership-package";
+import { adminGetMembershipPackageQuote } from "@cocalc/server/purchases/admin-membership-package";
 import createProject, {
   createProjectWithInternalProjectId,
 } from "@cocalc/server/projects/create";
@@ -1361,25 +1358,30 @@ async function startAccountLocalService(): Promise<void> {
         target_seats,
       }),
     purchaseTeamLicenseChange: async ({ account_id, target_seats }) =>
-      await purchaseTeamLicenseChange({
-        account_id,
-        target_seats: target_seats ?? {},
+      await executeBillingAuthorityCommand({
+        kind: "account-local",
+        operation: "purchase-team-license-change",
+        input: { account_id, target_seats: target_seats ?? {} },
       }),
     adminProvisionSiteLicense: async (opts) =>
       isSeedSiteLicenseBay()
         ? await adminProvisionSiteLicense({ ...opts, trusted_admin: true })
         : await getSeedSiteLicenseClient().adminProvisionSiteLicense(opts),
     adminCreateMembershipPackagePurchase: async (opts) =>
-      await adminCreateMembershipPackagePurchase({
-        admin_account_id: opts.actor_account_id,
-        user_account_id: opts.user_account_id,
-        product: opts.product,
-        price: opts.price,
-        source: opts.source,
-        reason: opts.reason,
-        idempotency_key: opts.idempotency_key,
-        pricing_note: opts.pricing_note,
-        trusted_admin: opts.trusted_admin === true,
+      await executeBillingAuthorityCommand({
+        kind: "account-local",
+        operation: "admin-create-membership-package-purchase",
+        input: {
+          admin_account_id: opts.actor_account_id,
+          user_account_id: opts.user_account_id,
+          product: opts.product,
+          price: opts.price,
+          source: opts.source,
+          reason: opts.reason,
+          idempotency_key: opts.idempotency_key,
+          pricing_note: opts.pricing_note,
+          trusted_admin: opts.trusted_admin === true,
+        },
       }),
     adminGetMembershipPackageQuote: async (opts) =>
       await adminGetMembershipPackageQuote({
@@ -1878,13 +1880,25 @@ async function startAccountLocalService(): Promise<void> {
     legacyMigrationPreviewFinancialMigration: async (opts) =>
       await legacyMigration.previewFinancialMigration(opts ?? {}),
     legacyMigrationApplyFinancialMigration: async (opts) =>
-      await legacyMigration.applyFinancialMigration(opts ?? {}),
+      await executeBillingAuthorityCommand({
+        kind: "account-local",
+        operation: "legacy-apply-financial-migration",
+        input: { ...(opts ?? {}) },
+      }),
     legacyMigrationApplyFinancialHomeBay: async (opts) =>
-      await legacyMigration.applyFinancialMigrationHomeBay(opts),
+      await executeBillingAuthorityCommand({
+        kind: "account-local",
+        operation: "legacy-apply-financial-home-bay",
+        input: { ...opts },
+      }),
     legacyMigrationGetFinancialMembershipGrantHomeBay: async (opts) =>
       await legacyMigration.getFinancialMembershipGrantHomeBay(opts),
     legacyMigrationConfigureFinancialRenewalHomeBay: async (opts) =>
-      await legacyMigration.configureFinancialMembershipRenewalHomeBay(opts),
+      await executeBillingAuthorityCommand({
+        kind: "account-local",
+        operation: "legacy-configure-financial-renewal-home-bay",
+        input: { ...opts },
+      }),
     legacyMigrationAdminSearchLegacyAccounts: async (opts) =>
       await legacyMigration.adminSearchLegacyAccounts(opts),
     legacyMigrationAdminSearchLegacyProjects: async (opts) =>
