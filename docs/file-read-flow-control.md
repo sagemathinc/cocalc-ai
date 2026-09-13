@@ -53,8 +53,11 @@ No filesystem data moves through a new hub proxy or direct filesystem shortcut.
   not assumed to be their owner account. These are isolation bounds, not a
   guarantee against many independently authorized identities exhausting capacity.
 - Routers validate transport headers before stamping or delivery: a plain JSON
-  record, at most 100,000 serialized UTF-8 bytes, 128 total keys/array entries,
-  and nesting depth 8. The added principal field counts toward these bounds.
+  record of at most 100,000 serialized UTF-8 bytes. Application headers retain
+  their nested JSON contract, including persistence metadata and historical
+  editor maps; there is no separate depth or entry-count cap. Validation walks
+  one child at a time, iteratively, with work bounded by the byte budget.
+  The added principal field counts toward the byte limit.
   A present `CN-Reply` must be a nonempty non-wildcard subject. Malformed headers
   fail publication with code 400, without allocating a stamped copy. File-reader
   error replies are best-effort; their failure cannot end the shared reader
@@ -104,6 +107,15 @@ the new reader and sender together, including account, viewer, and share paths.
 Workspace HTTP forwards the verified account, rather than a client-supplied
 identity, and Lite forwards its local account identity too.
 
+Persistence replay validates bootstrap headers before unconfirmed publication.
+An invalid bootstrap produces a small error-only reply, not successful
+completion with missing metadata. Replay remains synchronous while its SQLite
+iterator is open. Clients validate sequence continuity including the completion
+frame, require config/checkpoints for info replies, and reject incomplete
+responses. Unset metadata may still be omitted by legacy servers. Deterministic
+400 errors terminate CoreStream bootstrap instead of retrying indefinitely;
+failed recovery leaves the existing metadata and checkpoints intact.
+
 Validate on a staging/canary host with a large synthetic file: throttle, cancel,
 and retry repeatedly; verify an intact completed download; monitor RSS/external
 memory and host responsiveness. Do not reproduce the old unbounded behavior on
@@ -124,9 +136,10 @@ pnpm -C src/packages/server exec tsc --build
 pnpm -C src/packages/hub exec tsc --build
 pnpm -C src/packages/lite exec tsc --build
 pnpm -C src/packages/util exec jest --runInBand event-iterator.test.ts
-pnpm -C src/packages/conat exec jest --runInBand files core/abort.test.ts core/message-bytes.test.ts core/message-headers.test.ts
+pnpm -C src/packages/conat exec jest --runInBand files core/abort.test.ts core/message-bytes.test.ts core/message-headers.test.ts persist/client-bootstrap.test.ts sync/core-stream-metadata.test.ts
 pnpm -C src/packages/conat exec jest --runInBand core/server.inbound-admission.test.ts core/server.egress.integration.test.ts
 pnpm -C src/packages/backend exec jest --runInBand conat/test/files/read.test.ts conat/test/files/write.test.ts conat/test/core/core-stream.test.ts conat/test/core/core-stream-break.test.ts conat/test/core/core-stream-recovery.test.ts
+pnpm -C src/packages/backend exec jest --runInBand conat/test/persist conat/test/sync-doc
 pnpm -C src/packages/hub exec jest --runInBand proxy/handle-request.test.ts
 pnpm -C src/packages/server exec jest --runInBand conat/project/workspace-filesystem.test.ts
 ```
@@ -142,3 +155,7 @@ write destinations including delayed finish/commit.
 Header rejection tests use small local fixtures and confirm subsequent reads
 remain available. Workspace HTTP coverage checks verified identity across
 projects, isolation between accounts, and configured versus effective limits.
+Persistence coverage round-trips 129-field metadata, 112 historical editors,
+nested JSON, and snapshot checkpoints through local sockets, CoreStream, and
+SyncDoc reopen. It also checks byte-limit boundaries, explicit oversized-header
+failure, incomplete replay, and preservation of durable metadata/checkpoints.

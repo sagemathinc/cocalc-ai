@@ -2,10 +2,7 @@ import { once } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 import { init, type ConatServer } from "../core/server";
 import type { Client } from "../core/client";
-import {
-  MAX_MESSAGE_HEADER_BYTES,
-  MAX_MESSAGE_HEADER_ENTRIES,
-} from "../core/message-headers";
+import { MAX_MESSAGE_HEADER_BYTES } from "../core/message-headers";
 import { createServer, close, readFile } from "./read";
 import { projectSubject } from "../names";
 
@@ -72,13 +69,8 @@ describe("router header rejection leaves readers available", () => {
       headers: { value: "x".repeat(MAX_MESSAGE_HEADER_BYTES) },
     },
     {
-      label: "header entries",
-      headers: Object.fromEntries(
-        Array.from({ length: MAX_MESSAGE_HEADER_ENTRIES + 1 }, (_, i) => [
-          `k${i}`,
-          0,
-        ]),
-      ),
+      label: "nested header bytes",
+      headers: { metadata: { users: Array(1000).fill("x".repeat(100)) } },
     },
   ])("rejects $label with 400 before reader delivery", async ({ headers }) => {
     await expect(

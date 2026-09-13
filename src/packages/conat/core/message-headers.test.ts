@@ -1,7 +1,5 @@
 import {
   MAX_MESSAGE_HEADER_BYTES,
-  MAX_MESSAGE_HEADER_DEPTH,
-  MAX_MESSAGE_HEADER_ENTRIES,
   validateMessageHeaders,
 } from "./message-headers";
 import { Message } from "./client";
@@ -56,25 +54,30 @@ describe("bounded JSON message headers", () => {
     }
   });
 
-  it("bounds keys, nested entries, and depth without evaluating accessors", () => {
+  it("accepts wide metadata and deeply nested JSON within the byte budget", () => {
     const headers = Object.fromEntries(
-      Array.from({ length: MAX_MESSAGE_HEADER_ENTRIES }, (_, i) => [
-        `k${i}`,
-        0,
-      ]),
+      Array.from({ length: 1000 }, (_, i) => [`k${i}`, 0]),
     );
     expect(() => validateMessageHeaders(headers)).not.toThrow();
-    expect(() => validateMessageHeaders({ ...headers, extra: 0 })).toThrow(
-      "entry limit",
-    );
     expect(() =>
       validateMessageHeaders({
-        values: Array(MAX_MESSAGE_HEADER_ENTRIES).fill(0),
+        values: Array(1000).fill(0),
       }),
-    ).toThrow("entry limit");
+    ).not.toThrow();
     let nested: unknown = 0;
-    for (let i = 0; i <= MAX_MESSAGE_HEADER_DEPTH; i++) nested = { nested };
-    expect(() => validateMessageHeaders(nested)).toThrow("depth limit");
+    // Deeper than ordinary JS recursion; this must not overflow the call stack.
+    for (let i = 0; i < 10_000; i++) nested = [nested];
+    expect(() => validateMessageHeaders({ nested })).not.toThrow();
+  });
+
+  it("rejects cycles and accessors but permits shared JSON subobjects", () => {
+    const cycle: any = {};
+    cycle.child = cycle;
+    expect(() => validateMessageHeaders(cycle)).toThrow("cyclic");
+    const shared = { key: "value" };
+    expect(() =>
+      validateMessageHeaders({ a: shared, b: shared }),
+    ).not.toThrow();
     const get = jest.fn();
     const accessor = Object.defineProperty({}, "value", {
       get,
@@ -82,6 +85,34 @@ describe("bounded JSON message headers", () => {
     });
     expect(() => validateMessageHeaders(accessor)).toThrow("accessors");
     expect(get).not.toHaveBeenCalled();
+  });
+
+  it("matches JSON byte accounting for nested arrays, keys, and omitted fields", () => {
+    const variants = [
+      {
+        metadata: {
+          users: Array(200).fill("editor"),
+          settings: { nested: [{ key: "value" }] },
+        },
+      },
+      {
+        checkpoints: { latest: { seq: 1, time: 2, data: undefined } },
+        array: [undefined, null, false, -1.25],
+      },
+      { "\u20ac\u0000": ["\u20ac\u0000", { blank: "", more: [] }], empty: {} },
+    ];
+    for (const variant of variants) {
+      const headers = { ...variant, padding: "" };
+      headers.padding = "x".repeat(
+        MAX_MESSAGE_HEADER_BYTES - Buffer.byteLength(JSON.stringify(headers)),
+      );
+      expect(Buffer.byteLength(JSON.stringify(headers))).toBe(
+        MAX_MESSAGE_HEADER_BYTES,
+      );
+      expect(() => validateMessageHeaders(headers)).not.toThrow();
+      headers.padding += "x";
+      expect(() => validateMessageHeaders(headers)).toThrow("byte limit");
+    }
   });
 
   it("stamps in place and accounts for the added field", () => {

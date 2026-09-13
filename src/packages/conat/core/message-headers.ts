@@ -3,8 +3,6 @@ import type { Headers } from "./client";
 
 export const REPLY_HEADER = "CN-Reply";
 export const MAX_MESSAGE_HEADER_BYTES = 100_000;
-export const MAX_MESSAGE_HEADER_ENTRIES = 128;
-export const MAX_MESSAGE_HEADER_DEPTH = 8;
 
 function invalid(reason: string): never {
   // Do not include untrusted header values in the error or logs.
@@ -23,76 +21,99 @@ export function validateReplySubject(value: unknown): asserts value is string {
   }
 }
 
-// Check before stamping/routing. Walk only a bounded number of entries, and
-// reject long strings before serializing them; never stringify the whole input
-// or spread it into a new object to find out whether it is acceptable.
+// Headers include application JSON (e.g. persistence metadata and editor maps),
+// so bound serialized bytes, not arbitrary nested entry counts or depth. An
+// iterative walk avoids call-stack limits and visits one child at a time. Every
+// value consumes at least one byte, bounding both work and stack by the budget.
 export function validateMessageHeaders(
   value: unknown,
 ): asserts value is Headers | null | undefined {
   if (value == null) return;
   if (!isRecord(value)) invalid("expected a plain JSON object");
   let remaining = MAX_MESSAGE_HEADER_BYTES;
-  let entries = 0;
+  // Also bound visits to omitted undefined properties in locally constructed
+  // envelopes. Every actual JSON slot costs at least a byte, so this budget
+  // cannot reject JSON that fits the serialized byte limit.
+  let slots = MAX_MESSAGE_HEADER_BYTES;
+  const slot = () => {
+    if (--slots < 0) invalid("JSON work budget exceeded");
+  };
   const spend = (bytes: number) => {
     remaining -= bytes;
     if (remaining < 0) invalid("serialized byte limit exceeded");
-  };
-  const entry = () => {
-    if (++entries > MAX_MESSAGE_HEADER_ENTRIES) invalid("entry limit exceeded");
   };
   const string = (s: string) => {
     if (s.length > remaining) invalid("serialized byte limit exceeded");
     spend(Buffer.byteLength(JSON.stringify(s)));
   };
-  const visit = (item: unknown, depth: number) => {
-    if (depth > MAX_MESSAGE_HEADER_DEPTH) invalid("depth limit exceeded");
+  function* children(object: object): Generator<unknown> {
+    let first = true;
+    if (Array.isArray(object)) {
+      for (let i = 0; i < object.length; i++) {
+        slot();
+        if (!first) spend(1);
+        first = false;
+        const descriptor = Object.getOwnPropertyDescriptor(object, i);
+        if (descriptor != null && !("value" in descriptor))
+          invalid("accessors are not JSON values");
+        yield descriptor?.value ?? null;
+      }
+    } else {
+      for (const key in object) {
+        if (!Object.prototype.hasOwnProperty.call(object, key)) continue;
+        slot();
+        const descriptor = Object.getOwnPropertyDescriptor(object, key)!;
+        if (!("value" in descriptor)) invalid("accessors are not JSON values");
+        if (descriptor.value === undefined) continue;
+        if (!first) spend(1);
+        first = false;
+        string(key);
+        spend(1);
+        yield descriptor.value;
+      }
+    }
+  }
+  const active = new Set<object>();
+  const stack: { iterator: Iterator<unknown>; object?: object }[] = [
+    { iterator: [value][Symbol.iterator]() },
+  ];
+  while (stack.length) {
+    const frame = stack[stack.length - 1];
+    const next = frame.iterator.next();
+    if (next.done) {
+      if (frame.object != null) active.delete(frame.object);
+      stack.pop();
+      continue;
+    }
+    const item = next.value;
     if (item === null) {
       spend(4);
-      return;
+      continue;
     }
     switch (typeof item) {
       case "string":
         string(item);
-        return;
+        break;
       case "boolean":
         spend(item ? 4 : 5);
-        return;
+        break;
       case "number":
         if (!Number.isFinite(item)) invalid("expected a finite JSON number");
         spend(JSON.stringify(item).length);
-        return;
+        break;
       case "object": {
+        if (!Array.isArray(item) && !isRecord(item))
+          invalid("expected JSON values");
+        if (active.has(item)) invalid("cyclic values are not JSON");
         spend(2);
-        let first = true;
-        if (Array.isArray(item)) {
-          for (const child of item) {
-            entry();
-            if (!first) spend(1);
-            first = false;
-            visit(child, depth + 1);
-          }
-          return;
-        }
-        if (!isRecord(item)) invalid("expected JSON values");
-        for (const key in item) {
-          if (!Object.prototype.hasOwnProperty.call(item, key)) continue;
-          entry();
-          if (!first) spend(1);
-          first = false;
-          string(key);
-          spend(1);
-          const descriptor = Object.getOwnPropertyDescriptor(item, key)!;
-          if (!Object.prototype.hasOwnProperty.call(descriptor, "value"))
-            invalid("accessors are not JSON values");
-          visit(descriptor.value, depth + 1);
-        }
-        return;
+        active.add(item);
+        stack.push({ object: item, iterator: children(item) });
+        break;
       }
       default:
         invalid("expected JSON values");
     }
-  };
-  visit(value, 0);
+  }
   if (Object.prototype.hasOwnProperty.call(value, REPLY_HEADER))
     validateReplySubject(value[REPLY_HEADER]);
 }
