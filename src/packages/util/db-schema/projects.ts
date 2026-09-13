@@ -361,6 +361,11 @@ Table({
       pg_type: "VARCHAR(64)",
       desc: "Control-plane bay that authoritatively owns this project record.",
     },
+    course_vm_recommendations: {
+      type: "map",
+      pg_type: "JSONB",
+      desc: "Server-managed optional VM recommendations by course instance, with optimistic versions. Project-owned metadata, never spending authorization; not exposed through user_query.",
+    },
     users: {
       title: "Collaborators",
       type: "map",

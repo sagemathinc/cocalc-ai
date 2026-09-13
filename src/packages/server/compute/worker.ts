@@ -41,6 +41,24 @@ import {
   updateComputeVm,
 } from "./db";
 import { getComputeVmConfig } from "./config";
+import { processVmPersonalFundingHandoffs } from "./funding/vm-personal";
+import { recoverTerminalCourseVmFunding } from "./funding/vm-worker-recovery";
+import {
+  computeResourceIsOwned,
+  computeVmDnsLabelIsOwned,
+} from "./resource-names";
+import { finalizeSettledCourseFundingPools } from "./funding/pool-lifecycle-worker";
+import {
+  hasCourseVmFunding,
+  denyCourseVmMutation,
+  meterCourseVm,
+  meterCourseVmEgress,
+  enforceCourseVmFunding,
+  refreshCourseVmForProvider,
+  reserveCourseVmLaunch,
+  queueCourseVmEnforcement,
+  enqueueCourseFundingDeadlines,
+} from "./funding/vm-funding";
 import {
   createProviderComputeVm,
   deleteOrphanProviderComputeAddress,
@@ -69,6 +87,22 @@ import {
 } from "./provider";
 import { isComputeVmV2, isComputeVolumeV2 } from "./contract";
 import {
+  hasCourseVolumeFunding,
+  reserveCourseVolume,
+  refreshCourseVolumeForProvider,
+  meterCourseVolume,
+  enforceCourseVolumeFunding,
+  endCourseVolumeService,
+  enqueueCourseVolumeDeadlines,
+  requireCourseVolumeService,
+} from "./funding/volume-funding";
+import { recordCourseVolumeGrowth } from "./funding/volume-growth";
+import {
+  recoverCourseVolumeFunding,
+  recoverTerminalCourseVolumeFunding,
+} from "./funding/volume-recovery";
+import { detachProviderComputeHomeVolume } from "./provider";
+import {
   deleteHostDns,
   ensureUnproxiedAddressDns,
   listManagedVmDnsRecords,
@@ -82,7 +116,14 @@ import {
   updateComputeVmProjectAccessState,
 } from "./project-access";
 import { effectiveComputeVolumeSizeGb } from "./volume-size";
-import { ensureComputeWorkQueueSchema } from "./schema";
+import {
+  ensureComputeWorkQueueSchema,
+  ensureComputeScheduledStopSchema,
+} from "./schema";
+import {
+  enqueueScheduledComputeStops,
+  scheduledStopLockKey,
+} from "./scheduled-stop";
 import {
   closeDedicatedHostPurchaseSessionForAccount,
   recordDedicatedHostMeteredUsageForAccount,
@@ -262,6 +303,10 @@ async function reconcileVmBilling(
   billingState: "running" | "stopped",
   startedAt = new Date(),
 ) {
+  if (hasCourseVmFunding(vm)) {
+    await meterCourseVm(vm);
+    return;
+  }
   if (vm.funding_mode === "site-funded") {
     await closeDedicatedHostPurchaseSessionForAccount({
       account_id: vm.owner_account_id,
@@ -308,6 +353,10 @@ async function reconcileVmBilling(
 }
 
 async function closeVmBilling(vm: ComputeVmRow) {
+  if (hasCourseVmFunding(vm)) {
+    await meterCourseVm(vm, true);
+    return;
+  }
   if (vm.funding_mode === "site-funded") {
     const billingState =
       vm.state === "stopped" || vm.desired_state === "stopped"
@@ -331,6 +380,7 @@ async function closeVmBilling(vm: ComputeVmRow) {
 }
 
 async function reconcileVolumeBilling(volume: ComputeVolumeRow) {
+  if (hasCourseVolumeFunding(volume)) return await meterCourseVolume(volume);
   if (volume.funding_mode === "site-funded") {
     await closeDedicatedHostPurchaseSessionForAccount({
       account_id: volume.owner_account_id,
@@ -370,6 +420,7 @@ async function reconcileVolumeBilling(volume: ComputeVolumeRow) {
 }
 
 async function closeVolumeBilling(volume: ComputeVolumeRow) {
+  if (hasCourseVolumeFunding(volume)) return await meterCourseVolume(volume);
   if (volume.funding_mode === "site-funded") {
     await closeDedicatedHostPurchaseSessionForAccount({
       account_id: volume.owner_account_id,
@@ -432,6 +483,7 @@ async function transitionVmFunding(
   vm: ComputeVmRow,
   targetValue: unknown,
 ): Promise<void> {
+  denyCourseVmMutation(vm, "Funding transition");
   const target = requireFundingTransitionTarget(targetValue);
   if (vm.funding_mode !== target) {
     if (vm.funding_mode === "site-funded") {
@@ -466,6 +518,10 @@ async function transitionVolumeFunding(
   volume: ComputeVolumeRow,
   targetValue: unknown,
 ): Promise<void> {
+  if (hasCourseVolumeFunding(volume))
+    throw new Error(
+      "Volume payer changes require separately approved funding terms",
+    );
   const target = requireFundingTransitionTarget(targetValue);
   if (volume.funding_mode !== target) {
     if (volume.funding_mode === "site-funded") {
@@ -502,13 +558,40 @@ function vmHourlyRate(vm: ComputeVmRow): string {
   return rate.hourly_cost_usd;
 }
 
-async function enforceComputeVmFunding() {
+export async function enforceComputeVmFunding() {
   const rows = await listComputeVmsForBillingEnforcement();
   const snapshots = new Map<
     string,
     Awaited<ReturnType<typeof getDedicatedHostPolicySnapshotForAccount>>
   >();
   for (const vm of rows) {
+    if (hasCourseVmFunding(vm)) {
+      if (!vm.metadata?.billing?.course_funding?.binding) continue;
+      try {
+        const action = await enforceCourseVmFunding(vm);
+        if (action) await queueCourseVmEnforcement(vm, action);
+      } catch (err) {
+        logger.warn("sponsored VM funding enforcement needs reconciliation", {
+          vm_id: vm.id,
+          err,
+        });
+        if (vm.desired_state === "running")
+          await queueCourseVmEnforcement(vm, "stop");
+      }
+      // Admission can precede dispatch. A reservation alone is not runtime,
+      // and a settlement retry must not cancel otherwise authorized service.
+      if (vm.ready_at || vm.stopped_at) {
+        try {
+          await meterCourseVm(vm);
+        } catch (err) {
+          logger.warn("sponsored VM metering needs reconciliation", {
+            vm_id: vm.id,
+            err,
+          });
+        }
+      }
+      continue;
+    }
     const fundingMode = vm.funding_mode;
     if (fundingMode === "site-funded") {
       if (
@@ -654,6 +737,17 @@ async function enforceComputeVolumeFunding() {
   for (const volume of volumes) {
     if (!isComputeVolumeV2(volume)) continue;
     const fundingMode = volume.funding_mode;
+    if (hasCourseVolumeFunding(volume)) {
+      try {
+        await enforceCourseVolumeFunding(volume);
+      } catch (err) {
+        logger.warn("sponsored volume funding remains pending", {
+          volume_id: volume.id,
+          err,
+        });
+      }
+      continue;
+    }
     if (fundingMode === "site-funded") {
       if (
         volume.ready_at &&
@@ -766,6 +860,12 @@ async function meterComputeVmPublicEgress() {
   const watermark = new Date(Date.now() - COMPUTE_EGRESS_FINALIZATION_DELAY_MS);
   const rows = await listComputeVmsForEgressMetering();
   for (const vm of rows) {
+    if (
+      hasCourseVmFunding(vm) &&
+      (!vm.metadata?.billing?.course_funding?.binding ||
+        (!vm.ready_at && !vm.stopped_at && !vm.deleted_at))
+    )
+      continue;
     const rawStart =
       vm.metadata?.billing?.egress?.metered_through_at ?? vm.created_at;
     const start = new Date(rawStart);
@@ -793,6 +893,10 @@ async function meterComputeVmPublicEgress() {
       const unitCostUsd =
         vm.provider === "nebius" ? 0 : COMPUTE_PUBLIC_EGRESS_USD_PER_GB;
       const costUsd = (bytes / 1_000_000_000) * unitCostUsd;
+      if (hasCourseVmFunding(vm)) {
+        await meterCourseVmEgress(vm, { bytes, start, end, finalize });
+        continue;
+      }
       const current = await getComputeVmById(vm.id);
       if (!current) continue;
       const previous = current.metadata?.billing?.egress ?? {};
@@ -861,7 +965,8 @@ async function meterComputeVmPublicEgress() {
   }
 }
 
-async function reconcileComputeProviderInventory() {
+export async function reconcileComputeProviderInventory() {
+  const inventoryConfig = await getComputeVmConfig();
   const [vms, volumes] = await Promise.all([
     listComputeVmsForInventory(),
     listComputeVolumesForInventory(),
@@ -948,18 +1053,22 @@ async function reconcileComputeProviderInventory() {
     }
   }
   const orphanInstances = providerInventory.instances.filter(
-    (instance) => !providerComputeInstanceIsExpected(instance, vms),
+    (instance) =>
+      computeResourceIsOwned(instance.name, inventoryConfig.environment) &&
+      !providerComputeInstanceIsExpected(instance, vms),
   );
   const orphanDisks = providerInventory.disks_observed
     ? providerInventory.disks.filter(({ provider, name }) =>
-        name.startsWith("cocalc-vm-")
+        computeResourceIsOwned(name, inventoryConfig.environment)
           ? !expectedDisks.has(providerKey(provider, name))
           : false,
       )
     : [];
   const orphanAddresses = providerInventory.addresses_observed
     ? providerInventory.addresses.filter(
-        ({ provider, id }) => !expectedAddresses.has(providerKey(provider, id)),
+        ({ provider, id, name }) =>
+          computeResourceIsOwned(name, inventoryConfig.environment) &&
+          !expectedAddresses.has(providerKey(provider, id)),
       )
     : [];
   const observedOrphanIds: string[] = [];
@@ -1075,7 +1184,7 @@ async function reconcileComputeProviderInventory() {
         provider: address.provider,
         resource_type: "address",
         resource_id: address.id,
-        resource_name: address.id,
+        resource_name: address.name,
         region: address.region,
         metadata: { ip: address.ip },
       },
@@ -1089,7 +1198,7 @@ async function reconcileComputeProviderInventory() {
           await deleteOrphanProviderComputeAddress({
             provider: address.provider,
             resource_id: address.id,
-            resource_name: address.id,
+            resource_name: address.name,
             region: address.region,
           });
           await updateComputeOrphan(row.id, {
@@ -1113,7 +1222,9 @@ async function reconcileComputeProviderInventory() {
       vms.filter(isComputeVmV2).map(({ public_hostname }) => public_hostname),
     );
     const orphanDnsRecords = managedDnsRecords.filter(
-      ({ name }) => !expectedHostnames.has(name),
+      ({ name }) =>
+        computeVmDnsLabelIsOwned(name.split(".")[0]) &&
+        !expectedHostnames.has(name),
     );
     orphanDnsRecordCount = orphanDnsRecords.length;
     const observedDnsOrphanIds: string[] = [];
@@ -1933,8 +2044,11 @@ async function provision(
     return;
   }
   if (runningVmWorkAlreadySatisfied(vm, opts)) return;
+  await refreshCourseVmForProvider(vm);
   const beginningNewGeneration =
     !!vm.ready_at && vm.metadata?.provider_generation_provisioning !== true;
+  if (beginningNewGeneration)
+    denyCourseVmMutation(vm, "Provider generation replacement");
   let provisioning = (await updateComputeVm(vm.id, {
     state: "provisioning",
     instance_generation:
@@ -1980,6 +2094,7 @@ async function provision(
     }))!;
   }
   provisioning = await ensureVmPublicAddress(provisioning);
+  await refreshCourseVmForProvider(provisioning);
   let runtime;
   try {
     runtime = await observeVmPhase(provisioning, "provider_create", async () =>
@@ -2069,6 +2184,7 @@ async function start(vm: ComputeVmRow) {
     return await remove(vm);
   }
   if (vm.desired_state === "stopped") return await reconcile(vm);
+  await refreshCourseVmForProvider(vm);
   if (runningVmWorkAlreadySatisfied(vm)) return;
   let observed = await inspectAndRecordProviderComputeVm(vm);
   let disposition = providerStartDisposition(observed.status);
@@ -2121,9 +2237,10 @@ async function start(vm: ComputeVmRow) {
     error: null,
   }))!;
   try {
-    await observeVmPhase(vm, "provider_start", async () =>
-      startProviderComputeVm(vm),
-    );
+    await observeVmPhase(vm, "provider_start", async () => {
+      await refreshCourseVmForProvider(vm);
+      return await startProviderComputeVm(vm);
+    });
     const observed = await inspectAndRecordProviderComputeVm(vm);
     const disposition = providerStartDisposition(observed.status);
     if (disposition === "provision") return await provision(vm);
@@ -2177,6 +2294,7 @@ async function recoverFromSpotCapacityFailure(vm: ComputeVmRow, err: unknown) {
 }
 
 async function switchToOnDemand(vm: ComputeVmRow) {
+  denyCourseVmMutation(vm, "On-demand fallback");
   if (!vm.allow_on_demand_fallback) {
     throw new Error("Standard fallback is not authorized");
   }
@@ -2209,6 +2327,7 @@ async function switchToOnDemand(vm: ComputeVmRow) {
 }
 
 async function probeAndReturnToSpot(vm: ComputeVmRow) {
+  denyCourseVmMutation(vm, "Spot pricing switch");
   if (spotStandardHoldIsActive(spotState(vm))) return;
   const available = await probeProviderComputeSpot(vm);
   if (!available) {
@@ -2265,6 +2384,28 @@ export function computePostStopTransition(
 }
 
 async function stop(vm: ComputeVmRow) {
+  if (vm.stop_at && vm.stop_at.valueOf() <= Date.now()) {
+    await withSessionAdvisoryLock({
+      lockKey: scheduledStopLockKey(vm.id),
+      fn: async () => {
+        const current = await getComputeVmById(vm.id);
+        if (
+          !current ||
+          current.desired_state !== "stopped" ||
+          current.stop_generation !== vm.stop_generation ||
+          !current.stop_at ||
+          current.stop_at.valueOf() > Date.now()
+        )
+          return;
+        await stopCurrentVm(current);
+      },
+    });
+    return;
+  }
+  await stopCurrentVm(vm);
+}
+
+async function stopCurrentVm(vm: ComputeVmRow) {
   await updateComputeVm(vm.id, { state: "stopping", error: null });
   await observeVmPhase(vm, "provider_stop", async () =>
     stopProviderComputeVm(vm),
@@ -2291,13 +2432,13 @@ async function stop(vm: ComputeVmRow) {
   });
   const next = (await updateComputeVm(vm.id, {
     state: transition.state,
-    stopped_at: new Date(),
+    stopped_at: current.stopped_at ?? new Date(),
     public_ip:
       current.desired_state === "running" ? networkState.public_ip : null,
     error: null,
   }))!;
   await updateComputeInstance(next, { stopped: true });
-  await reconcileVmBilling(next, "stopped");
+  if (!hasCourseVmFunding(next)) await reconcileVmBilling(next, "stopped");
   if (transition.action) {
     await enqueueComputeWork({
       resource_id: vm.id,
@@ -2353,10 +2494,18 @@ async function remove(vm: ComputeVmRow) {
     error: null,
   }))!;
   await updateComputeInstance(next, { deleted: true });
-  await closeVmBilling(next);
+  // Sponsored settlement is durable maintenance: payer outages must not turn
+  // a confirmed provider deletion into failed resource work.
+  if (!hasCourseVmFunding(next)) await closeVmBilling(next);
 }
 
 async function provisionVolume(volume: ComputeVolumeRow) {
+  if (volume.desired_state === "deleted") return await deleteVolume(volume);
+  if (hasCourseVolumeFunding(volume)) {
+    volume = await reserveCourseVolume(volume);
+    if (volume.ready_at) return await reconcileVolume(volume);
+    volume = await refreshCourseVolumeForProvider(volume);
+  }
   if (volume.ready_at) {
     throw new Error(
       `refusing to recreate previously ready compute volume '${volume.name}'`,
@@ -2366,7 +2515,9 @@ async function provisionVolume(volume: ComputeVolumeRow) {
     state: "provisioning",
     error: null,
   }))!;
-  const disk = await ensureProviderComputeVolume(provisioning);
+  const disk = await ensureProviderComputeVolume(
+    await refreshCourseVolumeForProvider(provisioning),
+  );
   const next = (await updateComputeVolume(volume.id, {
     state: "ready",
     size_gb: volume.desired_size_gb,
@@ -2388,12 +2539,24 @@ async function provisionVolume(volume: ComputeVolumeRow) {
 }
 
 async function resizeVolume(volume: ComputeVolumeRow) {
+  if (volume.desired_state === "deleted") return await deleteVolume(volume);
+  volume = await refreshCourseVolumeForProvider(volume);
   if (volume.desired_size_gb < volume.size_gb) {
     throw new Error("compute volumes cannot be shrunk");
   }
   if (volume.desired_size_gb === volume.size_gb) return;
   await updateComputeVolume(volume.id, { state: "resizing", error: null });
   await resizeProviderComputeVolume(volume);
+  if (hasCourseVolumeFunding(volume)) {
+    const disk = await inspectProviderComputeVolume(volume);
+    if (
+      !disk ||
+      disk.size_gb <
+        effectiveComputeVolumeSizeGb(volume.provider, volume.desired_size_gb)
+    )
+      throw new Error("Volume growth is not yet confirmed by the provider");
+    await recordCourseVolumeGrowth(volume, disk.size_gb);
+  }
   const next = (await updateComputeVolume(volume.id, {
     state: "ready",
     size_gb: volume.desired_size_gb,
@@ -2422,6 +2585,75 @@ async function resizeVolume(volume: ComputeVolumeRow) {
 }
 
 async function deleteVolume(volume: ComputeVolumeRow) {
+  if (volume.deleted_at)
+    return await closeVolumeBilling(await recoverCourseVolumeFunding(volume));
+  if (hasCourseVolumeFunding(volume)) {
+    volume = await recoverCourseVolumeFunding(volume);
+    if (volume.attached_vm_id) {
+      await endCourseVolumeService(volume);
+      const vm = await getComputeVmById(volume.attached_vm_id);
+      if (
+        !vm ||
+        vm.owner_account_id !== volume.owner_account_id ||
+        vm.owning_bay_id !== volume.owning_bay_id ||
+        vm.home_volume_id !== volume.id
+      )
+        throw new Error("Funded volume attachment ownership is uncertain");
+      if (vm.desired_state === "running" || (!vm.stopped_at && !vm.deleted_at))
+        throw new RetryableComputeWorkError(
+          "waiting for attached VM shutdown",
+          new Date(Date.now() + 5000),
+        );
+      await detachProviderComputeHomeVolume(vm, volume);
+      const disk = await inspectProviderComputeVolume(volume);
+      if (disk?.users.length)
+        throw new Error("Volume detach is not confirmed by the provider");
+      const client = await getPool().connect();
+      try {
+        await client.query("BEGIN");
+        const {
+          rows: [locked],
+        } = await client.query<ComputeVolumeRow>(
+          "SELECT * FROM compute_volumes WHERE id=$1 FOR UPDATE",
+          [volume.id],
+        );
+        if (
+          !locked ||
+          locked.attached_vm_id !== vm.id ||
+          locked.attachment_generation !== volume.attachment_generation ||
+          locked.desired_state !== "deleted"
+        )
+          throw new Error("Volume attachment changed during funded cleanup");
+        const { rowCount } = await client.query(
+          "UPDATE compute_vms SET home_volume_id=NULL,updated_at=NOW() WHERE id=$1 AND home_volume_id=$2 AND desired_state<>'running'",
+          [vm.id, volume.id],
+        );
+        if (!rowCount) throw new Error("VM restarted during volume detach");
+        await client.query(
+          "UPDATE compute_volumes SET attached_vm_id=NULL,attachment_state='detached',detached_at=NOW(),updated_at=NOW() WHERE id=$1",
+          [volume.id],
+        );
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+      volume = (await getComputeVolumeById(volume.id))!;
+    }
+  }
+  if (
+    hasCourseVolumeFunding(volume) &&
+    !volume.attached_vm_id &&
+    volume.attachment_state !== "detached"
+  ) {
+    const disk = await inspectProviderComputeVolume(volume);
+    if (!disk || !disk.users.length)
+      volume = (await updateComputeVolume(volume.id, {
+        attachment_state: "detached",
+      }))!;
+  }
   if (volume.attached_vm_id || volume.attachment_state !== "detached") {
     throw new Error("cannot delete an attached or uncertain compute volume");
   }
@@ -2447,6 +2679,10 @@ async function deleteVolume(volume: ComputeVolumeRow) {
 
 async function reconcileVolume(volume: ComputeVolumeRow) {
   if (volume.desired_state === "deleted") return await deleteVolume(volume);
+  if (hasCourseVolumeFunding(volume)) {
+    volume = await reserveCourseVolume(volume);
+    volume = await refreshCourseVolumeForProvider(volume);
+  }
   const observed = await inspectProviderComputeVolume(volume);
   if (!observed) {
     if (!volume.ready_at) return await provisionVolume(volume);
@@ -2463,6 +2699,7 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
   ) {
     return await resizeVolume(volume);
   }
+  await recordCourseVolumeGrowth(volume, observed.size_gb);
   const attachedVm = volume.attached_vm_id
     ? await getComputeVmById(volume.attached_vm_id)
     : undefined;
@@ -2470,10 +2707,11 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
     attachedVm && volumeAttachedToVm(observed.users, attachedVm)
   );
   const attachedElsewhere = observed.users.length > 0 && !attachedToExpectedVm;
-  await updateComputeVolume(volume.id, {
+  const next = await updateComputeVolume(volume.id, {
     state: "ready",
     size_gb: volume.desired_size_gb,
     effective_size_gb: observed.size_gb,
+    ready_at: volume.ready_at ?? new Date(),
     attachment_state: attachedElsewhere
       ? "unknown"
       : attachedToExpectedVm
@@ -2484,6 +2722,7 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
     error: null,
     metadata: { ...(volume.metadata ?? {}), provider: observed },
   });
+  if (next && hasCourseVolumeFunding(next)) await reconcileVolumeBilling(next);
 }
 
 async function reconcile(vm: ComputeVmRow) {
@@ -2517,7 +2756,7 @@ async function reconcile(vm: ComputeVmRow) {
       await updateComputeVm(vm.id, {
         state: "stopped",
         public_ip: null,
-        stopped_at: new Date(),
+        stopped_at: vm.stopped_at ?? new Date(),
       });
     }
     return;
@@ -2629,6 +2868,7 @@ async function reconcile(vm: ComputeVmRow) {
     vm = interrupted;
   }
   if (shouldReplaceNebiusSpotInterruption(vm)) {
+    denyCourseVmMutation(vm, "Provider generation replacement");
     // A stopped Nebius preemptible instance can be evicted again immediately
     // when restarted on the same placement. Recreate only the instance so the
     // persistent disks and static address survive while Nebius chooses a fresh
@@ -2657,10 +2897,32 @@ async function reconcile(vm: ComputeVmRow) {
   });
 }
 
-async function handleWork(row: ComputeWorkRow) {
+export async function handleComputeWork(row: ComputeWorkRow) {
   if (row.resource_kind === "volume") {
-    const volume = await getComputeVolumeById(row.resource_id);
+    let volume = await getComputeVolumeById(row.resource_id);
     if (!isComputeVolumeV2(volume)) return;
+    if (hasCourseVolumeFunding(volume)) {
+      if (
+        row.payload?.funding_epoch &&
+        row.payload.funding_epoch !==
+          volume.metadata.billing.course_funding.funding_epoch
+      )
+        return;
+      if (row.action === "funding_transition")
+        throw new Error(
+          "Volume payer changes require separately approved funding terms",
+        );
+      if (volume.desired_state === "deleted" || row.action === "delete_volume")
+        return await deleteVolume(volume);
+      if (!volume.metadata.billing.course_funding.binding)
+        volume = await reserveCourseVolume(volume);
+      try {
+        await requireCourseVolumeService(volume);
+      } catch (err) {
+        await endCourseVolumeService(volume);
+        throw err;
+      }
+    }
     switch (row.action) {
       case "provision_volume":
         return await provisionVolume(volume);
@@ -2680,6 +2942,39 @@ async function handleWork(row: ComputeWorkRow) {
   }
   const vm = await getComputeVmById(row.resource_id);
   if (!isComputeVmV2(vm)) return;
+  if (
+    row.payload?.funding_epoch &&
+    row.payload.funding_epoch !==
+      vm.metadata?.billing?.course_funding?.funding_epoch
+  )
+    return;
+  if (
+    hasCourseVmFunding(vm) &&
+    !vm.metadata?.billing?.course_funding?.binding &&
+    vm.desired_state === "running"
+  ) {
+    return await reconcile(await reserveCourseVmLaunch(vm));
+  }
+  if (hasCourseVmFunding(vm) && vm.desired_state === "running") {
+    try {
+      const action = await enforceCourseVmFunding(vm);
+      if (action) {
+        await queueCourseVmEnforcement(vm, action);
+        return;
+      }
+    } catch (err) {
+      await queueCourseVmEnforcement(vm, "stop");
+      throw err;
+    }
+  }
+  if (
+    vm.stop_at &&
+    vm.stop_at.valueOf() <= Date.now() &&
+    vm.desired_state === "running"
+  ) {
+    await enqueueScheduledComputeStops(1, vm.id);
+    return await reconcile((await getComputeVmById(vm.id))!);
+  }
   switch (row.action) {
     case "provision":
       return await provision(vm);
@@ -2702,6 +2997,8 @@ async function handleWork(row: ComputeWorkRow) {
   }
 }
 
+export const SPONSORED_RESOURCE_WRITER_PROTOCOL_VERSION = 1;
+
 export function startComputeVmWorker(
   opts: { interval_ms?: number; concurrency?: number } = {},
 ) {
@@ -2715,6 +3012,14 @@ export function startComputeVmWorker(
   let lastProviderInventory = 0;
   let lastProviderObservation = 0;
   let providerObservationRunning = false;
+  let egressMeterRunning = false;
+  let providerInventoryRunning = false;
+  let vmFundingRunning = false;
+  let volumeFundingRunning = false;
+  let personalFundingRunning = false;
+  let terminalFundingRunning = false;
+  let terminalVolumeFundingRunning = false;
+  let lastFundingMaintenance = 0;
   let queueSchemaReady = false;
   const activeWork = new Set<Promise<void>>();
 
@@ -2732,7 +3037,7 @@ export function startComputeVmWorker(
     }, 60_000);
     heartbeat.unref();
     try {
-      await handleWork(row);
+      await handleComputeWork(row);
       await finishComputeWork({ id: row.id, state: "done" });
       logger.info("managed compute work completed", {
         id: row.id,
@@ -2752,11 +3057,11 @@ export function startComputeVmWorker(
         duration_ms: Date.now() - startedAt,
         err,
       });
-      if (
-        row.resource_kind === "vm" &&
-        err instanceof RetryableComputeWorkError
-      ) {
-        const vm = await getComputeVmById(row.resource_id);
+      if (err instanceof RetryableComputeWorkError) {
+        const vm =
+          row.resource_kind === "vm"
+            ? await getComputeVmById(row.resource_id)
+            : undefined;
         if (vm) {
           await updateComputeVm(vm.id, {
             state: err.failureState,
@@ -2780,6 +3085,7 @@ export function startComputeVmWorker(
         // per-resource work deduplication does not suppress the retry.
         await finishComputeWork({ id: row.id, state: "failed", error });
         await enqueueComputeWork({
+          resource_kind: row.resource_kind,
           resource_id: row.resource_id,
           action: row.action,
           idempotency_key: `retry:${row.resource_id}:${row.action}:${err.retryAt.toISOString()}`,
@@ -2847,10 +3153,14 @@ export function startComputeVmWorker(
     try {
       if (!queueSchemaReady) {
         await ensureComputeWorkQueueSchema();
+        await ensureComputeScheduledStopSchema();
         queueSchemaReady = true;
         logger.info("managed compute work queue schema is ready");
       }
       await enqueueExpiredComputeVms();
+      await enqueueScheduledComputeStops();
+      await enqueueCourseFundingDeadlines();
+      await enqueueCourseVolumeDeadlines();
       if (
         !providerObservationRunning &&
         Date.now() - lastProviderObservation >=
@@ -2874,27 +3184,36 @@ export function startComputeVmWorker(
       if (Date.now() - lastReconcile >= 15_000) {
         lastReconcile = Date.now();
         const config = await getComputeVmConfig();
-        if (Date.now() - lastEgressMeter >= 5 * 60_000) {
+        if (!egressMeterRunning && Date.now() - lastEgressMeter >= 5 * 60_000) {
           lastEgressMeter = Date.now();
-          try {
-            await withSessionAdvisoryLock({
-              lockKey: COMPUTE_EGRESS_METER_LOCK_KEY,
-              fn: meterComputeVmPublicEgress,
+          egressMeterRunning = true;
+          void withSessionAdvisoryLock({
+            lockKey: COMPUTE_EGRESS_METER_LOCK_KEY,
+            fn: meterComputeVmPublicEgress,
+          })
+            .catch((err) =>
+              logger.warn("managed compute egress metering pass failed", {
+                err,
+              }),
+            )
+            .finally(() => {
+              egressMeterRunning = false;
             });
-          } catch (err) {
-            logger.warn("managed compute egress metering pass failed", { err });
-          }
         }
-        if (Date.now() - lastProviderInventory >= 15 * 60_000) {
+        if (
+          !providerInventoryRunning &&
+          Date.now() - lastProviderInventory >= 15 * 60_000
+        ) {
           lastProviderInventory = Date.now();
-          try {
-            await reconcileComputeProviderInventory();
-          } catch (err) {
-            logger.warn("managed compute inventory pass failed", { err });
-          }
+          providerInventoryRunning = true;
+          void reconcileComputeProviderInventory()
+            .catch((err) =>
+              logger.warn("managed compute inventory pass failed", { err }),
+            )
+            .finally(() => {
+              providerInventoryRunning = false;
+            });
         }
-        await enforceComputeVmFunding();
-        await enforceComputeVolumeFunding();
         if (config.emergency_stop) {
           await enqueueComputeEmergencyStops();
         }
@@ -2917,6 +3236,101 @@ export function startComputeVmWorker(
   };
   void tick();
   const timer = setInterval(() => void tick(), intervalMs);
+  // Keep each maintenance pass single-flight without consuming work slots or
+  // abandoning timed-out promises that may still hold account/provider locks.
+  const maintenanceTimer = setInterval(() => {
+    if (
+      stopped ||
+      !queueSchemaReady ||
+      Date.now() - lastFundingMaintenance < 15_000
+    )
+      return;
+    lastFundingMaintenance = Date.now();
+    if (!terminalVolumeFundingRunning) {
+      terminalVolumeFundingRunning = true;
+      void recoverTerminalCourseVolumeFunding()
+        .catch((err) =>
+          logger.warn("terminal volume funding recovery failed", { err }),
+        )
+        .finally(() => {
+          terminalVolumeFundingRunning = false;
+        });
+    }
+    if (!vmFundingRunning) {
+      vmFundingRunning = true;
+      void enforceComputeVmFunding()
+        .catch((err) => logger.warn("VM funding maintenance failed", { err }))
+        .finally(() => {
+          vmFundingRunning = false;
+        });
+    }
+    if (!volumeFundingRunning) {
+      volumeFundingRunning = true;
+      void enforceComputeVolumeFunding()
+        .catch((err) =>
+          logger.warn("volume funding maintenance failed", { err }),
+        )
+        .finally(() => {
+          volumeFundingRunning = false;
+        });
+    }
+    if (!personalFundingRunning) {
+      personalFundingRunning = true;
+      void processVmPersonalFundingHandoffs()
+        .catch((err) =>
+          logger.warn("personal VM funding handoff remains pending", { err }),
+        )
+        .finally(() => {
+          personalFundingRunning = false;
+        });
+    }
+    if (!terminalFundingRunning) {
+      terminalFundingRunning = true;
+      void recoverTerminalCourseVmFunding()
+        .catch((err) =>
+          logger.warn("terminal VM funding recovery failed", { err }),
+        )
+        .finally(() => {
+          terminalFundingRunning = false;
+        });
+    }
+  }, intervalMs);
+  let fundingSweepRunning = false;
+  const fundingTimer = setInterval(() => {
+    if (stopped || !queueSchemaReady || fundingSweepRunning) return;
+    fundingSweepRunning = true;
+    void enqueueCourseFundingDeadlines()
+      .catch((err) =>
+        logger.warn("sponsored VM deadline sweep failed", { err }),
+      )
+      .finally(() => {
+        fundingSweepRunning = false;
+      });
+  }, intervalMs);
+  let stopSweepRunning = false;
+  let closureSweepRunning = false;
+  const closureTimer = setInterval(() => {
+    if (stopped || !queueSchemaReady || closureSweepRunning) return;
+    closureSweepRunning = true;
+    void finalizeSettledCourseFundingPools()
+      .catch((err) =>
+        logger.warn("course funding closure sweep failed", { err }),
+      )
+      .finally(() => {
+        closureSweepRunning = false;
+      });
+  }, intervalMs);
+  const stopTimer = setInterval(() => {
+    if (stopped || !queueSchemaReady || stopSweepRunning) return;
+    stopSweepRunning = true;
+    void enqueueScheduledComputeStops()
+      .catch((err) =>
+        logger.warn("scheduled compute stop sweep failed", { err }),
+      )
+      .finally(() => {
+        stopSweepRunning = false;
+      });
+  }, intervalMs);
   logger.info("compute VM worker started", {
     worker_id: workerId,
     intervalMs,
@@ -2925,5 +3339,9 @@ export function startComputeVmWorker(
   return () => {
     stopped = true;
     clearInterval(timer);
+    clearInterval(maintenanceTimer);
+    clearInterval(fundingTimer);
+    clearInterval(closureTimer);
+    clearInterval(stopTimer);
   };
 }

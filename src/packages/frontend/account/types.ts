@@ -73,6 +73,8 @@ export interface AccountState {
     use_balance_toward_team_licenses?: boolean;
     hide_button_tooltips?: boolean;
     hide_navbar_membership?: boolean;
+    low_credit_notifications?: boolean;
+    low_credit_threshold_usd?: number;
     auto_update_file_listing?: boolean;
     follow_current_path?: boolean;
     show_symbol_bar_labels?: boolean; // whether to show labels on the menu buttons

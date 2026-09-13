@@ -11,6 +11,12 @@ import {
   authFirstRequireAccountOrComputeAgent,
 } from "./util";
 import type { HostCatalog } from "./hosts";
+import type {
+  CourseVmFundingSource,
+  ComputeVmFundingStatus,
+} from "@cocalc/util/compute-vm-funding";
+import type { VmPersonalFundingApi } from "@cocalc/util/compute-vm-funding";
+import type { ComputeVolumeFundingStatus } from "@cocalc/util/compute-volume-funding";
 
 export const COMPUTE_AGENT_GRANTS_PROJECT_DETAIL_FIELD = "compute_agent_grants";
 
@@ -92,6 +98,7 @@ export interface ComputeAgentGrant {
 }
 
 export interface ComputeVm {
+  funding_status?: ComputeVmFundingStatus;
   id: string;
   name: string;
   owner_account_id: string;
@@ -141,6 +148,9 @@ export interface ComputeVm {
   updated_at: string | Date;
   ready_at?: string | Date | null;
   expires_at?: string | Date | null;
+  stop_at?: string | Date | null;
+  stop_after_minutes?: number | null;
+  stop_generation?: number;
   stopped_at?: string | Date | null;
   deleted_at?: string | Date | null;
   allow_on_demand_fallback: boolean;
@@ -164,6 +174,7 @@ export interface ComputeVmInstanceTiming {
 }
 
 export interface CreateComputeVmRequest {
+  funding_source?: CourseVmFundingSource;
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -181,8 +192,11 @@ export interface CreateComputeVmRequest {
   pricing_model: ComputeVmPricingModel;
   allow_on_demand_fallback?: boolean;
   ttl_minutes?: number | null;
+  // Omitted: six hours for new VMs. Null: explicitly disable scheduled stop.
+  stop_after_minutes?: number | null;
   boot_disk_gb?: number;
   home_volume?: string;
+  expected_home_volume_funding_version?: string;
   funding_mode?: ManagedComputeFundingMode;
   ssh_public_key?: string;
   configure_project_ssh?: boolean;
@@ -212,6 +226,8 @@ export interface ComputeVmSshKey {
 }
 
 export interface ComputeVolume {
+  funding_source?: CourseVmFundingSource;
+  funding_status?: ComputeVolumeFundingStatus;
   id: string;
   name: string;
   owner_account_id: string;
@@ -248,6 +264,8 @@ export interface ComputeVolume {
 }
 
 export interface CreateComputeVolumeRequest {
+  funding_source?: CourseVmFundingSource;
+  accept_course_retention?: boolean;
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -263,6 +281,8 @@ export interface CreateComputeVolumeRequest {
 }
 
 export interface ComputeCatalog {
+  // True only when sponsored volume creation, retention and review fencing work.
+  sponsored_home_volumes?: boolean;
   providers: ManagedComputeProviderId[];
   provider_catalogs: Partial<Record<ManagedComputeProviderId, HostCatalog>>;
   funding_modes: Array<{
@@ -310,6 +330,11 @@ export interface PrepareComputeWindowsRdpResult {
 }
 
 export const compute = {
+  previewVmPersonalFunding: authFirstRequireAccount,
+  proposeVmPersonalFunding: authFirstRequireAccount,
+  getVmPersonalFunding: authFirstRequireAccount,
+  clearVmPersonalFunding: authFirstRequireAccount,
+  switchVmPersonalFunding: authFirstRequireAccount,
   getCatalog: authFirstRequireAccountOrComputeAgent,
   createVm: authFirstRequireAccountOrComputeAgent,
   listVms: authFirstRequireAccount,
@@ -347,7 +372,7 @@ export const compute = {
   resolveOrphan: authFirstRequireAccount,
 };
 
-export interface ComputeApi {
+export interface ComputeApi extends VmPersonalFundingApi {
   getCatalog: (opts: { account_id?: string }) => Promise<ComputeCatalog>;
   createVm: (opts: CreateComputeVmRequest) => Promise<ComputeVm>;
   listVms: (opts: {
@@ -433,6 +458,8 @@ export interface ComputeApi {
     browser_id?: string;
     session_hash?: string;
     id_or_name: string;
+    // Omitted: reuse the saved choice; explicit values also update it.
+    stop_after_minutes?: number | null;
     idempotency_key: string;
   }) => Promise<ComputeVm>;
   stopVm: (opts: {
@@ -503,6 +530,7 @@ export interface ComputeApi {
     id_or_name: string;
   }) => Promise<ComputeVolume>;
   resizeVolume: (opts: {
+    expected_funding_version?: string;
     account_id?: string;
     browser_id?: string;
     session_hash?: string;

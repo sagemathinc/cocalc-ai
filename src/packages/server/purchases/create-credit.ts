@@ -7,7 +7,8 @@ do not create the credit again.
 In all cases, it returns the purchase id number.
 */
 
-import getPool, { PoolClient } from "@cocalc/database/pool";
+import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
+import { lockAccountSpending } from "./lock-account-spending";
 import type { Credit } from "@cocalc/util/db-schema/purchases";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
@@ -22,7 +23,41 @@ import { publishAccountBalanceUpdateBestEffort } from "./refresh-balance";
 
 const logger = getLogger("purchases:create-credit");
 
-export default async function createCredit({
+export default async function createCredit(
+  opts: Parameters<typeof createCreditInTransaction>[0],
+): Promise<number> {
+  if (opts.client) {
+    await lockAccountSpending(opts.client, opts.account_id);
+    return createCreditInTransaction(opts);
+  }
+  await (
+    await import("@cocalc/server/compute/funding/authority")
+  ).assertFundingAccountHome(opts.account_id);
+  const client = await getTransactionClient();
+  let id: number;
+  let balance: MoneyValue;
+  try {
+    id = await createCredit({ ...opts, client });
+    balance = await getBalance({
+      account_id: opts.account_id,
+      client,
+      forceSave: true,
+    });
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  await publishAccountBalanceUpdateBestEffort({
+    account_id: opts.account_id,
+    balance,
+  });
+  return id;
+}
+
+async function createCreditInTransaction({
   account_id,
   invoice_id,
   amount,
@@ -43,7 +78,7 @@ export default async function createCredit({
   service?: "credit" | "auto-credit";
 }): Promise<number> {
   logger.debug("createCredit", { account_id, invoice_id, amount, service });
-  if (!(await isValidAccount(account_id))) {
+  if (!(await isValidAccount(account_id, client))) {
     throw Error(`${account_id} is not a valid account`);
   }
   const amountValue = toDecimal(amount);
@@ -51,7 +86,8 @@ export default async function createCredit({
     throw Error(`credit amount (=${amount}) must be positive`);
   }
   const postedAmount = moneyRoundToCents(amountValue);
-  const pool = client ?? getPool();
+  if (!client) throw Error("Credit creation requires a financial transaction");
+  const pool = client;
 
   if (invoice_id) {
     const x = await pool.query(
@@ -83,14 +119,10 @@ export default async function createCredit({
   );
 
   // call getbalance to trigger update of the balance field in the accounts table.
-  const balance = await getBalance({
+  await getBalance({
     account_id,
     client,
     forceSave: client == null,
   });
-  if (client == null) {
-    await publishAccountBalanceUpdateBestEffort({ account_id, balance });
-  }
-
   return rows[0].id;
 }

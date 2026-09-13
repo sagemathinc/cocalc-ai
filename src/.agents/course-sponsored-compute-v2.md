@@ -1,6 +1,112 @@
 # Course-Sponsored Compute: Fresh Implementation
 
-Date: 2026-09-12. Status: fresh branch prepared; no product implementation yet.
+Date: 2026-09-12. Status: implementation and local validation in progress;
+not release-ready.
+
+## Implementation Checkpoint
+
+The course budget tab, allocation preview and approval-intent APIs, student
+funding selection, VM admission/billing integration, and separate financial
+approval service are implemented on this branch. Focused tests exercise these
+boundaries. This is not yet verification of the full acceptance path below.
+
+An isolated development hub is running with its own database, instructor and
+student test accounts, fictitious credit, and a real course project. Browser
+testing has exercised enrollment, the actual course allocation preview, and
+separate-origin approval of a USD 2 allowance. Both accounts see that allowance.
+The same student, with zero personal balance and no payment method, launched a
+disposable GCP CPU VM through the normal authenticated compute API using that
+allowance. SSH and Python execution succeeded. The actual worker stopped the VM
+at its five-minute scheduled deadline and deleted it at its ten-minute deletion
+deadline. At 22:00 UTC, independent provider inspection confirmed no remaining
+instance, boot disk, or public address. The existing purchase ledger charged the
+instructor USD 0.01; the student's personal balance remained zero. A payer-home
+read-only audit found no ledger discrepancies. Test account credit is fictitious;
+the GCP VM was real and has been cleaned up.
+
+Final egress settlement is a separate check: the live run exposed a timestamp
+precision mismatch in the first owning-bay watermark update. Its focused
+real-PostgreSQL regression failed before the fix and passes afterward, including
+successive meter readings, retries, and final reservation release. After loading
+the fix, the live worker finalized egress and released the unused reservation.
+At 22:16 UTC the student had USD 1.99 available from this USD 2 allowance, zero
+personal charges, and no remaining resource commitments. The payer audit was
+clean. Physical deletion and financial settlement were checked separately.
+
+The instructor/student budget surfaces have been checked in Chromium at 320,
+720, and 1440 CSS pixels, in light and dark modes, with keyboard scrolling of
+the instructor table and expandable student budget details. Student available
+credit is visible without horizontal scrolling. Focused accessibility scans
+passed. This is not yet a complete browser
+VM-create, personal-handoff, or home-volume workflow. First-party email
+verification succeeded for both controlled accounts; financial receipt delivery
+after a repaired SMTP configuration succeeded for both recipients through the
+normal retry worker. It retried the original two receipt records without a new
+allocation, receipt event, or direct database reset.
+The existing live checkout and previous implementation worktree remain preserved.
+
+Classroom-size PostgreSQL checks cover simultaneous retries for both 20 and 50
+students: one pool, one grant per recipient, and one backing hold. Browser VM
+creation now retains both VM and optional-volume request identities on an
+unchanged retry after a lost response. Shared region/machine selectors preserve
+their form labels and ARIA attributes; that independently validated change is
+committed as `e8624b52bf`.
+
+The browser VM-create workflow now uses the instructor's CPU recommendation.
+Its scheduled stop/deletion and fresh-browser notebook preservation checks
+passed. The test student's original zero-balance result above is preserved; a
+subsequent USD 2 fictitious credit was added solely for personal-payment testing.
+It is not a captured payment or transferable cash.
+
+A live separate-origin personal approval stopped a running GCP VM, waited for
+network accounting, switched its payer, and restarted the retained instance.
+That test found two defects: old-source release incorrectly required a network
+watermark through the later storage handoff, and retained-instance restart did
+not create the new billing-generation timing row. Both have fixes and focused
+PostgreSQL regressions; the latter test now verifies a persisted personal runtime
+start. The live attempt is not proof of correct personal runtime billing: a new
+live run must validate the corrected path. The first attempt was stopped on its
+timer and deletion was requested through the student's normal authenticated API.
+Automatic fallback and personal home-volume takeover remain incomplete live paths.
+
+The current checkpoint also includes a checksum/expiry-validated offline Ed25519
+rollout-manifest CLI and operations runbook. No operator key is loaded into hubs;
+the tool does not deploy or enable sponsorship. Personal admission now shares
+the same aggregate exposure guard as course admission. Full static build and
+package typechecks passed. Broader purchase/admission/rehome checks passed 376
+tests (13 skipped), funding PostgreSQL checks passed 167 before the newest
+regressions, and the updated VM/personal suites pass 42 tests. Three-bay tests
+use real PostgreSQL and Conat with controlled directory/rollout fixtures, not
+actual cloud instances in multiple bays.
+
+Remaining implementation/validation includes cross-bay personal handoff,
+personal home-volume takeover, live sponsored-volume lifecycle, transfer/payment
+provenance validation, bounded postpaid workflows, and currency display. A
+phone-width screenshot caught wrapped amounts/dates missed by the automated
+accessibility scan; funding details now use vertical label/value layout and
+await a fresh rendered check. Nothing in this checkpoint enables production.
+
+Other work in progress includes pool changes, nonbinding recommendations,
+historical student balances, personal funding handoff, transfers, sponsored
+storage, and multibay/rehome behavior. Do not infer completion from the presence
+of a UI component, table, or passing unit test. The independent review and pilot
+gates remain outstanding.
+
+Implementation decisions:
+
+- Financial approvals use a separately hosted page and independent sign-in;
+  an ordinary application RPC can propose but cannot approve spending.
+- Test cloud resources must have an isolated ownership namespace before cloud
+  credentials are enabled, so orphan cleanup cannot touch another dev hub.
+- A new course can establish its identity from the budget workflow without
+  requiring a prior visit to an unrelated Configuration panel.
+- Stale or failed funding lookups disable sponsored creation and retain the
+  selected payer; they never silently switch the student to personal payment.
+- The first user guide remains a draft until the implemented workflow and
+  release gates have been verified.
+- Operations have a read-only payer-home audit API and CLI command. Its bounded
+  repeatable-read report explicitly excludes provider inventory and remote worker
+  verification; it cannot repair balances or declare the pilot reconciled.
 
 ## Baseline
 

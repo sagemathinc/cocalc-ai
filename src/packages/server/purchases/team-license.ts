@@ -16,7 +16,8 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
-import getBalance from "@cocalc/server/purchases/get-balance";
+import getSpendableBalance from "./get-spendable-balance";
+import { lockAccountSpending } from "./lock-account-spending";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import createPaymentIntent from "./stripe/create-payment-intent";
 import send, { support, url } from "@cocalc/server/messages/send";
@@ -65,11 +66,13 @@ export async function purchaseTeamLicenseChange({
   target_seats,
   amount,
   creditId,
+  client: suppliedClient,
 }: {
   account_id: string;
   target_seats: Record<string, number>;
   amount?: MoneyValue;
   creditId?: number;
+  client?: PoolClient;
 }) {
   logger.debug("purchaseTeamLicenseChange", {
     account_id,
@@ -77,15 +80,17 @@ export async function purchaseTeamLicenseChange({
     amount,
   });
   const normalizedTargets = normalizeTargets(target_seats);
-  const quote = await resolveTeamLicenseQuote({
-    owner_account_id: account_id,
-    target_seats: normalizedTargets,
-  });
-  if (quote.total_price <= 0) {
-    throw Error("team license change has no seats to purchase");
-  }
-  const client = await getTransactionClient();
+  const client = suppliedClient ?? (await getTransactionClient());
   try {
+    await lockAccountSpending(client, account_id);
+    const quote = await resolveTeamLicenseQuote({
+      owner_account_id: account_id,
+      target_seats: normalizedTargets,
+      client,
+    });
+    if (quote.total_price <= 0) {
+      throw Error("team license change has no seats to purchase");
+    }
     await assertPurchaseAllowed({
       account_id,
       service: "membership",
@@ -138,14 +143,16 @@ export async function purchaseTeamLicenseChange({
       line_items: quote.line_items,
       client,
     });
-    await client.query("COMMIT");
-    await refreshAccountBalanceAndPublishBestEffort({ account_id });
+    if (!suppliedClient) {
+      await client.query("COMMIT");
+      await refreshAccountBalanceAndPublishBestEffort({ account_id });
+    }
     return overview;
   } catch (err) {
-    await client.query("ROLLBACK");
+    if (!suppliedClient) await client.query("ROLLBACK");
     throw err;
   } finally {
-    client.release();
+    if (!suppliedClient) client.release();
   }
 }
 
@@ -173,9 +180,9 @@ export async function createTeamLicenseRenewalPayment({
   try {
     if (
       (await useBalanceTowardTeamLicenses(owner_account_id)) &&
-      toDecimal(await getBalance({ account_id: owner_account_id })).gte(
-        toDecimal(quote.total_price),
-      )
+      toDecimal(
+        await getSpendableBalance({ account_id: owner_account_id }),
+      ).gte(toDecimal(quote.total_price))
     ) {
       await processTeamLicenseRenewal({
         account_id: owner_account_id,
@@ -245,6 +252,13 @@ ${await support()}
   }
 }
 
+interface TeamLicenseRenewedNotification {
+  account_id: string;
+  team_license_id: string;
+  next_period_end: Date | string;
+  total_price: MoneyValue;
+}
+
 export async function processTeamLicenseRenewal({
   account_id,
   paymentIntent,
@@ -255,7 +269,7 @@ export async function processTeamLicenseRenewal({
   paymentIntent: { id?: string; metadata?: Record<string, string> };
   amount: MoneyValue;
   client?: PoolClient;
-}) {
+}): Promise<TeamLicenseRenewedNotification | undefined> {
   const team_license_id = `${paymentIntent.metadata?.team_license_id ?? ""}`;
   if (!team_license_id) {
     throw Error("team license renewal metadata is missing team_license_id");
@@ -265,6 +279,7 @@ export async function processTeamLicenseRenewal({
   const dbClient = client ?? ownedClient!;
   let committed = false;
   try {
+    await lockAccountSpending(dbClient, account_id);
     const { rows: lockedRows } = await dbClient.query(
       `
         SELECT payment
@@ -308,6 +323,14 @@ export async function processTeamLicenseRenewal({
     }
     if (toDecimal(amount).add(ALLOWED_SLACK).lt(toDecimal(quote.total_price))) {
       throw Error("team license renewal payment is less than renewal cost");
+    }
+    if (!paymentIntentId) {
+      await assertPurchaseAllowed({
+        account_id,
+        service: "membership",
+        cost: quote.total_price,
+        client: dbClient,
+      });
     }
     const creditId = positiveInteger(paymentIntent.metadata?.credit_id);
     const purchase_id = await createPurchase({
@@ -371,12 +394,17 @@ export async function processTeamLicenseRenewal({
       committed = true;
       await refreshAccountBalanceAndPublishBestEffort({ account_id });
     }
-    await sendTeamLicenseRenewedNotification({
+    const notification = {
       account_id,
       team_license_id,
       next_period_end: quote.next_period_end,
       total_price: quote.total_price,
-    });
+    };
+    if (ownedClient) {
+      await sendTeamLicenseRenewedNotification(notification);
+      return;
+    }
+    return notification;
   } catch (err) {
     if (ownedClient && !committed) {
       await ownedClient.query("ROLLBACK");
@@ -387,7 +415,7 @@ export async function processTeamLicenseRenewal({
   }
 }
 
-async function sendTeamLicenseRenewedNotification({
+export async function sendTeamLicenseRenewedNotification({
   account_id,
   team_license_id,
   next_period_end,
@@ -395,7 +423,7 @@ async function sendTeamLicenseRenewedNotification({
 }: {
   account_id: string;
   team_license_id: string;
-  next_period_end: Date;
+  next_period_end: Date | string;
   total_price: MoneyValue;
 }) {
   try {

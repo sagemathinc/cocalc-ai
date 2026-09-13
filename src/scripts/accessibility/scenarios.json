@@ -2,6 +2,47 @@
   "version": 1,
   "pages": [
     {
+      "id": "account-running-gpu-dialog",
+      "title": "Account running GPU reminder",
+      "path": "/hosts?tab=vms",
+      "authentication": "account",
+      "engine": "axe",
+      "minimumScore": 1,
+      "settleMs": 500,
+      "actions": [
+        {
+          "type": "remember",
+          "key": "trigger",
+          "selector": "button[aria-label='GPU status unknown'], button[aria-label$='GPU VMs running']"
+        },
+        {
+          "type": "focus",
+          "selector": "button[aria-label='GPU status unknown'], button[aria-label$='GPU VMs running']"
+        },
+        { "type": "press", "key": "Enter" },
+        {
+          "type": "wait",
+          "role": "dialog",
+          "name": "Account GPU virtual machines"
+        },
+        {
+          "type": "assertFocusWithin",
+          "role": "dialog",
+          "name": "Account GPU virtual machines"
+        }
+      ],
+      "cleanupActions": [
+        { "type": "press", "key": "Escape" },
+        {
+          "type": "assertHidden",
+          "role": "dialog",
+          "name": "Account GPU virtual machines"
+        },
+        { "type": "waitForTimeout", "timeoutMs": 250 },
+        { "type": "assertFocus", "key": "trigger" }
+      ]
+    },
+    {
       "id": "pricing-details-expanded",
       "title": "Pricing exact limits expanded",
       "path": "/pricing",

@@ -9,6 +9,8 @@ import { maintainPaymentIntents } from "./stripe/process-payment-intents";
 import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
 import maintainMembershipAnalytics from "./maintain-membership-analytics";
 import maintainComputeRevenueAnalyticsProjection from "./maintain-compute-revenue-analytics";
+import maintainProviderRefunds from "./provider-refund-worker";
+import maintainCreditTransfers from "./credit-transfers/worker";
 
 const logger = getLogger("purchases:maintenance");
 
@@ -28,6 +30,15 @@ interface MaintenanceDescription {
 }
 
 const FUNCTIONS: MaintenanceDescription[] = [
+  {
+    f: maintainCreditTransfers,
+    desc: "reconcile pending account credit transfers",
+  },
+  {
+    f: maintainProviderRefunds,
+    desc: "reconcile pending provider refunds",
+    requiresStripe: true,
+  },
   {
     f: maintainSubscriptions,
     desc: "maintain subscriptions",

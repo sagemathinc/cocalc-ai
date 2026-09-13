@@ -62,6 +62,17 @@ export async function assertAccountNotRehoming({
   action?: string;
 }): Promise<void> {
   await lockAccountRehomeFence({ db, account_id });
+  // A failed coordinator attempt is retryable, not an unfreeze. Destination
+  // imports also remain unwritable before directory cutover and activation.
+  if (await tableExists(db, "account_financial_handoffs")) {
+    const { rows } = await db.query(
+      `SELECT 1 FROM account_financial_handoffs
+      WHERE account_id=$1 AND state IN ('frozen','accepted','imported') LIMIT 1`,
+      [account_id],
+    );
+    if (rows.length)
+      throw new Error(`cannot ${action}; account financial rehome is frozen`);
+  }
   if (!(await accountRehomeOperationsTableExists(db))) {
     return;
   }

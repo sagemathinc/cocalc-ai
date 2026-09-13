@@ -474,6 +474,11 @@ Table({
     ],
     pg_custom_indexes: [
       {
+        name: "accounts_low_credit_notifications_idx",
+        query:
+          "(account_id) WHERE deleted IS NOT TRUE AND other_settings->'low_credit_notifications' = 'true'::jsonb",
+      },
+      {
         name: "accounts_banned_account_idx",
         query: "(account_id) WHERE banned IS TRUE",
       },
@@ -576,6 +581,8 @@ Table({
               USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
             hide_navbar_balance: false,
             hide_navbar_membership: false,
+            low_credit_notifications: false,
+            low_credit_threshold_usd: 10,
             cookie_consent: null,
           },
           display_name: "",

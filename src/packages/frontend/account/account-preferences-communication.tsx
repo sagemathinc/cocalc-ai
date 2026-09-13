@@ -28,6 +28,7 @@ import {
 } from "@cocalc/util/notification-preferences";
 import { CookieConsentSettings } from "./cookie-consent-settings";
 import { SettingsCard } from "./settings-card";
+import { LowCreditNotificationSetting } from "./low-credit-notification-setting";
 import type { SettingsPageDefinition } from "./settings-page";
 
 type NotificationCategoryRow = (typeof NOTIFICATION_CATEGORIES)[number];
@@ -336,6 +337,7 @@ export function AccountPreferencesCommunication(): React.JSX.Element {
     <Space vertical size="middle" style={{ width: "100%" }}>
       {render_marketing_email_preferences()}
       <SettingsCard title="Notifications">
+        <LowCreditNotificationSetting />
         {render_notification_email_preferences()}
       </SettingsCard>
       <CookieConsentSettings />

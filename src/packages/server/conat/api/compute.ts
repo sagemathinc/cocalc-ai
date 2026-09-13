@@ -4,6 +4,28 @@
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import {
+  normalizeVmFundingSource,
+  requireSponsoredVmAdmission,
+  hasCourseVmFunding,
+  denyCourseVmMutation,
+  reserveCourseVmLaunch,
+  requireCourseVmService,
+  publicVmFundingStatus,
+} from "@cocalc/server/compute/funding/vm-funding";
+import {
+  createStopSchedule,
+  requestScheduledVmState,
+  startStopSchedule,
+} from "@cocalc/server/compute/scheduled-stop";
+import { prepareCourseVmRestart } from "@cocalc/server/compute/funding/vm-restart";
+import {
+  hasCourseVolumeFunding,
+  publicVolumeFundingStatus,
+  reserveCourseVolume,
+  requireCourseVolumeService,
+} from "@cocalc/server/compute/funding/volume-funding";
+import { reserveCourseVolumeGrowth } from "@cocalc/server/compute/funding/volume-growth";
 import type {
   ComputeCatalog,
   ComputeVolume,
@@ -153,6 +175,14 @@ function requireAccount(accountId?: string) {
   if (!value) throw new Error("must be signed in");
   return value;
 }
+
+export {
+  previewVmPersonalFunding,
+  proposeVmPersonalFunding,
+  getVmPersonalFunding,
+  clearVmPersonalFunding,
+  switchVmPersonalFunding,
+} from "@cocalc/server/compute/funding/vm-personal";
 
 function resolveComputeActor(
   opts: {
@@ -316,6 +346,7 @@ function cachedEgressSummary(vm: ComputeVmRow) {
 }
 
 async function egressSummary(vm: ComputeVmRow) {
+  if (hasCourseVmFunding(vm)) return cachedEgressSummary(vm);
   try {
     const { rows } = await getPool("medium").query(
       `WITH intervals AS (
@@ -397,6 +428,7 @@ async function publicVmWithTiming(
     : undefined;
   return {
     ...result,
+    funding_status: publicVmFundingStatus(vm),
     operating_system: vm.operating_system ?? "linux",
     operating_system_version: vm.operating_system_version ?? "ubuntu-24.04",
     os_license_hourly_price: vm.os_license_hourly_price ?? "0.000000",
@@ -438,7 +470,13 @@ async function publicVm(vm: ComputeVmRow): Promise<ComputeVm> {
 
 function publicVolume(volume: ComputeVolumeRow): ComputeVolume {
   const { idempotency_key: _key, ...result } = volume;
-  return result;
+  const status = publicVolumeFundingStatus(volume);
+  return {
+    ...result,
+    metadata: publicComputeVmMetadata(volume.metadata),
+    funding_source: status?.source,
+    funding_status: status,
+  };
 }
 
 async function resolveOwned(
@@ -690,9 +728,6 @@ export async function getCatalog(opts: {
     ),
   );
   const allowedFunding = fundingModes.find(({ allowed }) => allowed);
-  if (!allowedFunding) {
-    throw new Error("no managed compute funding lane is currently available");
-  }
   const providerCatalogs: ComputeCatalog["provider_catalogs"] = {
     gcp: gcpCatalog,
   };
@@ -704,11 +739,19 @@ export async function getCatalog(opts: {
   } catch {
     // Nebius is omitted until its provider credentials/catalog are configured.
   }
+  let sponsoredHomeVolumes = false;
+  try {
+    await requireSponsoredVmAdmission();
+    sponsoredHomeVolumes = true;
+  } catch {
+    /* Existing personal compute remains available during funding rollout. */
+  }
   return {
+    sponsored_home_volumes: sponsoredHomeVolumes,
     providers: providerCatalogs.nebius ? ["gcp", "nebius"] : ["gcp"],
     provider_catalogs: providerCatalogs,
     funding_modes: fundingModes,
-    default_funding_mode: allowedFunding.value,
+    default_funding_mode: allowedFunding?.value ?? "account-prepaid",
     operating_systems: [
       {
         value: "linux",
@@ -753,6 +796,18 @@ export async function createVm(
   opts: CreateComputeVmRequest & { agent_auth?: ComputeAgentAuth },
 ) {
   const { accountId, actorKind } = resolveComputeActor(opts, opts.project_id);
+  const fundingSource = normalizeVmFundingSource(opts.funding_source);
+  if (fundingSource) {
+    await requireSponsoredVmAdmission();
+    if (opts.funding_mode === "site-funded" || opts.allow_on_demand_fallback)
+      throw new Error(
+        "Course funding requires an account lane, independently funded volumes, and no unreserved price fallback",
+      );
+  }
+  const stopSchedule = createStopSchedule(
+    opts.stop_after_minutes,
+    actorKind === "agent",
+  );
   const config = await getComputeVmConfig();
   requireComputeVmCreateAllowed(config, accountId);
   if (opts.project_id) {
@@ -776,12 +831,14 @@ export async function createVm(
       "Windows managed compute is currently available only on GCP",
     );
   }
-  const fundingMode = await requireComputeFunding({
-    account_id: accountId,
-    action: "create",
-    funding_mode: opts.funding_mode,
-    provider,
-  });
+  const fundingMode = fundingSource
+    ? normalizeFundingMode(opts.funding_mode ?? "account-prepaid")
+    : await requireComputeFunding({
+        account_id: accountId,
+        action: "create",
+        funding_mode: opts.funding_mode,
+        provider,
+      });
 
   const name = normalizeName(opts.name);
   if (provider === "gcp" && !opts.zone) {
@@ -807,6 +864,16 @@ export async function createVm(
   let homeVolume = opts.home_volume
     ? await resolveOwnedVolume(accountId, opts.home_volume)
     : undefined;
+  if (homeVolume) await requireCourseVolumeService(homeVolume);
+  if (
+    homeVolume &&
+    hasCourseVolumeFunding(homeVolume) &&
+    opts.expected_home_volume_funding_version !==
+      homeVolume.metadata.billing.course_funding.funding_epoch
+  )
+    throw new Error(
+      "Home volume funding version changed; review its independent storage policy",
+    );
   if (homeVolume && homeVolume.provider !== provider) {
     throw new Error("home volume and VM must use the same provider");
   }
@@ -1033,7 +1100,7 @@ export async function createVm(
     id,
     config.environment,
   );
-  const vm = await insertComputeVm(
+  let vm = await insertComputeVm(
     {
       id,
       name,
@@ -1088,6 +1155,7 @@ export async function createVm(
       ssh_public_key: configureProjectSsh ? "" : sshPublicKey,
       expires_at:
         ttlMinutes == null ? null : new Date(Date.now() + ttlMinutes * 60_000),
+      ...stopSchedule,
       allow_on_demand_fallback: allowOnDemandFallback,
       authorized_fallback_hours: authorizedFallbackHours,
       spot_hourly_price: `${spotRate.hourly_cost_usd}`,
@@ -1108,6 +1176,8 @@ export async function createVm(
       metadata: {
         machine: { cpu: machine.cpu, ram_gb: machine.ram_gb },
         provider_instance_name: providerInstanceId,
+        expected_home_volume_funding_version:
+          opts.expected_home_volume_funding_version,
         ssh_public_keys:
           !configureProjectSsh && sshPublicKey ? [sshPublicKey] : [],
         project_ssh_public_keys:
@@ -1120,6 +1190,14 @@ export async function createVm(
         max_ttl_minutes: config.max_ttl_minutes,
         billing: {
           funding_mode: fundingMode,
+          ...(fundingSource
+            ? {
+                course_funding: {
+                  source: fundingSource,
+                  funding_epoch: randomUUID(),
+                },
+              }
+            : {}),
           spot_supported: spotSupported,
           running_rates: {
             spot: spotRate,
@@ -1134,6 +1212,17 @@ export async function createVm(
       max_active_total: config.max_active_total,
     },
   );
+  if (fundingSource || hasCourseVmFunding(vm)) {
+    const existingSource = vm.metadata?.billing?.course_funding?.source;
+    if (
+      !fundingSource ||
+      existingSource?.pool_id !== fundingSource.pool_id ||
+      existingSource?.grant_id !== fundingSource.grant_id ||
+      existingSource?.payer_account_id !== fundingSource.payer_account_id
+    )
+      throw new Error("VM create retry selected a different funding source");
+    vm = await reserveCourseVmLaunch(vm);
+  }
   if (opts.project_id && configureProjectSsh && projectKey) {
     await grantComputeVmProjectAccess({
       owner_account_id: accountId,
@@ -1155,6 +1244,8 @@ export async function createVm(
       machine_type: vm.machine_type,
       pricing_model: vm.desired_pricing_model,
       expires_at: vm.expires_at,
+      stop_at: vm.stop_at,
+      stop_after_minutes: vm.stop_after_minutes,
       funding_mode: fundingMode,
       home_volume_id: vm.home_volume_id,
     },
@@ -1170,6 +1261,16 @@ export async function createVm(
 export async function createVolume(
   opts: CreateComputeVolumeRequest & { agent_auth?: ComputeAgentAuth },
 ) {
+  const fundingSource = normalizeVmFundingSource(opts.funding_source);
+  if (fundingSource) {
+    await requireSponsoredVmAdmission();
+    if (opts.funding_mode === "site-funded")
+      throw new Error("Course volumes require an account funding lane");
+    if (opts.accept_course_retention !== true)
+      throw new Error(
+        "Course volumes require acceptance of their independent funded retention and deletion policy",
+      );
+  }
   const { accountId, actorKind } = resolveComputeActor(opts, opts.project_id);
   const config = await getComputeVmConfig();
   requireComputeVmCreateAllowed(config, accountId);
@@ -1185,12 +1286,14 @@ export async function createVolume(
   if (provider !== "gcp" && provider !== "nebius") {
     throw new Error("provider must be gcp or nebius");
   }
-  const fundingMode = await requireComputeFunding({
-    account_id: accountId,
-    action: "create",
-    funding_mode: opts.funding_mode,
-    provider,
-  });
+  const fundingMode = fundingSource
+    ? normalizeFundingMode(opts.funding_mode ?? "account-prepaid")
+    : await requireComputeFunding({
+        account_id: accountId,
+        action: "create",
+        funding_mode: opts.funding_mode,
+        provider,
+      });
   const name = normalizeVolumeName(opts.name);
   const zone =
     provider === "gcp"
@@ -1258,7 +1361,7 @@ export async function createVolume(
     require_fresh_auth: true,
   });
   const id = randomUUID();
-  const volume = await insertComputeVolume(
+  let volume = await insertComputeVolume(
     {
       id,
       name,
@@ -1295,11 +1398,40 @@ export async function createVolume(
           ? "project-host-provider-context"
           : "dedicated-compute-provider-context",
         price_snapshot_kind: "dedicated-host-catalog",
-        billing: { funding_mode: fundingMode, rate: volumeRate },
+        billing: {
+          funding_mode: fundingMode,
+          rate: volumeRate,
+          ...(fundingSource
+            ? {
+                course_funding: {
+                  source: fundingSource,
+                  funding_epoch: randomUUID(),
+                  retention_agreement: {
+                    version: 1,
+                    accepted_by: accountId,
+                    accepted_at: new Date().toISOString(),
+                    max_grace_hours: 72,
+                    independent_of_vm: true,
+                  },
+                },
+              }
+            : {}),
+        },
       },
     },
     config.max_volumes_per_account,
   );
+  if (fundingSource) {
+    const selected = volume.metadata?.billing?.course_funding?.source;
+    if (
+      selected?.pool_id !== fundingSource.pool_id ||
+      selected?.grant_id !== fundingSource.grant_id ||
+      selected?.payer_account_id !== fundingSource.payer_account_id
+    )
+      throw new Error("Volume retry changed its funding source");
+    volume = await reserveCourseVolume(volume);
+  } else if (hasCourseVolumeFunding(volume))
+    throw new Error("Volume retry changed its funding source");
   await appendComputeVolumeEvent({
     volume,
     actor_account_id: accountId,
@@ -1348,6 +1480,7 @@ export async function getVolume(opts: {
 }
 
 export async function resizeVolume(opts: {
+  expected_funding_version?: string;
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -1364,12 +1497,20 @@ export async function resizeVolume(opts: {
   requireComputeVmCreateAllowed(config, accountId);
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
   const { actorKind } = resolveComputeActor(opts, volume.project_id ?? "");
-  const fundingMode = await requireComputeFunding({
-    account_id: accountId,
-    action: "resize",
-    funding_mode: opts.funding_mode ?? volume.funding_mode,
-    provider: volume.provider,
-  });
+  if (
+    hasCourseVolumeFunding(volume) &&
+    opts.funding_mode &&
+    opts.funding_mode !== volume.funding_mode
+  )
+    throw new Error("Volume growth cannot change its payer or funding lane");
+  const fundingMode = hasCourseVolumeFunding(volume)
+    ? volume.funding_mode
+    : await requireComputeFunding({
+        account_id: accountId,
+        action: "resize",
+        funding_mode: opts.funding_mode ?? volume.funding_mode,
+        provider: volume.provider,
+      });
   const sizeGb = volumeAuthorization({
     provider: volume.provider,
     size_gb: opts.size_gb,
@@ -1415,6 +1556,36 @@ export async function resizeVolume(opts: {
     require_fresh_auth: true,
   });
   const fundingChanging = fundingMode !== volume.funding_mode;
+  if (hasCourseVolumeFunding(volume)) {
+    const next = await reserveCourseVolumeGrowth(volume, {
+      operation_id: normalizeIdempotencyKey(opts.idempotency_key),
+      expected_funding_version: opts.expected_funding_version,
+      size_gb: sizeGb,
+      rate: volumeRate,
+    });
+    await appendComputeVolumeEvent({
+      volume: next,
+      actor_account_id: accountId,
+      actor_kind: actorKind,
+      action: "resize",
+      idempotency_key: opts.idempotency_key,
+      old_state: volume.state,
+      new_state: next.state,
+      status: "requested",
+      details: { old_size_gb: volume.size_gb, desired_size_gb: sizeGb },
+    });
+    if (next.desired_size_gb > next.size_gb)
+      await enqueueComputeWork({
+        resource_kind: "volume",
+        resource_id: volume.id,
+        action: "resize_volume",
+        idempotency_key: opts.idempotency_key,
+        payload: {
+          funding_epoch: next.metadata.billing.course_funding.funding_epoch,
+        },
+      });
+    return publicVolume(next);
+  }
   const pendingFundingMode = volume.metadata?.billing?.pending_funding_mode;
   if (pendingFundingMode && pendingFundingMode !== fundingMode) {
     throw new Error(
@@ -1481,6 +1652,10 @@ export async function setVolumeFundingMode(opts: {
     opts.agent_auth?.account_id ?? opts.account_id,
   );
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
+  if (hasCourseVolumeFunding(volume))
+    throw new Error(
+      "Volume funding changes require separately approved personal terms",
+    );
   const { actorKind } = resolveComputeActor(opts, volume.project_id ?? "");
   const fundingMode = await requireComputeFunding({
     account_id: accountId,
@@ -1747,7 +1922,16 @@ export async function listProjectVms(opts: {
 
 export async function getVm(opts: { account_id?: string; id_or_name: string }) {
   const accountId = requireAccount(opts.account_id);
-  return publicVm(await resolveOwned(accountId, opts.id_or_name, true));
+  const vm = await resolveOwned(accountId, opts.id_or_name, true);
+  const result = await publicVm(vm);
+  if (result.funding_status && vm.owner_account_id === accountId) {
+    const { getVmPersonalFunding } =
+      await import("@cocalc/server/compute/funding/vm-personal");
+    result.funding_status.personal_consent =
+      (await getVmPersonalFunding({ account_id: accountId, vm_id: vm.id })) ??
+      undefined;
+  }
+  return result;
 }
 
 export async function getProjectVm(opts: {
@@ -2158,6 +2342,7 @@ async function requestState(opts: {
   id_or_name: string;
   idempotency_key: string;
   desired_state: "running" | "stopped";
+  stop_after_minutes?: number | null;
   agent_auth?: ComputeAgentAuth;
 }) {
   const accountId = requireAccount(
@@ -2169,17 +2354,19 @@ async function requestState(opts: {
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   if (opts.desired_state === "running") {
-    await requireComputeFunding({
-      account_id: accountId,
-      action: "start",
-      funding_mode: vm.funding_mode,
-      provider: vm.provider,
-    });
+    if (hasCourseVmFunding(vm)) {
+      if (!vm.stopped_at) await requireCourseVmService(vm);
+    } else
+      await requireComputeFunding({
+        account_id: accountId,
+        action: "start",
+        funding_mode: vm.funding_mode,
+        provider: vm.provider,
+      });
   }
   if (vm.expires_at && vm.expires_at.valueOf() <= Date.now()) {
     throw new Error("compute VM lease has expired");
   }
-  const action = opts.desired_state === "running" ? "start" : "stop";
   const selectedRate =
     vm.desired_pricing_model === "spot"
       ? vm.spot_hourly_price
@@ -2235,25 +2422,22 @@ async function requestState(opts: {
       { code: 403 },
     );
   }
-  const next = (await updateComputeVm(vm.id, {
+  const preparedFunding =
+    opts.desired_state === "running" && hasCourseVmFunding(vm) && vm.stopped_at
+      ? await prepareCourseVmRestart(
+          vm,
+          normalizeIdempotencyKey(opts.idempotency_key),
+          startStopSchedule(vm, opts.stop_after_minutes, actorKind === "agent")
+            .stop_at,
+        )
+      : undefined;
+  const next = await requestScheduledVmState({
+    vm,
     desired_state: opts.desired_state,
-    state: opts.desired_state === "running" ? "starting" : "stopping",
-    error: null,
-  }))!;
-  await appendComputeEvent({
-    vm: next,
-    actor_account_id: accountId,
+    stop_after_minutes: opts.stop_after_minutes,
     actor_kind: actorKind,
-    action,
     idempotency_key: normalizeIdempotencyKey(opts.idempotency_key),
-    old_state: vm.state,
-    new_state: next.state,
-    status: "requested",
-  });
-  await enqueueComputeWork({
-    resource_id: vm.id,
-    action,
-    idempotency_key: opts.idempotency_key,
+    prepared_funding: preparedFunding,
   });
   return publicVm(next);
 }
@@ -2263,6 +2447,7 @@ export async function startVm(opts: {
   browser_id?: string;
   session_hash?: string;
   id_or_name: string;
+  stop_after_minutes?: number | null;
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
@@ -2294,6 +2479,7 @@ export async function setVmTtl(opts: {
   const config = await getComputeVmConfig();
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
+  denyCourseVmMutation(vm, "Deletion deadline change");
   if (vm.desired_state === "deleted" || vm.state === "deleting") {
     throw new Error("cannot change the TTL of a deleting VM");
   }
@@ -2420,6 +2606,7 @@ export async function setVmFundingMode(opts: {
   );
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
+  denyCourseVmMutation(vm, "Funding source change");
   if (actorKind === "agent" && !vm.expires_at) {
     throw Object.assign(
       new Error(
@@ -2522,6 +2709,7 @@ export async function setVmMachineType(opts: {
   );
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
+  denyCourseVmMutation(vm, "Machine or pricing change");
   if (vm.state !== "stopped" || vm.desired_state !== "stopped") {
     throw new Error("stop the VM before changing its machine type");
   }
@@ -2722,6 +2910,7 @@ export async function setVmPricingModel(opts: {
   if (vm.state !== "stopped" || vm.desired_state !== "stopped") {
     throw new Error("stop the VM before changing its pricing model");
   }
+  denyCourseVmMutation(vm, "Pricing change");
   if (opts.pricing_model !== "spot" && opts.pricing_model !== "on_demand") {
     throw new Error("pricing_model must be spot or on_demand");
   }

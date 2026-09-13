@@ -9,6 +9,7 @@ import { uuid } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import { before, after, getPool } from "@cocalc/server/test";
 import { toDecimal } from "@cocalc/util/money";
+import { createTestAccount } from "./test-data";
 import {
   ensurePurchaseCostCentsSchema,
   PURCHASE_COST_CENTS_TRIGGER,
@@ -21,6 +22,7 @@ afterAll(after);
 
 describe("test computing balance under various conditions", () => {
   const account_id = uuid();
+  beforeAll(async () => createTestAccount(account_id));
 
   it("get the balance for a new user with no purchases", async () => {
     expect(toDecimal(await getBalance({ account_id })).toNumber()).toBe(0);
@@ -42,6 +44,7 @@ describe("test computing balance under various conditions", () => {
 
   it("posts finalized costs in whole cents", async () => {
     const account_id = uuid();
+    await createTestAccount(account_id);
     const purchase_id = await createPurchase({
       account_id,
       service: "student-pay",
@@ -59,6 +62,8 @@ describe("test computing balance under various conditions", () => {
   });
 
   it("normalizes direct fractional finalized ledger writes", async () => {
+    const purchaseAccount = uuid();
+    await createTestAccount(purchaseAccount);
     const inserted = await getPool().query(
       `INSERT INTO purchases
          (time, account_id, cost, service, description)
@@ -69,7 +74,7 @@ describe("test computing balance under various conditions", () => {
     expect(inserted.rows[0].cost).toBe("1.0100000000");
 
     const purchase_id = await createPurchase({
-      account_id: uuid(),
+      account_id: purchaseAccount,
       service: "dedicated-host",
       description: {} as any,
       client: null,
@@ -179,6 +184,7 @@ describe("test computing balance under various conditions", () => {
 
   it("with a different account that has a purchase, which shouldn't impact anything", async () => {
     const account_id2 = uuid();
+    await createTestAccount(account_id2);
     await createPurchase({
       account_id: account_id2,
       service: "student-pay",
@@ -197,6 +203,7 @@ describe("test computing balance under various conditions", () => {
 
   it("with a purchase that has an open range and a cost_per_hour", async () => {
     const account_id = uuid();
+    await createTestAccount(account_id);
     const hours = 2;
     const period_start = dayjs().subtract(hours, "hour").toDate();
     await createPurchase({
@@ -220,6 +227,7 @@ describe("test computing balance under various conditions", () => {
 
   it("with a purchase that has an open range and a cost_so_far", async () => {
     const account_id = uuid();
+    await createTestAccount(account_id);
     const hours = 999; // doesn't matter
     const period_start = dayjs().subtract(hours, "hour").toDate();
     await createPurchase({
@@ -243,6 +251,7 @@ describe("test computing balance under various conditions", () => {
 
   it("rounds a precise active usage estimate in the account balance", async () => {
     const account_id = uuid();
+    await createTestAccount(account_id);
     const purchase_id = await createPurchase({
       account_id,
       service: "dedicated-host",
@@ -264,6 +273,7 @@ describe("test computing balance under various conditions", () => {
     const period_start = dayjs().subtract(4, "hour").toDate();
     const period_end = dayjs().subtract(1, "hour").toDate();
     const account_id = uuid();
+    await createTestAccount(account_id);
     await createPurchase({
       account_id,
       service: "membership",

@@ -49,6 +49,7 @@ prices, subscriptions".
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
@@ -358,8 +359,9 @@ export async function collectPayment({
 
 export async function hasUsageSubscription(
   account_id: string,
+  client?: PoolClient,
 ): Promise<boolean> {
-  const pool = getPool();
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
     "SELECT stripe_usage_subscription FROM accounts WHERE account_id=$1",
     [account_id],

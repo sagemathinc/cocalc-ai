@@ -1,0 +1,82 @@
+/*
+ *  This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ *  License: MS-RSL - see LICENSE.md for details
+ */
+
+import type { PoolClient } from "@cocalc/database/pool";
+import type { AccountLocalDedicatedHostPolicySnapshot } from "@cocalc/conat/inter-bay/api";
+import getBalance from "@cocalc/server/purchases/get-balance";
+import {
+  getDedicatedHostWindowUsageLocal,
+  getDedicatedHostPostpaidUnbilledExposureLocal,
+} from "@cocalc/server/project-host/spend";
+
+type PolicySettings = Pick<
+  AccountLocalDedicatedHostPolicySnapshot,
+  | "can_create_hosts"
+  | "has_active_second_factor"
+  | "has_payment_method"
+  | "has_usage_subscription"
+  | "effective_limits"
+  | "admin_override"
+>;
+
+const settings = new Map<string, Partial<PolicySettings>>();
+const failures = new Map<string, Error>();
+
+export function setPolicyFailure(account: string, error?: Error) {
+  if (error) failures.set(account, error);
+  else failures.delete(account);
+}
+
+export function setPolicy(account: string, value: Partial<PolicySettings>) {
+  settings.set(account, value);
+}
+
+// Only membership/payment configuration is faked. All financial quantities,
+// window identities and reservations still come from the real transaction.
+export function mockPolicySource() {
+  return {
+    async prepareDedicatedHostPolicyInputsLocal(account_id: string) {
+      if (failures.has(account_id)) throw failures.get(account_id);
+      return {};
+    },
+    async getDedicatedHostPolicySnapshotLocal(
+      account_id: string,
+      opts: {
+        client: PoolClient;
+        funding_mode_override: AccountLocalDedicatedHostPolicySnapshot["funding_mode"];
+      },
+    ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
+      if (!opts.client)
+        throw new Error("Funding policy requires a transaction");
+      return {
+        account_id,
+        membership_class: "member",
+        funding_mode: opts.funding_mode_override,
+        can_create_hosts: true,
+        has_active_second_factor: true,
+        has_payment_method: true,
+        has_usage_subscription: true,
+        effective_limits: {
+          prepaid_host_usage_limit_5h_usd: 1000,
+          prepaid_host_usage_limit_7d_usd: 10000,
+          credit_spend_limit_5h_usd: 1000,
+          credit_spend_limit_7d_usd: 10000,
+        },
+        ...settings.get(account_id),
+        balance: await getBalance({
+          account_id,
+          client: opts.client,
+          noSave: true,
+        }),
+        dedicated_host_window_usage: await getDedicatedHostWindowUsageLocal(
+          account_id,
+          opts,
+        ),
+        postpaid_unbilled_exposure_usd:
+          await getDedicatedHostPostpaidUnbilledExposureLocal(account_id, opts),
+      };
+    },
+  };
+}

@@ -7,16 +7,15 @@ import getPool, {
   getTransactionClient,
   type PoolClient,
 } from "@cocalc/database/pool";
-import { recordAccountAdminAuditEvent } from "@cocalc/server/accounts/admin-audit";
+import {
+  ensureAccountAdminAuditLogSchema,
+  recordAccountAdminAuditEventInTransaction,
+} from "@cocalc/server/accounts/admin-audit";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
-import {
-  assertAccountNotRehoming,
-  assertAccountWriteOnHomeBay,
-} from "@cocalc/server/accounts/rehome-fence";
+import { lockAccountSpending } from "./lock-account-spending";
 import {
   createMembershipPackage,
-  resolveMembershipPackageQuote,
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
 import {
@@ -26,7 +25,19 @@ import {
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
-import { MAX_COST } from "@cocalc/util/db-schema/purchases";
+import processPaymentIntents from "./stripe/process-payment-intents";
+import getStripe from "@cocalc/server/stripe/connection";
+import {
+  ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
+  MAX_COST,
+} from "@cocalc/util/db-schema/purchases";
+import {
+  beginAdminMembershipCardDispatch,
+  prepareAdminMembershipOrder,
+  verifyAdminMembershipPayment,
+} from "./admin-membership-orders";
+import type { AdminMembershipOrder } from "./admin-membership-orders";
+import type { MoneyValue } from "@cocalc/util/money";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
 
@@ -133,61 +144,56 @@ function isUniqueViolation(err: unknown): boolean {
   return (err as { code?: string })?.code === "23505";
 }
 
-async function fundPurchaseFromCard({
-  account_id,
-  admin_account_id,
-  amount,
-  idempotency_key,
-}: {
-  account_id: string;
-  admin_account_id: string;
-  amount: number;
-  idempotency_key: string;
-}): Promise<{
-  credit_id: number;
-  payment_intent_id: string;
-  hosted_invoice_url: string;
-}> {
-  const { payment_intent, hosted_invoice_url } = await createPaymentIntent({
-    account_id,
-    purpose: "admin-membership-package-purchase",
-    description: "Custom CoCalc membership package",
-    lineItems: [
-      {
-        amount,
-        description: "Custom CoCalc membership package",
+async function fundPurchaseFromCard(
+  order: AdminMembershipOrder,
+): Promise<AdminMembershipPackagePurchaseResult> {
+  const current = await beginAdminMembershipCardDispatch(order);
+  let hosted_invoice_url: string | undefined;
+  if (current.payment_intent_id) {
+    await processPaymentIntents({
+      account_id: current.account_id,
+      payment_intent_id: current.payment_intent_id,
+    });
+    const existing = await getExistingPurchase({
+      account_id: current.account_id,
+      invoice_id: invoiceId(current.admin_account_id, current.idempotency_key),
+    });
+    if (existing) return existing;
+    if (current.stripe_invoice_id) {
+      hosted_invoice_url =
+        (await (await getStripe()).invoices.retrieve(current.stripe_invoice_id))
+          .hosted_invoice_url ?? undefined;
+    }
+  } else {
+    ({ hosted_invoice_url } = await createPaymentIntent({
+      account_id: current.account_id,
+      purpose: ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
+      description: "Custom CoCalc membership package",
+      lineItems: [
+        {
+          amount: current.request.price,
+          description: "Custom CoCalc membership package",
+        },
+      ],
+      metadata: {
+        admin_account_id: current.admin_account_id,
+        admin_membership_order_id: current.id,
       },
-    ],
-    metadata: {
-      admin_account_id,
-      admin_purchase_idempotency_key: idempotency_key,
-    },
-    force: true,
-    requireAddress: true,
-    processImmediately: true,
-    idempotencyKeyPrefix: `admin-membership-package:${admin_account_id}:${idempotency_key}`,
-    allowedPaymentMethodTypes: ["card"],
-  });
-  const { rows } = await getPool("medium").query(
-    `SELECT id, -cost AS amount
-       FROM purchases
-      WHERE account_id=$1
-        AND invoice_id=$2
-        AND service='credit'
-      LIMIT 1`,
-    [account_id, payment_intent],
-  );
-  const credit = rows[0];
-  if (!credit || toDecimal(credit.amount ?? 0).lt(amount)) {
-    throw Error(
-      `The saved card could not be charged automatically. Complete the invoice and retry: ${hosted_invoice_url}`,
-    );
+      force: true,
+      requireAddress: true,
+      processImmediately: true,
+      idempotencyKeyPrefix: `admin-membership-order:${current.id}`,
+      allowedPaymentMethodTypes: ["card"],
+    }));
+    const existing = await getExistingPurchase({
+      account_id: current.account_id,
+      invoice_id: invoiceId(current.admin_account_id, current.idempotency_key),
+    });
+    if (existing) return { ...existing, existing: false };
   }
-  return {
-    credit_id: Number(credit.id),
-    payment_intent_id: payment_intent,
-    hosted_invoice_url,
-  };
+  throw Error(
+    `The saved card purchase has not completed. If payment is required, complete the invoice and retry; do not submit a new purchase: ${hosted_invoice_url ?? "contact support to inspect the existing payment"}`,
+  );
 }
 
 export default async function adminCreateMembershipPackagePurchase({
@@ -236,175 +242,28 @@ export default async function adminCreateMembershipPackagePurchase({
   });
   if (existing) return existing;
 
-  const cardFunding =
-    source === "card" && customPrice.gt(0)
-      ? await fundPurchaseFromCard({
-          account_id: user_account_id,
-          admin_account_id,
-          amount: customPrice.toNumber(),
-          idempotency_key: idempotencyKey,
-        })
-      : undefined;
+  await ensureAccountAdminAuditLogSchema();
+  const order = await prepareAdminMembershipOrder({
+    admin_account_id,
+    user_account_id,
+    product,
+    price: customPrice.toNumber(),
+    source,
+    reason: normalizedReason,
+    idempotency_key: idempotencyKey,
+    pricing_note: pricing_note?.trim(),
+  });
+  if (source === "card" && customPrice.gt(0))
+    return fundPurchaseFromCard(order);
   const client = await getTransactionClient();
   try {
-    await assertAccountNotRehoming({
-      db: client,
-      account_id: user_account_id,
-      action: "create admin membership package purchase",
-    });
-    await assertAccountWriteOnHomeBay({
-      db: client,
-      account_id: user_account_id,
-      action: "create admin membership package purchase",
-    });
-    const existing = await getExistingPurchase({
-      account_id: user_account_id,
-      invoice_id,
-      client,
-    });
-    if (existing) {
-      await client.query("COMMIT");
-      return existing;
-    }
-
-    const quote = await resolveMembershipPackageQuote(product, client);
-    const starts_at = product.starts_at
-      ? normalizeDate(product.starts_at, "starts_at")
-      : quote.starts_at;
-    const expires_at = product.expires_at
-      ? normalizeDate(product.expires_at, "expires_at")
-      : quote.expires_at;
-    if (!(starts_at instanceof Date) || !Number.isFinite(starts_at.valueOf())) {
-      throw Error("starts_at is required");
-    }
-    if (
-      !(expires_at instanceof Date) ||
-      !Number.isFinite(expires_at.valueOf())
-    ) {
-      throw Error("expires_at is required");
-    }
-    if (expires_at <= starts_at) {
-      throw Error("expires_at must be after starts_at");
-    }
-
-    const notes = [
-      `Admin-assisted membership package created by account \`${admin_account_id}\`.`,
-      `Source of funds: **${source}**.`,
-      pricing_note?.trim() ? `Pricing note: ${pricing_note.trim()}` : "",
-      `Reason: ${normalizedReason}`,
-    ]
-      .filter(Boolean)
-      .join("\n\n");
-    let credit_id: number | undefined = cardFunding?.credit_id;
-    if (source === "free") {
-      credit_id = await maybeCreateFundingCredit({
-        account_id: user_account_id,
-        admin_account_id,
-        amount: customPrice.toNumber(),
-        client,
-        notes,
-      });
-    } else if (customPrice.gt(0)) {
-      await ensureCreditCoversPurchase({
-        account_id: user_account_id,
-        client,
-        cost: customPrice.toNumber(),
-        service: "membership",
-      });
-    }
-
-    const metadata = {
-      ...(quote.metadata ?? {}),
-      ...(product.metadata ?? {}),
-      admin_custom_price: customPrice.toNumber(),
-      standard_total_price: quote.total_price,
-    };
-    const package_id = await createMembershipPackage(
-      {
-        owner_account_id: user_account_id,
-        kind: quote.kind,
-        membership_class: quote.membership_class,
-        seat_count: quote.seat_count,
-        starts_at,
-        expires_at,
-        metadata,
-      },
-      client,
-    );
-    const purchase_id = await createPurchase({
-      account_id: user_account_id,
-      client,
-      cost: customPrice.toNumber(),
-      unrounded_cost: customPrice.toNumber(),
-      description: {
-        type: "membership-package",
-        package_id,
-        kind: quote.kind,
-        membership_class: quote.membership_class,
-        seat_count: quote.seat_count,
-        seat_price:
-          quote.seat_count > 0
-            ? customPrice.div(quote.seat_count).toNumber()
-            : 0,
-        total_price: customPrice.toNumber(),
-        standard_seat_price: quote.seat_price,
-        standard_total_price: quote.total_price,
-        starts_at,
-        expires_at,
-        interval: quote.interval,
-        metadata,
-        admin_assigned: true,
-        assigned_by: admin_account_id,
-        admin_funding_credit_id: credit_id,
-        admin_payment_intent_id: cardFunding?.payment_intent_id,
-        admin_hosted_invoice_url: cardFunding?.hosted_invoice_url,
-      } as any,
-      invoice_id,
-      notes,
-      period_start: starts_at,
-      period_end: expires_at,
-      service: "membership",
-      tag: "admin-membership-package",
-    });
-    await setMembershipPackagePurchaseId({ package_id, purchase_id }, client);
-    await recordAccountAdminAuditEvent({
-      account_id: user_account_id,
-      action: "membership-package-purchase",
-      actor_account_id: admin_account_id,
-      client,
-      reason: normalizedReason,
-      metadata: {
-        package_id,
-        purchase_id,
-        credit_id: credit_id ?? null,
-        payment_intent_id: cardFunding?.payment_intent_id ?? null,
-        source,
-        custom_price: customPrice.toNumber(),
-        standard_price: quote.total_price,
-        kind: quote.kind,
-        membership_class: quote.membership_class,
-        seat_count: quote.seat_count,
-        starts_at: starts_at.toISOString(),
-        expires_at: expires_at.toISOString(),
-        idempotency_key: idempotencyKey,
-      },
-    });
+    await lockAccountSpending(client, user_account_id);
+    const result = await fulfillAdminMembershipOrder(order, client);
     await client.query("COMMIT");
     await refreshAccountBalanceAndPublishBestEffort({
       account_id: user_account_id,
     });
-    return {
-      package_id,
-      purchase_id,
-      credit_id,
-      payment_intent_id: cardFunding?.payment_intent_id,
-      hosted_invoice_url: cardFunding?.hosted_invoice_url,
-      price: customPrice.toNumber(),
-      standard_price: quote.total_price,
-      starts_at,
-      expires_at,
-      existing: false,
-    };
+    return result;
   } catch (err) {
     await client.query("ROLLBACK");
     if (isUniqueViolation(err)) {
@@ -418,4 +277,198 @@ export default async function adminCreateMembershipPackagePurchase({
   } finally {
     client.release();
   }
+}
+
+/** Called only inside verified captured-payment fulfillment, with its account
+ * lock and payment hold. No provider calls or transaction boundaries here.
+ */
+export async function fulfillAdminMembershipCardPayment(
+  opts: {
+    account_id: string;
+    order_id: string;
+    payment_intent_id: string;
+    amount: MoneyValue;
+    credit_id: number;
+    hosted_invoice_url?: string;
+    minimumPayment: number;
+  },
+  client: PoolClient,
+): Promise<AdminMembershipPackagePurchaseResult> {
+  const order = await verifyAdminMembershipPayment(opts, client);
+  return fulfillAdminMembershipOrder(order, client, {
+    credit_id: opts.credit_id,
+    payment_intent_id: opts.payment_intent_id,
+    hosted_invoice_url: opts.hosted_invoice_url,
+    minimumPayment: opts.minimumPayment,
+  });
+}
+
+async function fulfillAdminMembershipOrder(
+  order: AdminMembershipOrder,
+  client: PoolClient,
+  cardFunding?: {
+    credit_id: number;
+    payment_intent_id: string;
+    hosted_invoice_url?: string;
+    minimumPayment: number;
+  },
+): Promise<AdminMembershipPackagePurchaseResult> {
+  const {
+    account_id: user_account_id,
+    admin_account_id,
+    idempotency_key: idempotencyKey,
+  } = order;
+  const {
+    product,
+    price,
+    source,
+    reason: normalizedReason,
+    pricing_note,
+  } = order.request;
+  const customPrice = toDecimal(price);
+  const invoice_id = invoiceId(admin_account_id, idempotencyKey);
+  const existing = await getExistingPurchase({
+    account_id: user_account_id,
+    invoice_id,
+    client,
+  });
+  if (existing) {
+    if (
+      cardFunding &&
+      existing.payment_intent_id !== cardFunding.payment_intent_id
+    )
+      throw Error("Membership purchase belongs to another payment");
+    return existing;
+  }
+
+  const quote = order.quote;
+  const starts_at = product.starts_at
+    ? normalizeDate(product.starts_at, "starts_at")
+    : normalizeDate(quote.starts_at, "starts_at");
+  const expires_at = product.expires_at
+    ? normalizeDate(product.expires_at, "expires_at")
+    : normalizeDate(quote.expires_at, "expires_at");
+  if (!(starts_at instanceof Date) || !Number.isFinite(starts_at.valueOf())) {
+    throw Error("starts_at is required");
+  }
+  if (!(expires_at instanceof Date) || !Number.isFinite(expires_at.valueOf())) {
+    throw Error("expires_at is required");
+  }
+  if (expires_at <= starts_at) {
+    throw Error("expires_at must be after starts_at");
+  }
+
+  const notes = [
+    `Admin-assisted membership package created by account \`${admin_account_id}\`.`,
+    `Source of funds: **${source}**.`,
+    pricing_note?.trim() ? `Pricing note: ${pricing_note.trim()}` : "",
+    `Reason: ${normalizedReason}`,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+  let credit_id: number | undefined = cardFunding?.credit_id;
+  if (source === "free") {
+    credit_id = await maybeCreateFundingCredit({
+      account_id: user_account_id,
+      admin_account_id,
+      amount: customPrice.toNumber(),
+      client,
+      notes,
+    });
+  } else if (customPrice.gt(0)) {
+    await ensureCreditCoversPurchase({
+      account_id: user_account_id,
+      client,
+      cost: customPrice.toNumber(),
+      service: "membership",
+      minimumPayment: cardFunding?.minimumPayment,
+    });
+  }
+
+  const metadata = {
+    ...(quote.metadata ?? {}),
+    ...(product.metadata ?? {}),
+    admin_custom_price: customPrice.toNumber(),
+    standard_total_price: quote.total_price,
+  };
+  const package_id = await createMembershipPackage(
+    {
+      owner_account_id: user_account_id,
+      kind: quote.kind,
+      membership_class: quote.membership_class,
+      seat_count: quote.seat_count,
+      starts_at,
+      expires_at,
+      metadata,
+    },
+    client,
+  );
+  const purchase_id = await createPurchase({
+    account_id: user_account_id,
+    client,
+    cost: customPrice.toNumber(),
+    unrounded_cost: customPrice.toNumber(),
+    description: {
+      type: "membership-package",
+      package_id,
+      kind: quote.kind,
+      membership_class: quote.membership_class,
+      seat_count: quote.seat_count,
+      seat_price:
+        quote.seat_count > 0 ? customPrice.div(quote.seat_count).toNumber() : 0,
+      total_price: customPrice.toNumber(),
+      standard_seat_price: quote.seat_price,
+      standard_total_price: quote.total_price,
+      starts_at,
+      expires_at,
+      interval: quote.interval,
+      metadata,
+      admin_assigned: true,
+      assigned_by: admin_account_id,
+      admin_funding_credit_id: credit_id,
+      admin_payment_intent_id: cardFunding?.payment_intent_id,
+      admin_hosted_invoice_url: cardFunding?.hosted_invoice_url,
+    } as any,
+    invoice_id,
+    notes,
+    period_start: starts_at,
+    period_end: expires_at,
+    service: "membership",
+    tag: "admin-membership-package",
+  });
+  await setMembershipPackagePurchaseId({ package_id, purchase_id }, client);
+  await recordAccountAdminAuditEventInTransaction({
+    account_id: user_account_id,
+    action: "membership-package-purchase",
+    actor_account_id: admin_account_id,
+    client,
+    reason: normalizedReason,
+    metadata: {
+      package_id,
+      purchase_id,
+      credit_id: credit_id ?? null,
+      payment_intent_id: cardFunding?.payment_intent_id ?? null,
+      source,
+      custom_price: customPrice.toNumber(),
+      standard_price: quote.total_price,
+      kind: quote.kind,
+      membership_class: quote.membership_class,
+      seat_count: quote.seat_count,
+      starts_at: starts_at.toISOString(),
+      expires_at: expires_at.toISOString(),
+      idempotency_key: idempotencyKey,
+    },
+  });
+  return {
+    package_id,
+    purchase_id,
+    credit_id,
+    payment_intent_id: cardFunding?.payment_intent_id,
+    hosted_invoice_url: cardFunding?.hosted_invoice_url,
+    price: customPrice.toNumber(),
+    standard_price: quote.total_price,
+    starts_at,
+    expires_at,
+    existing: false,
+  };
 }

@@ -44,6 +44,18 @@ import {
   restoreAccountPersistState,
 } from "@cocalc/server/accounts/persist-portability";
 import { isValidUUID } from "@cocalc/util/misc";
+import { assertFundingAccountCanRehome } from "@cocalc/server/compute/funding/authority";
+import {
+  financialRehomeEnabled,
+  ensureFinancialRehomeSchema,
+  freezeAccountFinancialState,
+  getAccountFinancialHandoff,
+  acceptAccountFinancialState,
+  importAccountFinancialState,
+  retireAccountFinancialState,
+  remapFinancialRow,
+  transaction as financialTransaction,
+} from "./financial-rehome";
 
 const log = getLogger("server:accounts:rehome");
 const ACCOUNT_REHOME_OPERATIONS_TABLE = "account_rehome_operations";
@@ -111,8 +123,8 @@ type Queryable = {
   ) => Promise<{ rows: any[]; rowCount?: number | null }>;
 };
 
-let accountRehomeSchemaReady: Promise<void> | undefined;
-let accountRehomeApiKeysSchemaReady: Promise<void> | undefined;
+const accountRehomeSchemaReady = new Map<string, Promise<void>>();
+const accountRehomeApiKeysSchemaReady = new Map<string, Promise<void>>();
 const tableColumnsCache = new Map<string, Promise<string[]>>();
 
 function normalizeUuid(name: string, value: string): string {
@@ -154,7 +166,10 @@ async function assertBayExists(bay_id: string): Promise<void> {
 }
 
 async function ensureAccountRehomeSchema(): Promise<void> {
-  accountRehomeSchemaReady ??= (async () => {
+  const bay = getConfiguredBayId();
+  if (accountRehomeSchemaReady.has(bay))
+    return accountRehomeSchemaReady.get(bay);
+  const pending = (async () => {
     await getPool().query(`
       CREATE TABLE IF NOT EXISTS ${ACCOUNT_REHOME_OPERATIONS_TABLE} (
         op_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -188,11 +203,20 @@ async function ensureAccountRehomeSchema(): Promise<void> {
       `CREATE INDEX IF NOT EXISTS account_rehome_operations_campaign_idx ON ${ACCOUNT_REHOME_OPERATIONS_TABLE}(campaign_id)`,
     );
   })();
-  await accountRehomeSchemaReady;
+  accountRehomeSchemaReady.set(bay, pending);
+  try {
+    await pending;
+  } catch (err) {
+    accountRehomeSchemaReady.delete(bay);
+    throw err;
+  }
 }
 
 async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
-  accountRehomeApiKeysSchemaReady ??= (async () => {
+  const bay = getConfiguredBayId();
+  if (accountRehomeApiKeysSchemaReady.has(bay))
+    return accountRehomeApiKeysSchemaReady.get(bay);
+  const pending = (async () => {
     await getPool().query(
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_id TEXT",
     );
@@ -206,7 +230,13 @@ async function ensureAccountRehomeApiKeysSchema(): Promise<void> {
       "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS allowed_project_ids UUID[] NOT NULL DEFAULT '{}'::UUID[]",
     );
   })();
-  await accountRehomeApiKeysSchemaReady;
+  accountRehomeApiKeysSchemaReady.set(bay, pending);
+  try {
+    await pending;
+  } catch (err) {
+    accountRehomeApiKeysSchemaReady.delete(bay);
+    throw err;
+  }
 }
 
 function durationMs(
@@ -270,10 +300,12 @@ async function upsertJsonRow({
   table,
   row,
   primaryKey,
+  db = getPool(),
 }: {
   table: string;
   row: Record<string, unknown>;
   primaryKey: string[];
+  db?: Queryable;
 }): Promise<void> {
   const columns = (await getTableColumns(table)).filter(
     (column) =>
@@ -289,7 +321,7 @@ async function upsertJsonRow({
   const updateSet = updateColumns
     .map((column) => `"${column}" = EXCLUDED."${column}"`)
     .join(", ");
-  await getPool().query(
+  await db.query(
     `
       INSERT INTO "${table}" (${insertColumns})
       SELECT ${selectColumns}
@@ -304,10 +336,12 @@ async function replacePortableRows({
   table,
   account_id,
   rows,
+  db = getPool(),
 }: {
   table: PortableStateTable;
   account_id: string;
   rows: Record<string, unknown>[];
+  db?: Queryable;
 }): Promise<void> {
   const portableRows =
     table === "account_notification_index"
@@ -331,7 +365,7 @@ async function replacePortableRows({
                   ? ["account_id"]
                   : ["id"];
   if (table === "api_keys") {
-    await getPool().query(
+    await db.query(
       `
         DELETE FROM api_keys
          WHERE account_id=$1
@@ -345,7 +379,7 @@ async function replacePortableRows({
       table === "account_impersonation_sessions"
         ? "subject_account_id"
         : "account_id";
-    await getPool().query(`DELETE FROM "${table}" WHERE ${accountColumn}=$1`, [
+    await db.query(`DELETE FROM "${table}" WHERE ${accountColumn}=$1`, [
       account_id,
     ]);
   }
@@ -360,6 +394,7 @@ async function replacePortableRows({
       table,
       row: nextRow,
       primaryKey,
+      db,
     });
   }
 }
@@ -368,14 +403,16 @@ async function replaceOwnedPortableRows({
   table,
   account_id,
   rows,
+  db = getPool(),
 }: {
   table: AccountOwnedMembershipPortableTable;
   account_id: string;
   rows: Record<string, unknown>[];
+  db?: Queryable;
 }): Promise<void> {
   const primaryKey = table === "membership_packages" ? ["id"] : ["effect_key"];
   if (table === "membership_packages") {
-    await getPool().query(
+    await db.query(
       `
         DELETE FROM membership_packages
          WHERE owner_account_id=$1
@@ -384,7 +421,7 @@ async function replaceOwnedPortableRows({
       [account_id],
     );
   } else if (table === "membership_side_effects_outbox") {
-    await getPool().query(
+    await db.query(
       `
         DELETE FROM membership_side_effects_outbox
          WHERE owner_account_id=$1
@@ -398,7 +435,7 @@ async function replaceOwnedPortableRows({
       [account_id],
     );
   } else {
-    await getPool().query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
+    await db.query(`DELETE FROM "${table}" WHERE owner_account_id=$1`, [
       account_id,
     ]);
   }
@@ -407,6 +444,7 @@ async function replaceOwnedPortableRows({
       table,
       row,
       primaryKey,
+      db,
     });
   }
 }
@@ -414,11 +452,13 @@ async function replaceOwnedPortableRows({
 async function replaceOwnedMembershipPackageAssignments({
   account_id,
   rows,
+  db = getPool(),
 }: {
   account_id: string;
   rows: Record<string, unknown>[];
+  db?: Queryable;
 }): Promise<void> {
-  await getPool().query(
+  await db.query(
     `
       DELETE FROM membership_package_assignments
        WHERE package_id IN (
@@ -435,6 +475,7 @@ async function replaceOwnedMembershipPackageAssignments({
       table: "membership_package_assignments",
       row,
       primaryKey: ["id"],
+      db,
     });
   }
 }
@@ -825,6 +866,7 @@ async function createOperation({
   campaign_id?: string | null;
 }): Promise<AccountRehomeOperationRow> {
   await ensureAccountRehomeSchema();
+  if (financialRehomeEnabled()) await ensureFinancialRehomeSchema();
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
@@ -854,6 +896,8 @@ async function createOperation({
       );
     }
     const account = await assertLocalHomeAccount(account_id, client);
+    if (!financialRehomeEnabled())
+      await assertFundingAccountCanRehome(client, account_id);
     const { rows } = await client.query(
       `
         INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}
@@ -872,6 +916,8 @@ async function createOperation({
         account,
       ],
     );
+    if (financialRehomeEnabled())
+      await freezeAccountFinancialState(client, rows[0]!);
     await client.query("COMMIT");
     return rows[0]! as AccountRehomeOperationRow;
   } catch (err) {
@@ -1162,6 +1208,7 @@ export async function acceptAccountRehome({
   source_bay_id,
   dest_bay_id,
   account,
+  financial_handoff,
 }: AccountRehomeAcceptRequest): Promise<AccountRehomeResponse> {
   const accountId = normalizeUuid("target_account_id", target_account_id);
   const sourceBayId = normalizeBayId("source_bay_id", source_bay_id);
@@ -1172,15 +1219,46 @@ export async function acceptAccountRehome({
       `account rehome accept for ${accountId} reached ${localBayId}, not destination bay ${destBayId}`,
     );
   }
-  await upsertJsonRow({
-    table: "accounts",
-    row: {
-      ...account,
-      account_id: accountId,
-      home_bay_id: destBayId,
-    },
-    primaryKey: ["account_id"],
-  });
+  const accept = async (db: Queryable = getPool()) =>
+    await upsertJsonRow({
+      table: "accounts",
+      row: {
+        ...account,
+        account_id: accountId,
+        home_bay_id: destBayId,
+      },
+      primaryKey: ["account_id"],
+      db,
+    });
+  if (financial_handoff) {
+    assertFinancialEnvelope({
+      target_account_id,
+      source_bay_id,
+      dest_bay_id,
+      financial_handoff,
+    });
+    const source = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: sourceBayId,
+    }).getRehomeOperation({ op_id: financial_handoff.op_id });
+    if (
+      !source ||
+      source.account_id !== accountId ||
+      source.source_bay_id !== sourceBayId ||
+      source.dest_bay_id !== destBayId
+    )
+      throw Error(
+        "Financial handoff does not match a committed source operation",
+      );
+    await ensureFinancialRehomeSchema();
+    await financialTransaction(async (client) => {
+      if (await acceptAccountFinancialState(client, financial_handoff))
+        await accept(client);
+    });
+  } else {
+    await assertNoFinancialHandoff(accountId);
+    await accept();
+  }
   log.info("account rehome destination accepted", {
     account_id: accountId,
     source_bay_id: sourceBayId,
@@ -1194,7 +1272,114 @@ export async function acceptAccountRehome({
   };
 }
 
-export async function copyAccountRehomeState({
+function assertFinancialEnvelope(
+  opts: Pick<
+    AccountRehomeStateCopyRequest,
+    "target_account_id" | "source_bay_id" | "dest_bay_id" | "financial_handoff"
+  >,
+) {
+  const h = opts.financial_handoff;
+  if (
+    !h ||
+    h.account_id !== opts.target_account_id ||
+    h.source_bay_id !== opts.source_bay_id ||
+    h.dest_bay_id !== opts.dest_bay_id
+  )
+    throw Error("Account and financial handoff identities differ");
+}
+
+async function assertNoFinancialHandoff(account_id: string) {
+  const {
+    rows: [table],
+  } = await getPool().query(
+    "SELECT to_regclass('public.account_financial_handoffs') AS name",
+  );
+  if (
+    table?.name &&
+    (
+      await getPool().query(
+        "SELECT 1 FROM account_financial_handoffs WHERE account_id=$1 LIMIT 1",
+        [account_id],
+      )
+    ).rows.length
+  )
+    throw Error("Financial account rehome requires its authenticated handoff");
+}
+
+async function copyFinancialRehomeState(
+  opts: AccountRehomeStateCopyRequest,
+): Promise<void> {
+  assertFinancialEnvelope(opts);
+  const h = opts.financial_handoff!;
+  // File restoration precedes the atomic DB import. A completed replay must not
+  // overwrite files or projections that the activated account has since changed.
+  const {
+    rows: [prior],
+  } = await getPool().query(
+    "SELECT state,snapshot_hash FROM account_financial_handoffs WHERE op_id=$1",
+    [h.op_id],
+  );
+  if (!prior || prior.snapshot_hash !== h.snapshot_hash)
+    throw Error("Missing accepted financial snapshot");
+  if (["imported", "active"].includes(prior.state)) {
+    await financialTransaction((client) =>
+      importAccountFinancialState(client, h),
+    );
+    return;
+  }
+  if (opts.account_persist_files != null)
+    await restoreAccountPersistState({
+      account_id: h.account_id,
+      files: opts.account_persist_files,
+    });
+  await ensureAccountRehomeApiKeysSchema();
+  await financialTransaction(async (client) => {
+    await importAccountFinancialState(client, h, async (maps) => {
+      for (const table of PORTABLE_STATE_TABLES) {
+        const rows = ((opts as any)[table] ?? []).map((row) =>
+          remapFinancialRow(table, row, maps),
+        );
+        await replacePortableRows({
+          table,
+          account_id: h.account_id,
+          rows,
+          db: client,
+        });
+      }
+      for (const table of [
+        "membership_packages",
+        "membership_side_effects_outbox",
+      ] as const)
+        await replaceOwnedPortableRows({
+          table,
+          account_id: h.account_id,
+          rows: (opts[table] ?? []).map((row) =>
+            remapFinancialRow(table, row, maps),
+          ),
+          db: client,
+        });
+      await replaceOwnedMembershipPackageAssignments({
+        account_id: h.account_id,
+        rows: opts.membership_package_assignments ?? [],
+        db: client,
+      });
+    });
+  });
+  await updateClusterAccountApiKeysHomeBay({
+    account_id: h.account_id,
+    home_bay_id: h.dest_bay_id,
+  });
+}
+
+export async function copyAccountRehomeState(
+  opts: AccountRehomeStateCopyRequest,
+): Promise<void> {
+  if (opts.financial_handoff) return copyFinancialRehomeState(opts);
+  await assertNoFinancialHandoff(opts.target_account_id);
+  return copyLegacyAccountRehomeState(opts);
+}
+
+async function copyLegacyAccountRehomeState({
   target_account_id,
   source_bay_id,
   dest_bay_id,
@@ -1382,6 +1567,10 @@ export async function rehomeAccountOnHomeBay({
     };
   }
   await assertBayExists(destBayId);
+  if (financialRehomeEnabled())
+    await (
+      await import("@cocalc/server/compute/funding/authority")
+    ).assertFundingAccountHome(accountId);
   const op = await createOperation({
     account_id: accountId,
     source_bay_id: localBayId,
@@ -1405,6 +1594,7 @@ export async function runAccountRehomeOperation(
   }
 
   try {
+    const financial_handoff = await getAccountFinancialHandoff(op_id);
     let account = op.account;
     if (!account) {
       account = await loadAccountRowForRehome(op.account_id);
@@ -1421,6 +1611,7 @@ export async function runAccountRehomeOperation(
         source_bay_id: op.source_bay_id,
         dest_bay_id: op.dest_bay_id,
         account,
+        financial_handoff,
       });
       op = await updateOperation({
         op_id,
@@ -1449,6 +1640,7 @@ export async function runAccountRehomeOperation(
         ...state,
         source_bay_id: op.source_bay_id,
         dest_bay_id: op.dest_bay_id,
+        financial_handoff,
       });
       op = await updateOperation({
         op_id,
@@ -1457,6 +1649,7 @@ export async function runAccountRehomeOperation(
     }
 
     if (op.stage === "projections_copied") {
+      if (financial_handoff) await retireAccountFinancialState(op_id);
       await clearPortableState(op.account_id);
       await clearAccountPersistState(op.account_id);
       const accountEntry = await getClusterAccountById(op.account_id);
@@ -1491,6 +1684,18 @@ export async function runAccountRehomeOperation(
     }
 
     if (op.stage === "directory_updated") {
+      if (financial_handoff) {
+        await createInterBayAccountLocalClient({
+          client: getInterBayFabricClient(),
+          dest_bay: op.dest_bay_id,
+          timeout: ACCOUNT_REHOME_TIMEOUT_MS,
+        }).activateFinancialRehome({
+          op_id,
+          target_account_id: op.account_id,
+          source_bay_id: op.source_bay_id,
+          dest_bay_id: op.dest_bay_id,
+        });
+      }
       op = await updateOperation({
         op_id,
         status: "succeeded",

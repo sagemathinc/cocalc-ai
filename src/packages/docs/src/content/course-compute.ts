@@ -152,6 +152,97 @@ to preview and propose bounded terms, inspect status, or cancel consent. An
 immediate change has a separate **apply** operation after approval; submitting
 a proposal alone does not change the payer.
 
+### Personal funding from the CLI
+
+Use your own account-authenticated CLI session. Read **funding_status.source**,
+**funding_status.funding_version**, **funding_status.as_of**, **stop_at**, and
+**expires_at** from **vm funding**. The resource's **updated_at** is not a fresh
+funding observation. A null funding status means unavailable, not zero cost.
+VM price fields are not an account-wide aggregate rate or a guaranteed runway.
+Read the complete preview before requesting approval.
+
+Prepare a JSON terms file with every field explicit; replace the placeholders
+with the reviewed VM UUID, funding version and a future end time within its
+deletion deadline. The cap is a decimal USD string, not a JSON number:
+
+~~~json
+{
+  "vm_id": "VM_UUID",
+  "expected_funding_version": "REVIEWED_FUNDING_VERSION",
+  "home_volume_ids": [],
+  "lane": "prepaid",
+  "cap_usd": "12.34",
+  "ends_at": "ABSOLUTE_ISO_TIMESTAMP_WITH_TIMEZONE",
+  "activation": "immediate",
+  "fallback_reasons": []
+}
+~~~
+
+The example cap is illustrative, not a recommendation or automatic default.
+Each operation UUID must be unique to an action and reused only when retrying
+that identical action after an uncertain response.
+
+~~~sh
+cocalc vm personal-funding preview --terms terms.json --json
+cocalc vm personal-funding propose --terms terms.json --operation PROPOSAL_UUID --json
+cocalc vm personal-funding status VM_UUID --json
+~~~
+
+Open the returned **approval_url** in your own browser and review the exact
+terms on the isolated approval surface. After human approval, run **status**
+again: approval changes the consent version. Use that current consent version
+and the unchanged funding version approved in the terms:
+
+~~~sh
+cocalc vm personal-funding apply VM_UUID --consent CONSENT_UUID --expected-version APPROVED_CONSENT_VERSION --expected-funding-version REVIEWED_FUNDING_VERSION --operation APPLY_UUID --json
+cocalc vm personal-funding status VM_UUID --json
+cocalc vm get VM_UUID --json
+~~~
+
+**preparing** means the handoff was accepted, not completed. The backend queues a
+stop, waits for provider and metering reconciliation, validates personal backing,
+changes the funding epoch, and queues a restart. Check both consent status and
+VM state. Do not replace an uncertain operation with a new operation UUID.
+
+To cancel the exact consent, first read its current version:
+
+~~~sh
+cocalc vm personal-funding cancel VM_UUID --consent CONSENT_UUID --expected-version CURRENT_CONSENT_VERSION --operation CANCEL_UUID --json
+~~~
+
+Cancelling active or preparing consent can stop the VM; it does not refund
+already incurred charges or remove storage obligations. A pending fallback
+proposal uses **activation: fallback** and explicit **course_exhausted** and/or
+**course_expired** reasons. The **apply** command accepts immediate consent only;
+the backend evaluates approved fallback reasons after a confirmed funded stop.
+An unknown funding error, manual stop, or reached scheduled stop is not a
+fallback reason. This path still needs deployment-specific live acceptance;
+do not force it using a CLI workaround.
+
+Personal handoff of attached home volumes is still backend work. The current
+backend rejects a nonempty home-volume scope and VMs that have an attached home
+volume even if the array is empty. Do not remove scope or use **vm funding --set**
+to bypass a rejection. Separately sponsored home-volume creation and resize are
+also capability-gated; VM-only personal handoff readiness does not enable them.
+
+### Denials and agent context
+
+Structured CLI errors retain the server's denial **code** and **message**, with
+recovery guidance where available. **funding_unavailable** or a changed version
+requires refreshing the authorized readouts and reviewing the exact terms,
+not increasing a cap or automatically substituting a new version. Home-bay
+denials require the correct account/bay context, not an arbitrary routing retry.
+For course spending, inspect **sources --include-inactive** to distinguish an
+exhausted or expired allowance from a missing source; never remove the three
+course-source flags to get past an error.
+
+Project/agent authentication uses the project-scoped VM read/start/stop methods.
+It cannot call account-only source listings or personal-consent commands. An
+agent can prepare a bounded proposal for the human owner and report the
+authorized VM context; the owner submits and approves it using their own
+session. No private instructor-account lookup or internal accounting command is
+added to this path.
+
 Financial proposals return a separate approval URL. Only the human account
 holder can sign in there and approve the exact transaction. Never give an agent
 your password, authentication code, or session cookie. Project-scoped agents

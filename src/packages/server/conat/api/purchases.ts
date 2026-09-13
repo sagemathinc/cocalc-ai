@@ -1,4 +1,10 @@
 import getBalance from "@cocalc/server/purchases/get-balance";
+export {
+  previewCreditTransfer,
+  proposeCreditTransfer,
+  getCreditTransferStatus,
+  listCreditTransfers,
+} from "@cocalc/server/purchases/credit-transfers/api";
 import getMinBalance0 from "@cocalc/server/purchases/get-min-balance";
 import { db } from "@cocalc/database";
 import {

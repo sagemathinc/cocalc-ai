@@ -20,6 +20,16 @@ test("course compute guide distinguishes authorization, reservations, and remote
     "compute-funding sources --include-inactive --json",
     "vm funding VM_UUID --json",
     "Project-scoped agents cannot inspect",
+    "vm personal-funding preview --terms terms.json --json",
+    "vm personal-funding propose --terms terms.json --operation PROPOSAL_UUID --json",
+    "vm personal-funding status VM_UUID --json",
+    "approval changes the consent version",
+    "--expected-version APPROVED_CONSENT_VERSION",
+    "--expected-funding-version REVIEWED_FUNDING_VERSION",
+    "--operation APPLY_UUID --json",
+    "--operation CANCEL_UUID --json",
+    "Personal handoff of attached home volumes is still backend work",
+    "never remove the three course-source flags",
   ]) {
     assert.ok(guide.body.replace(/\s+/g, " ").includes(phrase), phrase);
   }

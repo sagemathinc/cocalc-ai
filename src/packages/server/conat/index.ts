@@ -24,6 +24,8 @@ import { startRestoreLroWorker } from "@cocalc/server/projects/restore-worker";
 import { startHostLroWorker } from "@cocalc/server/hosts/start-worker";
 import { startHostRuntimeFleetRolloutWorker } from "@cocalc/server/hosts/runtime-fleet-rollout-worker";
 import { startComputeVmWorker } from "@cocalc/server/compute/worker";
+import { initCourseFundingApprovalService } from "@cocalc/server/compute/funding/approval-startup";
+import { initVmPersonalFundingApprovalHandler } from "@cocalc/server/compute/funding/vm-personal";
 import { startLegacyMigrationProjectRestoreWorker } from "@cocalc/server/legacy-migration/restore-worker";
 import { startLegacyMigrationArtifactRefreshMaintenance } from "@cocalc/server/legacy-migration/artifact-refresh-maintenance";
 import { getProjectRuntimeMode } from "@cocalc/server/launchpad/project-runtime";
@@ -204,6 +206,8 @@ export async function initConatApi({
     projectRunnerCount,
   });
   await loadConatConfiguration();
+  initVmPersonalFundingApprovalHandler();
+  await initCourseFundingApprovalService({ listen: isPrimaryBayWorker() });
   configureHubServiceAdmissionDenialRecorder();
   startConatAdmissionSettingsRefresh();
   logProjectionReadModes();

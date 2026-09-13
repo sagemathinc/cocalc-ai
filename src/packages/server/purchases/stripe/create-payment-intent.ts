@@ -21,9 +21,12 @@ import { decimalToStripe, grandTotal } from "@cocalc/util/stripe/calc";
 import {
   RESUME_SUBSCRIPTION,
   SUBSCRIPTION_RENEWAL,
+  ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
 } from "@cocalc/util/db-schema/purchases";
 import { resumeSubscriptionSetPaymentIntent } from "./create-subscription-payment";
 import { bindSubscriptionRenewalPaymentIntent } from "../subscription-renewal-attempts";
+import { bindAdminMembershipPayment } from "../admin-membership-orders";
+import { toDecimal } from "@cocalc/util/money";
 import send, { name, support, url } from "@cocalc/server/messages/send";
 import { delay } from "awaiting";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
@@ -515,6 +518,14 @@ export async function recordPaymentIntent({
       attempt_id: metadata.renewal_attempt_id,
       payment_intent_id: paymentIntentId,
       stripe_invoice_id: metadata.invoice_id,
+    });
+  } else if (purpose === ADMIN_MEMBERSHIP_PACKAGE_PURCHASE) {
+    await bindAdminMembershipPayment({
+      account_id,
+      order_id: metadata.admin_membership_order_id,
+      payment_intent_id: paymentIntentId,
+      stripe_invoice_id: metadata.invoice_id,
+      amount: toDecimal(metadata.total_excluding_tax_usd).div(100),
     });
   }
 }

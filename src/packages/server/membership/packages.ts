@@ -216,9 +216,11 @@ function isMembershipTierVisibleForPackageKind({
 async function getPurchasableMembershipTierForPackageKind({
   kind,
   membership_class,
+  client,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
+  client?: PoolClient;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
     throw Error(
@@ -227,6 +229,7 @@ async function getPurchasableMembershipTierForPackageKind({
   }
   const tier = await getSeedMembershipTierById({
     id: membership_class,
+    client,
   });
   if (
     !tier ||
@@ -1658,17 +1661,20 @@ async function getTierSeatQuote({
   interval,
   starts_at,
   expires_at,
+  client,
 }: {
   product: MembershipPackageProduct;
   membership_class: MembershipClass;
   interval: "month" | "year";
   starts_at?: Date;
   expires_at?: Date;
+  client?: PoolClient;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
     kind,
     membership_class,
+    client,
   });
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
@@ -1713,6 +1719,7 @@ export async function resolveMembershipPackageQuote(
     await getPurchasableMembershipTierForPackageKind({
       kind: existing.kind,
       membership_class: existing.membership_class,
+      client,
     });
     const seat_price =
       toNumber(existing.metadata?.seat_price) ??
@@ -1731,6 +1738,7 @@ export async function resolveMembershipPackageQuote(
           ).seat_price
         : (
             await getTierSeatQuote({
+              client,
               product: { ...product, kind: existing.kind },
               membership_class: existing.membership_class,
               interval:
@@ -1786,6 +1794,7 @@ export async function resolveMembershipPackageQuote(
     throw Error("membership_class is required");
   }
   return await getTierSeatQuote({
+    client,
     product: { ...product, kind, seat_count },
     membership_class,
     interval,

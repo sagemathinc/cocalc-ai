@@ -4,6 +4,33 @@
  */
 
 import type { ProjectOnboardingIntent } from "@cocalc/util/accounts/onboarding-intent";
+import type {
+  AccountFinancialHandoff,
+  AccountFinancialActivation,
+} from "@cocalc/util/account-financial-rehome";
+import type {
+  CourseVmRecommendations,
+  CourseVmTemplate,
+} from "@cocalc/util/course-vm-template";
+import type {
+  ReserveComputeVmFundingRequest,
+  LookupComputeVmFundingRequest,
+  ComputeVmFallbackDecision,
+  CheckComputeVmFundingRequest,
+  SettleComputeVmFundingRequest,
+  ComputeVmFundingBinding,
+  ComputeVmFundingSettlement,
+} from "@cocalc/util/compute-vm-funding";
+import type {
+  CourseFundingAllocationPreview,
+  CourseFundingAllocationStatus,
+  CourseFundingCourseRequest,
+  CourseFundingDraft,
+  CourseFundingSources,
+  CourseFundingSummary,
+  CourseFundingPoolChangeDraft,
+  CourseFundingPoolChangePreview,
+} from "@cocalc/conat/hub/api/compute-funding";
 
 import { MAX_INTEREST_TIMEOUT, type Client } from "@cocalc/conat/core/client";
 import {
@@ -937,6 +964,7 @@ export interface AccountRehomeAcceptRequest {
   source_bay_id: string;
   dest_bay_id: string;
   account: Record<string, unknown>;
+  financial_handoff?: AccountFinancialHandoff;
 }
 
 export interface AccountPersistFileV1 {
@@ -951,6 +979,7 @@ export interface AccountRehomeStateCopyRequest {
   target_account_id: string;
   source_bay_id: string;
   dest_bay_id: string;
+  financial_handoff?: AccountFinancialHandoff;
   account_persist_files?: AccountPersistFileV1[];
   account_project_index?: Record<string, unknown>[];
   account_collaborator_index?: Record<string, unknown>[];
@@ -1116,6 +1145,10 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   has_payment_method: boolean;
   has_usage_subscription: boolean;
   balance: MoneyValue;
+  // Ledger balance minus prepaid holds. Optional during rolling upgrades;
+  // sponsorship must stay disabled until all account/compute bays support it.
+  prepaid_spendable_balance?: MoneyValue;
+  postpaid_committed_usd?: MoneyValue;
   postpaid_unbilled_exposure_usd: MoneyValue;
   dedicated_host_window_usage: {
     prepaid_5h_usd: MoneyValue;
@@ -2771,11 +2804,14 @@ export type AccountDirectoryMethod =
   | "activate-membership-claim-identity"
   | "revoke-membership-claim-identity";
 export type AccountLocalMethod =
+  | "compute-funding"
+  | "credit-transfers"
   | "create"
   | "delete"
   | "rehome"
   | "accept-rehome"
   | "copy-rehome-state"
+  | "activate-financial-rehome"
   | "get-rehome-operation"
   | "reconcile-rehome"
   | "create-impersonation-grant"
@@ -4191,7 +4227,94 @@ export interface InterBayAccountDirectoryApi {
   ) => Promise<void>;
 }
 
-export interface InterBayAccountLocalApi {
+export interface InterBayComputeFundingApi {
+  computeFundingGetOwnedPools: (opts: {
+    account_id: string;
+  }) => Promise<
+    import("@cocalc/conat/hub/api/compute-funding").CourseFundingOwnedPools
+  >;
+  // Private authoritative-home preflight; never exposed on the public hub API.
+  computeFundingCheckApprovalRecipients: (opts: {
+    account_ids: string[];
+    home_bay_id: string;
+    require_active: boolean;
+  }) => Promise<void>;
+  // Bay-service-only rollout evidence; no public client can assert capabilities.
+  computeFundingGetRolloutCapabilities: (opts: {}) => Promise<
+    import("@cocalc/util/compute-funding-rollout").FundingRolloutCapabilities
+  >;
+  // Project-owned metadata: callers target the project owning bay, not payer home.
+  computeFundingGetCourseVmRecommendations: (
+    opts: CourseFundingCourseRequest & { account_id: string },
+  ) => Promise<CourseVmRecommendations>;
+  computeFundingSetCourseVmRecommendations: (
+    opts: CourseFundingCourseRequest & {
+      account_id: string;
+      templates: CourseVmTemplate[];
+      expected_version: number;
+    },
+  ) => Promise<CourseVmRecommendations>;
+  // Internal grant-source projection only; deliberately absent from public hub API.
+  computeFundingGetPublishedCourseVmRecommendations: (
+    opts: CourseFundingCourseRequest,
+  ) => Promise<CourseVmRecommendations>;
+  reserveComputeVmFunding: (
+    opts: ReserveComputeVmFundingRequest,
+  ) => Promise<ComputeVmFundingBinding>;
+  lookupComputeVmFunding: (
+    opts: LookupComputeVmFundingRequest,
+  ) => Promise<ComputeVmFundingBinding | null>;
+  getComputeVmFallbackDecision: (
+    opts: Pick<CheckComputeVmFundingRequest, "account_id" | "binding">,
+  ) => Promise<ComputeVmFallbackDecision>;
+  checkComputeVmFunding: (
+    opts: CheckComputeVmFundingRequest,
+  ) => Promise<ComputeVmFundingBinding>;
+  settleComputeVmFunding: (
+    opts: SettleComputeVmFundingRequest,
+  ) => Promise<ComputeVmFundingSettlement>;
+  computeFundingPreviewPoolChange: (opts: {
+    account_id: string;
+    terms: CourseFundingPoolChangeDraft;
+  }) => Promise<CourseFundingPoolChangePreview>;
+  computeFundingProposePoolChange: (opts: {
+    account_id: string;
+    operation_id: string;
+    terms: CourseFundingPoolChangeDraft;
+  }) => Promise<CourseFundingAllocationStatus>;
+  computeFundingListSourcesOnBay: (opts: {
+    beneficiary_account_id: string;
+    beneficiary_home_bay_id: string;
+    include_inactive?: boolean;
+  }) => Promise<CourseFundingSources & { payer_home_bay_ids: string[] }>;
+  computeFundingGetCourseSummary: (
+    opts: CourseFundingCourseRequest & {
+      account_id: string;
+    },
+  ) => Promise<CourseFundingSummary>;
+  computeFundingListSources: (opts: {
+    account_id: string;
+    include_inactive?: boolean;
+  }) => Promise<CourseFundingSources>;
+  computeFundingPreviewAllocation: (opts: {
+    account_id: string;
+    terms: CourseFundingDraft;
+  }) => Promise<CourseFundingAllocationPreview>;
+  computeFundingProposeAllocation: (opts: {
+    account_id: string;
+    operation_id: string;
+    terms: CourseFundingDraft;
+  }) => Promise<CourseFundingAllocationStatus>;
+  computeFundingGetAllocationStatus: (opts: {
+    account_id: string;
+    intent_id: string;
+  }) => Promise<CourseFundingAllocationStatus>;
+}
+
+import type { InterBayCreditTransferApi } from "./credit-transfers";
+
+export interface InterBayAccountLocalApi
+  extends InterBayComputeFundingApi, InterBayCreditTransferApi {
   create: (
     opts: AccountDirectoryCreateRequest,
   ) => Promise<AccountDirectoryEntry>;
@@ -4203,6 +4326,7 @@ export interface InterBayAccountLocalApi {
     opts: AccountRehomeAcceptRequest,
   ) => Promise<AccountRehomeResponse>;
   copyRehomeState: (opts: AccountRehomeStateCopyRequest) => Promise<void>;
+  activateFinancialRehome: (opts: AccountFinancialActivation) => Promise<void>;
   getRehomeOperation: (opts: {
     op_id: string;
   }) => Promise<AccountRehomeOperationSummary | null>;
@@ -6702,6 +6826,14 @@ export function createInterBayAccountLocalClient({
   dest_bay: string;
   timeout?: number;
 }): InterBayAccountLocalApi {
+  const creditTransfersClient = createServiceClient<InterBayCreditTransferApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "credit-transfers" }),
+  });
+  const computeFundingClient = createServiceClient<InterBayComputeFundingApi>({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({ dest_bay, method: "compute-funding" }),
+  });
   const createClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "create">
   >({
@@ -6731,6 +6863,15 @@ export function createInterBayAccountLocalClient({
   >({
     ...serviceClientOptions({ client, timeout }),
     subject: accountLocalSubject({ dest_bay, method: "copy-rehome-state" }),
+  });
+  const activateFinancialRehomeClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "activateFinancialRehome">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "activate-financial-rehome",
+    }),
   });
   const getRehomeOperationClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getRehomeOperation">
@@ -7985,12 +8126,70 @@ export function createInterBayAccountLocalClient({
       }),
     });
   return {
+    computeFundingGetCourseSummary: async (opts) =>
+      await computeFundingClient.computeFundingGetCourseSummary(opts),
+    computeFundingGetOwnedPools: async (opts) =>
+      await computeFundingClient.computeFundingGetOwnedPools(opts),
+    computeFundingGetCourseVmRecommendations: (opts) =>
+      computeFundingClient.computeFundingGetCourseVmRecommendations(opts),
+    computeFundingSetCourseVmRecommendations: (opts) =>
+      computeFundingClient.computeFundingSetCourseVmRecommendations(opts),
+    computeFundingGetPublishedCourseVmRecommendations: (opts) =>
+      computeFundingClient.computeFundingGetPublishedCourseVmRecommendations(
+        opts,
+      ),
+    reserveComputeVmFunding: (opts) =>
+      computeFundingClient.reserveComputeVmFunding(opts),
+    lookupComputeVmFunding: (opts) =>
+      computeFundingClient.lookupComputeVmFunding(opts),
+    getComputeVmFallbackDecision: (opts) =>
+      computeFundingClient.getComputeVmFallbackDecision(opts),
+    checkComputeVmFunding: (opts) =>
+      computeFundingClient.checkComputeVmFunding(opts),
+    settleComputeVmFunding: (opts) =>
+      computeFundingClient.settleComputeVmFunding(opts),
+    computeFundingPreviewPoolChange: async (opts) =>
+      await computeFundingClient.computeFundingPreviewPoolChange(opts),
+    computeFundingProposePoolChange: async (opts) =>
+      await computeFundingClient.computeFundingProposePoolChange(opts),
+    previewCreditTransfer: (opts) =>
+      creditTransfersClient.previewCreditTransfer(opts),
+    proposeCreditTransfer: (opts) =>
+      creditTransfersClient.proposeCreditTransfer(opts),
+    getCreditTransferStatus: (opts) =>
+      creditTransfersClient.getCreditTransferStatus(opts),
+    listCreditTransfers: (opts) =>
+      creditTransfersClient.listCreditTransfers(opts),
+    creditTransferRecipient: (opts) =>
+      creditTransfersClient.creditTransferRecipient(opts),
+    creditTransferVerifyRoot: (opts) =>
+      creditTransfersClient.creditTransferVerifyRoot(opts),
+    creditTransferOutgoing: (opts) =>
+      creditTransfersClient.creditTransferOutgoing(opts),
+    creditTransferDeliver: (opts) =>
+      creditTransfersClient.creditTransferDeliver(opts),
+    computeFundingGetRolloutCapabilities: async (opts) =>
+      await computeFundingClient.computeFundingGetRolloutCapabilities(opts),
+    computeFundingCheckApprovalRecipients: (opts) =>
+      computeFundingClient.computeFundingCheckApprovalRecipients(opts),
+    computeFundingListSourcesOnBay: async (opts) =>
+      await computeFundingClient.computeFundingListSourcesOnBay(opts),
+    computeFundingListSources: async (opts) =>
+      await computeFundingClient.computeFundingListSources(opts),
+    computeFundingPreviewAllocation: async (opts) =>
+      await computeFundingClient.computeFundingPreviewAllocation(opts),
+    computeFundingProposeAllocation: async (opts) =>
+      await computeFundingClient.computeFundingProposeAllocation(opts),
+    computeFundingGetAllocationStatus: async (opts) =>
+      await computeFundingClient.computeFundingGetAllocationStatus(opts),
     create: async (opts) => await createClient.create(opts),
     delete: async (opts) => await deleteClient.delete(opts),
     rehome: async (opts) => await rehomeClient.rehome(opts),
     acceptRehome: async (opts) => await acceptRehomeClient.acceptRehome(opts),
     copyRehomeState: async (opts) =>
       await copyRehomeStateClient.copyRehomeState(opts),
+    activateFinancialRehome: async (opts) =>
+      await activateFinancialRehomeClient.activateFinancialRehome(opts),
     getRehomeOperation: async (opts) =>
       await getRehomeOperationClient.getRehomeOperation(opts),
     reconcileRehome: async (opts) =>
@@ -8398,6 +8597,68 @@ export function createInterBayAccountLocalHandler({
   impl: InterBayAccountLocalApi;
 }): ConatService[] {
   return [
+    createServiceHandler<InterBayCreditTransferApi>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "credit-transfers",
+      }),
+      impl: {
+        previewCreditTransfer: (opts) => impl.previewCreditTransfer(opts),
+        proposeCreditTransfer: (opts) => impl.proposeCreditTransfer(opts),
+        getCreditTransferStatus: (opts) => impl.getCreditTransferStatus(opts),
+        listCreditTransfers: (opts) => impl.listCreditTransfers(opts),
+        creditTransferRecipient: (opts) => impl.creditTransferRecipient(opts),
+        creditTransferVerifyRoot: (opts) => impl.creditTransferVerifyRoot(opts),
+        creditTransferOutgoing: (opts) => impl.creditTransferOutgoing(opts),
+        creditTransferDeliver: (opts) => impl.creditTransferDeliver(opts),
+      },
+    }),
+    createServiceHandler<InterBayComputeFundingApi>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "compute-funding",
+      }),
+      impl: {
+        computeFundingGetCourseSummary: async (opts) =>
+          await impl.computeFundingGetCourseSummary(opts),
+        computeFundingGetOwnedPools: async (opts) =>
+          await impl.computeFundingGetOwnedPools(opts),
+        computeFundingGetCourseVmRecommendations: (opts) =>
+          impl.computeFundingGetCourseVmRecommendations(opts),
+        computeFundingSetCourseVmRecommendations: (opts) =>
+          impl.computeFundingSetCourseVmRecommendations(opts),
+        computeFundingGetPublishedCourseVmRecommendations: (opts) =>
+          impl.computeFundingGetPublishedCourseVmRecommendations(opts),
+        reserveComputeVmFunding: (opts) => impl.reserveComputeVmFunding(opts),
+        lookupComputeVmFunding: (opts) => impl.lookupComputeVmFunding(opts),
+        getComputeVmFallbackDecision: (opts) =>
+          impl.getComputeVmFallbackDecision(opts),
+        checkComputeVmFunding: (opts) => impl.checkComputeVmFunding(opts),
+        settleComputeVmFunding: (opts) => impl.settleComputeVmFunding(opts),
+        computeFundingPreviewPoolChange: async (opts) =>
+          await impl.computeFundingPreviewPoolChange(opts),
+        computeFundingProposePoolChange: async (opts) =>
+          await impl.computeFundingProposePoolChange(opts),
+        computeFundingGetRolloutCapabilities: async (opts) =>
+          await impl.computeFundingGetRolloutCapabilities(opts),
+        computeFundingCheckApprovalRecipients: (opts) =>
+          impl.computeFundingCheckApprovalRecipients(opts),
+        computeFundingListSourcesOnBay: async (opts) =>
+          await impl.computeFundingListSourcesOnBay(opts),
+        computeFundingListSources: async (opts) =>
+          await impl.computeFundingListSources(opts),
+        computeFundingPreviewAllocation: async (opts) =>
+          await impl.computeFundingPreviewAllocation(opts),
+        computeFundingProposeAllocation: async (opts) =>
+          await impl.computeFundingProposeAllocation(opts),
+        computeFundingGetAllocationStatus: async (opts) =>
+          await impl.computeFundingGetAllocationStatus(opts),
+      },
+    }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "create">>({
       ...options,
       service: "inter-bay-account-local",
@@ -8442,6 +8703,20 @@ export function createInterBayAccountLocalHandler({
       }),
       impl: {
         copyRehomeState: async (opts) => await impl.copyRehomeState(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "activateFinancialRehome">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "activate-financial-rehome",
+      }),
+      impl: {
+        activateFinancialRehome: async (opts) =>
+          await impl.activateFinancialRehome(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "getRehomeOperation">>({

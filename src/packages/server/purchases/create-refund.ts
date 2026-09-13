@@ -22,6 +22,16 @@ import {
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import { recordMembershipAllocationRefund } from "@cocalc/server/membership/allocation-analytics";
+import { lockAccountSpending } from "./lock-account-spending";
+import { lockMembershipSubscriptionAccount } from "./membership-subscription-guard";
+import { assertDebitPreservesPrepaidHolds } from "./assert-debit-preserves-prepaid-holds";
+import {
+  prepareProviderRefund,
+  bindProviderRefundRequest,
+  recordProviderRefundResult,
+} from "./provider-refund-attempts";
+import type { ProviderRefundAttempt } from "./provider-refund-attempts";
+import { inspectProviderRefundCharge } from "./provider-refund-reader";
 
 const logger = getLogger("purchase:create-refund");
 
@@ -52,12 +62,26 @@ export default async function createRefund(opts: {
   const { rows } = await getPool().query<{
     description: any;
     service: Service;
-  }>("SELECT description, service FROM purchases WHERE id=$1", [purchase_id]);
-  const { description, service } = rows[0] ?? {};
+    invoice_id: string | null;
+  }>("SELECT description, service, invoice_id FROM purchases WHERE id=$1", [
+    purchase_id,
+  ]);
+  const { description, service, invoice_id } = rows[0] ?? {};
   if (!service) {
     throw Error(`No purchase with id ${purchase_id}`);
   }
+  if (service === "credit-transfer") {
+    throw Error(
+      "Credit transfers require a separately approved compensating transfer",
+    );
+  }
+  // An immutable historical receipt needs no new spending authority.
+  const existing = getExistingRefundPurchaseId(description);
+  if (existing != null) return existing;
   if (service === "credit" || service === "auto-credit") {
+    if (!invoice_id) {
+      return await refundInternalPurchase({ purchase_id, reason, notes });
+    }
     return await refundCredit({
       admin_account_id: account_id,
       purchase_id,
@@ -113,172 +137,108 @@ async function refundCredit({
   reason: Reason;
   notes: string;
 }): Promise<number> {
-  logger.debug("refundCredit", purchase_id);
-  const client = await getTransactionClient();
-  let refund_purchase_id!: number;
-  let account_id = "";
-  let costValue = toDecimal(0);
-  let invoice_id: string | undefined;
-  let externalPayment = false;
-  try {
-    const { rows: purchases } = await client.query(
-      "SELECT id, account_id, invoice_id, service, cost, description FROM purchases WHERE id=$1 FOR UPDATE",
-      [purchase_id],
+  const purchase = await getPurchase(purchase_id);
+  const prepared = await prepareProviderRefund({
+    account_id: purchase.account_id,
+    purchase_id,
+    admin_account_id,
+    reason,
+    notes,
+  });
+  if (!("id" in prepared)) return prepared.refund_purchase_id;
+  if (prepared.state === "succeeded") return prepared.refund_purchase_id!;
+  if (prepared.state === "failed")
+    throw Error(
+      "This refund failed at the payment provider; reconcile it before requesting another refund",
     );
-    if (purchases.length == 0) {
-      throw Error(`No purchase with id ${purchase_id}`);
-    }
-    const {
-      account_id: purchaseAccountId,
-      cost,
-      description: orig_description,
-      service,
-    } = purchases[0];
-    account_id = purchaseAccountId;
-    costValue = toDecimal(cost);
-    invoice_id = purchases[0].invoice_id;
-    externalPayment = !!invoice_id;
-    logger.debug("got locked purchase", purchases);
-    if (service != "credit" && service != "auto-credit") {
-      throw Error(
-        `Only credits can be refunded, but this purchase is of service type '${service}'`,
-      );
-    }
+  const stripe = await getConn();
+  let invoice_id: string | undefined = prepared.invoice_id;
+  let paymentIntentId = "";
+  let charge: string | undefined = prepared.provider_request?.charge;
+  if (!charge && invoice_id.startsWith("pi_")) {
+    paymentIntentId = invoice_id;
+    const intent = await stripe.paymentIntents.retrieve(paymentIntentId);
+    charge =
+      stripeId((intent as any).latest_charge) ??
+      (await refundChargeId({ stripe, invoice: undefined, paymentIntentId }));
+    invoice_id =
+      stripeId((intent as any).invoice) ??
+      stripeMetadataId((intent as any).metadata?.invoice_id) ??
+      (await invoiceIdFromInvoicePayments({ stripe, paymentIntentId }));
+    if (!invoice_id && !charge)
+      throw Error("payment intent does not reference a refundable charge");
+  }
+  if (!charge && invoice_id) {
+    const invoice = await stripe.invoices.retrieve(invoice_id);
+    paymentIntentId =
+      stripeId((invoice as any).payment_intent) ??
+      (await paymentIntentIdFromInvoicePayments({ stripe, invoice_id })) ??
+      "";
+    charge = await refundChargeId({ stripe, invoice, paymentIntentId });
+  }
+  if (!charge)
+    throw Error("corresponding invoice does not have a refundable charge");
 
-    const existingRefundPurchaseId =
-      getExistingRefundPurchaseId(orig_description);
-    if (existingRefundPurchaseId != null) {
-      await client.query("COMMIT");
-      return existingRefundPurchaseId;
+  const refund = prepared.provider_result
+    ? await stripe.refunds.retrieve(prepared.provider_result.id)
+    : await createOrReuseStripeRefund({
+        stripe,
+        charge,
+        admin_account_id: prepared.request.admin_account_id,
+        purchase_id,
+        reason: prepared.request.reason,
+        attempt: prepared,
+      });
+  if (stripeId((refund as any).charge) !== charge)
+    throw Error(
+      "Provider refund belongs to another charge; funds remain reserved",
+    );
+  const settled = await recordProviderRefundResult(prepared, {
+    id: refund.id ?? "",
+    charge,
+    status: (refund as any).status ?? "",
+    amount: (refund as any).amount,
+  });
+  if (settled.state !== "succeeded") {
+    if (
+      settled.state === "pending" &&
+      ["failed", "canceled"].includes(settled.provider_result?.status ?? "")
+    ) {
+      throw Error("Partial refund needs reconciliation; funds remain reserved");
     }
-
-    const stripe = invoice_id ? await getConn() : undefined;
-    let paymentIntentId = "";
-    let charge: string | undefined;
-    if (invoice_id?.startsWith("pi_")) {
-      paymentIntentId = invoice_id;
-      const intent = await stripe!.paymentIntents.retrieve(paymentIntentId);
-      charge =
-        stripeId((intent as any).latest_charge) ??
-        (await refundChargeId({
-          stripe: stripe!,
-          invoice: undefined,
-          paymentIntentId,
-        }));
-      const intentInvoice =
-        stripeId((intent as any).invoice) ??
-        stripeMetadataId((intent as any).metadata?.invoice_id) ??
-        (await invoiceIdFromInvoicePayments({
-          stripe: stripe!,
-          paymentIntentId,
-        }));
-      if (intentInvoice) {
-        invoice_id = intentInvoice;
-      } else if (!charge) {
-        throw Error("payment intent does not reference a refundable charge");
-      } else {
-        invoice_id = undefined;
-      }
-    }
-    if (invoice_id) {
-      const refundableInvoiceId = invoice_id;
-      logger.debug("get the invoice_id", refundableInvoiceId);
-      const invoice = await stripe!.invoices.retrieve(refundableInvoiceId);
-      if (!paymentIntentId) {
-        paymentIntentId =
-          stripeId((invoice as any).payment_intent) ??
-          (await paymentIntentIdFromInvoicePayments({
-            stripe: stripe!,
-            invoice_id: refundableInvoiceId,
-          })) ??
-          "";
-      }
-      charge =
-        charge ??
-        (await refundChargeId({
-          stripe: stripe!,
-          invoice,
-          paymentIntentId,
-        }));
-      logger.debug("got invoice charge = ", { charge });
-      if (!charge) {
-        throw Error("corresponding invoice does not have a refundable charge");
-      }
-    }
-
-    const description = {
-      type: "refund",
-      purchase_id,
-      notes,
-      reason,
-    } as Refund;
-    refund_purchase_id = await createPurchase({
-      account_id,
-      service: "refund",
-      cost: costValue.neg(),
-      description,
-      client,
-    });
-    const refund = charge
-      ? await createOrReuseStripeRefund({
-          stripe: stripe!,
-          charge,
-          admin_account_id,
-          purchase_id,
-          reason,
-        })
-      : undefined;
-
-    if (paymentIntentId && stripe) {
+    throw Error(
+      settled.state === "failed"
+        ? "The payment provider rejected this refund; its hold was released. Reconcile before retrying."
+        : "The payment provider is still processing this refund; funds remain reserved. Retry to check its status.",
+    );
+  }
+  await refreshAccountBalanceAndPublishBestEffort({
+    account_id: purchase.account_id,
+  });
+  // Ancillary metadata failure must not undo a settled refund or its receipt.
+  if (paymentIntentId) {
+    try {
       await stripe.paymentIntents.update(paymentIntentId, {
         metadata: {
           refund_date: Date.now(),
-          refund_reason: reason,
-          refund_notes: notes,
+          refund_reason: settled.request.reason,
+          refund_notes: settled.request.notes,
         },
       });
+    } catch (err) {
+      logger.debug("Unable to annotate settled provider refund", err);
     }
-
-    // Record the Stripe refund id so later retries can short-circuit locally.
-    if (refund?.id) {
-      await client.query("UPDATE purchases SET description=$2 WHERE id=$1", [
-        refund_purchase_id,
-        { ...description, refund_id: refund.id },
-      ]);
-    }
-    // we also set new purchase id
-    await client.query("UPDATE purchases SET description=$2 WHERE id=$1", [
-      purchase_id,
-      {
-        ...(isObject(orig_description) ? orig_description : {}),
-        refund_purchase_id,
-      },
-    ]);
-
-    await client.query("COMMIT");
-    await refreshAccountBalanceAndPublishBestEffort({ account_id });
-  } catch (err) {
-    logger.debug("error creating refund", { account_id, invoice_id }, err);
-    await client.query("ROLLBACK");
-    throw err;
-  } finally {
-    client.release();
   }
-
   await sendRefundMessage({
-    account_id,
+    account_id: purchase.account_id,
     purchase_id,
-    amount: costValue.toString(),
-    reason,
-    notes,
-    details: externalPayment
-      ? "The associated Stripe payment was refunded."
-      : "The credit was reversed in the CoCalc account.",
+    amount: settled.amount,
+    reason: settled.request.reason,
+    notes: settled.request.notes,
+    details: "The associated Stripe payment was refunded.",
   });
-
-  return refund_purchase_id;
+  return settled.refund_purchase_id!;
 }
-
 async function refundMembership({
   admin_account_id,
   purchase_id,
@@ -295,7 +255,7 @@ async function refundMembership({
   let refundPurchaseId!: number;
   let subscriptionId!: number;
   try {
-    purchase = await getPurchase(purchase_id, client, true);
+    purchase = await getPurchaseForLocalRefund(purchase_id, client, true);
     const existing = getExistingRefundPurchaseId(purchase.description);
     if (existing != null) {
       await client.query("COMMIT");
@@ -410,7 +370,7 @@ async function refundMembershipPackage({
   let expiredPackage = false;
   let refundedSeats = 0;
   try {
-    purchase = await getPurchase(purchase_id, client, true);
+    purchase = await getPurchaseForLocalRefund(purchase_id, client);
     const existing = getExistingRefundPurchaseId(purchase.description);
     if (existing != null) {
       await client.query("COMMIT");
@@ -584,7 +544,7 @@ async function refundInternalPurchase({
   let purchase: PurchaseRow | undefined;
   let refundPurchaseId: number;
   try {
-    purchase = await getPurchase(purchase_id, client, true);
+    purchase = await getPurchaseForLocalRefund(purchase_id, client);
     const existing = getExistingRefundPurchaseId(purchase.description);
     if (existing != null) {
       await client.query("COMMIT");
@@ -592,6 +552,14 @@ async function refundInternalPurchase({
     }
     if (purchase.service === "refund") {
       throw Error("Refund transactions cannot themselves be refunded");
+    }
+    if (
+      (purchase.service === "credit" || purchase.service === "auto-credit") &&
+      purchase.invoice_id
+    ) {
+      throw Error(
+        "Credit now references a provider payment; retry through the provider refund workflow",
+      );
     }
     if (purchase.cost == null) {
       throw Error(`Transaction ${purchase_id} is not finalized`);
@@ -639,6 +607,40 @@ interface PurchaseRow {
   description: any;
   invoice_id?: string | null;
   service: Service;
+}
+
+async function getPurchaseForLocalRefund(
+  purchase_id: number,
+  client: PoolClient,
+  subscription = false,
+): Promise<PurchaseRow> {
+  // Discover the payer without a row lock, then take account locks before any
+  // purchase/subscription/package rows, just as admission and renewal do.
+  const observed = await getPurchase(purchase_id, client);
+  if (subscription) {
+    await lockMembershipSubscriptionAccount({
+      account_id: observed.account_id,
+      client,
+    });
+  } else {
+    await lockAccountSpending(client, observed.account_id);
+  }
+  const purchase = await getPurchase(purchase_id, client, true);
+  if (purchase.account_id !== observed.account_id) {
+    throw Error("Purchase account changed while preparing refund; retry");
+  }
+  if (
+    getExistingRefundPurchaseId(purchase.description) == null &&
+    purchase.cost != null &&
+    toDecimal(purchase.cost).lt(0)
+  ) {
+    await assertDebitPreservesPrepaidHolds({
+      account_id: purchase.account_id,
+      client,
+      amount: toDecimal(purchase.cost).neg(),
+    });
+  }
+  return purchase;
 }
 
 async function getPurchase(
@@ -743,58 +745,45 @@ async function createOrReuseStripeRefund({
   admin_account_id,
   purchase_id,
   reason,
+  attempt,
 }: {
   stripe: any;
   charge: string;
   admin_account_id: string;
   purchase_id: number;
   reason: Reason;
+  attempt: ProviderRefundAttempt;
 }): Promise<{ id?: string }> {
-  let stripeCharge: any;
-  if (stripe.charges?.retrieve) {
-    stripeCharge = await stripe.charges.retrieve(charge, {
-      expand: ["refunds"],
-    });
-  }
-  const amount = Number(stripeCharge?.amount);
-  const amountRefunded = Number(stripeCharge?.amount_refunded ?? 0);
-  if (
-    stripeCharge?.refunded === true ||
-    (Number.isFinite(amount) && amount > 0 && amountRefunded >= amount)
-  ) {
-    const expandedRefund = stripeCharge?.refunds?.data?.find(
-      ({ status }) => status !== "failed" && status !== "canceled",
-    );
-    if (expandedRefund?.id) {
-      return expandedRefund;
-    }
-    if (stripe.refunds?.list) {
-      const { data } = await stripe.refunds.list({ charge, limit: 100 });
-      const existing = data.find(
-        ({ status }) => status !== "failed" && status !== "canceled",
-      );
-      if (existing?.id) {
-        return existing;
-      }
-    }
-    // The charge is fully refunded in Stripe even if an old API response does
-    // not expose the individual Refund object.
-    return {};
-  }
-
-  const remainingAmount =
-    Number.isFinite(amount) && amount > amountRefunded && amountRefunded > 0
-      ? amount - amountRefunded
-      : undefined;
-  return await stripe.refunds.create(
+  const {
+    amount,
+    amount_refunded: amountRefunded,
+    refund,
+  } = await inspectProviderRefundCharge(stripe, attempt, charge);
+  if (refund) return refund;
+  const bound = await bindProviderRefundRequest(
+    attempt,
     {
       charge,
-      ...(remainingAmount != null ? { amount: remainingAmount } : {}),
-      metadata: { account_id: admin_account_id, purchase_id } as any,
-      reason: reason != "other" ? reason : undefined,
+      amount: amount - amountRefunded,
+      metadata: { account_id: admin_account_id, purchase_id },
+      reason: reason !== "other" ? reason : undefined,
     },
-    { idempotencyKey: `cocalc-refund-purchase-${purchase_id}` },
+    amountRefunded,
   );
+  if (bound.provider_result) return bound.provider_result;
+  // Stripe may prune idempotency keys after 24 hours. Do not issue a fresh
+  // mutation for an old uncertain request; read/reconcile its result instead.
+  if (
+    !bound.dispatched_at ||
+    Date.now() - new Date(bound.dispatched_at).getTime() >= 23 * 60 * 60 * 1000
+  ) {
+    throw Error(
+      "Refund retry window expired; funds remain reserved pending provider reconciliation",
+    );
+  }
+  return await stripe.refunds.create(bound.provider_request!, {
+    idempotencyKey: `cocalc-refund-${bound.id}`,
+  });
 }
 
 function getExistingRefundPurchaseId(description: unknown): number | undefined {
