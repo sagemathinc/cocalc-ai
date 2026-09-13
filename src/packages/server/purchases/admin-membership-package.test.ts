@@ -225,6 +225,78 @@ describe("admin membership package purchase", () => {
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
   });
 
+  it("canonicalizes UUID spelling before funding and reuses the same purchase", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const idempotency_key = `uppercase-${uuid()}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    mockCreatePaymentIntent.mockImplementation(async ({ account_id }) => {
+      const payment_intent = `pi_${uuid()}`;
+      await getPool().query(
+        `INSERT INTO purchases
+           (service, time, account_id, cost, description, invoice_id)
+         VALUES ('credit', NOW(), $1, -20, '{}'::JSONB, $2)`,
+        [account_id, payment_intent],
+      );
+      return {
+        payment_intent,
+        hosted_invoice_url: `https://stripe.test/${payment_intent}`,
+      };
+    });
+    const options = {
+      admin_account_id: admin_account_id.toUpperCase(),
+      user_account_id: user_account_id.toUpperCase(),
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: membershipClass,
+        seat_count: 1,
+        interval: "month" as const,
+      },
+      price: 20,
+      source: "card" as const,
+      reason: "canonical UUID retry",
+      idempotency_key,
+    };
+
+    const created = await adminCreateMembershipPackagePurchase(options);
+    const repeated = await adminCreateMembershipPackagePurchase({
+      ...options,
+      admin_account_id,
+      user_account_id,
+    });
+
+    expect(repeated).toMatchObject({
+      package_id: created.package_id,
+      purchase_id: created.purchase_id,
+      existing: true,
+    });
+    expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: user_account_id,
+        metadata: expect.objectContaining({ admin_account_id }),
+      }),
+    );
+    const { rows } = await getPool().query(
+      `SELECT account_id, invoice_id
+         FROM purchases
+        WHERE id=$1`,
+      [created.purchase_id],
+    );
+    expect(rows).toEqual([
+      {
+        account_id: user_account_id,
+        invoice_id: `admin-membership-package:${admin_account_id}:${idempotency_key}`,
+      },
+    ]);
+  });
+
   it("rejects cross-account reuse of an explicit key before card funding", async () => {
     const admin_account_id = uuid();
     const first_account_id = uuid();

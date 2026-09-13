@@ -33,7 +33,11 @@ import {
   resolveAdminCourseProjectQuoteContext,
   resolveLockedLocalAdminCourseProjectQuoteContext,
 } from "./admin-course-project";
-import { adminMembershipPackageInvoiceId } from "./admin-membership-package-identity";
+import {
+  adminMembershipPackageInvoiceId,
+  normalizeAdminMembershipPackageProduct,
+  normalizeAdminMembershipPackageUuid,
+} from "./admin-membership-package-identity";
 
 export type AdminMembershipPackageSource = "card" | "credit" | "free";
 
@@ -73,6 +77,15 @@ export async function adminGetMembershipPackageQuote({
   product: MembershipPackageProduct;
   trusted_admin?: boolean;
 }): Promise<MembershipPackageQuote> {
+  admin_account_id = normalizeAdminMembershipPackageUuid(
+    admin_account_id,
+    "admin_account_id",
+  );
+  user_account_id = normalizeAdminMembershipPackageUuid(
+    user_account_id,
+    "user_account_id",
+  );
+  product = normalizeAdminMembershipPackageProduct(product);
   if (!trusted_admin && !(await userIsInGroup(admin_account_id, "admin"))) {
     throw Error("must be an admin");
   }
@@ -474,6 +487,15 @@ export default async function adminCreateMembershipPackagePurchase({
   pricing_note,
   trusted_admin = false,
 }: AdminMembershipPackagePurchaseOptions): Promise<AdminMembershipPackagePurchaseResult> {
+  admin_account_id = normalizeAdminMembershipPackageUuid(
+    admin_account_id,
+    "admin_account_id",
+  );
+  user_account_id = normalizeAdminMembershipPackageUuid(
+    user_account_id,
+    "user_account_id",
+  );
+  product = normalizeAdminMembershipPackageProduct(product);
   if (!trusted_admin && !(await userIsInGroup(admin_account_id, "admin"))) {
     throw Error("must be an admin");
   }

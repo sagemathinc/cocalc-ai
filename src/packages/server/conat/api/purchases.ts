@@ -140,6 +140,10 @@ import adminCreateMembershipPackagePurchase0, {
   adminGetMembershipPackageQuote as adminGetMembershipPackageQuote0,
 } from "@cocalc/server/purchases/admin-membership-package";
 import {
+  normalizeAdminMembershipPackageProduct,
+  normalizeAdminMembershipPackageUuid,
+} from "@cocalc/server/purchases/admin-membership-package-identity";
+import {
   verifyDirectStudentCourseProduct,
   verifyDirectStudentCourseProducts,
 } from "@cocalc/server/purchases/direct-student-course-product";
@@ -1517,7 +1521,10 @@ export async function adminGetMembershipPackageQuote({
   user_account_id?: string;
   product?: MembershipPackageProduct;
 } = {}): Promise<MembershipPackageQuote> {
-  const actorId = requireAccount(account_id);
+  const actorId = normalizeAdminMembershipPackageUuid(
+    requireAccount(account_id),
+    "account_id",
+  );
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
   }
@@ -1527,9 +1534,12 @@ export async function adminGetMembershipPackageQuote({
     session_hash,
     allow_actor_impersonation: false,
   });
-  const userAccountId = `${user_account_id ?? ""}`.trim();
-  if (!userAccountId) throw Error("user_account_id is required");
   if (!product) throw Error("product is required");
+  const userAccountId = normalizeAdminMembershipPackageUuid(
+    user_account_id,
+    "user_account_id",
+  );
+  const normalizedProduct = normalizeAdminMembershipPackageProduct(product);
   const homeBay = await resolveTargetAccountHomeBay({
     account_id: actorId,
     user_account_id: userAccountId,
@@ -1538,7 +1548,7 @@ export async function adminGetMembershipPackageQuote({
   const options = {
     actor_account_id: actorId,
     user_account_id: userAccountId,
-    product,
+    product: normalizedProduct,
   };
   if (homeBay !== getConfiguredBayId()) {
     return await createInterBayAccountLocalClient({
@@ -1549,7 +1559,7 @@ export async function adminGetMembershipPackageQuote({
   return await adminGetMembershipPackageQuote0({
     admin_account_id: actorId,
     user_account_id: userAccountId,
-    product,
+    product: normalizedProduct,
   });
 }
 
@@ -2446,7 +2456,10 @@ export async function adminCreateMembershipPackagePurchase({
   idempotency_key?: string;
   pricing_note?: string;
 } = {}): Promise<AdminMembershipPackagePurchaseResult> {
-  const actorId = requireAccount(account_id);
+  const actorId = normalizeAdminMembershipPackageUuid(
+    requireAccount(account_id),
+    "account_id",
+  );
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
   }
@@ -2456,9 +2469,12 @@ export async function adminCreateMembershipPackagePurchase({
     session_hash,
     allow_actor_impersonation: false,
   });
-  const userAccountId = `${user_account_id ?? ""}`.trim();
-  if (!userAccountId) throw Error("user_account_id is required");
   if (!product) throw Error("product is required");
+  const userAccountId = normalizeAdminMembershipPackageUuid(
+    user_account_id,
+    "user_account_id",
+  );
+  const normalizedProduct = normalizeAdminMembershipPackageProduct(product);
   if (source !== "card" && source !== "credit" && source !== "free") {
     throw Error("source must be card, credit, or free");
   }
@@ -2470,7 +2486,7 @@ export async function adminCreateMembershipPackagePurchase({
   const options = {
     actor_account_id: actorId,
     user_account_id: userAccountId,
-    product,
+    product: normalizedProduct,
     price: Number(price),
     source,
     reason: `${reason ?? ""}`,
@@ -2489,7 +2505,7 @@ export async function adminCreateMembershipPackagePurchase({
   return await adminCreateMembershipPackagePurchase0({
     admin_account_id: actorId,
     user_account_id: userAccountId,
-    product,
+    product: normalizedProduct,
     price: Number(price),
     source,
     reason: `${reason ?? ""}`,
