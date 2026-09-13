@@ -174,8 +174,9 @@ export const dpaPolicy: PublicPolicy = {
           </li>
           <li>
             <b>Online backups</b>: References to the project&apos;s ordinary
-            online backups are removed within seven days, after which those
-            backups cannot be restored through the Service.
+            online backups are scheduled for removal after a seven-day retention
+            period. Once removed, those backups cannot be restored through the
+            Service.
           </li>
           <li>
             <b>Disaster-recovery backups</b>: Customer Data may remain in
