@@ -243,6 +243,12 @@ describePg(
                     await import("../owner-resource-routing")
                   ).computeProjectResourcesOnBay(opts),
                 ),
+              computeProjectAuthorizeSsh: (opts) =>
+                onBay(bay, async () =>
+                  (
+                    await import("@cocalc/server/conat/api/compute")
+                  ).authorizeProjectSshKeyOnBay(opts),
+                ),
               computeOwnerMutate: (opts) =>
                 onBay(bay, async () =>
                   (
@@ -654,6 +660,107 @@ describePg(
         ).toEqual({ n: 0 });
       },
     );
+
+    it("routes host-verified project SSH setup to the VM bay and fences revoked access", async () => {
+      const f = await fixture();
+      await pools
+        .get(resourceBay)!
+        .query(
+          "UPDATE compute_vms SET public_hostname='project-ssh.example',bootstrap_revision=1,funding_mode='account-prepaid' WHERE id=$1",
+          [f.vm.id],
+        );
+      const api = await import("@cocalc/server/conat/api/compute");
+      const access = await import("../project-access");
+      const host_id = randomUUID();
+      await pools
+        .get(courseBay)!
+        .query("INSERT INTO project_hosts(id,bay_id) VALUES($1,$2)", [
+          host_id,
+          courseBay,
+        ]);
+      await pools
+        .get(courseBay)!
+        .query("UPDATE projects SET host_id=$2 WHERE project_id=$1", [
+          f.project,
+          host_id,
+        ]);
+      const ssh_public_key = "ssh-ed25519 AAAAPROJECTBAY project-test";
+      await onBay(resourceBay, () =>
+        access.grantComputeVmProjectAccess({
+          owner_account_id: f.student,
+          vm_id: f.vm.id,
+          project_id: f.project,
+          ssh_public_key: "ssh-ed25519 AAAAOLDKEY old-key",
+          created_by_account_id: f.student,
+        }),
+      );
+      const request = {
+        host_id,
+        project_id: f.project,
+        id_or_name: f.vm.id,
+        ssh_public_key,
+        idempotency_key: randomUUID(),
+      };
+      await onBay(courseBay, async () => {
+        await expect(
+          api.authorizeProjectSshKeyFromHost({
+            ...request,
+            host_id: randomUUID(),
+          }),
+        ).rejects.toThrow(/not assigned/);
+        await expect(api.authorizeProjectSshKey(request)).rejects.toThrow(
+          /scoped agent or project-host/,
+        );
+        expect((await api.authorizeProjectSshKeyFromHost(request)).id).toBe(
+          f.vm.id,
+        );
+        expect((await api.authorizeProjectSshKeyFromHost(request)).id).toBe(
+          f.vm.id,
+        );
+      });
+      expect(
+        await row(
+          resourceBay,
+          "SELECT ssh_public_key FROM compute_vm_project_access WHERE vm_id=$1 AND project_id=$2",
+          [f.vm.id, f.project],
+        ),
+      ).toEqual({ ssh_public_key });
+      expect(
+        await row(
+          resourceBay,
+          "SELECT count(*)::int AS n FROM compute_resource_work WHERE resource_id=$1 AND idempotency_key=$2",
+          [f.vm.id, `project-ssh-config:${request.idempotency_key}`],
+        ),
+      ).toEqual({ n: 1 });
+      await onBay(resourceBay, () =>
+        access.revokeComputeVmProjectAccess({
+          owner_account_id: f.student,
+          vm_id: f.vm.id,
+          project_id: f.project,
+        }),
+      );
+      await onBay(courseBay, () =>
+        expect(api.authorizeProjectSshKeyFromHost(request)).rejects.toThrow(
+          /not found|access denied/,
+        ),
+      );
+      // A delayed private message must recheck access, not trust earlier discovery.
+      await expect(
+        remote(resourceBay).computeProjectAuthorizeSsh({
+          project_id: f.project,
+          vm_id: f.vm.id,
+          ssh_public_key,
+          idempotency_key: request.idempotency_key,
+        }),
+      ).rejects.toThrow(/not found|access/);
+      expect(
+        await row(
+          courseBay,
+          "SELECT count(*)::int AS n FROM compute_resource_work WHERE resource_id=$1",
+          [f.vm.id],
+        ),
+      ).toEqual({ n: 0 });
+    });
 
     it("lists and opens the student's existing VM through the public API after account rehome", async () => {
       const f = await approvedMovedVm();

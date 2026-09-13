@@ -5,7 +5,7 @@ not release-ready.
 
 ## Implementation Checkpoint
 
-Latest local validation (2026-09-13, 07:03 UTC): unattended **exhaustion** fallback
+Latest local validation (2026-09-13): unattended **exhaustion** fallback
 passed on GCP VM `249401db-c964-4634-8f31-3c6674d7d120`. The instructor approved
 a grant ceiling equal to existing spent/reserved commitments, preventing further
 renewal. The student separately approved only `course_exhausted`, with a USD 1.50
@@ -13,8 +13,31 @@ personal cap. The normal worker stopped course service, waited for GCP network
 accounting, and activated personal funding at 06:48:29. SSH/Python worked before
 and after restart, including its changed public IP. The original 06:57 stop and
 07:02 deletion deadlines survived the handoff. Independent provider inventory at
-07:03 showed no instance, disk, or address. Final financial settlement is still
-being observed; do not equate physical deletion with released backing.
+07:03 showed no instance, disk, or address. Final personal settlement completed
+at 07:08:44 after the provider network watermark reached deletion. The course
+paid USD 0.03 and personal funding paid USD 0.01; unused resource reservations
+were released. The expired course pool returned USD 1.97 of unused backing.
+
+The independently personally funded home-disk workflow also passed live. VM
+`4e86cb4d-9fbb-4840-9d8d-a058b9f8e0b8` switched from course funding to the
+student's separately approved USD 1.50 VM cap at 07:13:49. The approval explicitly
+preserved disk `cdf84792-31bf-4d59-a72a-278a73bf5e1d` on its existing personal
+funding, outside that cap. SSH after restart confirmed `/home/user` was still the
+separate ext4 disk and its original marker was unchanged. VM deletion left the
+disk detached and intact: independent GCP inventory confirmed only that disk at
+07:18:54. Explicit disk deletion then completed; inventory at 07:20:08 contained
+no instances, disks, or addresses. The temporary student entitlement was restored.
+Final personal VM network settlement is still being observed; resource cleanup
+alone is not evidence that financial backing has been released.
+
+Project-to-VM deploy-key setup now routes from the project bay to the VM's
+owning bay. The origin retains assigned-host or scoped-agent/exact-key checks;
+the resource bay rechecks current project access before updating its key and
+queuing reconciliation. Three-bay PostgreSQL/Conat tests cover an unassigned
+host, an unscoped caller, successful setup, retry without duplicate work, and a
+delayed request after access revocation. The focused run passed 78 tests across
+six suites, and the Conat checks passed 27 tests. These are protocol tests, not
+a new live multi-bay cloud deployment.
 
 Project-scoped discovery and owner SSH/project-access controls now route to the
 resource bay. Actual three-bay public API tests cover denied project membership,
@@ -38,8 +61,8 @@ The live pending and active personal-funding panels passed keyboard/focus and
 scoped axe checks at 320/720/1440 pixels in both themes, plus actual Chromium
 200% zoom. Zoom screenshots use direct viewport capture to avoid the browser's
 full-page screenshot cropping. This is not an iOS/iPad or full application audit.
-A new small live run is checking independently personally funded home storage;
-its resources must be cleaned before this validation is considered complete.
+The independently personally funded home-storage test is described above;
+its physical resources have all been cleaned up.
 The existing project notebook was saved and reloaded through the live notebook
 backend after exhaustion-test VM deletion; its original marker remained intact.
 
@@ -387,17 +410,21 @@ The earlier diagnostic-assisted fallback VM
 `c3da759c-7acd-4575-b927-de54c7b67fb6` was deleted and settled. The fresh
 unattended run described at the top supersedes that attempt as fallback evidence.
 
-Remaining implementation/validation includes live independent personal home volumes,
-live volume retention expiry, live exhaustion-triggered fallback, transfer/payment
-provenance validation, automatic payment collection, and optional currency display. The
+Remaining implementation/validation includes live volume retention expiry,
+transfer/payment provenance validation, automatic payment collection, and the
+complete live cross-bay/device/GPU validation matrix. Creating a new VM with an
+existing home disk on another bay after account rehome still needs a co-placement
+implementation decision and validation; remote owner controls and existing
+resource handoff do not prove that creation path. Optional currency display is
+not a USD pilot prerequisite. The
 isolated hub has no Stripe configuration; the maintainer has been asked to
 configure test mode without sending keys in chat. Fictitious credits are correctly
 ineligible for credit transfer and are not a substitute for captured-payment
 validation. Nothing in this checkpoint enables production.
 
-Other work in progress includes pool changes, nonbinding recommendations,
-historical student balances, personal funding handoff, transfers, sponsored
-storage, and multibay/rehome behavior. Do not infer completion from the presence
+Pool changes, nonbinding recommendations, historical student balances, personal
+funding handoff, transfers, sponsored storage, and multibay/rehome behavior have
+implementation and focused evidence recorded above. Do not infer completion from the presence
 of a UI component, table, or passing unit test. The independent review and pilot
 gates remain outstanding.
 

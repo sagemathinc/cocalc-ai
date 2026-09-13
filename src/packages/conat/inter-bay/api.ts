@@ -4238,6 +4238,13 @@ export interface ComputeProjectResourcesRequest {
   kind: "vm" | "volume";
   include_deleted?: boolean;
 }
+export interface ComputeProjectSshRequest {
+  project_id: string;
+  vm_id: string;
+  ssh_public_key: string;
+  idempotency_key: string;
+  agent_auth?: import("@cocalc/util/compute-agent-auth").ComputeAgentAuth;
+}
 export type ComputeOwnerResourcesResult =
   | {
       kind: "vm";
@@ -4296,6 +4303,9 @@ export type ComputeOwnerMutationResult = {
 );
 
 export interface InterBayComputeFundingApi {
+  computeProjectAuthorizeSsh: (
+    opts: ComputeProjectSshRequest,
+  ) => Promise<import("@cocalc/conat/hub/api/compute").ComputeVm>;
   computeOwnerCheckAgentGrant: (
     opts: import("@cocalc/util/compute-agent-auth").ComputeAgentGrantCheck,
   ) => Promise<
@@ -8241,6 +8251,8 @@ export function createInterBayAccountLocalClient({
       computeFundingClient.computeOwnerCheckAgentGrant(opts),
     computeProjectResources: (opts) =>
       computeFundingClient.computeProjectResources(opts),
+    computeProjectAuthorizeSsh: (opts) =>
+      computeFundingClient.computeProjectAuthorizeSsh(opts),
     computeOwnerMutate: (opts) => computeFundingClient.computeOwnerMutate(opts),
     computeOwnerCheckFreshAuth: (opts) =>
       computeFundingClient.computeOwnerCheckFreshAuth(opts),
@@ -8753,6 +8765,8 @@ export function createInterBayAccountLocalHandler({
         computeOwnerCheckAgentGrant: (opts) =>
           impl.computeOwnerCheckAgentGrant(opts),
         computeProjectResources: (opts) => impl.computeProjectResources(opts),
+        computeProjectAuthorizeSsh: (opts) =>
+          impl.computeProjectAuthorizeSsh(opts),
         computeOwnerMutate: (opts) => impl.computeOwnerMutate(opts),
         computeOwnerCheckFreshAuth: (opts) =>
           impl.computeOwnerCheckFreshAuth(opts),

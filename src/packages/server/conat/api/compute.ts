@@ -4,6 +4,9 @@
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import type { ComputeProjectSshRequest } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import {
   routeComputeOwnerMutation,
   requireComputeOwnerFreshAuth,
@@ -2341,11 +2344,6 @@ async function authorizeVerifiedProjectSshKey(opts: {
   if (!projectId) throw new Error("must be a project");
   const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
   if (!key) throw new Error("ssh_public_key is required");
-  const vm = await resolveProjectComputeVm({
-    project_id: projectId,
-    id_or_name: `${opts.id_or_name ?? ""}`.trim(),
-  });
-  if (!vm) throw new Error(`compute VM '${opts.id_or_name}' not found`);
   if (!opts.key_verified_by_host) {
     if (!opts.agent_auth) {
       throw Object.assign(
@@ -2368,6 +2366,45 @@ async function authorizeVerifiedProjectSshKey(opts: {
       );
     }
   }
+  const discovered = routeComputeOwnerRead()
+    ? selectOwnedComputeResource(
+        await listComputeProjectResources({
+          project_id: projectId,
+          kind: "vm",
+        }),
+        opts.id_or_name,
+      )
+    : undefined;
+  if (discovered && discovered.owning_bay_id !== getConfiguredBayId()) {
+    await requireAgentComputeGrant({
+      auth: opts.agent_auth,
+      action: "data-plane",
+      project_id: projectId,
+      vm_id: discovered.id,
+    });
+    const result = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: discovered.owning_bay_id,
+      timeout: 15_000,
+    }).computeProjectAuthorizeSsh({
+      project_id: projectId,
+      vm_id: discovered.id,
+      ssh_public_key: key,
+      idempotency_key: opts.idempotency_key,
+      agent_auth: opts.agent_auth,
+    });
+    if (
+      result.id !== discovered.id ||
+      result.owning_bay_id !== discovered.owning_bay_id
+    )
+      throw Error("Compute resource authority changed; refresh and retry.");
+    return result;
+  }
+  const vm = await resolveProjectComputeVm({
+    project_id: projectId,
+    id_or_name: discovered?.id ?? `${opts.id_or_name ?? ""}`.trim(),
+  });
+  if (!vm) throw new Error(`compute VM '${opts.id_or_name}' not found`);
   await requireAgentComputeGrant({
     auth: opts.agent_auth,
     action: "data-plane",
@@ -2399,6 +2436,28 @@ async function authorizeVerifiedProjectSshKey(opts: {
     idempotency_key: `project-ssh-config:${opts.idempotency_key}`,
   });
   return await publicVm(vm);
+}
+
+/** Private fabric entry: the origin verified the exact deploy key using the
+ * project host or scoped agent. Recheck live project access on the resource bay. */
+export async function authorizeProjectSshKeyOnBay(
+  opts: ComputeProjectSshRequest,
+) {
+  const { rows } = await getPool().query(
+    "SELECT id FROM compute_vms WHERE id=$1 AND owning_bay_id=$2 AND deleted_at IS NULL",
+    [opts.vm_id, getConfiguredBayId()],
+  );
+  if (rows.length !== 1) throw Error("Compute VM not found on this bay.");
+  return withLocalComputeResource(() =>
+    authorizeVerifiedProjectSshKey({
+      project_id: opts.project_id,
+      id_or_name: opts.vm_id,
+      ssh_public_key: opts.ssh_public_key,
+      idempotency_key: opts.idempotency_key,
+      agent_auth: opts.agent_auth,
+      key_verified_by_host: true,
+    }),
+  );
 }
 
 export async function authorizeProjectSshKey(opts: {
