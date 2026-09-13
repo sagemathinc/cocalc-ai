@@ -3,6 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { SCHEMA } from "@cocalc/util/schema";
 import { syncTableSchemaColumnInvariants } from "@cocalc/database/postgres/schema/column-invariants";
 import getPool, { getClient } from "@cocalc/database/pool";
@@ -432,6 +433,59 @@ it("does not apply an approved handoff after independent home funding changes", 
   expect((await getComputeVolumeById(f.volumeId))!.funding_mode).toBe(
     "account-postpaid",
   );
+});
+
+it("retries contended meter locks before financial work, without repeating a void callback", async () => {
+  const db = getClient();
+  await db.connect();
+  const id = randomUUID();
+  const key = `compute-funding-meter:vm:${id}`;
+  const work = jest.fn(async () => {});
+  let pending: Promise<unknown> | undefined;
+  try {
+    await db.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
+    await withFundingResourceMeterLock("vm", id, work);
+    expect(work).not.toHaveBeenCalled();
+    pending = withFundingResourceMeterLock("vm", id, work, {
+      retryContention: true,
+    });
+    await delay(75);
+    expect(work).not.toHaveBeenCalled();
+    await db.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+    await pending;
+    expect(work).toHaveBeenCalledTimes(1);
+    await withFundingResourceMeterLock("vm", id, work, {
+      retryContention: true,
+    });
+    expect(work).toHaveBeenCalledTimes(2);
+  } finally {
+    await db.end();
+    await pending;
+  }
+});
+
+it("leaves persistently busy meter locks for a later sweep and does not retry failed work", async () => {
+  const db = getClient();
+  await db.connect();
+  const id = randomUUID();
+  const key = `compute-funding-meter:vm:${id}`;
+  const work = jest.fn(async () => {
+    throw new Error("handoff unavailable");
+  });
+  try {
+    await db.query("SELECT pg_advisory_lock(hashtext($1))", [key]);
+    await expect(
+      withFundingResourceMeterLock("vm", id, work, { retryContention: true }),
+    ).resolves.toBeUndefined();
+    expect(work).not.toHaveBeenCalled();
+    await db.query("SELECT pg_advisory_unlock(hashtext($1))", [key]);
+    await expect(
+      withFundingResourceMeterLock("vm", id, work, { retryContention: true }),
+    ).rejects.toThrow("handoff unavailable");
+    expect(work).toHaveBeenCalledTimes(1);
+  } finally {
+    await db.end();
+  }
 });
 
 it("upgrades existing VM-only consents to permit exactly one standalone volume", async () => {
@@ -1057,7 +1111,22 @@ it("requires approved consent, reserves personal backing before worker restart, 
   expect(publicVmFundingStatus((await getComputeVmById(f.vmId))!)!.state).toBe(
     "settling",
   );
-  await recoverTerminalCourseVmFunding();
+  // Other fixtures leave terminal VM rows behind. Recovery is paginated, so
+  // this randomly assigned VM need not occur in the first bounded batch.
+  const {
+    rows: [{ count }],
+  } = await getPool().query<{ count: string }>(
+    "SELECT count(*) FROM compute_vms WHERE owning_bay_id=$1 AND deleted_at IS NOT NULL",
+    [getConfiguredBayId()],
+  );
+  for (let batch = 0; batch <= Math.ceil(Number(count) / 20); batch++) {
+    await recoverTerminalCourseVmFunding();
+    if (
+      publicVmFundingStatus((await getComputeVmById(f.vmId))!)!
+        .committed_usd === "0.0000000000"
+    )
+      break;
+  }
   expect(
     publicVmFundingStatus((await getComputeVmById(f.vmId))!)!.committed_usd,
   ).toBe("0.0000000000");

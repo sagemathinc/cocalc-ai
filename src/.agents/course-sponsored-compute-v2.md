@@ -5,6 +5,19 @@ not release-ready.
 
 ## Implementation Checkpoint
 
+A later live automatic-fallback test approved only the `course_expired` reason.
+The worker stopped the sponsored instance before the financial deadline and
+prepared the personal handoff, but activation stalled after the network usage
+watermark had caught up. Running the same handoff sweep separately completed it;
+the VM restarted and Python execution over SSH succeeded under personal funding.
+The original scheduled stop also remained effective after the payer changed.
+This is diagnostic-assisted validation, not proof of unattended fallback.
+Metering and handoff maintenance start on the same worker tick and contend on
+the same nonblocking resource lock. Handoff now retries that contention briefly
+before financial work; normal metering remains nonblocking. PostgreSQL checks
+cover eventual acquisition, persistent contention, and callback-at-most-once
+behavior. A fresh unattended live run is still required.
+
 The course budget tab, allocation preview and approval-intent APIs, student
 funding selection, VM admission/billing integration, and separate financial
 approval service are implemented on this branch. Focused tests exercise these

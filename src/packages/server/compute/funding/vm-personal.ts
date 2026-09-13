@@ -926,14 +926,21 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             consent.handoff_operation_id!,
           );
         });
-      await withFundingResourceMeterLock("vm", pending.vm_id, async () => {
-        const volumeId = pending.terms.home_volume_ids[0];
-        if (volumeId) {
-          await withFundingResourceMeterLock("volume", volumeId, handoff);
-        } else {
-          await handoff();
-        }
-      });
+      await withFundingResourceMeterLock(
+        "vm",
+        pending.vm_id,
+        async () => {
+          const volumeId = pending.terms.home_volume_ids[0];
+          if (volumeId) {
+            await withFundingResourceMeterLock("volume", volumeId, handoff, {
+              retryContention: true,
+            });
+          } else {
+            await handoff();
+          }
+        },
+        { retryContention: true },
+      );
     } catch (err) {
       logger.warn("personal funding handoff remains pending", {
         consent_id: pending.id,
