@@ -169,14 +169,19 @@ export const dpaPolicy: PublicPolicy = {
         </p>
         <ul>
           <li>
-            <b>Production data</b>: Permanent project deletion removes the live
-            project data and metadata upon completion of the deletion workflow.
+            <b>Production data</b>: Permanent project deletion removes the
+            active project record and initiates cleanup of its live data. Host
+            cleanup may complete later if a host is unavailable or cleanup
+            fails. Deletion records and associated metadata are retained to
+            document and enforce deletion.
           </li>
           <li>
-            <b>Online backups</b>: References to the project&apos;s ordinary
-            online backups are scheduled for removal after a seven-day retention
-            period. Once removed, those backups cannot be restored through the
-            Service.
+            <b>Online backups</b>: By default, references to the project&apos;s
+            ordinary online backups are scheduled for removal after a seven-day
+            retention period. A different retention period may be requested when
+            deleting the project. Processing failures can delay removal and may
+            require operator intervention. Once removed, those backups cannot be
+            restored through the Service.
           </li>
           <li>
             <b>Disaster-recovery backups</b>: Customer Data may remain in
