@@ -82,6 +82,11 @@ it("requires authoritative owner, named resources and generation/epoch in review
         {
           id: randomUUID(),
           name: "unapproved",
+          funding_epoch: randomUUID(),
+          resource_generation: 1,
+          attachment_generation: 1,
+          size_gb: 10,
+          hourly_usd: "0.01",
           storage_delete_at: review.storage_delete_at,
         },
       ],

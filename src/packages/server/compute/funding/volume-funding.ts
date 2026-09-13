@@ -16,6 +16,7 @@ import {
   requireSponsoredVmAdmission,
 } from "./vm-funding";
 import { fundingConflict } from "./vm-reservations";
+import { withFundingResourceMeterLock } from "./resource-meter-lock";
 
 export const volumeFunding = (v: ComputeVolumeRow) =>
   v.metadata.billing.course_funding;
@@ -34,7 +35,7 @@ export function courseVolumeBinding(
   if (
     !binding ||
     binding.resource_kind !== "compute-volume" ||
-    binding.source.kind !== "course" ||
+    !["course", "personal"].includes(binding.source.kind) ||
     binding.resource_id !== volume.id ||
     binding.owner_account_id !== volume.owner_account_id ||
     volume.owning_bay_id !== getConfiguredBayId() ||
@@ -95,12 +96,16 @@ export function publicVolumeFundingStatus(
   const spent = data.spent_usd ?? "0";
   const committed = data.committed_usd ?? undefined;
   return {
-    source: {
-      kind: "course",
-      pool_id: data.source.pool_id,
-      grant_id: data.source.grant_id,
-    },
-    label: "Course funding",
+    source:
+      data.source.kind === "personal"
+        ? { kind: "personal", consent_id: data.source.consent_id }
+        : {
+            kind: "course",
+            pool_id: data.source.pool_id,
+            grant_id: data.source.grant_id,
+          },
+    label:
+      data.source.kind === "personal" ? "Personal funding" : "Course funding",
     funding_version: data.funding_epoch,
     state: volume.deleted_at
       ? committed != null && toDecimal(committed).eq(0)
@@ -283,6 +288,12 @@ export async function meterCourseVolume(
   volume: ComputeVolumeRow,
 ): Promise<void> {
   if (!hasCourseVolumeFunding(volume)) return;
+  await withFundingResourceMeterLock("volume", volume.id, () =>
+    meterLockedVolume(volume),
+  );
+}
+
+async function meterLockedVolume(volume: ComputeVolumeRow): Promise<void> {
   const {
     rows: [current],
   } = await getPool().query<ComputeVolumeRow & { meter_as_of: Date }>(
@@ -309,6 +320,32 @@ export async function meterCourseVolume(
   let commitmentKnown = !(volumeFunding(volume).growth ?? []).some(
     (slice) => !slice.binding,
   );
+  // Retain old payer obligations until each cutover has settled. Replays route
+  // to that payer; a lost reply cannot move its usage onto the new source.
+  for (const previous of volumeFunding(volume).history ?? []) {
+    const transfer = new Date(previous.transferred_at);
+    const runEnd = new Date(
+      Math.max(
+        Date.parse(previous.started_at),
+        Math.min(transfer.valueOf(), Date.parse(previous.service_ended_at)),
+      ),
+    );
+    const result = await (
+      await payerApi(previous.binding.payer_account_id)
+    ).settleComputeVmFunding({
+      account_id: previous.binding.payer_account_id,
+      binding: previous.binding,
+      meter_as_of: current.meter_as_of.toISOString(),
+      running_started_at: previous.started_at,
+      running_until: runEnd.toISOString(),
+      stopped_until: transfer.toISOString(),
+      transferred_at: previous.transferred_at,
+      successor_reservation_id: previous.successor_binding.reservation_id,
+      successor_binding: previous.successor_binding,
+    });
+    if (result.committed_usd == null) commitmentKnown = false;
+    else committed = committed.plus(result.committed_usd);
+  }
   for (const binding of volumeFundingBindings(volume)) {
     const slice = (volumeFunding(volume).growth ?? []).find(
       (s) => s.binding?.reservation_id === binding.reservation_id,
@@ -317,7 +354,9 @@ export async function meterCourseVolume(
       ? slice.started_at
         ? new Date(slice.started_at)
         : undefined
-      : volume.ready_at;
+      : volumeFunding(volume).started_at
+        ? new Date(volumeFunding(volume).started_at)
+        : volume.ready_at;
     // Disk existence, unlike running compute, continues between observations.
     // Its persisted ready/deleted boundaries exclude failed provider creation.
     const runEnd = new Date(

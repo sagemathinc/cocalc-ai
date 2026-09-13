@@ -35,6 +35,12 @@ export interface VmPersonalFundingPreview {
   protected_storage_usd: string;
   egress_cap_usd: string;
   available_usd: string;
+  home_volumes?: {
+    id: string;
+    name: string;
+    hourly_usd: string;
+    storage_delete_at: string;
+  }[];
   as_of: string;
 }
 

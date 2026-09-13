@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { withFundingResourceMeterLock } from "./resource-meter-lock";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -366,6 +367,15 @@ export async function meterCourseVm(
   egress?: { bytes: number; complete_through: string; finalized: boolean },
 ) {
   if (!hasCourseVmFunding(vm)) return;
+  return withFundingResourceMeterLock("vm", vm.id, () =>
+    meterLockedVm(vm, egress),
+  );
+}
+
+async function meterLockedVm(
+  vm: ComputeVmRow,
+  egress?: { bytes: number; complete_through: string; finalized: boolean },
+) {
   const expectedEpoch = vm.metadata.billing.course_funding.funding_epoch;
   // Read state and all generation boundaries in one database snapshot. Callers
   // routinely hold a VM object from before provider creation or shutdown.

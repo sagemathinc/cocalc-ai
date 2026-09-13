@@ -118,8 +118,9 @@ export default function VolumeFundingStatus({
             children: source
               ? funding?.label ||
                 funding?.payer_account_id ||
-                source.payer_account_id ||
-                "Course sponsor"
+                (source.kind === "course"
+                  ? source.payer_account_id || "Course sponsor"
+                  : volume.owner_account_id)
               : volume.funding_mode === "site-funded"
                 ? "Site"
                 : volume.owner_account_id,

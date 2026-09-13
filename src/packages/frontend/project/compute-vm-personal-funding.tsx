@@ -390,6 +390,27 @@ export default function VmPersonalFunding({
                   {new Date(preview.terms.ends_at).toLocaleString()}
                 </Descriptions.Item>
               </Descriptions>
+              {(preview.home_volumes ?? []).map((volume) => (
+                <section
+                  key={volume.id}
+                  aria-label={`Personal storage: ${volume.name}`}
+                >
+                  <Typography.Text strong>{volume.name}</Typography.Text>
+                  <Descriptions size="small" column={1}>
+                    <Descriptions.Item label="Home volume hourly rate">
+                      {moneyToCurrency(volume.hourly_usd, 4)}
+                    </Descriptions.Item>
+                    <Descriptions.Item label="Latest storage deletion">
+                      {new Date(volume.storage_delete_at).toLocaleString()}
+                    </Descriptions.Item>
+                  </Descriptions>
+                  <Typography.Paragraph>
+                    Deleting the VM does not delete this disk. Storage uses the
+                    same personal cap and continues under its own funding
+                    deadline. VM files are not automatically backed up.
+                  </Typography.Paragraph>
+                </section>
+              ))}
               {previewStale && (
                 <Alert
                   type="warning"

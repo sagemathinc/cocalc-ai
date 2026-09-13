@@ -111,6 +111,7 @@ export async function createVmWithHomeVolume({
     if (
       values.funding_source &&
       (!source ||
+        source.kind !== "course" ||
         source.pool_id !== values.funding_source.pool_id ||
         source.grant_id !== values.funding_source.grant_id ||
         (source.payer_account_id != null &&

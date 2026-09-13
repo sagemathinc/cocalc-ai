@@ -27,7 +27,16 @@ export interface PersonalVmApprovalReview {
   protected_storage_usd: string;
   egress_cap_usd: string;
   storage_delete_at: string;
-  home_volumes: { id: string; name: string; storage_delete_at: string }[];
+  home_volumes: {
+    id: string;
+    name: string;
+    funding_epoch: string;
+    resource_generation: number;
+    attachment_generation: number;
+    size_gb: number;
+    hourly_usd: string;
+    storage_delete_at: string;
+  }[];
 }
 
 export interface VmPersonalFundingApprovalHandler {
@@ -134,6 +143,19 @@ export function validatePersonalVmApprovalReview(
   fundingAmount(review.protected_storage_usd);
   fundingAmount(review.egress_cap_usd);
   fundingDate(review.storage_delete_at);
-  review.home_volumes.forEach((v) => fundingDate(v.storage_delete_at));
+  review.home_volumes.forEach((v) => {
+    fundingDate(v.storage_delete_at);
+    fundingAmount(v.hourly_usd);
+    fundingId(v.funding_epoch, "Volume funding epoch");
+    if (
+      !Number.isSafeInteger(v.resource_generation) ||
+      v.resource_generation < 1 ||
+      !Number.isSafeInteger(v.attachment_generation) ||
+      v.attachment_generation < 0 ||
+      !Number.isSafeInteger(v.size_gb) ||
+      v.size_gb < 1
+    )
+      throw new Error("Personal volume identity or size unavailable");
+  });
   return review;
 }

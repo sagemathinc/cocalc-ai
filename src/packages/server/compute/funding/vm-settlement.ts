@@ -185,7 +185,10 @@ export async function settleComputeVmFundingLocal(
       fundingConflict(
         "Egress watermark cannot rewind or extend into the future.",
       );
-    if (previous?.running_started_at) {
+    // A confirmed cutover is authoritative even if an older worker observed
+    // the prior epoch beyond it. The charge calculation below still refuses
+    // any reversal of an already-posted charge; that needs reconciliation.
+    if (previous?.running_started_at && !successorConfirmed) {
       if (
         runEnd < new Date(previous.running_until) ||
         (previous.stopped_until &&

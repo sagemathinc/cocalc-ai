@@ -125,7 +125,46 @@ deleted resources remain financially "settling" until release is confirmed.
 The bounded recovery sweep refreshes older closed projections without new holds
 or charges. This was verified on the deleted live VM and volume above.
 
-Remaining implementation/validation includes personal home-volume takeover,
+Attached course-funded home volumes can now be included in the same explicit
+personal approval as their VM. The trusted approval names the disk, rate, and
+latest deletion date. Admission rechecks its size, attachment generation, funding
+epoch, and owner. VM and disk receive separate reservations atomically within the
+approved combined cap. VM deletion does not cancel the surviving disk's approved
+funding or delete the disk. Automatic fallback with a home disk is restricted to
+the same course allowance; independently funded disks require an immediate review.
+
+A real GCP test on September 13 used VM
+`25e9ce7f-ff73-452b-83d0-8df0a3b4fb6b` and 10 GB home volume
+`c2f982b5-bab5-45c6-b74d-245731e5cfc2`. Separate-origin approval switched both at
+01:45 UTC, reserving USD 1.37 under a USD 1.50 personal cap. The retained VM
+restarted and stopped on its original timer at 01:50 UTC. Provider inventory at
+01:52 showed the VM and boot disk gone and the detached home volume retained.
+Explicit student deletion removed that disk; inventory at 01:54 confirmed no
+remaining instance, disk, or address. This run did not repeat SSH after handoff.
+
+The live run exposed a meter/cutover race: an old disk snapshot could meter past
+the committed cutover and prevent release. VM/disk meters and handoff now acquire
+owning-bay session locks before financial transactions, including across payer
+RPCs; a busy pass retries on the next sweep. A confirmed successor can reconcile
+a legacy late observation only without reversing a posted charge. The normal
+worker recovered this test's reservation without direct financial database edits.
+At 01:58, all four reservations were settled: course segments and short disk use
+rounded to zero; personal VM use cost USD 0.01, and all unused backing was released.
+The run also exposed a deletion date exceeding its approval; new reservations
+are capped at the reviewed date. That correction is PostgreSQL-tested, not yet
+verified in another live handoff.
+
+The focused set now passes 91 tests, including real-PostgreSQL concurrent meters,
+volume-before-VM row ordering, stale review rejection, atomic cap rollback,
+growth-slice settlement, and three-bay handoff with lost replies. Fresh funding
+panels and the isolated approval page passed keyboard/focus and axe checks at
+320/720/1440 pixels in light/dark mode where supported. The latest full static
+build passed before the final server-only meter locking fix; server typecheck
+also passed afterward. This is not the complete zoom/device matrix or an
+independent review.
+
+Remaining implementation/validation includes standalone volume extension or
+takeover after VM deletion, pre-existing independent personal home volumes,
 live volume retention expiry, automatic fallback/exhaustion, transfer/payment
 provenance validation, bounded postpaid workflows, and currency display. The
 isolated hub has no Stripe configuration; the maintainer has been asked to

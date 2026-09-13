@@ -81,7 +81,9 @@ export async function reserveCourseVolumeGrowth(
   if (!slice && opts.size_gb === volume.size_gb) return volume;
   const base = courseVolumeBinding(volume);
   if (base.source.kind !== "course")
-    fundingConflict("Unsupported volume payer.");
+    fundingConflict(
+      "This personal approval covers the current disk size only. A larger disk needs a new storage authorization.",
+    );
   if (!slice) {
     if (
       volumeGrowth(volume).some((s) => !s.started_at) ||

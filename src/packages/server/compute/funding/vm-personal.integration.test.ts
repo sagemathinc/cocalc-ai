@@ -3,7 +3,7 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
-import getPool from "@cocalc/database/pool";
+import getPool, { getClient } from "@cocalc/database/pool";
 import { before, after } from "@cocalc/server/test";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getComputeVmById, updateComputeInstance } from "../db";
@@ -34,8 +34,22 @@ import { requestScheduledVmState } from "../scheduled-stop";
 import type { VmPersonalFundingTerms } from "@cocalc/util/compute-vm-funding";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import * as exposure from "./exposure";
+import { withFundingResourceMeterLock } from "./resource-meter-lock";
 import { settleComputeVmFundingLocal } from "./vm-settlement";
 import { recoverTerminalCourseVmFunding } from "./vm-worker-recovery";
+import { getComputeVolumeById } from "../volume-db";
+import {
+  reserveCourseVolumeGrowth,
+  recordCourseVolumeGrowth,
+} from "./volume-growth";
+import {
+  reserveCourseVolume,
+  courseVolumeBinding,
+  meterCourseVolume,
+  requireCourseVolumeService,
+  endCourseVolumeService,
+  publicVolumeFundingStatus,
+} from "./volume-funding";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -53,10 +67,23 @@ jest.mock("@cocalc/server/bay-directory", () => ({
   }),
 }));
 
-beforeAll(async () => before({ noConat: true }), 60_000);
+const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+beforeAll(async () => {
+  process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "personal-volume-funding-test";
+  await before({ noConat: true });
+}, 60_000);
 const fixtures = fundingResourceFixtures();
+const homeFixtureIds = new Set<string>();
 afterEach(async () => {
   jest.restoreAllMocks();
+  for (const id of homeFixtureIds) {
+    await getPool().query(
+      "UPDATE compute_vms SET home_volume_id=NULL,desired_state='deleted',deleted_at=NOW() WHERE home_volume_id=$1",
+      [id],
+    );
+    await getPool().query("DELETE FROM compute_volumes WHERE id=$1", [id]);
+  }
+  homeFixtureIds.clear();
   await fixtures.cleanup();
 });
 afterAll(async () => {
@@ -64,6 +91,8 @@ afterAll(async () => {
     await fixtures.cleanup();
   } finally {
     await after();
+    if (deployment == null) delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+    else process.env.COCALC_COMPUTE_DEPLOYMENT_ID = deployment;
   }
 });
 
@@ -173,6 +202,392 @@ async function fixture(provider: "nebius" | "gcp" = "nebius") {
   };
   return { payer, student, vmId, consentId, binding, terms, opts };
 }
+
+async function fixtureWithHome() {
+  const f = await fixture("gcp");
+  const volumeId = randomUUID(),
+    epoch = randomUUID();
+  homeFixtureIds.add(volumeId);
+  await getPool().query(
+    `INSERT INTO compute_volumes (id,name,owner_account_id,owning_bay_id,provider,region,zone,role,funding_mode,
+    size_gb,desired_size_gb,effective_size_gb,state,desired_state,attachment_state,attached_vm_id,attachment_generation,created_at,ready_at,metadata)
+    VALUES ($1,'personal-home',$2,$3,'gcp','us-central1','us-central1-a','home','account-prepaid',10,10,10,'ready','ready','attached',$4,1,NOW(),NOW()-interval '1 minute',$5)`,
+    [
+      volumeId,
+      f.student,
+      getConfiguredBayId(),
+      f.vmId,
+      {
+        billing: {
+          rate: {
+            hourly_cost_usd: "0.01",
+            pricing_snapshot: { provider: "gcp" },
+          },
+          course_funding: {
+            source: { ...f.binding.source, payer_account_id: f.payer },
+            funding_epoch: epoch,
+          },
+        },
+      },
+    ],
+  );
+  const volume = await reserveCourseVolume(
+    (await getComputeVolumeById(volumeId))!,
+  );
+  await requireCourseVolumeService(volume, true);
+  await getPool().query(
+    "UPDATE compute_funding_reservations SET dispatched_at=NOW()-interval '2 minutes' WHERE id=$1",
+    [courseVolumeBinding(volume).reservation_id],
+  );
+  await getPool().query(
+    "UPDATE compute_vms SET home_volume_id=$2 WHERE id=$1",
+    [f.vmId, volumeId],
+  );
+  f.terms.home_volume_ids = [volumeId];
+  await getPool().query(
+    "UPDATE compute_vm_personal_consents SET terms=$2,review=$3 WHERE id=$1",
+    [
+      f.consentId,
+      f.terms,
+      {
+        home_volumes: [
+          {
+            id: volumeId,
+            name: volume.name,
+            funding_epoch: epoch,
+            resource_generation: 1,
+            attachment_generation: 1,
+            size_gb: 10,
+            hourly_usd: "0.01",
+          },
+        ],
+      },
+    ],
+  );
+  return { ...f, volumeId, volume, volumeBinding: courseVolumeBinding(volume) };
+}
+
+async function stopForHomeHandoff(
+  f: Awaited<ReturnType<typeof fixtureWithHome>>,
+) {
+  await switchVmPersonalFunding(f.opts);
+  await getPool().query(
+    `UPDATE compute_vms SET state='stopped',stopped_at=NOW(),
+    metadata=jsonb_set(metadata,'{billing,egress}',jsonb_build_object('metered_through_at',clock_timestamp(),'total_bytes',0)) WHERE id=$1`,
+    [f.vmId],
+  );
+}
+
+it("hands off the reviewed home disk once, settles its old payer, and retains independent storage after VM deletion", async () => {
+  const f = await fixtureWithHome();
+  f.terms.ends_at = new Date(Date.now() + 20 * 60_000).toISOString();
+  await getPool().query(
+    "UPDATE compute_vm_personal_consents SET terms=$2 WHERE id=$1",
+    [f.consentId, f.terms],
+  );
+  const preview = await previewVmPersonalFunding({
+    account_id: f.student,
+    terms: f.terms,
+  });
+  expect(preview.home_volumes).toEqual([
+    expect.objectContaining({ id: f.volumeId, hourly_usd: "0.01" }),
+  ]);
+  await stopForHomeHandoff(f);
+  await Promise.all([
+    processVmPersonalFundingHandoffs(),
+    processVmPersonalFundingHandoffs(),
+  ]);
+  const volume = (await getComputeVolumeById(f.volumeId))!;
+  const next = courseVolumeBinding(volume);
+  expect(next.source).toEqual({ kind: "personal", consent_id: f.consentId });
+  expect(next.resource_generation).toBe(2);
+  expect(next.reservation_id).not.toBe(f.consentId);
+  expect(next.egress_usd).toBe("0");
+  expect(Date.parse(next.storage_delete_at)).toBeLessThanOrEqual(
+    Date.parse(preview.home_volumes![0].storage_delete_at),
+  );
+  expect(
+    (
+      await getPool().query(
+        "SELECT id FROM compute_funding_reservations WHERE payer_account_id=$1",
+        [f.student],
+      )
+    ).rows,
+  ).toHaveLength(2);
+  await requireCourseVolumeService(volume, true, true);
+  await meterCourseVolume(volume);
+  await meterCourseVolume(volume);
+  const old = (
+    await getPool().query(
+      "SELECT state,released_usd,pricing_snapshot FROM compute_funding_reservations WHERE id=$1",
+      [f.volumeBinding.reservation_id],
+    )
+  ).rows[0];
+  expect(old.state).toBe("settled");
+  expect(Number(old.released_usd)).toBeGreaterThan(0);
+  expect(old.pricing_snapshot.meter.transferred_at).toBe(
+    volume.metadata.billing.course_funding.started_at,
+  );
+  await getPool().query(
+    "UPDATE compute_vms SET desired_state='deleted',deleted_at=NOW() WHERE id=$1",
+    [f.vmId],
+  );
+  await processVmPersonalFundingHandoffs();
+  expect(
+    (await getVmPersonalFunding({ account_id: f.student, vm_id: f.vmId }))!
+      .state,
+  ).toBe("active");
+  await requireCourseVolumeService((await getComputeVolumeById(f.volumeId))!);
+  // A delayed course deadline cannot mutate the successor epoch.
+  await endCourseVolumeService(f.volume);
+  expect(
+    (await getComputeVolumeById(f.volumeId))!.metadata.billing.course_funding
+      .service_ended_at,
+  ).toBeUndefined();
+  await getPool().query(
+    "UPDATE compute_volumes SET desired_state='deleted',deleted_at=NOW() WHERE id=$1",
+    [f.volumeId],
+  );
+  await processVmPersonalFundingHandoffs();
+  expect(
+    (await getVmPersonalFunding({ account_id: f.student, vm_id: f.vmId }))!
+      .state,
+  ).toBe("cancelled");
+  await meterCourseVolume((await getComputeVolumeById(f.volumeId))!);
+  expect(
+    publicVolumeFundingStatus((await getComputeVolumeById(f.volumeId))!),
+  ).toMatchObject({
+    label: "Personal funding",
+    state: "closed",
+    committed_usd: "0.0000000000",
+  });
+});
+
+it("does not cut over while an old home-volume meter is awaiting its payer", async () => {
+  const f = await fixtureWithHome();
+  await stopForHomeHandoff(f);
+  const api = await payerApi(f.payer);
+  const settle = api.settleComputeVmFunding;
+  let entered!: () => void;
+  const enteredMeter = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  let release!: () => void;
+  const released = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  jest
+    .spyOn(api, "settleComputeVmFunding")
+    .mockImplementation(async (request) => {
+      if (request.binding.reservation_id === f.volumeBinding.reservation_id) {
+        entered();
+        await released;
+      }
+      return settle(request);
+    });
+  const metering = meterCourseVolume(f.volume);
+  try {
+    await enteredMeter;
+    await processVmPersonalFundingHandoffs();
+    expect(
+      courseVolumeBinding((await getComputeVolumeById(f.volumeId))!).source
+        .kind,
+    ).toBe("course");
+  } finally {
+    release();
+    await metering;
+  }
+  await processVmPersonalFundingHandoffs();
+  const volume = (await getComputeVolumeById(f.volumeId))!;
+  expect(courseVolumeBinding(volume).source.kind).toBe("personal");
+  await meterCourseVolume(volume);
+  const {
+    rows: [old],
+  } = await getPool().query(
+    "SELECT state,pricing_snapshot FROM compute_funding_reservations WHERE id=$1",
+    [f.volumeBinding.reservation_id],
+  );
+  expect(old.state).toBe("settled");
+  expect(old.pricing_snapshot.meter.running_until).toBe(
+    volume.metadata.billing.course_funding.started_at,
+  );
+});
+
+it("skips VM and volume observations while a handoff holds their meter locks", async () => {
+  const f = await fixtureWithHome();
+  const spy = jest.spyOn(await payerApi(f.payer), "settleComputeVmFunding");
+  await withFundingResourceMeterLock("vm", f.vmId, async () => {
+    await withFundingResourceMeterLock("volume", f.volumeId, async () => {
+      await meterCourseVm((await getComputeVmById(f.vmId))!);
+      await meterCourseVolume(f.volume);
+    });
+  });
+  expect(spy).not.toHaveBeenCalled();
+});
+
+it("settles a confirmed cutover after a legacy late observation without reversing posted charges", async () => {
+  const f = await fixtureWithHome();
+  await stopForHomeHandoff(f);
+  await processVmPersonalFundingHandoffs();
+  const volume = (await getComputeVolumeById(f.volumeId))!;
+  const cutover = Date.parse(volume.metadata.billing.course_funding.started_at);
+  // Reproduce an old worker that read the previous epoch while cutover committed.
+  await getPool().query("SELECT pg_sleep(0.025)");
+  const late = new Date(cutover + 1).toISOString();
+  await settleComputeVmFundingLocal({
+    account_id: f.payer,
+    binding: f.volumeBinding,
+    running_started_at: f.volume.ready_at!.toISOString(),
+    running_until: late,
+    meter_as_of: late,
+  });
+  await meterCourseVolume(volume);
+  const {
+    rows: [old],
+  } = await getPool().query(
+    "SELECT state,spent_usd,pricing_snapshot FROM compute_funding_reservations WHERE id=$1",
+    [f.volumeBinding.reservation_id],
+  );
+  expect(old.state).toBe("settled");
+  expect(Number(old.spent_usd)).toBe(0);
+  expect(old.pricing_snapshot.meter.running_until).toBe(
+    new Date(cutover).toISOString(),
+  );
+});
+
+it.each(["size", "attachment", "epoch", "delete"])(
+  "does not move either payer after the reviewed volume changes: %s",
+  async (change) => {
+    const f = await fixtureWithHome();
+    await stopForHomeHandoff(f);
+    const sql = {
+      size: "size_gb=20,desired_size_gb=20",
+      attachment: "attachment_generation=attachment_generation+1",
+      epoch:
+        "metadata=jsonb_set(metadata,'{billing,course_funding,funding_epoch}',to_jsonb('changed'::text))",
+      delete: "desired_state='deleted'",
+    }[change]!;
+    await getPool().query(`UPDATE compute_volumes SET ${sql} WHERE id=$1`, [
+      f.volumeId,
+    ]);
+    await processVmPersonalFundingHandoffs();
+    expect(courseVmBinding((await getComputeVmById(f.vmId))!).source.kind).toBe(
+      "course",
+    );
+    expect(
+      (
+        await getPool().query(
+          "SELECT id FROM compute_funding_reservations WHERE payer_account_id=$1",
+          [f.student],
+        )
+      ).rows,
+    ).toHaveLength(0);
+  },
+);
+
+it("settles every existing disk growth slice at the same personal cutover", async () => {
+  const f = await fixtureWithHome();
+  let volume = await reserveCourseVolumeGrowth(f.volume, {
+    operation_id: randomUUID(),
+    expected_funding_version: f.volumeBinding.funding_epoch,
+    size_gb: 20,
+    rate: { hourly_cost_usd: "0.02", pricing_snapshot: { provider: "gcp" } },
+  });
+  await requireCourseVolumeService(volume, true);
+  await recordCourseVolumeGrowth(volume, 20);
+  await getPool().query(
+    "UPDATE compute_volumes SET size_gb=20,state='ready' WHERE id=$1",
+    [f.volumeId],
+  );
+  await getPool().query(
+    `UPDATE compute_vm_personal_consents SET review=jsonb_set(jsonb_set(review,'{home_volumes,0,size_gb}','20'),'{home_volumes,0,hourly_usd}','"0.02"') WHERE id=$1`,
+    [f.consentId],
+  );
+  await stopForHomeHandoff(f);
+  await processVmPersonalFundingHandoffs();
+  volume = (await getComputeVolumeById(f.volumeId))!;
+  expect(volume.metadata.billing.course_funding.history).toHaveLength(2);
+  expect(volume.metadata.billing.course_funding.growth).toBeUndefined();
+  await meterCourseVolume(volume);
+  const rows = (
+    await getPool().query(
+      "SELECT state,pricing_snapshot FROM compute_funding_reservations WHERE payer_account_id=$1 AND resource_id=$2",
+      [f.payer, f.volumeId],
+    )
+  ).rows;
+  expect(rows).toHaveLength(2);
+  for (const row of rows) {
+    expect(row.state).toBe("settled");
+    expect(row.pricing_snapshot.meter.transferred_at).toBe(
+      volume.metadata.billing.course_funding.started_at,
+    );
+  }
+});
+
+it("uses volume-before-VM locks while a concurrent disk operation holds the volume", async () => {
+  const f = await fixtureWithHome();
+  await stopForHomeHandoff(f);
+  // The normal test pool has two connections. Keep the competing resource
+  // operation outside it so this tests PostgreSQL locks, not pool starvation.
+  const db = getClient();
+  await db.connect();
+  let handoff: Promise<void> | undefined;
+  try {
+    await db.query("BEGIN");
+    await db.query("SELECT id FROM compute_volumes WHERE id=$1 FOR UPDATE", [
+      f.volumeId,
+    ]);
+    handoff = processVmPersonalFundingHandoffs();
+    let waiting = false;
+    for (let i = 0; i < 200; i++) {
+      const { rows } = await getPool().query(
+        "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM compute_volumes%'",
+      );
+      if (rows.length) {
+        waiting = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(waiting).toBe(true);
+    await db.query("SELECT id FROM compute_vms WHERE id=$1 FOR UPDATE NOWAIT", [
+      f.vmId,
+    ]);
+    await db.query("COMMIT");
+    await handoff;
+    expect(
+      courseVolumeBinding((await getComputeVolumeById(f.volumeId))!).source
+        .kind,
+    ).toBe("personal");
+  } finally {
+    await db.query("ROLLBACK");
+    await db.end();
+    await handoff;
+  }
+});
+
+it("rolls back the VM reservation when the combined home-volume reservation exceeds the approved cap", async () => {
+  const f = await fixtureWithHome();
+  await stopForHomeHandoff(f);
+  // Simulate another already-authorized resource consuming the remaining cap
+  // after the preview. Reservation admission must still be atomic.
+  await getPool().query(
+    "UPDATE compute_vm_personal_consents SET committed_usd=5.5 WHERE id=$1",
+    [f.consentId],
+  );
+  await processVmPersonalFundingHandoffs();
+  expect(
+    (
+      await getPool().query(
+        "SELECT id FROM compute_funding_reservations WHERE payer_account_id=$1",
+        [f.student],
+      )
+    ).rows,
+  ).toHaveLength(0);
+  expect(courseVmBinding((await getComputeVmById(f.vmId))!).source.kind).toBe(
+    "course",
+  );
+});
 
 it.each([{ limit_usd: "0" }, { limit_usd: "100", expires_at: Date.now() - 1 }])(
   "does not activate personal funding with an unavailable deployment budget %j",

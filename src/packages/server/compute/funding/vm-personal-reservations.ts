@@ -9,7 +9,7 @@ import type {
   CheckComputeVmFundingRequest,
   VmPersonalFundingTerms,
 } from "@cocalc/util/compute-vm-funding";
-import type { ComputeVmRow } from "../types";
+import type { ComputeVmRow, ComputeVolumeRow } from "../types";
 import { fundingAmount, fundingDate } from "@cocalc/util/compute-funding";
 import { moneyRound2Up, moneyToDbString, toDecimal } from "@cocalc/util/money";
 import {
@@ -53,7 +53,60 @@ export async function reservePersonalVmInTransaction(
   until: Date,
   exposureBudget: FundingExposureBudget,
 ): Promise<ComputeVmFundingBinding> {
+  return reservePersonalResourceInTransaction(
+    client,
+    vm,
+    consentId,
+    until,
+    exposureBudget,
+  );
+}
+
+export async function reservePersonalVolumeInTransaction(
+  client: PoolClient,
+  vm: ComputeVmRow,
+  volume: ComputeVolumeRow,
+  consentId: string,
+  reservationId: string,
+  until: Date,
+  exposureBudget: FundingExposureBudget,
+  cutover: Date,
+): Promise<ComputeVmFundingBinding> {
+  const binding = await reservePersonalResourceInTransaction(
+    client,
+    vm,
+    consentId,
+    until,
+    exposureBudget,
+    {
+      volume,
+      reservationId,
+    },
+  );
+  // The retained disk already exists. Its new funded interval begins at the
+  // same atomic cutover as the old interval ends, not at the next worker poll.
+  const {
+    rows: [row],
+  } = await client.query<VmFundingReservation>(
+    "UPDATE compute_funding_reservations SET dispatched_at=$2,state='dispatched' WHERE id=$1 AND dispatched_at IS NULL RETURNING *",
+    [binding.reservation_id, cutover],
+  );
+  if (row) await fundingEvent(client, row, "dispatched", binding);
+  return binding;
+}
+
+async function reservePersonalResourceInTransaction(
+  client: PoolClient,
+  vm: ComputeVmRow,
+  consentId: string,
+  until: Date,
+  exposureBudget: FundingExposureBudget,
+  home?: { volume: ComputeVolumeRow; reservationId: string },
+): Promise<ComputeVmFundingBinding> {
   const payer = vm.owner_account_id;
+  const resource = home?.volume ?? vm;
+  const reservationId = home?.reservationId ?? consentId;
+  const resourceKind = home ? "compute-volume" : "compute-vm";
   const {
     rows: [consent],
   } = await client.query<PersonalConsent>(
@@ -63,36 +116,57 @@ export async function reservePersonalVmInTransaction(
   if (
     !consent ||
     consent.state !== "preparing" ||
-    new Date(consent.terms.ends_at) < until
+    new Date(consent.terms.ends_at) < until ||
+    (home &&
+      (!consent.terms.home_volume_ids.includes(resource.id) ||
+        resource.owner_account_id !== payer ||
+        resource.owning_bay_id !== vm.owning_bay_id))
   )
     fundingConflict("Personal consent no longer authorizes this handoff.");
   const {
     rows: [existing],
   } = await client.query<VmFundingReservation>(
     "SELECT * FROM compute_funding_reservations WHERE id=$1 AND payer_account_id=$2 FOR UPDATE",
-    [consentId, payer],
+    [reservationId, payer],
   );
-  if (existing) return existing.pricing_snapshot.binding;
+  if (existing) {
+    const binding = existing.pricing_snapshot.binding;
+    if (
+      binding.resource_id !== resource.id ||
+      binding.source.kind !== "personal" ||
+      binding.source.consent_id !== consentId ||
+      (binding.resource_kind ?? "compute-vm") !== resourceKind
+    )
+      fundingConflict("Personal reservation retry changed its resource.");
+    return binding;
+  }
   const now = new Date();
-  const rate = vm.metadata.billing.running_rates[vm.effective_pricing_model];
-  const storage = vm.metadata.billing.stopped_rate;
+  const rate =
+    home?.volume.metadata.billing.rate ??
+    vm.metadata.billing.running_rates[vm.effective_pricing_model];
+  const storage = home ? rate : vm.metadata.billing.stopped_rate;
   const quote = quoteVmFundingAdmission(
     {
       requested_until: new Date(now.valueOf() + 25 * 60_000).toISOString(),
       requested_stop_at: new Date(
         Math.min(
           until.valueOf() - VM_FUNDING_MARGIN_MS,
-          vm.stop_at?.valueOf() ?? Infinity,
+          home ? Infinity : (vm.stop_at?.valueOf() ?? Infinity),
         ),
       ).toISOString(),
-      requested_delete_at: vm.expires_at?.toISOString(),
+      requested_delete_at: new Date(
+        Math.min(
+          new Date(consent.terms.ends_at).valueOf() + VM_FUNDING_STORAGE_MS,
+          home ? Infinity : (vm.expires_at?.valueOf() ?? Infinity),
+        ),
+      ).toISOString(),
       hourly_cost_usd: rate.hourly_cost_usd,
       storage_hourly_cost_usd: storage.hourly_cost_usd,
     },
     now,
   );
   const egress =
-    vm.provider === "gcp"
+    !home && vm.provider === "gcp"
       ? fundingAmount(process.env.COCALC_COURSE_VM_EGRESS_RESERVE_USD ?? "1", {
           positive: true,
         })
@@ -118,7 +192,7 @@ export async function reservePersonalVmInTransaction(
   const hold = await reserveAccountFundingBacking(client, {
     payer_account_id: payer,
     source_kind: "resource",
-    source_id: consentId,
+    source_id: reservationId,
     lane: consent.terms.lane,
     authorized_usd: amount,
     capacity_usd: policy.backing_capacity_usd,
@@ -127,10 +201,14 @@ export async function reservePersonalVmInTransaction(
     source: { kind: "personal", consent_id: consentId },
     payer_account_id: payer,
     payer_authority_epoch: fundingAuthorityEpoch(client, payer),
-    reservation_id: consentId,
-    funding_epoch: consentId,
-    resource_id: vm.id,
-    resource_generation: vm.instance_generation + 1,
+    reservation_id: reservationId,
+    funding_epoch: reservationId,
+    resource_kind: resourceKind,
+    resource_id: resource.id,
+    resource_generation: home
+      ? home.volume.metadata.billing.course_funding.binding
+          .resource_generation + 1
+      : vm.instance_generation + 1,
     owner_account_id: payer,
     owning_bay_id: vm.owning_bay_id,
     lane: consent.terms.lane,
@@ -142,12 +220,13 @@ export async function reservePersonalVmInTransaction(
   const request = {
     account_id: payer,
     source: binding.source,
-    resource_id: vm.id,
+    resource_id: resource.id,
+    resource_kind: resourceKind,
     resource_generation: binding.resource_generation,
     owner_account_id: payer,
     owning_bay_id: vm.owning_bay_id,
-    funding_epoch: consentId,
-    provider: vm.provider,
+    funding_epoch: reservationId,
+    provider: resource.provider,
     hourly_cost_usd: rate.hourly_cost_usd,
     storage_hourly_cost_usd: storage.hourly_cost_usd,
     pricing_snapshot: rate.pricing_snapshot,
@@ -159,13 +238,13 @@ export async function reservePersonalVmInTransaction(
     `INSERT INTO compute_funding_reservations
     (id,payer_account_id,personal_hold_id,personal_lane,resource_id,resource_generation,resource_kind,funding_epoch,operation_id,
     request_hash,pricing_snapshot,authorized_usd,protected_usd,authorized_until,usage_window_5h_id,usage_window_7d_id,state)
-    VALUES ($1,$2,$3,$4,$5,$6,'compute-vm',$1,$1,$7,$8,$9,$10,$11,$12,$13,'reserved') RETURNING *`,
+    VALUES ($1,$2,$3,$4,$5,$6,$14,$1,$1,$7,$8,$9,$10,$11,$12,$13,'reserved') RETURNING *`,
     [
-      consentId,
+      reservationId,
       payer,
       hold.id,
       consent.terms.lane,
-      vm.id,
+      resource.id,
       binding.resource_generation,
       createHash("sha256").update(JSON.stringify(request)).digest("hex"),
       { request, binding },
@@ -174,6 +253,7 @@ export async function reservePersonalVmInTransaction(
       until,
       policy.windows["5h"].window!.id,
       policy.windows["7d"].window!.id,
+      resourceKind,
     ],
   );
   await client.query(
@@ -229,7 +309,11 @@ export async function lockPersonalVmReservation(
     reservation.personal_hold_id !== hold.id ||
     binding.source.kind !== "personal" ||
     binding.source.consent_id !== consent.id ||
-    consent.vm_id !== supplied.resource_id
+    ((binding.resource_kind ?? "compute-vm") === "compute-volume"
+      ? !consent.terms.home_volume_ids.includes(supplied.resource_id)
+      : consent.vm_id !== supplied.resource_id) ||
+    (binding.resource_kind ?? "compute-vm") !==
+      (supplied.resource_kind ?? "compute-vm")
   )
     fundingConflict("Missing personal VM reservation or consent.");
   for (const key of [
@@ -270,7 +354,10 @@ export async function checkPersonalVmFunding(
     )
       fundingConflict("Personal VM funding authorization ended.");
     const meter = reservation.pricing_snapshot.meter;
-    if (reservation.pricing_snapshot.request.provider === "gcp") {
+    if (
+      binding.resource_kind !== "compute-volume" &&
+      reservation.pricing_snapshot.request.provider === "gcp"
+    ) {
       if (
         toDecimal(meter?.public_egress_bytes ?? 0)
           .div(1e9)

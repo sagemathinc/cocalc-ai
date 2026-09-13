@@ -15,12 +15,21 @@ import type {
   ComputeVmFallbackDecision,
   VmPersonalFallbackReason,
 } from "@cocalc/util/compute-vm-funding";
-import type { ComputeVmRow } from "../types";
+import type { ComputeVmRow, ComputeVolumeRow } from "../types";
 import { insertComputeInstance } from "../db";
 import { randomUUID } from "node:crypto";
 import { getLogger } from "@cocalc/backend/logger";
 import { payerApi } from "./vm-funding";
-import { reservePersonalVmInTransaction } from "./vm-personal-reservations";
+import {
+  reservePersonalVmInTransaction,
+  reservePersonalVolumeInTransaction,
+} from "./vm-personal-reservations";
+import {
+  courseVolumeBinding,
+  volumeFunding,
+  volumeFundingBindings,
+  volumeFundingDeadline,
+} from "./volume-funding";
 import {
   assertFundingPayerHomeBay,
   proposeVmPersonalFundingApproval,
@@ -31,6 +40,7 @@ import {
 } from "./approval-personal";
 import type { PersonalVmApprovalReview } from "./approval-personal";
 import { withFundingAccountTransaction } from "./backing";
+import { withFundingResourceMeterLock } from "./resource-meter-lock";
 import { getComputeFundingPolicyInTransaction } from "./policy";
 import { loadFundingExposureBudget } from "./exposure";
 import {
@@ -86,7 +96,6 @@ async function fallbackDecision(
     !vm.stopped_at ||
     vm.deleted_at ||
     vm.error ||
-    vm.home_volume_id ||
     (vm.stop_at && vm.stop_at.valueOf() <= Date.now()) ||
     (vm.expires_at && vm.expires_at.valueOf() <= Date.now())
   )
@@ -133,11 +142,12 @@ async function reviewedFallbackStillApplies(
     [vm.id, stop.requested_at],
   );
   if (rows.length) return false;
-  const review = reviewVm(vm, consent.terms);
+  const review = await reviewVm(vm, consent.terms, db);
   return (
     consent.review.resource_generation === review.resource_generation &&
     toDecimal(consent.review.hourly_usd).eq(review.hourly_usd) &&
-    toDecimal(consent.review.egress_cap_usd).eq(review.egress_cap_usd)
+    toDecimal(consent.review.egress_cap_usd).eq(review.egress_cap_usd) &&
+    sameHomeVolumeReview(consent.review, review)
   );
 }
 
@@ -240,6 +250,22 @@ async function ownedVm(
 ): Promise<ComputeVmRow> {
   fundingId(payer, "Account");
   fundingId(id, "VM");
+  // Volume deletion/attachment locks volume before VM. Use that same order
+  // before changing a multi-resource funding agreement.
+  let homeId: string | null | undefined;
+  if (db) {
+    const {
+      rows: [snapshot],
+    } = await db.query<ComputeVmRow>(
+      "SELECT * FROM compute_vms WHERE id=$1 AND owner_account_id=$2 AND owning_bay_id=$3",
+      [id, payer, getConfiguredBayId()],
+    );
+    homeId = snapshot?.home_volume_id;
+    if (homeId)
+      await db.query("SELECT id FROM compute_volumes WHERE id=$1 FOR UPDATE", [
+        homeId,
+      ]);
+  }
   const {
     rows: [vm],
   } = await (db ?? getPool()).query<ComputeVmRow>(
@@ -247,6 +273,8 @@ async function ownedVm(
     [id, payer, getConfiguredBayId()],
   );
   if (!vm) fundingConflict("VM funding requires its owner on the owning bay.");
+  if (db && (vm.home_volume_id ?? null) !== (homeId ?? null))
+    fundingConflict("Home volume changed; retry the funding operation.");
   return vm;
 }
 
@@ -258,10 +286,89 @@ function normalize(terms: VmPersonalFundingTerms): VmPersonalFundingTerms {
   return normalized;
 }
 
-function reviewVm(
+async function reviewedHomeVolume(
   vm: ComputeVmRow,
   terms: VmPersonalFundingTerms,
-): PersonalVmApprovalReview {
+  db?: PoolClient,
+): Promise<ComputeVolumeRow | undefined> {
+  if (!vm.home_volume_id && !terms.home_volume_ids.length) return;
+  if (
+    terms.home_volume_ids.length !== 1 ||
+    terms.home_volume_ids[0] !== vm.home_volume_id
+  )
+    fundingConflict(
+      "Include the attached home volume in the personal funding review.",
+    );
+  const {
+    rows: [volume],
+  } = await (db ?? getPool()).query<ComputeVolumeRow>(
+    "SELECT * FROM compute_volumes WHERE id=$1 AND owner_account_id=$2 AND owning_bay_id=$3",
+    [vm.home_volume_id, vm.owner_account_id, vm.owning_bay_id],
+  );
+  if (
+    !volume ||
+    volume.deleted_at ||
+    volume.desired_state !== "ready" ||
+    !volume.ready_at ||
+    volume.attached_vm_id !== vm.id ||
+    volume.desired_size_gb !== volume.size_gb ||
+    volume.state !== "ready" ||
+    volume.attachment_state !== "attached" ||
+    (volume.metadata.billing.course_funding?.growth ?? []).some(
+      (s) => !s.started_at,
+    )
+  )
+    fundingConflict(
+      "Home volume is changing or unavailable; wait for storage work and review again.",
+    );
+  const binding = courseVolumeBinding(volume);
+  if (binding.source.kind !== "course")
+    fundingConflict(
+      "This home volume already has independent personal funding.",
+    );
+  const vmSource = vm.metadata.billing.course_funding.binding.source;
+  if (
+    terms.activation === "fallback" &&
+    (vmSource.kind !== "course" ||
+      binding.source.pool_id !== vmSource.pool_id ||
+      binding.source.grant_id !== vmSource.grant_id)
+  )
+    fundingConflict(
+      "Automatic fallback requires the VM and home disk to use the same course allowance. Use an immediate reviewed switch for separate sources.",
+    );
+  return volume;
+}
+
+function sameHomeVolumeReview(
+  a: PersonalVmApprovalReview,
+  b: PersonalVmApprovalReview,
+): boolean {
+  const identity = (review: PersonalVmApprovalReview) =>
+    (review.home_volumes ?? []).map(
+      ({
+        id,
+        funding_epoch,
+        resource_generation,
+        attachment_generation,
+        size_gb,
+        hourly_usd,
+      }) => ({
+        id,
+        funding_epoch,
+        resource_generation,
+        attachment_generation,
+        size_gb,
+        hourly_usd,
+      }),
+    );
+  return JSON.stringify(identity(a)) === JSON.stringify(identity(b));
+}
+
+async function reviewVm(
+  vm: ComputeVmRow,
+  terms: VmPersonalFundingTerms,
+  db?: PoolClient,
+): Promise<PersonalVmApprovalReview> {
   const binding = vm.metadata?.billing?.course_funding?.binding;
   if (
     !binding ||
@@ -272,8 +379,7 @@ function reviewVm(
     fundingConflict(
       "VM funding changed; refresh the personal funding proposal.",
     );
-  if (terms.home_volume_ids.length || vm.home_volume_id)
-    fundingConflict("Personal home-volume handoff is not yet available.");
+  const volume = await reviewedHomeVolume(vm, terms, db);
   const end = new Date(terms.ends_at);
   const now = new Date();
   if (end <= now || (vm.expires_at && end > vm.expires_at))
@@ -302,7 +408,25 @@ function reviewVm(
     vm.provider === "gcp"
       ? (process.env.COCALC_COURSE_VM_EGRESS_RESERVE_USD ?? "1.00")
       : "0";
-  if (toDecimal(quote.authorized_usd).plus(egress).gt(terms.cap_usd))
+  const volumeQuote = volume
+    ? quoteVmFundingAdmission(
+        {
+          hourly_cost_usd: volume.metadata.billing.rate.hourly_cost_usd,
+          storage_hourly_cost_usd: volume.metadata.billing.rate.hourly_cost_usd,
+          requested_until: new Date(now.valueOf() + 25 * 60_000).toISOString(),
+          requested_stop_at: new Date(
+            end.valueOf() - VM_FUNDING_MARGIN_MS,
+          ).toISOString(),
+        },
+        now,
+      )
+    : undefined;
+  if (
+    toDecimal(quote.authorized_usd)
+      .plus(egress)
+      .plus(volumeQuote?.authorized_usd ?? 0)
+      .gt(terms.cap_usd)
+  )
     fundingConflict(
       "Personal cap cannot cover the initial service and protected storage.",
     );
@@ -314,7 +438,9 @@ function reviewVm(
     resource_generation: vm.instance_generation,
     funding_epoch: binding.funding_epoch,
     hourly_usd: running.hourly_cost_usd,
-    protected_storage_usd: quote.protected_usd,
+    protected_storage_usd: moneyToDbString(
+      toDecimal(quote.protected_usd).plus(volumeQuote?.protected_usd ?? 0),
+    ),
     egress_cap_usd: egress,
     storage_delete_at: new Date(
       Math.min(
@@ -322,7 +448,23 @@ function reviewVm(
         vm.expires_at?.valueOf() ?? Infinity,
       ),
     ).toISOString(),
-    home_volumes: [],
+    home_volumes: volume
+      ? [
+          {
+            id: volume.id,
+            name: volume.name,
+            funding_epoch: courseVolumeBinding(volume).funding_epoch,
+            resource_generation:
+              courseVolumeBinding(volume).resource_generation,
+            attachment_generation: volume.attachment_generation,
+            size_gb: volume.size_gb,
+            hourly_usd: volume.metadata.billing.rate.hourly_cost_usd,
+            storage_delete_at: new Date(
+              end.valueOf() + VM_FUNDING_STORAGE_MS,
+            ).toISOString(),
+          },
+        ]
+      : [],
   };
 }
 
@@ -332,7 +474,7 @@ export async function previewPersonalVmFunding(
 ): Promise<VmPersonalFundingPreview> {
   await assertFundingPayerHomeBay(account);
   const terms = normalize(input);
-  const review = reviewVm(await ownedVm(account, terms.vm_id), terms);
+  const review = await reviewVm(await ownedVm(account, terms.vm_id), terms);
   const policy = await withFundingAccountTransaction(account, (db) =>
     getComputeFundingPolicyInTransaction(db, {
       payer_account_id: account,
@@ -345,6 +487,7 @@ export async function previewPersonalVmFunding(
     protected_storage_usd: review.protected_storage_usd,
     egress_cap_usd: review.egress_cap_usd,
     available_usd: policy.available_backing_usd,
+    home_volumes: review.home_volumes,
     as_of: new Date().toISOString(),
   };
 }
@@ -356,13 +499,15 @@ export function initVmPersonalFundingApprovalHandler(): void {
     resolveReview: async ({ payer_account_id, terms }) =>
       reviewVm(await ownedVm(payer_account_id, terms.vm_id), normalize(terms)),
     apply: async ({ db, payer_account_id, intent_id, terms, review }) => {
-      const current = reviewVm(
+      const current = await reviewVm(
         await ownedVm(payer_account_id, terms.vm_id, db),
         normalize(terms),
+        db,
       );
       if (
         current.resource_generation !== review.resource_generation ||
-        current.hourly_usd !== review.hourly_usd
+        current.hourly_usd !== review.hourly_usd ||
+        !sameHomeVolumeReview(current, review)
       )
         fundingConflict(
           "VM quote changed; create a new personal funding intent.",
@@ -408,7 +553,7 @@ export async function proposeVmPersonalFunding(
     operation_id: fundingId(opts.operation_id, "Operation"),
     terms: preview.terms,
   });
-  const review = reviewVm(
+  const review = await reviewVm(
     await ownedVm(payer, preview.terms.vm_id),
     preview.terms,
   );
@@ -512,7 +657,11 @@ export async function switchVmPersonalFunding(
       fundingConflict(
         "An unchanged, isolated-approved immediate personal consent is required.",
       );
-    reviewVm(vm, consent.terms);
+    const review = await reviewVm(vm, consent.terms, db);
+    if (!sameHomeVolumeReview(consent.review, review))
+      fundingConflict(
+        "Home volume quote changed; create a new personal funding intent.",
+      );
     await enqueuePersonalTransition(
       db,
       vm.id,
@@ -582,9 +731,8 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
           : undefined;
       const exposureBudget =
         await loadFundingExposureBudget(getConfiguredBayId());
-      await withFundingAccountTransaction(
-        pending.payer_account_id,
-        async (db) => {
+      const handoff = () =>
+        withFundingAccountTransaction(pending.payer_account_id, async (db) => {
           const vm = await ownedVm(pending.payer_account_id, pending.vm_id, db);
           const {
             rows: [consent],
@@ -609,7 +757,11 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             vm.stop_generation !== consent.handoff?.stop_generation
           )
             return;
-          reviewVm(vm, consent.terms);
+          const review = await reviewVm(vm, consent.terms, db);
+          if (!sameHomeVolumeReview(consent.review, review))
+            fundingConflict(
+              "Home volume quote changed; create a new personal funding intent.",
+            );
           const old = vm.metadata.billing.course_funding;
           const oldEgress = vm.metadata.billing.egress ?? {};
           // Do not move a GCP run until the measured watermark covers its confirmed stop.
@@ -635,6 +787,60 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             until,
             exposureBudget,
           );
+          const volume = await reviewedHomeVolume(vm, consent.terms, db);
+          if (volume) {
+            const volumeUntil = new Date(
+              Math.min(
+                cutover.valueOf() + 25 * 60_000,
+                new Date(consent.terms.ends_at).valueOf(),
+              ),
+            );
+            const successor = await reservePersonalVolumeInTransaction(
+              db,
+              vm,
+              volume,
+              consent.id,
+              randomUUID(),
+              volumeUntil,
+              exposureBudget,
+              cutover,
+            );
+            const previous = volumeFunding(volume);
+            const history = volumeFundingBindings(volume).map((oldBinding) => {
+              const slice = (previous.growth ?? []).find(
+                (s) => s.binding?.reservation_id === oldBinding.reservation_id,
+              );
+              const start = slice
+                ? slice.started_at
+                : (previous.started_at ?? volume.ready_at!.toISOString());
+              return {
+                binding: oldBinding,
+                started_at: new Date(start).toISOString(),
+                service_ended_at:
+                  previous.service_ended_at ??
+                  volumeFundingDeadline(volume, "stop_at"),
+                transferred_at: cutover.toISOString(),
+                successor_binding: successor,
+              };
+            });
+            await db.query(
+              `UPDATE compute_volumes SET funding_mode=$2,billing_state='pending',billing_updated_at=NULL,
+              metadata=jsonb_set(jsonb_set(metadata,'{billing,course_funding}',$3::jsonb),'{billing,funding_mode}',to_jsonb($2::text)),updated_at=clock_timestamp() WHERE id=$1`,
+              [
+                volume.id,
+                successor.lane === "prepaid"
+                  ? "account-prepaid"
+                  : "account-postpaid",
+                JSON.stringify({
+                  source: successor.source,
+                  funding_epoch: successor.funding_epoch,
+                  binding: successor,
+                  started_at: cutover.toISOString(),
+                  history: [...(previous.history ?? []), ...history],
+                }),
+              ],
+            );
+          }
           const history = [
             ...(old.history ?? []),
             {
@@ -687,8 +893,15 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             binding.funding_epoch,
             consent.handoff_operation_id!,
           );
-        },
-      );
+        });
+      await withFundingResourceMeterLock("vm", pending.vm_id, async () => {
+        const volumeId = pending.terms.home_volume_ids[0];
+        if (volumeId) {
+          await withFundingResourceMeterLock("volume", volumeId, handoff);
+        } else {
+          await handoff();
+        }
+      });
     } catch (err) {
       logger.warn("personal funding handoff remains pending", {
         consent_id: pending.id,
@@ -717,6 +930,12 @@ async function closeEndedPersonalConsents(): Promise<void> {
         consent.payer_account_id,
         async (db) => {
           const vm = await ownedVm(consent.payer_account_id, consent.vm_id, db);
+          const { rows: retainedVolumes } = await db.query(
+            `SELECT id FROM compute_volumes WHERE owner_account_id=$1 AND owning_bay_id=$2 AND deleted_at IS NULL AND desired_state='ready'
+              AND metadata#>>'{billing,course_funding,source,kind}'='personal'
+              AND metadata#>>'{billing,course_funding,source,consent_id}'=$3 LIMIT 1`,
+            [consent.payer_account_id, getConfiguredBayId(), consent.id],
+          );
           await db.query(
             `UPDATE compute_vm_personal_consents SET state=CASE WHEN $3 THEN 'cancelled' ELSE 'expired' END,
           version=version+1,updated_at=clock_timestamp()
@@ -725,7 +944,8 @@ async function closeEndedPersonalConsents(): Promise<void> {
             [
               consent.id,
               consent.version,
-              vm.desired_state === "deleted" || vm.deleted_at != null,
+              (vm.desired_state === "deleted" || vm.deleted_at != null) &&
+                !retainedVolumes.length,
             ],
           );
         },

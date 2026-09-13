@@ -226,7 +226,7 @@ export interface ComputeVmSshKey {
 }
 
 export interface ComputeVolume {
-  funding_source?: CourseVmFundingSource;
+  funding_source?: ComputeVolumeFundingStatus["source"];
   funding_status?: ComputeVolumeFundingStatus;
   id: string;
   name: string;

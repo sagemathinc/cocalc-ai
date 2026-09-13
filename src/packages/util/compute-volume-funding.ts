@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import type { CourseVmFundingSource } from "./compute-vm-funding";
+import type { ComputeVmFundingSource } from "./compute-vm-funding";
 
 // Public projection only. The volume owning bay and payer home authorize all
 // mutations; attaching to a VM never changes this independent funding policy.
@@ -14,7 +14,7 @@ import type { CourseVmFundingSource } from "./compute-vm-funding";
 // extension requires separate approval, never setVolumeFundingMode.
 // Public sources retain pool/grant identity but may redact the payer UUID.
 export interface ComputeVolumeFundingStatus {
-  source: CourseVmFundingSource;
+  source: ComputeVmFundingSource;
   payer_account_id?: string;
   label: string;
   state: string;
@@ -61,9 +61,9 @@ export function requireVolumeFundingVersion(
     (stopAt != null &&
       (!Number.isFinite(Date.parse(stopAt)) || Date.parse(stopAt) <= now)) ||
     !["running", "active", "ready"].includes(funding?.state ?? "") ||
-    source?.kind !== "course" ||
-    !source.pool_id ||
-    !source.grant_id
+    !(source?.kind === "course"
+      ? source.pool_id && source.grant_id
+      : source?.kind === "personal" && source.consent_id)
   )
     throw Error(
       "Volume funding is unavailable or out of date. Reload its funding status before attaching or enlarging it.",
