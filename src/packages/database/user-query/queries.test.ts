@@ -206,6 +206,22 @@ describe("postgres user-queries - Comprehensive Test Suite", () => {
     });
 
     describe("user_set_query", () => {
+      test("rejects tables that require a dedicated domain API", (done) => {
+        db._parse_set_query_opts = jest.fn();
+
+        db.user_set_query({
+          account_id: "admin-account",
+          table: "membership_grants",
+          query: { id: "grant-id" },
+          cb: (err) => {
+            expect(err).toContain("dedicated domain API");
+            expect(db._parse_set_query_opts).not.toHaveBeenCalled();
+            expect(db._query).not.toHaveBeenCalled();
+            done();
+          },
+        });
+      });
+
       test("should require account_id or project_id", (done) => {
         db.user_set_query({
           table: "projects",

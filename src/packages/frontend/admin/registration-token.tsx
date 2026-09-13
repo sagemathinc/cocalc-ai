@@ -27,6 +27,10 @@ import { DeleteOutlined, EditOutlined } from "@ant-design/icons";
 import { Alert } from "@cocalc/frontend/antd-bootstrap";
 import { React, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
+import {
   ErrorDisplay,
   Icon,
   Saving,
@@ -34,6 +38,7 @@ import {
 } from "@cocalc/frontend/components";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { CancelText } from "@cocalc/frontend/i18n/components";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { RegistrationTokenSetFields } from "@cocalc/util/db-schema/types";
 import { cmp_dayjs, round1, secure_random_token } from "@cocalc/util/misc";
 import { COLORS } from "@cocalc/util/theme";
@@ -62,6 +67,7 @@ function useRegistrationTokens() {
   const [saving_public_signup, set_saving_public_signup] =
     React.useState<boolean>(false);
   const [sel_rows, set_sel_rows] = React.useState<any>([]);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   // Antd
   const [form] = Form.useForm();
@@ -203,18 +209,39 @@ function useRegistrationTokens() {
 
   async function save_public_signup_without_token(
     enabled: boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
     set_saving_public_signup(true);
     try {
-      await query({
-        query: {
-          site_settings: {
-            name: "public_signup_without_registration_token",
-            value: enabled ? "yes" : "no",
-          },
-        },
+      const completed = await runFreshAuthAction(async () => {
+        const result =
+          await webapp_client.conat_client.hub.system.setSiteSettings({
+            settings: [
+              {
+                name: "public_signup_without_registration_token",
+                value: enabled ? "yes" : "no",
+              },
+            ],
+            browser_id: webapp_client.browser_id,
+          });
+        const failures = result.bays.filter(
+          ({ status }) => status === "failed",
+        );
+        if (failures.length > 0) {
+          throw Error(
+            failures
+              .map(
+                ({ bay_id, error }) =>
+                  `${bay_id}: ${error ?? "settings propagation failed"}`,
+              )
+              .join("; "),
+          );
+        }
       });
+      if (!completed) {
+        return false;
+      }
       set_error("");
+      return true;
     } catch (err) {
       set_error(`${err}`);
       throw err;
@@ -259,6 +286,7 @@ function useRegistrationTokens() {
     save_public_signup_without_token,
     load,
     no_or_all_inactive,
+    freshAuthModalProps,
   };
 }
 
@@ -286,6 +314,7 @@ export function RegistrationToken() {
     save_public_signup_without_token,
     load,
     loading,
+    freshAuthModalProps,
   } = useRegistrationTokens();
   const configuredPublicSignupWithoutToken = !!useTypedRedux(
     "customize",
@@ -584,7 +613,9 @@ export function RegistrationToken() {
               const before = publicSignupWithoutToken;
               setPublicSignupOverride(checked);
               try {
-                await save_public_signup_without_token(checked);
+                if (!(await save_public_signup_without_token(checked))) {
+                  setPublicSignupOverride(before);
+                }
               } catch {
                 setPublicSignupOverride(before);
               }
@@ -628,6 +659,7 @@ export function RegistrationToken() {
       {render_error()}
       {render_control()}
       {render_info()}
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

@@ -136,7 +136,9 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 import purchaseMembershipPackage0, {
   purchaseMembershipPackages as purchaseMembershipPackages0,
 } from "@cocalc/server/purchases/membership-package";
-import adminCreateMembershipPackagePurchase0 from "@cocalc/server/purchases/admin-membership-package";
+import adminCreateMembershipPackagePurchase0, {
+  adminGetMembershipPackageQuote as adminGetMembershipPackageQuote0,
+} from "@cocalc/server/purchases/admin-membership-package";
 import {
   verifyDirectStudentCourseProduct,
   verifyDirectStudentCourseProducts,
@@ -183,6 +185,7 @@ import type {
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
   MembershipPackageAssignment,
+  MembershipPackageQuote,
   AdminMembershipPackagePurchaseResult,
   SiteLicenseAccountDetails,
   SiteLicensePoolAccountSearchResult,
@@ -1492,6 +1495,55 @@ export async function getMembershipPackageQuote({
   return await resolveMembershipPackageQuote0(
     await verifyDirectStudentCourseProduct({ account_id, product }),
   );
+}
+
+export async function adminGetMembershipPackageQuote({
+  account_id,
+  browser_id,
+  session_hash,
+  user_account_id,
+  product,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  user_account_id?: string;
+  product?: MembershipPackageProduct;
+} = {}): Promise<MembershipPackageQuote> {
+  const actorId = requireAccount(account_id);
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  const userAccountId = `${user_account_id ?? ""}`.trim();
+  if (!userAccountId) throw Error("user_account_id is required");
+  if (!product) throw Error("product is required");
+  const homeBay = await resolveTargetAccountHomeBay({
+    account_id: actorId,
+    user_account_id: userAccountId,
+    allow_cross_account_routing: true,
+  });
+  const options = {
+    actor_account_id: actorId,
+    user_account_id: userAccountId,
+    product,
+  };
+  if (homeBay !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: homeBay,
+    }).adminGetMembershipPackageQuote(options);
+  }
+  return await adminGetMembershipPackageQuote0({
+    admin_account_id: actorId,
+    user_account_id: userAccountId,
+    product,
+  });
 }
 
 export async function purchaseMembershipPackage({

@@ -16,6 +16,10 @@ let importProjectSecretsForCopyMock: jest.Mock;
 let syncProjectSecretsRuntimeOnAssignedHostMock: jest.Mock;
 let resolveProjectBayMock: jest.Mock;
 let requireDangerousProjectMutationAuthMock: jest.Mock;
+let interBayProjectControlMock: {
+  setProjectEntitlementOverride: jest.Mock;
+  clearProjectEntitlementOverride: jest.Mock;
+};
 let interBayProjectSecretsMock: {
   list: jest.Mock;
   set: jest.Mock;
@@ -68,6 +72,7 @@ jest.mock("@cocalc/server/inter-bay/directory", () => ({
 jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   __esModule: true,
   getInterBayBridge: () => ({
+    projectControl: () => interBayProjectControlMock,
     projectSecrets: () => interBayProjectSecretsMock,
   }),
 }));
@@ -160,6 +165,18 @@ describe("project env helpers", () => {
     requireDangerousProjectMutationAuthMock = jest.fn(async (opts) => ({
       session_hash: opts.session_hash,
     }));
+    interBayProjectControlMock = {
+      setProjectEntitlementOverride: jest.fn(async (opts) => ({
+        project_id: opts.project_id,
+        enabled: true,
+        project_defaults: {
+          disk_quota: { value: opts.disk_quota_mb, source: "admin" },
+        },
+        reason: opts.reason,
+        source: opts.source,
+      })),
+      clearProjectEntitlementOverride: jest.fn(async () => undefined),
+    };
     listProjectSecretsMock = jest.fn(async () => [
       {
         project_id: PROJECT_ID,
@@ -760,4 +777,50 @@ describe("project env helpers", () => {
     });
     expect(isAdminMock).not.toHaveBeenCalled();
   });
+
+  it.each(["set", "clear"] as const)(
+    "requires fresh auth before an admin project entitlement %s",
+    async (action) => {
+      isAdminMock.mockResolvedValue(true);
+      const error = Object.assign(new Error("fresh auth is required"), {
+        code: "fresh_auth_required",
+      });
+      requireDangerousProjectMutationAuthMock.mockRejectedValueOnce(error);
+      const projects = await import("./projects");
+
+      const operation =
+        action === "set"
+          ? projects.setAdminProjectEntitlementOverride({
+              account_id: ACCOUNT_ID,
+              browser_id: "browser-1",
+              session_hash: "session-1",
+              project_id: PROJECT_ID,
+              disk_quota_mb: 10_240,
+              reason: "support adjustment",
+            })
+          : projects.clearAdminProjectEntitlementOverride({
+              account_id: ACCOUNT_ID,
+              browser_id: "browser-1",
+              session_hash: "session-1",
+              project_id: PROJECT_ID,
+              reason: "support adjustment complete",
+            });
+
+      await expect(operation).rejects.toMatchObject({
+        code: "fresh_auth_required",
+      });
+      expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalledWith({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        session_hash: "session-1",
+      });
+      expect(resolveProjectBayMock).not.toHaveBeenCalled();
+      expect(
+        interBayProjectControlMock.setProjectEntitlementOverride,
+      ).not.toHaveBeenCalled();
+      expect(
+        interBayProjectControlMock.clearProjectEntitlementOverride,
+      ).not.toHaveBeenCalled();
+    },
+  );
 });

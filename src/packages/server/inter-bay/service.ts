@@ -242,7 +242,9 @@ import {
   resolveTeamLicenseQuote,
 } from "@cocalc/server/membership/team-licenses";
 import { purchaseTeamLicenseChange } from "@cocalc/server/purchases/team-license";
-import adminCreateMembershipPackagePurchase from "@cocalc/server/purchases/admin-membership-package";
+import adminCreateMembershipPackagePurchase, {
+  adminGetMembershipPackageQuote,
+} from "@cocalc/server/purchases/admin-membership-package";
 import createProject, {
   createProjectWithInternalProjectId,
 } from "@cocalc/server/projects/create";
@@ -1375,6 +1377,13 @@ async function startAccountLocalService(): Promise<void> {
         idempotency_key: opts.idempotency_key,
         pricing_note: opts.pricing_note,
         trusted_admin: opts.trusted_admin === true,
+      }),
+    adminGetMembershipPackageQuote: async (opts) =>
+      await adminGetMembershipPackageQuote({
+        admin_account_id: opts.actor_account_id,
+        user_account_id: opts.user_account_id,
+        product: opts.product,
+        trusted_admin: true,
       }),
     listSiteLicenseOverviews: async ({
       actor_account_id,

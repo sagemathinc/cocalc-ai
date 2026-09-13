@@ -28,6 +28,7 @@ import type {
   CodexUsageStatusInfo,
   HostBayLocation,
   ProjectBayLocation,
+  SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
 import type { NewsItemWebapp } from "@cocalc/util/types/news";
 import type {
@@ -113,7 +114,7 @@ import {
   uploadLiteSubscriptionAuthFile,
   verifyLiteCodexDeviceAuthStatus,
 } from "./codex-auth";
-import { getRow, listRows } from "./sqlite/database";
+import { getRow, listRows, upsertRow } from "./sqlite/database";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import {
   createInflightRequestCoalescer,
@@ -226,6 +227,36 @@ function requireLiteAccountId(value?: string): string {
     throw Error("user must be signed in");
   }
   return account_id;
+}
+
+async function setSiteSettingsLite({
+  account_id,
+  settings,
+}: {
+  account_id?: string;
+  settings: { name: string; value: string }[];
+}): Promise<SiteSettingsSyncResult> {
+  const caller = requireLiteAccountId(account_id);
+  if (!ACCOUNT_ID || caller !== ACCOUNT_ID) {
+    throw Error("site settings can only be changed by the local lite account");
+  }
+  if (!Array.isArray(settings) || settings.length !== 1) {
+    throw Error("exactly one lite AI setting must be provided");
+  }
+  const [{ name, value }] = settings;
+  if (name !== "openai_api_key") {
+    throw Error(`setting name='${name}' not allowed in lite mode`);
+  }
+  if (typeof value !== "string" || value.length > 65_536) {
+    throw Error("OpenAI API key must be a string of at most 65536 characters");
+  }
+  upsertRow("server_settings", JSON.stringify({ name }), { name, value });
+  const local_bay_id = getLiteBayId();
+  return {
+    local_bay_id,
+    count: 1,
+    bays: [{ bay_id: local_bay_id, status: "local", count: 1 }],
+  };
 }
 
 function requireLiteProjectId(value?: string): string {
@@ -1348,6 +1379,7 @@ async function archiveNotificationLite(
 export const hubApi: HubApi = {
   system: {
     getNames,
+    setSiteSettings: setSiteSettingsLite,
     listNews: listNewsLite,
     listBays: listBaysLite,
     getAccountBay: getAccountBayLite,

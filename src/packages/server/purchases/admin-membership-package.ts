@@ -16,9 +16,10 @@ import {
 } from "@cocalc/server/accounts/rehome-fence";
 import {
   createMembershipPackage,
-  resolveMembershipPackageQuote,
+  resolveAdminMembershipPackageQuote,
   setMembershipPackagePurchaseId,
 } from "@cocalc/server/membership/packages";
+import type { MembershipPackageQuote } from "@cocalc/conat/hub/api/purchases";
 import {
   ensureCreditCoversPurchase,
   maybeCreateFundingCredit,
@@ -55,6 +56,29 @@ export interface AdminMembershipPackagePurchaseResult {
   starts_at: Date;
   expires_at: Date;
   existing: boolean;
+}
+
+export async function adminGetMembershipPackageQuote({
+  admin_account_id,
+  user_account_id,
+  product,
+  trusted_admin = false,
+}: {
+  admin_account_id: string;
+  user_account_id: string;
+  product: MembershipPackageProduct;
+  trusted_admin?: boolean;
+}): Promise<MembershipPackageQuote> {
+  if (!trusted_admin && !(await userIsInGroup(admin_account_id, "admin"))) {
+    throw Error("must be an admin");
+  }
+  if (!(await isValidAccount(user_account_id))) {
+    throw Error("target account is not valid");
+  }
+  if (product?.type !== "membership-package" || product.package_id) {
+    throw Error("product must create a new membership package");
+  }
+  return await resolveAdminMembershipPackageQuote(product);
 }
 
 function normalizeRequiredText(
@@ -267,7 +291,7 @@ export default async function adminCreateMembershipPackagePurchase({
       return existing;
     }
 
-    const quote = await resolveMembershipPackageQuote(product, client);
+    const quote = await resolveAdminMembershipPackageQuote(product, client);
     const starts_at = product.starts_at
       ? normalizeDate(product.starts_at, "starts_at")
       : quote.starts_at;

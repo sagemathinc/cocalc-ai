@@ -75,6 +75,7 @@ schema.stats =
 */
 
 import { RenderSpec } from "./render-types";
+import { userQueryMutationRequiresDomainApi } from "./domain-api-only";
 
 export const SCHEMA: DBSchema = {};
 
@@ -100,6 +101,19 @@ export function Table<F extends Fields>({
     }
   }
   const T: TableSchema<F> = { name, ...rules, fields };
+
+  // Keep privileged state out of the generic mutation protocol even if a
+  // future table edit accidentally adds a set declaration.
+  if (userQueryMutationRequiresDomainApi(name)) {
+    if (T.user_query != null) {
+      T.user_query = { ...T.user_query };
+      delete T.user_query.set;
+    }
+    if (T.project_query != null) {
+      T.project_query = { ...T.project_query };
+      delete T.project_query.set;
+    }
+  }
   SCHEMA[name] = T;
 
   if (name.startsWith("crm_")) {

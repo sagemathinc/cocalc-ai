@@ -4,6 +4,11 @@ import { getLogger } from "@cocalc/frontend/logger";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { Gap, Loading } from "@cocalc/frontend/components";
 import { redux } from "@cocalc/frontend/app-framework";
+import {
+  FreshAuthModal,
+  useFreshAuthAction,
+} from "@cocalc/frontend/auth/fresh-auth";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const log = getLogger("account:lite-ai-settings");
 
@@ -34,6 +39,7 @@ export default function LiteAISettings({
   const [savedValues, setSavedValues] = useState<Record<string, string>>({});
   const [state, setState] = useState<State>("load");
   const [error, setError] = useState<string>("");
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   useEffect(() => {
     load();
@@ -81,9 +87,30 @@ export default function LiteAISettings({
     try {
       const { keyField } = OPENAI_PROVIDER;
       const val = values[keyField] ?? "";
-      await query({
-        query: { site_settings: { name: keyField, value: val } },
+      const completed = await runFreshAuthAction(async () => {
+        const result =
+          await webapp_client.conat_client.hub.system.setSiteSettings({
+            settings: [{ name: keyField, value: val }],
+            browser_id: webapp_client.browser_id,
+          });
+        const failures = result.bays.filter(
+          ({ status }) => status === "failed",
+        );
+        if (failures.length > 0) {
+          throw Error(
+            failures
+              .map(
+                ({ bay_id, error }) =>
+                  `${bay_id}: ${error ?? "settings propagation failed"}`,
+              )
+              .join("; "),
+          );
+        }
       });
+      if (!completed) {
+        setState("ready");
+        return;
+      }
       redux.getStore("projects").clearOpenAICache();
       // @ts-ignore
       await redux.getActions("customize")?.reload();
@@ -119,6 +146,7 @@ export default function LiteAISettings({
           allowClear
           value={values[OPENAI_PROVIDER.keyField] ?? ""}
           placeholder={OPENAI_PROVIDER.placeholder}
+          aria-label={OPENAI_PROVIDER.label}
           name={`llm-${OPENAI_PROVIDER.keyField}`}
           autoComplete="off"
           onChange={(e) => onChange(OPENAI_PROVIDER.keyField, e.target.value)}
@@ -133,6 +161,7 @@ export default function LiteAISettings({
       >
         {saving ? <Loading text="Saving" /> : "Save"}
       </Button>
+      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }

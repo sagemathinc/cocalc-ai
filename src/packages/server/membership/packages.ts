@@ -1696,10 +1696,24 @@ async function getTierSeatQuote({
   };
 }
 
-export async function resolveMembershipPackageQuote(
+async function resolveMembershipPackageQuoteInternal(
   product: MembershipPackageProduct,
-  client?: PoolClient,
+  {
+    client,
+    allow_custom_period,
+  }: {
+    client?: PoolClient;
+    allow_custom_period: boolean;
+  },
 ): Promise<MembershipPackageQuote> {
+  if (
+    !allow_custom_period &&
+    (product.starts_at != null || product.expires_at != null)
+  ) {
+    throw Error(
+      "custom membership package periods require an admin-assisted purchase",
+    );
+  }
   const seat_count = normalizeSeatCount(product.seat_count);
   if (product.package_id) {
     const existing = await getMembershipPackage({
@@ -1791,6 +1805,26 @@ export async function resolveMembershipPackageQuote(
     interval,
     starts_at: asDate(product.starts_at),
     expires_at: asDate(product.expires_at),
+  });
+}
+
+export async function resolveMembershipPackageQuote(
+  product: MembershipPackageProduct,
+  client?: PoolClient,
+): Promise<MembershipPackageQuote> {
+  return await resolveMembershipPackageQuoteInternal(product, {
+    client,
+    allow_custom_period: false,
+  });
+}
+
+export async function resolveAdminMembershipPackageQuote(
+  product: MembershipPackageProduct,
+  client?: PoolClient,
+): Promise<MembershipPackageQuote> {
+  return await resolveMembershipPackageQuoteInternal(product, {
+    client,
+    allow_custom_period: true,
   });
 }
 

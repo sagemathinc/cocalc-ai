@@ -4,7 +4,7 @@ import {
   defaultReturnUrl,
   getStripeCustomerId,
   sanityCheckAmount,
-  assertValidUserMetadata,
+  assertValidStripePaymentInput,
   getStripeLineItems,
   currentStripeSite,
 } from "./util";
@@ -77,11 +77,8 @@ export default async function createPaymentIntent({
     return_url,
     force,
   });
-  if (!purpose) {
-    throw Error("purpose must be set");
-  }
+  assertValidStripePaymentInput({ purpose, description, lineItems, metadata });
   await assertPaymentCheckoutAllowed();
-  assertValidUserMetadata(metadata);
 
   const { lineItemsWithoutCredit, total_excluding_tax_usd } =
     getStripeLineItems(lineItems);

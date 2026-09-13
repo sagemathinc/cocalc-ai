@@ -1631,6 +1631,13 @@ export interface Purchases {
     expires_at?: Date | string;
     metadata?: Record<string, unknown> | null;
   }) => Promise<MembershipPackageQuote>;
+  adminGetMembershipPackageQuote: (opts?: {
+    account_id?: string;
+    browser_id?: string;
+    session_hash?: string | null;
+    user_account_id?: string;
+    product?: MembershipPackageProduct;
+  }) => Promise<MembershipPackageQuote>;
   purchaseMembershipPackage: (opts?: {
     account_id?: string;
     browser_id?: string;
@@ -1991,6 +1998,7 @@ export const purchases = {
   importMembershipTiers: authFirstRequireAccount,
   deleteMembershipTier: authFirstRequireAccount,
   getMembershipPackageQuote: authFirstRequireAccount,
+  adminGetMembershipPackageQuote: authFirstRequireAccount,
   purchaseMembershipPackage: authFirstRequireAccount,
   purchaseMembershipPackages: authFirstRequireAccount,
   getTeamLicense: authFirstRequireAccount,

@@ -15,6 +15,7 @@ export type { RenderSpec } from "./render-types";
 export type { RetentionModel } from "./retention";
 export { retentionModels } from "./retention";
 export * from "./table-ownership";
+export * from "./domain-api-only";
 
 // The tables
 import "./active-user-map-history";
