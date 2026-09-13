@@ -640,6 +640,7 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
               running_until: vm.stopped_at.toISOString(),
               transferred_at: cutover.toISOString(),
               successor_reservation_id: binding.reservation_id,
+              successor_binding: binding,
               egress: oldEgress,
             },
           ];

@@ -140,6 +140,7 @@ export async function applyPreparedCourseRestart(
       running_until: vm.stopped_at.toISOString(),
       transferred_at: cutover.toISOString(),
       successor_reservation_id: binding.reservation_id,
+      successor_binding: binding,
       egress: vm.metadata.billing.egress ?? {},
     },
   ];

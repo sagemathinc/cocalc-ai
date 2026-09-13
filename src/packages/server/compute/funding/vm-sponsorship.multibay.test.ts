@@ -44,6 +44,10 @@ import {
   requireCourseVmService,
 } from "./vm-funding";
 import { recoverExistingCourseVmFunding } from "./vm-worker-recovery";
+import {
+  prepareCourseVmRestart,
+  applyPreparedCourseRestart,
+} from "./vm-restart";
 import { setPolicy } from "./__tests__/policy-source";
 import {
   bays,
@@ -364,6 +368,67 @@ describePg(
     async function row(bay: string, sql: string, params: unknown[] = []) {
       return (await pools.get(bay)!.query(sql, params)).rows[0];
     }
+
+    it("settles a sponsored restart without a VM row on the payer bay", async () => {
+      const f = await fixture();
+      await onBay(resourceBay, async () => {
+        const bound = await reserveCourseVmLaunch(f.vm);
+        await requireCourseVmService(bound, true);
+        await pools
+          .get(resourceBay)!
+          .query(
+            "UPDATE compute_vms SET state='stopped',desired_state='stopped',stopped_at=NOW() WHERE id=$1",
+            [f.vm.id],
+          );
+        const vm = (await getComputeVmById(f.vm.id))!;
+        const prepared = (await prepareCourseVmRestart(
+          vm,
+          randomUUID(),
+          null,
+        ))!;
+        const db = await pools.get(resourceBay)!.connect();
+        let restarted;
+        try {
+          await db.query("BEGIN");
+          const {
+            rows: [locked],
+          } = await db.query(
+            "SELECT * FROM compute_vms WHERE id=$1 FOR UPDATE",
+            [vm.id],
+          );
+          restarted = await applyPreparedCourseRestart(db, locked, prepared);
+          await db.query("COMMIT");
+        } catch (err) {
+          await db.query("ROLLBACK");
+          throw err;
+        } finally {
+          db.release();
+        }
+        await (
+          await payerApi(f.payer)
+        ).checkComputeVmFunding({
+          account_id: f.payer,
+          binding: prepared.binding,
+          dispatch: true,
+        });
+        await meterCourseVm(restarted!);
+        await meterCourseVm(restarted!);
+      });
+      expect(
+        await row(
+          payerBay,
+          "SELECT count(*)::int AS n FROM compute_vms WHERE id=$1",
+          [f.vm.id],
+        ),
+      ).toEqual({ n: 0 });
+      expect(
+        await row(
+          payerBay,
+          "SELECT state FROM compute_funding_reservations WHERE operation_id=$1",
+          [f.request.funding_epoch],
+        ),
+      ).toEqual({ state: "settled" });
+    });
 
     it.each(["prepaid", "postpaid"] as const)(
       "routes %s grants, recovers a lost reserve reply, and settles only the payer after rehome",

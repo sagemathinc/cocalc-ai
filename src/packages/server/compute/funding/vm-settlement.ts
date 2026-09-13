@@ -45,6 +45,41 @@ export function cumulativeVmCharge(
 export async function settleComputeVmFundingLocal(
   opts: SettleComputeVmFundingRequest,
 ): Promise<ComputeVmFundingSettlement> {
+  // Confirm the successor on its payer home before taking any local financial
+  // lock. The owning bay persisted this binding with its cutover; a VM row in
+  // the old payer's database is neither required nor authoritative.
+  let successorConfirmed = false;
+  if (opts.successor_binding) {
+    const next = opts.successor_binding;
+    if (
+      !opts.transferred_at ||
+      next.reservation_id !== opts.successor_reservation_id ||
+      next.reservation_id === opts.binding.reservation_id ||
+      next.resource_id !== opts.binding.resource_id ||
+      (next.resource_kind ?? "compute-vm") !==
+        (opts.binding.resource_kind ?? "compute-vm") ||
+      next.owner_account_id !== opts.binding.owner_account_id ||
+      next.owning_bay_id !== opts.binding.owning_bay_id ||
+      next.resource_generation <= opts.binding.resource_generation
+    )
+      fundingConflict("Invalid successor funding identity.");
+    const { payerApi } = await import("./vm-funding");
+    const confirmed = await (
+      await payerApi(next.payer_account_id)
+    ).lookupComputeVmFunding({
+      account_id: next.payer_account_id,
+      source: next.source,
+      resource_kind: next.resource_kind,
+      resource_id: next.resource_id,
+      resource_generation: next.resource_generation,
+      owner_account_id: next.owner_account_id,
+      owning_bay_id: next.owning_bay_id,
+      funding_epoch: next.funding_epoch,
+    });
+    if (confirmed?.reservation_id !== next.reservation_id)
+      fundingConflict("Successor funding reservation has not committed.");
+    successorConfirmed = true;
+  }
   return withFundingAccountTransaction(opts.account_id, async (client) => {
     const source =
       opts.binding.source.kind === "personal"
@@ -106,19 +141,24 @@ export async function settleComputeVmFundingLocal(
         !successorId ||
         !storageEnd ||
         storageEnd.toISOString() !== fundingDate(transferredAt) ||
-        (previous?.transferred_at && previous.transferred_at !== transferredAt)
+        (previous?.transferred_at &&
+          previous.transferred_at !== transferredAt) ||
+        (previous?.successor_reservation_id &&
+          previous.successor_reservation_id !== successorId)
       )
         fundingConflict("Invalid VM funding handoff interval.");
-      const {
-        rows: [successor],
-      } = await client.query(
-        `SELECT r.id FROM compute_funding_reservations r JOIN compute_vms v ON v.id=r.resource_id
+      if (!successorConfirmed && !previous?.transferred_at) {
+        const {
+          rows: [successor],
+        } = await client.query(
+          `SELECT r.id FROM compute_funding_reservations r JOIN compute_vms v ON v.id=r.resource_id
         WHERE r.id=$1 AND r.resource_id=$2 AND r.id<>$3 AND r.state<>'settled'
           AND v.owner_account_id=$4 AND v.metadata#>>'{billing,course_funding,binding,reservation_id}'=r.id::text`,
-        [successorId, binding.resource_id, row.id, binding.owner_account_id],
-      );
-      if (!successor && !previous?.transferred_at)
-        fundingConflict("Successor VM funding has not committed.");
+          [successorId, binding.resource_id, row.id, binding.owner_account_id],
+        );
+        if (!successor)
+          fundingConflict("Successor VM funding has not committed.");
+      }
     }
     const egressBytes =
       opts.public_egress_bytes ?? previous?.public_egress_bytes ?? 0;

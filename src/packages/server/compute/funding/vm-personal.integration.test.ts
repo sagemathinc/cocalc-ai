@@ -33,6 +33,7 @@ import { requestScheduledVmState } from "../scheduled-stop";
 import type { VmPersonalFundingTerms } from "@cocalc/util/compute-vm-funding";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import * as exposure from "./exposure";
+import { settleComputeVmFundingLocal } from "./vm-settlement";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -638,6 +639,69 @@ it("releases the old GCP reservation when network accounting covers the stop but
       )
     ).rows[0],
   ).toEqual(old);
+});
+
+it("does not release old funding for a missing or mismatched successor", async () => {
+  const f = await fixture();
+  await switchVmPersonalFunding(f.opts);
+  await getPool().query(
+    "UPDATE compute_vms SET state='stopped',stopped_at=NOW() WHERE id=$1",
+    [f.vmId],
+  );
+  await processVmPersonalFundingHandoffs();
+  const vm = (await getComputeVmById(f.vmId))!;
+  const prior = vm.metadata.billing.course_funding.history[0];
+  const request = {
+    account_id: f.payer,
+    binding: f.binding,
+    running_until: prior.running_until,
+    stopped_until: prior.transferred_at,
+    transferred_at: prior.transferred_at,
+    successor_reservation_id: prior.successor_reservation_id,
+    successor_binding: prior.successor_binding,
+  };
+  for (const change of [
+    { resource_id: randomUUID() },
+    { owner_account_id: randomUUID() },
+    { owning_bay_id: "wrong-bay" },
+    { resource_generation: 1 },
+    { reservation_id: randomUUID() },
+  ])
+    await expect(
+      settleComputeVmFundingLocal({
+        ...request,
+        successor_binding: { ...request.successor_binding, ...change },
+      }),
+    ).rejects.toThrow(/successor funding identity/);
+  const api = await payerApi(f.student);
+  const lookup = jest
+    .spyOn(api, "lookupComputeVmFunding")
+    .mockResolvedValue(null);
+  await expect(settleComputeVmFundingLocal(request)).rejects.toThrow(
+    /has not committed/,
+  );
+  lookup.mockRejectedValue(new Error("successor payer unavailable"));
+  await expect(settleComputeVmFundingLocal(request)).rejects.toThrow(
+    /unavailable/,
+  );
+  expect(
+    (
+      await getPool().query(
+        "SELECT released_usd FROM compute_funding_reservations WHERE id=$1",
+        [f.binding.reservation_id],
+      )
+    ).rows[0].released_usd,
+  ).toBe("0.0000000000");
+  lookup.mockRestore();
+  await meterCourseVm(vm);
+  expect(
+    (
+      await getPool().query(
+        "SELECT state FROM compute_funding_reservations WHERE id=$1",
+        [f.binding.reservation_id],
+      )
+    ).rows[0].state,
+  ).toBe("settled");
 });
 
 it("uses postpaid only when that exact lane is in the isolated-approved fallback", async () => {

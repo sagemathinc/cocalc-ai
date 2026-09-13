@@ -25,12 +25,13 @@ export async function lookupComputeVmFundingLocal(
     request.resource_id,
     request.owner_account_id,
     request.funding_epoch,
-    request.source.pool_id,
-    request.source.grant_id,
+    ...(request.source.kind === "course"
+      ? [request.source.pool_id, request.source.grant_id]
+      : [request.source.consent_id]),
   ])
     fundingId(value, "Funding identity");
   if (
-    request.source.kind !== "course" ||
+    !["course", "personal"].includes(request.source.kind) ||
     !request.owning_bay_id ||
     !Number.isSafeInteger(request.resource_generation) ||
     request.resource_generation < 1 ||
@@ -59,9 +60,12 @@ export async function lookupComputeVmFundingLocal(
       binding.owner_account_id !== request.owner_account_id ||
       binding.owning_bay_id !== request.owning_bay_id ||
       binding.funding_epoch !== request.funding_epoch ||
-      binding.source.kind !== "course" ||
-      binding.source.pool_id !== request.source.pool_id ||
-      binding.source.grant_id !== request.source.grant_id
+      (request.source.kind === "course"
+        ? binding.source.kind !== "course" ||
+          binding.source.pool_id !== request.source.pool_id ||
+          binding.source.grant_id !== request.source.grant_id
+        : binding.source.kind !== "personal" ||
+          binding.source.consent_id !== request.source.consent_id)
     )
       fundingConflict("Funding recovery found a mismatched authorization.");
     // A lost reply may be recovered after an account move. Accept the old

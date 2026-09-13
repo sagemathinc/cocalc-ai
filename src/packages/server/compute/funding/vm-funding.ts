@@ -442,6 +442,7 @@ export async function meterCourseVm(
       stopped_until: prior.transferred_at,
       transferred_at: prior.transferred_at,
       successor_reservation_id: prior.successor_reservation_id,
+      successor_binding: prior.successor_binding,
       public_egress_bytes: Number(prior.egress.total_bytes ?? 0),
       egress_complete_through: prior.egress.metered_through_at,
       egress_finalized:

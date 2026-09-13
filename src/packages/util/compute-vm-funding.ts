@@ -147,14 +147,13 @@ export interface ComputeVmFallbackDecision {
 export type LookupComputeVmFundingRequest = Pick<
   ReserveComputeVmFundingRequest,
   | "account_id"
-  | "source"
   | "resource_kind"
   | "resource_id"
   | "resource_generation"
   | "owner_account_id"
   | "owning_bay_id"
   | "funding_epoch"
->;
+> & { source: ComputeVmFundingBinding["source"] };
 
 export interface SettleComputeVmFundingRequest {
   account_id: string;
@@ -171,6 +170,7 @@ export interface SettleComputeVmFundingRequest {
   egress_finalized?: boolean;
   // A stopped resource's obligation was durably assumed by this successor.
   successor_reservation_id?: string;
+  successor_binding?: ComputeVmFundingBinding;
   transferred_at?: string;
 }
 
