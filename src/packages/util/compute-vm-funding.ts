@@ -38,8 +38,9 @@ export interface VmPersonalFundingPreview {
   home_volumes?: {
     id: string;
     name: string;
+    funding_action?: "switch" | "preserve";
     hourly_usd: string;
-    storage_delete_at: string;
+    storage_delete_at?: string;
   }[];
   as_of: string;
 }

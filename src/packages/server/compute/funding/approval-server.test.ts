@@ -290,81 +290,113 @@ describe("isolated financial browser approval", () => {
     ).toBe(0);
     expect(apply).not.toHaveBeenCalled();
   });
-  it("renders explicit bounded personal fallback and named storage obligations", async () => {
-    const vm_id = randomUUID();
-    const personal: FundingIntent<CourseFundingApprovalTerms> = {
-      ...intent,
-      terms: {
-        kind: "personalVMfallback",
-        vm_id,
-        expected_funding_version: "version-9",
-        home_volume_ids: [],
-        lane: "prepaid",
-        cap_usd: "5.00",
-        ends_at: "2099-10-01T12:00:00Z",
-        activation: "fallback",
-        fallback_reasons: ["course_exhausted", "course_expired"],
-      },
-      review: {
-        ...intent.review,
-        recipients: [],
-        personal_vm_fallback: {
+  it.each(["none", "switch", "preserve"] as const)(
+    "renders personal fallback with %s home funding",
+    async (action) => {
+      const vm_id = randomUUID();
+      const volume_id = randomUUID();
+      const personal: FundingIntent<CourseFundingApprovalTerms> = {
+        ...intent,
+        terms: {
+          kind: "personalVMfallback",
           vm_id,
-          vm_name: "Research VM <script>alert(1)</script>",
-          owner_account_id: payer,
-          owning_bay_id: "bay-0",
-          resource_generation: 7,
-          funding_epoch: "epoch-9",
-          hourly_usd: "0.125",
-          protected_storage_usd: "0.75",
-          egress_cap_usd: "0.50",
-          storage_delete_at: "2099-10-04T12:00:00Z",
-          home_volumes: [],
+          expected_funding_version: "version-9",
+          home_volume_ids: action === "none" ? [] : [volume_id],
+          lane: "prepaid",
+          cap_usd: "5.00",
+          ends_at: "2099-10-01T12:00:00Z",
+          activation: "fallback",
+          fallback_reasons: ["course_exhausted", "course_expired"],
         },
-      },
-    };
-    approvals.retrieve.mockResolvedValue(personal);
-    await login("Approve Personal VM Funding");
-    const body = await page.locator("main").innerText();
-    for (const text of [
-      "payer@example.test",
-      "Research VM",
-      "USD 5.00",
-      "Course allowance exhausted",
-      "Course sponsorship expired",
-      "version-9",
-      "epoch-9",
-      "2099-10-01",
-      "2099-10-04",
-      "Revocation",
-      "No separate home volume",
-    ])
-      expect(body).toContain(text);
-    expect(await page.locator("script").count()).toBe(0);
-    await page.setViewportSize({ width: 320, height: 900 });
-    const axe = readFileSync(
-      require.resolve("axe-core/axe.min.js", {
-        paths: [resolve(__dirname, "../../../..")],
-      }),
-      "utf8",
-    );
-    await page.evaluate(axe);
-    for (const colorScheme of ["light", "dark"]) {
-      await page.emulateMedia({ colorScheme });
-      expect(
-        (
+        review: {
+          ...intent.review,
+          recipients: [],
+          personal_vm_fallback: {
+            vm_id,
+            vm_name: "Research VM <script>alert(1)</script>",
+            owner_account_id: payer,
+            owning_bay_id: "bay-0",
+            resource_generation: 7,
+            funding_epoch: "epoch-9",
+            hourly_usd: "0.125",
+            protected_storage_usd: "0.75",
+            egress_cap_usd: "0.50",
+            storage_delete_at: "2099-10-04T12:00:00Z",
+            home_volumes:
+              action === "none"
+                ? []
+                : [
+                    {
+                      id: volume_id,
+                      name: "Personal home <b>data</b>",
+                      funding_action: action,
+                      funding_mode:
+                        action === "preserve" ? "account-prepaid" : undefined,
+                      funding_epoch: randomUUID(),
+                      resource_generation: 1,
+                      attachment_generation: 1,
+                      size_gb: 10,
+                      hourly_usd: "0.01",
+                      storage_delete_at:
+                        action === "switch"
+                          ? "2099-10-04T12:00:00Z"
+                          : undefined,
+                    },
+                  ],
+          },
+        },
+      };
+      approvals.retrieve.mockResolvedValue(personal);
+      await login("Approve Personal VM Funding");
+      const body = await page.locator("main").innerText();
+      for (const text of [
+        "payer@example.test",
+        "Research VM",
+        "USD 5.00",
+        "Course allowance exhausted",
+        "Course sponsorship expired",
+        "version-9",
+        "epoch-9",
+        "2099-10-01",
+        "2099-10-04",
+        "Revocation",
+      ])
+        expect(body).toContain(text);
+      if (action === "none") expect(body).toContain("No separate home volume");
+      else {
+        expect(body).toContain(volume_id);
+        expect(body).toContain("Personal home <b>data</b>");
+        if (action === "preserve") {
+          expect(body).toContain("outside this VM cap");
+          expect(body).toContain("does not extend or cancel");
+        }
+      }
+      expect(await page.locator("script").count()).toBe(0);
+      await page.setViewportSize({ width: 320, height: 900 });
+      const axe = readFileSync(
+        require.resolve("axe-core/axe.min.js", {
+          paths: [resolve(__dirname, "../../../..")],
+        }),
+        "utf8",
+      );
+      await page.evaluate(axe);
+      for (const colorScheme of ["light", "dark"]) {
+        await page.emulateMedia({ colorScheme });
+        expect(
+          (
+            await page.evaluate(
+              "axe.run(document, {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}})",
+            )
+          ).violations,
+        ).toEqual([]);
+        expect(
           await page.evaluate(
-            "axe.run(document, {runOnly:{type:'tag',values:['wcag2a','wcag2aa','wcag21aa']}})",
-          )
-        ).violations,
-      ).toEqual([]);
-      expect(
-        await page.evaluate(
-          "document.documentElement.scrollWidth <= innerWidth",
-        ),
-      ).toBe(true);
-    }
-  });
+            "document.documentElement.scrollWidth <= innerWidth",
+          ),
+        ).toBe(true);
+      }
+    },
+  );
   it("reviews storage alone without granting VM authority", async () => {
     const volume_id = randomUUID();
     approvals.retrieve.mockResolvedValue({

@@ -201,7 +201,17 @@ checks ran at 320/720/1440 pixels in light/dark mode. The dev stale-build overla
 obscured parts of some captured screenshots: those captures are not complete
 visual sign-off, and the 200% zoom/device matrix remains outstanding.
 
-Remaining implementation/validation includes pre-existing independent personal home volumes,
+Pre-existing personally funded home volumes are now included in VM approval as
+unchanged resources, outside the VM's new cap. They retain their payer and storage
+agreement. Incomplete funding records and post-approval funding changes block the
+handoff. Real-PostgreSQL tests verify that the entire disk row remains unchanged
+and only the VM receives a reservation. Trusted approval/browser tests cover the
+distinct disclosure; this case has not yet been exercised with a real attached
+cloud disk. Server/frontend typechecks, frontend lint, 68 funding/approval tests,
+13 updated isolated approval tests, 6 frontend tests, 13 CLI tests and 8 docs
+tests pass (these overlapping sets are not a combined unique-test count).
+
+Remaining implementation/validation includes live independent personal home volumes,
 live volume retention expiry, automatic fallback/exhaustion, transfer/payment
 provenance validation, bounded postpaid workflows, and currency display. The
 isolated hub has no Stripe configuration; the maintainer has been asked to

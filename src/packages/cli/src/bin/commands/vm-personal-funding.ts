@@ -156,8 +156,9 @@ a restart. Poll status and vm get; an accepted request is not completed cutover.
 Cancel active/preparing consent can stop the VM; it does not refund prior usage.
 Include an attached course-funded home volume in the review. It receives its
 own reservation within the same cap and survives VM deletion under its own
-retention deadline. Independently personal-funded home volumes are not yet
-supported in this VM handoff; never silently replace their funding agreement.
+retention deadline. Include an already personally funded home volume too: its
+agreement stays unchanged outside the VM cap. VM approval does not extend or
+cancel that disk's funding or retention.
 Never remove volume scope, change versions automatically, or use vm funding --set
 to bypass a rejected proposal. No command here approves consent or extends timers.
 `,

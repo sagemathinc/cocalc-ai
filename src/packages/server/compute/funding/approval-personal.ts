@@ -30,12 +30,14 @@ export interface PersonalVmApprovalReview {
   home_volumes: {
     id: string;
     name: string;
-    funding_epoch: string;
-    resource_generation: number;
+    funding_action?: "switch" | "preserve";
+    funding_mode?: string;
+    funding_epoch?: string;
+    resource_generation?: number;
     attachment_generation: number;
     size_gb: number;
     hourly_usd: string;
-    storage_delete_at: string;
+    storage_delete_at?: string;
   }[];
 }
 
@@ -144,12 +146,25 @@ export function validatePersonalVmApprovalReview(
   fundingAmount(review.egress_cap_usd);
   fundingDate(review.storage_delete_at);
   review.home_volumes.forEach((v) => {
-    fundingDate(v.storage_delete_at);
-    fundingAmount(v.hourly_usd);
-    fundingId(v.funding_epoch, "Volume funding epoch");
     if (
-      !Number.isSafeInteger(v.resource_generation) ||
-      v.resource_generation < 1 ||
+      v.funding_action != null &&
+      !["switch", "preserve"].includes(v.funding_action)
+    )
+      throw new Error("Invalid home-volume funding action");
+    if (v.funding_action === "preserve") {
+      if (
+        !["account-prepaid", "account-postpaid"].includes(v.funding_mode ?? "")
+      )
+        throw new Error("Independent personal storage funding unavailable");
+      if (v.storage_delete_at != null) fundingDate(v.storage_delete_at);
+    } else fundingDate(v.storage_delete_at!);
+    fundingAmount(v.hourly_usd);
+    if (v.funding_epoch != null || v.funding_action !== "preserve")
+      fundingId(v.funding_epoch!, "Volume funding epoch");
+    if (
+      ((v.resource_generation != null || v.funding_action !== "preserve") &&
+        (!Number.isSafeInteger(v.resource_generation) ||
+          v.resource_generation! < 1)) ||
       !Number.isSafeInteger(v.attachment_generation) ||
       v.attachment_generation < 0 ||
       !Number.isSafeInteger(v.size_gb) ||

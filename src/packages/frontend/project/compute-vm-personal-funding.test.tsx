@@ -132,49 +132,62 @@ it("drops a pending preview after changing the resource funding generation", asy
   ).toBeNull();
 });
 
-it("includes the attached disk in the reviewed scope and discloses its independent retention", async () => {
-  const api = service();
-  api.previewVmPersonalFunding.mockImplementation(async ({ terms }) => ({
-    terms,
-    hourly_usd: "0.1",
-    protected_storage_usd: "0.5",
-    egress_cap_usd: "0.05",
-    available_usd: "10",
-    as_of: new Date().toISOString(),
-    home_volumes: [
-      {
-        id: "home",
-        name: "Student data",
-        hourly_usd: "0.01",
-        storage_delete_at: "2030-01-04T12:00:00Z",
-      },
-    ],
-  }));
-  const user = userEvent.setup();
-  render(
-    <VmPersonalFunding
-      vmId="vm"
-      fundingVersion="epoch:1"
-      homeVolumeIds={["home"]}
-      api={api}
-    />,
-  );
-  await fill();
-  screen.getByRole("button", { name: "Preview personal funding" }).focus();
-  await user.keyboard("{Enter}");
-  const region = await screen.findByRole("region", {
-    name: "Personal storage: Student data",
-  });
-  expect(region).toHaveTextContent("Home volume hourly rate");
-  expect(region).toHaveTextContent("Latest storage deletion");
-  expect(region).toHaveTextContent("Deleting the VM does not delete this disk");
-  await user.click(
-    screen.getByRole("button", { name: "Request personal authorization" }),
-  );
-  expect(
-    api.proposeVmPersonalFunding.mock.calls[0][0].terms.home_volume_ids,
-  ).toEqual(["home"]);
-});
+it.each(["switch", "preserve"] as const)(
+  "includes the attached disk in the reviewed scope with %s funding",
+  async (funding_action) => {
+    const api = service();
+    api.previewVmPersonalFunding.mockImplementation(async ({ terms }) => ({
+      terms,
+      hourly_usd: "0.1",
+      protected_storage_usd: "0.5",
+      egress_cap_usd: "0.05",
+      available_usd: "10",
+      as_of: new Date().toISOString(),
+      home_volumes: [
+        {
+          id: "home",
+          name: "Student data",
+          funding_action,
+          hourly_usd: "0.01",
+          storage_delete_at:
+            funding_action === "switch" ? "2030-01-04T12:00:00Z" : undefined,
+        },
+      ],
+    }));
+    const user = userEvent.setup();
+    render(
+      <VmPersonalFunding
+        vmId="vm"
+        fundingVersion="epoch:1"
+        homeVolumeIds={["home"]}
+        api={api}
+      />,
+    );
+    await fill();
+    screen.getByRole("button", { name: "Preview personal funding" }).focus();
+    await user.keyboard("{Enter}");
+    const region = await screen.findByRole("region", {
+      name: "Personal storage: Student data",
+    });
+    expect(region).toHaveTextContent("Home volume hourly rate");
+    expect(region).toHaveTextContent("Latest storage deletion");
+    expect(region).toHaveTextContent(
+      "Deleting the VM does not delete this disk",
+    );
+    if (funding_action === "preserve") {
+      expect(region).toHaveTextContent("outside this VM cap");
+      expect(region).toHaveTextContent("does not extend or cancel");
+      expect(region).toHaveTextContent("Existing policy; unchanged");
+    } else
+      expect(region).toHaveTextContent("Storage uses the same personal cap");
+    await user.click(
+      screen.getByRole("button", { name: "Request personal authorization" }),
+    );
+    expect(
+      api.proposeVmPersonalFunding.mock.calls[0][0].terms.home_volume_ids,
+    ).toEqual(["home"]);
+  },
+);
 
 it("fails closed when the existing authorization cannot be loaded", async () => {
   const api = service();

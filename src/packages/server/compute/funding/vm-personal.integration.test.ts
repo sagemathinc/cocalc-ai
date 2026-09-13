@@ -319,6 +319,121 @@ async function standaloneVolumeConsent() {
   return { ...f, terms, preview, consent, review };
 }
 
+async function fixtureWithPersonalHome() {
+  const f = await fixture("gcp");
+  const volumeId = randomUUID();
+  homeFixtureIds.add(volumeId);
+  await getPool().query(
+    `INSERT INTO compute_volumes (id,name,owner_account_id,owning_bay_id,provider,region,zone,role,funding_mode,
+      size_gb,desired_size_gb,state,desired_state,attachment_state,attached_vm_id,attachment_generation,ready_at,metadata)
+      VALUES ($1,'independent-home',$2,$3,'gcp','us-central1','us-central1-a','home','account-prepaid',10,10,'ready','ready','attached',$4,1,NOW(),$5)`,
+    [
+      volumeId,
+      f.student,
+      getConfiguredBayId(),
+      f.vmId,
+      { billing: { rate: { hourly_cost_usd: "0.01" } } },
+    ],
+  );
+  await getPool().query(
+    "UPDATE compute_vms SET home_volume_id=$2 WHERE id=$1",
+    [f.vmId, volumeId],
+  );
+  f.terms.home_volume_ids = [volumeId];
+  const preview = await previewVmPersonalFunding({
+    account_id: f.student,
+    terms: f.terms,
+  });
+  expect(preview.home_volumes![0]).toMatchObject({
+    id: volumeId,
+    funding_action: "preserve",
+    storage_delete_at: undefined,
+  });
+  const volume = (await getComputeVolumeById(volumeId))!;
+  await getPool().query(
+    "UPDATE compute_vm_personal_consents SET terms=$2,review=$3 WHERE id=$1",
+    [
+      f.consentId,
+      f.terms,
+      {
+        home_volumes: [
+          {
+            ...preview.home_volumes![0],
+            funding_mode: volume.funding_mode,
+            attachment_generation: 1,
+            size_gb: 10,
+          },
+        ],
+      },
+    ],
+  );
+  return { ...f, volumeId, volume };
+}
+
+it("preserves an existing personal home disk and charges only the VM against its new cap", async () => {
+  const f = await fixtureWithPersonalHome();
+  const { volumeId, volume } = f;
+  await switchVmPersonalFunding(f.opts);
+  await getPool().query(
+    "UPDATE compute_vms SET state='stopped',stopped_at=NOW(),metadata=jsonb_set(metadata,'{billing,egress}',jsonb_build_object('metered_through_at',clock_timestamp(),'total_bytes',0)) WHERE id=$1",
+    [f.vmId],
+  );
+  await processVmPersonalFundingHandoffs();
+  expect(
+    (await getVmPersonalFunding({ account_id: f.student, vm_id: f.vmId }))!
+      .state,
+  ).toBe("active");
+  expect(await getComputeVolumeById(volumeId)).toEqual(volume);
+  expect(
+    (
+      await getPool().query(
+        "SELECT resource_id,resource_kind FROM compute_funding_reservations WHERE payer_account_id=$1",
+        [f.student],
+      )
+    ).rows,
+  ).toEqual([{ resource_id: f.vmId, resource_kind: "compute-vm" }]);
+});
+
+it("rejects incomplete home funding instead of treating it as an ordinary personal disk", async () => {
+  const f = await fixtureWithPersonalHome();
+  await getPool().query(
+    "UPDATE compute_volumes SET metadata=jsonb_set(metadata,'{billing,course_funding}',$2::jsonb) WHERE id=$1",
+    [f.volumeId, JSON.stringify({ funding_epoch: randomUUID() })],
+  );
+  await expect(
+    previewVmPersonalFunding({ account_id: f.student, terms: f.terms }),
+  ).rejects.toThrow("Home volume funding is unknown");
+});
+
+it("does not apply an approved handoff after independent home funding changes", async () => {
+  const f = await fixtureWithPersonalHome();
+  await switchVmPersonalFunding(f.opts);
+  await getPool().query(
+    "UPDATE compute_vms SET state='stopped',stopped_at=NOW(),metadata=jsonb_set(metadata,'{billing,egress}',jsonb_build_object('metered_through_at',clock_timestamp(),'total_bytes',0)) WHERE id=$1",
+    [f.vmId],
+  );
+  await getPool().query(
+    "UPDATE compute_volumes SET funding_mode='account-postpaid' WHERE id=$1",
+    [f.volumeId],
+  );
+  await processVmPersonalFundingHandoffs();
+  expect(
+    (await getVmPersonalFunding({ account_id: f.student, vm_id: f.vmId }))!
+      .state,
+  ).toBe("preparing");
+  expect(
+    (
+      await getPool().query(
+        "SELECT id FROM compute_funding_reservations WHERE payer_account_id=$1",
+        [f.student],
+      )
+    ).rows,
+  ).toEqual([]);
+  expect((await getComputeVolumeById(f.volumeId))!.funding_mode).toBe(
+    "account-postpaid",
+  );
+});
+
 it("upgrades existing VM-only consents to permit exactly one standalone volume", async () => {
   const db = getClient();
   await db.connect();

@@ -401,13 +401,17 @@ export default function VmPersonalFunding({
                       {moneyToCurrency(volume.hourly_usd, 4)}
                     </Descriptions.Item>
                     <Descriptions.Item label="Latest storage deletion">
-                      {new Date(volume.storage_delete_at).toLocaleString()}
+                      {volume.storage_delete_at
+                        ? new Date(volume.storage_delete_at).toLocaleString()
+                        : "Existing policy; unchanged"}
                     </Descriptions.Item>
                   </Descriptions>
                   <Typography.Paragraph>
-                    Deleting the VM does not delete this disk. Storage uses the
-                    same personal cap and continues under its own funding
-                    deadline. VM files are not automatically backed up.
+                    Deleting the VM does not delete this disk.{" "}
+                    {volume.funding_action === "preserve"
+                      ? "Its personal funding is unchanged and outside this VM cap. This approval does not extend or cancel the disk's existing agreement."
+                      : "Storage uses the same personal cap and continues under its own funding deadline."}{" "}
+                    VM files are not automatically backed up.
                   </Typography.Paragraph>
                 </section>
               ))}

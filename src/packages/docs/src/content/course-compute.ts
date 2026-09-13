@@ -223,8 +223,10 @@ Include an attached course-funded home volume in **home_volume_ids**. Its size,
 rate, and latest deletion date appear in the same personal approval. VM and disk
 receive separate reservations within the approved combined cap; deleting the VM
 does not delete that disk. Automatic fallback requires both to use the same
-course allowance. Independently personal-funded home volumes are not yet supported
-in this VM handoff. Do not omit scope or use **vm funding --set** to bypass a
+course allowance when switching both resources. An already personally funded home
+disk is named in the review but keeps its existing agreement outside the VM cap.
+The VM approval does not extend or cancel that disk's funding or retention.
+Do not omit scope or use **vm funding --set** to bypass a
 rejected review.
 
 ### Retain a disk without a VM

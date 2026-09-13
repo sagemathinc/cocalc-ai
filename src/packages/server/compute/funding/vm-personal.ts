@@ -25,7 +25,6 @@ import {
   reservePersonalVolumeInTransaction,
 } from "./vm-personal-reservations";
 import {
-  courseVolumeBinding,
   volumeFunding,
   volumeFundingBindings,
   volumeFundingDeadline,
@@ -321,11 +320,22 @@ async function reviewedHomeVolume(
     fundingConflict(
       "Home volume is changing or unavailable; wait for storage work and review again.",
     );
-  const binding = courseVolumeBinding(volume);
-  if (binding.source.kind !== "course")
-    fundingConflict(
-      "This home volume already has independent personal funding.",
-    );
+  const funding = volume.metadata.billing.course_funding;
+  const binding = funding?.binding;
+  if (binding?.source.kind !== "course") {
+    if (
+      !["account-prepaid", "account-postpaid"].includes(volume.funding_mode) ||
+      (funding != null && !binding) ||
+      (binding &&
+        (binding.source.kind !== "personal" ||
+          binding.payer_account_id !== vm.owner_account_id ||
+          volume.funding_mode !== `account-${binding.lane}`))
+    )
+      fundingConflict(
+        "Home volume funding is unknown; review its independent agreement first.",
+      );
+    return volume;
+  }
   const vmSource = vm.metadata.billing.course_funding.binding.source;
   if (
     terms.activation === "fallback" &&
@@ -352,6 +362,9 @@ function sameHomeVolumeReview(
         attachment_generation,
         size_gb,
         hourly_usd,
+        funding_action,
+        funding_mode,
+        storage_delete_at,
       }) => ({
         id,
         funding_epoch,
@@ -359,6 +372,10 @@ function sameHomeVolumeReview(
         attachment_generation,
         size_gb,
         hourly_usd,
+        funding_action: funding_action ?? "switch",
+        funding_mode,
+        storage_delete_at:
+          funding_action === "preserve" ? storage_delete_at : undefined,
       }),
     );
   return JSON.stringify(identity(a)) === JSON.stringify(identity(b));
@@ -408,19 +425,25 @@ async function reviewVm(
     vm.provider === "gcp"
       ? (process.env.COCALC_COURSE_VM_EGRESS_RESERVE_USD ?? "1.00")
       : "0";
-  const volumeQuote = volume
-    ? quoteVmFundingAdmission(
-        {
-          hourly_cost_usd: volume.metadata.billing.rate.hourly_cost_usd,
-          storage_hourly_cost_usd: volume.metadata.billing.rate.hourly_cost_usd,
-          requested_until: new Date(now.valueOf() + 25 * 60_000).toISOString(),
-          requested_stop_at: new Date(
-            end.valueOf() - VM_FUNDING_MARGIN_MS,
-          ).toISOString(),
-        },
-        now,
-      )
-    : undefined;
+  const changeVolumeFunding =
+    volume?.metadata.billing.course_funding?.binding?.source.kind === "course";
+  const volumeQuote =
+    volume && changeVolumeFunding
+      ? quoteVmFundingAdmission(
+          {
+            hourly_cost_usd: volume.metadata.billing.rate.hourly_cost_usd,
+            storage_hourly_cost_usd:
+              volume.metadata.billing.rate.hourly_cost_usd,
+            requested_until: new Date(
+              now.valueOf() + 25 * 60_000,
+            ).toISOString(),
+            requested_stop_at: new Date(
+              end.valueOf() - VM_FUNDING_MARGIN_MS,
+            ).toISOString(),
+          },
+          now,
+        )
+      : undefined;
   if (
     toDecimal(quote.authorized_usd)
       .plus(egress)
@@ -453,15 +476,20 @@ async function reviewVm(
           {
             id: volume.id,
             name: volume.name,
-            funding_epoch: courseVolumeBinding(volume).funding_epoch,
+            funding_action: changeVolumeFunding ? "switch" : "preserve",
+            funding_mode: changeVolumeFunding ? undefined : volume.funding_mode,
+            funding_epoch:
+              volume.metadata.billing.course_funding?.binding?.funding_epoch,
             resource_generation:
-              courseVolumeBinding(volume).resource_generation,
+              volume.metadata.billing.course_funding?.binding
+                ?.resource_generation,
             attachment_generation: volume.attachment_generation,
             size_gb: volume.size_gb,
             hourly_usd: volume.metadata.billing.rate.hourly_cost_usd,
-            storage_delete_at: new Date(
-              end.valueOf() + VM_FUNDING_STORAGE_MS,
-            ).toISOString(),
+            storage_delete_at: changeVolumeFunding
+              ? new Date(end.valueOf() + VM_FUNDING_STORAGE_MS).toISOString()
+              : volume.metadata.billing.course_funding?.binding
+                  ?.storage_delete_at,
           },
         ]
       : [],
@@ -789,7 +817,10 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
             exposureBudget,
           );
           const volume = await reviewedHomeVolume(vm, consent.terms, db);
-          if (volume) {
+          if (
+            volume?.metadata.billing.course_funding?.binding?.source.kind ===
+            "course"
+          ) {
             const volumeUntil = new Date(
               Math.min(
                 cutover.valueOf() + 25 * 60_000,
