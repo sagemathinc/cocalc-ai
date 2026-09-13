@@ -1,7 +1,8 @@
 # Research workflow examples
 
 These synthetic examples accompany the [research workflow documentation](https://cocalc.ai/docs/research/reproduce-analysis).
-Python 3 and its standard library are sufficient for the scripts. The notebook
+Python 3 and its standard library are sufficient for the introductory scripts.
+The native example below additionally needs an existing C compiler. The notebook
 also requires a working Python Jupyter kernel. Use a new directory for your work.
 
 | File               | Purpose                                                                                       |
@@ -113,3 +114,35 @@ Pre-publication testing uploaded the candidate files through the CLI; public
 main-download navigation requires the files to be merged. Saved checksums and
 schemas establish run consistency; they do not authenticate the
 artifacts, independently verify the science, or replace backups.
+
+## Call compiled C from Python
+
+The `native/` directory accompanies the
+[native numerical component guide](https://cocalc.ai/docs/research/native-python).
+Keep `weighted_fit.c` and `check_native.py` together in a new folder with Python
+3.9 or later, an existing `cc` compiler, and Linux or macOS. No packages or
+compiler are installed by the example. From that folder, run:
+
+```sh
+python3 -B check_native.py --output native-fit-run
+```
+
+Expected: four scientific/input tests pass and a new
+`native-fit-run/validation-receipt.json` records the synthetic inputs, numerical
+reference, result, source hashes, compiler and interpreter. The output name must
+not exist. The temporary shared library is removed before receipt publication;
+retain source and rebuild it in each target environment. Review recorded paths
+and environment details before sharing receipts.
+
+The package's `test:examples` runs `test_native_publication.py` from a temporary
+copy. Its four regression tests cover an existing result, failed compilation,
+a competing publication and a successful existing-compiler run. The last test
+explicitly skips when `cc` is unavailable; a skip is not native execution
+acceptance. To run these checks independently, use a disposable copy of all
+three files and run `python3 -B test_native_publication.py` there. Existing-output
+and compilation checks preserve prior files; no result authenticates the science
+or promises speedup. On September 13, 2026, the exact guide shell blocks and all
+eight scientific/publication tests passed in a fresh CoCalc CPU project with the
+existing Basic 1.7 image, Linux x86_64, Python 3.14.4 and GCC 15.2.0. Reusing the
+output name failed without changing the earlier receipt. Downloaded source and
+result hashes matched before the disposable project was stopped and cleaned up.

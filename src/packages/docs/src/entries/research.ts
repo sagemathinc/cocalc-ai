@@ -25,6 +25,8 @@ import {
   RESEARCH_PARALLEL_BODY,
 } from "../content/research-compute";
 
+import { RESEARCH_NATIVE_BODY } from "../content/research-native";
+
 export const RESEARCH_ENTRIES: DocsEntry[] = [
   {
     body: RESEARCH_REPRODUCE_BODY.trim(),
@@ -200,5 +202,21 @@ export const RESEARCH_ENTRIES: DocsEntry[] = [
     summary:
       "Compare one and two worker processes, check numerical integrals independently, and verify complete saved results.",
     title: "Run and verify a bounded parallel CPU sweep",
+  },
+  {
+    body: RESEARCH_NATIVE_BODY.trim(),
+    audiences: ["agents", "researchers", "teams"],
+    category: "Research workflows",
+    id: "research.native-python",
+    lastReviewed: "2026-09-13",
+    noActionReason:
+      "This multi-step guide uses example files and a project selected by the reader.",
+    searchKeywords:
+      "compiled C numerical Python ctypes shared library compiler ABI weighted fit independent reference",
+    slug: "research/native-python",
+    status: "ready",
+    summary:
+      "Compile a C numerical routine, call it from Python, compare independent results, and retain source and build evidence.",
+    title: "Compile and verify a C numerical component from Python",
   },
 ];

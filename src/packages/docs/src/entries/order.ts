@@ -36,6 +36,7 @@ export const DOCS_ENTRY_IDS = [
   "research.notebook-migration",
   "research.resume-computation",
   "research.parallel-cpu",
+  "research.native-python",
   "research.remote-cli",
   "research.recover-work",
   "research.private-dashboard",

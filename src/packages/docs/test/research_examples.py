@@ -185,6 +185,21 @@ class ResearchExamples(unittest.TestCase):
         self.assertEqual(process.returncode, 0, stderr)
         self.assertIn("Ran 14 tests", stderr)
 
+    @unittest.skipUnless(sys.platform in ("linux", "darwin"), "native example supports Linux and macOS")
+    def test_native_compilation_results_and_failed_publication(self):
+        # The standalone suite owns temporary folders beside its files.
+        for name in ("weighted_fit.c", "check_native.py", "test_native_publication.py"):
+            shutil.copyfile(EXAMPLES / "native" / name, self.directory / name)
+        process = subprocess.Popen(
+            [sys.executable, "-B", "test_native_publication.py"],
+            cwd=self.directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+        stdout, stderr = communicate_owned_group(process, timeout=90)
+        print(stdout, end="")
+        print(stderr, end="")  # Includes an explicit skip if cc is unavailable.
+        self.assertEqual(process.returncode, 0, stderr)
+
     def test_notebook_has_no_saved_outputs_and_valid_code(self):
         notebook = json.loads((EXAMPLES / "analysis.ipynb").read_text())
         for index, cell in enumerate(notebook["cells"]):
