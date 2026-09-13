@@ -4,18 +4,78 @@ import hashlib
 from http.server import ThreadingHTTPServer
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
+from unittest.mock import Mock, call, patch
 from urllib.error import HTTPError
 from urllib.request import urlopen
 
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "research-workflows"
+
+
+def terminate_owned_group(process, grace_seconds=2):
+    """Best-effort bounded cleanup of a child started with start_new_session=True.
+
+    Reap the direct child and signal its group, including descendants that keep
+    pipes open or ignore TERM. This cannot handle an uncatchable runner SIGKILL.
+    Return cleanup errors so cancellation never gets replaced by a cleanup error.
+    """
+    errors = []
+    for signum in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+        except BaseException as error:
+            errors.append(error)
+        try:
+            process.communicate(timeout=grace_seconds)
+        except subprocess.TimeoutExpired as error:
+            if signum == signal.SIGKILL:
+                errors.append(error)
+        except BaseException as error:
+            errors.append(error)
+    try:
+        process.wait(timeout=grace_seconds)
+    except BaseException as error:
+        errors.append(error)
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except BaseException as error:
+                errors.append(error)
+    return errors
+
+
+def communicate_owned_group(process, timeout, cleanup_timeout=2):
+    """On any exceptional wait exit, clean our new session and re-raise it."""
+    try:
+        return process.communicate(timeout=timeout)
+    except BaseException as original:
+        try:
+            errors = terminate_owned_group(process, grace_seconds=cleanup_timeout)
+        except BaseException as cleanup_error:
+            errors = [cleanup_error]
+        if errors:
+            # This attribute also preserves diagnostics on Python 3.9/3.10.
+            diagnostics = tuple(f"{type(error).__name__}: {error}" for error in errors)
+            try:
+                original.owned_group_cleanup_errors = diagnostics
+                if hasattr(original, "add_note"):
+                    original.add_note("Owned process-group cleanup: " + "; ".join(diagnostics))
+            except BaseException:
+                pass
+        raise
 
 
 class ResearchExamples(unittest.TestCase):
@@ -105,6 +165,21 @@ class ResearchExamples(unittest.TestCase):
         self.run_script("sweep.py", "--out", "run", "--delay", 0, success=False)
         self.run_script("summarize_run.py", "run", success=False)
 
+    @unittest.skipUnless(os.name == "posix", "scientific examples require Unix resource limits")
+    def test_scientific_references_corruption_and_interruption(self):
+        # The suite writes fixtures beside itself; keep every run out of the source tree.
+        for name in ("scientific-prototype-v2-workflows.py", "scientific-prototype-v2-tests.py"):
+            shutil.copyfile(EXAMPLES / "scientific" / name, self.directory / name)
+        process = subprocess.Popen(
+            [sys.executable, "-B", "scientific-prototype-v2-tests.py"],
+            cwd=self.directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True,
+        )
+        stdout, stderr = communicate_owned_group(process, timeout=90)
+        print(stdout, end="")
+        self.assertEqual(process.returncode, 0, stderr)
+        self.assertIn("Ran 14 tests", stderr)
+
     def test_notebook_has_no_saved_outputs_and_valid_code(self):
         notebook = json.loads((EXAMPLES / "analysis.ipynb").read_text())
         for index, cell in enumerate(notebook["cells"]):
@@ -112,6 +187,151 @@ class ResearchExamples(unittest.TestCase):
                 self.assertEqual(cell["outputs"], [])
                 self.assertIsNone(cell["execution_count"])
                 compile("".join(cell["source"]), f"cell-{index}", "exec")
+
+
+@unittest.skipUnless(os.name == "posix", "owned process groups require POSIX")
+class OwnedProcessGroupTests(unittest.TestCase):
+    def test_timeout_escalates_and_preserves_the_original_exception(self):
+        original = subprocess.TimeoutExpired("suite", 90)
+        process = Mock(pid=123456)
+        process.communicate.side_effect = [
+            original, subprocess.TimeoutExpired("suite", 0.1), ("", "")
+        ]
+        with patch.object(os, "killpg") as killpg:
+            with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                communicate_owned_group(process, timeout=90, cleanup_timeout=0.1)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(killpg.call_args_list, [
+            call(process.pid, signal.SIGTERM), call(process.pid, signal.SIGKILL)
+        ])
+        self.assertEqual(process.communicate.call_args_list, [
+            call(timeout=90), call(timeout=0.1), call(timeout=0.1)
+        ])
+        process.wait.assert_called_once_with(timeout=0.1)
+
+    def test_keyboard_interrupt_and_pipe_error_clean_up_before_reraising(self):
+        for original in (KeyboardInterrupt("cancel suite"), OSError("pipe read failed")):
+            with self.subTest(error=type(original).__name__):
+                process = Mock(pid=123456)
+                process.communicate.side_effect = [original, ("", ""), ("", "")]
+                with patch.object(os, "killpg") as killpg:
+                    with self.assertRaises(type(original)) as caught:
+                        communicate_owned_group(process, timeout=90, cleanup_timeout=0.1)
+                self.assertIs(caught.exception, original)
+                self.assertEqual(killpg.call_count, 2)
+                process.wait.assert_called_once_with(timeout=0.1)
+
+    def test_already_exited_child_does_not_replace_cancellation(self):
+        original = KeyboardInterrupt("cancel after exit")
+        process = Mock(pid=123456, returncode=0)
+        process.communicate.side_effect = [original, ("done", ""), ("done", "")]
+        with patch.object(os, "killpg", side_effect=ProcessLookupError):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                communicate_owned_group(process, timeout=90, cleanup_timeout=0.1)
+        self.assertIs(caught.exception, original)
+        self.assertFalse(hasattr(original, "owned_group_cleanup_errors"))
+        process.wait.assert_called_once_with(timeout=0.1)
+
+    def test_cleanup_errors_do_not_hide_the_original_exception(self):
+        original = KeyboardInterrupt("original cancellation")
+        process = Mock(pid=123456)
+        process.communicate.side_effect = [original, OSError("read failed"), KeyboardInterrupt("second interrupt")]
+        process.wait.side_effect = subprocess.TimeoutExpired("suite", 0.1)
+        with patch.object(os, "killpg", side_effect=PermissionError("signal denied")):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                communicate_owned_group(process, timeout=90, cleanup_timeout=0.1)
+        self.assertIs(caught.exception, original)
+        self.assertEqual(len(original.owned_group_cleanup_errors), 5)
+        self.assertIn("PermissionError: signal denied", original.owned_group_cleanup_errors)
+        process.wait.assert_called_once_with(timeout=0.1)
+
+        unexpected = KeyboardInterrupt("preserve even an unexpected cleanup failure")
+        process = Mock(pid=123456)
+        process.communicate.side_effect = unexpected
+        with patch(f"{__name__}.terminate_owned_group", side_effect=RuntimeError("cleanup helper failed")):
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                communicate_owned_group(process, timeout=90, cleanup_timeout=0.1)
+        self.assertIs(caught.exception, unexpected)
+        self.assertEqual(unexpected.owned_group_cleanup_errors, ("RuntimeError: cleanup helper failed",))
+
+    def test_term_resistant_leader_and_descendant_are_bounded(self):
+        child_code = """import os, signal, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()))
+time.sleep(60)
+"""
+        for descendant in (False, True):
+            with self.subTest(descendant=descendant), tempfile.TemporaryDirectory() as directory:
+                ready = Path(directory) / "ready"
+                if descendant:
+                    code = "import subprocess, sys, time\nsubprocess.Popen([sys.executable, '-c', " + repr(child_code) + ", sys.argv[1]])\ntime.sleep(60)"
+                else:
+                    code = child_code
+                process = subprocess.Popen(
+                    [sys.executable, "-c", code, str(ready)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                    start_new_session=True,
+                )
+                try:
+                    deadline = time.monotonic() + 5
+                    while not ready.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(ready.exists(), "TERM handler was not installed")
+                    with self.assertRaises(subprocess.TimeoutExpired) as caught:
+                        communicate_owned_group(process, timeout=0.05, cleanup_timeout=0.1)
+                    self.assertFalse(hasattr(caught.exception, "owned_group_cleanup_errors"))
+                    self.assertEqual(process.returncode, -signal.SIGTERM if descendant else -signal.SIGKILL)
+                    # communicate reached EOF only after the resistant child,
+                    # which inherited both pipes, also exited. Reap the leader.
+                    process.wait(timeout=1)
+                finally:
+                    if process.poll() is None:
+                        terminate_owned_group(process, grace_seconds=0.1)
+
+    def test_outer_term_allows_standalone_suite_to_clean_nested_group(self):
+        worker_code = """import os, signal, sys, time
+from pathlib import Path
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+Path(sys.argv[1]).write_text(str(os.getpid()))
+time.sleep(60)
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            ready = Path(directory) / "ready"
+            suite = EXAMPLES / "scientific" / "scientific-prototype-v2-tests.py"
+            harness = """import importlib.util, signal, sys
+spec = importlib.util.spec_from_file_location("standalone_suite", sys.argv[1])
+suite = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(suite)
+signal.signal(signal.SIGTERM, suite.cancel_on_sigterm)
+with suite.owned_process([sys.executable, "-c", sys.argv[2], sys.argv[3]]) as child:
+    child.communicate(timeout=60)
+"""
+            process = subprocess.Popen(
+                [sys.executable, "-c", harness, str(suite), worker_code, str(ready)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                start_new_session=True,
+            )
+            nested_group = None
+            try:
+                deadline = time.monotonic() + 5
+                while not ready.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(ready.exists(), "nested worker was not ready")
+                nested_group = int(ready.read_text())
+                with self.assertRaises(subprocess.TimeoutExpired):
+                    communicate_owned_group(process, timeout=0.05, cleanup_timeout=1)
+                with self.assertRaises(ProcessLookupError):
+                    os.killpg(nested_group, 0)
+                self.assertIsNotNone(process.returncode)
+            finally:
+                if nested_group is not None:
+                    try:
+                        os.killpg(nested_group, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                if process.poll() is None:
+                    terminate_owned_group(process, grace_seconds=0.1)
 
 
 if __name__ == "__main__":

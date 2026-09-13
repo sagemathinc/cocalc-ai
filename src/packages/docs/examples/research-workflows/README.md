@@ -67,3 +67,50 @@ python3 src/packages/docs/test/research_examples.py
 This tests the analysis, failure/resume behavior, and rejection of corrupt or
 incomplete results in temporary directories. It does not exercise CoCalc
 authentication, remote execution, or browser behavior.
+
+## Stream data and bound CPU workers
+
+The `scientific/` directory contains the version 2 terminal example and its
+companion regression suite. Keep these two files beside one another in a new,
+writable working folder with Python 3.9 or later on Linux or macOS:
+
+- `scientific-prototype-v2-workflows.py`: streaming group statistics, a bounded
+  process pool for numerical integrals, and saved-artifact verification.
+- `scientific-prototype-v2-tests.py`: independent numerical references, malformed
+  inputs, incomplete artifacts, simulated worker failure, and real child-run
+  interruption checks.
+
+Follow the [streaming analysis guide](https://cocalc.ai/docs/research/streaming-analysis)
+or [parallel CPU guide](https://cocalc.ai/docs/research/parallel-cpu) for exact
+synthetic inputs, commands, expected results, and cleanup. These are terminal
+examples; no companion notebook is required. The serial `sweep.py` example
+above remains the separate resumable workflow.
+
+From a disposable copy of the `scientific/` folder, run the companion suite:
+
+```sh
+python3 -B scientific-prototype-v2-tests.py
+```
+
+The suite writes PID-prefixed fixtures beside itself. It uses the Unix-like
+`resource` module and runs up to two workers, including an interruption case
+with 16 rates and 500,000 intervals. It sets per-process CPU limits and
+subprocess timeouts, not a total memory cap. Wait for it to exit before deleting
+only that disposable folder. The package's `test:examples` command also runs
+this suite from a temporary copy, so its fixtures stay out of the source tree.
+
+On September 13, 2026, the two guides passed 19 project-shell command checks
+(17 successful commands and two expected failures) in CoCalc on Linux with
+Python 3.14.4. The companion suite passed all 12 tests. Fifteen downloaded
+result files and receipts matched their remote hashes; the downloaded results
+also passed the independent numerical comparisons. Local tests passed on macOS
+with Python 3.12.14. After the hosted run, changes added exclusive output-file
+publication, bounded artifact verification, deterministic interruption tests,
+and bounded test-process cleanup. The revised files passed locally on Python
+3.9.6 and 3.12.14; they were not rerun in CoCalc. The numerical algorithms and
+guide commands are unchanged. Output directories must support hard links;
+unsupported filesystems fail without falling back to replacing existing files.
+Pre-publication testing uploaded the candidate files through the CLI; public
+main-download navigation requires the files to be merged. Saved checksums and
+schemas establish run consistency; they do not authenticate the
+artifacts, independently verify the science, or replace backups.
