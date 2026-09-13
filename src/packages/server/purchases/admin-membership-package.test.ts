@@ -222,6 +222,38 @@ describe("admin membership package purchase", () => {
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
   });
 
+  it("validates package dates before attempting card funding", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        admin_account_id,
+        user_account_id,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: membershipClass,
+          seat_count: 1,
+          interval: "month",
+          starts_at: new Date("2026-10-02T00:00:00Z"),
+          expires_at: new Date("2026-10-01T00:00:00Z"),
+        },
+        price: 25,
+        source: "card",
+        reason: "invalid date ordering must fail before Stripe",
+        idempotency_key: "invalid-dates-before-card",
+      }),
+    ).rejects.toThrow("expires_at must be after starts_at");
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("does not create a package when card funding needs user action", async () => {
     const admin_account_id = uuid();
     const user_account_id = uuid();
