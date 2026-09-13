@@ -27,8 +27,12 @@ separate ext4 disk and its original marker was unchanged. VM deletion left the
 disk detached and intact: independent GCP inventory confirmed only that disk at
 07:18:54. Explicit disk deletion then completed; inventory at 07:20:08 contained
 no instances, disks, or addresses. The temporary student entitlement was restored.
-Final personal VM network settlement is still being observed; resource cleanup
-alone is not evidence that financial backing has been released.
+Final personal VM network settlement completed at 07:23:56 after the provider
+watermark reached deletion. Both course and personal reservations for this short
+run settled at USD 0.00 with their full USD 1.25 holds released; the separate
+personal home disk remained outside those reservations. All four reservations
+from these two live runs now have zero outstanding commitments. Physical cleanup
+was confirmed separately, before settlement; no manual hold release was used.
 
 Project-to-VM deploy-key setup now routes from the project bay to the VM's
 owning bay. The origin retains assigned-host or scoped-agent/exact-key checks;
