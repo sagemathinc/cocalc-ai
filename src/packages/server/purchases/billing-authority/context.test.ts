@@ -6,7 +6,9 @@
 import {
   assertBillingAuthorityAccountRegistered,
   assertStripeMutationAuthorized,
+  beginStripeMutation,
   enableStripeMutationAuthorityEnforcement,
+  finishStripeMutation,
   getBillingAuthorityContext,
   isInBillingAuthorityContext,
   registerBillingAuthorityAccount,
@@ -64,6 +66,59 @@ describe("billing authority context", () => {
     await expect(
       assertStripeMutationAuthorized({ method: "POST", path: "/v1/invoices" }),
     ).rejects.toThrow();
+  });
+
+  it("keeps caller-keyed Stripe mutations stable when replay order changes", async () => {
+    let originalKey = "";
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "stable-command-id",
+      fn: async () => {
+        const precedingKey = await beginStripeMutation({
+          method: "POST",
+          path: "/v1/customers",
+          body: "metadata[first]=true",
+          existing_key: "create-customer",
+        });
+        finishStripeMutation({ key: precedingKey, status: 200 });
+        originalKey = await beginStripeMutation({
+          method: "POST",
+          path: "/v1/invoices",
+          body: "customer=cus_1",
+          existing_key: "create-package-invoice",
+        });
+      },
+    });
+
+    let replayKey = "";
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "stable-command-id",
+      fn: async () => {
+        replayKey = await beginStripeMutation({
+          method: "POST",
+          path: "/v1/invoices",
+          body: "customer=cus_1&unexpected=change",
+          existing_key: "create-package-invoice",
+        });
+      },
+    });
+
+    expect(replayKey).toBe(originalKey);
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "different-command-id",
+      fn: async () => {
+        await expect(
+          beginStripeMutation({
+            method: "POST",
+            path: "/v1/invoices",
+            body: "customer=cus_1",
+            existing_key: "create-package-invoice",
+          }),
+        ).resolves.not.toBe(originalKey);
+      },
+    });
   });
 
   it("expires authority inherited by detached asynchronous work", async () => {

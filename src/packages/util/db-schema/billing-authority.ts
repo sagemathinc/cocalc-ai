@@ -126,6 +126,10 @@ Table({
       type: "timestamp",
       desc: "Execution start time.",
     },
+    first_started_at: {
+      type: "timestamp",
+      desc: "Immutable first execution time used to bound provider replay safety.",
+    },
     finished_at: {
       type: "timestamp",
       desc: "Terminal completion time.",

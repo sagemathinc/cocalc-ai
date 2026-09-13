@@ -42,6 +42,7 @@ const describePostgres =
 const INSTANCE_A = "11111111-1111-4111-8111-111111111111";
 const INSTANCE_B = "22222222-2222-4222-8222-222222222222";
 const ACCOUNT_ID = "33333333-3333-4333-8333-333333333333";
+const ADMIN_ACCOUNT_ID = "44444444-4444-4444-8444-444444444444";
 const ACTIVATION_ACCOUNT_IDS = [
   "10000000-0000-4000-8000-000000000001",
   "20000000-0000-4000-8000-000000000002",
@@ -64,6 +65,13 @@ function request(
 
 async function resetTables(): Promise<void> {
   await getPool().query("DELETE FROM billing_authority_commands");
+  await getPool().query(
+    "DELETE FROM admin_membership_package_intents WHERE account_id=$1 OR admin_account_id=$2",
+    [ACCOUNT_ID, ADMIN_ACCOUNT_ID],
+  );
+  await getPool().query("DELETE FROM purchases WHERE invoice_id LIKE $1", [
+    `admin-membership-package:${ADMIN_ACCOUNT_ID}:%`,
+  ]);
   await getPool().query("DELETE FROM billing_authority_account_fences");
   await getPool().query("DELETE FROM billing_authority_lease");
   await getPool().query("DELETE FROM billing_authority_migrations");
@@ -200,6 +208,252 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
     expect(second).toMatchObject({ status: "queued" });
     expect(second.command_id).not.toBe(first.command_id);
+  });
+
+  it("requeues only a durable uncertain admin card package recovery", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const idempotencyKey = "recover-card-package";
+    const command = {
+      kind: "account-local" as const,
+      operation: "admin-create-membership-package-purchase" as const,
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        source: "card",
+        idempotency_key: idempotencyKey,
+      },
+    };
+    const item = request(command);
+    await submitBillingAuthorityCommand(item);
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+      [
+        `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+        ACCOUNT_ID,
+        ADMIN_ACCOUNT_ID,
+        "a".repeat(64),
+      ],
+    );
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: { message: "complete the existing invoice and retry" },
+    });
+
+    const retry = {
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    };
+    await expect(submitBillingAuthorityCommand(retry)).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+    const recovered = await claimNextBillingAuthorityCommand(identity);
+    expect(recovered).toMatchObject({
+      record: { command_id: item.command_id, status: "running" },
+      command,
+    });
+    const { rows } = await getPool().query(
+      "SELECT attempt_count FROM billing_authority_commands WHERE command_id=$1",
+      [item.command_id],
+    );
+    expect(rows).toEqual([{ attempt_count: 2 }]);
+
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: { message: "recovery remains incomplete" },
+    });
+    await expect(submitBillingAuthorityCommand(retry)).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+  });
+
+  it("keeps unrelated or stale uncertain commands terminal", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const unrelated = request({ kind: "maintenance", task: "statements" });
+    await submitBillingAuthorityCommand(unrelated);
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: unrelated.command_id,
+      status: "uncertain",
+      error: { message: "unknown provider outcome" },
+    });
+    await expect(
+      submitBillingAuthorityCommand({
+        ...unrelated,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: "uncertain", reused: true });
+
+    const idempotencyKey = "stale-card-package";
+    const stale = request({
+      kind: "account-local",
+      operation: "admin-create-membership-package-purchase",
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        source: "card",
+        idempotency_key: idempotencyKey,
+      },
+    });
+    await submitBillingAuthorityCommand(stale);
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+      [
+        `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+        ACCOUNT_ID,
+        ADMIN_ACCOUNT_ID,
+        "b".repeat(64),
+      ],
+    );
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: stale.command_id,
+      status: "uncertain",
+      error: { message: "old unknown provider outcome" },
+    });
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET first_started_at=clock_timestamp() - INTERVAL '24 hours'
+        WHERE command_id=$1`,
+      [stale.command_id],
+    );
+    await expect(
+      submitBillingAuthorityCommand({
+        ...stale,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: "uncertain", reused: true });
+  });
+
+  it("requeues a durable package intent after a pre-provider failure", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const idempotencyKey = "pre-provider-card-recovery";
+    const item = request({
+      kind: "account-local",
+      operation: "admin-create-membership-package-purchase",
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        source: "card",
+        idempotency_key: idempotencyKey,
+      },
+    });
+    await submitBillingAuthorityCommand(item);
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+      [
+        `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+        ACCOUNT_ID,
+        ADMIN_ACCOUNT_ID,
+        "c".repeat(64),
+      ],
+    );
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+      error: { message: "Stripe was unavailable before the first mutation" },
+    });
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+  });
+
+  it("recovers a committed package after the provider replay window", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const idempotencyKey = "committed-card-recovery";
+    const invoiceId = `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`;
+    const item = request({
+      kind: "account-local",
+      operation: "admin-create-membership-package-purchase",
+      actor_account_id: ADMIN_ACCOUNT_ID,
+      input: {
+        admin_account_id: ADMIN_ACCOUNT_ID,
+        user_account_id: ACCOUNT_ID,
+        source: "card",
+        idempotency_key: idempotencyKey,
+      },
+    });
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: { message: "completion acknowledgement was lost" },
+    });
+    await getPool().query(
+      `INSERT INTO purchases
+         (service, time, account_id, cost, description, invoice_id,
+          period_start, period_end)
+       VALUES ('membership', clock_timestamp(), $1, 25, $2::JSONB, $3,
+               clock_timestamp(), clock_timestamp() + INTERVAL '1 month')`,
+      [
+        ACCOUNT_ID,
+        JSON.stringify({
+          type: "membership-package",
+          package_id: "55555555-5555-4555-8555-555555555555",
+        }),
+        invoiceId,
+      ],
+    );
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET first_started_at=clock_timestamp() - INTERVAL '30 days'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
   });
 
   it("checks drain state before returning an exact or semantic outcome", async () => {

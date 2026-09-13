@@ -222,18 +222,22 @@ function providerIdempotencyKey({
   body: string;
   caller_key?: string;
 }): string {
-  const hash = createHash("sha256")
-    .update(
-      JSON.stringify({
+  // A caller key already identifies the logical provider mutation. Do not mix
+  // in call order: recovery can legitimately skip work that completed during
+  // an earlier attempt (for example, Stripe customer creation).
+  const identity = caller_key
+    ? { version: 2, request_id, caller_key }
+    : {
         version: 1,
         request_id,
         sequence,
         method: method.toUpperCase(),
         path,
         body,
-        caller_key: caller_key ?? null,
-      }),
-    )
+        caller_key: null,
+      };
+  const hash = createHash("sha256")
+    .update(JSON.stringify(identity))
     .digest("hex");
   return `cocalc-ba-v1-${hash}`;
 }

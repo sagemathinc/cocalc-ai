@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { adminMembershipPackageInvoiceId } from "@cocalc/server/purchases/admin-membership-package-identity";
 import { isValidUUID } from "@cocalc/util/misc";
 
 import type {
@@ -34,6 +35,7 @@ const MAX_REASON_LENGTH = 4000;
 const MAX_DEDUPLICATION_MS = 24 * 60 * 60_000;
 const PAYLOAD_RETENTION = "48 hours";
 const AUDIT_RETENTION = "400 days";
+const STRIPE_IDEMPOTENCY_RECOVERY_WINDOW = "23 hours";
 const MAX_QUEUE_DEPTH: Record<BillingAuthorityLane, number> = {
   critical: 1000,
   interactive: 500,
@@ -72,6 +74,7 @@ interface CommandRow {
   error?: BillingAuthorityError | null;
   created_at: Date | string;
   updated_at: Date | string;
+  first_started_at?: Date | string | null;
   started_at?: Date | string | null;
   finished_at?: Date | string | null;
   expires_at: Date | string;
@@ -219,6 +222,90 @@ async function existingCommand(
     [commandId],
   );
   return rows[0];
+}
+
+function adminPackageRecoveryIdentity(command: BillingAuthorityCommand):
+  | {
+      account_id: string;
+      admin_account_id: string;
+      invoice_id: string;
+      source: "card" | "credit" | "free";
+    }
+  | undefined {
+  if (
+    command.kind !== "account-local" ||
+    command.operation !== "admin-create-membership-package-purchase"
+  ) {
+    return;
+  }
+  const source = `${command.input.source ?? ""}`;
+  const account_id = `${command.input.user_account_id ?? ""}`.trim();
+  const admin_account_id = `${command.input.admin_account_id ?? ""}`.trim();
+  const idempotency_key = `${command.input.idempotency_key ?? ""}`.trim();
+  const actor = billingAuthorityActorAccountId(command);
+  if (
+    !isValidUUID(account_id) ||
+    !isValidUUID(admin_account_id) ||
+    actor !== admin_account_id.toLowerCase() ||
+    !["card", "credit", "free"].includes(source) ||
+    !idempotency_key ||
+    idempotency_key.length > 120
+  ) {
+    return;
+  }
+  return {
+    account_id,
+    admin_account_id,
+    source: source as "card" | "credit" | "free",
+    invoice_id: adminMembershipPackageInvoiceId(
+      admin_account_id,
+      idempotency_key,
+    ),
+  };
+}
+
+async function canRecoverAdminPackage(
+  db: Queryable,
+  existing: CommandRow,
+  command: BillingAuthorityCommand,
+): Promise<boolean> {
+  if (existing.attempt_count < 1) return false;
+  const identity = adminPackageRecoveryIdentity(command);
+  if (!identity) return false;
+  const { rows } = await db.query<{
+    has_intent: boolean;
+    has_purchase: boolean;
+    provider_key_retained: boolean;
+  }>(
+    `SELECT EXISTS (
+              SELECT 1
+                FROM admin_membership_package_intents
+               WHERE invoice_id=$1 AND account_id=$2
+                 AND admin_account_id=$3
+            ) AS has_intent,
+            EXISTS (
+              SELECT 1
+                FROM purchases
+               WHERE invoice_id=$1 AND account_id=$2
+                 AND service='membership'
+                 AND description->>'type'='membership-package'
+                 AND NULLIF(description->>'package_id', '') IS NOT NULL
+            ) AS has_purchase,
+            $4::TIMESTAMPTZ >=
+              clock_timestamp() - INTERVAL '${STRIPE_IDEMPOTENCY_RECOVERY_WINDOW}'
+              AS provider_key_retained`,
+    [
+      identity.invoice_id,
+      identity.account_id,
+      identity.admin_account_id,
+      existing.first_started_at ?? existing.started_at ?? existing.created_at,
+    ],
+  );
+  const state = rows[0];
+  if (state?.has_purchase) return true;
+  if (!state?.has_intent) return false;
+  if (existing.status === "failed" || identity.source !== "card") return true;
+  return state.provider_key_retained;
 }
 
 async function assertBillingAccountsAllowed(
@@ -551,6 +638,37 @@ export async function submitBillingAuthorityCommand(
             accountIds,
             actorAccountId ?? null,
             json,
+          ],
+        );
+        if (rows[0]) return commandRecord(rows[0]);
+      }
+      if (
+        (existing.status === "failed" || existing.status === "uncertain") &&
+        (await canRecoverAdminPackage(db, existing, request.command))
+      ) {
+        const { rows } = await db.query<CommandRow>(
+          `UPDATE billing_authority_commands
+              SET status=CASE WHEN $2::TIMESTAMPTZ <= clock_timestamp()
+                              THEN 'expired' ELSE 'queued' END,
+                  expires_at=$2, started_at=NULL, finished_at=NULL,
+                  authority_generation=NULL, authority_instance_id=NULL,
+                  operation=$3, lane=$4, account_id=$5,
+                  account_ids=$6::UUID[], actor_account_id=$7,
+                  command=$8::JSONB, result=NULL, error=NULL,
+                  updated_at=clock_timestamp()
+            WHERE command_id=$1 AND status IN ('failed','uncertain')
+              AND attempt_count > 0 AND request_hash=$9
+            RETURNING *`,
+          [
+            request.command_id,
+            expiresAt.toISOString(),
+            operation,
+            lane,
+            accountId ?? null,
+            accountIds,
+            actorAccountId ?? null,
+            json,
+            hash,
           ],
         );
         if (rows[0]) return commandRecord(rows[0]);
@@ -1131,6 +1249,7 @@ export async function claimNextBillingAuthorityCommand(
         `UPDATE billing_authority_commands
             SET status='running', attempt_count=attempt_count + 1,
                 authority_generation=$2, authority_instance_id=$3,
+                first_started_at=COALESCE(first_started_at, clock_timestamp()),
                 started_at=clock_timestamp(), updated_at=clock_timestamp()
           WHERE command_id=$1 AND status='queued'
             AND expires_at > clock_timestamp()
