@@ -222,6 +222,58 @@ describe("admin membership package purchase", () => {
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
   });
 
+  it("rejects cross-account reuse of an explicit key before card funding", async () => {
+    const admin_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const idempotency_key = `cross-account-${uuid()}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    const common = {
+      admin_account_id,
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: membershipClass,
+        seat_count: 1,
+        interval: "month" as const,
+      },
+      price: 20,
+      reason: "explicit idempotency key must identify one target purchase",
+      idempotency_key,
+    };
+
+    await adminCreateMembershipPackagePurchase({
+      ...common,
+      user_account_id: first_account_id,
+      source: "free",
+    });
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        ...common,
+        user_account_id: second_account_id,
+        source: "card",
+      }),
+    ).rejects.toThrow("idempotency key belongs to an incompatible purchase");
+
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    const secondAccountPurchases = await getPool().query(
+      "SELECT id FROM purchases WHERE account_id=$1",
+      [second_account_id],
+    );
+    expect(secondAccountPurchases.rows).toHaveLength(0);
+    const secondAccountIntents = await getPool().query(
+      "SELECT invoice_id FROM admin_membership_package_intents WHERE account_id=$1",
+      [second_account_id],
+    );
+    expect(secondAccountIntents.rows).toHaveLength(0);
+  });
+
   it("fulfills the immutable approved quote when tier configuration changes after funding", async () => {
     const admin_account_id = uuid();
     const user_account_id = uuid();

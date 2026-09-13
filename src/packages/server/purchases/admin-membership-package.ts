@@ -33,6 +33,7 @@ import {
   resolveAdminCourseProjectQuoteContext,
   resolveLockedLocalAdminCourseProjectQuoteContext,
 } from "./admin-course-project";
+import { adminMembershipPackageInvoiceId } from "./admin-membership-package-identity";
 
 export type AdminMembershipPackageSource = "card" | "credit" | "free";
 
@@ -344,10 +345,6 @@ async function resolveValidatedPackageQuote({
   return { quote, starts_at, expires_at };
 }
 
-function invoiceId(adminAccountId: string, idempotencyKey: string): string {
-  return `admin-membership-package:${adminAccountId}:${idempotencyKey}`;
-}
-
 async function getExistingPurchase({
   account_id,
   invoice_id,
@@ -360,16 +357,18 @@ async function getExistingPurchase({
   client?: PoolClient;
 }): Promise<AdminMembershipPackagePurchaseResult | undefined> {
   const { rows } = await (client ?? getPool("medium")).query(
-    `SELECT id, cost, description, period_start, period_end
+    `SELECT id, account_id, service, cost, description, period_start, period_end
        FROM purchases
-      WHERE account_id=$1 AND invoice_id=$2 AND service='membership'
+      WHERE invoice_id=$1
       LIMIT 1`,
-    [account_id, invoice_id],
+    [invoice_id],
   );
   const row = rows[0];
   const description = row?.description;
   if (!row) return undefined;
   if (
+    row.service !== "membership" ||
+    `${row.account_id}`.toLowerCase() !== account_id.toLowerCase() ||
     description?.type !== "membership-package" ||
     !`${description?.package_id ?? ""}`.trim()
   ) {
@@ -514,7 +513,10 @@ export default async function adminCreateMembershipPackagePurchase({
     reason: normalizedReason,
     pricing_note: normalizedPricingNote,
   });
-  const invoice_id = invoiceId(admin_account_id, idempotencyKey);
+  const invoice_id = adminMembershipPackageInvoiceId(
+    admin_account_id,
+    idempotencyKey,
+  );
   const existing = await getExistingPurchase({
     account_id: user_account_id,
     invoice_id,
