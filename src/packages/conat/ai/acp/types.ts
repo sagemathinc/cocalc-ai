@@ -281,7 +281,7 @@ export type AcpAttentionQuestion = {
 };
 
 export type AcpAttentionAction = {
-  kind: "fresh_auth";
+  kind: "fresh_auth" | "agent_messaging";
   reference: string;
   expires_at: number;
 };

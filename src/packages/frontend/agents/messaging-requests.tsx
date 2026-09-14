@@ -16,6 +16,7 @@ interface Props {
   projectId?: string;
   threadId?: string;
   path?: string;
+  requestId?: string;
 }
 export function AgentMessagingRequests(props: Props) {
   const accountId = useTypedRedux("account", "account_id");
@@ -33,6 +34,7 @@ function AccountMessagingRequests({
   projectId,
   threadId,
   path,
+  requestId,
 }: Props & { accountId: string }) {
   const { directory } = useNamedAgents();
   const boundAccount = useBoundAgentAccount();
@@ -83,6 +85,7 @@ function AccountMessagingRequests({
             requests.filter(
               (request) =>
                 request.account_id === accountId &&
+                (!requestId || request.request_id === requestId) &&
                 request.state === "pending" &&
                 Date.parse(request.expires_at) > Date.now() &&
                 (!projectId ||
@@ -122,7 +125,7 @@ function AccountMessagingRequests({
       disposed = true;
       clearInterval(timer);
     };
-  }, [accountId, projectId, threadId, path, revision]);
+  }, [accountId, projectId, threadId, path, requestId, revision]);
   const label = (endpoint) => {
     const agent = directory?.agents.find((agent) =>
       sameEndpoint(agent.endpoint, endpoint),
@@ -181,7 +184,7 @@ function AccountMessagingRequests({
           </Button>
         </div>
       ))}
-      {error && (
+      {error && !selected && (
         <div role="alert">
           <Alert
             type="warning"
@@ -224,6 +227,7 @@ function AccountMessagingRequests({
             </p>
             <p>Reason: {selected.reason}</p>
             {sourceNaming.field}
+            {error && <Alert type="error" title={error} role="alert" />}
             <p>
               Direction:{" "}
               {selected.both_directions ? "Both directions" : "One way"}.

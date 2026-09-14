@@ -13,6 +13,10 @@ import {
   pendingAttentionByThread,
   useCodexAttentionSummary,
 } from "../use-codex-attention";
+import { loadMessagingAttention } from "@cocalc/frontend/agents/messaging-attention";
+jest.mock("@cocalc/frontend/agents/messaging-attention", () => ({
+  loadMessagingAttention: jest.fn(async () => []),
+}));
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -49,6 +53,105 @@ function record(
 describe("Codex attention summaries", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    jest.mocked(loadMessagingAttention).mockResolvedValue([]);
+  });
+
+  it("merges messaging into native badges and notifications, then clears it after approval", async () => {
+    const pending = {
+      ...record("thread-1", "pending"),
+      attention_id: "agent-messaging:request",
+      source_kind: "cocalc_action" as const,
+      action: {
+        kind: "agent_messaging" as const,
+        reference: "request",
+        expires_at: Date.now() + 60000,
+      },
+    };
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockResolvedValue({ ok: true, records: [] });
+    jest
+      .mocked(loadMessagingAttention)
+      .mockResolvedValueOnce([pending])
+      .mockResolvedValue([]);
+    const hook = renderHook(() =>
+      useCodexAttentionSummary({
+        active: true,
+        account_id: "account-1",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    await waitFor(() => expect(hook.result.current.count).toBe(1));
+    expect(hook.result.current.targetByThread.get("thread-1")).toBe(
+      pending.attention_id,
+    );
+    window.dispatchEvent(new Event("focus"));
+    await waitFor(() => expect(hook.result.current.count).toBe(0));
+    expect(showCodexNotificationBestEffort).toHaveBeenCalledWith(
+      expect.objectContaining({
+        row: expect.objectContaining({
+          summary: expect.objectContaining({
+            attention_id: pending.attention_id,
+            attention_state: "resolved",
+          }),
+        }),
+      }),
+    );
+    hook.unmount();
+  });
+
+  it("retains ordinary attention when the optional personal service is unavailable", async () => {
+    const pending = record("thread-1", "pending");
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockResolvedValue({ ok: true, records: [pending] });
+    jest
+      .mocked(loadMessagingAttention)
+      .mockRejectedValue(new Error("unavailable"));
+    const hook = renderHook(() =>
+      useCodexAttentionSummary({
+        active: true,
+        account_id: "account-1",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    await waitFor(() => expect(hook.result.current.records).toEqual([pending]));
+    hook.unmount();
+  });
+
+  it("drops the previous human's attention on account switch even when new reads fail", async () => {
+    const pending = record("thread-1", "pending");
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockResolvedValue({ ok: true, records: [] });
+    jest
+      .mocked(loadMessagingAttention)
+      .mockResolvedValueOnce([pending])
+      .mockRejectedValue(new Error("unavailable"));
+    const hook = renderHook(
+      ({ account_id }) =>
+        useCodexAttentionSummary({
+          active: true,
+          account_id,
+          project_id: "project-1",
+          path: "agent.chat",
+        }),
+      { initialProps: { account_id: "account-1" } },
+    );
+    await waitFor(() => expect(hook.result.current.records).toEqual([pending]));
+    hook.rerender({ account_id: "account-2" });
+    expect(hook.result.current.records).toEqual([]);
+    await waitFor(() =>
+      expect(loadMessagingAttention).toHaveBeenLastCalledWith({
+        account_id: "account-2",
+        project_id: "project-1",
+        path: "agent.chat",
+      }),
+    );
+    expect(hook.result.current.count).toBe(0);
+    hook.unmount();
   });
 
   it("counts only pending attention per thread", () => {

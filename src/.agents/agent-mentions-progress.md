@@ -209,8 +209,15 @@ Evidence: `/tmp/agent-mentions-{paused-api,paused-ui,resumed-api,resumed-directo
 - An actual scoped agent was denied a human-only automation mutation.
 - Q's ordinary execution was rejected by `queued_per_account 0/0`. No funds,
   execution entitlements, or provider credentials were added for this test.
-- Adding Q to the cross-bay receiver failed with
-  `projects.createCollabInvite: account not found`. No database bypass was used.
+- Adding Q to the cross-bay receiver initially failed with
+  `projects.createCollabInvite: account not found`. Fixed in `856255a520`:
+  the inviter's account-home handler verifies product access before routing;
+  the internal project-owner handler does not require a second local account
+  row. Public input cannot supply that internal verification.
+  After restarting all three hubs, P added genuine Q to recv, Q read the
+  collaborator list through its own session, and P removed Q. The final list
+  contains only P. No database bypass, credential copying, or quota changes.
+  Evidence: `src/.local/human-turn-qa/logs/collab-fix-*.json`.
 - Removed only the Q membership added to A and the disposable QA automation;
   retained QA chats and evidence. No host or provider cleanup was necessary.
 
@@ -225,8 +232,12 @@ Live evidence: `/tmp/agent-mentions-{grant,picker-open,inline-approval,warm-runn
 - Account rehome fails closed when personal messaging state exists, including
   tombstones and revoked grants. Cross-bay messaging is supported; moving the
   account's home requires a later versioned state migration implementation.
-- In-turn approval appears in the current chat through three-second read-only
-  polling, not native ACP attention events. Approval never itself sends.
+- In-turn requests are projected read-only into the existing frontend Codex
+  attention cards, thread badges, and local notification handling. The
+  account-home request remains authoritative; this is not a new persisted ACP
+  event stream or a second approval store. The normal attention refresh polls
+  every five seconds and the typed request renderer refreshes every three
+  seconds. Approval never itself sends. Live rendering validation is pending.
 - Per-turn credentials constrain server APIs, not hostile processes sharing the
   same operating-system user. Shared project content can influence model output.
 
@@ -269,7 +280,8 @@ isolation and honest unknown outcomes; they are not substituted for unperformed
 live checks.
 
 Actual external validation blockers are completing browser human verification
-and obtaining a runnable second QA account plus its cross-bay project access.
+and obtaining a runnable second QA account. Cross-bay collaborator setup has
+now been fixed and live-verified; temporary access was removed after the test.
 Positive successive P/Q turns have not been live-proven. The new path stays
 opt-in; these gaps prevent a claim that every acceptance test is complete.
 
@@ -279,3 +291,22 @@ After the temporary grant expires, selecting the mention should offer inline
 approval. Complete browser fresh auth and choose the intended direction/duration.
 Then ask builder for one correlated send/reply. A bare typed name without picker
 selection is not the same as a UUID-bound mention.
+
+## September 14 Attention Integration
+
+- The existing chat attention summary merges pending personal requests for the
+  authenticated account and exact source thread. It loads only identity metadata
+  for the open project, not live chat documents for all named agents.
+- The messaging-specific card invokes only the existing typed approval renderer;
+  generic Codex question responses cannot grant a connection. My Agents retains
+  its account-wide recovery inbox; the separate composer inbox was removed.
+- Account/context switches discard old records. Temporary messaging API failures
+  do not hide ordinary Codex attention. Naming/approval errors remain visible
+  inside the open dialog, rather than behind it.
+- 82 focused tests passed before the navigation follow-up, with conat and
+  frontend typechecks, frontend lint, and the development static build.
+- Live denial test submitted once in builder: request ID
+  `d1f52c12-22d5-42b4-b807-a6fb768b305e`. At 04:53 UTC the agent was still running
+  without a recorded tool call; no request had reached the account store.
+  This is not evidence of a successful approval test and was not retried.
+  Persisted activity: `src/.local/human-turn-qa/logs/attention-native-activity.json`.

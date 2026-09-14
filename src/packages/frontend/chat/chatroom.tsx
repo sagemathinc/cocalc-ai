@@ -841,6 +841,7 @@ function ChatPanelContent({
   });
   const codexAttention = useCodexAttentionSummary({
     active: !readOnly && !!account_id,
+    account_id,
     project_id,
     path,
   });

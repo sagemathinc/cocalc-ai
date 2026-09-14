@@ -257,6 +257,20 @@ test("typed request names the source before approving its exact request", async 
   );
 });
 
+test("typed request shows a naming failure inside its modal and never grants", async () => {
+  const user = await openUnnamedRequest();
+  mockApi.nameAgent.mockRejectedValue(new Error("name already taken"));
+  await user.type(
+    screen.getByRole("textbox", { name: "Source agent name" }),
+    "builder",
+  );
+  await user.click(
+    screen.getByRole("button", { name: "Approve requested connection" }),
+  );
+  expect(await screen.findByText("Error: name already taken")).toBeVisible();
+  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+});
+
 test("validation normalizes names, permits the same endpoint, and checks syntax", () => {
   expect(agentNameProblem(" REVIEWER ", [reviewer], target)).toBeUndefined();
   expect(agentNameProblem("reviewer", [reviewer], source)).toMatch(

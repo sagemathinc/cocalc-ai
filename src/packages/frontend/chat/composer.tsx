@@ -40,7 +40,6 @@ import { DictateButton } from "./audio/dictate-button";
 import { AgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { useAgentMentions } from "@cocalc/frontend/agents/use-agent-mentions";
 import { NameAgent } from "@cocalc/frontend/agents/name-agent";
-import { AgentMessagingRequests } from "@cocalc/frontend/agents/messaging-requests";
 import { extractAgentMentions } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import {
@@ -762,13 +761,6 @@ export function ChatRoomComposer({
                   {agent.project_title ?? "Project"})
                 </Button>
               ))}
-          {showGoal && selectedThread && (
-            <AgentMessagingRequests
-              projectId={project_id}
-              threadId={selectedThread.key}
-              path={path}
-            />
-          )}
           <div ref={inputContainerRef} data-testid="chat-composer-input">
             <ChatInput
               key={`${path}${project_id}-draft-${composerDraftKey}`}
