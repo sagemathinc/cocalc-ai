@@ -1136,40 +1136,50 @@ export async function addCollaborator({
   return { project_id: projects };
 }
 
-export async function createCollabInvite({
-  account_id,
-  project_id,
-  invitee_account_id,
-  message,
-  invite_context,
-  invite_scope,
-  direct,
-  trusted_admin,
-  invite_role,
-  read_policy,
-}: {
-  account_id?: string;
-  project_id: string;
-  invitee_account_id: string;
-  message?: string;
-  invite_context?: Record<string, unknown>;
-  invite_scope?: string;
-  direct?: boolean;
-  /** Internal result of an admin check performed on the actor's home bay. */
-  trusted_admin?: boolean;
-  invite_role?: Exclude<ProjectUserRole, "owner">;
-  read_policy?: ProjectViewerReadPolicy | null;
-}): Promise<{
+export async function createCollabInvite(
+  {
+    account_id,
+    project_id,
+    invitee_account_id,
+    message,
+    invite_context,
+    invite_scope,
+    direct,
+    trusted_admin,
+    invite_role,
+    read_policy,
+  }: {
+    account_id?: string;
+    project_id: string;
+    invitee_account_id: string;
+    message?: string;
+    invite_context?: Record<string, unknown>;
+    invite_scope?: string;
+    direct?: boolean;
+    /** Internal result of an admin check performed on the actor's home bay. */
+    trusted_admin?: boolean;
+    invite_role?: Exclude<ProjectUserRole, "owner">;
+    read_policy?: ProjectViewerReadPolicy | null;
+  },
+  {
+    trustedProductAccessChecked = false,
+  }: {
+    /** Only set by the authenticated inter-bay service after a home-bay check. */
+    trustedProductAccessChecked?: boolean;
+  } = {},
+): Promise<{
   created: boolean;
   invite: ProjectCollabInviteRow;
 }> {
   if (!account_id) {
     throw new Error("user must be signed in");
   }
-  await assertAccountTrustedForProductAccess(
-    account_id,
-    "invite collaborators",
-  );
+  if (!trustedProductAccessChecked) {
+    await assertAccountTrustedForProductAccess(
+      account_id,
+      "invite collaborators",
+    );
+  }
   ensureUuid(project_id, "project_id");
   ensureUuid(invitee_account_id, "invitee_account_id");
   const actorIsAdmin = (direct && trusted_admin) || (await isAdmin(account_id));

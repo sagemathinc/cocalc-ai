@@ -3972,6 +3972,12 @@ export async function createCollabInvite({
       read_policy,
     });
   }
+  // This account-authenticated handler runs at the inviter's home. The project
+  // owner may have no local row for that account and cannot repeat this check.
+  await assertAccountTrustedForProductAccess(
+    account_id!,
+    "invite collaborators",
+  );
   const result = await getInterBayBridge()
     .projectCollabInvite(ownership.bay_id)
     .create({
@@ -3981,6 +3987,7 @@ export async function createCollabInvite({
       message,
       direct,
       trusted_admin,
+      trusted_product_access_checked: true,
       invite_role,
       read_policy,
     });

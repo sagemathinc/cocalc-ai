@@ -2304,8 +2304,10 @@ async function startProjectCollabInviteService(): Promise<void> {
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
     },
-    create: async (opts) => {
-      const result = await createCollabInvite(opts);
+    create: async ({ trusted_product_access_checked, ...opts }) => {
+      const result = await createCollabInvite(opts, {
+        trustedProductAccessChecked: trusted_product_access_checked === true,
+      });
       return {
         created: result.created,
         invite: collabInviteToWire(result.invite),

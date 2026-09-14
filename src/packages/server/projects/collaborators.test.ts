@@ -618,6 +618,33 @@ describe("project collaborators local bay access", () => {
     });
   });
 
+  it("uses the internal home-bay product-trust check without requiring a local account row", async () => {
+    assertAccountTrustedForProductAccessMock.mockRejectedValue(
+      new Error("account not found"),
+    );
+    const { createCollabInvite } = await import("./collaborators");
+    const request = {
+      account_id: ACCOUNT_ID,
+      invitee_account_id: TARGET_ACCOUNT_ID,
+      project_id: PROJECT_ID,
+      direct: true,
+      trusted_admin: true,
+    };
+    await expect(createCollabInvite(request)).rejects.toThrow(
+      "account not found",
+    );
+    assertAccountTrustedForProductAccessMock.mockClear();
+    await expect(
+      createCollabInvite(request, { trustedProductAccessChecked: true }),
+    ).resolves.toEqual(expect.objectContaining({ created: true }));
+    expect(assertAccountTrustedForProductAccessMock).not.toHaveBeenCalled();
+    expect(addUserToProject).toHaveBeenCalledWith({
+      account_id: TARGET_ACCOUNT_ID,
+      group: "collaborator",
+      project_id: PROJECT_ID,
+    });
+  });
+
   it("lets a trusted home-bay admin directly add themselves", async () => {
     assertLocalProjectCollaboratorMock = jest.fn(async () => {
       throw new Error("user is not a project collaborator");

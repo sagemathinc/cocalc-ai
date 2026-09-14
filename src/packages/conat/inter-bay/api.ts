@@ -2299,6 +2299,8 @@ export interface ProjectCollabInviteCreateRequest {
   direct?: boolean;
   /** Internal result of an admin check performed on the actor's home bay. */
   trusted_admin?: boolean;
+  /** Internal attestation from the inviter's account home, never client input. */
+  trusted_product_access_checked?: boolean;
   invite_role?: Exclude<ProjectUserRole, "owner">;
   read_policy?: ProjectViewerReadPolicy | null;
 }
