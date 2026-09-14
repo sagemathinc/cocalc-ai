@@ -1401,6 +1401,7 @@ export async function startMasterRegistration({
       return createLocalAgentRpcService(controlClient, hubApi.agent).inspect(
         opts.source,
         opts.request,
+        opts.account_id,
       );
     },
     async applyExamRun(opts) {

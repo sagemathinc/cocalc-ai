@@ -860,6 +860,32 @@ describe("test isAllowed for collaboration -- this is the most nontrivial one", 
     ).toBe(true);
   });
 
+  it("rejects automation settings ingress from a project agent while preserving normal ACP", async () => {
+    (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
+      true,
+    );
+    const user = {
+      account_id,
+      auth_actor: "agent" as const,
+      auth_project_id: project_id,
+      auth_scopes: ["project_session"],
+    };
+    await expect(
+      isAllowed({
+        user,
+        type: "pub",
+        subject: `acp.project-${project_id}.account-${account_id}.automation`,
+      }),
+    ).resolves.toBe(false);
+    await expect(
+      isAllowed({
+        user,
+        type: "pub",
+        subject: `acp.project-${project_id}.account-${account_id}.api`,
+      }),
+    ).resolves.toBe(true);
+  });
+
   it("rejects ACP subject account mismatches and subscriptions", async () => {
     (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockResolvedValue(
       true,

@@ -13,6 +13,51 @@ import type {
 } from "@cocalc/conat/agents/rpc";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import type { AgentIdentityRoute } from "./agent-identities";
+import type { AgentApi } from "@cocalc/conat/hub/api/agent";
+import type {
+  PersonalConnectionRequest,
+  PersonalConnectionRequestOptions,
+  PersonalAgentDenial,
+} from "@cocalc/conat/agents/personal";
+
+export type PersonalHumanMethod =
+  | "listNamedAgents"
+  | "nameAgent"
+  | "listPersonalConnections"
+  | "grantPersonalConnection"
+  | "setPersonalConnectionState"
+  | "setPersonalMessagingState"
+  | "listPersonalConnectionRequests"
+  | "resolvePersonalConnectionRequest";
+export type PersonalControlRequest =
+  | {
+      [K in PersonalHumanMethod]: {
+        action: K;
+        options: Omit<
+          Parameters<AgentApi[K]>[0],
+          "account_id" | "session_hash"
+        >;
+      };
+    }[PersonalHumanMethod]
+  | { action: "links"; options: { source: AgentEndpoint } }
+  | {
+      action: "check";
+      options: {
+        source: AgentEndpoint;
+        target: AgentEndpoint;
+        guidance: boolean;
+      };
+    }
+  | { action: "request"; options: PersonalConnectionRequestOptions & RpcSource }
+  | { action: "requestRead"; options: RpcSource & { request_id: string } }
+  | { action: "observe"; options: { link_id: string; accepted: boolean } };
+export type PersonalControlResult =
+  | PersonalAgentDenial
+  | void
+  | Awaited<ReturnType<AgentApi[PersonalHumanMethod]>>
+  | AgentRpcLink
+  | AgentRpcLink[]
+  | PersonalConnectionRequest;
 
 export interface AgentRpcLinkApproval {
   source: AgentEndpoint;
@@ -31,6 +76,15 @@ export interface RpcSource {
   run_id: string;
 }
 export interface AgentRpcControlApi {
+  personal(opts: {
+    account_id: string;
+    home_bay_id: string;
+    fresh_auth_at?: number;
+    request: PersonalControlRequest;
+  }): Promise<PersonalControlResult>;
+  principal(
+    opts: RpcRoute & RpcSource,
+  ): Promise<{ account_id: string; personal_messaging: boolean }>;
   grant(
     opts: RpcRoute &
       AgentRpcLinkApproval & { account_id: string; fresh_auth_at: number },
@@ -52,7 +106,9 @@ export interface AgentRpcControlApi {
   ): Promise<AgentRpcLink[]>;
   check(
     opts: RpcRoute & RpcSource & { target: AgentEndpoint; guidance: boolean },
-  ): Promise<{ source: AgentIdentity; link: AgentRpcLink }>;
+  ): Promise<
+    { source: AgentIdentity; link: AgentRpcLink } | PersonalAgentDenial
+  >;
   submit(
     opts: RpcRoute & RpcSource & { request: AgentRpcSend },
   ): Promise<AgentRpcOutcome>;

@@ -33,6 +33,13 @@ import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/proj
 import { agentStore } from "./store";
 import { assertActor, assertAgent, assertRun } from "./access";
 import { getIdentity } from "./api";
+import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
+import type { PersonalAgentDenial } from "@cocalc/conat/agents/personal";
+import {
+  personalControl,
+  personalMessagingEnabled,
+  withPersonalHome,
+} from "./personal";
 
 const logger = getLogger("agents:rpc");
 
@@ -120,7 +127,9 @@ async function sourceIdentity(source: AgentEndpoint) {
 async function sourceRun(source: AgentEndpoint, run_id: string) {
   requireUuid(run_id, "run_id");
   await sourceIdentity(source);
-  await assertRun(await agentStore().activeRun(source.agent_id, run_id));
+  const run = await agentStore().activeRun(source.agent_id, run_id);
+  await assertRun(run);
+  return run;
 }
 
 const permits = new Map<
@@ -157,6 +166,14 @@ async function hostFor(endpoint: AgentEndpoint) {
 }
 
 export const agentRpcControl: AgentRpcControlApi = {
+  personal: (opts) => personalControl(opts),
+  principal: async (opts) => {
+    await local(opts, opts.source);
+    return {
+      account_id: (await sourceRun(opts.source, opts.run_id)).account_id,
+      personal_messaging: personalMessagingEnabled(),
+    };
+  },
   grant: async (opts) => {
     await local(opts, opts.source);
     fresh(opts.fresh_auth_at);
@@ -244,6 +261,19 @@ export const agentRpcControl: AgentRpcControlApi = {
   links: async (opts) => {
     await local(opts, opts.source);
     const source = await sourceIdentity(opts.source);
+    if (personalMessagingEnabled()) {
+      const account_id = opts.run_id
+        ? (await sourceRun(opts.source, opts.run_id)).account_id
+        : opts.account_id;
+      requireUuid(account_id, "account_id");
+      if (opts.run_id && opts.account_id && opts.account_id !== account_id)
+        throw new Error("principal_mismatch");
+      await assertActor(account_id, opts.source.project_id);
+      return (await withPersonalHome(account_id, {
+        action: "links",
+        options: { source: opts.source },
+      })) as AgentRpcLink[];
+    }
     if (opts.run_id) await sourceRun(opts.source, opts.run_id);
     else {
       requireUuid(opts.account_id, "account_id");
@@ -266,7 +296,21 @@ export const agentRpcControl: AgentRpcControlApi = {
   check: async (opts) => {
     await local(opts, opts.source);
     validateAgentEndpoint(opts.target);
-    await sourceRun(opts.source, opts.run_id);
+    const run = await sourceRun(opts.source, opts.run_id);
+    if (personalMessagingEnabled()) {
+      const personalLink = (await withPersonalHome(run.account_id, {
+        action: "check",
+        options: {
+          source: opts.source,
+          target: opts.target,
+          guidance: opts.guidance,
+        },
+      })) as AgentRpcLink | PersonalAgentDenial;
+      if ("denied" in personalLink) return personalLink;
+      if (personalLink.approved_by !== run.account_id)
+        return { denied: "principal_mismatch" };
+      return { source: await sourceIdentity(opts.source), link: personalLink };
+    }
     const row = (
       await agentStore().query(
         `SELECT * FROM agent_rpc_links
@@ -292,6 +336,8 @@ export const agentRpcControl: AgentRpcControlApi = {
     await local(opts, opts.request.target);
     validateAgentRpcRequest({ ...opts.request, action: "send" });
     let submissionStarted = false;
+    let observation: { account_id: string; link_id: string } | undefined;
+    let accepted = false;
     try {
       const proof = await routed(opts.source.project_id, (api, route) =>
         api.check({
@@ -302,11 +348,31 @@ export const agentRpcControl: AgentRpcControlApi = {
           guidance: opts.request.guidance === true,
         }),
       );
+      if ("denied" in proof)
+        return rpcOutcome(opts.request, "rejected", { reason: proof.denied });
       const target = await sourceIdentity(opts.request.target);
-      if (target.created_by !== proof.link.approved_by)
+      if (
+        personalMessagingEnabled() !==
+        (proof.link.principal_account_id !== undefined)
+      )
+        throw new Error("personal messaging mode mismatch between bays");
+      if (
+        personalMessagingEnabled() &&
+        proof.link.principal_account_id !== proof.link.approved_by
+      )
+        throw new PersonalAgentAuthorizationError("principal_mismatch");
+      if (
+        !personalMessagingEnabled() &&
+        target.created_by !== proof.link.approved_by
+      )
         throw new Error("target approver changed");
       await assertActor(proof.link.approved_by, target.project_id);
       const host = await hostFor(opts.request.target);
+      if (personalMessagingEnabled())
+        observation = {
+          account_id: proof.link.approved_by,
+          link_id: proof.link.link_id,
+        };
       prunePermits();
       if (permits.size >= 1000)
         throw new Error("too many in-flight submissions");
@@ -316,7 +382,9 @@ export const agentRpcControl: AgentRpcControlApi = {
         run_id: opts.run_id,
         permit_id: randomUUID(),
         link_id: proof.link.link_id,
-        account_id: target.created_by,
+        account_id: personalMessagingEnabled()
+          ? proof.link.approved_by
+          : target.created_by,
         path: target.path,
         thread_id: target.thread_id,
         deadline: Date.now() + 30_000,
@@ -329,6 +397,7 @@ export const agentRpcControl: AgentRpcControlApi = {
       submissionStarted = true;
       const outcome = await host.api.submitAgentRpc(envelope);
       validateAgentRpcOutcome(outcome, opts.request);
+      accepted = outcome.outcome === "accepted";
       return outcome;
     } catch (error) {
       logger.warn("recipient submission failed", {
@@ -343,9 +412,24 @@ export const agentRpcControl: AgentRpcControlApi = {
         {
           reason: submissionStarted
             ? "Recipient acknowledgment unavailable"
-            : "Link, execution account or target host unavailable",
+            : personalMessagingEnabled() &&
+                error instanceof PersonalAgentAuthorizationError
+              ? error.denial
+              : "Link, execution account or target host unavailable",
         },
       );
+    } finally {
+      // Observations are not receipts. Unavailable telemetry cannot change an
+      // outcome or cause a send retry, and must not delay the host response.
+      if (submissionStarted && observation)
+        void withPersonalHome(observation.account_id, {
+          action: "observe",
+          options: { link_id: observation.link_id, accepted },
+        }).catch((error) =>
+          logger.warn("personal attempt observation unavailable", {
+            error: `${error}`,
+          }),
+        );
     }
   },
   inspect: async (opts) => {
@@ -353,13 +437,45 @@ export const agentRpcControl: AgentRpcControlApi = {
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
     // Source authentication is checked at its owning bay. The host returns only
     // evidence for this exact source/target/attempt, never receiver content.
-    await routed(opts.source.project_id, async (api, route) => {
-      await api.links({ ...route, source: opts.source, run_id: opts.run_id });
-    });
+    const account_id = await routed(
+      opts.source.project_id,
+      async (api, route) => {
+        const principal = await api.principal({
+          ...route,
+          source: opts.source,
+          run_id: opts.run_id,
+        });
+        if (principal.personal_messaging !== personalMessagingEnabled())
+          throw new Error("personal messaging mode mismatch between bays");
+        if (personalMessagingEnabled()) {
+          const proof = await api.check({
+            ...route,
+            source: opts.source,
+            run_id: opts.run_id,
+            target: opts.request.target,
+            guidance: false,
+          });
+          if ("denied" in proof)
+            throw new PersonalAgentAuthorizationError(proof.denied);
+          if (proof.link.principal_account_id !== proof.link.approved_by)
+            throw new Error("principal_mismatch");
+          return proof.link.approved_by;
+        } else
+          await api.links({
+            ...route,
+            source: opts.source,
+            run_id: opts.run_id,
+          });
+      },
+    );
     try {
       const outcome = await (
         await hostFor(opts.request.target)
-      ).api.inspectAgentRpc({ source: opts.source, request: opts.request });
+      ).api.inspectAgentRpc({
+        source: opts.source,
+        request: opts.request,
+        ...(account_id ? { account_id } : {}),
+      });
       validateAgentRpcOutcome(outcome, opts.request);
       return outcome;
     } catch {
@@ -407,6 +523,10 @@ export const listRpcLinks: AgentApi["listRpcLinks"] = async (opts) => {
 export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
   opts,
 ) => {
+  // The 30-second envelope is not a cached grant: every host admission guard
+  // rechecks the source and account home, including after startup waits. A
+  // pause after that authority snapshot may race with the already authorized
+  // admission; it does not retract saved messages or cancel running work.
   enabled();
   const e = opts.envelope;
   prunePermits();
@@ -425,7 +545,7 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
   });
   const target = await sourceIdentity(e.target);
   if (
-    target.created_by !== e.account_id ||
+    (!personalMessagingEnabled() && target.created_by !== e.account_id) ||
     target.path !== e.path ||
     target.thread_id !== e.thread_id
   )
@@ -439,9 +559,15 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
       guidance: e.guidance === true,
     }),
   );
+  if ("denied" in proof)
+    throw new PersonalAgentAuthorizationError(proof.denied);
   if (
     proof.link.link_id !== e.link_id ||
     proof.link.approved_by !== e.account_id ||
+    personalMessagingEnabled() !==
+      (proof.link.principal_account_id !== undefined) ||
+    (personalMessagingEnabled() &&
+      proof.link.principal_account_id !== e.account_id) ||
     Date.now() >= e.deadline
   )
     throw new Error("RPC link authorization changed or expired");
@@ -456,7 +582,19 @@ export async function acceptAgentRpc(
   const { agent_id, run_id } = parseAgentMessagingSubject(subject);
   const identity = await agentStore().get(agent_id);
   const source = { agent_id, project_id: identity.project_id };
-  await sourceRun(source, run_id);
+  const run = await sourceRun(source, run_id);
+  if (request.action === "request-connection") {
+    const { action: _action, version: _version, ...options } = request;
+    return withPersonalHome(run.account_id, {
+      action: "request",
+      options: { ...options, source, run_id },
+    });
+  }
+  if (request.action === "connection-request")
+    return withPersonalHome(run.account_id, {
+      action: "requestRead",
+      options: { source, run_id, request_id: request.request_id },
+    });
   if (request.action === "destinations")
     return routed(source.project_id, (api, route) =>
       api.links({ ...route, source, run_id }),

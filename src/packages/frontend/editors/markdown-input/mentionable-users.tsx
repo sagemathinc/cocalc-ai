@@ -15,6 +15,12 @@ import {
   getMentionAllAccountIds,
 } from "./mention-all";
 import type { Item } from "./complete";
+import {
+  namedAgentReference,
+  useNamedAgents,
+} from "@cocalc/frontend/agents/api";
+import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
+import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 
 interface Opts {
   avatarUserSize?: number;
@@ -27,17 +33,52 @@ export function useMentionableUsers(): (
 ) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
+  const { directory } = useNamedAgents();
+  const { states } = useAgentMentionContext();
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
-      return mentionableUsers({
-        search,
-        project_id,
-        user_map,
-        opts,
-      });
+      const query = search?.toLowerCase() ?? "";
+      const agents: Item[] = (directory?.agents ?? [])
+        .filter((agent) =>
+          `${agent.name} ${agent.thread_title ?? ""} ${agent.project_title ?? ""}`
+            .toLowerCase()
+            .includes(query),
+        )
+        .sort(
+          (a, b) =>
+            Number(b.name === query) - Number(a.name === query) ||
+            a.name.localeCompare(b.name),
+        )
+        .map((agent) => ({
+          value: serializeAgentMention(namedAgentReference(agent)),
+          group: "Agents",
+          search:
+            `${agent.name} ${agent.thread_title ?? ""} ${agent.project_title ?? ""}`.toLowerCase(),
+          label: (
+            <span>
+              <strong>@{agent.name}</strong> ·{" "}
+              {agent.thread_title ?? "Agent thread"} /{" "}
+              {agent.project_title ?? "Project"}
+              {!agent.available
+                ? " · Unavailable"
+                : states?.[agent.endpoint.agent_id]
+                  ? ` · ${states[agent.endpoint.agent_id]}`
+                  : ""}
+            </span>
+          ),
+        }));
+      return [
+        ...agents,
+        ...mentionableUsers({
+          search,
+          project_id,
+          user_map,
+          opts,
+        }).map((item) => ({ ...item, group: "People" })),
+      ];
     };
-  }, [project_id, user_map]);
+  }, [project_id, user_map, directory, states]);
 }
 
 interface Props {

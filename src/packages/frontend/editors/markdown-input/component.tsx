@@ -40,6 +40,8 @@ import {
   mentionDisplayText,
 } from "./mention-all";
 import { useMentionableUsers } from "./mentionable-users";
+import { parseAgentMention } from "@cocalc/util/agent-mentions";
+import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { normalizeMentionSearch } from "./mention-search";
 import { submit_mentions } from "./mentions";
 import {
@@ -268,6 +270,7 @@ export function MarkdownInput(props: Props) {
   >(undefined);
 
   const mentionableUsers = useMentionableUsers();
+  const agentMentions = useAgentMentionContext();
   const onSelectionReadyRef = useRef<typeof onSelectionReady>(onSelectionReady);
   onSelectionReadyRef.current = onSelectionReady;
 
@@ -1410,6 +1413,21 @@ export function MarkdownInput(props: Props) {
         onCancel={close_mentions}
         onSelect={(account_id) => {
           if (mentions_cursor_ref.current == null) return;
+          const agentReference = parseAgentMention(account_id);
+          if (agentReference) {
+            if (cm.current == null) return;
+            // Store the bound markup in the draft itself, not ephemeral CodeMirror marks.
+            const from = mentions_cursor_ref.current.from;
+            cm.current.replaceRange(
+              account_id + " ",
+              from,
+              cm.current.getCursor(),
+            );
+            close_mentions();
+            cm.current.getInputField().focus({ preventScroll: true });
+            agentMentions.onSelect?.(agentReference);
+            return;
+          }
           const text =
             account_id === ALL_PROJECT_COLLABORATORS_MENTION_ID
               ? "@all"

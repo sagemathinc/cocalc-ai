@@ -2,8 +2,9 @@
 
 Date: 2026-09-14.
 
-Status: proposed prototype for human review, not an implementation authorization
-or a description of deployed behavior.
+Status: approved for implementation on 2026-09-14. This is the prototype contract,
+not a claim of deployed behavior. Actual evidence and remaining work are recorded
+in `agent-mentions-progress.md`.
 
 ## 1. Product Contract
 

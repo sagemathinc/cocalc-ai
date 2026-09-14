@@ -27,6 +27,9 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { SubmitMentionsRef } from "@cocalc/frontend/chat/types";
 import { useMentionableUsers } from "@cocalc/frontend/editors/markdown-input/mentionable-users";
+import { parseAgentMention } from "@cocalc/util/agent-mentions";
+import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
+import { createAgentMention } from "./elements/agent-mention";
 import { submit_mentions } from "@cocalc/frontend/editors/markdown-input/mentions";
 import {
   EditorFunctions,
@@ -1025,11 +1028,22 @@ const FullEditableMarkdown: React.FC<Props> = React.memo((props: Props) => {
   }, []);
 
   const mentionableUsers = useMentionableUsers();
+  const agentMentions = useAgentMentionContext();
 
   const mentions = useMentions({
     isVisible,
     editor,
     insertMention: (editor, account_id) => {
+      const agentReference = parseAgentMention(account_id);
+      if (agentReference) {
+        Transforms.insertNodes(editor, [
+          createAgentMention(agentReference),
+          { text: " " },
+        ]);
+        // Selection is the only editor action that can initiate approval; parsing/rendering cannot.
+        agentMentions.onSelect?.(agentReference);
+        return;
+      }
       Transforms.insertNodes(editor, [
         createMention(account_id),
         { text: " " },

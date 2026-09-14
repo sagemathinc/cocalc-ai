@@ -57,6 +57,8 @@ import "./list/editable-list";
 import type { DisplayMath, InlineMath } from "./math";
 import "./math/editable";
 import type { Mention } from "./mention";
+import type { AgentMention } from "./agent-mention";
+import "./agent-mention";
 import "./mention/editable";
 import type { Meta } from "./meta";
 import "./meta/editable";
@@ -92,6 +94,7 @@ declare module "slate" {
       | JupyterCodeCell
       | JupyterMarkdownCell
       | Mention
+      | AgentMention
       | Table
       | THead
       | TBody

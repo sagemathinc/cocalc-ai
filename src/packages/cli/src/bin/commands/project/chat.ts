@@ -1,9 +1,14 @@
 import { Command } from "commander";
 import { randomUUID } from "node:crypto";
 import { sendIdentityMessage } from "../../core/agent-message";
+import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { registerChatAgentCommands } from "./chat-agents";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
-import type { AgentRpcLink, AgentRpcOutcome } from "@cocalc/conat/agents/rpc";
+import type {
+  AgentEndpoint,
+  AgentRpcLink,
+  AgentRpcOutcome,
+} from "@cocalc/conat/agents/rpc";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -67,6 +72,10 @@ export function registerProjectChatCommands(
     )
     .option("-w, --project <project>", "project id or name")
     .option(
+      "--to <name>",
+      "exact personal agent name or selected @mention; uses scoped RPC",
+    )
+    .option(
       "--to-agent <id>",
       "registered target agent; requires a runtime identity credential",
     )
@@ -94,6 +103,7 @@ export function registerProjectChatCommands(
           stdin?: boolean;
           guidance?: boolean;
           toAgent?: string;
+          to?: string;
           requestId?: string;
           rpc?: boolean;
           attemptId?: string;
@@ -104,43 +114,50 @@ export function registerProjectChatCommands(
           throw new Error("use either message arguments or --stdin, not both");
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
-        if (opts.rpc) {
+        if (opts.rpc || opts.to) {
           if (
-            !opts.toAgent ||
+            (!opts.toAgent && !opts.to) ||
+            (opts.toAgent && opts.to) ||
             opts.requestId ||
             opts.project ||
             opts.path ||
             opts.threadId
           )
             throw new Error(
-              "--rpc requires --to-agent and cannot use legacy --request-id or project/path/thread options",
+              "Use --to name or --rpc --to-agent ID, not both; cannot use legacy --request-id or project/path/thread options",
             );
-          requireUuid(opts.toAgent, "to-agent");
+          if (opts.toAgent) requireUuid(opts.toAgent, "to-agent");
           const attempt_id = opts.attemptId || randomUUID();
           requireUuid(attempt_id, "attempt-id");
           const globals = deps.globalsFrom(command);
-          const destinations = (await sendIdentityMessage(
-            { version: 2, action: "destinations" },
-            globals.api,
-          )) as AgentRpcLink[];
-          const destination = destinations.find(
-            (link) =>
-              link.target.agent_id === opts.toAgent &&
-              (!opts.guidance || link.allow_guidance),
-          );
-          if (!destination)
-            throw new Error(
-              "No approved RPC destination; no submission attempted",
+          let target: AgentEndpoint;
+          if (opts.to) {
+            target = await resolveRuntimeAgentName(opts.to, globals.api);
+          } else {
+            const destinations = (await sendIdentityMessage(
+              { version: 2, action: "destinations" },
+              globals.api,
+            )) as AgentRpcLink[];
+            const destination = destinations.find(
+              (link) =>
+                link.target.agent_id === opts.toAgent &&
+                (!opts.guidance || link.allow_guidance),
             );
+            if (!destination)
+              throw new Error(
+                "No approved RPC destination; no submission attempted",
+              );
+            target = destination.target;
+          }
           process.stderr.write(
-            `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(destination.target)}\n`,
+            `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
           );
           const result = (await sendIdentityMessage(
             {
               version: 2,
               action: "send",
               attempt_id,
-              target: destination.target,
+              target,
               body: prompt,
               guidance: opts.guidance,
             },

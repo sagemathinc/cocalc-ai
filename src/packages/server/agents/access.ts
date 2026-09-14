@@ -27,6 +27,12 @@ export async function assertActor(account_id: string, project_id: string) {
 
 export async function assertAgent(agent: AgentIdentity) {
   if (agent.disabled_at) throw new Error("agent is disabled");
+  // Registration is provenance, not execution authority in personal mode.
+  // Callers must separately authorize the human/run principal.
+  if (process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED === "1") {
+    await assertLocalAgentProject(agent.project_id);
+    return;
+  }
   await assertActor(agent.created_by, agent.project_id);
 }
 

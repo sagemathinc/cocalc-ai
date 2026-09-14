@@ -69,6 +69,7 @@ import "./instances"; // probably deprecated
 import "./listings";
 import "./ai-log";
 import "./agent-messaging";
+import "./agent-personal";
 import "./lti";
 import "./mentions";
 import "./account-entitlement-overrides";

@@ -215,11 +215,20 @@ import {
   listAllAcpAutomations,
   listDueAcpAutomations,
   toAutomationConfig,
-  toAutomationRecord,
   toAutomationState,
+  toAutomationRecord,
   upsertAcpAutomation,
   type AcpAutomationRow,
 } from "../sqlite/acp-automations";
+import {
+  assertAutomationRequestCurrent,
+  automationSettingsRevision,
+  humanAutomationSettings,
+  withCurrentAutomationSettings,
+} from "./automation-settings";
+import { assertSameTurnPrincipal } from "@cocalc/ai/acp";
+import { resolveHumanTurnMentions } from "./turn-mentions";
+import { augmentPromptWithAgentMentions } from "@cocalc/util/agent-mentions";
 import {
   decodeAcpInterruptCandidateIds,
   decodeAcpInterruptChat,
@@ -1952,6 +1961,9 @@ function compactLivePreviewBatch(
 }
 
 export class ChatStreamWriter {
+  assertSteerPrincipal(accountId: string): void {
+    assertSameTurnPrincipal(this.approverAccountId, accountId);
+  }
   public syncdbError?: unknown;
   private syncdb?: SyncDB;
   private syncdbPromise: Promise<SyncDB>;
@@ -7565,6 +7577,10 @@ async function executeAcpRequest({
     throw Error("project_id must be set");
   }
   await authorizeAgentDeliveryExecution(request, hubApi.agent);
+  const mentionReferences = await resolveHumanTurnMentions(
+    request,
+    hubApi.agent,
+  );
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,
@@ -7685,8 +7701,9 @@ async function executeAcpRequest({
     try {
       await currentAgent.evaluate({
         ...request,
+        mentionReferences,
         readPendingGoal: chatWriter?.readPendingGoal,
-        prompt,
+        prompt: augmentPromptWithAgentMentions(prompt, mentionReferences),
         local_images,
         runtime_env: runtimeEnv,
         config: effectiveConfig,
@@ -8135,6 +8152,7 @@ async function enqueueAutomationRun(
     message_date: assistantDate,
     automation_id: row.automation_id,
     automation_title: row.title ?? undefined,
+    automation_revision: automationSettingsRevision(row),
   };
   const request: AcpJobRequest =
     row.run_kind === "command"
@@ -8163,11 +8181,22 @@ async function enqueueAutomationRun(
     admitAcpJobCreation(request, admissionLimits),
     "automation",
   );
-  const job = enqueueAcpJob(request, {
-    preferred_worker_id: preferredWorkerForRetainedSession(
-      row.project_id,
-      request.request_kind === "command" ? undefined : request.session_id,
-    ),
+  const updated = withCurrentAutomationSettings(request, () => {
+    const job = enqueueAcpJob(request, {
+      preferred_worker_id: preferredWorkerForRetainedSession(
+        row.project_id,
+        request.request_kind === "command" ? undefined : request.session_id,
+      ),
+    });
+    return upsertAcpAutomation({
+      ...row,
+      status: "running",
+      last_run_started_at: now,
+      last_error: null,
+      last_job_op_id: job.op_id,
+      last_message_id: assistant_message_id,
+      updated_at: now,
+    });
   });
   await persistQueuedUserMessageProjection({
     client: conatClient,
@@ -8177,16 +8206,6 @@ async function enqueueAutomationRun(
     user_message_id,
     queued: true,
     readyTimeoutMs: opts.syncdbReadyTimeoutMs,
-  });
-
-  const updated = upsertAcpAutomation({
-    ...row,
-    status: "running",
-    last_run_started_at: now,
-    last_error: null,
-    last_job_op_id: job.op_id,
-    last_message_id: assistant_message_id,
-    updated_at: now,
   });
   await patchThreadAutomationProjection({
     project_id: updated.project_id,
@@ -8515,7 +8534,7 @@ async function handleAcpAutomationRequest(
     const enabled = config.enabled !== false;
     if (enabled) {
       const denial = await admitActiveAcpAutomationResponse({
-        account_id: existing?.account_id ?? request.account_id,
+        account_id: request.account_id,
         project_id,
         path,
         thread_id,
@@ -8529,7 +8548,7 @@ async function handleAcpAutomationRequest(
       project_id,
       path,
       thread_id,
-      account_id: existing?.account_id ?? request.account_id,
+      ...humanAutomationSettings(request.account_id),
       enabled,
       title: config.title ?? null,
       run_kind: config.run_kind ?? "codex",
@@ -8587,6 +8606,7 @@ async function handleAcpAutomationRequest(
   if (request.action === "pause") {
     const row = upsertAcpAutomation({
       ...existing,
+      ...humanAutomationSettings(request.account_id),
       enabled: false,
       status: "paused",
       paused_reason: "user_paused",
@@ -8610,7 +8630,7 @@ async function handleAcpAutomationRequest(
   }
   if (request.action === "resume") {
     const denial = await admitActiveAcpAutomationResponse({
-      account_id: existing.account_id ?? request.account_id,
+      account_id: request.account_id,
       project_id,
       path,
       thread_id,
@@ -8619,6 +8639,7 @@ async function handleAcpAutomationRequest(
     if (denial) return denial;
     const row = upsertAcpAutomation({
       ...existing,
+      ...humanAutomationSettings(request.account_id),
       enabled: true,
       status: "active",
       paused_reason: null,
@@ -8672,6 +8693,7 @@ async function handleAcpAutomationRequest(
   if (request.action === "skip_next") {
     const row = upsertAcpAutomation({
       ...existing,
+      ...humanAutomationSettings(request.account_id),
       next_run_at:
         computeSkippedAutomationRunAt(existing, {
           nextRunAtMs: existing.next_run_at,
@@ -8806,6 +8828,7 @@ function normalizeAcpAutomationRecord(
     path,
     thread_id,
     account_id,
+    settings_revision: record.settings_revision,
     enabled,
     title: config.title ?? null,
     prompt: config.prompt ?? null,
@@ -9700,6 +9723,22 @@ async function runQueuedCommandJob({
 
 async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
   const request = decodeAcpJobRequest(job);
+  try {
+    assertAutomationRequestCurrent(
+      request,
+      request.chat?.automation_id
+        ? getAcpAutomationById(request.chat.automation_id)
+        : undefined,
+    );
+  } catch (err) {
+    setAcpJobState({
+      op_id: job.op_id,
+      state: "canceled",
+      error: `${err}`,
+      worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
+    });
+    return;
+  }
   const project_id = `${job.project_id}`.trim();
   const path = `${job.path}`.trim();
   const thread_id = `${job.thread_id}`.trim();
@@ -10085,6 +10124,8 @@ async function trySteerCandidateIds({
 }): Promise<AcpSteerAttemptResult> {
   const ids = new Set<string>();
   const writer = findChatWriter({ threadId, chat });
+  writer?.assertSteerPrincipal(request.account_id);
+  assertRunningJobSteerPrincipal(request);
   for (const id of candidateIds ?? []) {
     const trimmed = `${id ?? ""}`.trim();
     if (trimmed) {
@@ -10123,6 +10164,7 @@ async function trySteerCandidateIds({
           sawNotSteerable = true;
         }
       } catch (err) {
+        if ((err as { code?: string }).code === "principal_mismatch") throw err;
         if (firstError === undefined) {
           firstError = err;
         }
@@ -11172,6 +11214,22 @@ function startCodexActionReconcilePoller(client: ConatClient): void {
   codexActionReconcileTimer.unref?.();
 }
 
+function assertRunningJobSteerPrincipal(request: AcpSteerRequest): void {
+  const chat = request.chat;
+  for (const job of listRunningAcpJobs()) {
+    if (
+      job.project_id === request.project_id &&
+      job.path === chat.path &&
+      job.thread_id === chat.thread_id
+    ) {
+      assertSameTurnPrincipal(job.account_id, request.account_id);
+    }
+  }
+  findChatWriter({ threadId: chat.thread_id, chat })?.assertSteerPrincipal(
+    request.account_id,
+  );
+}
+
 async function attemptAcpSteerRequest(
   request: AcpSteerRequest,
   extraCandidateIds: string[] = [],
@@ -11187,6 +11245,7 @@ async function attemptAcpSteerRequest(
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  assertRunningJobSteerPrincipal(request);
   await acknowledgeAutomationFromHumanTurn(request);
 
   const projectId = request.chat.project_id ?? request.project_id;
@@ -11968,6 +12027,8 @@ export function getAcpAgentRuntimeStatus(): {
 }
 
 export const acpTestInternals = {
+  assertRunningJobSteerPrincipal,
+  runQueuedAcpJob,
   asyncAttentionNotificationMetadata,
   deliverAsyncAttentionAnswer,
   initializeAcpRuntime,

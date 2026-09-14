@@ -5,6 +5,8 @@ import {
   type AgentRpcExecutionAdapter,
 } from "../agent-rpc-service";
 import type { AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
+import { rpcOutcome } from "@cocalc/conat/agents/rpc";
+import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
 
 function fixture() {
   const e: AgentRpcEnvelope = {
@@ -63,7 +65,7 @@ test("idle wake and busy queue use one existing admission call with target ident
     link_id: e.link_id,
     attempt_id: e.attempt_id,
   });
-  expect(service.inspect(e.source, e).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
   await service.submit(e);
   expect(deps.admit).toHaveBeenCalledTimes(1);
 });
@@ -101,7 +103,7 @@ test("lost execution ack is unknown and cannot cause a recovery admission", asyn
     throw new Error("ack lost after queue admission");
   });
   expect((await service.submit(e)).outcome).toBe("unknown");
-  expect(service.inspect(e.source, e).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
   await service.submit(e);
   expect(deps.admit).toHaveBeenCalledTimes(1);
   await service.submit({ ...e, attempt_id: randomUUID() });
@@ -185,7 +187,7 @@ test("startup timeout is unknown and late completion cannot deliver", async () =
     await jest.advanceTimersByTimeAsync(1);
     expect(db.set).not.toHaveBeenCalled();
     expect(deps.admit).not.toHaveBeenCalled();
-    expect(service.inspect(e.source, e).outcome).toBe("unknown");
+    expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
     expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
     await service.submit(e);
     expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
@@ -240,4 +242,56 @@ test("concurrent calls for the same attempt share startup and admission", async 
   expect(outcomes.map((r) => r.outcome)).toEqual(["accepted", "accepted"]);
   expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
   expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test.each([undefined, "0", "1"])(
+  "host evidence is principal scoped independently of personal flag %s",
+  async (flag) => {
+    const previous = process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+    if (flag == null)
+      delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+    else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = flag;
+    try {
+      const { e, deps, service } = fixture();
+      const q = { ...e, account_id: randomUUID(), run_id: randomUUID() };
+      expect((await service.submit(e)).outcome).toBe("accepted");
+      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
+        "accepted",
+      );
+      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
+        "unknown",
+      );
+      expect(service.inspect(e.source, e).outcome).toBe("unknown");
+      expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+      deps.admit = jest.fn(async () => {
+        throw new Error("lost Q acknowledgment");
+      });
+      expect((await service.submit(q)).outcome).toBe("unknown");
+      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
+        "accepted",
+      );
+      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
+        "unknown",
+      );
+      await service.submit(q);
+      expect(deps.admit).toHaveBeenCalledTimes(1);
+      expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previous == null)
+        delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+      else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = previous;
+    }
+  },
+);
+
+test("inspection never falls back to legacy unscoped evidence", async () => {
+  const { e, deps } = fixture();
+  const attempts = new AgentRpcAttempts();
+  await attempts.send(e.source, e, async () => rpcOutcome(e, "accepted"));
+  const service = createAgentRpcService(deps, attempts);
+  expect(attempts.inspect(e.source, e).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
 });

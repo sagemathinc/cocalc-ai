@@ -14,6 +14,7 @@ import getLogger from "@cocalc/backend/logger";
 import { agentStore, agentMessagingEnabled } from "./store";
 import { assertAgent, assertRun } from "./access";
 import { ownMessageReceipts } from "./inspection";
+import { personalMessagingEnabled } from "./personal";
 
 const logger = getLogger("agents:messaging");
 function receipt(
@@ -64,6 +65,13 @@ export async function acceptAgentMessage(
   if (request.action === "destinations")
     throw new Error(
       "Legacy destinations are retired; use agent rpc destinations",
+    );
+  if (
+    personalMessagingEnabled() &&
+    (request.action === "messages" || request.action === "receipt")
+  )
+    throw new Error(
+      "Legacy shared receipts are not available to personal runs; use RPC inspect",
     );
   if (request.action === "messages")
     return ownMessageReceipts(agent_id, request);
@@ -116,9 +124,17 @@ export async function startAgentMessaging(
               await message.respond({
                 result: await acceptAgentRpc(message.subject, message.data),
               });
-            } catch {
+            } catch (error) {
               await message
-                .respond({ error: "agent RPC unavailable or unauthorized" })
+                .respond({
+                  error:
+                    error instanceof Error &&
+                    /^(approval_required|grant_expired|grant_paused|grant_revoked|principal_mismatch|connection_request_[a-z_]+)$/.test(
+                      error.message,
+                    )
+                      ? error.message
+                      : "agent RPC unavailable or unauthorized",
+                })
                 .catch(() => undefined);
             }
           })();

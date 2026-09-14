@@ -36,6 +36,8 @@ import {
 } from "../../sqlite/acp-jobs";
 
 jest.mock("@cocalc/ai/acp", () => ({
+  assertSameTurnPrincipal:
+    jest.requireActual("@cocalc/ai/acp").assertSameTurnPrincipal,
   CODEX_ACP_RECOVERY_ERROR_CODE: {
     appServerExited: "codex_app_server_exited",
     commandBlocked: "codex_command_blocked",
@@ -247,6 +249,59 @@ afterEach(async () => {
 
 afterAll(() => {
   closeAcpDatabase();
+});
+
+it("rejects another human before durable steering while permitting an ordinary queued turn", () => {
+  const request = makeRequest();
+  enqueueAcpJob(request);
+  claimNextQueuedAcpJobForThread({
+    project_id: request.project_id,
+    path: request.chat.path,
+    thread_id: request.chat.thread_id,
+    worker_id: "worker-P",
+  });
+  expect(() =>
+    acpTestInternals.assertRunningJobSteerPrincipal({
+      ...request,
+      account_id: "Q",
+    }),
+  ).toThrow("Queue a new turn under your account");
+  expect(() =>
+    acpTestInternals.assertRunningJobSteerPrincipal(request),
+  ).not.toThrow();
+  const queued = enqueueAcpJob({
+    ...request,
+    account_id: "Q",
+    chat: {
+      ...request.chat,
+      parent_message_id: "user-Q",
+      message_id: "assistant-Q",
+      message_date: "2026-03-16T00:01:01.000Z",
+    },
+  });
+  expect(queued.account_id).toBe("Q");
+  expect(queued.state).toBe("queued");
+});
+
+it("cancels stale automation jobs at execution without invoking Codex or commands", async () => {
+  const request = makeRequest();
+  const queued = enqueueAcpJob({
+    ...request,
+    chat: {
+      ...request.chat,
+      automation_id: "deleted-automation",
+      automation_revision: "obsolete",
+    },
+  });
+  await acpTestInternals.runQueuedAcpJob(queued);
+  expect(
+    getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    })?.state,
+  ).toBe("canceled");
+  expect(chatServer.acquireChatSyncDB).not.toHaveBeenCalled();
 });
 
 function makeSyncdb(rows: any[] = []) {

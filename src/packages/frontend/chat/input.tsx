@@ -61,6 +61,7 @@ interface Props {
 }
 
 export interface ChatInputControl {
+  getValue?: () => string;
   focus: () => boolean;
   captureSelection: () => MarkdownPosition | null;
   insertText: (text: string, selection?: MarkdownPosition | null) => boolean;
@@ -170,6 +171,7 @@ export default function ChatInput({
   const narrow = useNarrowChatViewport();
   const intl = useIntl();
   const controlRef = useRef<any>(null);
+  const getValueRef = useRef<() => string>(() => propsInput ?? "");
   const [input, setInput] = useState<string>(propsInput ?? "");
   const [editorResetEpoch, setEditorResetEpoch] = useState(0);
   const [mode, setMode] = useState<"markdown" | "editor">(
@@ -378,6 +380,7 @@ export default function ChatInput({
 
   useEffect(() => {
     const control: ChatInputControl = {
+      getValue: () => getValueRef.current(),
       focus: focusInput,
       captureSelection,
       insertText,
@@ -418,6 +421,7 @@ export default function ChatInput({
       cacheId={cacheId}
       value={input}
       controlRef={controlRef}
+      getValueRef={getValueRef}
       enableUpload={enableUpload}
       enableMentions={enableMentions}
       submitMentionsRef={submitMentionsRef}

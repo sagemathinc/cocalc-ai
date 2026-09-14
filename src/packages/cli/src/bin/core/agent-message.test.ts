@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { readTurnAgentReferences } from "./agent-destination";
 import type { AgentRpcSend } from "@cocalc/conat/agents/rpc";
 import {
   sendIdentityMessage,
@@ -153,6 +154,96 @@ test("RPC CLI makes one scoped request and preserves honest outcomes", async () 
     stub.mock.restore();
     if (old === undefined) delete process.env.COCALC_AGENT_IDENTITY_FILE;
     else process.env.COCALC_AGENT_IDENTITY_FILE = old;
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("approval requests and turn references stay bound to the current credential", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-personal-cli-"));
+  const old = process.env.COCALC_AGENT_IDENTITY_FILE;
+  const oldRefs = process.env.COCALC_AGENT_MENTION_REFERENCES_FILE;
+  const credential = {
+    agent_id: randomUUID(),
+    run_id: randomUUID(),
+    token: "cocalc_agent_identity_test",
+    expires_at: Date.now() + 60000,
+    api_url: "https://owner.invalid",
+  };
+  const request = {
+    version: 2 as const,
+    action: "request-connection" as const,
+    request_id: randomUUID(),
+    target: { agent_id: randomUUID(), project_id: randomUUID() },
+    reason: "review",
+    ttl_seconds: null,
+  };
+  let result: any = {
+    ...request,
+    source: { agent_id: credential.agent_id, project_id: randomUUID() },
+    run_id: credential.run_id,
+    state: "pending",
+  };
+  let calls = 0;
+  let closes = 0;
+  const stub = mock.method(
+    require("@cocalc/conat/core/client"),
+    "connect",
+    () => ({
+      request: async () => {
+        calls++;
+        if (result === null) throw new Error("lost approval acknowledgment");
+        return { data: { result } };
+      },
+      close: () => closes++,
+    }),
+  );
+  try {
+    process.env.COCALC_AGENT_IDENTITY_FILE = join(dir, "identity.json");
+    process.env.COCALC_AGENT_MENTION_REFERENCES_FILE = join(
+      dir,
+      "references.json",
+    );
+    await writeFile(
+      process.env.COCALC_AGENT_IDENTITY_FILE,
+      JSON.stringify(credential),
+    );
+    const references = [{ name: "reviewer", target: request.target }];
+    await writeFile(
+      process.env.COCALC_AGENT_MENTION_REFERENCES_FILE,
+      JSON.stringify({
+        agent_id: credential.agent_id,
+        run_id: credential.run_id,
+        references,
+      }),
+    );
+    assert.deepEqual(await readTurnAgentReferences(), references);
+    assert.equal((await sendIdentityMessage(request)).state, "pending");
+    result = { ...result, request_id: randomUUID() };
+    assert.equal(
+      (await sendIdentityMessage(request)).request_id,
+      result.request_id,
+    );
+    result = { ...result, run_id: randomUUID() };
+    await assert.rejects(sendIdentityMessage(request), /mismatched/);
+    result = null;
+    await assert.rejects(
+      sendIdentityMessage(request),
+      /lost approval acknowledgment/,
+    );
+    assert.equal(calls, 4);
+    assert.equal(closes, 4);
+    await writeFile(
+      process.env.COCALC_AGENT_IDENTITY_FILE,
+      JSON.stringify({ ...credential, run_id: randomUUID() }),
+    );
+    await assert.rejects(readTurnAgentReferences(), /current|match|invalid/i);
+  } finally {
+    stub.mock.restore();
+    if (old === undefined) delete process.env.COCALC_AGENT_IDENTITY_FILE;
+    else process.env.COCALC_AGENT_IDENTITY_FILE = old;
+    if (oldRefs === undefined)
+      delete process.env.COCALC_AGENT_MENTION_REFERENCES_FILE;
+    else process.env.COCALC_AGENT_MENTION_REFERENCES_FILE = oldRefs;
     await rm(dir, { recursive: true, force: true });
   }
 });

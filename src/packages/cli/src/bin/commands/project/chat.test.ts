@@ -1,8 +1,76 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
+import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import type { ProjectCommandDeps } from "../project";
 import { registerProjectChatCommands } from "./chat";
+
+test("named send uses one scoped attempt and never the human send path", async () => {
+  const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  let resolved = 0;
+  const attempts: any[] = [];
+  let output: any;
+  const resolver = mock.method(
+    require("../../core/agent-destination"),
+    "resolveRuntimeAgentName",
+    async (name: string) => {
+      assert.equal(name, "@reviewer");
+      resolved++;
+      return target;
+    },
+  );
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      attempts.push(request);
+      return { ...request, outcome: "accepted", observed_at: Date.now() };
+    },
+  );
+  const program = new Command();
+  registerProjectChatCommands(program.command("project"), {
+    globalsFrom: () => ({}),
+    emitSuccess: (_ctx: unknown, _command: unknown, result: unknown) => {
+      output = result;
+    },
+    withContext: () => {
+      throw new Error("broad credential fallback");
+    },
+  } as any);
+  const oldExit = process.exitCode;
+  try {
+    await program.parseAsync(
+      ["project", "chat", "send", "--to", "@reviewer", "Review this"],
+      { from: "user" },
+    );
+    assert.equal(resolved, 1);
+    assert.equal(attempts.length, 1);
+    assert.deepEqual(attempts[0].target, target);
+    assert.equal(attempts[0].action, "send");
+    assert.equal(attempts[0].body, "Review this");
+    assert.equal(output.outcome, "accepted");
+    await assert.rejects(
+      program.parseAsync(
+        [
+          "project",
+          "chat",
+          "send",
+          "--to",
+          "@reviewer",
+          "--to-agent",
+          target.agent_id,
+          "Review this",
+        ],
+        { from: "user" },
+      ),
+    );
+    assert.equal(attempts.length, 1);
+  } finally {
+    process.exitCode = oldExit;
+    resolver.mock.restore();
+    transport.mock.restore();
+  }
+});
 
 function setup() {
   const program = new Command();

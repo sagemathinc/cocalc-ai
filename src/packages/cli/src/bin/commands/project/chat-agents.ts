@@ -2,6 +2,8 @@ import type { Command } from "commander";
 import type { ProjectCommandDeps } from "../project";
 import { sendIdentityMessage } from "../../core/agent-message";
 import { randomUUID } from "node:crypto";
+import { resolveRuntimeAgentName } from "../../core/agent-destination";
+import { validateAgentEndpoint } from "@cocalc/conat/agents/rpc";
 
 export function registerChatAgentCommands(
   chat: Command,
@@ -21,6 +23,122 @@ export function registerChatAgentCommands(
   const rpc = agent
     .command("rpc")
     .description("V2 single-attempt messaging; separate from legacy delivery");
+  agent
+    .command("destinations")
+    .description(
+      "discover destinations approved for this turn's human principal",
+    )
+    .action(async (_opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      emitSuccess(
+        { globals },
+        "project chat agent destinations",
+        await sendIdentityMessage(
+          { version: 2, action: "destinations" },
+          globals.api,
+        ),
+      );
+    });
+  agent
+    .command("request-connection")
+    .description(
+      "request typed human approval; does not grant permission or send a message",
+    )
+    .option("--to <name>", "exact approved name or selected @mention")
+    .option(
+      "--to-agent <uuid>",
+      "previously resolved target identity, requires --target-project",
+    )
+    .option("--target-project <uuid>", "previously resolved target project")
+    .requiredOption("--reason <reason>", "why this connection is needed")
+    .option(
+      "--request-id <uuid>",
+      "stable request id for subsequent inspection",
+    )
+    .option(
+      "--ttl-seconds <seconds>",
+      "duration, default one day, maximum 30 days",
+    )
+    .option("--never-expires", "request no expiry")
+    .option("--both-directions", "request communication in both directions")
+    .option(
+      "--wait-seconds <seconds>",
+      "wait for the human decision using read-only inspection; 0 returns immediately, maximum 900",
+      "120",
+    )
+    .action(async (opts, cmd) => {
+      if (opts.neverExpires && opts.ttlSeconds !== undefined)
+        throw new Error("Choose --never-expires or --ttl-seconds, not both");
+      const waitSeconds = Number(opts.waitSeconds);
+      if (
+        !Number.isInteger(waitSeconds) ||
+        waitSeconds < 0 ||
+        waitSeconds > 900
+      )
+        throw new Error("--wait-seconds must be an integer from 0 to 900");
+      const globals = globalsFrom(cmd);
+      if (
+        (opts.to && (opts.toAgent || opts.targetProject)) ||
+        (!opts.to && (!opts.toAgent || !opts.targetProject))
+      )
+        throw new Error(
+          "Choose --to NAME or both --to-agent and --target-project",
+        );
+      const target = opts.to
+        ? await resolveRuntimeAgentName(opts.to, globals.api)
+        : { agent_id: opts.toAgent, project_id: opts.targetProject };
+      validateAgentEndpoint(target);
+      const request_id = opts.requestId ?? randomUUID();
+      process.stderr.write(
+        `Connection approval request ${request_id}; no message is sent.\n`,
+      );
+      let result = await sendIdentityMessage(
+        {
+          version: 2,
+          action: "request-connection",
+          request_id,
+          target,
+          reason: opts.reason,
+          ttl_seconds: opts.neverExpires
+            ? null
+            : Number(opts.ttlSeconds ?? 86400),
+          both_directions: opts.bothDirections === true,
+        },
+        globals.api,
+      );
+      const deadline = Date.now() + waitSeconds * 1000;
+      while (result.state === "pending" && Date.now() < deadline) {
+        await new Promise((resolve) =>
+          setTimeout(resolve, Math.min(2000, deadline - Date.now())),
+        );
+        if (Date.now() >= deadline) break;
+        result = await sendIdentityMessage(
+          {
+            version: 2,
+            action: "connection-request",
+            request_id: result.request_id,
+          },
+          globals.api,
+        );
+      }
+      emitSuccess({ globals }, "project chat agent request-connection", result);
+    });
+  agent
+    .command("connection-request <request-id>")
+    .description(
+      "inspect a typed approval request; never starts work or replays a message",
+    )
+    .action(async (request_id, _opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      emitSuccess(
+        { globals },
+        "project chat agent connection-request",
+        await sendIdentityMessage(
+          { version: 2, action: "connection-request", request_id },
+          globals.api,
+        ),
+      );
+    });
   rpc.command("destinations").action(async (_opts, cmd) => {
     const globals = globalsFrom(cmd);
     emitSuccess(

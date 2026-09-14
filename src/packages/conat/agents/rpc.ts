@@ -25,17 +25,29 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
 }
 
 export interface AgentRpcLink {
+  /** Present only on an account-home authoritative personal grant. */
+  principal_account_id?: string;
   link_id: string;
   source: AgentEndpoint;
   target: AgentEndpoint;
   approved_by: string;
   reason: string;
-  expires_at: string;
+  expires_at: string | null;
+  source_name?: string;
+  target_name?: string;
+  target_retired_names?: string[];
+  source_named_agent?: import("./personal").NamedAgent;
+  target_named_agent?: import("./personal").NamedAgent;
   revoked_at?: string | null;
   allow_guidance: boolean;
 }
 
 export type AgentRpcRequest =
+  | ({
+      version: 2;
+      action: "request-connection";
+    } & import("./personal").PersonalConnectionRequestOptions)
+  | { version: 2; action: "connection-request"; request_id: string }
   | (AgentRpcSend & { action: "send" })
   | (AgentRpcAttempt & { action: "inspect" })
   | { version: 2; action: "destinations" };
@@ -67,11 +79,50 @@ export function validateAgentRpcRequest(value: AgentRpcRequest): void {
       if (value.guidance !== undefined && typeof value.guidance !== "boolean")
         throw new Error("guidance must be boolean");
     }
+  } else if (value.action === "request-connection") {
+    keys.push(
+      "request_id",
+      "target",
+      "reason",
+      "ttl_seconds",
+      "both_directions",
+      "allow_guidance",
+    );
+    requireUuid(value.request_id, "request_id");
+    validateAgentEndpoint(value.target);
+    validatePersonalApproval(value);
+  } else if (value.action === "connection-request") {
+    keys.push("request_id");
+    requireUuid(value.request_id, "request_id");
   } else if (value.action !== "destinations") {
     throw new Error("unsupported agent RPC operation");
   }
   if (Object.keys(value).some((key) => !keys.includes(key)))
     throw new Error("unexpected agent RPC field");
+}
+
+export function validatePersonalApproval(value: {
+  reason: string;
+  ttl_seconds?: number | null;
+  both_directions?: boolean;
+  allow_guidance?: boolean;
+}): void {
+  if (
+    typeof value.reason !== "string" ||
+    !value.reason.trim() ||
+    value.reason.length > 2000
+  )
+    throw new Error("approval reason required (maximum 2000 characters)");
+  if (
+    value.ttl_seconds != null &&
+    (!Number.isInteger(value.ttl_seconds) ||
+      value.ttl_seconds < 1 ||
+      value.ttl_seconds > 30 * 86400)
+  )
+    throw new Error("invalid approval duration");
+  for (const key of ["both_directions", "allow_guidance"] as const)
+    if (value[key] !== undefined && typeof value[key] !== "boolean")
+      throw new Error(`invalid ${key}`);
 }
 
 export function rpcOutcome(

@@ -6352,6 +6352,28 @@ describe("hosts.issueProjectHostAuthToken", () => {
       expect.objectContaining({
         account_id: ACCOUNT_UUID,
         host_id: HOST_UUID,
+        auth_actor: "account",
+      }),
+    );
+  });
+
+  it("marks host-issued project agent credentials as agent, never human scheduling authority", async () => {
+    const { issueProjectHostAgentAuthToken } = await import("./hosts");
+    await issueProjectHostAgentAuthToken({
+      account_id: ACCOUNT_UUID,
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+    });
+    expect(assertProjectHostAgentTokenAccessMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+    });
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        auth_actor: "agent",
       }),
     );
   });

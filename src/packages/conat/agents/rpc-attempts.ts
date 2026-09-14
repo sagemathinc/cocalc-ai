@@ -33,8 +33,12 @@ export class AgentRpcAttempts {
   private now() {
     return this.options.now?.() ?? Date.now();
   }
-  private key(source: AgentEndpoint, attempt: AgentRpcAttempt) {
-    return `${source.project_id}/${source.agent_id}/${attempt.target.project_id}/${attempt.target.agent_id}/${attempt.attempt_id}`;
+  private key(
+    source: AgentEndpoint,
+    attempt: AgentRpcAttempt,
+    accountId?: string,
+  ) {
+    return `${JSON.stringify(accountId ?? null)}/${source.project_id}/${source.agent_id}/${attempt.target.project_id}/${attempt.target.agent_id}/${attempt.attempt_id}`;
   }
   private prune() {
     for (const [key, entry] of this.entries)
@@ -44,10 +48,14 @@ export class AgentRpcAttempts {
         this.sources.delete(key);
   }
 
-  inspect(source: AgentEndpoint, attempt: AgentRpcAttempt): AgentRpcOutcome {
+  inspect(
+    source: AgentEndpoint,
+    attempt: AgentRpcAttempt,
+    accountId?: string,
+  ): AgentRpcOutcome {
     this.prune();
     return (
-      this.entries.get(this.key(source, attempt))?.result ??
+      this.entries.get(this.key(source, attempt, accountId))?.result ??
       rpcOutcome(attempt, "unknown", {
         reason: "No retained acceptance evidence",
       })
@@ -58,9 +66,10 @@ export class AgentRpcAttempts {
     source: AgentEndpoint,
     request: AgentRpcSend,
     execute: () => Promise<AgentRpcOutcome>,
+    accountId?: string,
   ): Promise<AgentRpcOutcome> {
     this.prune();
-    const key = this.key(source, request);
+    const key = this.key(source, request, accountId);
     const hash = createHash("sha256")
       .update(JSON.stringify([request.body, request.guidance === true]))
       .digest("hex");

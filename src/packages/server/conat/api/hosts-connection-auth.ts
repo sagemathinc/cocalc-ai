@@ -373,6 +373,7 @@ export async function issueProjectHostAuthTokenLocalHelper({
     host_id,
     ttl_seconds,
     browser_session_exp_s,
+    auth_actor: "account",
     private_key: getProjectHostAuthTokenPrivateKey(),
   });
   return { host_id, token, expires_at };
@@ -430,6 +431,7 @@ export async function issueProjectHostAgentAuthTokenInternalHelper({
     host_id,
     ttl_seconds,
     session_id,
+    auth_actor: "agent",
     private_key: getProjectHostAuthTokenPrivateKey(),
   });
   return { host_id, token, expires_at };

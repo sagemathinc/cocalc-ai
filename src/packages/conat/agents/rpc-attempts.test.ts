@@ -42,6 +42,63 @@ test("lost response can be inspected without starting work; explicit retry is ne
   expect(execute).toHaveBeenCalledTimes(2);
 });
 
+test("retained evidence is principal scoped, never a legacy fallback", async () => {
+  const evidence = new AgentRpcAttempts();
+  const source = endpoint(),
+    send = request();
+  const p = randomUUID(),
+    q = randomUUID();
+  const executeP = jest.fn(async () => rpcOutcome(send, "accepted"));
+  const executeQ = jest.fn(async () => rpcOutcome(send, "rejected"));
+  await evidence.send(source, send, executeP, p);
+  expect(evidence.inspect(source, send, p).outcome).toBe("accepted");
+  expect(evidence.inspect(source, send, q).outcome).toBe("unknown");
+  expect(evidence.inspect(source, send).outcome).toBe("unknown");
+  await evidence.send(source, send, executeQ, q);
+  expect(evidence.inspect(source, send, q).outcome).toBe("rejected");
+  expect(evidence.inspect(source, send, p).outcome).toBe("accepted");
+  await evidence.send(source, send, executeP, p);
+  expect(executeP).toHaveBeenCalledTimes(1);
+  expect(executeQ).toHaveBeenCalledTimes(1);
+  const legacy = jest.fn(async () => rpcOutcome(send, "unknown"));
+  await evidence.send(source, send, legacy);
+  expect(legacy).toHaveBeenCalledTimes(1);
+  expect(evidence.inspect(source, send, p).outcome).toBe("accepted");
+});
+
+test("in-flight coalescing never joins another human's attempt", async () => {
+  const evidence = new AgentRpcAttempts();
+  const source = endpoint(),
+    send = request();
+  const p = randomUUID(),
+    q = randomUUID();
+  let finish!: () => void;
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const executeP = jest.fn(async () => {
+    await held;
+    return rpcOutcome(send, "accepted");
+  });
+  const first = evidence.send(source, send, executeP, p);
+  const duplicate = evidence.send(source, send, executeP, p);
+  const executeQ = jest.fn(async () => rpcOutcome(send, "rejected"));
+  try {
+    expect((await evidence.send(source, send, executeQ, q)).outcome).toBe(
+      "rejected",
+    );
+    expect(evidence.inspect(source, send, p).outcome).toBe("unknown");
+    expect(evidence.inspect(source, send, q).outcome).toBe("rejected");
+    expect(executeP).toHaveBeenCalledTimes(1);
+    expect(executeQ).toHaveBeenCalledTimes(1);
+  } finally {
+    finish();
+  }
+  expect((await first).outcome).toBe("accepted");
+  expect((await duplicate).outcome).toBe("accepted");
+  expect(evidence.inspect(source, send, q).outcome).toBe("rejected");
+});
+
 test("in-flight calls coalesce, conflict does not replay, other senders cannot inspect", async () => {
   const evidence = new AgentRpcAttempts();
   const source = endpoint(),

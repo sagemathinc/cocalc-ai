@@ -61,7 +61,9 @@ export function CommunicationPanel({
   accountId,
 }: Props) {
   const [identity, setIdentity] = useState<AgentIdentity>();
-  const [grants, setGrants] = useState<AgentGrant[]>([]);
+  const [grants, setGrants] = useState<
+    (Omit<AgentGrant, "expires_at"> & { expires_at: string | null })[]
+  >([]);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -284,7 +286,8 @@ export function CommunicationPanel({
               const outgoing = grant.source_agent_id === identity.agent_id;
               const state = grant.revoked_at
                 ? "Revoked"
-                : new Date(grant.expires_at).valueOf() <= Date.now()
+                : grant.expires_at &&
+                    new Date(grant.expires_at).valueOf() <= Date.now()
                   ? "Expired"
                   : "Active";
               return (
@@ -332,7 +335,10 @@ export function CommunicationPanel({
                   <details>
                     <summary>Connection details</summary>
                     <div>
-                      Expires: {new Date(grant.expires_at).toLocaleString()}
+                      Expires:{" "}
+                      {grant.expires_at
+                        ? new Date(grant.expires_at).toLocaleString()
+                        : "Never expires"}
                     </div>
                     <div>Reason: {grant.reason}</div>
                     <div>Approved by: {grant.approved_by}</div>
@@ -487,8 +493,9 @@ export function CommunicationPanel({
                               });
                               if (
                                 grant.revoked_at ||
-                                new Date(grant.expires_at).valueOf() <=
-                                  Date.now()
+                                (grant.expires_at != null &&
+                                  new Date(grant.expires_at).valueOf() <=
+                                    Date.now())
                               )
                                 throw new Error(
                                   "This approval is no longer active. Refresh connections before creating a new approval.",

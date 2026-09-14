@@ -27,8 +27,28 @@ import type {
   AgentRpcLink,
 } from "@cocalc/conat/agents/rpc";
 import type { AgentRpcLinkApproval } from "@cocalc/conat/inter-bay/agent-rpc";
+import type {
+  NamedAgent,
+  NamedAgentDirectory,
+  NameAgentOptions,
+  PersonalConnection,
+  PersonalConnectionDirectory,
+  PersonalMessagingControls,
+  GrantPersonalConnectionOptions,
+  SetPersonalConnectionStateOptions,
+  SetPersonalMessagingStateOptions,
+  PersonalConnectionRequest,
+} from "@cocalc/conat/agents/personal";
 
 export const agent = {
+  listPersonalConnectionRequests: authFirstRequireAccount,
+  resolvePersonalConnectionRequest: authFirstRequireAccountWithBoundSession,
+  listNamedAgents: authFirstRequireAccount,
+  nameAgent: authFirstRequireAccountWithBoundSession,
+  listPersonalConnections: authFirstRequireAccount,
+  grantPersonalConnection: authFirstRequireAccountWithBoundSession,
+  setPersonalConnectionState: authFirstRequireAccountWithBoundSession,
+  setPersonalMessagingState: authFirstRequireAccountWithBoundSession,
   grantRpcLink: authFirstRequireAccountWithBoundSession,
   revokeRpcLink: authFirstRequireAccountWithBoundSession,
   listRpcLinks: authFirstRequireAccount,
@@ -196,6 +216,26 @@ export interface AgentIdentityLocator {
 }
 
 export interface AgentApi {
+  listPersonalConnectionRequests(opts: {
+    account_id?: string;
+  }): Promise<{ enabled: boolean; requests: PersonalConnectionRequest[] }>;
+  resolvePersonalConnectionRequest(
+    opts: AgentHumanAuth & { request_id: string; decision: "approve" | "deny" },
+  ): Promise<PersonalConnectionRequest>;
+  listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
+  nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
+  listPersonalConnections(opts: {
+    account_id?: string;
+  }): Promise<PersonalConnectionDirectory>;
+  grantPersonalConnection(
+    opts: AgentHumanAuth & GrantPersonalConnectionOptions,
+  ): Promise<PersonalConnection[]>;
+  setPersonalConnectionState(
+    opts: AgentHumanAuth & SetPersonalConnectionStateOptions,
+  ): Promise<PersonalConnection[]>;
+  setPersonalMessagingState(
+    opts: AgentHumanAuth & SetPersonalMessagingStateOptions,
+  ): Promise<PersonalMessagingControls>;
   grantRpcLink(
     opts: AgentHumanAuth & AgentRpcLinkApproval,
   ): Promise<AgentRpcLink>;

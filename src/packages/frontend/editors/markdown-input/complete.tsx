@@ -21,6 +21,7 @@ import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export interface Item {
+  group?: string;
   label?: ReactNode;
   value: string;
   search?: string; // useful for clients
@@ -122,11 +123,19 @@ export function Complete({
 
   const style: CSS = { fontSize: "115%" } as const;
 
-  const menuItems: MenuItems = items.map(({ label, value }) => ({
-    key: value,
-    label: label ?? value,
-    style,
-  }));
+  const menuItems: MenuItems = [];
+  for (const group of [...new Set(items.map((item) => item.group))]) {
+    const children = items
+      .filter((item) => item.group === group)
+      .map(({ label, value }) => ({
+        key: value,
+        label: label ?? value,
+        style,
+      }));
+    if (group)
+      menuItems.push({ type: "group", key: group, label: group, children });
+    else menuItems.push(...children);
+  }
 
   if (menuItems.length == 0) {
     menuItems.push({ key: "nothing", label: "No items found", disabled: true });

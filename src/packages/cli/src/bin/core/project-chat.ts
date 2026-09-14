@@ -12,7 +12,7 @@ import {
   type ImmerDB,
 } from "@cocalc/chat/server";
 import { akv } from "@cocalc/conat/sync/akv";
-import { automationAcp } from "@cocalc/conat/ai/acp/client";
+import { humanChatAutomation } from "./chat-automation";
 import type {
   AcpAutomationConfig,
   AcpAutomationRequest,
@@ -413,7 +413,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
             record: null,
           };
         }
-        const response = (await automationAcp(
+        const response = (await humanChatAutomation(
           {
             project_id: project.project_id,
             account_id: (ctx as any).accountId,

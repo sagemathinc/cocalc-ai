@@ -6,6 +6,16 @@ import {
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
+export {
+  listNamedAgents,
+  nameAgent,
+  listPersonalConnections,
+  grantPersonalConnection,
+  setPersonalConnectionState,
+  setPersonalMessagingState,
+  listPersonalConnectionRequests,
+  resolvePersonalConnectionRequest,
+} from "@cocalc/server/agents/personal";
 export const grantRpcLink = rpc.grantRpcLink;
 export const revokeRpcLink = rpc.revokeRpcLink;
 export const listRpcLinks = rpc.listRpcLinks;

@@ -1527,86 +1527,92 @@ function ChatPanelContent({
     }
   }, [actions, selectedThreadId]);
 
-  const createThreadWithoutMessage = useCallback(async () => {
-    const allowCodexAutomation = newThreadSetup.agentMode === "codex";
-    const automationEnabled = newThreadSetup.automationConfig?.enabled === true;
-    if (automationEnabled) {
-      const missingReason = automationConfigMissingReason({
-        draft: buildAutomationDraft({
-          config: newThreadSetup.automationConfig,
-          enabled: true,
+  const createThreadWithoutMessage = useCallback(
+    async (metadataOnly = false, draft?: string) => {
+      const allowCodexAutomation = newThreadSetup.agentMode === "codex";
+      const automationEnabled =
+        !metadataOnly && newThreadSetup.automationConfig?.enabled === true;
+      if (automationEnabled) {
+        const missingReason = automationConfigMissingReason({
+          draft: buildAutomationDraft({
+            config: newThreadSetup.automationConfig,
+            enabled: true,
+            allowCodexRunKind: allowCodexAutomation,
+          }),
           allowCodexRunKind: allowCodexAutomation,
-        }),
-        allowCodexRunKind: allowCodexAutomation,
+        });
+        if (missingReason) {
+          antdMessage.warning(missingReason);
+          return;
+        }
+      }
+      const threadAgent =
+        newThreadSetup.agentMode != null
+          ? {
+              mode: newThreadSetup.agentMode,
+              model:
+                newThreadSetup.codexConfig.model?.trim() ||
+                newThreadSetup.model?.trim(),
+              codexConfig:
+                newThreadSetup.agentMode === "codex"
+                  ? {
+                      ...newThreadSetup.codexConfig,
+                      model:
+                        newThreadSetup.codexConfig.model?.trim() ||
+                        newThreadSetup.model?.trim(),
+                    }
+                  : undefined,
+            }
+          : undefined;
+      const threadKey = actions.createEmptyThread?.({
+        name: newThreadSetup.title.trim() || undefined,
+        threadAgent,
+        threadAppearance: {
+          color: newThreadSetup.color?.trim(),
+          icon: newThreadSetup.icon?.trim(),
+          image: newThreadSetup.image?.trim(),
+        },
       });
-      if (missingReason) {
-        antdMessage.warning(missingReason);
+      if (!threadKey) {
         return;
       }
-    }
-    const threadAgent =
-      newThreadSetup.agentMode != null
-        ? {
-            mode: newThreadSetup.agentMode,
-            model:
-              newThreadSetup.codexConfig.model?.trim() ||
-              newThreadSetup.model?.trim(),
-            codexConfig:
-              newThreadSetup.agentMode === "codex"
-                ? {
-                    ...newThreadSetup.codexConfig,
-                    model:
-                      newThreadSetup.codexConfig.model?.trim() ||
-                      newThreadSetup.model?.trim(),
-                  }
-                : undefined,
-          }
-        : undefined;
-    const threadKey = actions.createEmptyThread?.({
-      name: newThreadSetup.title.trim() || undefined,
-      threadAgent,
-      threadAppearance: {
-        color: newThreadSetup.color?.trim(),
-        icon: newThreadSetup.icon?.trim(),
-        image: newThreadSetup.image?.trim(),
-      },
-    });
-    if (!threadKey) {
-      return;
-    }
 
-    pendingThreadDraftTransferRef.current = {
-      threadKey,
-      text: inputRef.current ?? "",
-      sourceDraftKey: composerDraftKey,
-    };
-    setAllowAutoSelectThread(false);
-    setSelectedThreadKey(threadKey);
-    setNewThreadSetup(defaultNewThreadSetup);
+      pendingThreadDraftTransferRef.current = {
+        threadKey,
+        text: draft ?? inputRef.current ?? "",
+        acpPrompt: acpPromptRef.current,
+        sourceDraftKey: composerDraftKey,
+      };
+      setAllowAutoSelectThread(false);
+      setSelectedThreadKey(threadKey);
+      setNewThreadSetup(defaultNewThreadSetup);
 
-    const newThreadAutomationConfig = normalizeAutomationConfigForSave({
-      draft: newThreadSetup.automationConfig,
-      allowCodexRunKind: allowCodexAutomation,
-    });
-    if (automationEnabled && newThreadAutomationConfig) {
-      try {
-        await handleAutomationSave({
-          threadId: threadKey,
-          config: newThreadAutomationConfig,
-        });
-      } catch (err) {
-        console.error("Failed to create thread automation", err);
+      const newThreadAutomationConfig = normalizeAutomationConfigForSave({
+        draft: newThreadSetup.automationConfig,
+        allowCodexRunKind: allowCodexAutomation,
+      });
+      if (automationEnabled && newThreadAutomationConfig) {
+        try {
+          await handleAutomationSave({
+            threadId: threadKey,
+            config: newThreadAutomationConfig,
+          });
+        } catch (err) {
+          console.error("Failed to create thread automation", err);
+        }
       }
-    }
-  }, [
-    actions,
-    composerDraftKey,
-    defaultNewThreadSetup,
-    handleAutomationSave,
-    newThreadSetup,
-    setAllowAutoSelectThread,
-    setSelectedThreadKey,
-  ]);
+      return threadKey;
+    },
+    [
+      actions,
+      composerDraftKey,
+      defaultNewThreadSetup,
+      handleAutomationSave,
+      newThreadSetup,
+      setAllowAutoSelectThread,
+      setSelectedThreadKey,
+    ],
+  );
 
   useEffect(() => {
     if (!automationModalOpen) return;
@@ -2304,12 +2310,12 @@ function ChatPanelContent({
       scrollToBottomRef.current?.(true);
     }, 100);
   }
-  function on_send(value?: string): void {
-    void sendMessage(value);
+  function on_send(value?: string): Promise<void> {
+    return sendMessage(value);
   }
 
-  function on_send_immediately(value?: string): void {
-    void sendMessage(value, { immediate: true });
+  function on_send_immediately(value?: string): Promise<void> {
+    return sendMessage(value, { immediate: true });
   }
 
   function onNewChat(): void {
@@ -2836,7 +2842,9 @@ function ChatPanelContent({
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
-        onCreateThread={createThreadWithoutMessage}
+        onCreateThread={async () => {
+          await createThreadWithoutMessage();
+        }}
         showThreadImagePreview={showThreadImagePreview && !narrow}
         hideChatTypeSelector={hideChatTypeSelector || !aiAgentPolicyAllowed}
         activityJumpDate={
@@ -2890,6 +2898,9 @@ function ChatPanelContent({
             acpPrompt={acpPrompt}
             setAcpPrompt={setComposerAcpPrompt}
             on_send={on_send}
+            onPrepareAgentThread={(draft) =>
+              createThreadWithoutMessage(true, draft)
+            }
             on_send_immediately={on_send_immediately}
             onIncreaseFontSize={onIncreaseFontSize}
             onDecreaseFontSize={onDecreaseFontSize}

@@ -37,6 +37,7 @@ export interface AcpAutomationState {
 }
 
 export interface AcpAutomationRecord {
+  settings_revision?: string;
   automation_id: string;
   project_id: string;
   path: string;
@@ -73,6 +74,8 @@ export interface AcpAutomationRecord {
 }
 
 export interface AcpChatContext {
+  // Trusted receiving service marks model-authored messages; never bind their refs.
+  agent_message?: boolean;
   // Revalidate the directional grant before executing a queued agent message.
   agent_delivery_id?: string;
   agent_delivery_generation?: string;
@@ -100,6 +103,8 @@ export interface AcpChatContext {
   // automation attached to the thread.
   automation_id?: string;
   automation_title?: string;
+  // Server-stamped settings snapshot; never refresh a queued job to a new owner.
+  automation_revision?: string;
   // Optional restart-recovery metadata for turns automatically resumed after
   // backend or host interruption.
   recovery_parent_op_id?: string;

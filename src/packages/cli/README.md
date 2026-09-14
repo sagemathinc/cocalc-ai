@@ -355,6 +355,47 @@ and cross-site identity federation are not provided by this command. To use a
 different site, explicitly select its API/profile and authorized credentials;
 never put credentials into the message text.
 
+### Personal Named Agent Messaging (Opt-In)
+
+With personal messaging enabled, name agents in **My Agents** or beside the
+thread title. Select a named agent in the composer's `@` picker to approve
+communication at the point of use. Permissions belong to the human initiating
+the turn, not everyone sharing the thread. Names span that human's projects;
+selected references remain bound to the original agent after a rename.
+
+During an agent turn, use the runtime-issued scoped identity, never a broader
+account/project credential:
+
+```bash
+cocalc project chat agent destinations --json
+cocalc project chat send --to reviewer --stdin --json <<'EOF'
+{"kind":"review-request","correlation_id":"review-42","text":"Please review the PR."}
+EOF
+cocalc project chat agent request-connection --to reviewer --reason "Review this PR"
+cocalc project chat agent connection-request "$request_id" --json
+```
+
+`--to` resolves an exact approved name or a reference selected for the current
+turn. It never guesses from project titles or historical messages. For approval
+of a previously resolved endpoint, `request-connection` also accepts the pair
+`--to-agent` and `--target-project` instead of `--to`.
+
+A connection request is a typed request to the turn's human, not approval itself
+and not a message. It supports `--ttl-seconds` (default one day, maximum 30 days),
+`--never-expires`, and `--both-directions`. Approval never replays a send. The
+command waits up to 120 seconds using read-only inspection; use `--wait-seconds 0`
+to return immediately or set a limit up to 900 seconds. A pending result is not
+approval and does not keep the source run alive after that run finishes. The
+human can pause or revoke their permissions in My Agents. Intentional pause or
+revocation is not a reason to repeatedly request renewal.
+
+Named send returns `accepted`, `rejected`, or `unknown` with an attempt ID
+(exit codes 0, 2, and 3 respectively). Acceptance is admission, not completion;
+a timeout is not rejection. There is no automatic retry or delivery guarantee.
+Use the lower-level `project chat agent rpc inspect` command with the returned
+attempt/endpoint IDs to inspect evidence without starting work. An explicit
+retry may duplicate work. Cross-site federation is not supported.
+
 ### Manual Smoke Check
 
 Use a dedicated test `.chat` file and read-only agent configuration. These tests
