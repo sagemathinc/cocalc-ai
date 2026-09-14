@@ -12,6 +12,7 @@ import {
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { OkStatus } from "@cocalc/http-api/lib/api/status";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
+import { parseSubscriptionId } from "@cocalc/server/purchases/cancel-subscription";
 
 export default async function handle(req, res) {
   try {
@@ -35,7 +36,7 @@ async function get(req) {
   const { subscription_id, reason } = getParams(req);
   await executeBillingHttpCommand("cancel-subscription", {
     account_id,
-    subscription_id,
+    subscription_id: parseSubscriptionId(subscription_id),
     reason,
   });
   return OkStatus;

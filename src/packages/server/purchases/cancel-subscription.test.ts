@@ -36,7 +36,7 @@ jest.mock("@cocalc/server/membership/analytics", () => ({
     mockRecordMembershipAnalyticsEvent(...args),
 }));
 
-import cancelSubscription from "./cancel-subscription";
+import cancelSubscription, { parseSubscriptionId } from "./cancel-subscription";
 
 describe("cancelSubscription", () => {
   beforeEach(() => {
@@ -51,7 +51,7 @@ describe("cancelSubscription", () => {
     await expect(
       cancelSubscription({
         account_id: "owner-account",
-        subscription_id: `${"a".repeat(3959)}\u{1f600}` as unknown as number,
+        subscription_id: `${"a".repeat(3959)}\u{1f600}`,
       }),
     ).rejects.toMatchObject({
       message: "invalid subscription id",
@@ -60,6 +60,39 @@ describe("cancelSubscription", () => {
     });
     expect(mockPoolQuery).not.toHaveBeenCalled();
     expect(mockClient.release).not.toHaveBeenCalled();
+  });
+
+  it("accepts only numbers and canonical positive decimal strings", () => {
+    expect(parseSubscriptionId(7)).toBe(7);
+    expect(parseSubscriptionId("7")).toBe(7);
+    for (const invalid of [
+      0,
+      -1,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.MAX_SAFE_INTEGER + 1,
+      "",
+      "0",
+      "01",
+      "+1",
+      "-1",
+      "1.0",
+      "1e0",
+      " 1",
+      "1 ",
+      "\u0661",
+      "\uFF11",
+      "1\0",
+      String(Number.MAX_SAFE_INTEGER + 1),
+      {},
+      [],
+      null,
+    ]) {
+      expect(() => parseSubscriptionId(invalid)).toThrow(
+        "invalid subscription id",
+      );
+    }
   });
 
   it("does not send a cancellation notification when the account does not own the subscription", async () => {

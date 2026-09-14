@@ -13,6 +13,7 @@ export interface BillingAuthorityProviderMutationTracker {
   started: boolean;
   successful: boolean;
   ambiguous_keys: Set<string>;
+  retry_pending_keys: Set<string>;
   known_keys: Set<string>;
   anonymous_key_aliases: Map<string, string>;
   anonymous_fingerprint_by_key: Map<string, string>;
@@ -79,6 +80,7 @@ export function createBillingAuthorityProviderMutationTracker(): BillingAuthorit
     started: false,
     successful: false,
     ambiguous_keys: new Set(),
+    retry_pending_keys: new Set(),
     known_keys: new Set(),
     anonymous_key_aliases: new Map(),
     anonymous_fingerprint_by_key: new Map(),
@@ -91,7 +93,8 @@ export function getBillingAuthorityProviderMutationOutcome(
   return {
     started: tracker.started,
     successful: tracker.successful,
-    ambiguous: tracker.ambiguous_keys.size > 0,
+    ambiguous:
+      tracker.ambiguous_keys.size > 0 || tracker.retry_pending_keys.size > 0,
   };
 }
 
@@ -325,26 +328,38 @@ export function finishStripeMutation({
 }): void {
   const context = storage.getStore();
   if (!context) return;
-  if (
+  const tracker = context.provider_tracker;
+  const genuinelyAmbiguous =
     ambiguous ||
-    retry_requested ||
     status == null ||
     status === 408 ||
     status === 409 ||
-    status >= 500
-  ) {
-    context.provider_tracker.ambiguous_keys.add(key);
+    (status != null && status >= 500);
+  if (genuinelyAmbiguous) {
+    tracker.ambiguous_keys.add(key);
+  }
+  if (retry_requested) {
+    tracker.retry_pending_keys.add(key);
+  }
+  if (genuinelyAmbiguous || retry_requested) {
     return;
   }
-  const anonymousFingerprint =
-    context.provider_tracker.anonymous_fingerprint_by_key.get(key);
-  if (anonymousFingerprint) {
-    context.provider_tracker.anonymous_fingerprint_by_key.delete(key);
-    context.provider_tracker.anonymous_key_aliases.delete(anonymousFingerprint);
-  }
-  context.provider_tracker.ambiguous_keys.delete(key);
+  tracker.retry_pending_keys.delete(key);
   if (status != null && status >= 200 && status < 300) {
-    context.provider_tracker.successful = true;
+    // A successful replay for this exact provider identity resolves both a
+    // response-directed retry and a genuinely unknown earlier outcome.
+    tracker.ambiguous_keys.delete(key);
+    tracker.successful = true;
+  }
+  if (
+    !tracker.ambiguous_keys.has(key) &&
+    !tracker.retry_pending_keys.has(key)
+  ) {
+    const anonymousFingerprint = tracker.anonymous_fingerprint_by_key.get(key);
+    if (anonymousFingerprint) {
+      tracker.anonymous_fingerprint_by_key.delete(key);
+      tracker.anonymous_key_aliases.delete(anonymousFingerprint);
+    }
   }
 }
 

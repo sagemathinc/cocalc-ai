@@ -308,6 +308,73 @@ describe("authority-guarded Stripe HTTP client", () => {
     });
   });
 
+  it.each([
+    ["a lost response", "transport"],
+    ["a server error", "server"],
+  ] as const)(
+    "preserves genuine ambiguity after %s followed by a definitive failure",
+    async (_description, firstFailure) => {
+      enableStripeMutationAuthorityEnforcement();
+      let attempt = 0;
+      const makeRequest = jest.fn(async () => {
+        attempt += 1;
+        if (attempt === 1 && firstFailure === "transport") {
+          throw Object.assign(new Error("socket closed after request write"), {
+            code: "ECONNRESET",
+          });
+        }
+        const status = attempt === 1 ? 500 : 401;
+        return {
+          getStatusCode: () => status,
+          getHeaders: () => ({}),
+          getRawResponse: () => ({}),
+          toStream: () => {
+            throw new Error("unexpected streaming response");
+          },
+          toJSON: async () => ({
+            error: {
+              type: "invalid_request_error",
+              message: "authentication failed",
+            },
+          }),
+        };
+      });
+      const guarded = createAuthorityGuardedStripeHttpClient({
+        getClientName: () => "test",
+        makeRequest,
+      } as any);
+      const stripe = new Stripe("sk_test_authority_retry", {
+        apiVersion: "2026-04-22.dahlia",
+        httpClient: guarded,
+        maxNetworkRetries: 1,
+        telemetry: false,
+      });
+      (stripe as any)._requestSender._getSleepTimeInMS = () => 0;
+      const tracker = createBillingAuthorityProviderMutationTracker();
+
+      await expect(
+        runInBillingAuthorityContext({
+          operation: "test",
+          request_id:
+            firstFailure === "transport"
+              ? "77777777-7777-4777-8777-777777777777"
+              : "88888888-8888-4888-8888-888888888888",
+          provider_tracker: tracker,
+          fn: async () => await stripe.subscriptions.cancel("sub_retry"),
+        }),
+      ).rejects.toThrow("authentication failed");
+      expect(makeRequest).toHaveBeenCalledTimes(2);
+      expect(makeRequest.mock.calls[1][4]["Idempotency-Key"]).toBe(
+        makeRequest.mock.calls[0][4]["Idempotency-Key"],
+      );
+      expect(getBillingAuthorityProviderMutationOutcome(tracker)).toEqual({
+        started: true,
+        successful: false,
+        ambiguous: true,
+      });
+    },
+  );
+
   it("records a lost Stripe response as ambiguous", async () => {
     enableStripeMutationAuthorityEnforcement();
     const makeRequest = jest.fn(async () => {

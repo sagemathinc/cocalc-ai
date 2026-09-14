@@ -28,11 +28,6 @@ jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   requireFreshAuth: (...args: any[]) => mockRequireFreshAuth(...args),
 }));
 
-jest.mock("@cocalc/server/purchases/cancel-subscription", () => ({
-  __esModule: true,
-  default: (...args: any[]) => mockCancelSubscription(...args),
-}));
-
 jest.mock("@cocalc/server/purchases/resume-subscription", () => ({
   __esModule: true,
   default: (...args: any[]) => mockResumeSubscription(...args),
