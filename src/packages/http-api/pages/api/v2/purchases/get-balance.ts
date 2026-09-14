@@ -23,5 +23,5 @@ async function get(req) {
   if (account_id == null) {
     throw Error("must be signed in");
   }
-  return await getBalance({ account_id });
+  return await getBalance({ account_id, noSave: true });
 }

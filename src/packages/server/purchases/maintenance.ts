@@ -1,14 +1,10 @@
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import maintainSubscriptions from "./maintain-subscriptions";
-import maintainTeamLicenses from "./maintain-team-licenses";
-import maintainStatements from "./statements/maintenance";
 import getLogger from "@cocalc/backend/logger";
-import maintainAutomaticPayments from "./maintain-automatic-payments";
-import maintainAutoBalance from "./maintain-auto-balance";
-import { maintainPaymentIntents } from "./stripe/process-payment-intents";
 import { hasStripeBillingConfiguration } from "@cocalc/util/stripe/billing";
 import maintainMembershipAnalytics from "./maintain-membership-analytics";
 import maintainComputeRevenueAnalyticsProjection from "./maintain-compute-revenue-analytics";
+import { executeBillingAuthorityCommand } from "./billing-authority/client";
+import type { BillingAuthorityMaintenanceTask } from "./billing-authority/protocol";
 
 const logger = getLogger("purchases:maintenance");
 
@@ -29,28 +25,31 @@ interface MaintenanceDescription {
 
 const FUNCTIONS: MaintenanceDescription[] = [
   {
-    f: maintainSubscriptions,
+    f: authorityMaintenance("subscriptions"),
     desc: "maintain subscriptions",
     requiresStripe: true,
   },
   {
-    f: maintainTeamLicenses,
+    f: authorityMaintenance("team-licenses"),
     desc: "maintain team licenses",
     requiresStripe: true,
   },
-  { f: maintainStatements, desc: "maintain statements" },
   {
-    f: maintainPaymentIntents,
+    f: authorityMaintenance("statements"),
+    desc: "maintain statements",
+  },
+  {
+    f: authorityMaintenance("payment-intents"),
     desc: "processing any outstanding payment intents",
     requiresStripe: true,
   },
   {
-    f: maintainAutomaticPayments,
+    f: authorityMaintenance("automatic-payments"),
     desc: "maintain automatic payments",
     requiresStripe: true,
   },
   {
-    f: maintainAutoBalance,
+    f: authorityMaintenance("auto-balance"),
     desc: "maintain auto balance",
     requiresStripe: true,
   },
@@ -63,6 +62,14 @@ const FUNCTIONS: MaintenanceDescription[] = [
     desc: "maintain compute revenue analytics",
   },
 ];
+
+function authorityMaintenance(
+  task: BillingAuthorityMaintenanceTask,
+): () => Promise<void> {
+  return async () => {
+    await executeBillingAuthorityCommand({ kind: "maintenance", task });
+  };
+}
 
 export type MaintenanceSettings = Pick<
   Awaited<ReturnType<typeof getServerSettings>>,

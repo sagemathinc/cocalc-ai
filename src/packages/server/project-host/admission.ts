@@ -297,7 +297,7 @@ export async function getDedicatedHostPolicySnapshotLocal(
 
   const [balance, dedicated_host_window_usage, postpaid_unbilled_exposure_usd] =
     await Promise.all([
-      getBalance({ account_id }),
+      getBalance({ account_id, noSave: true }),
       getDedicatedHostWindowUsageLocal(account_id),
       getDedicatedHostPostpaidUnbilledExposureLocal(account_id),
     ]);

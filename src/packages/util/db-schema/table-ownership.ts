@@ -63,6 +63,21 @@ function entries(
 export const TABLE_OWNERSHIP = {
   ...entries(
     [
+      "billing_authority_account_fences",
+      "billing_authority_commands",
+      "billing_authority_lease",
+      "billing_authority_migrations",
+    ],
+    {
+      ownership: "seed-global",
+      authority: "seed",
+      portability: "stable",
+      notes:
+        "Durable billing command, fencing, and election state. Only the designated seed billing authority may mutate these tables; generic account rehome and bay drain must not move or delete them.",
+    },
+  ),
+  ...entries(
+    [
       "accounts",
       "account_auth_challenges",
       "account_auth_sessions",
@@ -75,6 +90,7 @@ export const TABLE_OWNERSHIP = {
       "account_resource_quarantine_audit_log",
       "account_second_factor_recovery_codes",
       "account_second_factors",
+      "admin_membership_package_intents",
       "api_keys",
       "membership_grants",
       "membership_package_assignments",

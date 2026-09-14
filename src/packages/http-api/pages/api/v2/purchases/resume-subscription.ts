@@ -3,7 +3,10 @@ Resume a subscription.
 */
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import resumeSubscription from "@cocalc/server/purchases/resume-subscription";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { OkStatus } from "@cocalc/http-api/lib/api/status";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
@@ -15,6 +18,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -27,6 +31,9 @@ async function get(req) {
   }
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { subscription_id } = getParams(req);
-  await resumeSubscription({ account_id, subscription_id });
+  await executeBillingHttpCommand("resume-subscription", {
+    account_id,
+    subscription_id,
+  });
   return OkStatus;
 }

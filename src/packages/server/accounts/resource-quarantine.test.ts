@@ -15,6 +15,8 @@ const recordAccountResourceQuarantineAuditEventMock = jest.fn();
 const projectControlStopMock = jest.fn();
 const bayOpsGetProjectRuntimeSlotReportMock = jest.fn();
 const listClusterBayInfosMock = jest.fn();
+const executeBillingAuthorityCommandMock = jest.fn();
+const setBillingAccountFrozenMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -44,6 +46,13 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
         bayOpsGetProjectRuntimeSlotReportMock({ bay_id, ...opts }),
     }),
   }),
+}));
+
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingAuthorityCommand: (...args: any[]) =>
+    executeBillingAuthorityCommandMock(...args),
+  setBillingAccountFrozen: (...args: any[]) =>
+    setBillingAccountFrozenMock(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe-usage-based-subscription", () => ({
@@ -112,6 +121,24 @@ describe("account resource quarantine", () => {
       .mockReset()
       .mockResolvedValue({ data: [], has_more: false });
     deletePaymentMethodMock.mockReset().mockResolvedValue(undefined);
+    executeBillingAuthorityCommandMock
+      .mockReset()
+      .mockImplementation(async (command) => {
+        if (command.kind === "quarantine-account-stripe-cleanup") {
+          await cancelUsageSubscriptionMock(command.account_id);
+          return {
+            usage_subscription_canceled: true,
+            payment_intents_canceled: 0,
+            payment_methods_detached: 0,
+          };
+        }
+        throw Error(`unexpected billing command '${command.kind}'`);
+      });
+    setBillingAccountFrozenMock.mockReset().mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      generation: 1,
+    });
     recordAccountResourceQuarantineAuditEventMock
       .mockReset()
       .mockResolvedValue(undefined);
@@ -145,6 +172,18 @@ describe("account resource quarantine", () => {
     });
     expect(result.projects_stop_requested).toBe(2);
     expect(result.project_ids).toEqual(["project-1", "project-2"]);
+    expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      cause: "quarantine",
+      reason: "ban",
+      actor_account_id: "22222222-2222-4222-8222-222222222222",
+    });
+    expect(
+      setBillingAccountFrozenMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      executeBillingAuthorityCommandMock.mock.invocationCallOrder[0],
+    );
   });
 
   it("stops active solely owned free projects and deduplicates slot projects", async () => {
@@ -252,5 +291,40 @@ describe("account resource quarantine", () => {
     expect(result.errors).toEqual([
       "list solely owned active projects: Error: projection unavailable",
     ]);
+  });
+
+  it("continues containment when installing the billing fence fails", async () => {
+    listHostsMock.mockResolvedValue([
+      {
+        billing_owner_account_id: ACCOUNT_ID,
+        id: "host-1",
+        status: "running",
+      },
+    ]);
+    setBillingAccountFrozenMock.mockRejectedValueOnce(
+      new Error("authority unavailable"),
+    );
+
+    const { quarantineAccountBillingResourcesLocal } =
+      await import("./resource-quarantine");
+    const result = await quarantineAccountBillingResourcesLocal({
+      account_id: ACCOUNT_ID,
+      actor_account_id: "22222222-2222-4222-8222-222222222222",
+      reason: "ban",
+      home_bay_id: "bay-1",
+    });
+
+    expect(executeBillingAuthorityCommandMock).toHaveBeenCalledWith({
+      kind: "quarantine-account-stripe-cleanup",
+      account_id: ACCOUNT_ID,
+    });
+    expect(stopHostMock).toHaveBeenCalledWith({
+      account_id: "22222222-2222-4222-8222-222222222222",
+      id: "host-1",
+    });
+    expect(projectControlStopMock).toHaveBeenCalled();
+    expect(result.errors).toContain(
+      "freeze account billing: Error: authority unavailable",
+    );
   });
 });

@@ -36,14 +36,19 @@ jest.mock("@cocalc/conat/files/read", () => ({
   createServer: (...args: any[]) => createReadServer(...args),
 }));
 
-import { mkdtemp, mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  MAX_PROJECT_READS,
+  ReadAdmission,
+} from "@cocalc/conat/files/read-admission";
 
 import {
   closeWorkspaceFileDownloadReadServers,
   createWorkspaceJupyterFilesystemHandlers,
   ensureWorkspaceFileDownloadReadServer,
+  getWorkspaceFileDownloadReadLimit,
   startWorkspaceFilesystem,
   workspaceProjectFilesystem,
   WORKSPACE_FILE_DOWNLOAD_READ_SERVICE,
@@ -105,15 +110,70 @@ describe("workspace filesystem", () => {
 describe("workspace file download reader", () => {
   let root: string;
   let projectDir: string;
+  const previousLimit = process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE;
 
   beforeEach(async () => {
     jest.clearAllMocks();
     closeWorkspaceFileDownloadReadServers();
+    delete process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE;
     root = await mkdtemp(join(tmpdir(), "workspace-reader-"));
     projectDir = join(root, PROJECT_ID);
     await mkdir(join(projectDir, "latex"), { recursive: true });
     await writeFile(join(projectDir, "latex", "tex.pdf"), "pdf");
   });
+
+  afterEach(async () => {
+    if (previousLimit == null)
+      delete process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE;
+    else process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE = previousLimit;
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it.each([
+    [undefined, MAX_PROJECT_READS],
+    ["2", Math.min(2, MAX_PROJECT_READS)],
+    ["16", Math.min(16, MAX_PROJECT_READS)],
+    ["invalid", MAX_PROJECT_READS],
+    ["2.5", MAX_PROJECT_READS],
+    ["0", MAX_PROJECT_READS],
+  ])(
+    "uses the effective workspace cap for override %s",
+    async (value, expected) => {
+      if (value != null)
+        process.env.COCALC_WORKSPACE_FILE_READ_MAX_ACTIVE = value as string;
+      expect(getWorkspaceFileDownloadReadLimit()).toBe(expected);
+      await ensureWorkspaceFileDownloadReadServer({
+        client: {} as any,
+        project_id: PROJECT_ID,
+        path: root,
+      });
+      const { maxActiveStreams } = createReadServer.mock.calls[0][0] as any;
+      expect(maxActiveStreams).toBe(expected);
+      const admission = new ReadAdmission("producer");
+      const releases: (() => void)[] = [];
+      try {
+        for (let i = 0; i < maxActiveStreams; i++)
+          releases.push(
+            admission.acquire(
+              PROJECT_ID,
+              `account:${i}`,
+              "workspace",
+              maxActiveStreams,
+            ),
+          );
+        expect(() =>
+          admission.acquire(
+            PROJECT_ID,
+            "account:extra",
+            "workspace",
+            maxActiveStreams,
+          ),
+        ).toThrow("busy");
+      } finally {
+        releases.forEach((release) => release());
+      }
+    },
+  );
 
   it("resolves the canonical /home/user alias to the project directory", async () => {
     const fs = workspaceProjectFilesystem({

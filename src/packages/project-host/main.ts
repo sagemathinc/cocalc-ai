@@ -1209,6 +1209,7 @@ export async function main(
           req,
           res,
           client: conatClient,
+          account_id,
           readServiceName:
             readOptions?.readServiceName ??
             PROJECT_HOST_FILE_DOWNLOAD_READ_SERVICE,

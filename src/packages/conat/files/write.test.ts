@@ -1,3 +1,5 @@
+import { PassThrough } from "node:stream";
+
 describe("files write explicit routing", () => {
   it("requires an explicit Conat client for createServer", async () => {
     const { createServer } = await import("./write");
@@ -84,12 +86,7 @@ describe("files write explicit routing", () => {
       if (path === "/tmp/first") {
         await blocked;
       }
-      return {
-        on: jest.fn(),
-        write: jest.fn(),
-        end: jest.fn(),
-        emit: jest.fn(),
-      };
+      return new PassThrough();
     });
 
     await createServer({

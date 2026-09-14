@@ -1860,6 +1860,8 @@ export async function getAdminProjectEntitlementOverride({
 
 export async function setAdminProjectEntitlementOverride({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   disk_quota_mb,
   reason,
@@ -1876,6 +1878,11 @@ export async function setAdminProjectEntitlementOverride({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   if (
     typeof disk_quota_mb !== "number" ||
     !Number.isFinite(disk_quota_mb) ||
@@ -1902,6 +1909,8 @@ export async function setAdminProjectEntitlementOverride({
 
 export async function clearAdminProjectEntitlementOverride({
   account_id,
+  browser_id,
+  session_hash,
   project_id,
   reason,
 }: {
@@ -1914,6 +1923,11 @@ export async function clearAdminProjectEntitlementOverride({
   if (!(await isAdmin(account_id))) {
     throw new Error("must be an admin");
   }
+  await requireDangerousProjectMutationAuth({
+    account_id,
+    browser_id,
+    session_hash,
+  });
   const ownership = await resolveProjectBay(project_id);
   if (ownership == null) {
     throw new Error(`project ${project_id} not found`);

@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Alert, Button, Input, Space, Typography } from "antd";
+import { Alert, Button, Input, Modal, Space, Typography } from "antd";
 import { getLogger } from "@cocalc/frontend/logger";
 import { query } from "@cocalc/frontend/frame-editors/generic/client";
 import { Gap, Loading } from "@cocalc/frontend/components";
 import { redux } from "@cocalc/frontend/app-framework";
+import { postAuthApi } from "@cocalc/frontend/auth/api";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
 
 const log = getLogger("account:lite-ai-settings");
 
@@ -34,6 +36,9 @@ export default function LiteAISettings({
   const [savedValues, setSavedValues] = useState<Record<string, string>>({});
   const [state, setState] = useState<State>("load");
   const [error, setError] = useState<string>("");
+  const [authorizeOpen, setAuthorizeOpen] = useState(false);
+  const [accessToken, setAccessToken] = useState("");
+  const [authorizeError, setAuthorizeError] = useState("");
 
   useEffect(() => {
     load();
@@ -75,25 +80,58 @@ export default function LiteAISettings({
     return false;
   }, [values, savedValues]);
 
+  function requestSave(): void {
+    if (saving || !dirty) return;
+    setError("");
+    setAuthorizeError("");
+    setAuthorizeOpen(true);
+  }
+
   async function save(): Promise<void> {
     if (saving || !dirty) return;
     setState("save");
     try {
       const { keyField } = OPENAI_PROVIDER;
       const val = values[keyField] ?? "";
-      await query({
-        query: { site_settings: { name: keyField, value: val } },
+      const { fresh_auth_token } = await postAuthApi<{
+        fresh_auth_token: string;
+      }>({
+        endpoint: "auth/lite-site-settings-authorize",
+        body: {
+          access_token: accessToken,
+          browser_id: webapp_client.browser_id,
+        },
       });
+      const result =
+        await webapp_client.conat_client.hub.system.setSiteSettings({
+          settings: [{ name: keyField, value: val }],
+          browser_id: webapp_client.browser_id,
+          fresh_auth_token,
+        });
+      const failures = result.bays.filter(({ status }) => status === "failed");
+      if (failures.length > 0) {
+        throw Error(
+          failures
+            .map(
+              ({ bay_id, error }) =>
+                `${bay_id}: ${error ?? "settings propagation failed"}`,
+            )
+            .join("; "),
+        );
+      }
       redux.getStore("projects").clearOpenAICache();
       // @ts-ignore
       await redux.getActions("customize")?.reload();
       setSavedValues(values);
+      setAccessToken("");
+      setAuthorizeOpen(false);
+      setAuthorizeError("");
       setState("ready");
       onSaved?.();
     } catch (err) {
       log.info("failed to save AI settings", err);
-      setError(`${err}`);
-      setState("error");
+      setAuthorizeError(`${err}`);
+      setState("ready");
     }
   }
 
@@ -119,6 +157,7 @@ export default function LiteAISettings({
           allowClear
           value={values[OPENAI_PROVIDER.keyField] ?? ""}
           placeholder={OPENAI_PROVIDER.placeholder}
+          aria-label={OPENAI_PROVIDER.label}
           name={`llm-${OPENAI_PROVIDER.keyField}`}
           autoComplete="off"
           onChange={(e) => onChange(OPENAI_PROVIDER.keyField, e.target.value)}
@@ -127,12 +166,53 @@ export default function LiteAISettings({
       <Gap />
       <Button
         type="primary"
-        onClick={save}
+        onClick={requestSave}
         disabled={saving || !dirty}
         style={{ marginTop: 8 }}
       >
         {saving ? <Loading text="Saving" /> : "Save"}
       </Button>
+      <Modal
+        title="Authorize site setting change"
+        open={authorizeOpen}
+        okText="Authorize and save"
+        okButtonProps={{ disabled: !accessToken }}
+        confirmLoading={saving}
+        onOk={save}
+        onCancel={() => {
+          if (saving) return;
+          setAccessToken("");
+          setAuthorizeError("");
+          setAuthorizeOpen(false);
+        }}
+        destroyOnHidden
+      >
+        <Typography.Paragraph>
+          Re-enter the CoCalc Lite access token to change the shared OpenAI API
+          key.
+        </Typography.Paragraph>
+        <label htmlFor="lite-site-settings-access-token">
+          CoCalc Lite access token
+        </label>
+        <Input.Password
+          id="lite-site-settings-access-token"
+          aria-label="CoCalc Lite access token"
+          value={accessToken}
+          autoComplete="current-password"
+          onChange={(event) => setAccessToken(event.target.value)}
+          onPressEnter={() => {
+            if (accessToken && !saving) void save();
+          }}
+        />
+        {authorizeError ? (
+          <Alert
+            type="error"
+            title="Authorization failed"
+            description={authorizeError}
+            style={{ marginTop: 12 }}
+          />
+        ) : null}
+      </Modal>
     </div>
   );
 }

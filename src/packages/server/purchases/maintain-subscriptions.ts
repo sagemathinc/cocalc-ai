@@ -70,10 +70,16 @@ import { alertDelayedSubscriptionRenewals } from "./subscription-renewal-health"
 
 const logger = getLogger("purchases:maintain-subscriptions");
 
-export default async function maintainSubscriptions() {
+export default async function maintainSubscriptions({
+  max_notifications = Number.POSITIVE_INFINITY,
+  max_renewals = Number.POSITIVE_INFINITY,
+}: {
+  max_notifications?: number;
+  max_renewals?: number;
+} = {}) {
   logger.debug("maintaining subscriptions");
   try {
-    await sendUpcomingRenewalNotifications();
+    await sendUpcomingRenewalNotifications({ limit: max_notifications });
   } catch (err) {
     logger.debug("nonfatal ERROR in sendUpcomingRenewalNotifications- ", err);
     adminAlert({
@@ -82,7 +88,7 @@ export default async function maintainSubscriptions() {
     });
   }
   try {
-    await createPayments();
+    await createPayments({ max_attempts: max_renewals });
   } catch (err) {
     logger.debug("nonfatal ERROR in createPayments - ", err);
     adminAlert({
@@ -105,7 +111,9 @@ export default async function maintainSubscriptions() {
 
 // UPCOMING NOTIFICATIONS (see above)
 
-export async function sendUpcomingRenewalNotifications() {
+export async function sendUpcomingRenewalNotifications({
+  limit = Number.POSITIVE_INFINITY,
+}: { limit?: number } = {}) {
   logger.debug("sendUpcomingRenewalNotifications");
   const { support_account_id: from_id, site_name } = await getServerSettings();
   if (from_id == null) {
@@ -117,16 +125,31 @@ export async function sendUpcomingRenewalNotifications() {
 
   const pool = getPool();
   const cutoff = "1 week";
+  const bounded = Number.isFinite(limit);
   const query = `
     SELECT id, cost, interval, metadata, account_id, current_period_end
     FROM subscriptions
     WHERE
       status != 'canceled' AND
+      NOT EXISTS (
+        SELECT 1 FROM accounts AS account
+        WHERE account.account_id=subscriptions.account_id
+          AND (account.banned IS TRUE OR account.deleted IS TRUE)
+      ) AND
+      NOT EXISTS (
+        SELECT 1 FROM billing_authority_account_fences AS fence
+        WHERE fence.account_id=subscriptions.account_id AND fence.frozen
+      ) AND
       current_period_end > NOW() AND
       current_period_end <= NOW() + INTERVAL '${cutoff}' AND
       (renewal_email IS NULL OR renewal_email < NOW() - INTERVAL '${cutoff}')
+    ORDER BY current_period_end, id
+    ${bounded ? "LIMIT $1" : ""}
   `;
-  const { rows } = await pool.query(query);
+  const { rows } = await pool.query(
+    query,
+    bounded ? [Math.max(0, Math.floor(limit))] : [],
+  );
   logger.debug(
     "sendUpcomingRenewalNotifications -- ",
     rows.length,
@@ -190,6 +213,8 @@ async function describeSubscription(metadata): Promise<string> {
 
 // CREATE PAYMENTS (see above)
 
-export async function createPayments() {
-  await maintainSubscriptionRenewals();
+export async function createPayments({
+  max_attempts = Number.POSITIVE_INFINITY,
+}: { max_attempts?: number } = {}) {
+  await maintainSubscriptionRenewals({ max_attempts });
 }

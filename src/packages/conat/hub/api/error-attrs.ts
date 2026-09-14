@@ -11,6 +11,8 @@ const HUB_API_ERROR_ATTR_KEYS = [
   "approval_url",
   "expires_at",
   "project_id",
+  "billing_authority_command_id",
+  "billing_authority_status",
 ] as const;
 
 export function hubApiErrorAttrs(error: unknown): Record<string, unknown> {

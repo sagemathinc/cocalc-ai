@@ -1,5 +1,8 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { getPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
@@ -8,7 +11,10 @@ export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...billingAuthorityErrorAttrs(err),
+    });
     return;
   }
 }
@@ -29,13 +35,14 @@ async function get(req) {
     if (!(await userIsInGroup(account_id, "admin"))) {
       throw Error("only admins can get other user's payment methods");
     }
-    return await getPaymentMethod({
+    return await executeBillingHttpCommand("get-payment-method", {
       account_id: user_account_id,
+      actor_account_id: account_id,
       id,
     });
   }
 
-  return await getPaymentMethod({
+  return await executeBillingHttpCommand("get-payment-method", {
     account_id,
     id,
   });

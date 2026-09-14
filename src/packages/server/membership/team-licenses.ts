@@ -17,6 +17,7 @@ import {
 } from "@cocalc/util/money";
 import { uuid } from "@cocalc/util/misc";
 import dayjs from "dayjs";
+import { boundedMembershipTierLabel } from "@cocalc/util/membership-tier-label";
 import type {
   MembershipClass,
   MembershipPackageDetails,
@@ -96,6 +97,10 @@ function getTierLabel(tier: MembershipTierRecord): string {
   return `${tier.label ?? tier.id}`.trim() || tier.id;
 }
 
+function getBillingTierLabel(tier: MembershipTierRecord): string {
+  return boundedMembershipTierLabel(tier);
+}
+
 function getTeamVisibleTiers(
   tiers: Record<string, MembershipTierRecord>,
 ): MembershipTierRecord[] {
@@ -161,7 +166,7 @@ function teamSeatLineDescription({
   prorated?: boolean;
 }): string {
   const price = toDecimal(annualPrice);
-  return `${seatCount} ${getTierLabel(tier)} annual team seat${
+  return `${seatCount} ${getBillingTierLabel(tier)} annual team seat${
     seatCount === 1 ? "" : "s"
   } at ${moneyToCurrency(annualPrice, price.isInteger() ? 0 : 2)}/seat${prorated ? ", prorated" : ""}`;
 }

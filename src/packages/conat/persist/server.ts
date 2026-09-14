@@ -55,6 +55,7 @@ client = await require('@cocalc/backend/conat').conat(); s = await require('@coc
 */
 
 import { type Client, ConatError } from "@cocalc/conat/core/client";
+import { validateMessageHeaders } from "../core/message-headers";
 import {
   type ConatSocketServer,
   type ServerSocket,
@@ -377,7 +378,9 @@ export function server({
   return server;
 }
 
-async function getAll({ stream, mesg, request, messagesThresh }) {
+// Keep replay synchronous: do not yield with a SQLite iterator open. Errors
+// propagate to the request handler, which sends a small error-only response.
+function getAll({ stream, mesg, request, messagesThresh }) {
   let seq = 0;
   let sentConfig = false;
   let sentMetadata = false;
@@ -405,20 +408,24 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
       : oldest_retained_seq == null
         ? startSeq
         : Math.max(startSeq, oldest_retained_seq);
-  const respond = (error?, messages?: StoredMessage[]) => {
-    mesg.respondSync(messages, {
-      headers: {
-        error,
-        seq,
-        code: classifyPersistStorageErrorCode(error),
-        config: !sentConfig ? config : undefined,
-        metadata: !sentMetadata ? metadata : undefined,
-        checkpoints: !sentCheckpoints ? checkpoints : undefined,
-        effective_start_seq: !sentReplayInfo ? effective_start_seq : undefined,
-        oldest_retained_seq: !sentReplayInfo ? oldest_retained_seq : undefined,
-        newest_retained_seq: !sentReplayInfo ? newest_retained_seq : undefined,
-      },
-    });
+  const respond = (messages?: StoredMessage[]) => {
+    const headers = {
+      seq,
+      config: !sentConfig ? config : undefined,
+      metadata: !sentMetadata ? metadata : undefined,
+      checkpoints: !sentCheckpoints ? checkpoints : undefined,
+      effective_start_seq: !sentReplayInfo ? effective_start_seq : undefined,
+      oldest_retained_seq: !sentReplayInfo ? oldest_retained_seq : undefined,
+      newest_retained_seq: !sentReplayInfo ? newest_retained_seq : undefined,
+    };
+    // Only these fixed envelope fields are enumerated. Mirror JSON's omission
+    // of undefined values, then validate before the unconfirmed publication so
+    // rejection cannot be followed by success with the bootstrap fields gone.
+    for (const key of Object.keys(headers)) {
+      if (headers[key] === undefined) delete headers[key];
+    }
+    validateMessageHeaders(headers);
+    mesg.respondSync(messages, { headers });
     sentConfig = true;
     sentMetadata = true;
     sentCheckpoints = true;
@@ -426,30 +433,26 @@ async function getAll({ stream, mesg, request, messagesThresh }) {
     seq += 1;
   };
 
-  try {
-    const messages: StoredMessage[] = [];
-    let size = 0;
-    for (const message of stream.getAll({
-      start_seq: startSeq,
-      end_seq: request.end_seq,
-    })) {
-      messages.push(message);
-      size += message.raw.length;
-      if (size >= messagesThresh) {
-        respond(undefined, messages);
-        messages.length = 0;
-        size = 0;
-      }
+  const messages: StoredMessage[] = [];
+  let size = 0;
+  for (const message of stream.getAll({
+    start_seq: startSeq,
+    end_seq: request.end_seq,
+  })) {
+    messages.push(message);
+    size += message.raw.length;
+    if (size >= messagesThresh) {
+      respond(messages);
+      messages.length = 0;
+      size = 0;
     }
-
-    if (messages.length > 0) {
-      respond(undefined, messages);
-    }
-    // successful finish
-    respond();
-  } catch (err) {
-    respond(`${err}`);
   }
+
+  if (messages.length > 0) {
+    respond(messages);
+  }
+  // successful finish
+  respond();
 }
 
 function startChangefeed({ socket, stream, messagesThresh }) {

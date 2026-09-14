@@ -74,7 +74,15 @@ describe("createRefund", () => {
   beforeEach(() => {
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
     mockGetPool.mockReset().mockReturnValue({
-      query: jest.fn().mockResolvedValue({ rows: [{ service: "credit" }] }),
+      query: jest.fn().mockResolvedValue({
+        rows: [
+          {
+            account_id: "user-1",
+            description: { type: "credit" },
+            service: "credit",
+          },
+        ],
+      }),
     });
     mockGetTransactionClient.mockReset();
     mockCreatePurchase.mockReset().mockResolvedValue(55);

@@ -1195,6 +1195,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin custom-price membership package and billing mutation",
   },
+  "purchases.adminGetMembershipPackageQuote": {
+    decision: "fresh-auth-required",
+    reason: "admin custom-period membership package pricing preview",
+  },
   "purchases.adminResetMembershipUsageWindows": {
     decision: "fresh-auth-required",
     reason: "admin operation resets user-visible membership usage windows",
@@ -1463,6 +1467,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "account SSO/passport login method unlink",
   },
+  "system.drainBillingAuthority": {
+    decision: "fresh-auth-required",
+    reason: "global billing authority lifecycle control",
+  },
   "system.drainAccountCollaboratorIndexProjection": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -1484,6 +1492,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "returns a raw remember-me cookie to the caller for browser session handoff",
   },
+  "system.getBillingAuthorityStatus": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "system.handoffBillingAuthority": {
+    decision: "fresh-auth-required",
+    reason: "global billing authority lifecycle control",
+  },
   "system.publishProjectRootfsImage": {
     decision: "fresh-auth-required",
     reason: "RootFS catalog/release mutation",
@@ -1501,6 +1517,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "project- or host-scoped accounting with canonical project attribution and server-side abuse enforcement",
+  },
+  "system.resumeBillingAuthority": {
+    decision: "fresh-auth-required",
+    reason: "global billing authority lifecycle control",
   },
   "system.recordServiceAdmissionDenial": {
     decision: "fresh-auth-not-required",

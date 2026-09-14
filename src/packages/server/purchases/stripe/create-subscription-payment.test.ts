@@ -9,8 +9,10 @@ import { before, after, getPool } from "@cocalc/server/test";
 import { SUBSCRIPTION_RENEWAL } from "@cocalc/util/db-schema/purchases";
 import {
   createTestAccount,
+  createTestMembershipTier,
   createTestMembershipSubscription,
 } from "@cocalc/server/purchases/test-data";
+import { MAX_MEMBERSHIP_TIER_LABEL_LENGTH } from "@cocalc/util/membership-tier-label";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import getBalance from "@cocalc/server/purchases/get-balance";
@@ -152,6 +154,38 @@ describe("createSubscriptionPayment", () => {
       status: "active",
       subscription_id,
     });
+  });
+
+  it("bounds legacy tier labels in renewal billing descriptions", async () => {
+    const account_id = uuid();
+    const membershipClass = `legacy-long-label-${uuid()}`;
+    await createTestAccount(account_id);
+    await createTestMembershipTier({
+      id: membershipClass,
+      price_monthly: 72,
+    });
+    await getPool().query("UPDATE membership_tiers SET label=$2 WHERE id=$1", [
+      membershipClass,
+      "x".repeat(500),
+    ]);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        class: membershipClass,
+        cost: 72,
+        start: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+        end: new Date(Date.now() - 60_000),
+      },
+    );
+
+    await createSubscriptionPayment({ account_id, subscription_id });
+
+    const description = mockCreatePaymentIntent.mock.calls[0][0].description;
+    expect(description).toContain("x".repeat(MAX_MEMBERSHIP_TIER_LABEL_LENGTH));
+    expect(description).not.toContain(
+      "x".repeat(MAX_MEMBERSHIP_TIER_LABEL_LENGTH + 1),
+    );
+    expect(description.length).toBeLessThanOrEqual(180);
   });
 
   it("adopts a matching legacy renewal payment intent", async () => {

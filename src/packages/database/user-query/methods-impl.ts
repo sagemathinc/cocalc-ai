@@ -23,6 +23,7 @@ import { quote_field } from "@cocalc/database/postgres/utils/quote-field";
 import { callback2 } from "@cocalc/util/async-utils";
 import * as misc from "@cocalc/util/misc";
 import { SCHEMA } from "@cocalc/util/schema";
+import { userQueryMutationRequiresDomainApi } from "@cocalc/util/db-schema/domain-api-only";
 import type { CB } from "@cocalc/util/types/callback";
 
 import { updateRetentionData as updateRetentionDataImpl } from "../postgres/retention";
@@ -1240,6 +1241,13 @@ export async function user_set_query(
     cb: opts.cb,
   }; // cb(err)
   const cb = opts.cb;
+
+  if (userQueryMutationRequiresDomainApi(opts.table)) {
+    cb?.(
+      `mutating '${opts.table}' through user_query is disabled; use its dedicated domain API`,
+    );
+    return;
+  }
 
   // TODO: it would be nice to return the primary key part of the created object on creation.
   // That's not implemented and will be somewhat nontrivial, and will use the RETURNING clause

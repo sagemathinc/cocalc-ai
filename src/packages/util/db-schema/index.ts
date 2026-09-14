@@ -15,10 +15,12 @@ export type { RenderSpec } from "./render-types";
 export type { RetentionModel } from "./retention";
 export { retentionModels } from "./retention";
 export * from "./table-ownership";
+export * from "./domain-api-only";
 
 // The tables
 import "./active-user-map-history";
 import "./account-managed-egress";
+import "./admin-membership-package-intents";
 import "./account-collaborator-index";
 import "./account-ban-audit-log";
 import "./account-admin-audit-log";
@@ -31,6 +33,7 @@ import "./accounts";
 import "./api-keys";
 import "./auth";
 import "./blobs";
+import "./billing-authority";
 import "./bookmarks";
 import "./buckets";
 import "./central-log";

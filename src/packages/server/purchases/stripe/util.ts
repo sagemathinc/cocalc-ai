@@ -11,15 +11,77 @@ import getPool, {
 } from "@cocalc/database/pool";
 import stripeName from "@cocalc/util/stripe/name";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import { MAX_COST } from "@cocalc/util/db-schema/purchases";
+import {
+  MAX_COST,
+  MEMBERSHIP_CHANGE,
+  MEMBERSHIP_PACKAGE_PURCHASE,
+  RESUME_SUBSCRIPTION,
+  TEAM_LICENSE_CHANGE,
+} from "@cocalc/util/db-schema/purchases";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import { stripeToDecimal, decimalToStripe } from "@cocalc/util/stripe/calc";
 import type { LineItem } from "@cocalc/util/stripe/types";
 import { url } from "@cocalc/server/messages/send";
 
 const MINIMUM_STRIPE_TRANSACTION = 0.5; // Stripe requires transactions to be at least $0.50.
+const MAX_PAYMENT_LINE_ITEMS = 32;
+const MAX_LINE_ITEM_DESCRIPTION_LENGTH = 180;
+const MAX_PAYMENT_DESCRIPTION_LENGTH = 500;
+const MAX_PAYMENT_PURPOSE_LENGTH = 100;
+const MAX_USER_METADATA_KEYS = 40;
+const MAX_METADATA_KEY_LENGTH = 40;
+const MAX_METADATA_VALUE_LENGTH = 500;
+
+const INTERACTIVE_PAYMENT_PURPOSES = new Set([
+  "add-credit",
+  MEMBERSHIP_CHANGE,
+  MEMBERSHIP_PACKAGE_PURCHASE,
+  RESUME_SUBSCRIPTION,
+  TEAM_LICENSE_CHANGE,
+]);
+
+const RESERVED_USER_METADATA_KEYS = new Set([
+  "purpose",
+  "account_id",
+  "cocalc_site",
+  "checkout_key",
+  "confirm",
+  "lineItems",
+  "processed",
+  "recorded",
+  "total_excluding_tax_usd",
+  "actor_account_id",
+  "admin_account_id",
+  "customer_account_id",
+  "owner_account_id",
+  "target_account_id",
+  "user_account_id",
+]);
 
 const logger = getLogger("purchases:stripe:util");
+
+export function normalizeStripeLineItems(lineItems: unknown): unknown {
+  if (!Array.isArray(lineItems)) return lineItems;
+  return lineItems.map((item) => {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) {
+      return item;
+    }
+    const description = (item as { description?: unknown }).description;
+    if (
+      typeof description !== "string" ||
+      description.length <= MAX_LINE_ITEM_DESCRIPTION_LENGTH
+    ) {
+      return item;
+    }
+    return {
+      ...item,
+      description: `${description.slice(
+        0,
+        MAX_LINE_ITEM_DESCRIPTION_LENGTH - 3,
+      )}...`,
+    };
+  });
+}
 
 async function setStripeCustomerId({
   account_id,
@@ -182,6 +244,9 @@ export async function getStripeCustomerId({
 
 export async function sanityCheckAmount(amount: MoneyValue) {
   const amountValue = toDecimal(amount);
+  if (!Number.isFinite(amountValue.toNumber())) {
+    throw Error("Amount must be finite.");
+  }
   if (amountValue.eq(0)) {
     throw Error("Amount must be nonzero.");
   }
@@ -249,22 +314,113 @@ export async function currentStripeSite(): Promise<string> {
   return `${dns ?? ""}`.trim();
 }
 
-export function assertValidUserMetadata(metadata) {
+export function assertInteractivePaymentPurpose(
+  purpose: unknown,
+): asserts purpose is string {
   if (
-    metadata?.purpose != null ||
-    metadata?.account_id != null ||
-    metadata?.cocalc_site != null ||
-    metadata?.checkout_key != null ||
-    metadata?.confirm != null ||
-    metadata?.lineItems != null ||
-    metadata?.processed != null ||
-    metadata?.recorded != null ||
-    metadata?.total_excluding_tax_usd != null
+    typeof purpose !== "string" ||
+    !INTERACTIVE_PAYMENT_PURPOSES.has(purpose)
+  ) {
+    throw Error("invalid interactive payment purpose");
+  }
+}
+
+export function assertValidUserMetadata(
+  metadata: unknown,
+): asserts metadata is Record<string, string> | null | undefined {
+  if (metadata == null) {
+    return;
+  }
+  if (typeof metadata !== "object" || Array.isArray(metadata)) {
+    throw Error("metadata must be an object");
+  }
+  const entries = Object.entries(metadata);
+  if (entries.length > MAX_USER_METADATA_KEYS) {
+    throw Error(`metadata must have at most ${MAX_USER_METADATA_KEYS} keys`);
+  }
+  for (const [key, value] of entries) {
+    if (RESERVED_USER_METADATA_KEYS.has(key)) {
+      throw Error(`metadata key '${key}' is reserved`);
+    }
+    if (
+      key.length === 0 ||
+      key.length > MAX_METADATA_KEY_LENGTH ||
+      key.includes("[") ||
+      key.includes("]")
+    ) {
+      throw Error("metadata contains an invalid key");
+    }
+    if (typeof value !== "string" || value.length > MAX_METADATA_VALUE_LENGTH) {
+      throw Error(
+        `metadata values must be strings of at most ${MAX_METADATA_VALUE_LENGTH} characters`,
+      );
+    }
+  }
+}
+
+export function assertValidStripePaymentInput({
+  purpose,
+  description,
+  lineItems,
+  metadata,
+}: {
+  purpose: unknown;
+  description?: unknown;
+  lineItems: unknown;
+  metadata?: unknown;
+}): void {
+  if (
+    typeof purpose !== "string" ||
+    purpose.length === 0 ||
+    purpose.length > MAX_PAYMENT_PURPOSE_LENGTH
   ) {
     throw Error(
-      "metadata must not include 'purpose', 'account_id', 'cocalc_site', 'checkout_key', 'confirm', 'lineItems', 'total_excluding_tax_usd', 'recorded', or 'processed' as a key",
+      `payment purpose must contain at most ${MAX_PAYMENT_PURPOSE_LENGTH} characters`,
     );
   }
+  if (
+    description != null &&
+    (typeof description !== "string" ||
+      description.length > MAX_PAYMENT_DESCRIPTION_LENGTH)
+  ) {
+    throw Error(
+      `payment description must contain at most ${MAX_PAYMENT_DESCRIPTION_LENGTH} characters`,
+    );
+  }
+  if (
+    !Array.isArray(lineItems) ||
+    lineItems.length === 0 ||
+    lineItems.length > MAX_PAYMENT_LINE_ITEMS
+  ) {
+    throw Error(
+      `payment must have between 1 and ${MAX_PAYMENT_LINE_ITEMS} line items`,
+    );
+  }
+  for (const item of lineItems) {
+    if (item == null || typeof item !== "object" || Array.isArray(item)) {
+      throw Error("payment line items must be objects");
+    }
+    const { amount, description: itemDescription } = item as Partial<LineItem>;
+    if (
+      typeof amount !== "number" ||
+      !Number.isFinite(amount) ||
+      Math.abs(amount) > MAX_COST
+    ) {
+      throw Error(
+        `payment line-item amounts must be finite and at most ${MAX_COST}`,
+      );
+    }
+    if (
+      typeof itemDescription !== "string" ||
+      itemDescription.trim().length === 0 ||
+      itemDescription.length > MAX_LINE_ITEM_DESCRIPTION_LENGTH
+    ) {
+      throw Error(
+        `payment line-item descriptions must contain at most ${MAX_LINE_ITEM_DESCRIPTION_LENGTH} characters`,
+      );
+    }
+  }
+  assertValidUserMetadata(metadata);
 }
 
 export function getStripeLineItems(lineItems: LineItem[]): {

@@ -70,6 +70,10 @@ export const system = {
   recordUxLatencyEvent: authFirstRequireAccount,
   getUxLatencySummary: authFirstRequireAccount,
   getLaunchHealth: authFirstRequireAccount,
+  getBillingAuthorityStatus: authFirstRequireAccount,
+  drainBillingAuthority: authFirstRequireAccount,
+  resumeBillingAuthority: authFirstRequireAccount,
+  handoffBillingAuthority: authFirstRequireAccount,
   recordLaunchSmokeResult: authFirstRequireAccount,
   getBayBackups: authFirstRequireAccount,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
@@ -2113,6 +2117,23 @@ export interface AccountNotificationIndexProjectionStatus {
   maintenance: AccountNotificationIndexProjectionMaintenanceStatus;
 }
 
+export interface BillingAuthorityStatus {
+  instance_id?: string;
+  generation?: number;
+  lease_until?: string;
+  ready: boolean;
+  enabled: boolean;
+  draining: boolean;
+  active_command_id?: string;
+  queue_depth: {
+    critical: number;
+    interactive: number;
+    maintenance: number;
+  };
+  completed: number;
+  failed: number;
+}
+
 export interface PrivateAppHostnameTrace {
   matched: boolean;
   hostname: string;
@@ -2193,6 +2214,30 @@ export interface System {
     alert_window_hours?: number;
     window_minutes?: number;
   }) => Promise<LaunchHealthStatus>;
+
+  getBillingAuthorityStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<BillingAuthorityStatus>;
+
+  drainBillingAuthority: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    timeout_ms?: number;
+  }) => Promise<BillingAuthorityStatus>;
+
+  resumeBillingAuthority: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  }) => Promise<BillingAuthorityStatus>;
+
+  handoffBillingAuthority: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    timeout_ms?: number;
+  }) => Promise<BillingAuthorityStatus>;
 
   recordLaunchSmokeResult: (opts: {
     account_id?: string;
@@ -2668,6 +2713,7 @@ export interface System {
     account_id?: string;
     browser_id?: string | null;
     session_hash?: string | null;
+    fresh_auth_token?: string | null;
     settings: { name: string; value: string }[];
   }) => Promise<SiteSettingsSyncResult>;
 

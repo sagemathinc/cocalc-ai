@@ -67,6 +67,7 @@ import type {
 } from "@cocalc/util/commercial-orders";
 import { getDiagnosticAmounts } from "./diagnostic-amounts";
 import { COMMERCIAL_ORDER_DOCUMENT_MAX_BYTES } from "@cocalc/util/commercial-orders";
+import { registerCommercialOrderBillingAccount } from "./billing-authority";
 import {
   moneyAdd,
   moneyCompare,
@@ -555,6 +556,11 @@ async function loadOrder(
     payments: payments.rows.map(normalizePaymentRow),
   } as CommercialOrder;
   validateIndependentStates(order);
+  // This loader also serves read-only APIs. Authority commands still register
+  // the account, while direct readers remain available after activation.
+  await registerCommercialOrderBillingAccount(order, {
+    allow_direct_execution: true,
+  });
   return order;
 }
 
