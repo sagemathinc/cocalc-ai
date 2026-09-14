@@ -62,6 +62,24 @@ describe("wireHostsApi", () => {
     });
   });
 
+  it("wires mention validation through the authenticated source host", async () => {
+    const { hubApi } = await import("@cocalc/lite/hub/api");
+    const { wireHostsApi } = await import("./hosts");
+    wireHostsApi();
+    const opts = {
+      account_id: "human",
+      project_id: "source-project",
+      target: { project_id: "target-project", agent_id: "reviewer" },
+    };
+    await hubApi.agent.getMentionIdentity(opts);
+    expect(callHubMock).toHaveBeenCalledWith({
+      client: { id: "master-client" },
+      name: "agent.getMentionIdentity",
+      args: [opts],
+      host_id: process.env.PROJECT_HOST_ID,
+    });
+  });
+
   it.each([true, false])(
     "preserves one-use admission result %s through the host adapter",
     async (result) => {

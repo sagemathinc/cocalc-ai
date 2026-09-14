@@ -4,6 +4,7 @@ import {
   resolveIdentity,
   registerIdentity,
   getIdentity,
+  getMentionIdentity,
   listGrants,
   listMessageReceipts,
 } from "./api";
@@ -28,6 +29,8 @@ const remote = {
   listMessageReceipts: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
+const sourceHostAccess = jest.fn();
+const localProject = jest.fn();
 let bay = "entry";
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => bay,
@@ -41,7 +44,13 @@ jest.mock("@cocalc/server/inter-bay/fabric", () => ({
 jest.mock("@cocalc/conat/inter-bay/agent-identities", () => ({
   createInterBayAgentIdentityClient: (o) => remoteClient(o),
 }));
-jest.mock("./access", () => ({ assertActor: (...a) => actor(...a) }));
+jest.mock("./access", () => ({
+  assertActor: (...a) => actor(...a),
+  assertLocalAgentProject: (...a) => localProject(...a),
+}));
+jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
+  assertProjectHostAgentTokenAccess: (...a) => sourceHostAccess(...a),
+}));
 jest.mock("./store", () => ({
   agentStore: () => ({ query, find, get }),
   normalizeAgentPath: (s) => s,
@@ -69,6 +78,8 @@ beforeEach(() => {
   owner.mockReset().mockResolvedValue({ bay_id: "owner", epoch: 3 });
   actor.mockReset().mockResolvedValue(undefined);
   fresh.mockReset().mockResolvedValue(undefined);
+  sourceHostAccess.mockReset().mockResolvedValue(undefined);
+  localProject.mockReset().mockResolvedValue(undefined);
   query.mockReset().mockResolvedValue({ rows: [{ agent_id: "registered" }] });
   find.mockReset().mockResolvedValue({ agent_id: "resolved" });
   get.mockReset().mockResolvedValue({
@@ -92,6 +103,45 @@ const inspections = [
   { read: listGrants, method: "listGrants" as const },
   { read: listMessageReceipts, method: "listMessageReceipts" as const },
 ];
+
+test("host mention lookup validates source and routes target under the human, not embedded fields", async () => {
+  const sourceProject = randomUUID();
+  await getMentionIdentity({
+    host_id: "source-host",
+    account_id,
+    project_id: sourceProject,
+    target: {
+      project_id,
+      agent_id: request.thread_id,
+      account_id: "spoof",
+    } as any,
+  });
+  expect(localProject).toHaveBeenCalledWith(sourceProject);
+  expect(sourceHostAccess).toHaveBeenCalledWith({
+    host_id: "source-host",
+    account_id,
+    project_id: sourceProject,
+  });
+  expect(remote.get).toHaveBeenCalledWith({
+    account_id,
+    project_id,
+    agent_id: request.thread_id,
+    route: { bay_id: "owner", epoch: 3 },
+  });
+});
+
+test("host mention lookup cannot inspect targets without source-host authorization", async () => {
+  sourceHostAccess.mockRejectedValueOnce(new Error("host does not own source"));
+  await expect(
+    getMentionIdentity({
+      host_id: "other-host",
+      account_id,
+      project_id: randomUUID(),
+      target: { project_id, agent_id: request.thread_id },
+    }),
+  ).rejects.toThrow("host does not own source");
+  expect(remote.get).not.toHaveBeenCalled();
+});
 
 test.each(inspections)(
   "$method routes the project-qualified ID without forwarding credentials",

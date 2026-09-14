@@ -30,6 +30,7 @@ export const grantMessaging = identities.grantMessaging;
 export const revokeMessaging = identities.revokeMessaging;
 export const disableIdentity = identities.disableIdentity;
 export const issueIdentity = identities.issueIdentity;
+export const getMentionIdentity = identities.getMentionIdentity;
 export const endIdentityRun = identities.endIdentityRun;
 export const authorizeDelivery = identities.authorizeDelivery;
 export const beginMessageAdmission = identities.beginMessageAdmission;

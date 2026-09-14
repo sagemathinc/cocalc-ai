@@ -53,6 +53,7 @@ export const agent = {
   revokeRpcLink: authFirstRequireAccountWithBoundSession,
   listRpcLinks: authFirstRequireAccount,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
+  getMentionIdentity: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccountWithBoundSession,
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
@@ -256,6 +257,9 @@ export interface AgentApi {
     thread_id: string;
   }): Promise<AgentIdentity | undefined>;
   getIdentity(opts: AgentIdentityLocator): Promise<AgentIdentity>;
+  getMentionIdentity(
+    opts: AgentHostAuth & { project_id: string; target: AgentEndpoint },
+  ): Promise<AgentIdentity>;
   listGrants(
     opts: AgentIdentityLocator & AgentPageOptions,
   ): Promise<AgentPage<AgentGrant>>;

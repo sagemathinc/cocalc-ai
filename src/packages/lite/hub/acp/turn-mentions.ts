@@ -7,7 +7,7 @@ import {
 
 export async function resolveHumanTurnMentions(
   request: AcpRequest,
-  api: Pick<AgentApi, "getIdentity">,
+  api: Pick<AgentApi, "getMentionIdentity">,
 ) {
   // Never bind history, scheduled/model-authored content, or an old turn's map.
   if (request.chat?.agent_message || request.chat?.automation_id) return [];
@@ -20,9 +20,10 @@ export async function resolveHumanTurnMentions(
   for (const reference of references) {
     // Validate copied references under the submitting human, not the naming
     // account embedded in the markup. Exact owner routing starts no target.
-    const identity = await api.getIdentity({
+    const identity = await api.getMentionIdentity({
       account_id: request.account_id,
-      ...reference.target,
+      project_id: request.chat?.project_id ?? request.project_id!,
+      target: reference.target,
     });
     if (
       identity.disabled_at ||

@@ -280,6 +280,24 @@ export const issueIdentity: AgentApi["issueIdentity"] = async (opts) => {
   return await db.issue(agent, opts.run_id, opts.account_id!);
 };
 
+// Host-scoped read for a human turn: source-host authority does not confer
+// access to the destination. Resolve the destination as the actual human.
+export const getMentionIdentity: AgentApi["getMentionIdentity"] = async (
+  opts,
+) => {
+  await assertLocalAgentProject(opts.project_id);
+  await assertProjectHostAgentTokenAccess({
+    host_id: opts.host_id!,
+    account_id: opts.account_id!,
+    project_id: opts.project_id,
+  });
+  return await getIdentity({
+    account_id: opts.account_id!,
+    project_id: opts.target.project_id,
+    agent_id: opts.target.agent_id,
+  });
+};
+
 export const endIdentityRun: AgentApi["endIdentityRun"] = async (opts) => {
   const db = agentStore();
   const agent = await db.get(opts.agent_id);

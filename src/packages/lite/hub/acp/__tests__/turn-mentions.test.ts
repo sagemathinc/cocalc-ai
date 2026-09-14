@@ -26,7 +26,7 @@ const request: AcpRequest = {
     user_message_content: serializeAgentMention(ref),
   },
 };
-const getIdentity = jest.fn(async () => ({
+const getMentionIdentity = jest.fn(async () => ({
   ...ref.target,
   disabled_at: null,
   created_by: "P",
@@ -34,13 +34,17 @@ const getIdentity = jest.fn(async () => ({
   thread_id: "thread",
   name: "renamed",
 }));
-beforeEach(() => getIdentity.mockClear());
+beforeEach(() => getMentionIdentity.mockClear());
 
 it("validates copied references under the submitting human and retains exact target/name", async () => {
-  expect(await resolveHumanTurnMentions(request, { getIdentity })).toEqual([
-    ref,
-  ]);
-  expect(getIdentity).toHaveBeenCalledWith({ account_id: "Q", ...ref.target });
+  expect(
+    await resolveHumanTurnMentions(request, { getMentionIdentity }),
+  ).toEqual([ref]);
+  expect(getMentionIdentity).toHaveBeenCalledWith({
+    account_id: "Q",
+    project_id: "source",
+    target: ref.target,
+  });
 });
 it("does not bind historical prompt content or model-authored input", async () => {
   for (const chat of [
@@ -49,15 +53,18 @@ it("does not bind historical prompt content or model-authored input", async () =
     { ...request.chat!, automation_id: "scheduled" },
   ]) {
     expect(
-      await resolveHumanTurnMentions({ ...request, chat }, { getIdentity }),
+      await resolveHumanTurnMentions(
+        { ...request, chat },
+        { getMentionIdentity },
+      ),
     ).toEqual([]);
   }
-  expect(getIdentity).not.toHaveBeenCalled();
+  expect(getMentionIdentity).not.toHaveBeenCalled();
 });
 it("fails closed on unavailable authority without name or account fallback", async () => {
-  getIdentity.mockRejectedValueOnce(new Error("access denied"));
+  getMentionIdentity.mockRejectedValueOnce(new Error("access denied"));
   await expect(
-    resolveHumanTurnMentions(request, { getIdentity }),
+    resolveHumanTurnMentions(request, { getMentionIdentity }),
   ).rejects.toThrow("access denied");
-  expect(getIdentity).toHaveBeenCalledTimes(1);
+  expect(getMentionIdentity).toHaveBeenCalledTimes(1);
 });

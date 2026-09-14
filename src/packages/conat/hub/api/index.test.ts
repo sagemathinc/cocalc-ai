@@ -55,6 +55,7 @@ describe("hub API argument transforms", () => {
       "agent.authorizeRpcAdmission",
       "agent.beginMessageAdmission",
       "agent.endIdentityRun",
+      "agent.getMentionIdentity",
       "agent.issueIdentity",
       "aiSessions.upsertProjectHostSession",
       "hosts.checkCodexSiteUsageAllowance",
