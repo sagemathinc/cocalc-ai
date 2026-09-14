@@ -9767,6 +9767,9 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       ...refreshedRequest,
       stream: async () => {},
     });
+    // The live-turn lease is released before automation finalization. Record
+    // progress now so the host watchdog cannot mistake that gap for a stall.
+    noteDetachedWorkerQueueProgress();
     await finalizeAutomationRun({
       automation_id: refreshedRequest.chat?.automation_id,
       terminalState: result.terminalState,
@@ -9800,6 +9803,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       }
     }
   } catch (err) {
+    noteDetachedWorkerQueueProgress();
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
