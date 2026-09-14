@@ -237,7 +237,8 @@ Live evidence: `/tmp/agent-mentions-{grant,picker-open,inline-approval,warm-runn
   account-home request remains authoritative; this is not a new persisted ACP
   event stream or a second approval store. The normal attention refresh polls
   every five seconds and the typed request renderer refreshes every three
-  seconds. Approval never itself sends. Live rendering validation is pending.
+  seconds. Approval never itself sends. Live display, refresh, expiry, denial,
+  keyboard, narrow-width, and actual 200% zoom checks passed below.
 - Per-turn credentials constrain server APIs, not hostile processes sharing the
   same operating-system user. Shared project content can influence model output.
 
@@ -285,19 +286,21 @@ Still unverified against the full plan:
   reused-session credential rotation, not just negative steering tests.
 - Positive approval/renewal through the native attention card. Live display,
   pending-state restoration across refresh, expiry, and denial now pass below.
-- Cold receiver start with all receiver UIs closed, excluding browser startup
-  as an independent cause.
-- Live pause/revoke while the target is stopped and while its owning bay is
-  unavailable; a live lost-acknowledgment/unknown outcome without replay.
-- The composer approval still needs live 200% zoom checks. The pending attention
-  card and My Agents naming/table now pass at actual browser zoom below.
+- Live revoke while the target is stopped and controls while its owning bay is
+  unavailable; a live lost-acknowledgment/unknown outcome without replay. Isolated
+  cold startup and a paused named send with the receiver stopped passed below.
+- Browser passkey completion for positive approval is still unverified. Composer
+  selection/review/cancel, the pending attention card, and My Agents naming/table
+  now pass at actual 200% browser zoom below.
 
 The remaining external prerequisite for the positive P/Q test is a runnable
 second QA account; its last execution attempt hit a zero queued-turn limit.
 Do not change its membership, billing, or provider credentials without human
-direction. Browser approval checks are unfinished work, not a current external
-blocker: the local dev fresh-auth session is working. Cross-bay collaborator setup has
-now been fixed and live-verified; temporary access was removed after the test.
+direction. The dev CLI has working fresh auth, but it is not the browser's
+session. Completing the browser's passkey confirmation requires the human;
+canceling it and approving through the typed CLI is not a browser approval pass.
+Cross-bay collaborator setup has now been fixed and live-verified; temporary
+access was removed after the test.
 Positive successive P/Q turns have not been live-proven. The new path stays
 opt-in; these gaps prevent a claim that every acceptance test is complete.
 
@@ -420,3 +423,83 @@ selection is not the same as a UUID-bound mention.
 - Next concrete step: exercise positive naming/approval and composer preflight
   at 200%, then the stopped-receiver test with all receiver UIs closed. The
   positive two-human test and live fault-injection cases above remain open.
+
+## September 14 Isolated Cold Start And Pause
+
+- At actual Chromium 200% zoom, the native request
+  `63286da3-ed34-4bf4-9e13-c7db0c17a72c` accepted source name `messaging-qa`.
+  Browser fresh auth then requested a passkey. Canceled that dialog and verified
+  the request remained pending with no grant. The saved name remained. Restored
+  100% zoom. The separately authenticated, fresh human CLI deliberately approved
+  that exact pending request at the account home; both directional grants expire
+  at 06:53:39 UTC. This is not evidence of completing browser passkey auth.
+- Closed the receiver file in both active browser sessions and closed all three
+  receiver-page CDP targets. Stopped project
+  `66db94af-0745-4088-b922-879c58942201`; two metadata-only checks separated by
+  ten seconds confirmed `opened` (stopped), including after directory inspection.
+- The real source agent in `human-turn-qa-1789350561320.chat` used its own CLI
+  identity, discovered `reviewer`, and sent once with attempt
+  `a5ad4f39-6fa7-4348-970e-f18f00e39149`. Source is on host-1 / bay-0; receiver
+  is on the QA host / bay-1. At 05:57:52.053 the receiver host's existing Codex
+  runtime logged starting the stopped container. The CLI observed acceptance at
+  05:57:54.307, about 3.9 seconds after its command began. No independent browser
+  or harness start occurred.
+- Receiver used the explicit reverse grant for one reply, attempt
+  `1b4af483-c558-41be-8f76-173c0bf63435`, accepted at 05:58:16.378. Correlation:
+  `mentions-isolated-cold-1789365452866`. Source acknowledged locally without
+  replying again. Both real execution logs are terminal; acceptance and model
+  completion were inspected separately. No send was retried.
+- Then paused all personal communication through My Agents and stopped the
+  receiver again. A single real named-CLI send with attempt
+  `c1728ae3-cbce-4898-a98f-04aa310e6a1d` failed before dispatch: no approved
+  destination or selected current-turn reference. Its source run completed at
+  06:04:09.417. Receiver remained stopped; both grants' attempt/acceptance
+  timestamps remained those of the preceding successful exchange. This proves
+  the named CLI path, not a live low-level explicit-ID bypass test.
+- At 06:09:17 restored the prior unpaused account state through the typed fresh
+  human CLI. Receiver still stopped with unchanged last activity. Resume did not
+  start it or replay the blocked message. No memberships or provider settings
+  changed. The finite QA grants and named disposable chat remain for inspection.
+- Reproduction: `.local/human-turn-qa/live.sh` modes `cold-isolated-send` and
+  `paused-cold-send` are guarded one-shot cases; inspect their saved IDs rather
+  than rerunning them. Read completion with `project chat activity` and stopped
+  state with `project get --project <id>`. Evidence is under
+  `/tmp/agent-mentions-isolated-cold-*`, `/tmp/agent-mentions-paused-cold-*`,
+  `/tmp/agent-mentions-positive-cli-*`, and `.local/human-turn-qa/logs/`.
+- Next: finish remaining browser approval/200% composer and live fault cases.
+  Positive two-human credential rotation still needs a runnable second account.
+
+## September 14 Naming Context And Composer Zoom
+
+- Live source naming during native approval saved only a short name, leaving
+  `messaging-qa` with generic thread/project labels. Commit `e57d1b09af` snapshots
+  cached account project titles and already-open thread metadata for explicit
+  naming and source naming during approval. Composer approval carries its exact
+  thread context; an out-of-composer save resolves identity metadata only. No
+  project or chat is opened to enrich a name, and missing titles stay unknown.
+- Validation: 39 focused naming/mention tests, frontend typecheck, frontend lint,
+  and the static development build passed. Deployment log:
+  `/tmp/agent-mentions-name-context-static.log`.
+- At 06:17 UTC, reloaded the actual disposable chat, opened Rename
+  `@messaging-qa`, and pressed Enter on Save with its name unchanged. The
+  authoritative directory now contains thread title
+  `human-turn-qa-1789350561320` and project title `fresh-project`; My Agents
+  rendered both after reload. Receiver remained stopped. Evidence:
+  `/tmp/agent-mentions-name-context-{dialog,saved,directory,receiver}.json`.
+- At real Chromium 200% zoom (1920 outer pixels, 960 CSS pixels, DPR 2), typed
+  `@` in the empty disposable Markdown composer, filtered `local`, and used Enter
+  on the exact `local-helper` option. The unconnected destination triggered
+  inline approval. Source and destination context were visible, with no
+  horizontal page/dialog overflow. Tab reached duration, direction, details,
+  Cancel, and Approve; the footer scrolled into view. Escape closed the dialog,
+  returned focus to the editor, and preserved the complete typed reference.
+- Account-home inspection confirmed no grant for that source/target pair. No
+  approval or send was submitted. Restored only the exact QA reference draft to
+  its original empty value, restored 100% zoom, and closed the temporary Chrome
+  settings tab. Evidence: `/tmp/agent-mentions-composer-zoom-*`, including the
+  picker/footer screenshots and cancel/restoration JSON.
+- Remaining: genuine positive browser passkey approval, positive successive
+  two-human execution, live revoke/owning-bay outage, and lost-acknowledgment
+  behavior. The implementation goal remains open; the second runnable account
+  and human browser verification are prerequisites, not reasons to skip the
+  independent fault tests.
