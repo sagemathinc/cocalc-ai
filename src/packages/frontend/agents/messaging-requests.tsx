@@ -172,22 +172,29 @@ function AccountMessagingRequests({
   }
   if (!requests.length && !error && !loadError) return null;
   return (
-    <section aria-label="Agent messaging approvals">
+    <section
+      aria-label="Agent messaging approvals"
+      style={{ minWidth: 0, overflowWrap: "anywhere" }}
+    >
       <div role="status">
         {requests.length} agent messaging approval request
         {requests.length === 1 ? "" : "s"}
       </div>
       {requests.map((request) => (
-        <div key={request.request_id}>
+        <div key={request.request_id} style={{ marginTop: 8 }}>
+          <p style={{ marginBottom: 4 }}>
+            {label(request.source)} to {label(request.target)}
+          </p>
           <Button
             size="small"
+            aria-label={`Review messaging request: ${label(request.source)} to ${label(request.target)}`}
+            style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
             onClick={() => {
               setError("");
               setSelected(request);
             }}
           >
-            Review messaging request: {label(request.source)} to{" "}
-            {label(request.target)}
+            Review messaging request
           </Button>
         </div>
       ))}
@@ -233,7 +240,11 @@ function AccountMessagingRequests({
             setSelected(undefined);
           }
         }}
-        modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
+        modalRender={(node) => (
+          <KeyboardBoundary>
+            <div style={{ overflowWrap: "anywhere" }}>{node}</div>
+          </KeyboardBoundary>
+        )}
       >
         {selected && (
           <>

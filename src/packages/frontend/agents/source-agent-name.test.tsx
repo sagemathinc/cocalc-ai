@@ -188,7 +188,7 @@ test("rename dialog checks other current names without submitting", async () => 
   expect(mockApi.nameAgent).not.toHaveBeenCalled();
 });
 
-async function openUnnamedRequest() {
+async function openUnnamedRequest(keyboard = false) {
   mockApi.listPersonalConnectionRequests.mockResolvedValue({
     enabled: true,
     requests: [
@@ -207,9 +207,14 @@ async function openUnnamedRequest() {
   });
   const user = userEvent.setup();
   render(<AgentMessagingRequests />);
-  await user.click(
-    await screen.findByRole("button", { name: /^Review messaging request:/ }),
-  );
+  const review = await screen.findByRole("button", {
+    name: /^Review messaging request:/,
+  });
+  if (keyboard) {
+    await user.tab();
+    expect(review).toHaveFocus();
+    await user.keyboard("{Enter}");
+  } else await user.click(review);
   expect(
     screen.getByRole("button", { name: "Approve requested connection" }),
   ).toBeDisabled();
@@ -220,6 +225,24 @@ async function openUnnamedRequest() {
   );
   return user;
 }
+
+test("request review uses a compact button with full accessible context and keyboard focus return", async () => {
+  const user = await openUnnamedRequest(true);
+  const review = screen.getByRole("button", {
+    name: /^Review messaging request:/,
+  });
+  expect(review).toHaveTextContent(/^Review messaging request$/);
+  expect(review).toHaveAccessibleName(expect.stringContaining("@reviewer"));
+  expect(review).toHaveAccessibleName(expect.stringContaining(source.agent_id));
+  expect(review).toHaveStyle({ maxWidth: "100%", whiteSpace: "normal" });
+  expect(
+    screen.getByRole("region", { name: "Agent messaging approvals" }),
+  ).toHaveStyle({ overflowWrap: "anywhere" });
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() => expect(review).toHaveFocus());
+  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+});
 
 test("typed in-turn request requires a source name to approve but can still be denied", async () => {
   const user = await openUnnamedRequest();
