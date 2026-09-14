@@ -11,6 +11,7 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
+import { useSourceAgentName } from "./source-agent-name";
 
 export interface ApprovalTarget {
   source: AgentEndpoint;
@@ -38,6 +39,7 @@ export function ConnectionApproval({
     value.bothDirections ?? false,
   );
   const [busy, setBusy] = useState(false);
+  const sourceNaming = useSourceAgentName(value.source, value.sourceName, busy);
   const [error, setError] = useState("");
   const lock = useRef(false);
   const alive = useRef(true);
@@ -50,7 +52,7 @@ export function ConnectionApproval({
   const attempt = useRef<{ key: string; id: string } | undefined>(undefined);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   async function approve() {
-    if (lock.current) return;
+    if (lock.current || !sourceNaming.canApprove) return;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -64,6 +66,12 @@ export function ConnectionApproval({
       if (attempt.current?.key !== key) attempt.current = { key, id: uuid() };
       const requestId = attempt.current.id;
       const completed = await runFreshAuthAction(async () => {
+        boundAccount.assertCurrent();
+        if (!alive.current)
+          throw new Error(
+            "The approval context changed. Review the connection again.",
+          );
+        await sourceNaming.ensureNamed();
         boundAccount.assertCurrent();
         if (!alive.current)
           throw new Error(
@@ -94,7 +102,7 @@ export function ConnectionApproval({
         title="Approve agent communication"
         okText="Approve connection"
         confirmLoading={busy}
-        okButtonProps={{ disabled: busy }}
+        okButtonProps={{ disabled: busy || !sourceNaming.canApprove }}
         onOk={() => void approve()}
         onCancel={() => {
           if (!busy) onClose(false);
@@ -103,8 +111,12 @@ export function ConnectionApproval({
       >
         <Space orientation="vertical" style={{ width: "100%" }}>
           <p>
-            <strong>{value.sourceLabel}</strong> may message{" "}
-            <strong>{value.targetLabel}</strong> under your account.
+            <strong>
+              {sourceNaming.known
+                ? `@${sourceNaming.known.name}`
+                : value.sourceLabel}
+            </strong>{" "}
+            may message <strong>{value.targetLabel}</strong> under your account.
           </p>
           <div>
             From: {value.sourceName?.thread_title ?? value.sourceLabel} /{" "}
@@ -114,6 +126,7 @@ export function ConnectionApproval({
             To: {value.targetName?.thread_title ?? value.targetLabel} /{" "}
             {value.targetName?.project_title ?? "Project name unavailable"}
           </div>
+          {sourceNaming.field}
           {value.namingAccountId && value.namingAccountId !== accountId && (
             <p>
               This reference was named in another account. You are approving

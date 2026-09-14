@@ -7,8 +7,9 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
-import { personalAgentApi, refreshNamedAgents } from "./api";
+import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
+import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 
 export function NameAgent({
   agent,
@@ -29,6 +30,7 @@ export function NameAgent({
 }) {
   const id = useId();
   const boundAccount = useBoundAgentAccount();
+  const { directory } = useNamedAgents();
   const [open, setOpen] = useState(initiallyOpen);
   const [name, setName] = useState(agent?.name ?? "");
   const [description, setDescription] = useState(agent?.description ?? "");
@@ -36,8 +38,17 @@ export function NameAgent({
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const problem = agentNameProblem(
+    name,
+    directory?.agents ?? [],
+    agent?.endpoint ?? {
+      project_id: projectId,
+      path,
+      thread_id: threadId,
+    },
+  );
   async function save() {
-    if (lock.current) return;
+    if (lock.current || problem) return;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -99,7 +110,7 @@ export function NameAgent({
         title="Name in your agents"
         okText="Save agent name"
         confirmLoading={busy}
-        okButtonProps={{ disabled: !name.trim() || busy }}
+        okButtonProps={{ disabled: !!problem || busy }}
         onOk={() => void save()}
         onCancel={() => {
           if (!busy) setOpen(false);
@@ -111,22 +122,14 @@ export function NameAgent({
             This name is in your account across projects. Naming does not start
             work, grant communication, or make shared chat history private.
           </p>
-          <label htmlFor={`${id}-name`}>Agent name</label>
-          <Input
+          <AgentNameInput
             id={`${id}-name`}
-            autoFocus
             value={name}
-            maxLength={32}
-            disabled={busy}
-            aria-describedby={`${id}-help`}
-            aria-invalid={!!error}
-            onChange={(event) => setName(event.target.value)}
-            onPressEnter={() => void save()}
+            busy={busy}
+            problem={name.trim() ? problem : undefined}
+            onChange={setName}
+            onEnter={() => void save()}
           />
-          <div id={`${id}-help`}>
-            1-32 letters, digits or internal hyphens, beginning with a letter.
-            Old names are retired after renaming.
-          </div>
           <label htmlFor={`${id}-description`}>Description (optional)</label>
           <Input.TextArea
             id={`${id}-description`}

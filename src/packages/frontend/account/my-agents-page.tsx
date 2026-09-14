@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useId, useRef, useState } from "react";
 import { Alert, Button, Card, Input, Modal, Space, Tag } from "antd";
 import { defineMessage } from "react-intl";
 import type {
@@ -25,10 +25,12 @@ import { agentThreadUrl } from "@cocalc/frontend/chat/agent-thread-url";
 import type { SettingsPageDefinition } from "./settings-page";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useBoundAgentAccount } from "@cocalc/frontend/agents/use-bound-account";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
   formatConnectionTime,
-  groupPersonalConnections,
+  groupPersonalConnectionPairs,
   latestConnectionObservation,
+  summarizeConnectionPair,
 } from "@cocalc/frontend/agents/connection-groups";
 
 export function MyAgentsPage() {
@@ -37,6 +39,8 @@ export function MyAgentsPage() {
 }
 
 function AccountAgentsPage() {
+  const tableId = useId();
+  const [expandedPair, setExpandedPair] = useState<string>();
   const boundAccount = useBoundAgentAccount();
   const { directory, error: directoryError, loading } = useNamedAgents();
   const [connections, setConnections] = useState<PersonalConnectionDirectory>();
@@ -132,7 +136,7 @@ function AccountAgentsPage() {
     const agent = directory?.agents.find((agent) =>
       sameEndpoint(agent.endpoint, endpoint),
     );
-    return agent ? `@${agent.name}` : endpoint.agent_id;
+    return agent ? `@${agent.name}` : "Unnamed agent";
   };
   return (
     <Space
@@ -285,161 +289,377 @@ function AccountAgentsPage() {
         {connections?.controls?.paused && (
           <div role="status">All your agent communication is paused.</div>
         )}
-        {groupPersonalConnections(connections?.connections ?? [])
-          .filter(
-            (group) =>
-              !filter ||
-              group.connections.some(
-                (connection) =>
-                  connection.source.agent_id === filter ||
-                  connection.target.agent_id === filter,
-              ),
-          )
-          .map((group) => {
-            const connection = group.connections[0];
-            const statuses = [
-              ...new Set(group.connections.map((entry) => entry.status)),
-            ];
-            const expiries = [
-              ...new Set(group.connections.map((entry) => entry.expires_at)),
-            ];
-            const allRevoked = statuses.every((status) => status === "revoked");
-            const needsApproval = statuses.some(
-              (status) => status === "revoked" || status === "expired",
-            );
-            const allPaused = group.connections.every((entry) => entry.paused);
-            const label = group.bidirectional
-              ? `${endpointLabel(connection.source)} and ${endpointLabel(connection.target)}`
-              : `${endpointLabel(connection.source)} sends to ${endpointLabel(connection.target)}`;
-            return (
-              <Card
-                key={group.id}
-                role="group"
-                aria-label={`Connection: ${label}`}
-                size="small"
-                style={{ marginTop: 8 }}
-              >
-                <Space
-                  orientation="vertical"
-                  style={{ width: "100%", overflowWrap: "anywhere" }}
-                >
-                  <strong>{label}</strong>
-                  {group.bidirectional && (
-                    <div>Communication in both directions</div>
-                  )}
-                  <div>
-                    Status: {statuses.join(" / ")}
-                    {statuses.length > 1 ? " (varies by direction)" : ""}.{" "}
-                    {expiries.length > 1
-                      ? "Expiry varies by direction"
-                      : connection.expires_at == null
-                        ? "Never expires"
-                        : `Expires ${formatConnectionTime(connection.expires_at)}`}
-                    .
-                  </div>
-                  <div>
-                    Last observed attempt
-                    {group.bidirectional ? " (either direction)" : ""}:{" "}
-                    {formatConnectionTime(
-                      latestConnectionObservation(
-                        group.connections,
-                        "last_attempt_at",
-                      ),
-                    )}
-                  </div>
-                  <div>
-                    Last observed acceptance
-                    {group.bidirectional ? " (either direction)" : ""}:{" "}
-                    {formatConnectionTime(
-                      latestConnectionObservation(
-                        group.connections,
-                        "last_accepted_at",
-                      ),
-                    )}
-                  </div>
-                  <Space wrap>
-                    {needsApproval && (
-                      <Button
-                        disabled={busy || connections?.controls?.paused}
-                        onClick={() =>
-                          setApproval({
-                            source: connection.source,
-                            target: connection.target,
-                            sourceLabel: endpointLabel(connection.source),
-                            targetLabel: endpointLabel(connection.target),
-                            bothDirections: group.bidirectional,
-                            sourceName: directory?.agents.find((agent) =>
-                              sameEndpoint(agent.endpoint, connection.source),
-                            ),
-                            targetName: directory?.agents.find((agent) =>
-                              sameEndpoint(agent.endpoint, connection.target),
-                            ),
-                          })
-                        }
+        <table
+          style={{
+            width: "100%",
+            tableLayout: "fixed",
+            borderCollapse: "collapse",
+            marginTop: 12,
+            overflowWrap: "anywhere",
+          }}
+        >
+          <caption style={{ textAlign: "left", color: UI_COLORS.secondary }}>
+            One row per agent pair. Open Details for controls and approval
+            history.
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col" style={{ textAlign: "left", width: "44%" }}>
+                Agents
+              </th>
+              <th scope="col" style={{ textAlign: "left", width: "28%" }}>
+                Direction
+              </th>
+              <th scope="col" style={{ textAlign: "left", width: "28%" }}>
+                Details
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {groupPersonalConnectionPairs(connections?.connections ?? [])
+              .filter(
+                (pair) =>
+                  !filter ||
+                  pair.visible[0].connections.some(
+                    (connection) =>
+                      connection.source.agent_id === filter ||
+                      connection.target.agent_id === filter,
+                  ),
+              )
+              .map((pair, index) => {
+                const summary = summarizeConnectionPair(
+                  pair,
+                  !!connections?.controls?.paused,
+                );
+                const label = `${endpointLabel(summary.source)} / ${endpointLabel(summary.target)}`;
+                const expanded = expandedPair === pair.id;
+                const detailsId = `${tableId}-pair-${index}`;
+                return (
+                  <Fragment key={pair.id}>
+                    <tr style={{ borderTop: `1px solid ${UI_COLORS.border}` }}>
+                      <th
+                        scope="row"
+                        style={{
+                          textAlign: "left",
+                          padding: "10px 4px",
+                          verticalAlign: "top",
+                          fontWeight: 500,
+                        }}
                       >
-                        {statuses.includes("revoked")
-                          ? "Approve new connection"
-                          : "Renew connection"}
-                      </Button>
-                    )}
-                    {!allRevoked && (!allPaused || !needsApproval) && (
-                      <Button
-                        disabled={busy}
-                        aria-label={`${allPaused ? "Resume" : "Pause"} connection: ${label}`}
-                        onClick={() =>
-                          connectionAction(
-                            group.id,
-                            allPaused ? "active" : "paused",
-                          )
-                        }
-                      >
-                        {allPaused ? "Resume" : "Pause"}
-                      </Button>
-                    )}
-                    {!allRevoked && (
-                      <Button
-                        danger
-                        disabled={busy}
-                        aria-label={`Revoke connection: ${label}`}
-                        onClick={() => connectionAction(group.id, "revoked")}
-                      >
-                        Revoke
-                      </Button>
-                    )}
-                  </Space>
-                  <details>
-                    <summary>Connection details</summary>
-                    <p>Direction group: {group.id}</p>
-                    {group.connections.map((direction) => (
-                      <div key={direction.link_id}>
-                        <strong>
-                          {endpointLabel(direction.source)} sends to{" "}
-                          {endpointLabel(direction.target)}
-                        </strong>
-                        <p>Direction status: {direction.status}</p>
-                        <p>
-                          Expires:{" "}
-                          {direction.expires_at == null
-                            ? "Never expires"
-                            : formatConnectionTime(direction.expires_at)}
-                        </p>
-                        <p>Reason: {direction.reason}</p>
-                        <p>Grant: {direction.link_id}</p>
-                        <p>
-                          Last attempt:{" "}
-                          {formatConnectionTime(direction.last_attempt_at)}
-                        </p>
-                        <p>
-                          Last accepted:{" "}
-                          {formatConnectionTime(direction.last_accepted_at)}
-                        </p>
-                      </div>
-                    ))}
-                  </details>
-                </Space>
-              </Card>
-            );
-          })}
+                        <div>{endpointLabel(summary.source)}</div>
+                        <div>{endpointLabel(summary.target)}</div>
+                      </th>
+                      <td style={{ padding: "10px 4px", verticalAlign: "top" }}>
+                        <span
+                          role="img"
+                          aria-label={
+                            summary.forward && summary.reverse
+                              ? `${label}: communication in both directions`
+                              : summary.forward
+                                ? `${endpointLabel(summary.source)} sends to ${endpointLabel(summary.target)}`
+                                : summary.reverse
+                                  ? `${endpointLabel(summary.target)} sends to ${endpointLabel(summary.source)}`
+                                  : summary.label
+                          }
+                        >
+                          <span aria-hidden="true">{summary.symbol}</span>
+                        </span>
+                        <div>{summary.label}</div>
+                      </td>
+                      <td style={{ padding: "10px 4px", verticalAlign: "top" }}>
+                        <Button
+                          size="small"
+                          aria-label={`Details: ${label}`}
+                          aria-expanded={expanded}
+                          aria-controls={detailsId}
+                          onClick={() =>
+                            setExpandedPair(expanded ? undefined : pair.id)
+                          }
+                        >
+                          {expanded ? "Hide" : "Details"}
+                        </Button>
+                      </td>
+                    </tr>
+                    <tr id={detailsId} hidden={!expanded}>
+                      <td colSpan={3}>
+                        <section aria-label={`Approvals: ${label}`}>
+                          {pair.visible.length > 1 && (
+                            <p>
+                              These agents have {pair.visible.length} current
+                              approvals. Each approval has independent controls.
+                            </p>
+                          )}
+                          {pair.visible.map((group) => {
+                            const connection = group.connections[0];
+                            const statuses = [
+                              ...new Set(
+                                group.connections.map((entry) => entry.status),
+                              ),
+                            ];
+                            const expiries = [
+                              ...new Set(
+                                group.connections.map(
+                                  (entry) => entry.expires_at,
+                                ),
+                              ),
+                            ];
+                            const allRevoked = statuses.every(
+                              (status) => status === "revoked",
+                            );
+                            const needsApproval = statuses.some(
+                              (status) =>
+                                status === "revoked" || status === "expired",
+                            );
+                            const allPaused = group.connections.every(
+                              (entry) => entry.paused,
+                            );
+                            const label = group.bidirectional
+                              ? `${endpointLabel(connection.source)} and ${endpointLabel(connection.target)}`
+                              : `${endpointLabel(connection.source)} sends to ${endpointLabel(connection.target)}`;
+                            return (
+                              <Card
+                                key={group.id}
+                                role="group"
+                                aria-label={`Connection: ${label}`}
+                                size="small"
+                                style={{ marginTop: 8 }}
+                              >
+                                <Space
+                                  orientation="vertical"
+                                  style={{
+                                    width: "100%",
+                                    overflowWrap: "anywhere",
+                                  }}
+                                >
+                                  <strong>{label}</strong>
+                                  {group.bidirectional && (
+                                    <div>Communication in both directions</div>
+                                  )}
+                                  <div>
+                                    Status: {statuses.join(" / ")}
+                                    {statuses.length > 1
+                                      ? " (varies by direction)"
+                                      : ""}
+                                    .{" "}
+                                    {expiries.length > 1
+                                      ? "Expiry varies by direction"
+                                      : connection.expires_at == null
+                                        ? "Never expires"
+                                        : `Expires ${formatConnectionTime(connection.expires_at)}`}
+                                    .
+                                  </div>
+                                  <div>
+                                    Last observed attempt
+                                    {group.bidirectional
+                                      ? " (either direction)"
+                                      : ""}
+                                    :{" "}
+                                    {formatConnectionTime(
+                                      latestConnectionObservation(
+                                        group.connections,
+                                        "last_attempt_at",
+                                      ),
+                                    )}
+                                  </div>
+                                  <div>
+                                    Last observed acceptance
+                                    {group.bidirectional
+                                      ? " (either direction)"
+                                      : ""}
+                                    :{" "}
+                                    {formatConnectionTime(
+                                      latestConnectionObservation(
+                                        group.connections,
+                                        "last_accepted_at",
+                                      ),
+                                    )}
+                                  </div>
+                                  <Space wrap>
+                                    {needsApproval && (
+                                      <Button
+                                        disabled={
+                                          busy || connections?.controls?.paused
+                                        }
+                                        onClick={() =>
+                                          setApproval({
+                                            source: connection.source,
+                                            target: connection.target,
+                                            sourceLabel: endpointLabel(
+                                              connection.source,
+                                            ),
+                                            targetLabel: endpointLabel(
+                                              connection.target,
+                                            ),
+                                            bothDirections: group.bidirectional,
+                                            sourceName: directory?.agents.find(
+                                              (agent) =>
+                                                sameEndpoint(
+                                                  agent.endpoint,
+                                                  connection.source,
+                                                ),
+                                            ),
+                                            targetName: directory?.agents.find(
+                                              (agent) =>
+                                                sameEndpoint(
+                                                  agent.endpoint,
+                                                  connection.target,
+                                                ),
+                                            ),
+                                          })
+                                        }
+                                      >
+                                        {statuses.includes("revoked")
+                                          ? "Approve new connection"
+                                          : "Renew connection"}
+                                      </Button>
+                                    )}
+                                    {!allRevoked &&
+                                      (!allPaused || !needsApproval) && (
+                                        <Button
+                                          disabled={busy}
+                                          aria-label={`${allPaused ? "Resume" : "Pause"} connection: ${label}`}
+                                          onClick={() =>
+                                            connectionAction(
+                                              group.id,
+                                              allPaused ? "active" : "paused",
+                                            )
+                                          }
+                                        >
+                                          {allPaused ? "Resume" : "Pause"}
+                                        </Button>
+                                      )}
+                                    {!allRevoked && (
+                                      <Button
+                                        danger
+                                        disabled={busy}
+                                        aria-label={`Revoke connection: ${label}`}
+                                        onClick={() =>
+                                          connectionAction(group.id, "revoked")
+                                        }
+                                      >
+                                        Revoke
+                                      </Button>
+                                    )}
+                                  </Space>
+                                  <details>
+                                    <summary>Connection details</summary>
+                                    <p>Direction group: {group.id}</p>
+                                    {group.connections.map((direction) => (
+                                      <div key={direction.link_id}>
+                                        <strong>
+                                          {endpointLabel(direction.source)}{" "}
+                                          sends to{" "}
+                                          {endpointLabel(direction.target)}
+                                        </strong>
+                                        <p>
+                                          Direction status: {direction.status}
+                                        </p>
+                                        <p>
+                                          Expires:{" "}
+                                          {direction.expires_at == null
+                                            ? "Never expires"
+                                            : formatConnectionTime(
+                                                direction.expires_at,
+                                              )}
+                                        </p>
+                                        <p>Reason: {direction.reason}</p>
+                                        <p>Grant: {direction.link_id}</p>
+                                        <p>
+                                          Source agent:{" "}
+                                          {direction.source.agent_id} / project{" "}
+                                          {direction.source.project_id}
+                                        </p>
+                                        <p>
+                                          Target agent:{" "}
+                                          {direction.target.agent_id} / project{" "}
+                                          {direction.target.project_id}
+                                        </p>
+                                        <p>
+                                          Last attempt:{" "}
+                                          {formatConnectionTime(
+                                            direction.last_attempt_at,
+                                          )}
+                                        </p>
+                                        <p>
+                                          Last accepted:{" "}
+                                          {formatConnectionTime(
+                                            direction.last_accepted_at,
+                                          )}
+                                        </p>
+                                      </div>
+                                    ))}
+                                  </details>
+                                </Space>
+                              </Card>
+                            );
+                          })}
+                          {pair.history.length > 0 && (
+                            <details
+                              style={{ marginTop: 8, overflowWrap: "anywhere" }}
+                            >
+                              <summary>
+                                Earlier approvals ({pair.history.length})
+                              </summary>
+                              <p>
+                                These approvals are expired or revoked. They are
+                                retained for inspection, not additional current
+                                connections.
+                              </p>
+                              {pair.history.map((group) => (
+                                <Card
+                                  key={group.id}
+                                  size="small"
+                                  style={{ marginTop: 8 }}
+                                >
+                                  <p>
+                                    Approved:{" "}
+                                    {formatConnectionTime(
+                                      group.connections[0].created_at,
+                                    )}
+                                  </p>
+                                  {group.connections.map((entry) => (
+                                    <div key={entry.link_id}>
+                                      <strong>
+                                        {endpointLabel(entry.source)} sends to{" "}
+                                        {endpointLabel(entry.target)}
+                                      </strong>
+                                      <p>
+                                        {entry.status === "revoked"
+                                          ? "Revoked"
+                                          : "Expired"}
+                                        .
+                                        {entry.expires_at == null
+                                          ? " No scheduled expiry."
+                                          : ` Expiry: ${formatConnectionTime(entry.expires_at)}.`}
+                                      </p>
+                                      <p>Reason: {entry.reason}</p>
+                                      <p>Grant: {entry.link_id}</p>
+                                      <p>
+                                        Last observed attempt:{" "}
+                                        {formatConnectionTime(
+                                          entry.last_attempt_at,
+                                        )}
+                                      </p>
+                                      <p>
+                                        Last observed acceptance:{" "}
+                                        {formatConnectionTime(
+                                          entry.last_accepted_at,
+                                        )}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </Card>
+                              ))}
+                            </details>
+                          )}
+                        </section>
+                      </td>
+                    </tr>
+                  </Fragment>
+                );
+              })}
+          </tbody>
+        </table>
         {connections?.connections.length === 0 && (
           <p>
             No connections yet. Select a named agent with @ in an agent composer

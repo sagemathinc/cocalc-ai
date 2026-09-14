@@ -9,6 +9,7 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useBoundAgentAccount } from "./use-bound-account";
+import { useSourceAgentName } from "./source-agent-name";
 
 /** A first-party typed request inbox. Reading/denying/approving never dispatches a message. */
 interface Props {
@@ -38,6 +39,7 @@ function AccountMessagingRequests({
   const [requests, setRequests] = useState<PersonalConnectionRequest[]>([]);
   const [selected, setSelected] = useState<PersonalConnectionRequest>();
   const [busy, setBusy] = useState(false);
+  const sourceNaming = useSourceAgentName(selected?.source, undefined, busy);
   const [error, setError] = useState("");
   const [revision, setRevision] = useState(0);
   const lock = useRef(false);
@@ -131,6 +133,7 @@ function AccountMessagingRequests({
   };
   async function resolve(decision: "approve" | "deny") {
     if (!selected || selected.account_id !== accountId || lock.current) return;
+    if (decision === "approve" && !sourceNaming.canApprove) return;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -140,6 +143,12 @@ function AccountMessagingRequests({
         if (!alive.current)
           throw new Error(
             "The account or thread changed. Review the request in the current session.",
+          );
+        if (decision === "approve") await sourceNaming.ensureNamed();
+        boundAccount.assertCurrent();
+        if (!alive.current)
+          throw new Error(
+            "The request context changed. Review it in the current session.",
           );
         await personalAgentApi().resolvePersonalConnectionRequest({
           request_id: selected.request_id,
@@ -195,6 +204,7 @@ function AccountMessagingRequests({
             <Button
               type="primary"
               loading={busy}
+              disabled={busy || !sourceNaming.canApprove}
               onClick={() => void resolve("approve")}
             >
               Approve requested connection
@@ -213,6 +223,7 @@ function AccountMessagingRequests({
               {label(selected.target)} under your account.
             </p>
             <p>Reason: {selected.reason}</p>
+            {sourceNaming.field}
             <p>
               Direction:{" "}
               {selected.both_directions ? "Both directions" : "One way"}.

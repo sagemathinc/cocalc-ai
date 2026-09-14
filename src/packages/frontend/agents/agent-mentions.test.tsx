@@ -37,7 +37,19 @@ const namedAgent = {
   project_title: "Review project",
   thread_title: "Code review",
 };
-const mockDirectory = { enabled: true, agents: [namedAgent] };
+const mockDirectory = {
+  enabled: true,
+  agents: [
+    namedAgent,
+    {
+      ...namedAgent,
+      name: "builder",
+      endpoint: source,
+      thread_id: "source",
+      path: "/source.chat",
+    },
+  ],
+};
 const activeConnection = {
   source,
   target,
@@ -516,6 +528,7 @@ test("My Agents presents a bidirectional pair once with shared keyboard-operable
   });
   const user = userEvent.setup();
   render(<MyAgentsPage />);
+  await user.click(await screen.findByRole("button", { name: /^Details:/ }));
   await screen.findByText("Communication in both directions");
   const groups = screen.getAllByRole("group", { name: /^Connection:/ });
   expect(groups).toHaveLength(1);
@@ -554,6 +567,87 @@ test("My Agents presents a bidirectional pair once with shared keyboard-operable
   );
 });
 
+test("My Agents collapses old approvals without hiding another current grant", async () => {
+  mockApi.listPersonalConnections.mockResolvedValue({
+    enabled: true,
+    connections: [
+      activeConnection,
+      {
+        ...activeConnection,
+        link_id: "old",
+        direction_group_id: "old-group",
+        status: "expired",
+        created_at: "2026-09-01T00:00:00Z",
+        reason: "Previous test approval",
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  render(<MyAgentsPage />);
+  const details = await screen.findByRole("button", { name: /^Details:/ });
+  expect(details).toHaveAttribute("aria-expanded", "false");
+  expect(
+    screen.queryByRole("button", { name: /^Pause connection:/ }),
+  ).toBeNull();
+  details.focus();
+  await user.keyboard("{Enter}");
+  expect(details).toHaveAttribute("aria-expanded", "true");
+  const summary = await screen.findByText("Earlier approvals (1)");
+  const history = summary.closest("details")!;
+  expect(history).not.toHaveAttribute("open");
+  expect(screen.getAllByRole("group", { name: /^Connection:/ })).toHaveLength(
+    1,
+  );
+  expect(
+    screen.getAllByRole("button", { name: /^Pause connection:/ }),
+  ).toHaveLength(1);
+  expect(mockApi.setPersonalConnectionState).not.toHaveBeenCalled();
+  await user.click(summary);
+  expect(history).toHaveAttribute("open");
+  expect(
+    within(history).getByText("Reason: Previous test approval"),
+  ).toBeVisible();
+  expect(within(history).queryByRole("button")).toBeNull();
+  expect(mockApi.setPersonalConnectionState).not.toHaveBeenCalled();
+  details.focus();
+  await user.keyboard("{Enter}");
+  expect(details).toHaveAttribute("aria-expanded", "false");
+  expect(details).toHaveFocus();
+  expect(
+    screen.queryByRole("button", { name: /^Pause connection:/ }),
+  ).toBeNull();
+});
+
+test("one table row retains separate controls for overlapping current approvals", async () => {
+  mockApi.listPersonalConnections.mockResolvedValue({
+    enabled: true,
+    connections: [
+      activeConnection,
+      {
+        ...activeConnection,
+        link_id: "other-link",
+        direction_group_id: "other-group",
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  render(<MyAgentsPage />);
+  const details = await screen.findByRole("button", { name: /^Details:/ });
+  expect(screen.getAllByRole("button", { name: /^Details:/ })).toHaveLength(1);
+  expect(screen.getAllByRole("row")).toHaveLength(2);
+  await user.click(details);
+  const pauses = screen.getAllByRole("button", { name: /^Pause connection:/ });
+  expect(pauses).toHaveLength(2);
+  await user.click(pauses[0]);
+  await waitFor(() =>
+    expect(mockApi.setPersonalConnectionState).toHaveBeenCalledTimes(1),
+  );
+  expect(mockApi.setPersonalConnectionState).toHaveBeenCalledWith({
+    direction_group_id: "group",
+    state: "paused",
+  });
+});
+
 test("bidirectional renewal offers one approval preserving both directions", async () => {
   mockApi.listPersonalConnections.mockResolvedValue({
     enabled: true,
@@ -570,6 +664,7 @@ test("bidirectional renewal offers one approval preserving both directions", asy
   });
   const user = userEvent.setup();
   render(<MyAgentsPage />);
+  await user.click(await screen.findByRole("button", { name: /^Details:/ }));
   await user.click(
     await screen.findByRole("button", { name: "Renew connection" }),
   );
@@ -609,7 +704,9 @@ test("pair observations use latest valid timestamps and mixed states stay explic
       },
     ],
   });
+  const user = userEvent.setup();
   render(<MyAgentsPage />);
+  await user.click(await screen.findByRole("button", { name: /^Details:/ }));
   await screen.findByText(/Status: active \/ paused \(varies by direction\)/);
   expect(
     screen.getByText(

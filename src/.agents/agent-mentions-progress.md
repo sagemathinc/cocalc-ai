@@ -230,6 +230,37 @@ Live evidence: `/tmp/agent-mentions-{grant,picker-open,inline-approval,warm-runn
 - Per-turn credentials constrain server APIs, not hostile processes sharing the
   same operating-system user. Shared project content can influence model output.
 
+## September 14 Connection Table And Naming Follow-Up
+
+- My Agents now uses a semantic HTML table with one summary row per endpoint
+  pair, usable direction indicators, and keyboard-operable Details controls.
+  Independent live approvals remain separately controllable inside Details;
+  expired/revoked approvals remain in collapsed read-only history. No records
+  were deleted or grants changed by this presentation cleanup.
+- Composer and typed in-turn approval dialogs require an unnamed source to be
+  named before creating a new grant. Existing grants are not retroactively
+  altered. Naming and granting are separate operations: if naming succeeds but
+  subsequent fresh-auth verification is canceled, the name can remain, without
+  a grant or send.
+- Both naming dialogs check syntax and conflicts against the loaded personal
+  directory as the user types. The server remains authoritative for concurrent
+  changes and retired names; a server-side naming conflict prevents approval.
+- Validation: 58 focused frontend agent tests, frontend typecheck, frontend lint,
+  and the static development build passed. Tests cover source naming in both
+  approval paths, cancel/deny, name races, directional summaries, overlapping
+  grants, collapsed history, and keyboard expansion/collapse.
+- Deployed the frontend to lite1b. In a fresh Chromium tab, verified the actual
+  builder/reviewer pair has one row and five historical approvals; checked the
+  table at 320 CSS pixels (document width 320, table width 285), keyboard
+  expansion/collapse, and actual light/dark appearance controls. Verified live
+  duplicate-name feedback and disabled Save, then canceled. Restored the
+  original system appearance. No names, permissions, or messages were mutated.
+  Source-naming approval itself is covered by component tests, not a new live
+  grant in this follow-up.
+- Evidence: `/tmp/agent-mentions-ux-all-agents-tests.log`,
+  `/tmp/agent-mentions-ux-{tsc,lint,static}.log`, and
+  `/tmp/agent-mentions-ux-{table,details}-dark-real.png`.
+
 ## Remaining Acceptance Work
 
 Live expiry/renewal and mobile UI checks are complete as described above.
