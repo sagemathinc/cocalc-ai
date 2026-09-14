@@ -286,9 +286,6 @@ Still unverified against the full plan:
   reused-session credential rotation, not just negative steering tests.
 - Positive approval/renewal through the native attention card. Live display,
   pending-state restoration across refresh, expiry, and denial now pass below.
-- Live revoke while the target is stopped and controls while its owning bay is
-  unavailable; a live lost-acknowledgment/unknown outcome without replay. Isolated
-  cold startup and a paused named send with the receiver stopped passed below.
 - Browser passkey completion for positive approval is still unverified. Composer
   selection/review/cancel, the pending attention card, and My Agents naming/table
   now pass at actual 200% browser zoom below.
@@ -301,6 +298,8 @@ session. Completing the browser's passkey confirmation requires the human;
 canceling it and approving through the typed CLI is not a browser approval pass.
 Cross-bay collaborator setup has now been fixed and live-verified; temporary
 access was removed after the test.
+Live stopped-target revocation, account controls during an owning-bay outage,
+and the accepted-to-unknown response-loss test now pass; see the final sections.
 Positive successive P/Q turns have not been live-proven. The new path stays
 opt-in; these gaps prevent a claim that every acceptance test is complete.
 
@@ -503,3 +502,72 @@ selection is not the same as a UUID-bound mention.
   behavior. The implementation goal remains open; the second runnable account
   and human browser verification are prerequisites, not reasons to skip the
   independent fault tests.
+
+## September 14 Owning-Bay Outage And Revocation
+
+- Suspended only the receiver bay-1 hub PID 682339 at 06:32:27 UTC, with a
+  240-second automatic SIGCONT watchdog and explicit cleanup. Loopback health
+  timed out while the process was stopped. The receiver project was stopped.
+- At 06:32:44, account-home listing and revocation succeeded without bay-1.
+  Both directions in disposable QA group
+  `c569c657-7e96-4ed5-8030-fdb959d47ffd` became revoked. History was retained.
+- The source submission during this outage failed before model execution:
+  resolving its selected mention timed out in `agent.getMentionIdentity`.
+  Attempt `570a7700-3cf6-453b-8b7b-43fa6e4acbf3` therefore proves fail-closed
+  turn admission, not a send-time rejection. It was not retried or replayed.
+- After the watchdog restored bay-1 at 06:36:27, a separate deliberate negative
+  test used the real scoped CLI and selected reference. Attempt
+  `0f8824f9-2cba-4e7f-975c-969bde19fe0c` returned `rejected`, `grant_revoked`.
+  Receiver stayed stopped with unchanged last activity; no renewal was requested.
+- A second, tightly bounded outage verified the actual My Agents pause button:
+  bay-1 suspended at 06:45:46.500; account-home controls confirmed paused at
+  06:45:49.192 while `ps` still showed the hub stopped; explicit SIGCONT restored
+  it at 06:45:49.251. Account pause was then restored to false. An earlier UI
+  click occurred after watchdog recovery and is not counted as outage evidence.
+- Artifacts: `/tmp/agent-mentions-outage-{revoked,after-revoke}.json`,
+  `/tmp/agent-mentions-revoked-recovered-activity.json`,
+  `/tmp/agent-mentions-outage-ui-{paused-verified,restored}.json`, and
+  `/tmp/agent-mentions-outage-final-receiver.json`. The ignored guarded harness
+  has separate `revoked-outage-send` and `revoked-recovered-send` cases; inspect
+  their existing IDs rather than resubmit. No target membership or quota changed.
+
+## September 14 Live Lost Acknowledgment
+
+- Added the opt-in test adapter and reproduction notes under
+  `packages/cli/sea/agent-messaging-lost-ack.*`. It wraps the built production
+  `sendIdentityMessage` helper, preserving its actual runtime credential lookup,
+  Conat transport, validation, unknown handling, and close behavior. A matching
+  accepted acknowledgment is deliberately discarded at the CLI transport
+  boundary. This is response-loss injection, not a claim of a physical outage.
+- A new explicit ten-minute one-way QA permission was created through the fresh
+  human's account-home API. Previous revoked grants remained revoked. Uploaded
+  fixture SHA-256:
+  `69e41a1f6b1acd57f7de020330aebf294ddbec778b0f2fe65333f0edfe008f21`.
+- Real `@messaging-qa` executed the fixture once with its own scoped environment.
+  Attempt `8897d818-6ff2-4449-ad7c-5fc093c48595` was accepted across hosts/bays
+  at 07:07:51.970. The fixture discarded that exact acknowledgment and the real
+  CLI helper returned `unknown` at 07:07:52.018. The source's terminal activity
+  contains one command, exit 0, and an honest unknown summary. No permission
+  renewal request was created.
+- Independently observed one receiver input
+  `fbba7ca2-16f3-4538-be36-4658d85dabf4` with authenticated attribution and the
+  matching attempt. Its assistant `04cc9979-1399-41a8-bae5-f556eaa41298` completed
+  at 07:09:53.328, acknowledging locally with no tools or outgoing message.
+  Early activity inspection showed only queued state; it was not treated as
+  failure and no restart/replay was attempted. Final live chat has exactly this
+  input/response pair after the test's submission, both not generating.
+- Revoked only the new QA group `cd692d1d-3d52-40d1-8094-d7b379fe7a5e` at
+  07:11:03.316 after completion. Account-wide pause remains off and bay-1 is
+  running. Receiver is left running after its admitted test; histories and
+  diagnostic evidence are retained, not erased.
+- Evidence: `.local/human-turn-qa/logs/lost-ack-source-activity.json`,
+  `live-lost-ack-{install,grant,send,evidence}-*.jsonl`,
+  `/tmp/agent-mentions-lost-ack-receiver-activity-2.json`,
+  `/tmp/agent-mentions-lost-ack-receiver-final.jsonl`, and
+  `/tmp/agent-mentions-lost-ack-{requests,cleanup}.json`. Harness send is guarded
+  against resubmission, and the fixture independently reserves its evidence path
+  before any network request.
+- Validation: CLI build passed; 11 focused helper/destination/fault-adapter tests
+  passed. No production source changed in this fault-test increment. Positive
+  successive two-human execution and actual browser passkey approval remain
+  unverified; they are not replaced by this successful fault test.
