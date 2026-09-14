@@ -35,7 +35,10 @@ import {
   setBillingAuthorityAccountFrozen,
   submitBillingAuthorityCommand,
 } from "./store";
-import { __test__ as serviceTest } from "./service";
+import {
+  __test__ as serviceTest,
+  handleBillingAuthorityTransportRequest,
+} from "./service";
 
 const describePostgres =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe.skip : describe;
@@ -129,6 +132,33 @@ describePostgres("billing authority PostgreSQL journal", () => {
         command: { kind: "maintenance", task: "subscriptions" },
       }),
     ).rejects.toMatchObject({ code: 409, status: 409 });
+  });
+
+  it("canonicalizes Unicode object keys independently of insertion order", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const command_id = randomUUID();
+    const precomposed = "\u00e9";
+    const decomposed = "e\u0301";
+    const command = (metadata: Record<string, unknown>) =>
+      ({
+        kind: "http",
+        operation: "admin-purchase",
+        input: { account_id: ACCOUNT_ID, metadata },
+      }) satisfies BillingAuthorityCommand;
+    const first = request(command({ [precomposed]: 1, [decomposed]: 2 }), {
+      command_id,
+    });
+    await submitBillingAuthorityCommand(first);
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...first,
+        command: command({ [decomposed]: 2, [precomposed]: 1 }),
+      }),
+    ).resolves.toMatchObject({ command_id, status: "queued", reused: true });
   });
 
   it("coalesces identical retry commands onto one durable outcome", async () => {
@@ -411,6 +441,107 @@ describePostgres("billing authority PostgreSQL journal", () => {
     expect(recovered?.command).toEqual(
       JSON.parse(JSON.stringify(refreshedCommand)),
     );
+  });
+
+  it("requeues a side-effect-free Hub auth failure with renewed credentials", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const command = {
+      kind: "hub-api" as const,
+      call: {
+        name: ADMIN_PACKAGE_HUB_METHOD,
+        account_id: ADMIN_ACCOUNT_ID,
+        auth_session_hash: "expired-fresh-auth-session",
+        args: [
+          {
+            account_id: ADMIN_ACCOUNT_ID,
+            user_account_id: ACCOUNT_ID,
+            product: {
+              type: "membership-package",
+              kind: "team",
+              membership_class: "standard",
+              seat_count: 1,
+              interval: "month",
+            },
+            price: 25,
+            source: "card",
+            reason: "approved package after renewed authentication",
+            idempotency_key: "pre-intent-hub-auth-recovery",
+          },
+        ],
+      },
+    } satisfies BillingAuthorityCommand;
+    const item = request(command);
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+      error: { message: "fresh authentication expired" },
+    });
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: {
+          ...command,
+          call: {
+            ...command.call,
+            args: [
+              {
+                ...command.call.args[0],
+                reason: "a different financial operation",
+              },
+            ],
+          },
+        },
+      }),
+    ).rejects.toMatchObject({ code: 409, status: 409 });
+
+    const refreshedCommand = {
+      ...command,
+      call: {
+        ...command.call,
+        auth_session_hash: "renewed-fresh-auth-session",
+      },
+    } satisfies BillingAuthorityCommand;
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: refreshedCommand,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "queued",
+    });
+    await expect(
+      claimNextBillingAuthorityCommand(identity),
+    ).resolves.toMatchObject({ command: refreshedCommand });
+
+    // Provider evidence without the workflow's durable intent is inconsistent
+    // and must never be guessed safe for another execution.
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+      error: { message: "provider response has no durable package intent" },
+    });
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        command: refreshedCommand,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: "failed", reused: true });
   });
 
   it("does not ignore credential changes for other Hub API methods", async () => {
@@ -819,6 +950,69 @@ describePostgres("billing authority PostgreSQL journal", () => {
       status: "failed",
       error: { message: "renewed authentication was rejected before replay" },
     });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: { message: "the first provider outcome was ambiguous" },
+    });
+    const authorityEnabled = process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+    try {
+      await expect(
+        handleBillingAuthorityTransportRequest({
+          action: "status",
+          command_id: item.command_id,
+        }),
+      ).resolves.toMatchObject({
+        ok: true,
+        value: {
+          status: "uncertain",
+          error: { message: "the first provider outcome was ambiguous" },
+        },
+      });
+    } finally {
+      if (authorityEnabled == null) {
+        delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+      } else {
+        process.env.COCALC_BILLING_AUTHORITY_ENABLED = authorityEnabled;
+      }
+    }
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: "queued" });
+    await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+      error: { message: "a later Stripe step was definitively rejected" },
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: { message: "the first provider outcome was ambiguous" },
+    });
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({ status: "queued" });
+    await expect(
+      cancelQueuedBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: { message: "the first provider outcome was ambiguous" },
+    });
     await getPool().query(
       `UPDATE billing_authority_commands
           SET provider_uncertain_started_at=clock_timestamp() - INTERVAL '24 hours'
@@ -831,7 +1025,11 @@ describePostgres("billing authority PostgreSQL journal", () => {
         ...item,
         expires_at: new Date(Date.now() + 60_000).toISOString(),
       }),
-    ).resolves.toMatchObject({ status: "failed", reused: true });
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      reused: true,
+      error: { message: "the first provider outcome was ambiguous" },
+    });
   });
 
   it("recovers a committed package after the provider replay window", async () => {

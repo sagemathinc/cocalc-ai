@@ -105,20 +105,35 @@ describe("billing authority context", () => {
     });
 
     expect(replayKey).toBe(originalKey);
+    let otherCommandKey = "";
     await runInBillingAuthorityContext({
       operation: "test",
       request_id: "different-command-id",
       fn: async () => {
-        await expect(
-          beginStripeMutation({
-            method: "POST",
-            path: "/v1/invoices",
-            body: "customer=cus_1",
-            existing_key: "create-package-invoice",
-          }),
-        ).resolves.not.toBe(originalKey);
+        otherCommandKey = await beginStripeMutation({
+          method: "POST",
+          path: "/v1/invoices",
+          body: "customer=cus_1",
+          existing_key: "create-package-invoice",
+        });
       },
     });
+    expect(otherCommandKey).toBe(originalKey);
+
+    let differentCallerKey = "";
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "different-command-id",
+      fn: async () => {
+        differentCallerKey = await beginStripeMutation({
+          method: "POST",
+          path: "/v1/invoices",
+          body: "customer=cus_1",
+          existing_key: "another-logical-invoice",
+        });
+      },
+    });
+    expect(differentCallerKey).not.toBe(originalKey);
   });
 
   it("records the provider boundary once before issuing mutation keys", async () => {

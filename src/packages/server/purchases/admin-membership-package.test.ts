@@ -9,6 +9,8 @@ import { uuid } from "@cocalc/util/misc";
 import adminCreateMembershipPackagePurchase from "./admin-membership-package";
 import {
   adminMembershipPackageBusinessIdentityHash,
+  adminMembershipPackageInvoiceId,
+  legacyAdminMembershipPackageRequestHash,
   normalizeAdminMembershipPackageBusinessIdentity,
   normalizeAdminMembershipPackageProduct,
 } from "./admin-membership-package-identity";
@@ -105,6 +107,7 @@ describe("admin membership package purchase", () => {
     });
 
     expect(first).toEqual(second);
+    expect(first.version).toBe(2);
     expect(first.custom_price).toBe(25.01);
     expect(adminMembershipPackageBusinessIdentityHash(first)).toBe(
       adminMembershipPackageBusinessIdentityHash(second),
@@ -120,6 +123,159 @@ describe("admin membership package purchase", () => {
         idempotency_key: "stable-key",
       }),
     ).toThrow("price must be a number");
+  });
+
+  it("reproduces the persisted PR #2 package request hash", () => {
+    expect(
+      legacyAdminMembershipPackageRequestHash({
+        admin_account_id: "11111111-1111-4111-8111-111111111111",
+        user_account_id: "22222222-2222-4222-8222-222222222222",
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: " standard ",
+          seat_count: 2,
+          interval: "month",
+          starts_at: "2026-10-01T00:00:00-07:00",
+          expires_at: "2026-11-01T00:00:00-07:00",
+          metadata: { z: 1, a: "x" },
+        },
+        custom_price: 25.01,
+        source: "card",
+        reason: "approved",
+        pricing_note: "note",
+      }),
+    ).toBe("f13889fb4a8dc3c489b00c22b8cbb69e2e8c237cc97b0459aac89ccc2f9d9f63");
+  });
+
+  it("canonicalizes distinct Unicode keys independently of insertion order", () => {
+    const precomposed = "\u00e9";
+    const decomposed = "e\u0301";
+    const common = {
+      admin_account_id: "11111111-1111-4111-8111-111111111111",
+      user_account_id: "22222222-2222-4222-8222-222222222222",
+      price: 25,
+      source: "card" as const,
+      reason: "approved",
+      idempotency_key: "unicode-metadata",
+    };
+    const identity = (metadata: Record<string, unknown>) =>
+      normalizeAdminMembershipPackageBusinessIdentity({
+        ...common,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: membershipClass,
+          seat_count: 1,
+          metadata,
+        },
+      });
+    const first = identity({ [precomposed]: 1, [decomposed]: 2 });
+    const second = identity({ [decomposed]: 2, [precomposed]: 1 });
+
+    expect(adminMembershipPackageBusinessIdentityHash(first)).toBe(
+      adminMembershipPackageBusinessIdentityHash(second),
+    );
+  });
+
+  it("consumes PR #2 intents and completed purchase hashes", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    const options = {
+      admin_account_id,
+      user_account_id,
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: membershipClass,
+        seat_count: 1,
+        interval: "month" as const,
+        starts_at: new Date("2026-10-01T00:00:00Z"),
+        expires_at: new Date("2026-11-01T00:00:00Z"),
+      },
+      price: 15,
+      source: "free" as const,
+      reason: "approved before the authority rollout",
+      idempotency_key: `legacy-package-${uuid()}`,
+      pricing_note: "legacy approved quote",
+    };
+    const legacyHash = legacyAdminMembershipPackageRequestHash({
+      admin_account_id,
+      user_account_id,
+      product: options.product,
+      custom_price: options.price,
+      source: options.source,
+      reason: options.reason,
+      pricing_note: options.pricing_note,
+    });
+    const currentHash = adminMembershipPackageBusinessIdentityHash(
+      normalizeAdminMembershipPackageBusinessIdentity(options),
+    );
+    const invoiceId = adminMembershipPackageInvoiceId(
+      admin_account_id,
+      options.idempotency_key,
+    );
+    await getPool().query(
+      `INSERT INTO admin_membership_package_intents
+         (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+       VALUES ($1, $2, $3, $4, $5::JSONB)`,
+      [
+        invoiceId,
+        user_account_id,
+        admin_account_id,
+        legacyHash,
+        {
+          version: 1,
+          quote: {
+            kind: "team",
+            membership_class: membershipClass,
+            seat_count: 1,
+            seat_price: 20,
+            total_price: 20,
+            interval: "month",
+          },
+          starts_at: options.product.starts_at.toISOString(),
+          expires_at: options.product.expires_at.toISOString(),
+          custom_price: options.price,
+          source: options.source,
+          reason: options.reason,
+          pricing_note: options.pricing_note,
+          metadata: {
+            admin_custom_price: options.price,
+            standard_total_price: 20,
+          },
+        },
+      ],
+    );
+
+    const created = await adminCreateMembershipPackagePurchase(options);
+    const { rows } = await getPool().query(
+      `SELECT description->>'admin_request_hash' AS request_hash
+         FROM purchases WHERE id=$1`,
+      [created.purchase_id],
+    );
+    expect(rows).toEqual([{ request_hash: currentHash }]);
+
+    await getPool().query(
+      `UPDATE purchases
+          SET description=jsonb_set(
+            description, '{admin_request_hash}', to_jsonb($2::TEXT))
+        WHERE id=$1`,
+      [created.purchase_id, legacyHash],
+    );
+    await expect(
+      adminCreateMembershipPackagePurchase(options),
+    ).resolves.toMatchObject({
+      package_id: created.package_id,
+      purchase_id: created.purchase_id,
+      existing: true,
+    });
   });
 
   it("atomically creates a custom-price package and reuses its idempotency key", async () => {

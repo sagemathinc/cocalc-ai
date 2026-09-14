@@ -230,7 +230,7 @@ function providerIdempotencyKey({
   // in call order: recovery can legitimately skip work that completed during
   // an earlier attempt (for example, Stripe customer creation).
   const identity = caller_key
-    ? { version: 2, request_id, caller_key }
+    ? { version: 3, caller_key }
     : {
         version: 1,
         request_id,
@@ -243,7 +243,7 @@ function providerIdempotencyKey({
   const hash = createHash("sha256")
     .update(JSON.stringify(identity))
     .digest("hex");
-  return `cocalc-ba-v1-${hash}`;
+  return `cocalc-ba-v2-${hash}`;
 }
 
 export async function beginStripeMutation({

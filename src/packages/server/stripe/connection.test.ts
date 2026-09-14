@@ -120,7 +120,7 @@ describe("authority-guarded Stripe HTTP client", () => {
     });
     const firstHeaders = makeRequest.mock.calls[0][4];
     const secondHeaders = makeRequest.mock.calls[1][4];
-    expect(firstHeaders["Idempotency-Key"]).toMatch(/^cocalc-ba-v1-/);
+    expect(firstHeaders["Idempotency-Key"]).toMatch(/^cocalc-ba-v2-/);
     expect(secondHeaders["Idempotency-Key"]).toBe(
       firstHeaders["Idempotency-Key"],
     );

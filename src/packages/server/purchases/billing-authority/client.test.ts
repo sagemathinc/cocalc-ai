@@ -347,6 +347,32 @@ describe("durable billing authority client", () => {
     expect(submittedId).toBe(commandId);
   });
 
+  it("surfaces retained provider ambiguity as an uncertain terminal result", async () => {
+    const commandId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    mockHandleTransport.mockResolvedValue({
+      ok: true,
+      value: record("uncertain", commandId, {
+        error: {
+          message: "a prior Stripe mutation outcome remains unresolved",
+          code: "stripe_mutation_outcome_unresolved",
+          status: 503,
+        },
+      }),
+    });
+
+    await expect(
+      executeBillingAuthorityCommand(
+        { kind: "commercial-maintenance", task: "stripe-events" },
+        { command_id: commandId },
+      ),
+    ).rejects.toMatchObject({
+      code: "stripe_mutation_outcome_unresolved",
+      status: 503,
+      billing_authority_command_id: commandId,
+      billing_authority_status: "uncertain",
+    });
+  });
+
   it("fails closed on attached bays without a dedicated authenticated transport", async () => {
     mockClusterRole.mockReturnValue("attached");
     await expect(

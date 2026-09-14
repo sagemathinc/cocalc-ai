@@ -33,6 +33,7 @@ import {
 import {
   adminMembershipPackageBusinessIdentityHash,
   adminMembershipPackageInvoiceId,
+  legacyAdminMembershipPackageRequestHash,
   normalizeAdminMembershipPackageBusinessIdentity,
   normalizeAdminMembershipPackageProduct,
   normalizeAdminMembershipPackageUuid,
@@ -177,13 +178,13 @@ async function getPackageIntent({
   invoice_id,
   account_id,
   admin_account_id,
-  request_hash,
+  accepted_request_hashes,
 }: {
   client: PoolClient;
   invoice_id: string;
   account_id: string;
   admin_account_id: string;
-  request_hash: string;
+  accepted_request_hashes: readonly string[];
 }): Promise<ApprovedPackageSnapshot | undefined> {
   const { rows } = await client.query<PackageIntentRow>(
     `SELECT account_id, admin_account_id, request_hash, snapshot
@@ -197,7 +198,7 @@ async function getPackageIntent({
   if (
     row.account_id !== account_id ||
     row.admin_account_id !== admin_account_id ||
-    row.request_hash !== request_hash
+    !accepted_request_hashes.includes(row.request_hash)
   ) {
     throw Error("idempotency key belongs to an incompatible purchase intent");
   }
@@ -275,12 +276,12 @@ async function resolveValidatedPackageQuote({
 async function getExistingPurchase({
   account_id,
   invoice_id,
-  request_hash,
+  accepted_request_hashes,
   client,
 }: {
   account_id: string;
   invoice_id: string;
-  request_hash?: string;
+  accepted_request_hashes?: readonly string[];
   client?: PoolClient;
 }): Promise<AdminMembershipPackagePurchaseResult | undefined> {
   const { rows } = await (client ?? getPool("medium")).query(
@@ -302,9 +303,9 @@ async function getExistingPurchase({
     throw Error("idempotency key belongs to an incompatible purchase");
   }
   if (
-    request_hash &&
+    accepted_request_hashes &&
     description.admin_request_hash &&
-    description.admin_request_hash !== request_hash
+    !accepted_request_hashes.includes(description.admin_request_hash)
   ) {
     throw Error("idempotency key belongs to an incompatible purchase");
   }
@@ -401,6 +402,7 @@ export default async function adminCreateMembershipPackagePurchase({
   pricing_note,
   trusted_admin = false,
 }: AdminMembershipPackagePurchaseOptions): Promise<AdminMembershipPackagePurchaseResult> {
+  const legacyProduct = product;
   admin_account_id = normalizeAdminMembershipPackageUuid(
     admin_account_id,
     "admin_account_id",
@@ -437,6 +439,18 @@ export default async function adminCreateMembershipPackagePurchase({
   const customPrice = toDecimal(businessIdentity.custom_price);
   const request_hash =
     adminMembershipPackageBusinessIdentityHash(businessIdentity);
+  const accepted_request_hashes = [
+    request_hash,
+    legacyAdminMembershipPackageRequestHash({
+      admin_account_id,
+      user_account_id,
+      product: legacyProduct,
+      custom_price: businessIdentity.custom_price,
+      source,
+      reason: normalizedReason,
+      pricing_note: normalizedPricingNote,
+    }),
+  ];
   const invoice_id = adminMembershipPackageInvoiceId(
     admin_account_id,
     idempotencyKey,
@@ -444,7 +458,7 @@ export default async function adminCreateMembershipPackagePurchase({
   const existing = await getExistingPurchase({
     account_id: user_account_id,
     invoice_id,
-    request_hash,
+    accepted_request_hashes,
   });
   if (existing) return existing;
   // Use a dedicated session rather than consuming the bounded application
@@ -493,7 +507,7 @@ export default async function adminCreateMembershipPackagePurchase({
     const existing = await getExistingPurchase({
       account_id: user_account_id,
       invoice_id,
-      request_hash,
+      accepted_request_hashes,
       client,
     });
     if (existing) {
@@ -505,7 +519,7 @@ export default async function adminCreateMembershipPackagePurchase({
       invoice_id,
       account_id: user_account_id,
       admin_account_id,
-      request_hash,
+      accepted_request_hashes,
     });
     if (!approvedSnapshot) {
       const { quote, starts_at, expires_at } =
@@ -579,7 +593,7 @@ export default async function adminCreateMembershipPackagePurchase({
     const existingAfterFunding = await getExistingPurchase({
       account_id: user_account_id,
       invoice_id,
-      request_hash,
+      accepted_request_hashes,
       client,
     });
     if (existingAfterFunding) {
@@ -595,7 +609,7 @@ export default async function adminCreateMembershipPackagePurchase({
       invoice_id,
       account_id: user_account_id,
       admin_account_id,
-      request_hash,
+      accepted_request_hashes,
     });
     if (!finalSnapshot) {
       throw Error("approved admin membership package intent is missing");
@@ -730,7 +744,7 @@ export default async function adminCreateMembershipPackagePurchase({
       const existing = await getExistingPurchase({
         account_id: user_account_id,
         invoice_id,
-        request_hash,
+        accepted_request_hashes,
       });
       if (existing) return existing;
     }

@@ -9,11 +9,12 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import { isValidUUID } from "@cocalc/util/misc";
 import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import { canonicalizeBillingValue } from "./canonical-json";
 
 export type AdminMembershipPackageSource = "card" | "credit" | "free";
 
 export interface AdminMembershipPackageBusinessIdentity {
-  version: 1;
+  version: 2;
   admin_account_id: string;
   user_account_id: string;
   product: MembershipPackageProduct;
@@ -53,21 +54,93 @@ function normalizeDate(value: Date | string, name: string): string {
   return date.toISOString();
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
+function canonicalizeLegacyPackageValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalizeLegacyPackageValue);
   if (value != null && typeof value === "object") {
     const toJSON = (value as { toJSON?: unknown }).toJSON;
     if (typeof toJSON === "function") {
-      return canonical(toJSON.call(value));
+      return canonicalizeLegacyPackageValue(toJSON.call(value));
     }
+    // This reproduces PR #2's persisted v1 encoding. It is read compatibility
+    // only; new identities use the locale-independent canonicalizer above.
     return Object.fromEntries(
       Object.entries(value as Record<string, unknown>)
         .filter(([, item]) => item !== undefined)
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => [key, canonical(item)]),
+        .map(([key, item]) => [key, canonicalizeLegacyPackageValue(item)]),
     );
   }
   return value;
+}
+
+function normalizeLegacyPackageProduct(
+  product: MembershipPackageProduct,
+): MembershipPackageProduct {
+  const suppliedProjectId = `${product.course_project_id ?? ""}`.trim();
+  if (!suppliedProjectId) {
+    if (product.kind === "course") {
+      throw Error("course_project_id must be a valid UUID");
+    }
+    return product.course_project_id == null
+      ? product
+      : { ...product, course_project_id: undefined };
+  }
+  const course_project_id = normalizeAdminMembershipPackageUuid(
+    suppliedProjectId,
+    "course_project_id",
+  );
+  return course_project_id === product.course_project_id
+    ? product
+    : { ...product, course_project_id };
+}
+
+export function legacyAdminMembershipPackageRequestHash({
+  admin_account_id,
+  user_account_id,
+  product,
+  custom_price,
+  source,
+  reason,
+  pricing_note,
+}: {
+  admin_account_id: string;
+  user_account_id: string;
+  product: MembershipPackageProduct;
+  custom_price: number;
+  source: AdminMembershipPackageSource;
+  reason: string;
+  pricing_note?: string | null;
+}): string {
+  const legacyProduct = normalizeLegacyPackageProduct(product);
+  const productWithCanonicalDates = {
+    ...legacyProduct,
+    ...(legacyProduct.starts_at == null
+      ? {}
+      : {
+          starts_at: normalizeDate(legacyProduct.starts_at, "starts_at"),
+        }),
+    ...(legacyProduct.expires_at == null
+      ? {}
+      : {
+          expires_at: normalizeDate(legacyProduct.expires_at, "expires_at"),
+        }),
+  };
+  return createHash("sha256")
+    .update(
+      JSON.stringify(
+        canonicalizeLegacyPackageValue({
+          version: 1,
+          admin_account_id,
+          user_account_id,
+          product: productWithCanonicalDates,
+          custom_price,
+          source,
+          reason,
+          pricing_note: pricing_note || null,
+        }),
+      ),
+    )
+    .digest("hex");
 }
 
 export function normalizeAdminMembershipPackageUuid(
@@ -187,7 +260,7 @@ export function normalizeAdminMembershipPackageBusinessIdentity({
         }),
   };
   return {
-    version: 1,
+    version: 2,
     admin_account_id: normalizedAdminAccountId,
     user_account_id: normalizedUserAccountId,
     product: productWithCanonicalDates,
@@ -203,7 +276,7 @@ export function adminMembershipPackageBusinessIdentityHash(
   identity: AdminMembershipPackageBusinessIdentity,
 ): string {
   return createHash("sha256")
-    .update(JSON.stringify(canonical(identity)))
+    .update(JSON.stringify(canonicalizeBillingValue(identity)))
     .digest("hex");
 }
 

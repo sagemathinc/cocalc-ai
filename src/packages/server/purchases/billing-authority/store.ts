@@ -6,6 +6,7 @@
 import { createHash } from "node:crypto";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { canonicalizeBillingValue } from "@cocalc/server/purchases/canonical-json";
 import {
   adminMembershipPackageInvoiceId,
   normalizeAdminMembershipPackageBusinessIdentity,
@@ -139,25 +140,8 @@ function commandRecord(
   };
 }
 
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value != null && typeof value === "object") {
-    const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === "function") {
-      return canonical(toJSON.call(value));
-    }
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, item]) => item !== undefined)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => [key, canonical(item)]),
-    );
-  }
-  return value;
-}
-
 function requestJson(request: BillingAuthoritySubmitRequest): string {
-  return JSON.stringify(canonical(request.command));
+  return JSON.stringify(canonicalizeBillingValue(request.command));
 }
 
 function record(value: unknown): Record<string, unknown> | undefined {
@@ -270,7 +254,7 @@ function requestHash(request: BillingAuthoritySubmitRequest): {
     throw authorityError("billing authority command is too large", 413);
   }
   const semanticJson = JSON.stringify(
-    canonical(adminPackageSemanticCommand(request.command)),
+    canonicalizeBillingValue(adminPackageSemanticCommand(request.command)),
   );
   return {
     hash: createHash("sha256").update(semanticJson).digest("hex"),
@@ -433,7 +417,12 @@ async function canRecoverAdminPackage(
   );
   const state = rows[0];
   if (state?.has_purchase) return true;
-  if (!state?.has_intent) return false;
+  if (!state?.has_intent) {
+    return (
+      existing.provider_attempt_started_at == null &&
+      existing.provider_uncertain_started_at == null
+    );
+  }
   if (identity.source !== "card") return true;
   // No unresolved guarded Stripe mutation exists without this durable anchor.
   // Pre-provider and definitive provider failures can retry at any age.
@@ -782,12 +771,22 @@ export async function submitBillingAuthorityCommand(
         const { rows } = await db.query<CommandRow>(
           `UPDATE billing_authority_commands
               SET status=CASE WHEN $2::TIMESTAMPTZ <= clock_timestamp()
-                              THEN 'expired' ELSE 'queued' END,
+                              THEN CASE
+                                WHEN provider_uncertain_started_at IS NOT NULL
+                                  THEN 'uncertain'
+                                ELSE 'expired'
+                              END
+                              ELSE 'queued' END,
                   expires_at=$2, started_at=NULL, finished_at=NULL,
                   authority_generation=NULL, authority_instance_id=NULL,
                   operation=$3, lane=$4, account_id=$5,
                   account_ids=$6::UUID[], actor_account_id=$7,
-                  command=$8::JSONB, result=NULL, error=NULL,
+                  command=$8::JSONB, result=NULL,
+                  error=CASE
+                    WHEN provider_uncertain_started_at IS NOT NULL
+                      THEN error
+                    ELSE NULL
+                  END,
                   updated_at=clock_timestamp()
             WHERE command_id=$1 AND status IN ('failed','uncertain')
               AND attempt_count > 0 AND request_hash=$9
@@ -874,10 +873,25 @@ export async function cancelQueuedBillingAuthorityCommand(
   }
   const { rows } = await getPool().query<CommandRow>(
     `UPDATE billing_authority_commands
-        SET status='canceled', finished_at=clock_timestamp(),
+        SET status=CASE
+              WHEN provider_uncertain_started_at IS NOT NULL
+                THEN 'uncertain'
+              ELSE 'canceled'
+            END,
+            finished_at=clock_timestamp(),
             updated_at=clock_timestamp(),
-            error=jsonb_build_object('message', 'caller canceled queued command',
-                                     'code', 408, 'status', 408)
+            error=CASE
+              WHEN provider_uncertain_started_at IS NOT NULL
+                THEN COALESCE(
+                  error,
+                  jsonb_build_object(
+                    'message', 'a prior Stripe mutation outcome remains unresolved',
+                    'code', 'stripe_mutation_outcome_unresolved',
+                    'status', 503))
+              ELSE jsonb_build_object(
+                'message', 'caller canceled queued command',
+                'code', 408, 'status', 408)
+            END
       WHERE command_id=$1 AND status='queued'
       RETURNING *`,
     [commandId],
@@ -1004,11 +1018,25 @@ export async function setBillingAuthorityAccountFrozen({
     if (rows[0].frozen) {
       await db.query(
         `UPDATE billing_authority_commands
-            SET status='canceled', finished_at=clock_timestamp(),
+            SET status=CASE
+                  WHEN provider_uncertain_started_at IS NOT NULL
+                    THEN 'uncertain'
+                  ELSE 'canceled'
+                END,
+                finished_at=clock_timestamp(),
                 updated_at=clock_timestamp(),
-                error=jsonb_build_object(
-                  'message', 'account billing was frozen before execution',
-                  'code', 423, 'status', 423)
+                error=CASE
+                  WHEN provider_uncertain_started_at IS NOT NULL
+                    THEN COALESCE(
+                      error,
+                      jsonb_build_object(
+                        'message', 'a prior Stripe mutation outcome remains unresolved',
+                        'code', 'stripe_mutation_outcome_unresolved',
+                        'status', 503))
+                  ELSE jsonb_build_object(
+                    'message', 'account billing was frozen before execution',
+                    'code', 423, 'status', 423)
+                END
           WHERE status='queued'
             AND (account_id=$1 OR $1=ANY(account_ids))`,
         [account_id],
@@ -1225,11 +1253,25 @@ export async function requestBillingAuthorityDrain({
     );
     await db.query(
       `UPDATE billing_authority_commands
-          SET status='canceled', finished_at=clock_timestamp(),
+          SET status=CASE
+                WHEN provider_uncertain_started_at IS NOT NULL
+                  THEN 'uncertain'
+                ELSE 'canceled'
+              END,
+              finished_at=clock_timestamp(),
               updated_at=clock_timestamp(),
-              error=jsonb_build_object(
-                'message', 'authority globally drained before execution',
-                'code', 503, 'status', 503)
+              error=CASE
+                WHEN provider_uncertain_started_at IS NOT NULL
+                  THEN COALESCE(
+                    error,
+                    jsonb_build_object(
+                      'message', 'a prior Stripe mutation outcome remains unresolved',
+                      'code', 'stripe_mutation_outcome_unresolved',
+                      'status', 503))
+                ELSE jsonb_build_object(
+                  'message', 'authority globally drained before execution',
+                  'code', 503, 'status', 503)
+              END
         WHERE status='queued'`,
     );
   });
@@ -1372,10 +1414,25 @@ export async function claimNextBillingAuthorityCommand(
     }
     await db.query(
       `UPDATE billing_authority_commands
-          SET status='expired', finished_at=clock_timestamp(),
+          SET status=CASE
+                WHEN provider_uncertain_started_at IS NOT NULL
+                  THEN 'uncertain'
+                ELSE 'expired'
+              END,
+              finished_at=clock_timestamp(),
               updated_at=clock_timestamp(),
-              error=jsonb_build_object('message', 'command expired before execution',
-                                       'code', 408, 'status', 408)
+              error=CASE
+                WHEN provider_uncertain_started_at IS NOT NULL
+                  THEN COALESCE(
+                    error,
+                    jsonb_build_object(
+                      'message', 'a prior Stripe mutation outcome remains unresolved',
+                      'code', 'stripe_mutation_outcome_unresolved',
+                      'status', 503))
+                ELSE jsonb_build_object(
+                  'message', 'command expired before execution',
+                  'code', 408, 'status', 408)
+              END
         WHERE status='queued' AND expires_at <= clock_timestamp()`,
     );
     for (let skipped = 0; skipped < 8; skipped += 1) {
@@ -1404,11 +1461,25 @@ export async function claimNextBillingAuthorityCommand(
         if ((err as { status?: number })?.status !== 423) throw err;
         await db.query(
           `UPDATE billing_authority_commands
-              SET status='canceled', finished_at=clock_timestamp(),
+              SET status=CASE
+                    WHEN provider_uncertain_started_at IS NOT NULL
+                      THEN 'uncertain'
+                    ELSE 'canceled'
+                  END,
+                  finished_at=clock_timestamp(),
                   updated_at=clock_timestamp(),
-                  error=jsonb_build_object(
-                    'message', 'account billing is frozen',
-                    'code', 423, 'status', 423)
+                  error=CASE
+                    WHEN provider_uncertain_started_at IS NOT NULL
+                      THEN COALESCE(
+                        error,
+                        jsonb_build_object(
+                          'message', 'a prior Stripe mutation outcome remains unresolved',
+                          'code', 'stripe_mutation_outcome_unresolved',
+                          'status', 503))
+                    ELSE jsonb_build_object(
+                      'message', 'account billing is frozen',
+                      'code', 423, 'status', 423)
+                  END
             WHERE command_id=$1 AND status='queued'`,
           [row.command_id],
         );
@@ -1450,9 +1521,28 @@ export async function finishBillingAuthorityCommand({
   const status =
     identity.status ?? (identity.error == null ? "succeeded" : "failed");
   const succeeded = status === "succeeded";
+  // Once a provider outcome is unresolved, only successful reconciliation can
+  // make it definitive. A later failure may concern a different Stripe step.
   const { rowCount } = await db.query(
     `UPDATE billing_authority_commands
-        SET status=$4::TEXT, result=$5::JSONB, error=$6::JSONB,
+        SET status=CASE
+              WHEN $4::TEXT='failed'
+                   AND provider_uncertain_started_at IS NOT NULL
+                THEN 'uncertain'
+              ELSE $4::TEXT
+            END,
+            result=$5::JSONB,
+            error=CASE
+              WHEN $4::TEXT='failed'
+                   AND provider_uncertain_started_at IS NOT NULL
+                THEN COALESCE(
+                  error,
+                  jsonb_build_object(
+                    'message', 'a prior Stripe mutation outcome remains unresolved',
+                    'code', 'stripe_mutation_outcome_unresolved',
+                    'status', 503))
+              ELSE $6::JSONB
+            END,
             provider_uncertain_started_at=CASE WHEN $4::TEXT='uncertain'
               THEN COALESCE(provider_uncertain_started_at,
                             provider_attempt_started_at)
