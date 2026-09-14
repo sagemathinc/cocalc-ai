@@ -193,6 +193,130 @@ test("Name agent opens by keyboard and Escape restores focus without registratio
   expect(mockApi.registerIdentity).not.toHaveBeenCalled();
 });
 
+async function saveAgentName() {
+  const user = userEvent.setup();
+  render(
+    <NameAgent
+      projectId={source.project_id}
+      path="/source.chat"
+      threadId="source"
+      initiallyOpen
+    />,
+  );
+  await user.type(
+    await screen.findByRole("textbox", { name: "Agent name" }),
+    "builder",
+  );
+  await user.click(screen.getByRole("button", { name: "Save agent name" }));
+}
+
+test("naming an already registered thread resolves its identity without fresh auth", async () => {
+  mockDeferAuth = true;
+  await saveAgentName();
+  await waitFor(() =>
+    expect(mockApi.nameAgent).toHaveBeenCalledWith(
+      expect.objectContaining({ endpoint: source, name: "builder" }),
+    ),
+  );
+  expect(mockApi.resolveIdentity).toHaveBeenCalledWith({
+    project_id: source.project_id,
+    path: "/source.chat",
+    thread_id: "source",
+  });
+  expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+  expect(mockFreshAction).toBeUndefined();
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+test("new identity registration retains fresh auth before saving name metadata", async () => {
+  mockApi.resolveIdentity.mockResolvedValue(undefined);
+  mockDeferAuth = true;
+  await saveAgentName();
+  await waitFor(() => expect(mockFreshAction).toBeDefined());
+  expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+  await act(async () => {
+    await mockFreshAction?.();
+  });
+  expect(mockApi.registerIdentity).toHaveBeenCalledTimes(1);
+  expect(mockApi.registerIdentity).toHaveBeenCalledWith({
+    project_id: source.project_id,
+    path: "/source.chat",
+    thread_id: "source",
+  });
+  expect(mockApi.nameAgent).toHaveBeenCalledWith(
+    expect.objectContaining({ endpoint: source, name: "builder" }),
+  );
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+});
+
+test("canceling fresh auth for new registration preserves the name form without naming", async () => {
+  mockApi.resolveIdentity.mockResolvedValue(undefined);
+  mockCancelAuth = true;
+  await saveAgentName();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Save agent name" }),
+    ).toBeEnabled(),
+  );
+  expect(screen.getByRole("textbox", { name: "Agent name" })).toHaveValue(
+    "builder",
+  );
+  expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+});
+
+test.each([source, undefined])(
+  "account change during identity lookup prevents registration and naming (%p)",
+  async (identity) => {
+    let finishLookup!: (identity: unknown) => void;
+    mockApi.resolveIdentity.mockReturnValue(
+      new Promise((resolve) => {
+        finishLookup = resolve;
+      }),
+    );
+    await saveAgentName();
+    await waitFor(() => expect(mockApi.resolveIdentity).toHaveBeenCalled());
+    mockAccount = "77777777-7777-4777-8777-777777777777";
+    await act(async () => {
+      finishLookup(identity);
+    });
+    expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+    expect(mockApi.nameAgent).not.toHaveBeenCalled();
+    expect(mockFreshAction).toBeUndefined();
+  },
+);
+
+test("account change while registration fresh auth is pending prevents the registration retry", async () => {
+  mockApi.resolveIdentity.mockResolvedValue(undefined);
+  mockDeferAuth = true;
+  await saveAgentName();
+  await waitFor(() => expect(mockFreshAction).toBeDefined());
+  mockAccount = "77777777-7777-4777-8777-777777777777";
+  await act(async () => {
+    await mockFreshAction?.();
+  });
+  expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+});
+
+test("account change during registration prevents the subsequent metadata mutation", async () => {
+  mockApi.resolveIdentity.mockResolvedValue(undefined);
+  let finishRegistration!: (identity: unknown) => void;
+  mockApi.registerIdentity.mockReturnValue(
+    new Promise((resolve) => {
+      finishRegistration = resolve;
+    }),
+  );
+  await saveAgentName();
+  await waitFor(() => expect(mockApi.registerIdentity).toHaveBeenCalled());
+  mockAccount = "77777777-7777-4777-8777-777777777777";
+  await act(async () => {
+    finishRegistration(source);
+  });
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+});
+
 test("canceling selection approval preserves bound draft and restores editor focus", async () => {
   const user = userEvent.setup();
   const send = jest.fn();

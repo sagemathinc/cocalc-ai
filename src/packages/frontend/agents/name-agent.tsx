@@ -43,32 +43,35 @@ export function NameAgent({
     setError("");
     try {
       const normalized = normalizeAgentName(name);
-      const completed = await runFreshAuthAction(async () => {
+      boundAccount.assertCurrent();
+      const api = personalAgentApi();
+      let endpoint = agent?.endpoint;
+      if (!endpoint) {
+        const locator = { project_id: projectId, path, thread_id: threadId };
+        let identity = await api.resolveIdentity(locator);
         boundAccount.assertCurrent();
-        const api = personalAgentApi();
-        const identity = agent
-          ? undefined
-          : await api.registerIdentity({
-              project_id: projectId,
-              path,
-              thread_id: threadId,
-            });
-        boundAccount.assertCurrent();
-        await api.nameAgent({
-          endpoint: agent?.endpoint ?? {
-            project_id: projectId,
-            agent_id: identity!.agent_id,
-          },
-          name: normalized,
-          description,
-          ...(threadTitle != null ? { thread_title: threadTitle } : {}),
-          ...(projectTitle != null ? { project_title: projectTitle } : {}),
-        });
-      });
-      if (completed) {
-        refreshNamedAgents();
-        setOpen(false);
+        if (!identity) {
+          const completed = await runFreshAuthAction(async () => {
+            boundAccount.assertCurrent();
+            identity = await api.registerIdentity(locator);
+            boundAccount.assertCurrent();
+          });
+          if (!completed) return;
+        }
+        if (!identity) throw new Error("Unable to register this agent thread");
+        endpoint = { project_id: projectId, agent_id: identity.agent_id };
       }
+      boundAccount.assertCurrent();
+      await api.nameAgent({
+        endpoint,
+        name: normalized,
+        description,
+        ...(threadTitle != null ? { thread_title: threadTitle } : {}),
+        ...(projectTitle != null ? { project_title: projectTitle } : {}),
+      });
+      boundAccount.assertCurrent();
+      refreshNamedAgents();
+      setOpen(false);
     } catch (err) {
       setError(`${err}`);
     } finally {

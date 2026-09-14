@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Alert, Checkbox, Modal, Select, Space } from "antd";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -29,6 +30,7 @@ export function ConnectionApproval({
   onClose: (approved: boolean) => void;
 }) {
   const id = useId();
+  const accountId = useTypedRedux("account", "account_id");
   const boundAccount = useBoundAgentAccount();
   const [ttl, setTtl] = useState<number | null>(86400);
   const [bothDirections, setBothDirections] = useState(false);
@@ -103,22 +105,29 @@ export function ConnectionApproval({
           </p>
           <div>
             From: {value.sourceName?.thread_title ?? value.sourceLabel} /{" "}
-            {value.sourceName?.project_title ?? value.source.project_id}
+            {value.sourceName?.project_title ?? "Project name unavailable"}
           </div>
           <div>
             To: {value.targetName?.thread_title ?? value.targetLabel} /{" "}
-            {value.targetName?.project_title ?? value.target.project_id}
+            {value.targetName?.project_title ?? "Project name unavailable"}
           </div>
-          {value.namingAccountId && (
+          {value.namingAccountId && value.namingAccountId !== accountId && (
             <p>
-              Reference name snapshot: {value.targetLabel}, originally named by{" "}
-              {value.namingAccountId}.{" "}
-              {value.targetName &&
-                `Current name in your directory: @${value.targetName.name}.`}{" "}
-              Approval uses your own authority for this exact target, not the
-              original naming account's permissions.
+              This reference was named in another account. You are approving
+              your own connection to the same agent, not using that account's
+              permissions.
             </p>
           )}
+          {value.targetName &&
+            value.targetLabel !== `@${value.targetName.name}` && (
+              <p>
+                {value.namingAccountId === accountId
+                  ? "This agent is now named"
+                  : "This agent is named"}{" "}
+                <strong>@{value.targetName.name}</strong> in your directory. The
+                selected reference still points to the same agent.
+              </p>
+            )}
           <label htmlFor={`${id}-duration`}>Connection duration</label>
           <Select
             id={`${id}-duration`}
@@ -150,6 +159,16 @@ export function ConnectionApproval({
           </p>
           <details>
             <summary>Endpoint details</summary>
+            {value.namingAccountId && (
+              <p>
+                Reference name snapshot: {value.targetLabel}, originally named
+                by {value.namingAccountId}.{" "}
+                {value.targetName &&
+                  `Current name in your directory: @${value.targetName.name}.`}{" "}
+                Approval uses your own authority for this exact target, not the
+                original naming account's permissions.
+              </p>
+            )}
             <pre style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
               {JSON.stringify(
                 { source: value.source, target: value.target },
