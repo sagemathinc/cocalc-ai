@@ -2,7 +2,7 @@ import { useState } from "react";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { agentThreadUrl } from "@cocalc/frontend/chat/agent-thread-url";
+import { openAgentThread } from "@cocalc/frontend/agents/open-agent";
 import { register } from "./register";
 import type { RenderElementProps, SlateElement } from "./register";
 
@@ -41,9 +41,7 @@ function AgentMentionElement({
       const { personalAgentApi } = await import("@cocalc/frontend/agents/api");
       const target = await personalAgentApi().getIdentity(reference.target);
       if (target.disabled_at) throw new Error("This agent is unavailable");
-      window.location.assign(
-        agentThreadUrl(target.project_id, target.path, target.thread_id),
-      );
+      await openAgentThread(target);
     } catch (err) {
       setError(`${err}`);
     } finally {

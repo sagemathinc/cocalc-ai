@@ -21,7 +21,7 @@ import {
   sameEndpoint,
   useNamedAgents,
 } from "@cocalc/frontend/agents/api";
-import { agentThreadUrl } from "@cocalc/frontend/chat/agent-thread-url";
+import { openAgentThread } from "@cocalc/frontend/agents/open-agent";
 import type { SettingsPageDefinition } from "./settings-page";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useBoundAgentAccount } from "@cocalc/frontend/agents/use-bound-account";
@@ -48,6 +48,7 @@ function AccountAgentsPage() {
   const [filter, setFilter] = useState<string>();
   const [revision, setRevision] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [opening, setOpening] = useState<string>();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [revokeAll, setRevokeAll] = useState(false);
@@ -208,16 +209,23 @@ function AccountAgentsPage() {
             </div>
             <Space wrap>
               <Button
-                href={
-                  agent.available
-                    ? agentThreadUrl(
-                        agent.endpoint.project_id,
-                        agent.path,
-                        agent.thread_id,
-                      )
-                    : undefined
-                }
-                disabled={!agent.available}
+                loading={opening === agent.endpoint.agent_id}
+                disabled={!agent.available || opening !== undefined}
+                onClick={async () => {
+                  setError("");
+                  setOpening(agent.endpoint.agent_id);
+                  try {
+                    await openAgentThread({
+                      project_id: agent.endpoint.project_id,
+                      path: agent.path,
+                      thread_id: agent.thread_id,
+                    });
+                  } catch (err) {
+                    setError(`${err}`);
+                  } finally {
+                    setOpening(undefined);
+                  }
+                }}
                 aria-label={`Open @${agent.name}`}
               >
                 Open

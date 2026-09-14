@@ -7,6 +7,9 @@ import { NameAgent } from "./name-agent";
 import { useAgentMentions } from "./use-agent-mentions";
 import { AgentMessagingRequests } from "./messaging-requests";
 import { MyAgentsPage } from "../account/my-agents-page";
+import { openAgentThread } from "./open-agent";
+
+jest.mock("./open-agent", () => ({ openAgentThread: jest.fn() }));
 
 let mockAccount = "11111111-1111-4111-8111-111111111111";
 let mockFreshAction: (() => Promise<void>) | undefined;
@@ -121,6 +124,7 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
 
 beforeEach(() => {
   jest.clearAllMocks();
+  jest.mocked(openAgentThread).mockResolvedValue();
   mockAccount = reference.naming_account_id;
   mockDeferAuth = false;
   mockCancelAuth = false;
@@ -488,6 +492,37 @@ test("disabled messaging requests never inspect a project identity", async () =>
     expect(mockApi.listPersonalConnectionRequests).toHaveBeenCalled(),
   );
   expect(mockApi.resolveIdentity).not.toHaveBeenCalled();
+});
+
+test("My Agents opens the selected thread in-app using keyboard activation", async () => {
+  const user = userEvent.setup();
+  render(<MyAgentsPage />);
+  const open = screen.getByRole("button", { name: "Open @reviewer" });
+  expect(open).not.toHaveAttribute("href");
+  expect(openAgentThread).not.toHaveBeenCalled();
+  open.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(openAgentThread).toHaveBeenCalledWith({
+      project_id: target.project_id,
+      path: namedAgent.path,
+      thread_id: namedAgent.thread_id,
+    }),
+  );
+  expect(openAgentThread).toHaveBeenCalledTimes(1);
+});
+
+test("My Agents keeps navigation failures visible and permits an explicit retry", async () => {
+  const user = userEvent.setup();
+  jest
+    .mocked(openAgentThread)
+    .mockRejectedValueOnce(new Error("Project unavailable"));
+  render(<MyAgentsPage />);
+  const open = screen.getByRole("button", { name: "Open @reviewer" });
+  await user.click(open);
+  expect(await screen.findByText("Error: Project unavailable")).toBeVisible();
+  expect(open).toBeEnabled();
+  expect(openAgentThread).toHaveBeenCalledTimes(1);
 });
 
 test("My Agents drops old connections and destructive dialog on account switch", async () => {

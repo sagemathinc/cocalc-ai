@@ -310,3 +310,20 @@ selection is not the same as a UUID-bound mention.
   without a recorded tool call; no request had reached the account store.
   This is not evidence of a successful approval test and was not retried.
   Persisted activity: `src/.local/human-turn-qa/logs/attention-native-activity.json`.
+
+## September 14 In-App Agent Navigation
+
+- Replaced My Agents' full-page Open link and rich-text agent mention navigation
+  with a shared `openAgentThread` helper. It loads the project Redux runtime on
+  demand, then uses `open_file` with foreground project/file and an exact thread
+  fragment. Opening retains the normal project access/start behavior; listing
+  does not invoke it. Failures remain visible instead of falling back to reload.
+- 86 focused tests, frontend typecheck, frontend lint, and static build passed.
+  Keyboard activation calls navigation once; tests cover the endpoint/fragment
+  and visible errors without automatic retry.
+- Live at 04:55 UTC: pressed Enter on Open @builder from My Agents. Arrived at
+  A.chat with `#thread=5637b4f8-063d-4ed9-9637-e24d208c20f7` and the builder
+  control visible. The window sentinel and `performance.timeOrigin` were
+  unchanged, proving same-document navigation rather than a reload.
+  Reproduction helpers: `/tmp/agent-mentions-navigation-{before,after}.js`;
+  check logs: `/tmp/agent-mentions-navigation-{tests,tsc,lint,static}.log`.
