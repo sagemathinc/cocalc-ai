@@ -91,6 +91,50 @@ jest.mock("../composing", () => ({
 }));
 
 describe("ChatLog sidechat search jumps", () => {
+  it("keeps each thread's reading position when switching away and back", async () => {
+    const actions = { clearScrollRequest: jest.fn() } as any;
+    const messages = new Map([
+      [
+        "1000",
+        { date: 1000, sender_id: "acct-1", history: [{ content: "first" }] },
+      ],
+      [
+        "2000",
+        { date: 2000, sender_id: "acct-1", history: [{ content: "second" }] },
+      ],
+    ]) as any;
+    const props = {
+      project_id: "project-1",
+      path: "thread.chat",
+      scrollCacheId: "editor",
+      messages,
+      actions,
+      mode: "sidechat" as const,
+    };
+    const view = render(<ChatLog {...props} selectedThread="thread-a" />);
+    const firstKey = latestVirtuosoProps.cacheId;
+    saveChatViewportAnchor(firstKey, {
+      atBottom: true,
+      date: "2000",
+      offsetPx: 0,
+      savedAt: Date.now(),
+    });
+    view.rerender(<ChatLog {...props} selectedThread="thread-b" />);
+    const secondKey = latestVirtuosoProps.cacheId;
+    expect(secondKey).not.toBe(firstKey);
+    saveChatViewportAnchor(secondKey, {
+      atBottom: false,
+      date: "1000",
+      offsetPx: -5,
+      savedAt: Date.now(),
+    });
+    view.rerender(<ChatLog {...props} selectedThread="thread-a" />);
+    expect(latestVirtuosoProps.cacheId).toBe(firstKey);
+    expect(latestVirtuosoProps.initialTopMostItemIndex).toBe(1);
+    view.rerender(<ChatLog {...props} selectedThread="thread-b" />);
+    expect(latestVirtuosoProps.initialTopMostItemIndex).toBe(0);
+    view.unmount();
+  });
   beforeEach(() => {
     mockScrollToIndex.mockClear();
     clearChatViewportAnchorCacheForTests();
