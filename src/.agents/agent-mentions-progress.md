@@ -7,6 +7,18 @@ Implementation worktree: `/home/user/scratch/agent-mentions`, branch
 Contract: `agent-mentions-prototype-plan.md`. The older durable delivery plan is
 not being resumed. This document records evidence, not a completion claim.
 
+## Current Checkpoint
+
+Candidate `97a1f748d6`: 478 focused regression tests passed in the September 14
+consolidated audit (commands and counts at the end). Cross-host request/reply,
+isolated autostart, personal P/Q/P destination selection, and fault/control
+tests have live evidence below. Native renewal approval is still awaiting actual
+browser/device fresh-auth completion; CLI approval is not substituted for it.
+The included-Codex one-concurrent-turn policy remains intact and can prevent
+receiver execution while its sender runs. This is a documented execution-gate
+limitation, not permission to add retries or redesign billing in this prototype.
+Do not mark the full acceptance milestone complete yet.
+
 ## Architecture
 
 Retain the existing owner-routed single-attempt messaging RPC and project-host
@@ -727,3 +739,37 @@ agents/agent-mentions.test.tsx agents/source-agent-name.test.tsx --runInBand`,
   session. Remaining product limitation: overlapping site-funded execution with
   a one-turn allowance. Neither is justification for weakening authorization,
   changing funding policy, or claiming the entire prototype complete.
+
+## September 14 Consolidated Regression Audit
+
+Rechecked the native request and live Chromium, then inspected the implemented
+mention, request, ownership, and automation tests against the plan. The previous
+turn was progress (new regression coverage); no new production change was needed
+in this audit. All commands below ran against candidate `97a1f748d6`:
+
+| Package      | Focused Suites                                                             | Passing Tests |
+| ------------ | -------------------------------------------------------------------------- | ------------- |
+| server       | personal-store, RPC integration, identity routing, retired delivery, hosts | 214           |
+| conat        | personal/protocol/attempts, inter-bay RPC/identities, hub API              | 64            |
+| frontend     | agents, mention search, Slate mention hook, Codex attention card           | 110           |
+| lite         | automation settings/ingress/storage, steer storage                         | 19            |
+| project-host | Codex project, start admission, identity lease, hub hosts                  | 47            |
+| CLI          | named destinations, message helper, chat/agent commands, lost-ack adapter  | 24            |
+
+Total: 478 passing tests. Logs are `/tmp/agent-mentions-audit-{server,conat,frontend,lite,host,cli}.log`.
+Use the existing Validation Commands above; additional checks in this audit:
+
+```sh
+pnpm -C src/packages/frontend exec jest agents editors/markdown-input/mention-search.test.ts editors/slate/slate-mentions/hook.test.tsx chat/__tests__/codex-attention-card.test.tsx --runInBand
+pnpm -C src/packages/lite exec jest hub/acp/__tests__/automation-settings.test.ts hub/acp/__tests__/automation-ingress.test.ts hub/acp/__tests__/acp-automations.test.ts hub/acp/__tests__/acp-steers.test.ts --runInBand
+node --test src/packages/cli/sea/agent-messaging-lost-ack.test.cjs
+```
+
+These tests cover deterministic behavior, not completion of the browser's
+passkey step. After inspecting the first-party fresh-auth flow, activated its
+Verify button once in the exact QA Chromium tab. The UI entered `Verifying...`;
+account-home inspection still returned pending for request
+`63b5898b-9a28-487b-86b6-b248530bafe8`. No alternate authentication method, copied
+credential, database-auth mutation, repeated request, or send was attempted.
+Evidence: `/tmp/agent-mentions-native-verify-{after.json,state.jsonl}`. The existing
+request deadline is 08:33:46 UTC; an expired request is not to be replayed.
