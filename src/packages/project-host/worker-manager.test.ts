@@ -18,6 +18,11 @@ import {
   oldestQueuedAcpJobTimestamp,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
 import { countRunningAcpTurnLeasesForWorker } from "@cocalc/lite/hub/sqlite/acp-turns";
+import {
+  __test__ as workerHealthTest,
+  isUnexpectedAcpWorkerTermination,
+  summarizeProjectHostAcpWorkerHealth,
+} from "./hub/acp/worker-health";
 
 jest.mock("@cocalc/lite/hub/sqlite/acp-workers", () => ({
   getAcpWorker: jest.fn(),
@@ -87,6 +92,37 @@ beforeEach(() => {
   mockOldestQueuedAcpJobTimestamp.mockReturnValue(undefined);
   mockCountRunningAcpTurnLeasesForWorker.mockReset();
   mockCountRunningAcpTurnLeasesForWorker.mockReturnValue(0);
+});
+
+describe("ACP worker health", () => {
+  it("reports unexpected supervisor replacements during the rolling window", () => {
+    const now = Date.UTC(2026, 8, 14, 20, 0, 0);
+    expect(isUnexpectedAcpWorkerTermination("managed_component_rollout")).toBe(
+      false,
+    );
+    expect(isUnexpectedAcpWorkerTermination("queue_stalled_worker")).toBe(true);
+    expect(
+      summarizeProjectHostAcpWorkerHealth({
+        now,
+        oldestQueuedAt: now - 10 * 60_000,
+        events: [
+          {
+            at_ms: now - workerHealthTest.degradedWindowMs - 1,
+            reason: "queue_stalled_worker",
+          },
+          {
+            at_ms: now - 30_000,
+            reason: "unresponsive_worker",
+          },
+        ],
+      }),
+    ).toMatchObject({
+      status: "degraded",
+      unexpected_terminations: 1,
+      latest_termination_reason: "unresponsive_worker",
+      oldest_queued_age_ms: 10 * 60_000,
+    });
+  });
 });
 
 describe("planProjectHostAcpWorkerRollout", () => {

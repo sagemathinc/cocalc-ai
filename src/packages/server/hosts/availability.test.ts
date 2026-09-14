@@ -223,6 +223,29 @@ describe("classifyHostAvailabilitySnapshot", () => {
     expect(body).not.toContain("stale>=6m");
   });
 
+  it("formats ACP worker instability separately from general host health", () => {
+    const body = _test.formatAcpWorkerDegradedHostAlertBody([
+      {
+        id: "6f95e686-4863-41ef-8dcc-f60a8c19629d",
+        status: "running",
+        metadata: {
+          name: "los-angeles-1",
+          acp_worker_health: {
+            status: "degraded",
+            unexpected_terminations: 4,
+            latest_termination_reason: "queue_stalled_worker",
+            latest_termination_at: "2026-09-14T19:30:00.000Z",
+            oldest_queued_age_ms: 10_800_000,
+          },
+        },
+      },
+    ]);
+    expect(body).toContain("los-angeles-1");
+    expect(body).toContain("terminations=4");
+    expect(body).toContain("reason=queue_stalled_worker");
+    expect(body).toContain("Codex/ACP work may be queued");
+  });
+
   it("defers stale-heartbeat escalation while remediation can still work", () => {
     const now = Date.UTC(2026, 6, 20, 12, 0, 0);
     const base = {

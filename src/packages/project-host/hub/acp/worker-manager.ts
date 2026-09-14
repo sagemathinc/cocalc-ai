@@ -38,6 +38,7 @@ import {
   readProjectHostAcpWorkerTarget,
   writeProjectHostAcpWorkerTarget,
 } from "./worker-target";
+import { recordUnexpectedAcpWorkerTermination } from "./worker-health";
 
 const logger = getLogger("project-host:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
@@ -768,6 +769,29 @@ async function terminateWorker(
 ): Promise<void> {
   await terminateWorkerPid(worker.pid);
   const worker_id = workerIdOf(worker);
+  try {
+    if (
+      recordUnexpectedAcpWorkerTermination({
+        dataDir: data,
+        reason,
+        pid: worker.pid,
+        worker_id: worker_id || undefined,
+      })
+    ) {
+      logger.error("recorded unexpected ACP worker termination", {
+        pid: worker.pid,
+        worker_id: worker_id || null,
+        reason,
+      });
+    }
+  } catch (err) {
+    logger.error("failed recording unexpected ACP worker termination", {
+      pid: worker.pid,
+      worker_id: worker_id || null,
+      reason,
+      err,
+    });
+  }
   if (!worker_id) return;
   try {
     stopAcpWorker({ worker_id, reason });

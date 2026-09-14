@@ -128,6 +128,7 @@ const CONAT_PERSIST_ALERT_FRESH_METRICS_MS = envNumberAtLeast(
   60_000,
 );
 const RUNTIME_DEGRADED_ALERT_LIMIT = 25;
+const ACP_WORKER_DEGRADED_ALERT_LIMIT = 25;
 const RUNTIME_DEGRADED_ALERT_FAILURES = Math.max(
   2,
   Math.floor(
@@ -210,6 +211,10 @@ type HostPressureAlertRow = ProjectHostAvailabilitySnapshot & {
 };
 
 type RuntimeDegradedHostRow = ProjectHostAvailabilitySnapshot & {
+  public_url?: string | null;
+};
+
+type AcpWorkerDegradedHostRow = ProjectHostAvailabilitySnapshot & {
   public_url?: string | null;
 };
 
@@ -1644,6 +1649,74 @@ export async function runRuntimeDegradedHostAlertCheck(): Promise<number> {
   return rows.length;
 }
 
+function formatAcpWorkerDegradedHostAlertBody(
+  rows: AcpWorkerDegradedHostRow[],
+): string {
+  return [
+    `${rows.length} project host${rows.length === 1 ? " has" : "s have"} unexpected ACP worker replacements.`,
+    "",
+    "Codex/ACP work may be queued without making progress even though project files and terminals remain healthy.",
+    "",
+    "Hosts:",
+    "",
+    ...rows.slice(0, ACP_WORKER_DEGRADED_ALERT_LIMIT).map((row) => {
+      const health = row.metadata?.acp_worker_health ?? {};
+      return [
+        `- ${runtimeDegradedHostName(row)}`,
+        `host_id=${row.id}`,
+        `terminations=${health.unexpected_terminations ?? "unknown"}`,
+        health.latest_termination_reason
+          ? `reason=${health.latest_termination_reason}`
+          : undefined,
+        health.latest_termination_at
+          ? `latest=${health.latest_termination_at}`
+          : undefined,
+        health.oldest_queued_age_ms != null
+          ? `oldest_queue_age_ms=${health.oldest_queued_age_ms}`
+          : undefined,
+        row.public_url ? `url=${row.public_url}` : undefined,
+      ]
+        .filter((part) => part != null)
+        .join(" ");
+    }),
+    rows.length > ACP_WORKER_DEGRADED_ALERT_LIMIT
+      ? `- ... ${rows.length - ACP_WORKER_DEGRADED_ALERT_LIMIT} more`
+      : undefined,
+  ]
+    .filter((line) => line != null)
+    .join("\n");
+}
+
+async function getAcpWorkerDegradedHosts(): Promise<
+  AcpWorkerDegradedHostRow[]
+> {
+  const { rows } = await pool().query<AcpWorkerDegradedHostRow>(
+    `
+      SELECT id, status, deleted, last_seen, metadata, public_url
+      FROM project_hosts
+      WHERE deleted IS NULL
+        AND status = 'running'
+        AND COALESCE(last_seen, to_timestamp(0)) >= NOW() - ($1::double precision * INTERVAL '1 millisecond')
+        AND metadata -> 'acp_worker_health' ->> 'status' = 'degraded'
+      ORDER BY last_seen DESC
+      LIMIT $2
+    `,
+    [HOST_AVAILABILITY_HEARTBEAT_GRACE_MS, ACP_WORKER_DEGRADED_ALERT_LIMIT + 1],
+  );
+  return rows;
+}
+
+export async function runAcpWorkerDegradedHostAlertCheck(): Promise<number> {
+  const rows = await getAcpWorkerDegradedHosts();
+  if (!rows.length) return 0;
+  await adminAlert({
+    subject: "Project hosts have unstable ACP workers",
+    body: formatAcpWorkerDegradedHostAlertBody(rows),
+    dedupMinutes: 15,
+  });
+  return rows.length;
+}
+
 export function startHostAvailabilityMaintenance({
   interval_ms = DEFAULT_MAINTENANCE_INTERVAL_MS,
 }: { interval_ms?: number } = {}): void {
@@ -1678,6 +1751,7 @@ export function startHostAvailabilityMaintenance({
       const rootFilesystemProblems = await runRootFilesystemAlertCheck();
       const persistProblems = await runConatPersistAlertCheck();
       const runtimeProblems = await runRuntimeDegradedHostAlertCheck();
+      const acpWorkerProblems = await runAcpWorkerDegradedHostAlertCheck();
       void runProjectHostRuntimeMaintenance().catch((err) => {
         logger.warn("project-host runtime maintenance failed", {
           err: `${err}`,
@@ -1707,6 +1781,11 @@ export function startHostAvailabilityMaintenance({
       if (runtimeProblems) {
         logger.warn("project hosts have degraded container runtimes", {
           count: runtimeProblems,
+        });
+      }
+      if (acpWorkerProblems) {
+        logger.warn("project hosts have unstable ACP workers", {
+          count: acpWorkerProblems,
         });
       }
     } catch (err) {
@@ -2012,6 +2091,7 @@ export const _test = {
   formatHostPressureAlertBody,
   formatRootFilesystemAlertBody,
   formatRuntimeDegradedHostAlertBody,
+  formatAcpWorkerDegradedHostAlertBody,
   formatRunningStaleHostAlertBody,
   formatStaleDuration,
   pressureAlertRow,
