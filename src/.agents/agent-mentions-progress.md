@@ -290,10 +290,12 @@ Still unverified against the full plan:
   selection/review/cancel, the pending attention card, and My Agents naming/table
   now pass at actual 200% browser zoom below.
 
-The remaining external prerequisite for the positive P/Q test is a runnable
-second QA account; its last execution attempt hit a zero queued-turn limit.
-Do not change its membership, billing, or provider credentials without human
-direction. The dev CLI has working fresh auth, but it is not the browser's
+The remaining external prerequisite for the positive P/Q test is a trusted,
+agent-capable second QA account. Its last execution attempt hit a zero
+queued-turn limit, but the September 14 recheck below traced this to the product
+access trust gate, not a zero free-membership allowance. Do not bypass email
+verification or change its membership, billing, or provider credentials without
+human direction. The dev CLI has working fresh auth, but it is not the browser's
 session. Completing the browser's passkey confirmation requires the human;
 canceling it and approving through the typed CLI is not a browser approval pass.
 Cross-bay collaborator setup has now been fixed and live-verified; temporary
@@ -571,3 +573,28 @@ selection is not the same as a UUID-bound mention.
   passed. No production source changed in this fault-test increment. Positive
   successive two-human execution and actual browser passkey approval remain
   unverified; they are not replaced by this successful fault test.
+
+## September 14 Second-Human Prerequisite Recheck
+
+- At 07:14 UTC, Q's own authenticated account-home `purchases.getMembership`
+  returned a queue allowance of 20 and running allowance of 3. The earlier
+  `queued_per_account 0/0` failure is not evidence that free membership forbids
+  agents. No membership or funding change was made.
+- Q's own account read reported its current email unverified. A scoped,
+  read-only admin query at its known home bay confirmed no registration trust
+  marker. The seed-authoritative settings API confirmed email verification and
+  email sending enabled with a configured backend.
+- The relevant path is `project-host/acp-worker.ts` ->
+  `server/conat/api/hosts.ts:getAccountEffectiveLimitsLocal` ->
+  `server/accounts/trusted-product-access.ts`. Before applying membership limits,
+  this path returns zero ACP limits when product-access trust fails. Complete
+  the normal email-verification flow or use an already verified QA account;
+  do not edit trust flags, disable verification, or pay for an upgrade to work
+  around this prerequisite. Agent/provider readiness still needs verification
+  after the account passes that gate.
+- No new turn, grant, collaborator change, or authentication mutation was made
+  during this read-only recheck. Evidence:
+  `.local/human-turn-qa/logs/live-Q-prerequisites-*.jsonl`,
+  `/tmp/agent-mentions-Q-trust-current.json`, and
+  `/tmp/agent-mentions-trust-settings.json`. Browser passkey completion remains
+  a separate human action; the positive two-human execution gate is still open.
