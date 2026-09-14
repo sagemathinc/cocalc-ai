@@ -157,6 +157,12 @@ export function useAgentMentions({
           : (threadTitle ?? "This agent"),
         targetLabel: `@${reference.name}`,
         sourceName,
+        sourceContext: {
+          project_id: projectId,
+          path,
+          thread_id: threadId!,
+          thread_title: threadTitle,
+        },
         targetName,
         namingAccountId: reference.naming_account_id,
       });

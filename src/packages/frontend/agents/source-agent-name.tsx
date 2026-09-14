@@ -10,12 +10,15 @@ import {
 } from "./api";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { useBoundAgentAccount } from "./use-bound-account";
+import { cachedAgentNameContext } from "./name-context";
+import type { AgentNameContext } from "./name-context";
 
 /** Name metadata is saved only inside the explicitly approved action, before its grant. */
 export function useSourceAgentName(
   source: AgentEndpoint | undefined,
   fallback?: NamedAgent,
   busy = false,
+  context?: AgentNameContext,
 ) {
   const id = useId();
   const account = useBoundAgentAccount();
@@ -65,9 +68,16 @@ export function useSourceAgentName(
       if (known) return known;
       if (!source || !canApprove)
         throw new Error(problem || "Load your agent names before approving.");
+      // Native requests may be reviewed outside their project. Resolve identity
+      // metadata only on this explicit save; never open a remote transcript.
+      const locator = context ?? (await personalAgentApi().getIdentity(source));
+      account.assertCurrent();
+      if (locator.project_id !== source.project_id)
+        throw new Error("The source agent changed. Review the request again.");
       const result = await personalAgentApi().nameAgent({
         endpoint: source,
         name: normalizeAgentName(name),
+        ...cachedAgentNameContext(locator),
       });
       account.assertCurrent();
       saved.current = result;

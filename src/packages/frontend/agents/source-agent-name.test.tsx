@@ -6,6 +6,9 @@ import { NameAgent } from "./name-agent";
 import { AgentMessagingRequests } from "./messaging-requests";
 import { agentNameProblem } from "./agent-name-input";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { cachedAgentNameContext } from "./name-context";
+
+jest.mock("./name-context", () => ({ cachedAgentNameContext: jest.fn() }));
 
 const account = "11111111-1111-4111-8111-111111111111";
 const source = {
@@ -28,6 +31,7 @@ const reviewer = {
 let mockAgents: NamedAgent[];
 const mockApi = {
   nameAgent: jest.fn(),
+  getIdentity: jest.fn(),
   grantPersonalConnection: jest.fn(),
   listPersonalConnectionRequests: jest.fn(),
   resolvePersonalConnectionRequest: jest.fn(),
@@ -61,6 +65,12 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
 }));
 beforeEach(() => {
   jest.resetAllMocks();
+  jest.mocked(cachedAgentNameContext).mockReturnValue({});
+  mockApi.getIdentity.mockResolvedValue({
+    ...source,
+    path: "/a.chat",
+    thread_id: "a",
+  });
   mockAgents = [reviewer];
   mockApi.nameAgent.mockImplementation(async ({ name, endpoint }) => ({
     ...reviewer,
@@ -130,6 +140,84 @@ test("server-side name conflict prevents the grant and retains the user's name",
   expect(await screen.findByText("Error: name already taken")).toBeVisible();
   expect(input).toHaveValue("builder");
   expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
+});
+
+test("composer approval shows and saves cached source context without another identity lookup", async () => {
+  const context = {
+    project_id: source.project_id,
+    path: "/a.chat",
+    thread_id: "a",
+    thread_title: "Current draft thread",
+  };
+  jest
+    .mocked(cachedAgentNameContext)
+    .mockReturnValue({
+      project_title: "Build project",
+      thread_title: "Current draft thread",
+    });
+  const user = userEvent.setup();
+  render(
+    <ConnectionApproval
+      value={{ ...approval, sourceContext: context }}
+      onClose={jest.fn()}
+    />,
+  );
+  await waitFor(() =>
+    expect(
+      screen.getByText("From: Current draft thread / Build project"),
+    ).toBeVisible(),
+  );
+  const input = screen.getByRole("textbox", { name: "Source agent name" });
+  await user.type(input, "builder");
+  screen.getByRole("button", { name: "Approve connection" }).focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(mockApi.grantPersonalConnection).toHaveBeenCalledTimes(1),
+  );
+  expect(mockApi.getIdentity).not.toHaveBeenCalled();
+  expect(cachedAgentNameContext).toHaveBeenCalledWith(context);
+  expect(mockApi.nameAgent).toHaveBeenCalledWith({
+    endpoint: source,
+    name: "builder",
+    thread_title: "Current draft thread",
+    project_title: "Build project",
+  });
+});
+
+test("explicit naming preserves supplied titles and fills missing project context from the cache", async () => {
+  jest
+    .mocked(cachedAgentNameContext)
+    .mockReturnValue({
+      project_title: "Build project",
+      thread_title: "Cached title",
+    });
+  const user = userEvent.setup();
+  render(
+    <NameAgent
+      agent={{ ...reviewer, name: "builder", endpoint: source }}
+      projectId={source.project_id}
+      path="/a.chat"
+      threadId="a"
+      threadTitle="Visible title"
+      initiallyOpen
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Save agent name" }));
+  await waitFor(() =>
+    expect(mockApi.nameAgent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "builder",
+        project_title: "Build project",
+        thread_title: "Visible title",
+      }),
+    ),
+  );
+  expect(cachedAgentNameContext).toHaveBeenCalledWith({
+    project_id: source.project_id,
+    path: "/a.chat",
+    thread_id: "a",
+    thread_title: "Visible title",
+  });
 });
 
 test("canceling does not name the source or create permission", async () => {
@@ -257,6 +345,12 @@ test("typed in-turn request requires a source name to approve but can still be d
 });
 
 test("typed request names the source before approving its exact request", async () => {
+  jest
+    .mocked(cachedAgentNameContext)
+    .mockReturnValue({
+      project_title: "Build project",
+      thread_title: "Build the PR",
+    });
   const user = await openUnnamedRequest();
   await user.type(
     screen.getByRole("textbox", { name: "Source agent name" }),
@@ -274,7 +368,17 @@ test("typed request names the source before approving its exact request", async 
   expect(mockApi.nameAgent).toHaveBeenCalledWith({
     endpoint: source,
     name: "builder",
+    project_title: "Build project",
+    thread_title: "Build the PR",
   });
+  expect(mockApi.getIdentity).toHaveBeenCalledWith(source);
+  expect(cachedAgentNameContext).toHaveBeenCalledWith(
+    expect.objectContaining({
+      project_id: source.project_id,
+      path: "/a.chat",
+      thread_id: "a",
+    }),
+  );
   expect(mockApi.nameAgent.mock.invocationCallOrder[0]).toBeLessThan(
     mockApi.resolvePersonalConnectionRequest.mock.invocationCallOrder[0],
   );

@@ -12,6 +12,8 @@ import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useSourceAgentName } from "./source-agent-name";
+import type { AgentNameContext } from "./name-context";
+import { cachedAgentNameContext } from "./name-context";
 
 export interface ApprovalTarget {
   source: AgentEndpoint;
@@ -19,6 +21,7 @@ export interface ApprovalTarget {
   sourceLabel: string;
   targetLabel: string;
   sourceName?: NamedAgent;
+  sourceContext?: AgentNameContext;
   targetName?: NamedAgent;
   namingAccountId?: string;
   bothDirections?: boolean;
@@ -39,7 +42,15 @@ export function ConnectionApproval({
     value.bothDirections ?? false,
   );
   const [busy, setBusy] = useState(false);
-  const sourceNaming = useSourceAgentName(value.source, value.sourceName, busy);
+  const sourceNaming = useSourceAgentName(
+    value.source,
+    value.sourceName,
+    busy,
+    value.sourceContext,
+  );
+  const sourceContext = value.sourceContext
+    ? cachedAgentNameContext(value.sourceContext)
+    : undefined;
   const [error, setError] = useState("");
   const lock = useRef(false);
   const alive = useRef(true);
@@ -119,8 +130,14 @@ export function ConnectionApproval({
             may message <strong>{value.targetLabel}</strong> under your account.
           </p>
           <div>
-            From: {value.sourceName?.thread_title ?? value.sourceLabel} /{" "}
-            {value.sourceName?.project_title ?? "Project name unavailable"}
+            From:{" "}
+            {sourceContext?.thread_title ??
+              sourceNaming.known?.thread_title ??
+              value.sourceLabel}{" "}
+            /{" "}
+            {sourceContext?.project_title ??
+              sourceNaming.known?.project_title ??
+              "Project name unavailable"}
           </div>
           <div>
             To: {value.targetName?.thread_title ?? value.targetLabel} /{" "}

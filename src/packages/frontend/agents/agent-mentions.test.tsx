@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import { NameAgent } from "./name-agent";
+jest.mock("./name-context", () => ({ cachedAgentNameContext: () => ({}) }));
 import { useAgentMentions } from "./use-agent-mentions";
 import { AgentMessagingRequests } from "./messaging-requests";
 import { MyAgentsPage } from "../account/my-agents-page";

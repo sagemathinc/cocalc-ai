@@ -10,6 +10,7 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
+import { cachedAgentNameContext } from "./name-context";
 
 export function NameAgent({
   agent,
@@ -77,6 +78,12 @@ export function NameAgent({
         endpoint,
         name: normalized,
         description,
+        ...cachedAgentNameContext({
+          project_id: projectId,
+          path,
+          thread_id: threadId,
+          thread_title: threadTitle,
+        }),
         ...(threadTitle != null ? { thread_title: threadTitle } : {}),
         ...(projectTitle != null ? { project_title: projectTitle } : {}),
       });
