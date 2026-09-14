@@ -1204,7 +1204,10 @@ build_daemon() {
 }
 
 refresh_hub_env() {
-  eval "$(pnpm -s dev:hub:env)"
+  local env_script
+  # Capture separately: eval would hide a failed command substitution.
+  env_script="$(pnpm --reporter=silent run dev:hub:env)" || return $?
+  eval "$env_script"
 }
 
 upgrade_hosts() {

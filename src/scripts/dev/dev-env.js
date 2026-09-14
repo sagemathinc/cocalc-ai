@@ -727,7 +727,9 @@ function emitShell(exportsMap, meta) {
   for (const [k, v] of Object.entries(exportsMap)) {
     console.log(`export ${k}=${shellEscape(v)}`);
   }
-  console.log(`# apply: eval \"$(pnpm -s dev:${meta.mode}:env)\"`);
+  console.log(
+    `# apply: eval \"$(pnpm --reporter=silent run dev:${meta.mode}:env)\"`,
+  );
 }
 
 function main() {
