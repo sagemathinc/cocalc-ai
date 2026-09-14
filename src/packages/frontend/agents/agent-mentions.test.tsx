@@ -495,6 +495,100 @@ test("disabled messaging requests never inspect a project identity", async () =>
   expect(mockApi.resolveIdentity).not.toHaveBeenCalled();
 });
 
+async function openNamedRequest() {
+  mockApi.listPersonalConnectionRequests.mockResolvedValue({
+    enabled: true,
+    requests: [{ ...request, both_directions: true }],
+  });
+  const user = userEvent.setup();
+  const view = render(<AgentMessagingRequests />);
+  const review = await screen.findByRole("button", {
+    name: /^Review messaging request:/,
+  });
+  review.focus();
+  await user.keyboard("{Enter}");
+  const dialog = await screen.findByRole("dialog");
+  expect(dialog).toHaveTextContent("Both directions");
+  return { user, view, dialog };
+}
+
+test("native fresh approval resolves the exact request once without a direct grant or send", async () => {
+  mockDeferAuth = true;
+  const { user, dialog } = await openNamedRequest();
+  const approve = within(dialog).getByRole("button", {
+    name: "Approve requested connection",
+  });
+  approve.focus();
+  await user.keyboard("{Enter}{Enter}");
+  expect(mockFreshAction).toBeDefined();
+  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+  expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
+  mockApi.listPersonalConnectionRequests.mockResolvedValue({
+    enabled: true,
+    requests: [{ ...request, state: "approved" }],
+  });
+  await act(async () => {
+    await mockFreshAction!();
+  });
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(mockApi.resolvePersonalConnectionRequest).toHaveBeenCalledTimes(1);
+  expect(mockApi.resolvePersonalConnectionRequest).toHaveBeenCalledWith({
+    request_id: request.request_id,
+    decision: "approve",
+  });
+  expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("button", {
+        name: /^Review messaging request:/,
+      }),
+    ).toBeNull(),
+  );
+});
+
+test("canceling native request fresh-auth keeps the request reviewable without resolving it", async () => {
+  mockCancelAuth = true;
+  const { user, dialog } = await openNamedRequest();
+  await user.click(
+    within(dialog).getByRole("button", {
+      name: "Approve requested connection",
+    }),
+  );
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", {
+        name: /^Review messaging request:/,
+      }),
+    ).toHaveFocus(),
+  );
+});
+
+test("native request fresh-auth callback cannot resolve after switching accounts", async () => {
+  mockDeferAuth = true;
+  const { user, view, dialog } = await openNamedRequest();
+  await user.click(
+    within(dialog).getByRole("button", {
+      name: "Approve requested connection",
+    }),
+  );
+  expect(mockFreshAction).toBeDefined();
+  mockAccount = "77777777-7777-4777-8777-777777777777";
+  view.rerender(<AgentMessagingRequests />);
+  await act(async () => {
+    await mockFreshAction!();
+  });
+  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+  expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
 test("My Agents opens the selected thread in-app using keyboard activation", async () => {
   const user = userEvent.setup();
   render(<MyAgentsPage />);

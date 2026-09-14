@@ -685,3 +685,45 @@ this account.` The included-Codex policy permits one simultaneous turn per
   included-Codex concurrency allowance is one; do not add message retries or
   relax funding limits implicitly. No new human authentication action is needed
   to explain or fix the cross-bay lookup issue resolved here.
+
+## September 14 Native Renewal Callback Verification
+
+- Previous goal turn was progress: routed eligibility was fixed/deployed and
+  genuine per-human discovery/identity rotation was observed. This turn checks
+  the remaining native renewal acceptance gate rather than repeating those sends.
+- Reloaded only the stale disposable QA Chromium tab; it reconnected and loaded
+  the current transcript. No user draft was overwritten. Dev build warning
+  reflects subsequent backend/test/docs commits, not a new frontend deployment.
+- P explicitly approved a new 30-second bidirectional QA grant through the
+  existing authenticated human API. It expired at 08:18:31 UTC without a send;
+  older revoked permissions were not resumed. A real source turn then requested
+  renewal once, request `63b5898b-9a28-487b-86b6-b248530bafe8`, run
+  `abc46450-761d-4f80-be9a-8e482cb8a0c1`. The native card displayed the correct
+  source/reviewer names and context. Reviewed that exact request and activated
+  Approve with Enter after focusing the enabled button.
+- Chromium opened its normal passkey fresh-auth dialog. This browser session
+  is not fresh, even though the independent human CLI is fresh. No passkey or
+  authentication state was fabricated, and no credential was copied. Account-home
+  inspection confirmed the request still pending with zero renewal grants.
+  The bounded agent wait ended normally at 08:22:48, returning `pending` and
+  reporting no message sent. It was not restarted or replayed.
+- The browser dialog/request is left available for the human's ordinary passkey
+  action until the request deadline, 08:33:46 UTC. If it expires, do not approve
+  or replay its old request; another test requires a deliberately new request.
+  Completing this browser approval is still unverified, not a transport failure.
+- Added three focused native UI tests: deferred fresh approval resolves the exact
+  request once despite repeated Enter; auth cancellation leaves it reviewable
+  and Escape restores focus; changing accounts before the auth callback cannot
+  resolve or grant the original request. Existing source-naming tests also run.
+  All 39 tests passed; frontend typecheck and lint passed. Only tests/docs changed,
+  so no further runtime deployment is needed for this increment.
+- Commands: `pnpm -C src/packages/frontend exec jest
+agents/agent-mentions.test.tsx agents/source-agent-name.test.tsx --runInBand`,
+  `pnpm -C src/packages/frontend tsc --build`, and `pnpm -C src lint:frontend`.
+  Evidence: `/tmp/agent-mentions-native-current-{dialog,after,grant-check,final}.json`,
+  `native-current-{state,postapproval,later}.jsonl` under the same prefix, and
+  `/tmp/agent-mentions-native-final-{tests,tsc,lint}.log`.
+- Remaining external gate: actual human passkey completion in the QA Chromium
+  session. Remaining product limitation: overlapping site-funded execution with
+  a one-turn allowance. Neither is justification for weakening authorization,
+  changing funding policy, or claiming the entire prototype complete.
