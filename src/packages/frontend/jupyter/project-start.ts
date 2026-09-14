@@ -31,6 +31,7 @@ export async function ensureProjectRunningForJupyter({
   isClosed: () => boolean;
   getProjectState?: (project_id: string) => Promise<ProjectState | undefined>;
 }): Promise<{ initialState?: string; started: boolean; wasRunning: boolean }> {
+  if (isClosed()) return { started: false, wasRunning: false };
   if (lite) {
     return { initialState: "running", started: false, wasRunning: true };
   }
@@ -43,7 +44,14 @@ export async function ensureProjectRunningForJupyter({
       return undefined;
     }
   };
-  const state = (await getFreshProjectState()) ?? store.get_state(project_id);
+  const freshState = await getFreshProjectState();
+  if (isClosed())
+    return {
+      initialState: freshState,
+      started: false,
+      wasRunning: freshState === "running",
+    };
+  const state = freshState ?? store.get_state(project_id);
   let started = false;
   if (state !== "running" && state !== "starting" && !isClosed()) {
     const accountStore = redux.getStore("account");
@@ -63,11 +71,12 @@ export async function ensureProjectRunningForJupyter({
   }
   await until(
     async () => {
+      if (isClosed()) return true;
       const freshState = await getFreshProjectState();
+      if (isClosed()) return true;
       if (
         freshState == "running" ||
-        (freshState == null && store.get_state(project_id) == "running") ||
-        isClosed()
+        (freshState == null && store.get_state(project_id) == "running")
       ) {
         return true;
       }
