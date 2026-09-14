@@ -19,6 +19,7 @@ import { getServerSettings } from "@cocalc/database/settings";
 import {
   beginStripeMutation,
   finishStripeMutation,
+  isStripeMutationAuthorityEnforcementEnabled,
 } from "@cocalc/server/purchases/billing-authority/context";
 
 // See https://stripe.com/docs/api/versioning
@@ -44,6 +45,11 @@ export function createAuthorityGuardedStripeHttpClient(
     ) => {
       const [, , path, method] = args;
       if (!["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase())) {
+        // Default-off rollout must be indistinguishable from the legacy Stripe
+        // transport, including preserving any caller-provided idempotency key.
+        if (!isStripeMutationAuthorityEnforcementEnabled()) {
+          return await delegate.makeRequest(...args);
+        }
         const headers = (args[4] ?? {}) as Exclude<(typeof args)[4], undefined>;
         args[4] = headers;
         const existingHeader = Object.keys(headers).find(

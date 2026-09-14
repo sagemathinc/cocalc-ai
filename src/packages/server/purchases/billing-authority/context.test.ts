@@ -104,6 +104,7 @@ describe("billing authority context", () => {
       },
     });
 
+    expect(originalKey).toBe("create-package-invoice");
     expect(replayKey).toBe(originalKey);
     let otherCommandKey = "";
     await runInBillingAuthorityContext({
@@ -133,7 +134,7 @@ describe("billing authority context", () => {
         });
       },
     });
-    expect(differentCallerKey).not.toBe(originalKey);
+    expect(differentCallerKey).toBe("another-logical-invoice");
   });
 
   it("records the provider boundary once before issuing mutation keys", async () => {

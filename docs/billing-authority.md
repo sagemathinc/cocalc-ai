@@ -101,7 +101,7 @@ flowchart TD
   executor -->|transactional domain effects| financial
   executor -->|known final outcome| journal
   executor --> transport
-  transport -->|deterministic command-scoped idempotency key| stripe
+  transport -->|preserved caller key or authority-generated key| stripe
   stripe -->|confirmed response| executor
   transport -->|lost or ambiguous response| uncertain
   uncertain -->|durable status| journal
@@ -232,6 +232,11 @@ The lifecycle is:
 2. `running`
 3. one of `succeeded`, `failed`, `canceled`, `expired`, or `uncertain`
 
+Every transition into a terminal state atomically records `finished_at` and a
+bounded error when the command did not succeed. This keeps health accounting,
+payload redaction, and eventual audit-row retention on the same lifecycle
+invariant.
+
 Submitting the same UUID and command is an idempotent status lookup. Reusing a
 UUID with different input is rejected. Provider events and commands carrying
 an explicit idempotency key derive stable UUIDs namespaced by protocol version,
@@ -298,12 +303,14 @@ command from another instance or generation becomes `uncertain`; it is never
 automatically replayed. Detached asynchronous work loses its mutation permit
 as soon as the parent command returns.
 
-This does not make Stripe and PostgreSQL one atomic transaction. Every Stripe
-write receives a deterministic authority-command-scoped idempotency key at the
-HTTP transport boundary. Lost responses and failures after a successful
-provider mutation are recorded as `uncertain`, not ordinary retryable failures.
-Durable provider identifiers, webhook handling, and domain-specific
-reconciliation remain necessary for failures between the two systems.
+This does not make Stripe and PostgreSQL one atomic transaction. At the HTTP
+transport boundary, an existing nonempty Stripe idempotency key is preserved
+verbatim so operations remain continuous across authority activation. A write
+without a key receives a deterministic authority-command-scoped key. Lost
+responses and failures after a successful provider mutation are recorded as
+`uncertain`, not ordinary retryable failures. Durable provider identifiers,
+webhook handling, and domain-specific reconciliation remain necessary for
+failures between the two systems.
 
 ## Account Fences
 

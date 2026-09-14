@@ -43,6 +43,24 @@ describe("authority-guarded Stripe HTTP client", () => {
     expect(makeRequest).toHaveBeenCalledTimes(1);
   });
 
+  it("leaves legacy writes and idempotency keys untouched while disabled", async () => {
+    const { guarded, makeRequest } = client();
+    const headers = { "idempotency-key": "legacy-package-invoice" };
+    await (guarded.makeRequest as any)(
+      "api.stripe.com",
+      "443",
+      "/v1/invoices",
+      "POST",
+      headers,
+      "customer=cus_1",
+    );
+    expect(makeRequest).toHaveBeenCalledTimes(1);
+    expect(makeRequest.mock.calls[0][4]).toBe(headers);
+    expect(makeRequest.mock.calls[0][4]).toEqual({
+      "idempotency-key": "legacy-package-invoice",
+    });
+  });
+
   it("blocks Stripe writes before network I/O", async () => {
     enableStripeMutationAuthorityEnforcement();
     const { guarded, makeRequest } = client();
@@ -97,9 +115,19 @@ describe("authority-guarded Stripe HTTP client", () => {
     expect(makeRequest).not.toHaveBeenCalled();
   });
 
-  it("injects one deterministic key across a Stripe transport retry", async () => {
-    enableStripeMutationAuthorityEnforcement();
+  it("preserves an explicit key across activation and transport retries", async () => {
     const { guarded, makeRequest } = client();
+    const callerKey = "stripe-node-retry-fixed";
+    await (guarded.makeRequest as any)(
+      "api.stripe.com",
+      "443",
+      "/v1/invoices",
+      "POST",
+      { "Idempotency-Key": callerKey },
+      "customer=cus_1",
+    );
+
+    enableStripeMutationAuthorityEnforcement();
     const tracker = createBillingAuthorityProviderMutationTracker();
     await runInBillingAuthorityContext({
       operation: "test",
@@ -112,18 +140,16 @@ describe("authority-guarded Stripe HTTP client", () => {
             "443",
             "/v1/invoices",
             "POST",
-            { "Idempotency-Key": "stripe-node-retry-fixed" },
+            { "Idempotency-Key": callerKey },
             "customer=cus_1",
           );
         }
       },
     });
-    const firstHeaders = makeRequest.mock.calls[0][4];
-    const secondHeaders = makeRequest.mock.calls[1][4];
-    expect(firstHeaders["Idempotency-Key"]).toMatch(/^cocalc-ba-v2-/);
-    expect(secondHeaders["Idempotency-Key"]).toBe(
-      firstHeaders["Idempotency-Key"],
+    const keys = makeRequest.mock.calls.map(
+      (call) => call[4]["Idempotency-Key"],
     );
+    expect(keys).toEqual([callerKey, callerKey, callerKey]);
     expect(getBillingAuthorityProviderMutationOutcome(tracker)).toEqual({
       started: true,
       successful: true,

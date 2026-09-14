@@ -94,6 +94,50 @@ async function resetTables(): Promise<void> {
   );
 }
 
+async function createRecoverableAmbiguousPackage(
+  identity: { instance_id: string; generation: number },
+  {
+    idempotencyKey,
+    errorMessage = "the first provider outcome was ambiguous",
+  }: { idempotencyKey: string; errorMessage?: string },
+): Promise<BillingAuthoritySubmitRequest> {
+  const item = request({
+    kind: "account-local",
+    operation: "admin-create-membership-package-purchase",
+    actor_account_id: ADMIN_ACCOUNT_ID,
+    input: {
+      admin_account_id: ADMIN_ACCOUNT_ID,
+      user_account_id: ACCOUNT_ID,
+      source: "card",
+      idempotency_key: idempotencyKey,
+    },
+  });
+  await submitBillingAuthorityCommand(item);
+  await getPool().query(
+    `INSERT INTO admin_membership_package_intents
+       (invoice_id, account_id, admin_account_id, request_hash, snapshot)
+     VALUES ($1, $2, $3, $4, '{}'::JSONB)`,
+    [
+      `admin-membership-package:${ADMIN_ACCOUNT_ID}:${idempotencyKey}`,
+      ACCOUNT_ID,
+      ADMIN_ACCOUNT_ID,
+      "a".repeat(64),
+    ],
+  );
+  await claimNextBillingAuthorityCommand(identity);
+  await recordBillingAuthorityProviderMutationStart({
+    ...identity,
+    command_id: item.command_id,
+  });
+  await finishBillingAuthorityCommand({
+    ...identity,
+    command_id: item.command_id,
+    status: "uncertain",
+    error: { message: errorMessage, code: "first_provider_ambiguity" },
+  });
+  return item;
+}
+
 describePostgres("billing authority PostgreSQL journal", () => {
   beforeAll(async () => {
     await initEphemeralDatabase({});
@@ -159,6 +203,79 @@ describePostgres("billing authority PostgreSQL journal", () => {
         command: command({ [decomposed]: 2, [precomposed]: 1 }),
       }),
     ).resolves.toMatchObject({ command_id, status: "queued", reused: true });
+  });
+
+  it("timestamps and bounds an initially expired submission", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const item = request(
+      { kind: "maintenance", task: "statements" },
+      { expires_in_ms: -1_000 },
+    );
+
+    await expect(submitBillingAuthorityCommand(item)).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "expired",
+      finished_at: expect.any(String),
+      error: { code: 408, status: 408 },
+    });
+  });
+
+  it("timestamps an attempt-zero command that expires before readmission", async () => {
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const item = request({ kind: "maintenance", task: "statements" });
+    await submitBillingAuthorityCommand(item);
+    await cancelQueuedBillingAuthorityCommand(item.command_id);
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() - 1_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      command_id: item.command_id,
+      status: "expired",
+      finished_at: expect.any(String),
+      error: { code: 408, status: 408 },
+    });
+    const { rows } = await getPool().query(
+      `SELECT attempt_count, finished_at IS NOT NULL AS finished
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(rows).toEqual([{ attempt_count: 0, finished: true }]);
+  });
+
+  it("stores a bounded fallback error for defective terminal completion", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = request({ kind: "maintenance", task: "statements" });
+    await submitBillingAuthorityCommand(item);
+    await claimNextBillingAuthorityCommand(identity);
+
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "failed",
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "failed",
+      finished_at: expect.any(String),
+      error: {
+        message: "billing authority command failed",
+        code: "billing_authority_command_failed",
+      },
+    });
   });
 
   it("coalesces identical retry commands onto one durable outcome", async () => {
@@ -1029,6 +1146,199 @@ describePostgres("billing authority PostgreSQL journal", () => {
       status: "uncertain",
       reused: true,
       error: { message: "the first provider outcome was ambiguous" },
+    });
+  });
+
+  it("retains the first provider ambiguity until successful reconciliation", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = await createRecoverableAmbiguousPackage(identity, {
+      idempotencyKey: "preserve-earliest-provider-evidence",
+    });
+
+    await submitBillingAuthorityCommand({
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      status: "uncertain",
+      error: {
+        message: "a later provider step was also ambiguous",
+        code: "second_provider_ambiguity",
+      },
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: {
+        message: "the first provider outcome was ambiguous",
+        code: "first_provider_ambiguity",
+      },
+    });
+
+    await submitBillingAuthorityCommand({
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await setBillingAuthorityAccountFrozen({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      reason: "test incident response",
+      cause: "incident-response",
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: { code: "first_provider_ambiguity" },
+    });
+    await setBillingAuthorityAccountFrozen({
+      account_id: ACCOUNT_ID,
+      frozen: false,
+      reason: "test incident resolved",
+      cause: "incident-response",
+    });
+
+    await submitBillingAuthorityCommand({
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await claimNextBillingAuthorityCommand(identity);
+    await finishBillingAuthorityCommand({
+      ...identity,
+      command_id: item.command_id,
+      result: { reconciled: true },
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "succeeded",
+      result: { reconciled: true },
+    });
+    expect(
+      (await getBillingAuthorityCommand(item.command_id))?.error,
+    ).toBeUndefined();
+  });
+
+  it("timestamps and retains an expired recovery ambiguity for health and pruning", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 5_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = await createRecoverableAmbiguousPackage(identity, {
+      idempotencyKey: "expired-provider-recovery",
+    });
+
+    await expect(
+      submitBillingAuthorityCommand({
+        ...item,
+        expires_at: new Date(Date.now() - 1_000).toISOString(),
+      }),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      finished_at: expect.any(String),
+      error: { code: "first_provider_ambiguity" },
+    });
+    await expect(getBillingAuthorityHealth()).resolves.toMatchObject({
+      failed: 1,
+    });
+
+    await getPool().query(
+      `UPDATE billing_authority_commands
+          SET finished_at=clock_timestamp() - INTERVAL '49 hours'
+        WHERE command_id=$1`,
+      [item.command_id],
+    );
+    await expect(pruneBillingAuthorityCommands()).resolves.toBe(0);
+    const { rows } = await getPool().query(
+      `SELECT status, command, error, finished_at IS NOT NULL AS finished
+         FROM billing_authority_commands WHERE command_id=$1`,
+      [item.command_id],
+    );
+    expect(rows).toEqual([
+      expect.objectContaining({
+        status: "uncertain",
+        command: { redacted: true },
+        error: expect.objectContaining({ code: "first_provider_ambiguity" }),
+        finished: true,
+      }),
+    ]);
+  });
+
+  it("preserves provider evidence when a successor takes the lease", async () => {
+    const first = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 100,
+    });
+    const oldIdentity = {
+      instance_id: INSTANCE_A,
+      generation: first!.generation,
+    };
+    const item = await createRecoverableAmbiguousPackage(oldIdentity, {
+      idempotencyKey: "provider-evidence-lease-takeover",
+    });
+    await submitBillingAuthorityCommand({
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await claimNextBillingAuthorityCommand(oldIdentity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...oldIdentity,
+      command_id: item.command_id,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_B,
+      lease_ms: 5_000,
+    });
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: { code: "first_provider_ambiguity" },
+    });
+  });
+
+  it("preserves provider evidence when an expired drain is reconciled", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 100,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const item = await createRecoverableAmbiguousPackage(identity, {
+      idempotencyKey: "provider-evidence-expired-drain",
+    });
+    await submitBillingAuthorityCommand({
+      ...item,
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await claimNextBillingAuthorityCommand(identity);
+    await recordBillingAuthorityProviderMutationStart({
+      ...identity,
+      command_id: item.command_id,
+    });
+    await requestBillingAuthorityDrain();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    await expect(reconcileExpiredBillingAuthorityLease()).resolves.toBe(true);
+    await expect(
+      getBillingAuthorityCommand(item.command_id),
+    ).resolves.toMatchObject({
+      status: "uncertain",
+      error: { code: "first_provider_ambiguity" },
     });
   });
 

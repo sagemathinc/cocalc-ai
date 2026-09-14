@@ -14,7 +14,6 @@ export interface BillingAuthorityProviderMutationTracker {
   successful: boolean;
   ambiguous_keys: Set<string>;
   known_keys: Set<string>;
-  caller_key_aliases: Map<string, string>;
   anonymous_key_aliases: Map<string, string>;
   anonymous_fingerprint_by_key: Map<string, string>;
 }
@@ -81,7 +80,6 @@ export function createBillingAuthorityProviderMutationTracker(): BillingAuthorit
     successful: false,
     ambiguous_keys: new Set(),
     known_keys: new Set(),
-    caller_key_aliases: new Map(),
     anonymous_key_aliases: new Map(),
     anonymous_fingerprint_by_key: new Map(),
   };
@@ -211,35 +209,27 @@ export async function assertBillingAuthorityAccountRegistered(
   }
 }
 
-function providerIdempotencyKey({
+function anonymousProviderIdempotencyKey({
   request_id,
   sequence,
   method,
   path,
   body,
-  caller_key,
 }: {
   request_id: string;
   sequence: number;
   method: string;
   path: string;
   body: string;
-  caller_key?: string;
 }): string {
-  // A caller key already identifies the logical provider mutation. Do not mix
-  // in call order: recovery can legitimately skip work that completed during
-  // an earlier attempt (for example, Stripe customer creation).
-  const identity = caller_key
-    ? { version: 3, caller_key }
-    : {
-        version: 1,
-        request_id,
-        sequence,
-        method: method.toUpperCase(),
-        path,
-        body,
-        caller_key: null,
-      };
+  const identity = {
+    version: 1,
+    request_id,
+    sequence,
+    method: method.toUpperCase(),
+    path,
+    body,
+  };
   const hash = createHash("sha256")
     .update(JSON.stringify(identity))
     .digest("hex");
@@ -286,44 +276,39 @@ export async function beginStripeMutation({
   if (existing_key && tracker.known_keys.has(existing_key)) {
     return existing_key;
   }
-  const anonymousFingerprint = existing_key
-    ? undefined
-    : createHash("sha256")
-        .update(
-          JSON.stringify({
-            method: method.toUpperCase(),
-            path,
-            body,
-          }),
-        )
-        .digest("hex");
-  const aliased = existing_key
-    ? tracker.caller_key_aliases.get(existing_key)
-    : tracker.anonymous_key_aliases.get(anonymousFingerprint!);
+  // Existing keys are durable identities chosen by the billing operation and
+  // may already have reached Stripe before authority activation. Rewriting one
+  // at cutover would turn a safe retry into a new provider mutation.
+  if (existing_key) {
+    tracker.known_keys.add(existing_key);
+    return existing_key;
+  }
+  const anonymousFingerprint = createHash("sha256")
+    .update(
+      JSON.stringify({
+        method: method.toUpperCase(),
+        path,
+        body,
+      }),
+    )
+    .digest("hex");
+  const aliased = tracker.anonymous_key_aliases.get(anonymousFingerprint);
   if (aliased) return aliased;
   tracker.sequence += 1;
-  const key = providerIdempotencyKey({
+  const key = anonymousProviderIdempotencyKey({
     request_id: context.request_id,
     sequence: tracker.sequence,
     method,
     path,
     body,
-    caller_key: existing_key,
   });
   tracker.known_keys.add(key);
-  if (existing_key) {
-    // Stripe copies its prepared headers for each network retry. Its original
-    // idempotency key is stable across those copies, so retain an alias to the
-    // authority key rather than relying on mutating one headers object.
-    tracker.caller_key_aliases.set(existing_key, key);
-  } else {
-    // V1 DELETE and a few nonstandard mutations have no Stripe-generated key.
-    // Reuse their fingerprint only while the outcome is unresolved; a
-    // definitive response removes it so a later intentional equal operation
-    // still receives a distinct key.
-    tracker.anonymous_key_aliases.set(anonymousFingerprint!, key);
-    tracker.anonymous_fingerprint_by_key.set(key, anonymousFingerprint!);
-  }
+  // V1 DELETE and a few nonstandard mutations have no Stripe-generated key.
+  // Reuse their fingerprint only while the outcome is unresolved; a
+  // definitive response removes it so a later intentional equal operation
+  // still receives a distinct key.
+  tracker.anonymous_key_aliases.set(anonymousFingerprint, key);
+  tracker.anonymous_fingerprint_by_key.set(key, anonymousFingerprint);
   return key;
 }
 

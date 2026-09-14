@@ -37,6 +37,8 @@ const ADMISSION_LOCK = 1_111_575_378;
 export const BILLING_AUTHORITY_EXECUTION_LOCK = 1_111_575_379;
 const MAX_COMMAND_BYTES = 1024 * 1024;
 const MAX_REASON_LENGTH = 4000;
+const MAX_ERROR_MESSAGE_LENGTH = 4000;
+const MAX_ERROR_CODE_LENGTH = 256;
 const MAX_DEDUPLICATION_MS = 24 * 60 * 60_000;
 const PAYLOAD_RETENTION = "48 hours";
 const AUDIT_RETENTION = "400 days";
@@ -107,6 +109,28 @@ export interface BillingAuthorityActivationProgress {
 
 function authorityError(message: string, status: number): Error {
   return Object.assign(new Error(message), { code: status, status });
+}
+
+function boundedTerminalError(
+  error: BillingAuthorityError | undefined,
+  status: "failed" | "uncertain",
+): BillingAuthorityError {
+  const code =
+    typeof error?.code === "number"
+      ? error.code
+      : typeof error?.code === "string"
+        ? error.code.slice(0, MAX_ERROR_CODE_LENGTH)
+        : status === "uncertain"
+          ? "billing_authority_outcome_uncertain"
+          : "billing_authority_command_failed";
+  return {
+    message: `${error?.message ?? `billing authority command ${status}`}`.slice(
+      0,
+      MAX_ERROR_MESSAGE_LENGTH,
+    ),
+    code,
+    ...(typeof error?.status === "number" ? { status: error.status } : {}),
+  };
 }
 
 function iso(value?: Date | string | null): string | undefined {
@@ -739,13 +763,25 @@ export async function submitBillingAuthorityCommand(
       ) {
         const { rows } = await db.query<CommandRow>(
           `UPDATE billing_authority_commands
-              SET status=CASE WHEN $2::TIMESTAMPTZ <= clock_timestamp()
+              SET status=CASE WHEN $2::TIMESTAMPTZ <= statement_timestamp()
                               THEN 'expired' ELSE 'queued' END,
-                  expires_at=$2, started_at=NULL, finished_at=NULL,
+                  expires_at=$2, started_at=NULL,
+                  finished_at=CASE
+                    WHEN $2::TIMESTAMPTZ <= statement_timestamp()
+                      THEN statement_timestamp()
+                    ELSE NULL
+                  END,
                   authority_generation=NULL, authority_instance_id=NULL,
                   operation=$3, lane=$4, account_id=$5,
                   account_ids=$6::UUID[], actor_account_id=$7,
-                  command=$8::JSONB, result=NULL, error=NULL,
+                  command=$8::JSONB, result=NULL,
+                  error=CASE
+                    WHEN $2::TIMESTAMPTZ <= statement_timestamp()
+                      THEN jsonb_build_object(
+                        'message', 'command expired before admission',
+                        'code', 408, 'status', 408)
+                    ELSE NULL
+                  END,
                   updated_at=clock_timestamp()
             WHERE command_id=$1
               AND status IN ('canceled','expired')
@@ -770,19 +806,36 @@ export async function submitBillingAuthorityCommand(
       ) {
         const { rows } = await db.query<CommandRow>(
           `UPDATE billing_authority_commands
-              SET status=CASE WHEN $2::TIMESTAMPTZ <= clock_timestamp()
+              SET status=CASE WHEN $2::TIMESTAMPTZ <= statement_timestamp()
                               THEN CASE
                                 WHEN provider_uncertain_started_at IS NOT NULL
                                   THEN 'uncertain'
                                 ELSE 'expired'
                               END
                               ELSE 'queued' END,
-                  expires_at=$2, started_at=NULL, finished_at=NULL,
+                  expires_at=$2, started_at=NULL,
+                  finished_at=CASE
+                    WHEN $2::TIMESTAMPTZ <= statement_timestamp()
+                      THEN statement_timestamp()
+                    ELSE NULL
+                  END,
                   authority_generation=NULL, authority_instance_id=NULL,
                   operation=$3, lane=$4, account_id=$5,
                   account_ids=$6::UUID[], actor_account_id=$7,
                   command=$8::JSONB, result=NULL,
                   error=CASE
+                    WHEN $2::TIMESTAMPTZ <= statement_timestamp()
+                         AND provider_uncertain_started_at IS NOT NULL
+                      THEN COALESCE(
+                        error,
+                        jsonb_build_object(
+                          'message', 'a prior Stripe mutation outcome remains unresolved',
+                          'code', 'stripe_mutation_outcome_unresolved',
+                          'status', 503))
+                    WHEN $2::TIMESTAMPTZ <= statement_timestamp()
+                      THEN jsonb_build_object(
+                        'message', 'command expired before admission',
+                        'code', 408, 'status', 408)
                     WHEN provider_uncertain_started_at IS NOT NULL
                       THEN error
                     ELSE NULL
@@ -833,11 +886,18 @@ export async function submitBillingAuthorityCommand(
       `INSERT INTO billing_authority_commands
          (command_id, request_hash, operation, lane, account_id, account_ids,
           actor_account_id, command,
-          status, expires_at, created_at, updated_at)
+          status, expires_at, created_at, updated_at, finished_at, error)
        VALUES ($1, $2, $3, $4, $5, $6::UUID[], $7, $8::JSONB,
-               CASE WHEN $9::TIMESTAMPTZ <= clock_timestamp()
+               CASE WHEN $9::TIMESTAMPTZ <= statement_timestamp()
                     THEN 'expired' ELSE 'queued' END,
-               $9, clock_timestamp(), clock_timestamp())
+               $9, statement_timestamp(), statement_timestamp(),
+               CASE WHEN $9::TIMESTAMPTZ <= statement_timestamp()
+                    THEN statement_timestamp() ELSE NULL END,
+               CASE WHEN $9::TIMESTAMPTZ <= statement_timestamp()
+                    THEN jsonb_build_object(
+                      'message', 'command expired before admission',
+                      'code', 408, 'status', 408)
+                    ELSE NULL END)
        RETURNING *`,
       [
         request.command_id,
@@ -1116,9 +1176,18 @@ export async function acquireBillingAuthorityLease({
               provider_uncertain_started_at=COALESCE(
                 provider_uncertain_started_at, provider_attempt_started_at),
               updated_at=clock_timestamp(),
-              error=jsonb_build_object(
-                'message', 'authority changed while command outcome was unknown',
-                'code', 'authority_generation_changed', 'status', 503)
+              error=CASE
+                WHEN provider_uncertain_started_at IS NOT NULL
+                  THEN COALESCE(
+                    error,
+                    jsonb_build_object(
+                      'message', 'a prior Stripe mutation outcome remains unresolved',
+                      'code', 'stripe_mutation_outcome_unresolved',
+                      'status', 503))
+                ELSE jsonb_build_object(
+                  'message', 'authority changed while command outcome was unknown',
+                  'code', 'authority_generation_changed', 'status', 503)
+              END
         WHERE status='running'
           AND (authority_generation IS DISTINCT FROM $1
                OR authority_instance_id IS DISTINCT FROM $2)`,
@@ -1299,9 +1368,18 @@ export async function reconcileExpiredBillingAuthorityLease(): Promise<boolean> 
               provider_uncertain_started_at=COALESCE(
                 provider_uncertain_started_at, provider_attempt_started_at),
               updated_at=clock_timestamp(),
-              error=jsonb_build_object(
-                'message', 'authority lease expired while globally drained',
-                'code', 'authority_lease_expired_during_drain', 'status', 503)
+              error=CASE
+                WHEN provider_uncertain_started_at IS NOT NULL
+                  THEN COALESCE(
+                    error,
+                    jsonb_build_object(
+                      'message', 'a prior Stripe mutation outcome remains unresolved',
+                      'code', 'stripe_mutation_outcome_unresolved',
+                      'status', 503))
+                ELSE jsonb_build_object(
+                  'message', 'authority lease expired while globally drained',
+                  'code', 'authority_lease_expired_during_drain', 'status', 503)
+              END
         WHERE status='running'`,
     );
     const released = await db.query(
@@ -1521,20 +1599,23 @@ export async function finishBillingAuthorityCommand({
   const status =
     identity.status ?? (identity.error == null ? "succeeded" : "failed");
   const succeeded = status === "succeeded";
+  const terminalError = succeeded
+    ? undefined
+    : boundedTerminalError(identity.error, status);
   // Once a provider outcome is unresolved, only successful reconciliation can
   // make it definitive. A later failure may concern a different Stripe step.
   const { rowCount } = await db.query(
     `UPDATE billing_authority_commands
         SET status=CASE
-              WHEN $4::TEXT='failed'
+              WHEN $4::TEXT <> 'succeeded'
                    AND provider_uncertain_started_at IS NOT NULL
                 THEN 'uncertain'
               ELSE $4::TEXT
             END,
             result=$5::JSONB,
             error=CASE
-              WHEN $4::TEXT='failed'
-                   AND provider_uncertain_started_at IS NOT NULL
+              WHEN $4::TEXT='succeeded' THEN NULL
+              WHEN provider_uncertain_started_at IS NOT NULL
                 THEN COALESCE(
                   error,
                   jsonb_build_object(
@@ -1561,7 +1642,7 @@ export async function finishBillingAuthorityCommand({
       identity.generation,
       status,
       succeeded ? JSON.stringify(identity.result ?? null) : null,
-      succeeded ? null : JSON.stringify(identity.error),
+      succeeded ? null : JSON.stringify(terminalError),
       LEASE_NAME,
     ],
   );
