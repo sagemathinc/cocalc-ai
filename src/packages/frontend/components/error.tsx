@@ -1,6 +1,11 @@
-import { Alert } from "antd";
-import { CSSProperties } from "react";
+import { SyncOutlined } from "@ant-design/icons";
+import { Alert, Button, Popconfirm } from "antd";
+import { CSSProperties, useState } from "react";
 import StaticMarkdown from "./lazy-static-markdown";
+import { useProjectErrorActions } from "./project-error-actions";
+
+export const PROJECT_RUNTIME_UPGRADE_ERROR_SIGNATURE =
+  "For a project/server runtime, restart or update the runtime and retry.";
 
 interface Props {
   error: any;
@@ -18,10 +23,14 @@ export default function ShowError({
   banner,
   noMarkdown,
 }: Props) {
+  const projectErrorActions = useProjectErrorActions();
   if (!error) return null;
   const err = normalizeUserFacingError(
     `${error}`.replace(/Error:/g, "").trim(),
   );
+  const showRestart =
+    projectErrorActions != null &&
+    err.includes(PROJECT_RUNTIME_UPGRADE_ERROR_SIGNATURE);
   return (
     <Alert
       banner={banner}
@@ -30,13 +39,63 @@ export default function ShowError({
       title={message}
       type="error"
       description={
-        <div style={{ maxHeight: "150px", overflow: "auto", textWrap: "wrap" }}>
-          {noMarkdown ? err : <StaticMarkdown value={err} />}
+        <div>
+          <div
+            style={{ maxHeight: "150px", overflow: "auto", textWrap: "wrap" }}
+          >
+            {noMarkdown ? err : <StaticMarkdown value={err} />}
+          </div>
+          {showRestart && (
+            <RestartProjectAfterUpgrade
+              restartProject={projectErrorActions.restartProject}
+              clearError={() => setError?.("")}
+            />
+          )}
         </div>
       }
       onClose={() => setError?.("")}
       closable={setError != null}
     />
+  );
+}
+
+function RestartProjectAfterUpgrade({
+  restartProject,
+  clearError,
+}: {
+  restartProject: () => Promise<void> | void;
+  clearError: () => void;
+}) {
+  const [restarting, setRestarting] = useState(false);
+
+  return (
+    <div style={{ marginTop: "12px" }}>
+      <Popconfirm
+        title="Restart project?"
+        description="This restarts the project server so it uses the latest CoCalc project code."
+        okText="Restart"
+        cancelText="Not now"
+        onConfirm={async () => {
+          setRestarting(true);
+          try {
+            await restartProject();
+            clearError();
+          } finally {
+            setRestarting(false);
+          }
+        }}
+      >
+        <Button
+          type="primary"
+          size="large"
+          icon={<SyncOutlined />}
+          loading={restarting}
+          aria-label="Restart Project"
+        >
+          Restart Project
+        </Button>
+      </Popconfirm>
+    </div>
   );
 }
 
