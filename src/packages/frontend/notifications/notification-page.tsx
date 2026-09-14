@@ -20,6 +20,7 @@ import { NotificationFilter } from "./mentions/types";
 import { MSGS } from "./notification-i18n";
 import { NotificationList } from "./notification-list";
 import { NotificationNav } from "./notification-nav";
+import { MarkEverythingRead } from "./mark-everything-read";
 
 export function NotificationPage() {
   const intl = useIntl();
@@ -212,6 +213,16 @@ export function NotificationPage() {
             <Icon name="question-circle" />
           </Button>
         </Title>
+        {filter !== "allNews" && (
+          <Flex justify="end" style={{ flex: "0 0 auto", marginBottom: 10 }}>
+            <MarkEverythingRead
+              disabled={loading || !mentions_unread}
+              onMarkRead={() =>
+                redux.getActions("mentions").markAll(undefined, "read")
+              }
+            />
+          </Flex>
+        )}
         {renderContent()}
         <Modal
           width={600}

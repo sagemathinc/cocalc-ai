@@ -299,20 +299,20 @@ export class MentionsActions extends Actions<MentionsState> {
     this.setState({ mentions: current_mentions });
   }
 
-  public refresh = async (): Promise<void> => {
+  public refresh = async (background = false): Promise<void> => {
     if (this.destroyed) {
       return;
     }
     if (this.refreshInFlight != null) {
       return await this.refreshInFlight;
     }
-    this.refreshInFlight = this.refreshImpl().finally(() => {
+    this.refreshInFlight = this.refreshImpl(background).finally(() => {
       this.refreshInFlight = undefined;
     });
     return await this.refreshInFlight;
   };
 
-  private async refreshImpl(): Promise<void> {
+  private async refreshImpl(background: boolean): Promise<void> {
     if (!webapp_client.is_signed_in()) {
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;
@@ -332,7 +332,7 @@ export class MentionsActions extends Actions<MentionsState> {
       this.setState({ loading: true });
       return;
     }
-    this.setState({ loading: true });
+    if (!background) this.setState({ loading: true });
     try {
       const [snapshot, counts] = await Promise.all([
         notifications.listSnapshot({
@@ -808,7 +808,7 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   public async markAll(
-    project_id: ProjectKey,
+    project_id: ProjectKey | undefined,
     as: "read" | "unread",
   ): Promise<void> {
     const account_id = this.getAccountId();
@@ -818,7 +818,8 @@ export class MentionsActions extends Actions<MentionsState> {
     const notification_ids = this.getMentions()
       .filter(
         (mention) =>
-          matchesProjectKey(mention, project_id) &&
+          (project_id === undefined ||
+            matchesProjectKey(mention, project_id)) &&
           mention.getIn(["users", account_id, "read"]) !== (as === "read"),
       )
       .keySeq()
@@ -830,12 +831,28 @@ export class MentionsActions extends Actions<MentionsState> {
         if (read_through_revision == null) {
           throw Error("notification snapshot is not available");
         }
+        // Undefined means every loaded tile; null still means General only.
+        // Capture the groups and revision before awaiting any writes so newly
+        // arriving notifications are not marked read by a later request.
+        const project_ids =
+          project_id === undefined
+            ? [
+                ...new Set(
+                  this.getMentions()
+                    .valueSeq()
+                    .toArray()
+                    .map((mention) => mention.get("project_id") ?? null),
+                ),
+              ]
+            : [project_id];
         await this.ensureSignedIn();
-        await webapp_client.conat_client.hub.notifications.markAllRead({
-          project_id,
-          read_through_revision,
-        });
-        await this.refresh();
+        for (const project_id of project_ids) {
+          await webapp_client.conat_client.hub.notifications.markAllRead({
+            project_id,
+            read_through_revision,
+          });
+        }
+        await this.refresh(true);
       } else {
         await this.updateReadState({
           notification_ids,
@@ -844,7 +861,7 @@ export class MentionsActions extends Actions<MentionsState> {
       }
     } catch (err) {
       console.warn("WARNING: notifications markAll error -- ", err);
-      await this.refresh();
+      await this.refresh(true);
     }
   }
 
