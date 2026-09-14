@@ -9,6 +9,7 @@
  */
 
 import { Map } from "immutable";
+import $ from "jquery";
 import React from "react";
 import { CSS, useState } from "@cocalc/frontend/app-framework";
 import * as feature from "@cocalc/frontend/feature";
