@@ -9,11 +9,19 @@ in your own code [1].
 
 ```jsx
 import { insertMention, useMentions } from "./slate-mentions";
+import { Editable, ReactEditor, Slate } from "./slate-react";
 
 // ... in your commponent ...
 
   const editor: ReactEditor = // ...;
-  const mentions = useMentions({editor, insertMention});
+  const candidates = ["Ada", "Grace"]; // replace with your mention source
+  const mentions = useMentions({
+    editor,
+    insertMention,
+    matchingUsers: (search) => candidates.filter((name) =>
+      name.toLowerCase().includes(search),
+    ),
+  });
 
 
 // ...
@@ -29,8 +37,8 @@ import { insertMention, useMentions } from "./slate-mentions";
     >
       <Editable
         onKeyDown={(event) => {
-          mentions.onKeyDown(e);
-          if (e.defaultPrevented) return;
+          mentions.onKeyDown(event);
+          if (event.defaultPrevented) return;
         }}
       />
       {mentions.Mentions}
@@ -39,5 +47,4 @@ import { insertMention, useMentions } from "./slate-mentions";
 ...
 ```
 
-  
 [1] I found another mentions plugin for slate [here](https://github.com/udecode/slate-plugins/tree/next/packages/slate-plugins/src/elements/mention), and it takes the exact same approach, so I guess this is perhaps the best way to do this...?

@@ -7,6 +7,7 @@ import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   PUBLIC_FEATURE_NAV_ITEMS,
+  publicFeatureHref,
   type PublicFeaturePage,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
@@ -34,7 +35,10 @@ function featurePath(basePath: string, slug?: string): string {
   return joinUrlPath(basePath, slug ? `features/${slug}` : "features");
 }
 
-function renderSection(section: PublicFeatureSection): string {
+function renderSection(
+  section: PublicFeatureSection,
+  basePath: string,
+): string {
   const paragraphs = (section.paragraphs ?? [])
     .map((paragraph) => `<p>${htmlEscape(paragraph)}</p>`)
     .join("");
@@ -49,7 +53,7 @@ function renderSection(section: PublicFeatureSection): string {
       ? `<ul>${section.links
           .map(
             ({ href, label }) =>
-              `<li><a href="${htmlEscape(href)}">${htmlEscape(label)}</a></li>`,
+              `<li><a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a></li>`,
           )
           .join("")}</ul>`
       : "";
@@ -60,10 +64,12 @@ function renderSection(section: PublicFeatureSection): string {
 
 function renderFeatureNavigation(
   basePath: string,
-  activeSlug?: string,
+  activeSlug: string | undefined,
+  config: { cocalc_product?: string },
 ): string {
   const links = PUBLIC_FEATURE_NAV_ITEMS.filter(
-    ({ slug }) => slug !== activeSlug,
+    ({ slug }) =>
+      slug !== activeSlug && getPublicFeaturePage(slug, config) != null,
   )
     .map(
       ({ label, slug }) =>
@@ -78,8 +84,11 @@ function renderFeatureNavigation(
 function renderFeatureDetail(
   page: PublicFeaturePage,
   basePath: string,
+  config: { cocalc_product?: string },
 ): string {
-  const sections = (page.sections ?? []).map(renderSection).join("");
+  const sections = (page.sections ?? [])
+    .map((section) => renderSection(section, basePath))
+    .join("");
   const title = page.metadataTitle ?? page.title;
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
 <header>
@@ -90,15 +99,18 @@ function renderFeatureDetail(
   <p>${htmlEscape(page.summary)}</p>
 </header>
 ${sections}
-${renderFeatureNavigation(basePath, page.slug)}
+${renderFeatureNavigation(basePath, page.slug, config)}
 <p><a href="${htmlEscape(
     joinUrlPath(basePath, "auth/sign-up"),
   )}">Start using CoCalc</a></p>
 </article>`;
 }
 
-function renderFeatureIndex(basePath: string): string {
-  const pages = getPublicFeatureIndexPages()
+function renderFeatureIndex(
+  basePath: string,
+  config: { cocalc_product?: string },
+): string {
+  const pages = getPublicFeatureIndexPages(config)
     .map(
       (page) => `<li>
   <h2><a href="${htmlEscape(featurePath(basePath, page.slug))}">${htmlEscape(
@@ -118,16 +130,17 @@ function renderFeatureIndex(basePath: string): string {
 export function renderPublicRoutePrerender(
   route: PublicMetadataRoute,
   basePath: string,
+  config?: { cocalc_product?: string },
 ): string {
   if (route.section !== "features") {
     return "";
   }
   if (route.route?.view === "index") {
-    return renderFeatureIndex(basePath);
+    return renderFeatureIndex(basePath, config ?? {});
   }
   if (route.route?.view !== "detail") {
     return "";
   }
-  const page = getPublicFeaturePage(route.route.slug);
-  return page == null ? "" : renderFeatureDetail(page, basePath);
+  const page = getPublicFeaturePage(route.route.slug, config ?? {});
+  return page == null ? "" : renderFeatureDetail(page, basePath, config ?? {});
 }

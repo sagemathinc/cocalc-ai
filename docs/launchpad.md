@@ -1,129 +1,90 @@
-# CoCalc Launchpad - Operator Control Plane Quick Start (Draft)
+# CoCalc Launchpad - Operator Control Plane Reference
 
-This is a quick-start for the lower-level Launchpad control plane. It is for
-operators and developers working on deployment modes, project-host connectivity,
-and product profiles.
+Launchpad packages the lower-level CoCalc control plane for operators and
+developers configuring project-host connectivity and product settings. For a
+single-machine appliance with local Postgres, a local project host, Caddy, and
+web onboarding, start with [CoCalc Star](./star.md).
 
-If you want the simplest public VM appliance for a lab, class, GPU box, agent
-sandbox, or small team, start with [CoCalc Star](./star.md) instead. Star wraps
-the Launchpad control plane with local Postgres, a local project host, Caddy
-HTTPS, default rootfs setup, and web onboarding.
+This is a source reference for Launchpad defaults, not a validated clean-machine
+installation recipe. A build alone does not supply project-host storage,
+provider credentials, or a working backup destination.
 
-Status: draft / in development.
+## Product and runtime selection
 
-## Choose a Mode
+The Launchpad entry point defaults `COCALC_PRODUCT` to `launchpad` and
+`COCALC_DB` to `pglite`. An explicitly configured database can use a different
+backend, as Star does with local Postgres. The entry point enables the hub's
+`/api/v2` HTTP API router.
 
-Launchpad supports deployment modes that are explicitly selected by an admin:
+The earlier `COCALC_LAUNCHPAD_MODE=onprem|cloud` selector and its Admin Settings
+mode-selection step are no longer the configuration model. Local SSH/REST
+services and configured Cloudflare connectivity are initialized by the current
+Launchpad service setup; they are not two mutually exclusive product modes.
+Cloud connectivity still requires its own valid site configuration.
 
-- **On\-prem \(local only\)**: all traffic is local, no Cloudflare tunnels, and
-  backups use a local repo over SFTP. This document describes this mode.
-- **Cloud \(global\)**: traffic goes through Cloudflare and backups use cloud
-  buckets. This mode is configured by providing Cloudflare \+ bucket settings
-  \(separate doc forthcoming\).
+Project execution is separate: normal Launchpad uses external project hosts.
+`COCALC_PROJECT_RUNTIME=workspace` is an explicit local process mode for a
+trusted machine. It is not container isolation for mutually untrusted users.
+See [project runtime selection](../src/packages/project-runner/runtime-mode.ts).
 
-Mode selection is explicit:
+## Ports and data directories
 
-- Default mode is **unset**: Launchpad starts, but does not start sshd
-  and does not activate host connectivity until an admin selects a mode.
-- Admins choose a mode in Admin Settings (later this will be a first-run setup
-  dialog).
-- You may also set `COCALC_LAUNCHPAD_MODE=onprem|cloud` to preselect the mode in
-  headless installs.
+The entry point resolves an explicit base port from `COCALC_BASE_PORT`, then
+`COCALC_HTTP_PORT`, then `PORT`. Without an override, it reuses the port stored
+in `launchpad-port.json` under the data directory, or chooses and saves an
+available port pair. It does not promise a fixed port 8443.
 
-## Overview
+- The hub HTTP port is the selected base port.
+- The SSH service defaults to base port plus one; `COCALC_SSHD_PORT` overrides it.
+- Explicit or saved ports must be available. On a conflict, free those ports or
+  provide a different pair; read the reported error before restarting.
+- `COCALC_DATA_DIR` or `DATA` selects the data directory. With neither set, a new
+  install uses `~/Library/Application Support/cocalc-launchpad` on macOS and
+  `~/.local/share/cocalc-launchpad` elsewhere. Existing legacy data directories
+  are reused when detected.
+- PGlite data defaults to the `pglite` child of that data directory.
 
-- One hub process serves HTTPS + WebSocket and proxies host traffic.
-- Hosts connect outbound to the hub and establish a reverse SSH tunnel.
-- Backups use rustic over SFTP to a local repo directory on the hub.
-- No wildcard DNS required; routing is path-based.
+The startup summary prints resolved settings. Keep the data directory stable
+when changing ports or upgrading; selecting a new directory selects different
+local state.
 
-## Default Ports (Base Port Model)
+These defaults are implemented in
+[src/packages/launchpad/lib/onprem-config.js](../src/packages/launchpad/lib/onprem-config.js).
+They differ from Star's appliance service configuration.
 
-Set one base port and everything else is derived:
+## Host connectivity
 
-- COCALC_BASE_PORT=8443
-- COCALC_HTTPS_PORT=COCALC_BASE_PORT
-- COCALC_HTTP_PORT=COCALC_BASE_PORT-1 (optional redirect only)
-- COCALC_SSHD_PORT=COCALC_BASE_PORT+1 (host reverse tunnel + SFTP)
-- COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
-- COCALC_LAUNCHPAD_HOST=localhost (hub host used in bootstrap URLs)
+Use `COCALC_PUBLIC_HOST` for the hostname reachable by the intended clients.
+`COCALC_LAUNCHPAD_HOST` and `COCALC_ONPREM_HOST` are deprecated fallbacks. A bind
+address such as `0.0.0.0` is not a public hostname, and a reachable hostname does
+not itself configure firewall rules, TLS, or provider access.
 
-Explicit port overrides are supported, but not expected in the simplest setup.
+SelfHost can run directly on Linux or inside Multipass. The connector can use
+SSH tunnels when the hub is not publicly reachable; see
+[Self-Hosted Project Hosts](./self-host.md). Keep hub, connector, and project-host
+addresses distinct when diagnosing a failed connection.
 
-## Example Env Block (Optional)
+## Local backup transport
 
-Launchpad works with **zero config**. The settings below are optional and only
-needed if you want to override defaults.
+For a SelfHost machine using local backup configuration, the hub builds a
+Rustic **REST** repository configuration. The host accesses the local REST
+endpoint through the configured tunnel; this is not the old SFTP repository
+path. Repository data lives below `COCALC_BACKUP_ROOT` (by default the data
+directory's `backup-repo`), with the subpath selected by the configuration
+builder. The local REST service defaults to port 9345, with explicit overrides.
 
-```bash
-# Optional overrides (defaults work if you omit all of this)
-export COCALC_BASE_PORT=8443
-export COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
-export COCALC_LAUNCHPAD_HOST=localhost
-export COCALC_DISABLE_HTTP=true
-# Optional: rotate self-signed certs this many days before expiry (default 30)
-export COCALC_LAUNCHPAD_CERT_ROTATE_DAYS=30
-```
+The selected repository and password are supplied by the control plane. Do not
+replace that configuration with an invented SFTP URL, or assume a local repo is
+an independent off-machine backup. Inspect backup completion and verify a
+restore before relying on a deployment's recovery procedure.
 
-## Quick Start
+See [local repository configuration](../src/packages/server/launchpad/rest-repo.ts)
+and [Project Backups](./project-backups.md).
 
-1. Optionally, pick a base port and data directory by setting environment variables.
-   Example defaults:
-   - COCALC_BASE_PORT=8443
-   - COCALC_DATA_DIR=~/.local/share/cocalc/launchpad
+## Developer entry points
 
-2. Start the Launchpad hub.
-   - If the host is **localhost**, Launchpad uses HTTP on the hub port.
-   - If the host is **non-local**, Launchpad auto-generates a self-signed
-     cert and uses HTTPS on the hub port.
-   - The hub performs the same on-prem TLS setup even when run outside
-     Launchpad (using the same env defaults).
-
-3. In Admin Settings, select **On‑prem** mode.
-   - Hub starts a locked down sshd as a child process.
-
-4. Create a host join token using the hub UI/CLI.
-
-5. On each host, run the connector with:
-   - hub URL
-   - join token
-   - \(optional\) explicit port overrides
-
-6. Confirm hosts appear in the hub UI and can start workspaces.
-
-Launchpad prints a startup summary showing the resolved ports and data
-directory so you can verify the defaults it selected.
-
-## Networking Requirements
-
-Host -> Hub (outbound only):
-
-- HTTPS/WSS to hub port
-- SSH to hub sshd port (reverse tunnel)
-
-Users -> Hub:
-
-- HTTPS/WSS to hub port
-- SSH to the per-host port shown by the hub
-
-If hosts run on a different machine, set `COCALC_LAUNCHPAD_HOST` to the hub’s
-LAN IP/hostname and ensure the hub listens on the LAN (e.g.
-`COCALC_HUB_HOSTNAME=0.0.0.0`).
-
-## Backups (Rustic + SFTP)
-
-- Single rustic repo stored on the hub:
-  COCALC_DATA_DIR/backup-repo
-- Hosts use SFTP to the hub sshd port.
-- One repo for all projects; host tag identifies each project backup.
-
-## When Hub and Host Are the Same Machine
-
-If the host runs on the same machine as the hub, the reverse SSH tunnel
-is skipped and the proxy connects directly to localhost.
-
-## Notes
-
-- On\-prem and cloud modes are exclusive. If you need both, run two hubs.
-- Port changes require a hub restart.
-- PGlite (embedded Postgres) stores data in COCALC_DATA_DIR
+Build and run commands, bundle output, and container packaging are in the
+[Launchpad package README](../src/packages/launchpad/README.md). These commands
+assume a prepared development workspace. For current service initialization,
+see [onprem-sshd.ts](../src/packages/server/launchpad/onprem-sshd.ts); do not use
+the removed mode-selection step as a prerequisite for host registration.

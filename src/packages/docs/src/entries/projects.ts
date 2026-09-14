@@ -5,20 +5,20 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon, projectActionParameters } from "../helpers";
+import { COLLABORATORS_BODY } from "../content/collaboration";
 import {
-  COLLABORATORS_BODY,
   CREATE_PROJECT_BODY,
-  OPEN_TERMINAL_BODY,
   PROJECT_LIST_BODY,
   PROJECT_SECRETS_BODY,
   PUBLISH_FILES_BODY,
   PUBLISH_ROOTFS_BODY,
-  RESEARCH_HANDOFF_BODY,
   RSTUDIO_PROJECT_BODY,
-  ROOTFS_BODY,
-  TASKS_BODY,
   VIRTUAL_MACHINES_BODY,
-} from "../content";
+} from "../content/projects";
+import { OPEN_TERMINAL_BODY } from "../content/terminal";
+import { RESEARCH_HANDOFF_BODY } from "../content/research";
+import { ROOTFS_BODY } from "../content/jupyter";
+import { TASKS_BODY } from "../content/files";
 
 export const PROJECTS_ENTRIES: DocsEntry[] = [
   {
@@ -54,7 +54,7 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "/public/docs/create-project-5b221552.webp",
       "A CoCalc project containing notebooks, files, and chat",
     ),
-    lastReviewed: "2026-09-08",
+    lastReviewed: "2026-09-11",
     noActionReason:
       "The walkthrough starts from the linked Essential projects page and uses files chosen by the reader.",
     searchKeywords:
@@ -84,11 +84,13 @@ export const PROJECTS_ENTRIES: DocsEntry[] = [
       "/public/docs/project-secrets-ea9872ae.webp",
       "Project secrets mounted as protected read-only files",
     ),
-    lastReviewed: "2026-05-24",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "project secrets environment variables CLI copy names overwrite conflicts missing mount refresh stdin",
     slug: "projects/project-secrets",
     status: "ready",
     summary:
-      "Store API keys and credentials as encrypted, read-only files mounted into the running project.",
+      "Store runtime credentials as encrypted, read-only files, select secrets to copy with the CLI, and check mount-refresh results.",
     title: "Project secrets",
   },
   {

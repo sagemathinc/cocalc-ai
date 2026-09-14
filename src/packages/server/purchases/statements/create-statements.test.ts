@@ -200,3 +200,35 @@ describe("monthly statements", () => {
     expect(purchases.length).toBe(2);
   });
 });
+
+describe("bounded statement creation", () => {
+  it("creates at most one account statement per invocation", async () => {
+    const accounts = [uuid(), uuid()];
+    for (const account_id of accounts) {
+      await createTestAccount(account_id);
+      await createPurchase({
+        account_id,
+        service: "student-pay",
+        description: {},
+        client: null,
+        cost: 1,
+      });
+    }
+    await delay(50);
+    const time = new Date(Date.now() - 1);
+
+    await createStatements({ time, interval: "day", max_statements: 1 });
+    const first = await getPool().query(
+      "SELECT COUNT(*)::INT AS count FROM statements WHERE interval='day' AND time=$1",
+      [time],
+    );
+    expect(first.rows[0].count).toBe(1);
+
+    await createStatements({ time, interval: "day", max_statements: 1 });
+    const second = await getPool().query(
+      "SELECT COUNT(*)::INT AS count FROM statements WHERE interval='day' AND time=$1",
+      [time],
+    );
+    expect(second.rows[0].count).toBe(2);
+  });
+});

@@ -107,6 +107,9 @@ describe("chat/register", () => {
     getStoreMock.mockImplementation((name: string) => storesByName.get(name));
     createActionsMock.mockImplementation((name: string) => {
       const actions = {
+        ...makeChatActions("connecting"),
+        messageCache: undefined,
+        syncdb: undefined,
         setState: jest.fn(),
         set_syncdb: jest.fn(),
       };
@@ -114,6 +117,7 @@ describe("chat/register", () => {
       return actions;
     });
     createStoreMock.mockImplementation((name: string) => {
+      if (storesByName.has(name)) throw Error(`store ${name} already exists`);
       const store = {};
       storesByName.set(name, store);
       return store;
@@ -187,5 +191,47 @@ describe("chat/register", () => {
     expect(initChat("project-1", "notes.chat")).toBe(live);
     expect(createActionsMock).not.toHaveBeenCalled();
     expect(removeActionsMock).not.toHaveBeenCalled();
+  });
+
+  it("recreates disposed actions whose message cache has been cleared", () => {
+    const name = "project-1:notes.chat";
+    const stale = { ...makeChatActions("closed"), messageCache: undefined };
+    actionsByName.set(name, stale);
+    storesByName.set(name, { state: {} });
+    projectConatSyncMock.mockReturnValue({
+      sync: { immer: () => makeSyncdb("connecting") },
+    });
+
+    expect(() => initChat("project-1", "notes.chat")).not.toThrow();
+    expect(removeStoreMock).toHaveBeenCalledWith(name);
+    expect(removeActionsMock).toHaveBeenCalledWith(name);
+  });
+
+  it("can retry initialization after synchronous routing failure", () => {
+    projectConatSyncMock.mockImplementationOnce(() => {
+      throw Error("routing unavailable");
+    });
+    expect(() => initChat("project-1", "notes.chat")).toThrow(
+      "routing unavailable",
+    );
+    projectConatSyncMock.mockReturnValue({
+      sync: { immer: () => makeSyncdb("connecting") },
+    });
+    expect(() => initChat("project-1", "notes.chat")).not.toThrow();
+  });
+
+  it("closes the syncdb even when dispose clears the reference", () => {
+    const name = "project-1:notes.chat";
+    const stale = makeChatActions("closed");
+    const syncdb = stale.syncdb;
+    stale.dispose.mockImplementation(() => {
+      (stale as any).syncdb = undefined;
+      (stale as any).messageCache = undefined;
+    });
+    actionsByName.set(name, stale);
+    // Cleanup must remove actions even if the store is already gone.
+    expect(getChatActions("project-1", "notes.chat")).toBeUndefined();
+    expect(syncdb.close).toHaveBeenCalledTimes(1);
+    expect(actionsByName.has(name)).toBe(false);
   });
 });

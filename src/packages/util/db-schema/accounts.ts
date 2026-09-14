@@ -486,6 +486,10 @@ Table({
         name: "accounts_banned_account_idx",
         query: "(account_id) WHERE banned IS TRUE",
       },
+      {
+        name: "accounts_billing_security_state_idx",
+        query: "(account_id) WHERE banned IS TRUE OR deleted IS TRUE",
+      },
     ],
     crm_indexes: [
       "(lower(display_name) text_pattern_ops)",

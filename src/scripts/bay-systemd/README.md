@@ -17,9 +17,9 @@ product runtime. They are meant to make the agreed rollout model concrete:
 
 There is also an installer:
 
-- [install-scaffold.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/install-scaffold.sh)
-- [bay-bootstrap-host.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/bay-bootstrap-host.sh)
-- [bay-bootstrap-release.sh](/home/user/cocalc-ai-clone/src/scripts/bay-systemd/bay-bootstrap-release.sh)
+- [install-scaffold.sh](install-scaffold.sh)
+- [bay-bootstrap-host.sh](bay-bootstrap-host.sh)
+- [bay-bootstrap-release.sh](bay-bootstrap-release.sh)
 
 It copies the units, wrapper scripts, and env templates into a target rootfs so
 you can start testing the scaffold on a remote VM without hand-copying every
@@ -201,8 +201,10 @@ libraries but intentionally does not install compiler dependencies.
    WAL reached the repository, restores the selected pgBackRest backup to the
    boundary, proves the post-boundary row is absent, restores the independent
    SQLite Rustic snapshot, and checks every database. The worker uses
-   prefix-scoped temporary read-only R2 credentials and always deletes its VM
-   and boot disk.
+   prefix-scoped temporary read-only R2 credentials. Cleanup attempts VM
+   deletion even after a failed run; the boot disk is configured for automatic
+   deletion with the VM. A cleanup API failure is reported as an error, so
+   inspect the result and confirm that the worker was removed.
 7. Enable the full, differential, status, SQLite backup, and SQLite prune timers
    only after that disposable PITR test succeeds.
 
@@ -564,16 +566,20 @@ topology and preserve existing secrets.
   `/opt/cocalc/bay/releases/<version>` and the active bundle is the symlink
   `/opt/cocalc/bay/current`.
 
-## What Is Still Missing
+## Implementation Scope And Validation
 
-- control-plane integration
-- bay drain orchestration above systemd
-- production-safe migration guards
-- exact bundle-local service entrypoints
-- log shipping / metrics exporters / nginx / cloudflared wiring
+This tree includes rollout helpers, a frontdoor drain/undrain mechanism,
+migration execution, and systemd service wrappers. The Rocket overlay in
+`env/bay-rocket-bundle-overlay.env.example` supplies bundle-local entrypoints
+for the hub, router, persist, schema migration, and cloudflared processes.
 
-That missing work is deliberate. This tree is meant to be the smallest useful
-starting point that can be iterated on during implementation.
+The original blanket scaffold backlog no longer describes these helpers.
+Their presence does not establish that a particular bay is configured or ready
+for production.
+Validate the selected bundle, service environment, ingress, monitoring, and
+backup/restore workflow on the intended deployment. In particular,
+`bin/bay-migrate` runs the configured migration command and records its result;
+it does not by itself prove that every schema change is safe to roll back.
 
 ## Direct State Handoff
 

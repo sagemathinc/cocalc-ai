@@ -1,62 +1,53 @@
 # CoCalc Hub (Launchpad / Rocket)
 
-This package contains the main Hub process. It is not meant to be used
-standalone; it is wired into the Launchpad and Rocket products.
+This package contains the hub process used by Launchpad and Rocket. It serves
+the public application shell and HTTP API, authorizes and routes Conat traffic,
+and coordinates project lifecycle and persistence services. Normal project
+file, terminal, notebook and agent traffic uses the project-host data plane;
+this is not a promise that all project traffic is proxied through the hub.
 
-The Hub serves:
+## Local development
 
-- static content and Next.js pages
-- browser ↔ project proxying (HTTP + websockets)
-- project control (start/stop, LRO orchestration, backups/moves)
-- Conat API + persistence services
-
-## Local development (Launchpad)
-
-Scripts are intentionally minimal and focus on Launchpad dev. Rocket runs via
-Helm and does not use these scripts.
-
-Default is **local network mode** (self‑contained). Cloud mode requires extra
-Cloudflare + bucket config and is only for testing those paths.
-
-Run with pglite (default):
+With workspace dependencies and build outputs prepared, run from
+`src/packages/hub`:
 
 ```sh
 pnpm app
 ```
 
-Other variants:
+`app` selects `app:pglite`. The available variants are:
 
 ```sh
 pnpm app:pglite
-pnpm app:pglite:cloud
 pnpm app:postgres
-pnpm app:postgres:cloud
 ```
 
-Data dirs for these scripts are isolated by DB + mode:
+These invoke [bin/start.sh](bin/start.sh), which sets
+`COCALC_PRODUCT=launchpad` and starts the hub with `--all`. PostgreSQL mode
+uses the local PostgreSQL bootstrap; PGlite mode uses an embedded database.
+There are no `app:pglite:cloud` or `app:postgres:cloud` scripts.
 
+The default data directories are:
+
+```text
+src/data/app/pglite
+src/data/app/postgres
 ```
-src/data/app/pglite/local
-src/data/app/pglite/cloud
-src/data/app/postgres/local
-src/data/app/postgres/cloud
-```
 
-You can override any of these with `DATA` or `COCALC_DATA_DIR`.
+Set `DATA_BASE` to change their common parent. The script deliberately clears
+inherited `DATA` and `COCALC_DATA_DIR` before deriving the mode-specific paths;
+setting those two variables beforehand does not override this launcher. It
+also clears inherited database and CLI targeting/authentication variables.
+Reload the matching development environment before running CLI commands
+against the started hub, as described in the root development instructions.
 
-## Product and deployment mode
+## Ports and deployment
 
-These scripts set:
+`HOST` selects the launcher's bind hostname and defaults to `localhost`.
+The hub's `PORT` defaults to `5000`. See
+[the Launchpad reference](../../../docs/launchpad.md) for its related services,
+port configuration and SSH access; a local hub start is not a tested public
+or multi-host installation.
 
-- `COCALC_PRODUCT=launchpad`
-
-Local mode is self‑contained. Cloud mode expects Cloudflare tunnels and a
-remote rustic repo, and is not useful without that extra configuration.
-
-## Ports and binding
-
-- `PORT` controls the Hub HTTP(S) port (defaults to 5000).
-- `HOST` controls the bind interface (defaults to `localhost` in these scripts).
-
-See [docs/launchpad.md](../../docs/launchpad.md) for the full Launchpad
-architecture and TLS behavior in local‑network mode.
+Rocket uses its own deployment configuration. These local scripts do not
+install a Rocket deployment or configure a cloud provider.

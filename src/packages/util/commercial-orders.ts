@@ -389,7 +389,13 @@ export interface CommercialUnlinkedStripeInvoice {
 export interface CommercialOrderDiagnostics {
   generated_at: string;
   counts: Record<string, number>;
+  /** USD-only invoice balances for older clients. Use amounts_by_currency. */
   amounts: Record<string, string>;
+  amounts_by_currency?: Record<string, CommercialReceivableAmounts>;
+  /** Linked local invoices only; excludes undiscovered provider invoices. */
+  amount_scope?: "linked_local_invoices";
+  unlinked_invoice_scan?: "not_requested" | "site_commercial";
+  legacy_invoice_scan?: CommercialLegacyInvoiceScan;
   reconciliation: {
     provider_local_mismatch_count: number;
     oldest_reconciliation_lag_seconds: number;
@@ -436,4 +442,34 @@ export interface CommercialOrderDiagnostics {
     indeterminate_provider_operation_ids: string[];
     open_orders_missing_due_date_ids: string[];
   };
+}
+
+export interface CommercialReceivableAmounts {
+  invoice_outstanding: string;
+  invoice_overdue: string;
+  fulfilled_invoice_outstanding: string;
+  uninvoiced_pipeline: string;
+  paid_unfulfilled_order_value: string;
+  open_order_value: string;
+}
+
+export interface CommercialLegacyInvoiceScan {
+  scope: "stripe_account_open_send_invoice";
+  scanned: number;
+  /** Complete for this page onward, not an atomic snapshot of Stripe. */
+  has_more: boolean;
+  next_cursor?: string;
+  invoices: Array<{
+    provider_invoice_id: string;
+    invoice_number: string | null;
+    customer_id: string | null;
+    customer_name: string | null;
+    currency: string;
+    /** Raw Stripe minor units, not necessarily cents. No currency conversion. */
+    amount_remaining_minor: string;
+    due_at: string | null;
+    created_at: string | null;
+    site_metadata: string | null;
+    site_match: "current" | "other" | "unknown";
+  }>;
 }

@@ -4,7 +4,10 @@ Apply a membership change using account balance (no external payment).
 
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
-import { applyMembershipChange } from "@cocalc/server/purchases/membership-change";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 
 export default async function handle(req, res) {
   try {
@@ -13,6 +16,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -32,7 +36,7 @@ async function get(req) {
     throw Error("interval must be 'month' or 'year'");
   }
 
-  return await applyMembershipChange({
+  return await executeBillingHttpCommand("membership-change", {
     account_id,
     targetClass,
     interval,

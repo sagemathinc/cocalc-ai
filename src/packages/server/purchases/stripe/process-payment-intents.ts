@@ -1,4 +1,5 @@
 import getConn from "@cocalc/server/stripe/connection";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import {
   getStripeCustomerId,
   getAccountIdFromStripeCustomerId,
@@ -911,6 +912,8 @@ customer.  So we don't know what to do with this.  Please manually investigate.
     }
   }
 
+  await registerBillingAuthorityAccount(account_id);
+
   expectedCustomerId = await getStripeCustomerId({
     account_id,
     create: false,
@@ -1410,8 +1413,13 @@ export async function markStatementPaidByPurchase({
 // This allows for a periodic check that we have processed all recent payment
 // intents across all users.  It should be called periodically.
 // This should be called periodically as a maintenance task.
-export async function processAllRecentPaymentIntents(): Promise<number> {
+export async function processAllRecentPaymentIntents({
+  max_payment_intents = Number.POSITIVE_INFINITY,
+}: { max_payment_intents?: number } = {}): Promise<number> {
   const stripe = await getConn();
+  const maxPaymentIntents = Number.isFinite(max_payment_intents)
+    ? Math.max(0, Math.floor(max_payment_intents))
+    : Number.POSITIVE_INFINITY;
 
   // payments that might have been missed. This might miss something from up to 1-2 minutes ago
   // due to time to update the index, but that is fine given the point of this function.
@@ -1427,6 +1435,8 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
   let pageCount = 0;
   let considered = 0;
   let skippedForeign = 0;
+  let attempted = 0;
+  let capped = false;
   do {
     const paymentIntents = await stripe.paymentIntents.search({
       query,
@@ -1453,6 +1463,11 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
         continue;
       }
       if (isReadyToProcess(paymentIntent)) {
+        if (attempted >= maxPaymentIntents) {
+          capped = true;
+          break;
+        }
+        attempted += 1;
         try {
           const id = await processPaymentIntent(paymentIntent);
           if (id) {
@@ -1470,6 +1485,10 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
         }
       }
     }
+    if (capped || attempted >= maxPaymentIntents) {
+      capped = true;
+      break;
+    }
     if (paymentIntents.has_more && !paymentIntents.next_page) {
       logger.warn(
         "processAllRecentPaymentIntents: Stripe search had more results but no next_page",
@@ -1481,7 +1500,9 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
       : undefined;
   } while (page && pageCount < RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES);
   const hasMore =
-    page != null && pageCount >= RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES;
+    !capped &&
+    page != null &&
+    pageCount >= RECENT_PAYMENT_INTENT_SEARCH_MAX_PAGES;
   if (hasMore) {
     await alertRecentPaymentIntentSearchTruncated({ considered, pageCount });
   }
@@ -1491,6 +1512,7 @@ export async function processAllRecentPaymentIntents(): Promise<number> {
     skippedForeign,
     pageCount,
     hasMore,
+    capped,
   });
   return purchase_ids.size;
 }
@@ -1515,12 +1537,14 @@ async function alertRecentPaymentIntentSearchTruncated({
   });
 }
 
-export async function maintainPaymentIntents() {
+export async function maintainPaymentIntents({
+  max_payment_intents = Number.POSITIVE_INFINITY,
+}: { max_payment_intents?: number } = {}) {
   logger.debug("maintainPaymentIntents");
   // Right now we just call this. We could put in a longer interval between
   // calls (i.e. refuse to call too frequently if necessary).  Right now
   // this gets called every 5 minutes, which seems fine.
-  await processAllRecentPaymentIntents();
+  await processAllRecentPaymentIntents({ max_payment_intents });
 }
 
 function getInvoiceLineItems(invoice): LineItem[] {

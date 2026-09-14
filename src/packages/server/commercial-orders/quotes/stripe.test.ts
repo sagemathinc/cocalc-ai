@@ -74,6 +74,7 @@ import type {
   CommercialOrder,
   CommercialQuote,
 } from "@cocalc/util/commercial-orders";
+import { runInBillingAuthorityContext } from "@cocalc/server/purchases/billing-authority/context";
 import {
   acceptStripeCommercialQuote,
   cancelStripeCommercialQuote,
@@ -1213,6 +1214,38 @@ describe("commercial Stripe quotes", () => {
         skip_if_unchanged: true,
       }),
     );
+  });
+
+  it("stops webhook reconciliation when its resolved customer is frozen", async () => {
+    const customerAccountId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ customer_account_id: customerAccountId }),
+    );
+    const registerAccount = jest.fn(async () => {
+      throw Object.assign(new Error("billing is frozen for this account"), {
+        status: 423,
+      });
+    });
+
+    await expect(
+      runInBillingAuthorityContext({
+        operation: "commercial-maintenance",
+        request_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        register_account: registerAccount,
+        fn: async () =>
+          await reconcileStripeCommercialQuoteById({
+            order_id: "co_1",
+            commercial_quote_id: "cq_1",
+            source: "stripe-webhook",
+            reason: "Reconcile Stripe webhook",
+            event_idempotency_key: "evt_frozen_quote",
+          }),
+      }),
+    ).rejects.toMatchObject({ status: 423 });
+
+    expect(registerAccount).toHaveBeenCalledWith(customerAccountId);
+    expect(mockGetCommercialQuote).not.toHaveBeenCalled();
+    expect(stripe.quotes.retrieve).not.toHaveBeenCalled();
   });
 
   it("replays a completed reconciliation without another provider request", async () => {

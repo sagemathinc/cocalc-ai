@@ -50,6 +50,7 @@ describe("purchases.maintenance capability gating", () => {
         stripe_secret_key: "sk_test_456",
       } as any),
     ).toEqual([
+      "collect explicitly authorized monthly statements",
       "reconcile pending account credit transfers",
       "reconcile pending provider refunds",
       "maintain subscriptions",

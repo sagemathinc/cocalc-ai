@@ -27,7 +27,7 @@ const { Paragraph, Text, Title } = Typography;
 
 const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 
-// A small sample of the real runtime-image catalog, used for the mock visual.
+// Illustrative software categories; the live catalog determines availability.
 const CATALOG_SAMPLE = [
   {
     accent: COLORS.FEATURE_SAGE_BLUE,
@@ -69,7 +69,7 @@ const CATALOG_SAMPLE = [
 const REUSABLE_ENV_ACCENT = COLORS.FEATURE_ORANGE;
 const REUSABLE_ENV_ITEMS = [
   { icon: "copy", label: "Start projects from a template" },
-  { icon: "database", label: "Include data and tools" },
+  { icon: "database", label: "Include example data and tools" },
   { icon: "upload", label: "Publish upgraded versions" },
   { icon: "file", label: "Record upgrade notes" },
 ] satisfies { icon: IconName; label: string }[];
@@ -207,9 +207,9 @@ export default function SoftwareEnvironmentFeaturePage({
                 Your project's software is an image you choose
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Every CoCalc project runs on a runtime image, from a lean base
-                system to full scientific stacks. Customize it, switch it, or
-                build your own.
+                Hosted CoCalc projects run on a runtime image, from a lean base
+                system to scientific stacks. Choose an available image,
+                customize it, or build a reusable environment for your team.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -226,7 +226,7 @@ export default function SoftwareEnvironmentFeaturePage({
               accent={COLORS.FEATURE_BLUE}
               items={[
                 { icon: "cube", label: "One image per project, switchable" },
-                { icon: "download", label: "Your installs persist on top" },
+                { icon: "download", label: "Install packages in your project" },
                 { icon: "users", label: "Share images with your team" },
               ]}
               title="Highlights"
@@ -253,23 +253,23 @@ export default function SoftwareEnvironmentFeaturePage({
         {/* mock visual — replace with a screenshot of the image catalog */}
         <FeatureInfo
           accent={COLORS.FEATURE_BLUE}
-          alt="Cards from the runtime image catalog"
+          alt="Illustration of software environment categories"
           anchor="a-catalog"
           icon="server"
           imageComponent={<ImageCatalogMock />}
           title="Ready-made images for real workflows"
         >
           <Paragraph>
-            The catalog covers the stacks technical work actually uses:
-            SageMath, Python, R with a full IDE, Julia with Pluto, Quarto, Lean,
-            GPU images for PyTorch and TensorFlow, web development, Overleaf, VS
-            Code in the browser, and more.
+            Look in the catalog for images for SageMath, Python, R, Julia,
+            Quarto, Lean, GPU frameworks, web development, and browser IDEs.
+            Check the selected entry for its included software, version, and
+            compatible hardware; an image alone does not provide a GPU.
           </Paragraph>
           <Paragraph>
-            Official images are curated and kept current in{" "}
-            <strong>stable and preview channels</strong>. Everything you see in
-            a notebook or terminal, from Jupyter kernels to LaTeX engines, comes
-            from the image you picked.
+            Check the image's <strong>version and release channel</strong>{" "}
+            before adopting an update. The image provides the initial software;
+            packages and kernels installed in the project can extend it. A
+            notebook using a remote kernel runs in that remote environment.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -282,10 +282,13 @@ export default function SoftwareEnvironmentFeaturePage({
           title="Pick per project, switch anytime"
         >
           <Paragraph>
-            Choose an image when you create a project, or change it later in the
-            project settings. Switching restarts the project with the new
-            environment, and a <strong>one-step rollback</strong> to the
-            previous image stays available.
+            Choose an image when you create a project, or change it later in
+            Settings under Environment. Save work first: changing a running
+            project's image queues a restart; a stopped project uses it on the
+            next start. The image controls retain{" "}
+            <strong>one previous image</strong> for rollback. Check the restart
+            status before resuming work. Selecting the previous image does not
+            undo changes to HOME files or restore running processes.
           </Paragraph>
           <Paragraph>
             When a newer version of your image family is released, CoCalc offers
@@ -302,15 +305,17 @@ export default function SoftwareEnvironmentFeaturePage({
           title="Install on top: your changes persist"
         >
           <Paragraph>
-            The base image is shared and read-only; everything you install on
-            top is stored with your project, whether via{" "}
-            <code>apt-get install</code>, <code>pip</code>, <code>npm</code>, or
-            your own builds. It <strong>survives restarts</strong>, is included
-            in backups, and moves with the project.
+            The base image is shared and read-only. Installs in the project's
+            persistent home directory or writable system layer survive normal
+            restarts and are included in project backups and host moves.
+            Temporary files in <code>/tmp</code> and host-shared{" "}
+            <code>/scratch</code> are separate: keep important packages, data,
+            and results in persistent project storage and check backup
+            freshness.
           </Paragraph>
           <Paragraph>
-            The base image itself does not count against your project's disk
-            quota, so a full scientific stack costs you nothing in storage.
+            Managed base-image layers do not count against your project's disk
+            quota. Your writable files and installed changes do.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -326,7 +331,11 @@ export default function SoftwareEnvironmentFeaturePage({
           <Paragraph>
             Turn a configured project into a reusable image with one action:{" "}
             <strong>publish the current environment</strong> and use it for your
-            next project, your collaborators, or a whole course.
+            next project, your collaborators, or a whole course. Publishing an
+            image excludes <code>/home/user</code>, <code>/root</code>, and{" "}
+            <code>/tmp</code>; place bundled examples in a stable path such as{" "}
+            <code>/opt/my-course/examples</code> and preserve research data
+            separately.
           </Paragraph>
           <Paragraph>
             Prefer reproducible builds? Describe an image as a{" "}
@@ -374,8 +383,8 @@ export default function SoftwareEnvironmentFeaturePage({
         >
           <BulletList
             items={[
-              "Notebook kernels, LaTeX engines, and command-line tools all come from the project's image.",
-              "Teams and courses stay reproducible: everyone works on the same environment.",
+              "Start with an image that provides the notebook kernels, LaTeX engines, and command-line tools your work needs.",
+              "Use the same base image for a team or course, and record added packages and input versions for later reruns.",
               "Start lean and add what you need, or start from a full stack and get to work.",
             ]}
           />

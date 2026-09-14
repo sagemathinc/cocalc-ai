@@ -143,6 +143,30 @@ it("does not let a newer statement bypass an uncertain previous attempt", async 
   );
   expect(await claimMonthlyCollection(f.account_id, 5)).toBeUndefined();
 });
+it("a bounded pass skips ineligible statements before selecting the next account", async () => {
+  await getPool().query("UPDATE accounts SET monthly_collection=NULL");
+  const small = await fixture();
+  await getPool().query("UPDATE statements SET balance=-1 WHERE id=$1", [
+    small.statement_id,
+  ]);
+  const deposited = await fixture();
+  await getPool().query(
+    "INSERT INTO purchases(account_id,cost,service,time) VALUES($1,-5,'credit',now())",
+    [deposited.account_id],
+  );
+  const pending = await fixture();
+  await claimMonthlyCollection(pending.account_id, 5);
+  await getPool().query(
+    "INSERT INTO statements(account_id,interval,time,balance) VALUES($1,'month',now(),-10)",
+    [pending.account_id],
+  );
+  const eligible = await fixture();
+  await maintainMonthlyCollections({ limit: 1 });
+  expect(createPaymentIntent).toHaveBeenCalledTimes(1);
+  expect(createPaymentIntent).toHaveBeenCalledWith(
+    expect.objectContaining({ account_id: eligible.account_id }),
+  );
+});
 it("refuses a retired or remote financial authority", async () => {
   const f = await fixture();
   await getPool().query(

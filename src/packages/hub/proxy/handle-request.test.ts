@@ -135,6 +135,7 @@ describe("hub proxy file downloads", () => {
         client: workspaceClient,
         readServiceName: ":workspace",
         statSubject: "fs.project-457f20dd-59d1-45c4-b5b1-a245d0e0a629",
+        account_id: "account-1",
       });
       expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
       expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
@@ -169,6 +170,116 @@ describe("hub proxy file downloads", () => {
     expect(mockGetProjectHostRedirectUrl).not.toHaveBeenCalled();
     expect(proxyHandlers.handleRequest).not.toHaveBeenCalled();
   });
+
+  it("applies workspace account fairness across projects using verified HTTP identity", async () => {
+    const { EventEmitter, once } = await import("node:events");
+    const { PassThrough } = await import("node:stream");
+    const { init: initServer } = await import("@cocalc/conat/core/server");
+    const { createServer, close } = await import("@cocalc/conat/files/read");
+    const { handleFileDownload } = jest.requireActual(
+      "@cocalc/conat/files/file-download",
+    );
+    const server = initServer({
+      port: 0,
+      autoscanInterval: 0,
+      getUser: async (socket) => socket.handshake.auth,
+    });
+    if (server.state !== "ready") await once(server, "ready");
+    const client = server.client({
+      noCache: true,
+      auth: { hub_id: "test-hub" },
+    });
+    const projects = Array.from(
+      { length: 9 },
+      (_, i) => `00000000-6000-4000-8000-${String(i).padStart(12, "0")}`,
+    );
+    const streams: InstanceType<typeof PassThrough>[] = [];
+    const responses: any[] = [];
+    const pending: Promise<void>[] = [];
+    const until = async (condition: () => boolean) => {
+      for (let i = 0; i < 500; i++) {
+        if (condition()) return;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      throw Error("condition timed out");
+    };
+    try {
+      mockIsWorkspaceProjectRuntime.mockReturnValue(true);
+      mockConat.mockReturnValue(client);
+      mockParseReq.mockImplementation((url: string) => ({
+        type: "files",
+        project_id: url.split("/")[1],
+        route: { access: "read" },
+      }));
+      mockHandleFileDownload.mockImplementation(handleFileDownload);
+      for (const project_id of projects)
+        await createServer({
+          client,
+          project_id,
+          name: ":workspace",
+          createReadStream: () => {
+            const stream = new PassThrough();
+            streams.push(stream);
+            return stream;
+          },
+        });
+      mockEnsureWorkspaceFileDownloadReadServer.mockImplementation(
+        async ({ project_id }) => ({
+          readServiceName: ":workspace",
+          statSubject: `fs.project-${project_id}`,
+        }),
+      );
+      const init = (await import("./handle-request")).default;
+      const handler = init({ isPersonal: false });
+      const request = (project_id: string) => {
+        const req: any = Object.assign(new EventEmitter(), {
+          method: "GET",
+          url: `/${project_id}/files/waiting.txt?account_id=untrusted`,
+          headers: {
+            cookie: "session=ok",
+            "CN-File-Read-Principal": "account:untrusted",
+          },
+        });
+        const res: any = Object.assign(new EventEmitter(), {
+          setHeader: jest.fn(),
+          write: jest.fn(() => true),
+          writeHead: jest.fn(),
+          end: jest.fn(),
+          destroy: jest.fn(),
+        });
+        responses.push(res);
+        pending.push(handler(req, res));
+        return res;
+      };
+      for (let i = 0; i < 8; i++) {
+        request(projects[i]);
+        await until(() => streams.length === i + 1);
+      }
+      const denied = request(projects[8]);
+      await until(() => denied.end.mock.calls.length > 0);
+      expect(denied.statusCode).toBe(500);
+      expect(streams).toHaveLength(8);
+      expect(
+        mockHandleFileDownload.mock.calls.every(
+          ([opts]) => opts.account_id === "account-1",
+        ),
+      ).toBe(true);
+      mockResolveAuthenticatedAccountId.mockResolvedValue("account-2");
+      request(projects[8]);
+      await until(() => streams.length === 9);
+    } finally {
+      for (const res of responses) {
+        res.destroyed = true;
+        res.emit("close");
+      }
+      await Promise.all(pending);
+      await until(() => streams.every((stream) => stream.destroyed));
+      for (const project_id of projects)
+        await close({ project_id, name: ":workspace" });
+      client.close();
+      await server.close();
+    }
+  }, 20000);
 
   it("redirects authenticated file downloads to the project-host", async () => {
     mockGetProjectHostRedirectUrl.mockResolvedValue(

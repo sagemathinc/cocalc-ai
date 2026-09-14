@@ -1,4 +1,5 @@
 import { CoreStream } from "./core-stream";
+import { ConatError } from "../core/client";
 
 function createStream() {
   return new CoreStream({
@@ -107,5 +108,46 @@ describe("CoreStream metadata propagation", () => {
       time: 4321,
       data: { patchId: "patch-11" },
     });
+  });
+
+  it("leaves existing metadata and checkpoints intact when recovery is incomplete", async () => {
+    const stream = createStream();
+    const metadata = {
+      users: Array.from({ length: 112 }, (_, i) => `historical-editor-${i}`),
+    };
+    const checkpoints = {
+      latest_snapshot: { seq: 11, time: 4321, data: { patchId: "patch-11" } },
+    };
+    (stream as any).processPersistentMessage({ op: "metadata", metadata }, {});
+    (stream as any).processPersistentMessage(
+      { op: "checkpoints", checkpoints },
+      {},
+    );
+    const error = new ConatError("incomplete persistence bootstrap state", {
+      code: 503,
+    });
+    const persistClient = {
+      changefeed: jest.fn().mockResolvedValue({}),
+      getAllWithInfo: jest.fn().mockRejectedValue(error),
+      close: jest.fn(),
+    };
+    (stream as any).persistClient = persistClient;
+    const metadataChange = jest.fn();
+    const checkpointsChange = jest.fn();
+    stream.on("metadata-change", metadataChange);
+    stream.on("checkpoints-change", checkpointsChange);
+    try {
+      await expect(
+        (stream as any).getAllFromPersist({ start_seq: 12, retry: false }),
+      ).rejects.toBe(error);
+      expect(stream.getMetadata()).toEqual(metadata);
+      expect(stream.getCheckpoint("latest_snapshot")).toEqual(
+        checkpoints.latest_snapshot,
+      );
+      expect(metadataChange).not.toHaveBeenCalled();
+      expect(checkpointsChange).not.toHaveBeenCalled();
+    } finally {
+      stream.close();
+    }
   });
 });

@@ -1,4 +1,10 @@
-Below is the shortest reliable path to produce the exact three strings the Nebius JS SDK expects under "Using a service account (private key / credentials file):" at https://github.com/nebius/js-sdk?tab=readme-ov-file
+# Nebius Credentials And CoCalc Configuration
+
+The provider setup notes below are references to external Nebius CLI workflows;
+confirm their commands and required permissions against the provider version and
+your access policy before using them. The CoCalc integration section describes
+the configuration consumed by this repository, not a tested provider login or
+provisioning result.
 
 It assumes you have installed the CLI nebius program as explained in http://docs.nebius.com/cli/quickstart
 
@@ -10,7 +16,8 @@ publicKeyId: "publickey-…",
 privateKeyPem: "-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----"
 ```
 
-The JS SDK’s README shows this “serviceAccount object (id + key) directly” initialization pattern. ([GitHub][1])
+CoCalc extracts these credential fields and passes them under the SDK
+constructor's `credentials` property, together with a `parentId`.
 
 ---
 
@@ -129,7 +136,21 @@ Key point: in Nebius’s auth scheme, `kid` is the **public key ID**, and `iss/s
 
 ## 4) Wire it into `@nebius/js-sdk`
 
-This is already done by cocalc -- you just have to put credentials.json into the admin settings.
+CoCalc reads the `nebius_region_config_json` admin setting as an object keyed by
+region. Each configured region needs all three fields:
+
+- `nebius_credentials_json`: the credentials file contents as a JSON string.
+- `nebius_parent_id`: the Nebius project/parent ID.
+- `nebius_subnet_id`: the subnet ID for that region.
+
+A single credentials file by itself is not the complete region configuration.
+If several regions are configured, select a region for the host. The parser and
+selection behavior are in
+[`server/cloud/nebius-credentials.ts`](../../server/cloud/nebius-credentials.ts).
+
+The following illustrates the constructor shape used by
+[`nebius/client.ts`](./client.ts). It reads local credentials; it does not
+validate permissions, a subnet, or instance availability.
 
 ```ts
 import fs from "node:fs";
@@ -143,22 +164,18 @@ const creds = JSON.parse(raw);
 const sc = creds["subject-credentials"];
 
 const sdk = new SDK({
-  serviceAccount: {
-    serviceAccountId: sc.iss, // e.g. serviceaccount-...
+  credentials: {
+    serviceAccountId: sc.iss ?? sc.sub, // e.g. serviceaccount-...
     publicKeyId: sc.kid, // e.g. publickey-...
     privateKeyPem: sc["private-key"], // actual PEM with real newlines after JSON.parse
   },
+  parentId: process.env.PROJECT_ID, // set to the intended Nebius project ID
 });
-
-// quick sanity check (the README shows whoami() for validation)
-const profile = await sdk.whoami();
-console.log(profile);
-
-await sdk.close();
 ```
 
-The SDK README shows both (a) the `serviceAccount: { serviceAccountId, publicKeyId, privateKeyPem }` constructor shape and (b) using `whoami()` to validate credentials. ([GitHub][1])
-
+Repository source establishes this configuration shape. It does not establish
+that the external account-creation and group-membership commands above have
+been run, or that a configured service account can create a host.
 
 [1]: https://github.com/nebius/js-sdk "GitHub - nebius/js-sdk"
 [2]: https://raw.githubusercontent.com/nebius/nebius-solution-library/refs/heads/main/skypilot/nebius-setup.sh "raw.githubusercontent.com"

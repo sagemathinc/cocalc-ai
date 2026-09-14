@@ -76,6 +76,7 @@ import {
 import { type Readable } from "node:stream";
 import { getLogger } from "@cocalc/conat/logger";
 import { recordServiceAdmissionDenial } from "@cocalc/conat/admission/denials";
+import { copyToWriteStream, type FileWriteStream } from "./write-stream";
 const logger = getLogger("conat:files:write");
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -142,7 +143,9 @@ export async function createServer({
   // createWriteStream returns a writeable stream
   // for writing the specified path to disk.  It
   // can be an async function.
-  createWriteStream: (path: string) => any;
+  createWriteStream: (
+    path: string,
+  ) => FileWriteStream | Promise<FileWriteStream>;
   maxActiveStreams?: number;
 }) {
   const subject = getWriteSubject({ project_id, name });
@@ -201,49 +204,20 @@ async function listen({
 }
 
 async function handleMessage({ mesg, createWriteStream, project_id, client }) {
-  let error = "";
-  let writeStream: null | Awaited<ReturnType<typeof createWriteStream>> = null;
   try {
-    const { path, name, maxWait } = mesg.data;
+    const { path, name, maxWait = 1000 * 60 * 10 } = mesg.data;
     logger.debug("handleMessage", { path, name, maxWait });
-    writeStream = await createWriteStream(path);
-    // console.log("created writeStream");
-    writeStream.on("error", (err) => {
-      error = `${err}`;
-      mesg.respondSync({ error, status: "error" });
-      console.warn(`error writing ${path}: ${error}`);
-      writeStream.emit("remove");
-    });
-    let chunks = 0;
-    let bytes = 0;
-    for await (const chunk of await readFile({
-      project_id,
-      name,
-      path,
+    const { bytes, chunks } = await copyToWriteStream({
+      open: () => createWriteStream(path),
+      source: (signal) =>
+        readFile({ project_id, name, path, maxWait, client, signal }),
       maxWait,
-      client,
-    })) {
-      if (error) {
-        // console.log("error", error);
-        writeStream.end();
-        return;
-      }
-      writeStream.write(chunk);
-      chunks += 1;
-      bytes += chunk.length;
-      logger.debug("handleMessage -- wrote", { path, name, bytes });
-      // console.log("wrote ", bytes);
-    }
-    writeStream.end();
-    writeStream.emit("rename");
+    });
     mesg.respondSync({ status: "success", bytes, chunks });
     logger.debug("handleMessage -- SUCCESS", { path, name });
   } catch (err) {
     logger.debug("handleMessage: ERROR", err);
-    if (!error) {
-      mesg.respondSync({ error: `${err}`, status: "error" });
-      writeStream?.emit("remove");
-    }
+    mesg.respondSync({ error: `${err}`, status: "error" });
   }
 }
 

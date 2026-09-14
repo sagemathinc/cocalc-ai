@@ -444,6 +444,14 @@ means the thread has no saved automation.
 
 ## Step 3: Activate when ready
 
+Before enabling the schedule, check the project's
+[browser-idle policy and host lifecycle](/docs/hosts/lifecycle) and the
+[authentication needed by commands in its prompt](/docs/cli/authentication-and-targets).
+An enabled schedule does not reserve compute or renew fresh authentication.
+Project or host availability, model authentication, and admission limits can
+prevent a run from completing. Confirm a result after activation before relying
+on unattended execution; the schedule configuration alone is not that result.
+
 To enable the reviewed daily task:
 
 ~~~bash

@@ -20,7 +20,8 @@ import { FeatureFinalBand } from "./feature-visuals";
 
 const { Paragraph, Title } = Typography;
 
-const OCTAVE_KERNEL_GUIDE = "docs/jupyter/install-octave-kernel";
+const OCTAVE_KERNEL_GUIDE =
+  "https://cocalc.ai/docs/jupyter/install-octave-kernel";
 const OCTAVE_IMAGE = "rootfs/octave-11-3";
 
 export default function OctaveFeaturePage({
@@ -47,9 +48,9 @@ export default function OctaveFeaturePage({
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
                 Octave is the free numerical computing language that is largely
-                compatible with MATLAB. Start a project on the Octave image and
-                it is ready: Octave with the common packages, a Jupyter kernel,
-                and a full Linux system for scripts, plots, and data.
+                compatible with MATLAB. Choose an available Octave image for its
+                packages and Jupyter kernel, or follow the kernel setup guide to
+                install Octave in a compatible project environment.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -76,9 +77,11 @@ export default function OctaveFeaturePage({
           anchor="a-overview"
           description={
             <>
-              The image brings Octave. The project brings passwordless sudo, a
-              persistent home directory, snapshots, TimeTravel history, and
-              collaborators editing the same files.
+              The hosted image supplies Octave, while collaborators work with
+              shared project files and edit history. System installation
+              permissions and snapshot coverage depend on the selected image and
+              deployment. Native CoCalc Plus uses your computer's operating
+              system and installed tools.
             </>
           }
         >
@@ -104,8 +107,7 @@ export default function OctaveFeaturePage({
           <Paragraph>
             The notebook itself is a collaborative CoCalc document:{" "}
             <strong>real-time editing with visible cursors</strong>, chat
-            threads anchored to cells, and TimeTravel recording every change.
-            The{" "}
+            threads anchored to cells, and TimeTravel document edit history. The{" "}
             <a href={appPath("features/jupyter-notebook")}>
               Jupyter notebooks page
             </a>{" "}
@@ -131,11 +133,14 @@ export default function OctaveFeaturePage({
             starts from the project's Apps panel.
           </Paragraph>
           <Paragraph>
-            Pick it when you create a project, or switch an existing project to
-            it later. Anything you add on top, from <code>pkg install</code> to{" "}
-            <code>apt-get</code>, <strong>persists with the project</strong>. To
-            add Octave to a different image instead, follow the{" "}
-            <a href={appPath(OCTAVE_KERNEL_GUIDE)}>kernel setup guide</a>.
+            Pick an available Octave image when creating a hosted project, or
+            check dependencies before switching an existing project to it.
+            Packages under HOME and system packages in the runtime filesystem
+            have different restore and image-change considerations. Record
+            package versions and installation locations, and check the
+            configured backup coverage. System installs also require the
+            appropriate permissions. To add Octave to a different image, follow
+            the <a href={OCTAVE_KERNEL_GUIDE}>kernel setup guide</a>.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -155,8 +160,9 @@ export default function OctaveFeaturePage({
           <Paragraph>
             Longer runs belong in the{" "}
             <a href={appPath("features/terminal")}>terminal</a>:{" "}
-            <strong>sessions survive disconnects</strong>, so you can start a
-            computation, close the laptop, and check the result later.
+            <strong>sessions can survive browser disconnects</strong> while the
+            project runtime remains running. Save intermediate results and plan
+            how to restart an interrupted calculation.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -172,7 +178,7 @@ export default function OctaveFeaturePage({
           relatedLinks={[
             { href: appPath(OCTAVE_IMAGE), label: "Octave image" },
             {
-              href: appPath(OCTAVE_KERNEL_GUIDE),
+              href: OCTAVE_KERNEL_GUIDE,
               label: "Octave setup guide",
             },
             {
@@ -196,7 +202,7 @@ export default function OctaveFeaturePage({
               "Numerical research and prototyping that benefits from shared files and history.",
               "Work that mixes Octave with notebooks, data, and write-ups in one project.",
               "A team that opens each other's Octave work and reviews it together.",
-              "A numerical course where students share one consistent environment.",
+              "A numerical course whose student projects are configured with the intended Octave image and packages.",
             ]}
           />
         </FeatureFinalBand>

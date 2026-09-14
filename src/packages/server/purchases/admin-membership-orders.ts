@@ -8,7 +8,9 @@ import getPool, {
   getTransactionClient,
   type PoolClient,
 } from "@cocalc/database/pool";
-import { resolveMembershipPackageQuote } from "@cocalc/server/membership/packages";
+import { resolveAdminMembershipPackageQuote } from "@cocalc/server/membership/packages";
+import { resolveLockedLocalAdminCourseProjectQuoteContext } from "./admin-course-project";
+import { adminMembershipPackageInvoiceId } from "./admin-membership-package-identity";
 import type { MembershipPackageQuote } from "@cocalc/conat/hub/api/purchases";
 import { toDecimal } from "@cocalc/util/money";
 import type { MoneyValue } from "@cocalc/util/money";
@@ -20,6 +22,39 @@ type Request = Omit<
   AdminMembershipPackagePurchaseOptions,
   "trusted_admin" | "admin_account_id" | "user_account_id" | "idempotency_key"
 >;
+
+function legacyQuote(
+  snapshot: any,
+  opts: AdminMembershipPackagePurchaseOptions,
+): MembershipPackageQuote {
+  const quote = snapshot?.quote;
+  if (
+    snapshot?.version !== 1 ||
+    !quote ||
+    !["course", "team", "site"].includes(quote.kind) ||
+    typeof quote.membership_class !== "string" ||
+    !quote.membership_class.trim() ||
+    !Number.isInteger(quote.seat_count) ||
+    quote.seat_count < 0 ||
+    !Number.isFinite(quote.seat_price) ||
+    !Number.isFinite(quote.total_price) ||
+    snapshot.custom_price !== opts.price ||
+    snapshot.source !== opts.source ||
+    snapshot.reason !== opts.reason ||
+    (snapshot.pricing_note ?? undefined) !== opts.pricing_note ||
+    !snapshot.metadata ||
+    typeof snapshot.metadata !== "object" ||
+    Array.isArray(snapshot.metadata)
+  ) {
+    throw Error("admin membership package intent snapshot is invalid");
+  }
+  return {
+    ...quote,
+    starts_at: new Date(snapshot.starts_at),
+    expires_at: new Date(snapshot.expires_at),
+    metadata: snapshot.metadata,
+  };
+}
 export interface AdminMembershipOrder {
   id: string;
   account_id: string;
@@ -100,7 +135,38 @@ export async function prepareAdminMembershipOrder(
           "An earlier custom membership payment needs reconciliation before charging this account again",
         );
     }
-    const quote = await resolveMembershipPackageQuote(opts.product, client);
+    const course = await resolveLockedLocalAdminCourseProjectQuoteContext({
+      client,
+      product: opts.product,
+    });
+    const { rows: legacyIntents } = await client.query(
+      "SELECT account_id,admin_account_id,request_hash,snapshot FROM admin_membership_package_intents WHERE invoice_id=$1 FOR UPDATE",
+      [
+        adminMembershipPackageInvoiceId(
+          opts.admin_account_id,
+          opts.idempotency_key,
+        ),
+      ],
+    );
+    const legacy = legacyIntents[0];
+    if (
+      legacy &&
+      (legacy.account_id !== opts.user_account_id ||
+        legacy.admin_account_id !== opts.admin_account_id ||
+        !opts.accepted_request_hashes?.includes(legacy.request_hash))
+    ) {
+      throw Error("idempotency key belongs to a different package request");
+    }
+    // A pre-upgrade card intent may already have a provider charge without the
+    // new order binding. Never create another charge under a new identity.
+    if (legacy && opts.source === "card" && opts.price > 0) {
+      throw Error(
+        "An earlier membership card intent needs reconciliation before using the new order workflow",
+      );
+    }
+    const quote = legacy
+      ? legacyQuote(legacy.snapshot, opts)
+      : await resolveAdminMembershipPackageQuote(opts.product, client, course);
     const starts_at = new Date(opts.product.starts_at ?? quote.starts_at ?? "");
     const expires_at = new Date(
       opts.product.expires_at ?? quote.expires_at ?? "",
@@ -126,6 +192,16 @@ export async function prepareAdminMembershipOrder(
         JSON.stringify({ ...quote, starts_at, expires_at }),
       ],
     );
+    if (legacy)
+      await client.query(
+        "DELETE FROM admin_membership_package_intents WHERE invoice_id=$1",
+        [
+          adminMembershipPackageInvoiceId(
+            opts.admin_account_id,
+            opts.idempotency_key,
+          ),
+        ],
+      );
     return order;
   });
 }

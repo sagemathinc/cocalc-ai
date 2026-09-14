@@ -438,6 +438,18 @@ let active:
 export function monthlyCollectionApprovalAvailable(): boolean {
   return active != null;
 }
+// Server-only dispatcher. The independent session is revalidated after queuing;
+// an ordinary application session or a proposed intent is not an approval.
+export async function applyFundingApprovalCommand(input: {
+  payer_account_id: string;
+  intent_id: string;
+  terms_hash: string;
+  approved_session_hash: string;
+}) {
+  if (!active)
+    throw Error("Trusted financial approval is not configured on this bay");
+  return active.approve(input);
+}
 export async function proposeMonthlyCollectionApproval(opts: {
   payer_account_id: string;
   operation_id: string;

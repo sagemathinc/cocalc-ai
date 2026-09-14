@@ -9,7 +9,7 @@ import {
   ACCOUNT_SETTINGS_BODY,
   BILLING_SETTINGS_BODY,
   TWO_FACTOR_AUTHENTICATION_BODY,
-} from "../content";
+} from "../content/account";
 
 export const ACCOUNT_ENTRIES: DocsEntry[] = [
   {

@@ -15,7 +15,10 @@ jest.mock("@cocalc/server/stripe/connection", () => ({
 }));
 
 jest.mock("./util", () => ({
-  assertValidUserMetadata: jest.requireActual("./util").assertValidUserMetadata,
+  assertInteractivePaymentPurpose:
+    jest.requireActual("./util").assertInteractivePaymentPurpose,
+  assertValidStripePaymentInput:
+    jest.requireActual("./util").assertValidStripePaymentInput,
   currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
   getStripeLineItems: (lineItems) => ({
@@ -120,10 +123,10 @@ describe("getCheckoutSession", () => {
     expect(createdMetadata).toMatchObject({
       account_id: "acct-1",
       cocalc_site: "staging.cocalc.ai",
-      lineItems: JSON.stringify(lineItems),
       membership_package_product: "product-a",
       purpose: "membership-package-purchase",
     });
+    expect(createdMetadata).not.toHaveProperty("lineItems");
     expect(createdMetadata.checkout_key).toMatch(/^[a-f0-9]{64}$/);
     expect(stripe.checkout.sessions.expire).not.toHaveBeenCalled();
     expect(stripe.checkout.sessions.create).toHaveBeenCalledTimes(1);

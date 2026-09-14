@@ -47,7 +47,9 @@ export default function RStatisticalSoftwareFeaturePage({
               >
                 Run R in your browser: Jupyter notebooks, a full IDE, RMarkdown
                 and Quarto reports, knitr LaTeX documents, and plain R scripts,
-                all in one shared project.
+                all in one shared project. Choose an image with R and the tools
+                your workflow needs; Quarto and PDF builds require additional
+                software beyond the R interpreter.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -112,9 +114,9 @@ export default function RStatisticalSoftwareFeaturePage({
           title="R in collaborative Jupyter notebooks"
         >
           <Paragraph>
-            R images ship the <strong>IRkernel</strong>, so notebooks run R
-            natively: fit models, plot with ggplot2, and keep narrative text
-            next to the code.
+            Choose an R image with <strong>IRkernel</strong>, then select its R
+            kernel in the notebook. Fit models, plot with installed packages
+            such as ggplot2, and keep narrative text next to the code.
           </Paragraph>
           <Paragraph>
             CoCalc notebooks add <strong>real-time collaboration</strong>:
@@ -143,9 +145,11 @@ export default function RStatisticalSoftwareFeaturePage({
             for you and shows the build log when something goes wrong.
           </Paragraph>
           <Paragraph>
-            The result is a <strong>reproducible report</strong>: code, text,
-            and figures in one file, rendered to HTML or PDF from the same
-            project that holds the data.
+            Keep code, text, and figures together in a report rendered from the
+            project that holds the data. Check that the selected environment has
+            RMarkdown or Quarto and the tools required for the output format,
+            including LaTeX for LaTeX-based PDF output. Record package and input
+            versions when others need to reproduce the build.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -183,15 +187,19 @@ export default function RStatisticalSoftwareFeaturePage({
           title="A full R IDE and Shiny apps"
         >
           <Paragraph>
-            Prefer a classic IDE? The R images include a browser-based R IDE
-            server: <strong>launch it with one click</strong> from the project's
-            Apps tab and work on the project's files and packages in a familiar
-            layout.
+            Prefer a classic IDE? Choose an image that includes RStudio Server
+            and its launcher. Use the project's Apps tab to launch it and work
+            on the project's files and packages. Check the app status and logs
+            if startup does not complete.
           </Paragraph>
           <Paragraph>
-            Shiny is installed as well, and a bundled example app{" "}
-            <strong>runs through the project's app proxy</strong>, so you can
-            try an interactive app straight from the browser.
+            Images with Shiny and the bundled example provide an app that{" "}
+            <strong>runs through the project's app proxy</strong>. These project
+            apps use the project's files. Check the active R version and{" "}
+            <a href="https://stat.ethz.ch/R-manual/R-devel/library/base/html/libPaths.html">
+              package library paths
+            </a>{" "}
+            in each interface before comparing packages or results.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -206,18 +214,19 @@ export default function RStatisticalSoftwareFeaturePage({
           title="R scripts on the command line"
         >
           <Paragraph>
-            Your existing scripts run unchanged:{" "}
+            Run a script after checking its required packages and input paths:{" "}
             <strong>
               <code>Rscript analysis.R</code> in a real Linux terminal
             </strong>
-            , with the project's filesystem, Git, and automatic backups and
-            snapshots.
+            . Save its results in persistent project files and check the
+            project's configured backup and snapshot recovery points.
           </Paragraph>
           <Paragraph>
-            Long-running model fits{" "}
-            <strong>keep going when you close the browser</strong>, and package
-            installs persist in the project, on top of the image's preinstalled
-            R stack.
+            Model fits can continue through a browser disconnect while the{" "}
+            <strong>project runtime remains running</strong>. A stop, restart,
+            failure, or configured browser-idle timeout can interrupt them. Save
+            logs and checkpoints; package installs in persistent project storage
+            survive normal restarts, but running processes do not.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -251,8 +260,8 @@ export default function RStatisticalSoftwareFeaturePage({
             items={[
               "Develop the model in a notebook or the IDE, with packages and data in the project.",
               "Render an RMarkdown or Quarto report, or build a knitr LaTeX paper, from the same project.",
-              "Collaborators and reviewers open the project and see the exact code, output, and TimeTravel history.",
-              "Re-run it later: the environment, data, and report build are still there.",
+              "Collaborators work with the shared code and output; viewers can read the saved files allowed by their access policy.",
+              "Keep input versions, package requirements, build instructions, and verified saved results for later reruns.",
             ]}
           />
         </FeatureFinalBand>

@@ -2013,16 +2013,53 @@ function registerMaintenanceCommands(
       "inspect commercial receivables consistency and reconciliation health",
     )
     .option("--reconcile", "request reconciliation-aware diagnostics", false)
+    .option(
+      "--include-legacy-invoices",
+      "read-only scan of unlinked open send-invoice candidates across the entire Stripe account",
+      false,
+    )
+    .option(
+      "--legacy-invoice-limit <number>",
+      "provider invoices to examine, including linked invoices (1-500; default 100)",
+    )
+    .option(
+      "--legacy-invoice-cursor <id>",
+      "continue a legacy scan from its next_cursor",
+    )
     .option("--reason <text>", "audit reason for this admin read")
     .action(async (opts: any, command: Command) => {
       await deps.withContext(
         command,
         "admin receivables diagnostics",
-        async (ctx) =>
-          await ctx.hub.commercialOrders.diagnostics({
+        async (ctx) => {
+          if (
+            !opts.includeLegacyInvoices &&
+            (opts.legacyInvoiceLimit != null ||
+              opts.legacyInvoiceCursor != null)
+          ) {
+            throw new Error(
+              "legacy invoice options require --include-legacy-invoices",
+            );
+          }
+          const limit = parsePositiveInteger(
+            opts.legacyInvoiceLimit,
+            "--legacy-invoice-limit",
+            { maximum: 500 },
+          );
+          return await ctx.hub.commercialOrders.diagnostics({
             reason: readReason(opts.reason, READ_REASONS.diagnostics),
             reconcile: opts.reconcile || undefined,
-          }),
+            ...(opts.includeLegacyInvoices
+              ? { include_legacy_invoices: true }
+              : {}),
+            ...(opts.legacyInvoiceLimit != null
+              ? { legacy_invoice_limit: limit }
+              : {}),
+            ...(opts.legacyInvoiceCursor != null
+              ? { legacy_invoice_cursor: opts.legacyInvoiceCursor }
+              : {}),
+          });
+        },
       );
     });
 

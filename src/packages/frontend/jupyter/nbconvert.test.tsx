@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { fromJS } from "immutable";
 
 import { NBConvert } from "./nbconvert";
@@ -170,5 +170,36 @@ describe("NBConvert", () => {
     ).toHaveAttribute("data-copy-value", error);
     expect(screen.getByText(/Copy the full log/)).toBeInTheDocument();
     expect(screen.queryByText(/restart your/i)).not.toBeInTheDocument();
+  });
+
+  it("scrolls the error log without a global jQuery", () => {
+    jest.useFakeTimers();
+    const previous = globalThis.$;
+    delete (globalThis as any).$;
+    try {
+      const { unmount } = render(
+        <NBConvert
+          actions={createActions()}
+          path="analysis.ipynb"
+          project_id="project-1"
+          nbconvert={fromJS({
+            state: "done",
+            args: ["--to", "pdf"],
+            error: "Conversion failed",
+            time: Date.now(),
+          })}
+          nbconvert_dialog={fromJS({ to: "pdf" })}
+        />,
+      );
+      const log = screen.getByRole("region", { name: "nbconvert error log" });
+      Object.defineProperty(log, "scrollHeight", { value: 500 });
+      act(() => jest.advanceTimersByTime(10));
+      expect(log.scrollTop).toBe(500);
+      unmount();
+      act(() => jest.runOnlyPendingTimers());
+    } finally {
+      globalThis.$ = previous;
+      jest.useRealTimers();
+    }
   });
 });

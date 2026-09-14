@@ -151,10 +151,13 @@ When answering from docs:
 - If the docs are stale or contradict the visible product, say that plainly and
   verify with browser actions or source inspection before giving final guidance.
 
-Project secret changes are live. Adding, replacing, deleting, or copying a
-secret refreshes the mounted files in a running project without restarting the
-project. A program that already cached a credential may still need its own
-reload. Never advise a project restart merely to apply a secret update.
+Adding, replacing, deleting, or copying a project secret requests a runtime
+refresh without requiring a project restart. A saved change is not proof that
+the running mount was updated: inspect the returned `runtime_refresh` status.
+A host can cache the change for the next start or report `retry_pending` when
+the runtime refresh has not been confirmed. Recheck the runtime refresh before claiming the
+new value is active. A program that already cached a credential may still need
+its own reload. Never advise a project restart merely to apply a secret update.
 
 Example answer shape for a usage question:
 
@@ -217,7 +220,7 @@ Current commands:
 - `cocalc project jupyter exec --path <ipynb> --file <script.js>`
 - `cocalc project jupyter exec --path <ipynb> --stdin`
 
-This is the preferred path because it survives browser refreshes/disconnects and does not require reverse-engineering frontend notebook state.
+This path survives browser refreshes and disconnects while the project runtime and kernel remain running, and does not require reverse-engineering frontend notebook state. Stopping the runtime or restarting the kernel interrupts its work.
 
 Hard rule for live notebook work:
 
@@ -233,10 +236,8 @@ Example:
 cocalc project jupyter exec-api
 cocalc project jupyter exec --path scratch/demo.ipynb --file ./tool.js
 cocalc project jupyter exec --path scratch/demo.ipynb --stdin <<'EOF'
-let { cells } = await api.notebook.listCells();
-let anchor = cells[cells.length - 1];
 let inserted = await api.notebook.insertCell({
-  afterId: anchor.id,
+  atEnd: true,
   input: "2 + 3",
   cellType: "code",
 });
@@ -249,10 +250,8 @@ EOF
 Where `tool.js` looks like:
 
 ```js
-let { cells } = await api.notebook.listCells();
-let anchor = cells[cells.length - 1];
 let inserted = await api.notebook.insertCell({
-  afterId: anchor.id,
+  atEnd: true,
   input: "2 + 3",
   cellType: "code",
 });

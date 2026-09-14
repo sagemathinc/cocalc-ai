@@ -236,7 +236,7 @@ test("admin membership-package purchase previews before committing", async () =>
     program,
     adminDeps({
       purchases: {
-        getMembershipPackageQuote: async (opts: any) => {
+        adminGetMembershipPackageQuote: async (opts: any) => {
           quoteArgs = opts;
           return {
             total_price: 900,
@@ -280,9 +280,13 @@ test("admin membership-package purchase previews before committing", async () =>
 
   assert.equal(purchaseCalls, 0);
   assert.equal(quoteArgs.account_id, "11111111-1111-4111-8111-111111111111");
-  assert.equal(quoteArgs.seat_count, 100);
   assert.equal(
-    quoteArgs.course_project_id,
+    quoteArgs.user_account_id,
+    "22222222-2222-4222-8222-222222222222",
+  );
+  assert.equal(quoteArgs.product.seat_count, 100);
+  assert.equal(
+    quoteArgs.product.course_project_id,
     "44444444-4444-4444-8444-444444444444",
   );
 });
@@ -294,7 +298,7 @@ test("admin membership-package purchase commits the reviewed custom price", asyn
     program,
     adminDeps({
       purchases: {
-        getMembershipPackageQuote: async () => ({
+        adminGetMembershipPackageQuote: async () => ({
           total_price: 900,
           starts_at: "2026-08-10T00:00:00.000Z",
           expires_at: "2026-08-22T00:00:00.000Z",

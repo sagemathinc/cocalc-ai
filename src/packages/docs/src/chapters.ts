@@ -33,6 +33,18 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
     ],
   },
   {
+    category: "Research workflows",
+    startEntryId: "research.reproduce-analysis",
+    summary:
+      "Move, run, reproduce, recover, and share research using complete examples for people and project agents.",
+    workflows: [
+      "Reproduce results",
+      "Move notebooks",
+      "Resume runs",
+      "Share research",
+    ],
+  },
+  {
     category: "AI",
     startEntryId: "ai.codex-chat",
     summary:
@@ -104,10 +116,10 @@ export const DOCS_CHAPTERS: DocsChapter[] = [
   },
   {
     category: "Project hosts",
-    startEntryId: "hosts.project-hosts",
+    startEntryId: "hosts.choose-compute",
     summary:
-      "Understand dedicated hosts, access and RAM policy, lifecycle operations, storage, scratch disks, and reliability.",
-    workflows: ["Host setup", "Lifecycle", "Storage"],
+      "Choose research compute, then understand project-host access, RAM policy, lifecycle operations, storage, and reliability.",
+    workflows: ["Choose compute", "Host setup", "Lifecycle", "Storage"],
   },
   {
     category: "Self Hosting",

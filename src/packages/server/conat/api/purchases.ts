@@ -1,4 +1,4 @@
-import getBalance from "@cocalc/server/purchases/get-balance";
+import getBalance0 from "@cocalc/server/purchases/get-balance";
 export {
   getMonthlyCollection,
   proposeMonthlyCollection,
@@ -146,7 +146,13 @@ import type { MembershipPackageProduct } from "@cocalc/util/membership-package-p
 import purchaseMembershipPackage0, {
   purchaseMembershipPackages as purchaseMembershipPackages0,
 } from "@cocalc/server/purchases/membership-package";
-import adminCreateMembershipPackagePurchase0 from "@cocalc/server/purchases/admin-membership-package";
+import adminCreateMembershipPackagePurchase0, {
+  adminGetMembershipPackageQuote as adminGetMembershipPackageQuote0,
+} from "@cocalc/server/purchases/admin-membership-package";
+import {
+  normalizeAdminMembershipPackageProduct,
+  normalizeAdminMembershipPackageUuid,
+} from "@cocalc/server/purchases/admin-membership-package-identity";
 import {
   verifyDirectStudentCourseProduct,
   verifyDirectStudentCourseProducts,
@@ -193,6 +199,7 @@ import type {
   SiteLicensePoolConfig,
   SiteLicensePoolRequest,
   MembershipPackageAssignment,
+  MembershipPackageQuote,
   AdminMembershipPackagePurchaseResult,
   SiteLicenseAccountDetails,
   SiteLicensePoolAccountSearchResult,
@@ -200,7 +207,14 @@ import type {
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
-export { getBalance };
+export async function getBalance({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<MoneyValue> {
+  if (!account_id) throw Error("account_id required");
+  return await getBalance0({ account_id, noSave: true });
+}
 
 function getSeedBayId(): string {
   return getConfiguredClusterSeedBayId();
@@ -1504,6 +1518,61 @@ export async function getMembershipPackageQuote({
   );
 }
 
+export async function adminGetMembershipPackageQuote({
+  account_id,
+  browser_id,
+  session_hash,
+  user_account_id,
+  product,
+}: {
+  account_id?: string;
+  browser_id?: string;
+  session_hash?: string | null;
+  user_account_id?: string;
+  product?: MembershipPackageProduct;
+} = {}): Promise<MembershipPackageQuote> {
+  const actorId = normalizeAdminMembershipPackageUuid(
+    requireAccount(account_id),
+    "account_id",
+  );
+  if (!(await isAdmin(actorId))) {
+    throw Error("must be an admin");
+  }
+  await validatePurchaseFreshAuth({
+    account_id: actorId,
+    browser_id,
+    session_hash,
+    allow_actor_impersonation: false,
+  });
+  if (!product) throw Error("product is required");
+  const userAccountId = normalizeAdminMembershipPackageUuid(
+    user_account_id,
+    "user_account_id",
+  );
+  const normalizedProduct = normalizeAdminMembershipPackageProduct(product);
+  const homeBay = await resolveTargetAccountHomeBay({
+    account_id: actorId,
+    user_account_id: userAccountId,
+    allow_cross_account_routing: true,
+  });
+  const options = {
+    actor_account_id: actorId,
+    user_account_id: userAccountId,
+    product: normalizedProduct,
+  };
+  if (homeBay !== getConfiguredBayId()) {
+    return await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: homeBay,
+    }).adminGetMembershipPackageQuote(options);
+  }
+  return await adminGetMembershipPackageQuote0({
+    admin_account_id: actorId,
+    user_account_id: userAccountId,
+    product: normalizedProduct,
+  });
+}
+
 export async function purchaseMembershipPackage({
   account_id,
   browser_id,
@@ -2397,7 +2466,10 @@ export async function adminCreateMembershipPackagePurchase({
   idempotency_key?: string;
   pricing_note?: string;
 } = {}): Promise<AdminMembershipPackagePurchaseResult> {
-  const actorId = requireAccount(account_id);
+  const actorId = normalizeAdminMembershipPackageUuid(
+    requireAccount(account_id),
+    "account_id",
+  );
   if (!(await isAdmin(actorId))) {
     throw Error("must be an admin");
   }
@@ -2407,9 +2479,12 @@ export async function adminCreateMembershipPackagePurchase({
     session_hash,
     allow_actor_impersonation: false,
   });
-  const userAccountId = `${user_account_id ?? ""}`.trim();
-  if (!userAccountId) throw Error("user_account_id is required");
   if (!product) throw Error("product is required");
+  const userAccountId = normalizeAdminMembershipPackageUuid(
+    user_account_id,
+    "user_account_id",
+  );
+  const normalizedProduct = normalizeAdminMembershipPackageProduct(product);
   if (source !== "card" && source !== "credit" && source !== "free") {
     throw Error("source must be card, credit, or free");
   }
@@ -2421,7 +2496,7 @@ export async function adminCreateMembershipPackagePurchase({
   const options = {
     actor_account_id: actorId,
     user_account_id: userAccountId,
-    product,
+    product: normalizedProduct,
     price: Number(price),
     source,
     reason: `${reason ?? ""}`,
@@ -2440,7 +2515,7 @@ export async function adminCreateMembershipPackagePurchase({
   return await adminCreateMembershipPackagePurchase0({
     admin_account_id: actorId,
     user_account_id: userAccountId,
-    product,
+    product: normalizedProduct,
     price: Number(price),
     source,
     reason: `${reason ?? ""}`,

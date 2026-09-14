@@ -1,5 +1,9 @@
 CoCalc code shared between the frontend and the backend.
 
-This is pure javascript code that can be used anywhere -- the backend servers, the frontend client, etc.
+This package contains shared TypeScript/JavaScript utilities. Check each module's
+dependencies before importing it in a browser: some modules use Node-only APIs
+such as filesystem access or cryptography.
 
-This code is part of https://github.com/sagemathinc/cocalc and isn't currently designed to be used standalone. Our plan is to refactor this code into smaller useful modules that are published under the @cocalc npm organization.
+This code is part of https://github.com/sagemathinc/cocalc-ai and is not designed
+as a standalone library. Earlier plans to extract smaller npm modules are
+design history, not a guarantee that a particular utility is separately published.

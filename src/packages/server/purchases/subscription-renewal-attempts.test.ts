@@ -28,6 +28,7 @@ describe("durable subscription renewal attempts", () => {
   beforeEach(async () => {
     await getPool().query("DELETE FROM subscription_renewal_attempts");
     await getPool().query("DELETE FROM subscriptions");
+    await getPool().query("DELETE FROM billing_authority_account_fences");
   });
 
   it("schedules exactly one attempt without making it claimable early", async () => {
@@ -205,6 +206,36 @@ describe("durable subscription renewal attempts", () => {
       },
       { last_error: null, state: "scheduled" },
     ]);
+  });
+
+  it("cancels scheduled renewal work when account billing is frozen", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        start: dayjs().subtract(1, "month").toDate(),
+        end: dayjs().subtract(1, "minute").toDate(),
+      },
+    );
+    await getPool().query(
+      `INSERT INTO billing_authority_account_fences
+         (account_id, frozen, reason, generation)
+       VALUES ($1, TRUE, 'test quarantine', 1)`,
+      [account_id],
+    );
+
+    await scheduleMissingSubscriptionRenewalAttempts();
+
+    await expect(
+      claimDueSubscriptionRenewalAttempts({ limit: 10 }),
+    ).resolves.toEqual([]);
+    const { rows } = await getPool().query(
+      `SELECT state FROM subscription_renewal_attempts
+        WHERE subscription_id=$1`,
+      [subscription_id],
+    );
+    expect(rows).toEqual([{ state: "canceled" }]);
   });
 
   it("enables split funding only for predeployment attempts never processed", async () => {

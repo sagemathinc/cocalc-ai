@@ -1,30 +1,28 @@
 # Messaging
 
-See util/db-schema/messages.ts for the database schema.
+See `util/db-schema/messages.ts` for the database schema.
 
-This package is now server-internal. The old frontend message center and
-public send/get APIs were removed; browser clients should use notifications,
-course tooling, or project chat instead of creating messages directly.
-
-## Maintenance
-
-- periodically delete messages that are marked for deletion
-
-- if user has an email on file, send out an email about their new unread messages.
+This package is server-internal. The old frontend message center and public
+send/get APIs were removed; browser clients should use notifications, course
+tooling, or project chat instead of creating messages directly.
 
 ## Server functionality
 
-A function that takes as input:
+`send.ts` accepts recipient account IDs in `to_ids`, a plain-text `subject`,
+and a Markdown `body`. It validates the accounts and creates an internal
+message. When `from_id` is omitted, it resolves the support account and treats
+the message as a system notice. System messages are also mirrored to account
+notifications. Mirroring is best-effort unless
+`requireAccountNoticeDelivery` is set; that option waits for creation of the
+durable notification event, not for email delivery.
 
-- account_id
-- subject
-- body (formatted as markdown)
+Sending an internal message does not itself send an immediate email.
+`maintenance.ts` periodically sends summaries for eligible unread messages
+when site email is enabled, subject to verification settings and the account's
+email preference. It also deletes messages when all recipients and the sender
+have marked them expired (or an unsent draft's author has expired it).
 
-then does the following:
-
-- if the user has email configured, sends an email to the user with the markdown converted to html
-- creates a message to the user from "cocalc".
-
-## Admin/monitoring functionality
-
-A function to make it easy to notify the admins if something should be investigated. It sends a message to all admins...
+`admin-alert.ts` sends a system message to admins, or an explicit recipient
+list. With no targets it does nothing; failures are logged unless
+`errorOnFail` requests an exception. These helpers do not guarantee external
+email delivery.

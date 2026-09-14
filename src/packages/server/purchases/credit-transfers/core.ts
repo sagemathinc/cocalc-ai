@@ -8,6 +8,7 @@ import type { PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { lockAccountSpending } from "../lock-account-spending";
+import { registerBillingAuthorityAccount } from "../billing-authority/context";
 import {
   lockAccountRehomeFence,
   assertAccountNotRehoming,
@@ -73,6 +74,7 @@ export async function withCreditTransferAccounts<T>(
     ...new Set(accounts.map((id) => fundingId(id, "Transfer account"))),
   ].sort();
   for (const account_id of ordered) {
+    await registerBillingAuthorityAccount(account_id);
     const { home_bay_id } = await resolveAccountHomeBay({ account_id });
     if (home_bay_id !== getConfiguredBayId())
       throw Error("Transfer account is homed on a different bay");

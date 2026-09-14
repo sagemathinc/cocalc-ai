@@ -86,6 +86,11 @@ import {
   type HubApiPrincipalType,
   recordHubApiPrincipalDenial,
 } from "./principal-policy-denials";
+import {
+  executeBillingHubApiCall,
+  isBillingAuthorityHubApiCall,
+} from "@cocalc/server/purchases/billing-authority/client";
+import { registerBillingAuthorityHubApiExecutor } from "@cocalc/server/purchases/billing-authority/dispatch";
 
 const ssh = {} as any;
 const reflect = {} as any;
@@ -335,8 +340,10 @@ export async function handleApiRequest({ request, mesg }) {
     } = getUserId(mesg.subject);
     const { name, args, auth_session_hash } = request as any;
     const principalPolicy = getHubApiPrincipalPolicy(name);
+    if (principalPolicy == null) {
+      throw Error(`unknown function '${name}'`);
+    }
     if (
-      principalPolicy != null &&
       !isHubApiPrincipalAllowed({
         policy: principalPolicy,
         account_id,
@@ -430,6 +437,36 @@ async function getResponse({
   auth_iat_s,
   auth_exp_s,
 }) {
+  const call = {
+    name,
+    args,
+    account_id,
+    auth_session_hash,
+    project_id,
+    host_id,
+    auth_actor,
+    auth_token_fingerprint,
+    auth_iat_s,
+    auth_exp_s,
+  };
+  if (isBillingAuthorityHubApiCall(name)) {
+    return await executeBillingHubApiCall(call);
+  }
+  return await getResponseLocal(call);
+}
+
+async function getResponseLocal({
+  name,
+  args,
+  account_id,
+  auth_session_hash,
+  project_id,
+  host_id,
+  auth_actor,
+  auth_token_fingerprint,
+  auth_iat_s,
+  auth_exp_s,
+}) {
   const [group, functionName] = name.split(".");
   const f = hubApi[group]?.[functionName];
   if (f == null) {
@@ -449,6 +486,8 @@ async function getResponse({
   });
   return await f(...args2);
 }
+
+registerBillingAuthorityHubApiExecutor(getResponseLocal);
 
 const AGENT_HUB_API_METHODS = new Set([
   "system.getPublicSiteUrl",

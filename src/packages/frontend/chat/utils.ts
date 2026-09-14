@@ -246,48 +246,29 @@ export function orderLinearThreadMessages(
     if (id) byId.set(id, message);
   }
 
-  const children = new Map<string, ChatMessageTyped[]>();
-  const anchors: ChatMessageTyped[] = [];
-  for (const message of sorted) {
-    const parentId = parentMessageIdField(message);
-    if (
-      parentId &&
-      byId.has(parentId) &&
-      parentId !== `${(message as any)?.message_id ?? ""}`.trim()
-    ) {
-      const bucket = children.get(parentId) ?? [];
-      bucket.push(message);
-      children.set(parentId, bucket);
-    } else {
-      anchors.push(message);
-    }
-  }
-  for (const bucket of children.values()) {
-    bucket.sort(stableMessageOrder);
-  }
-  anchors.sort(stableMessageOrder);
-
   const ordered: ChatMessageTyped[] = [];
   const visited = new Set<string>();
-  const visit = (message: ChatMessageTyped) => {
-    const id = `${(message as any)?.message_id ?? ""}`.trim();
-    const key =
-      id ||
-      `${dateValue(message)?.valueOf() ?? "no-date"}:${senderId(message) ?? ""}`;
-    if (visited.has(key)) return;
-    visited.add(key);
-    ordered.push(message);
-    if (!id) return;
-    for (const child of children.get(id) ?? []) {
-      visit(child);
-    }
-  };
-
-  for (const anchor of anchors) {
-    visit(anchor);
-  }
+  // Preserve chronology, pulling ancestors forward only when clock skew puts
+  // them after a reply. Traversing whole child branches instead makes an old
+  // branch look like the newest conversation (and the composer's next parent).
   for (const message of sorted) {
-    visit(message);
+    const ancestors: ChatMessageTyped[] = [];
+    let current: ChatMessageTyped | undefined = message;
+    while (current) {
+      const id = `${current.message_id ?? ""}`.trim();
+      const key =
+        id ||
+        `${dateValue(current)?.valueOf() ?? "no-date"}:${senderId(current) ?? ""}`;
+      if (visited.has(key)) break;
+      // Mark before following parents so malformed cycles terminate too.
+      visited.add(key);
+      ancestors.push(current);
+      const parentId = parentMessageIdField(current);
+      current = parentId ? byId.get(parentId) : undefined;
+    }
+    while (ancestors.length > 0) {
+      ordered.push(ancestors.pop()!);
+    }
   }
   return ordered;
 }

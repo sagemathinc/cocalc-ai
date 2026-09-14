@@ -850,6 +850,27 @@ async function assertLocalHomeAccount(
   return account;
 }
 
+async function assertNoPendingAdminMembershipPackageIntent({
+  account_id,
+  db,
+}: {
+  account_id: string;
+  db: Queryable;
+}): Promise<void> {
+  const { rows } = await db.query(
+    `SELECT invoice_id
+       FROM admin_membership_package_intents
+      WHERE account_id=$1
+      LIMIT 1`,
+    [account_id],
+  );
+  if (rows[0]) {
+    throw new Error(
+      `account ${account_id} has an unresolved admin membership package purchase; reconcile it before rehome`,
+    );
+  }
+}
+
 async function createOperation({
   account_id,
   source_bay_id,
@@ -898,6 +919,10 @@ async function createOperation({
     const account = await assertLocalHomeAccount(account_id, client);
     if (!financialRehomeEnabled())
       await assertFundingAccountCanRehome(client, account_id);
+    await assertNoPendingAdminMembershipPackageIntent({
+      account_id,
+      db: client,
+    });
     const { rows } = await client.query(
       `
         INSERT INTO ${ACCOUNT_REHOME_OPERATIONS_TABLE}

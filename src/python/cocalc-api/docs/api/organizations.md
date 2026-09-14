@@ -1,7 +1,10 @@
-Please contact support at [help@cocalc.ai](mailto:help@cocalc.ai) if you would like to manage an
-organization. Tell us what you're doing, and select an organization name, title,
-description, email address, and url. We will then create your organization and
-make your account an admin of the organization. You will then be able to create
-new users in your org and generate a temporary authentication link for any user.
+# Legacy organization wrapper
 
-::: cocalc_api.hub.Organizations
+The client still contains `hub.org` methods, including user creation and
+temporary login tokens. The current HTTP hub bridge does not allow `org.*`
+RPCs. Granting a key more capabilities does not enable those methods.
+
+This legacy wrapper is not the current membership, team-seat, or course
+administration interface. Use the site's supported account and course
+workflows and contact support for deployment-specific organization needs.
+See the [Python compatibility guide](../index.md) for accepted calls.

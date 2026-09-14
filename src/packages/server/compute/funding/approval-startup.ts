@@ -5,6 +5,7 @@
 
 import type { Server } from "node:http";
 import { getLogger } from "@cocalc/backend/logger";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
 import {
   COURSE_COMPUTE_RETENTION_HOURS,
   normalizeCourseFundingDraft,
@@ -203,7 +204,19 @@ export function initCourseFundingApprovalService({
       },
     });
     if (listen)
-      server = await startCourseFundingApprovalServer({ approvals, config });
+      server = await startCourseFundingApprovalServer({
+        approvals: {
+          ...approvals,
+          approve: async (input) =>
+            executeBillingAuthorityCommand({
+              kind: "account-local",
+              operation: "apply-funding-approval",
+              actor_account_id: input.payer_account_id,
+              input: { ...input },
+            }),
+        },
+        config,
+      });
     unregister = registerCourseFundingApprovalService(approvals);
     unregisterTransfers = registerTransferApprovals(approvals);
     server?.once("close", () => {

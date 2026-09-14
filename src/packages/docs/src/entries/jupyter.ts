@@ -10,9 +10,9 @@ import {
   CUSTOM_JUPYTER_KERNELS_BODY,
   JUPYTER_STUDIO_BODY,
   OCTAVE_JUPYTER_KERNEL_BODY,
-  REMOTE_JUPYTER_KERNELS_BODY,
   USE_JUPYTER_BODY,
-} from "../content";
+} from "../content/jupyter";
+import { REMOTE_JUPYTER_KERNELS_BODY } from "../content/remote-jupyter";
 
 export const JUPYTER_ENTRIES: DocsEntry[] = [
   {
@@ -57,7 +57,7 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
     slug: "jupyter/create-notebook",
     status: "ready",
     summary:
-      "Create notebooks that keep running and capturing output after browser disconnects.",
+      "Create collaborative notebooks with kernels and output capture in the project backend.",
     title: "Create a Jupyter notebook",
   },
   {
@@ -79,10 +79,11 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
       "A collaborative Jupyter notebook with output and a running kernel",
     ),
     lastReviewed: "2026-09-07",
+    searchKeywords: "sagews ipynb legacy worksheet conversion saved outputs",
     slug: "jupyter/use-jupyter",
     status: "ready",
     summary:
-      "Use collaborative durable Jupyter notebooks inside CoCalc projects.",
+      "Use collaborative durable Jupyter notebooks, including legacy Sage worksheet conversion and rerun checks.",
     title: "Use Jupyter notebooks",
   },
   {

@@ -10,6 +10,7 @@ import { getFeedData } from "@cocalc/database/postgres/news";
 import getCustomize from "@cocalc/database/settings/customize";
 import { docsPath, listDocsEntries, type DocsAccess } from "@cocalc/docs";
 import { getLogger } from "@cocalc/hub/logger";
+import { getCocalcProduct } from "@cocalc/server/launchpad/mode";
 import { slugURL } from "@cocalc/util/news";
 import { buildPublicSitemapPaths } from "@cocalc/util/public-site-metadata";
 import { joinUrlPath } from "@cocalc/util/url-path";
@@ -62,6 +63,7 @@ export async function publicSitemapPaths(req: Request): Promise<string[]> {
   // list is built per request from the cached customize data.
   const customize = await getCustomize();
   const allPaths = buildPublicSitemapPaths({
+    cocalc_product: getCocalcProduct(),
     imprint: customize?.imprint,
     policies: customize?.policies,
     policy_pages: customize?.policy_pages,

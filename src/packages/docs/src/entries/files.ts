@@ -16,7 +16,7 @@ import {
   SLIDES_BODY,
   TIMETRAVEL_BODY,
   WHITEBOARD_BODY,
-} from "../content";
+} from "../content/files";
 
 export const FILES_ENTRIES: DocsEntry[] = [
   {

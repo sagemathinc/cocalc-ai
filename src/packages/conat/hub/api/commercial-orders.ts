@@ -438,6 +438,10 @@ export interface CommercialProvisionRequest extends CommercialMutationRequest {
 
 export interface CommercialDiagnosticsRequest extends CommercialReadRequest {
   reconcile?: boolean;
+  /** Read-only discovery across the Stripe account, including legacy invoices. */
+  include_legacy_invoices?: boolean;
+  legacy_invoice_limit?: number;
+  legacy_invoice_cursor?: string;
 }
 
 export interface CommercialStripeEventRetryRequest extends CommercialMutationRequest {

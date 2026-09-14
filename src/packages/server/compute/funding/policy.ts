@@ -220,6 +220,18 @@ export async function getComputeFundingPolicyInTransaction(
 ): Promise<ComputeFundingPolicy> {
   const payer = fundingId(opts.payer_account_id, "Payer account");
   requireFundingAccountTransaction(client, payer);
+  // New service/backing must honor billing containment. Settlement and funded
+  // cleanup intentionally do not call this admission check.
+  const { rows: eligible } = await client.query(
+    `SELECT 1 FROM accounts a WHERE a.account_id=$1 AND a.banned IS NOT TRUE AND a.deleted IS NOT TRUE
+     AND NOT EXISTS (SELECT 1 FROM billing_authority_account_fences f WHERE f.account_id=a.account_id AND f.frozen)`,
+    [payer],
+  );
+  if (!eligible.length)
+    throw new ComputeFundingError(
+      "funding_unavailable",
+      "Billing is restricted for this funding account.",
+    );
   if (!["prepaid", "postpaid"].includes(opts.lane))
     throw new ComputeFundingError(
       "invalid_funding_request",

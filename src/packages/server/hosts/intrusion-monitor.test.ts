@@ -33,6 +33,7 @@ import {
   reachedCoverageFailureThreshold,
   runHostIntrusionMonitorPass,
   selectActionableHostIntrusionChanges,
+  snapRefreshConfirmationCandidate,
 } from "./intrusion-monitor";
 
 async function ensureProjectHostsTestTable(): Promise<void> {
@@ -147,6 +148,55 @@ function snapshot(): HostIntrusionSnapshotResponse {
     issues: [],
     truncated: {},
   };
+}
+
+function addSnapRevision(
+  source: HostIntrusionSnapshotResponse,
+  identity: string,
+  revision: string,
+  hash: string,
+): void {
+  const unit = `snap-${identity}-${revision}.mount`;
+  source.persistence.files.push(
+    {
+      path: `/etc/systemd/system/${unit}`,
+      uid: 0,
+      gid: 0,
+      mode: "0644",
+      mtime: "2026-09-01T00:00:00.000Z",
+      size: 500,
+      type: "file",
+      sha256: hash,
+    },
+    ...["multi-user.target.wants", "snapd.mounts.target.wants"].map(
+      (target) => ({
+        path: `/etc/systemd/system/${target}/${unit}`,
+        uid: 0,
+        gid: 0,
+        mode: "0777",
+        mtime: "2026-09-01T00:00:00.000Z",
+        size: 0,
+        type: "symlink" as const,
+        link_target: `/etc/systemd/system/${unit}`,
+      }),
+    ),
+  );
+  source.services.enabled.push(`${unit} enabled enabled`);
+}
+
+function snapRefreshSnapshots({ mounted }: { mounted: boolean }): {
+  before: HostIntrusionSnapshotResponse;
+  after: HostIntrusionSnapshotResponse;
+} {
+  const before = snapshot();
+  addSnapRevision(before, "google\\x2dcloud\\x2dcli", "491", "a".repeat(64));
+  before.snap_mount_units = ["snap-google\\x2dcloud\\x2dcli-491.mount"];
+  const after = snapshot();
+  addSnapRevision(after, "google\\x2dcloud\\x2dcli", "495", "b".repeat(64));
+  after.snap_mount_units = mounted
+    ? ["snap-google\\x2dcloud\\x2dcli-495.mount"]
+    : [];
+  return { before, after };
 }
 
 describe("project-host intrusion monitor normalization", () => {
@@ -526,6 +576,220 @@ describe("project-host intrusion monitor normalization", () => {
     }
   });
 
+  it("persists snap evidence and resolves a refresh after mount attestation", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    await ensureProjectHostsTestTable();
+    const hostId = "4f04cd67-3d45-4ad6-8574-b8bb594e18af";
+    const baselineId = "a547d1cb-08d2-48fa-b919-142937f79f31";
+    const pool = getPool();
+    const race = snapRefreshSnapshots({ mounted: false });
+    const attested = snapRefreshSnapshots({ mounted: true });
+    mockAdminAlert.mockReset();
+    mockGetIntrusionSnapshot.mockReset();
+    mockGetIntrusionSnapshot.mockResolvedValueOnce(race.after);
+    try {
+      await pool.query(
+        `INSERT INTO project_hosts
+           (id, name, bay_id, status, last_seen, created, updated)
+         VALUES ($1, 'snap-refresh-race', 'intrusion-monitor-test', 'running',
+                 NOW(), NOW(), NOW())`,
+        [hostId],
+      );
+      await pool.query(
+        `INSERT INTO project_host_intrusion_snapshots
+           (id, host_id, bay_id, captured_at, duration_ms, coverage,
+            normalization_version, normalized)
+         VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+                 2, $3::jsonb)`,
+        [
+          baselineId,
+          hostId,
+          JSON.stringify(normalizeHostIntrusionSnapshot(race.before)),
+        ],
+      );
+
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        checked: 1,
+        changed: 0,
+        pending: 1,
+      });
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      let stored = await pool.query<{
+        id: string;
+        assessment: Record<string, unknown>;
+        baseline_eligible: boolean;
+        collector_evidence: Record<string, unknown>;
+      }>(
+        `SELECT id, assessment, baseline_eligible, collector_evidence
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1 AND id<>$2
+          ORDER BY created_at`,
+        [hostId, baselineId],
+      );
+      expect(stored.rows).toHaveLength(1);
+      expect(stored.rows[0]).toMatchObject({
+        assessment: {
+          state: "pending_snap_refresh_confirmation",
+          units: ["snap-google\\x2dcloud\\x2dcli-495.mount"],
+        },
+        baseline_eligible: false,
+        collector_evidence: {
+          collector_version: 2,
+          snap_mount_units: [],
+          persistence_symlinks: expect.arrayContaining([
+            {
+              path: expect.stringContaining(
+                "multi-user.target.wants/snap-google\\x2dcloud\\x2dcli-495.mount",
+              ),
+              link_target:
+                "/etc/systemd/system/snap-google\\x2dcloud\\x2dcli-495.mount",
+            },
+          ]),
+          persistence_truncated: false,
+        },
+      });
+      const pendingId = stored.rows[0]!.id;
+
+      mockGetIntrusionSnapshot.mockResolvedValueOnce(attested.after);
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        checked: 1,
+        changed: 0,
+        pending: 0,
+      });
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      stored = await pool.query(
+        `SELECT id, assessment, baseline_eligible, collector_evidence
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1 AND id<>$2
+          ORDER BY created_at`,
+        [hostId, baselineId],
+      );
+      expect(stored.rows).toHaveLength(2);
+      expect(stored.rows[1]).toMatchObject({
+        assessment: {
+          state: "resolved_snap_refresh_confirmation",
+          pending_snapshot_id: pendingId,
+          resolution: "attested",
+        },
+        baseline_eligible: true,
+        collector_evidence: {
+          snap_mount_units: ["snap-google\\x2dcloud\\x2dcli-495.mount"],
+        },
+      });
+    } finally {
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+        [hostId],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+    }
+  });
+
+  it("honors the persisted confirmation delay even on immediate repeated passes", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    await ensureProjectHostsTestTable();
+    const hostId = "d3bcc208-46ca-4915-a435-c064f20ddc9d";
+    const baselineId = "1553db1d-9dfe-44dd-aeeb-779f866cb18f";
+    const pool = getPool();
+    const { before, after } = snapRefreshSnapshots({ mounted: false });
+    mockAdminAlert.mockReset();
+    mockAdminAlert.mockResolvedValue(undefined);
+    mockGetIntrusionSnapshot.mockReset();
+    mockGetIntrusionSnapshot.mockResolvedValue(after);
+    try {
+      await pool.query(
+        `INSERT INTO project_hosts
+           (id, name, bay_id, status, last_seen, created, updated)
+         VALUES ($1, 'persistent-snap-change', 'intrusion-monitor-test',
+                 'running', NOW(), NOW(), NOW())`,
+        [hostId],
+      );
+      await pool.query(
+        `INSERT INTO project_host_intrusion_snapshots
+           (id, host_id, bay_id, captured_at, duration_ms, coverage,
+            normalization_version, normalized)
+         VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+                 2, $3::jsonb)`,
+        [
+          baselineId,
+          hostId,
+          JSON.stringify(normalizeHostIntrusionSnapshot(before)),
+        ],
+      );
+
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        changed: 0,
+        pending: 1,
+      });
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      // A process restart or another caller need not wait for the timer.
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        changed: 0,
+        pending: 1,
+      });
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      await pool.query(
+        `UPDATE project_host_intrusion_snapshots
+         SET created_at=NOW() - INTERVAL '3 minutes' WHERE id=$1`,
+        [baselineId],
+      );
+      // Age only the first pending sample. Later observations must not reset
+      // the confirmation clock or keep an unresolved change pending forever.
+      await pool.query(
+        `UPDATE project_host_intrusion_snapshots
+         SET created_at=NOW() - INTERVAL '2 minutes'
+         WHERE id=(SELECT id FROM project_host_intrusion_snapshots
+           WHERE host_id=$1 AND NOT baseline_eligible
+           ORDER BY created_at ASC LIMIT 1)`,
+        [hostId],
+      );
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        changed: 1,
+        pending: 0,
+      });
+      expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+      expect(mockAdminAlert).toHaveBeenCalledWith(
+        expect.objectContaining({
+          subject:
+            "Project host intrusion monitor detected actionable security-state changes",
+        }),
+      );
+      const { rows } = await pool.query<{
+        assessment: Record<string, unknown>;
+        baseline_eligible: boolean;
+      }>(
+        `SELECT assessment, baseline_eligible
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1 AND id<>$2
+          ORDER BY created_at`,
+        [hostId, baselineId],
+      );
+      expect(rows).toHaveLength(3);
+      expect(rows[0]).toMatchObject({
+        assessment: { state: "pending_snap_refresh_confirmation" },
+        baseline_eligible: false,
+      });
+      expect(rows[1]).toMatchObject({
+        assessment: { state: "pending_snap_refresh_confirmation" },
+        baseline_eligible: false,
+      });
+      expect(rows[2]).toMatchObject({
+        assessment: { state: "notified_snap_refresh_confirmation" },
+        baseline_eligible: true,
+      });
+    } finally {
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+        [hostId],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+    }
+  });
+
   it("does not alert on volatile timestamps, pids, counts, or connections", () => {
     const before = snapshot();
     before.host_processes.findings = [
@@ -865,6 +1129,73 @@ describe("project-host intrusion monitor normalization", () => {
       added: { "persistence.files": [unexpectedPath] },
       removed: {},
     });
+  });
+
+  it("delays only complete snap refreshes awaiting mount attestation", () => {
+    const { before, after } = snapRefreshSnapshots({ mounted: false });
+    const normalizedBefore = normalizeHostIntrusionSnapshot(before);
+    const delta = diffHostIntrusionSnapshots(
+      normalizedBefore,
+      normalizeHostIntrusionSnapshot(after),
+    );
+    const actionable = selectActionableHostIntrusionChanges(delta, {
+      installedSnapMountUnits: after.snap_mount_units,
+      baselineSnapshots: [normalizedBefore],
+    });
+
+    expect(
+      snapRefreshConfirmationCandidate(delta, actionable, {
+        installedSnapMountUnits: after.snap_mount_units,
+        baselineSnapshots: [normalizedBefore],
+        persistenceFiles: after.persistence.files,
+      }),
+    ).toMatchObject({
+      fingerprint: expect.stringMatching(/^[a-f0-9]{64}$/),
+      units: ["snap-google\\x2dcloud\\x2dcli-495.mount"],
+    });
+
+    const malformed = structuredClone(after);
+    malformed.persistence.files = malformed.persistence.files.filter(
+      ({ path }) => !path.includes("snapd.mounts.target.wants"),
+    );
+    const malformedDelta = diffHostIntrusionSnapshots(
+      normalizedBefore,
+      normalizeHostIntrusionSnapshot(malformed),
+    );
+    const malformedActionable = selectActionableHostIntrusionChanges(
+      malformedDelta,
+      {
+        installedSnapMountUnits: malformed.snap_mount_units,
+        baselineSnapshots: [normalizedBefore],
+        persistenceFiles: malformed.persistence.files,
+      },
+    );
+    expect(hasHostIntrusionSnapshotChanges(malformedActionable)).toBe(true);
+    expect(
+      snapRefreshConfirmationCandidate(malformedDelta, malformedActionable, {
+        installedSnapMountUnits: malformed.snap_mount_units,
+        baselineSnapshots: [normalizedBefore],
+        persistenceFiles: malformed.persistence.files,
+      }),
+    ).toBeUndefined();
+    const redirected = structuredClone(after);
+    redirected.persistence.files.find(({ path }) =>
+      path.includes("multi-user.target.wants"),
+    )!.link_target = "/tmp/untrusted.mount";
+    expect(
+      snapRefreshConfirmationCandidate(delta, actionable, {
+        installedSnapMountUnits: redirected.snap_mount_units,
+        baselineSnapshots: [normalizedBefore],
+        persistenceFiles: redirected.persistence.files,
+      }),
+    ).toBeUndefined();
+    expect(
+      snapRefreshConfirmationCandidate(delta, actionable, {
+        installedSnapMountUnits: undefined,
+        baselineSnapshots: [normalizedBefore],
+        persistenceFiles: after.persistence.files,
+      }),
+    ).toBeUndefined();
   });
 
   it.each([

@@ -875,8 +875,6 @@ export function registerMembershipCommand(
       "--course-project <project>",
       "course project identifier for course packages",
     )
-    .option("--starts-at <iso>", "explicit start time")
-    .option("--expires-at <iso>", "explicit expiry time")
     .option("--metadata-json <json>", "package metadata as a JSON object")
     .action(
       async (
@@ -887,8 +885,6 @@ export function registerMembershipCommand(
           seatCount?: string;
           interval?: "month" | "year";
           courseProject?: string;
-          startsAt?: string;
-          expiresAt?: string;
           metadataJson?: string;
         },
         command: Command,
@@ -913,8 +909,6 @@ export function registerMembershipCommand(
                 ? opts.interval
                 : undefined,
               course_project_id,
-              starts_at: `${opts.startsAt ?? ""}`.trim() || undefined,
-              expires_at: `${opts.expiresAt ?? ""}`.trim() || undefined,
               metadata: parseMetadataJson(opts.metadataJson) ?? null,
             }),
             toIso,
@@ -936,8 +930,6 @@ export function registerMembershipCommand(
       "--course-project <project>",
       "course project identifier for course packages",
     )
-    .option("--starts-at <iso>", "explicit start time")
-    .option("--expires-at <iso>", "explicit expiry time")
     .option("--metadata-json <json>", "package metadata as a JSON object")
     .action(
       async (
@@ -949,8 +941,6 @@ export function registerMembershipCommand(
           seatCount?: string;
           interval?: "month" | "year";
           courseProject?: string;
-          startsAt?: string;
-          expiresAt?: string;
           metadataJson?: string;
         },
         command: Command,
@@ -975,8 +965,6 @@ export function registerMembershipCommand(
               ? opts.interval
               : undefined,
             course_project_id,
-            starts_at: `${opts.startsAt ?? ""}`.trim() || undefined,
-            expires_at: `${opts.expiresAt ?? ""}`.trim() || undefined,
             metadata: parseMetadataJson(opts.metadataJson) ?? null,
           });
         });

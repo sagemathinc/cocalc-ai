@@ -143,8 +143,9 @@ before changing the full paper.
 
 ## Ask Agent about a LaTeX build error
 
-For shared session-selection controls, see
-[Use Agent from an editor](/docs/ai/editor-agent).
+When **Recent agent sessions** is shown, select the conversation that should
+receive the request. The confirmation button submits it to that conversation;
+follow the response there and review any changes.
 
 An error entry with a source line can offer **Fix with Agent...** and
 **Ask Agent for a Hint...**, depending on the AI access allowed in the project.
@@ -284,6 +285,45 @@ the search and new-file controls when a project grows. The explorer is also a
 good starting point for creating terminals, notebooks, scripts, LaTeX files,
 slides, whiteboards, and task files.
 
+## Find a retained file when its path is unknown
+
+On CoCalc AI, use snapshot or backup search when you remember a name or text
+but cannot find the file in the current folders. These searches require the
+corresponding snapshot or backup service and retained data for your project.
+
+1. In a project you can edit, open **Find** (the magnifying-glass icon) in the
+   activity bar. In **Find in**, choose **Home** to start from the project's HOME
+   paths before selecting an archive tab.
+2. Choose **Snapshots**, then **Files** to search filenames or
+   **Contents** to search text. To search backup filenames, choose **Backups**.
+   Backup **Contents** search is disabled. Use **Choose** to narrow the search
+   to an ordinary project folder under HOME. Snapshot and backup searches only
+   cover HOME.
+3. Before entering your query, set **Subdirectories** to include nested folders,
+   **Hidden** to include dotfiles and hidden directories, and **Case sensitive**
+   when capitalization matters. For snapshot **Contents**, leave **Regexp** off
+   for literal text; turn off **Git ignore** to include ignored files.
+4. Enter a filename fragment such as \`measurements\`, or a filename glob such as
+   \`*.csv\`, then choose **Search**. For snapshot **Contents**, enter a distinctive
+   text fragment instead. Check each result's path and retained version.
+
+**Filter results** narrows the displayed matches; use the main search field to
+change the filename or contents query. Clear **Filter results** before
+interpreting an empty result. Also check the folder, search mode, and options,
+and read any error. An empty result
+means no match was displayed for that search, not that the file has never been
+retained.
+
+Backup search can stop at a result, time, or other limit. Its incomplete-search
+warning means more matches may exist. Refine the query, select a smaller folder,
+or turn off **Subdirectories** and search likely folders individually. Snapshot
+content search also has output limits; a missing warning does not establish an
+exhaustive search.
+
+If you already know the file's path, see [TimeTravel](/docs/files/timetravel)
+for inspecting its history. Finding a retained match does not restore or replace
+the current file.
+
 ## Files are shared project state
 
 Files opened from the explorer are visible to collaborators and tools in the
@@ -336,6 +376,26 @@ After an agent request, inspect its response and the resulting commit in the
 Git browser. Sending the request is not proof that a commit succeeded. Review
 commits and use TimeTravel for file-level recovery as described below.
 
+## Transfer saved Git review notes
+
+In the Git browser's commit drawer, open the **Review actions** ellipsis menu.
+**Export reviews** downloads a JSON bundle of saved commit reviews from your
+account. Its scope is the account's review store, not only the repository or
+commit currently displayed. Confirm that notes are saved and inspect the
+bundle before sharing it; unsaved browser drafts are not the export source.
+
+On the receiving account, use **Review actions -> Import reviews** and select
+the JSON file. Imported records belong to that signed-in account. They are not
+shared ownership of the sender's notes. The import keeps an existing record
+when its update time is equal to or newer than the imported one, and skips
+invalid records. Check the reported imported/skipped counts and inspect the
+intended commit's notes afterward.
+
+The bundle transfers review notes and state, not the repository or access to
+it. Include the repository location and full commit id in your handoff, and
+confirm that the recipient can open that commit separately. Export/import does
+not push commits or submit a GitHub review.
+
 ## Git and TimeTravel
 
 Git and TimeTravel solve different problems. Git is for intentional repository
@@ -353,20 +413,24 @@ browser-accessible workspace with terminals, notebooks, TimeTravel, and agents.
 export const PYTHON_BODY = String.raw`
 ## What Python in CoCalc is for
 
-Python in CoCalc is real Python running in a Linux project, not a browser-only
-runtime. You can use notebooks, scripts, terminals, virtual environments,
-package managers, LaTeX workflows, and agents in the same project.
+Python runs in the project's computing environment. Hosted CoCalc AI projects
+use Linux; local CoCalc Plus uses your computer's operating system and installed
+software. You can work with notebooks, scripts, terminals, virtual environments,
+and the tools available in that environment.
 
 ## Common ways to use Python
 
 1. Create a Jupyter notebook for exploratory work.
 2. Edit \`.py\` files for scripts, modules, and packages.
-3. Run \`python3\`, \`uv\`, \`pip\`, or \`conda\` in a terminal.
-4. Use Python from LaTeX workflows such as PyTeX when the document needs code.
+3. Use the available Python interpreter and package manager in a terminal,
+   such as \`python3\`, \`uv\`, \`pip\`, or \`conda\`.
+4. Use Python from LaTeX workflows such as PythonTeX when the document needs code.
 5. Install alternate Python versions or virtual environments when needed.
 
-Keep environment setup commands in a script, README, or runtime image workflow
-when other people or agents need to reproduce the project.
+Keep environment setup commands in a script or README when other people or
+agents need to reproduce the project. For an isolated notebook environment, see
+[Custom Jupyter kernels with uv](/docs/jupyter/custom-kernels) and check the
+recipe's operating-system requirements.
 
 ## Why this matters in CoCalc
 

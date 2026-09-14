@@ -9,11 +9,11 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { listClusterBayInfos } from "@cocalc/server/bay-registry";
 import { listHosts, stopHost } from "@cocalc/server/conat/api/hosts";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { cancelUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
-import { cancelPaymentIntent } from "@cocalc/server/purchases/stripe/create-payment-intent";
-import { getAllOpenPayments } from "@cocalc/server/purchases/stripe/get-payments";
-import getPaymentMethods from "@cocalc/server/purchases/stripe/get-payment-methods";
-import deletePaymentMethod from "@cocalc/server/purchases/stripe/delete-payment-method";
+import {
+  executeBillingAuthorityCommand,
+  setBillingAccountFrozen,
+} from "@cocalc/server/purchases/billing-authority/client";
+import type { BillingAuthorityFenceCause } from "@cocalc/server/purchases/billing-authority/protocol";
 import type { ProjectRuntimeSlotReportSlot } from "@cocalc/conat/hub/api/system";
 import { recordAccountResourceQuarantineAuditEvent } from "./resource-quarantine-audit";
 
@@ -84,43 +84,6 @@ async function disableAutomaticBillingState(account_id: string): Promise<{
     auto_balance_disabled: true,
     checkout_session_cleared: true,
   };
-}
-
-async function cancelOpenPaymentIntents(account_id: string): Promise<number> {
-  const payments = await getAllOpenPayments(account_id);
-  let count = 0;
-  for (const intent of payments.data ?? []) {
-    if (!intent?.id) {
-      continue;
-    }
-    await cancelPaymentIntent({ id: intent.id, reason: "fraudulent" });
-    count += 1;
-  }
-  return count;
-}
-
-async function detachPaymentMethods(account_id: string): Promise<number> {
-  let count = 0;
-  let starting_after: string | undefined = undefined;
-  do {
-    const methods = await getPaymentMethods({
-      account_id,
-      starting_after,
-      limit: 100,
-    });
-    for (const method of methods.data ?? []) {
-      if (!method?.id) {
-        continue;
-      }
-      await deletePaymentMethod({ account_id, payment_method: method.id });
-      count += 1;
-      starting_after = method.id;
-    }
-    if (!methods.has_more) {
-      break;
-    }
-  } while (starting_after);
-  return count;
 }
 
 async function stopOwnedDedicatedHosts({
@@ -367,45 +330,68 @@ export async function quarantineAccountBillingResourcesLocal({
   actor_account_id,
   reason,
   home_bay_id,
+  fence_cause = "quarantine",
 }: {
   account_id: string;
   actor_account_id?: string | null;
   reason?: string | null;
   home_bay_id: string;
+  fence_cause?: BillingAuthorityFenceCause;
 }): Promise<AccountResourceQuarantineResult> {
   const normalizedReason =
     normalizeReason(reason) || "admin billing/resource quarantine";
   const errors: string[] = [];
 
+  await attempt({
+    errors,
+    label: "freeze account billing",
+    fallback: undefined,
+    fn: async () =>
+      await setBillingAccountFrozen({
+        account_id,
+        frozen: true,
+        cause: fence_cause,
+        reason: normalizedReason,
+        actor_account_id: actor_account_id ?? undefined,
+      }),
+  });
+
   const automaticBilling = await disableAutomaticBillingState(account_id);
-  const local_subscriptions_canceled = await cancelLocalSubscriptions({
+  let local_subscriptions_canceled = await cancelLocalSubscriptions({
     account_id,
     reason: normalizedReason,
   });
-  const usage_subscription_canceled = await attempt({
+  const stripeCleanup = await attempt({
     errors,
-    label: "cancel Stripe usage subscription",
-    fallback: false,
-    fn: async () => {
-      await cancelUsageSubscription(account_id);
-      await getPool().query(
-        "UPDATE accounts SET stripe_usage_subscription='' WHERE account_id=$1",
-        [account_id],
-      );
-      return true;
+    label: "clean up quarantined Stripe resources",
+    fallback: {
+      usage_subscription_canceled: false,
+      payment_intents_canceled: 0,
+      payment_methods_detached: 0,
     },
+    fn: async () =>
+      await executeBillingAuthorityCommand<{
+        usage_subscription_canceled: boolean;
+        payment_intents_canceled: number;
+        payment_methods_detached: number;
+      }>({
+        kind: "quarantine-account-stripe-cleanup",
+        account_id,
+      }),
   });
-  const payment_intents_canceled = await attempt({
-    errors,
-    label: "cancel open Stripe payment intents",
-    fallback: 0,
-    fn: async () => await cancelOpenPaymentIntents(account_id),
-  });
-  const payment_methods_detached = await attempt({
-    errors,
-    label: "detach Stripe payment methods",
-    fallback: 0,
-    fn: async () => await detachPaymentMethods(account_id),
+  if (stripeCleanup.usage_subscription_canceled) {
+    await getPool().query(
+      "UPDATE accounts SET stripe_usage_subscription='' WHERE account_id=$1",
+      [account_id],
+    );
+  }
+  // A command that was already running when the account was frozen is allowed
+  // to finish before the serialized cleanup. Reapply local containment after
+  // that command so it cannot leave a renewed subscription behind.
+  await disableAutomaticBillingState(account_id);
+  local_subscriptions_canceled += await cancelLocalSubscriptions({
+    account_id,
+    reason: normalizedReason,
   });
   const stoppedHosts = await attempt({
     errors,
@@ -427,10 +413,10 @@ export async function quarantineAccountBillingResourcesLocal({
     account_id,
     home_bay_id,
     ...automaticBilling,
-    usage_subscription_canceled,
+    usage_subscription_canceled: stripeCleanup.usage_subscription_canceled,
     local_subscriptions_canceled,
-    payment_intents_canceled,
-    payment_methods_detached,
+    payment_intents_canceled: stripeCleanup.payment_intents_canceled,
+    payment_methods_detached: stripeCleanup.payment_methods_detached,
     hosts_stop_requested: stoppedHosts.count,
     host_ids: stoppedHosts.host_ids,
     projects_stop_requested: stoppedProjects.count,

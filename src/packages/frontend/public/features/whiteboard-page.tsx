@@ -114,19 +114,20 @@ function ExecutionGraph() {
         <Col xs={24} lg={12}>
           <Flex vertical gap={12}>
             <Title level={3} style={{ margin: 0 }}>
-              Put Jupyter cells in a directed graph.
+              Run connected Jupyter cells in tree order.
             </Title>
             <Paragraph style={{ margin: 0 }}>
-              A CoCalc whiteboard is not only a drawing surface. Jupyter cells
-              can live on the canvas, connect to each other, and run in graph
-              order, which makes the board useful for computational diagrams,
-              lecture flows, and exploratory workflows that are not naturally
-              linear.
+              Connect visible Jupyter cells with directed edges, then use
+              <strong> Run Tree</strong> to run a selected cell and its
+              reachable descendants. Those cells must form an acyclic tree: a
+              cell cannot merge two branches of that tree. Prepare any
+              prerequisites outside the selected tree and use a kernel with the
+              required packages.
             </Paragraph>
             <BulletList
               items={[
-                "Connect Jupyter cells so the board runs them in dependency order, not file order.",
-                "Lay out branching analyses that are not a single linear column.",
+                "Edges define tree traversal order; CoCalc does not infer data dependencies from the code.",
+                "Lay out branches while keeping Run Tree within its single-parent tree structure.",
                 "Keep each cell's code, output, and the math that explains it together in one frame.",
               ]}
             />
@@ -211,8 +212,8 @@ export default function WhiteboardFeaturePage({
                 explanations together.
               </Title>
               <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                Work through the problem together, then replay every change with
-                TimeTravel.
+                Work through the problem together, then review document edits
+                with TimeTravel.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryHref}>
@@ -258,9 +259,9 @@ export default function WhiteboardFeaturePage({
           <BulletList
             items={[
               "Choose a board when a research or engineering team needs to work through a method, not just store the final result.",
-              "Review a collaborator's work in place with TimeTravel — replay how the board evolved and recover earlier versions, with the code, output, and math all there to inspect.",
+              "Review saved board states with TimeTravel, including code and stored output. Restoring document history does not restore a running kernel or external files.",
               "Run office hours or a live support session on a shared board everyone can edit.",
-              "Choose a deck when the explanation needs an ordered presentation path, not a static export.",
+              "Choose a deck when the explanation needs an ordered presentation path.",
             ]}
           />
         </FeatureFinalBand>

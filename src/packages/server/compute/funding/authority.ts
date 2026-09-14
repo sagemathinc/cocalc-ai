@@ -13,6 +13,9 @@ import type { ComputeVmFundingBinding } from "@cocalc/util/compute-vm-funding";
  * when an old bay has been restored from a pre-handoff backup.
  */
 export async function assertFundingAccountHome(payer: string): Promise<void> {
+  (
+    await import("@cocalc/server/purchases/billing-authority/client")
+  ).assertBillingAuthorityTopology();
   const { isMultiBayCluster } = await import("@cocalc/server/cluster-config");
   const home = isMultiBayCluster()
     ? await (

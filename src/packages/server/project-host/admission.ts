@@ -343,7 +343,7 @@ export async function getDedicatedHostPolicySnapshotLocal(
     postpaid_unbilled_exposure_usd,
     holds,
   ] = await Promise.all([
-    getBalance({ account_id, client, noSave: client != null }),
+    getBalance({ account_id, client, noSave: true }),
     getDedicatedHostWindowUsageLocal(account_id, { client }),
     getDedicatedHostPostpaidUnbilledExposureLocal(account_id, { client }),
     getAccountFundingHolds({ account_id, client }),

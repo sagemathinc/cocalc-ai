@@ -20,6 +20,7 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import { publishAccountBalanceUpdateBestEffort } from "./refresh-balance";
+import { assertBillingAuthorityAccountRegistered } from "./billing-authority/context";
 
 const logger = getLogger("purchases:create-credit");
 
@@ -81,6 +82,7 @@ async function createCreditInTransaction({
   if (!(await isValidAccount(account_id, client))) {
     throw Error(`${account_id} is not a valid account`);
   }
+  await assertBillingAuthorityAccountRegistered(account_id);
   const amountValue = toDecimal(amount);
   if (amountValue.lte(0)) {
     throw Error(`credit amount (=${amount}) must be positive`);

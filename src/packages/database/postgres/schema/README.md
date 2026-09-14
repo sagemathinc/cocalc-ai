@@ -6,25 +6,22 @@ database matches the one defined in `@cocalc/util/db-schema`.
 This creates the initial schema, adds new columns, and in a **VERY LIMITED**
 range of cases, _might be_ be able to change the data type of a column.
 
-## SCHEMA \- DB Schema must be passed in
+## Schema and connection ownership
 
-We do NOT use the global SCHEMA object from @cocalc/util/db\-schema, and instead require a schema object to be passed in. The motivation is a caller could \-\- in a single transaction \-\- set the role to another user:
+`syncSchema(dbSchema = SCHEMA, role?)` and
+`schemaNeedsSync(dbSchema = SCHEMA, role?)` default to the registered schema
+from `@cocalc/util/schema`. Callers may pass an explicit schema and role.
 
-```sql
-SET ROLE crm
-```
+Each function opens its own dedicated connection and applies the optional
+`SET ROLE` on that connection. It does not reuse a caller's connection or
+transaction. In particular, running `SET ROLE` in a separate caller
+transaction does not change the role of the synchronizer's connection.
+`syncSchema` is not one all-or-nothing migration transaction: it also performs
+legacy schema cleanup and the incremental convergence described below.
 
-then call `syncSchema` with a different schema that is specific to something else. The result would be tables, indexes, etc., all getting created to match the given schema for that user. This way we can easily create the normal tables \(as the smc user\), then create completely different tables for something else, using the exact same code.
-
-NOTE: That said **we do not actually use this capability.** I wrote this to support some separate CRM integration, which I ended up deleting.
-
-### Do NOT use a pool
-
-Since we are supporting changing the role, it's important to not use a pool. We make one
-connection, possibly change the role _during that connection_, and use that for
-all the schema updates.
-
-Again, violating this wouldn't matter in practice since we do not use this capability.
+The normal pool startup path coordinates schema synchronization with a
+session-level advisory lock. Do not treat the optional schema/role parameters
+as a general-purpose isolated migration API or a tested CRM deployment recipe.
 
 ## Online invariant convergence
 

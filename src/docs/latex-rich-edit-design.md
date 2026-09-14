@@ -1,6 +1,6 @@
 # LaTeX Hybrid Rich-Text Editing — Design & Architecture
 
-> **Status:** Shipped on branch `latex-inline-widgets`. The CodeMirror
+> **Status:** Current implementation reference. The CodeMirror
 > source frame for `.tex` files gains a top toolbar plus a set of inline
 > widgets that render standard LaTeX constructs (sections, inline styles,
 > math, lists, verbatim, links, …) as their typeset equivalents while
@@ -50,9 +50,10 @@ files:
   structure → inline style → insert:
   - **Section▾** — Section / Subsection / Subsubsection / Plain. Wraps
     the selected lines.
-  - **Math▾** — insert inline `$…$`, display `\[…\]`, or open the AI
-    formula dialog.
-  - **List▾** — insert itemize / enumerate / description skeleton.
+  - **Math▾** — insert inline `$…$` or display `$$…$$`. Agent editing
+    is opened from a rendered math widget with Shift+click / Shift+Enter.
+  - **List▾** — insert itemize or enumerate skeletons. The parser also
+    renders description environments already present in the source.
   - **B / I / U** — wrap selection in `\textbf{…}` / `\textit{…}` /
     `\underline{…}`.
   - **Size▾** — wrap the selection in a braced size group, the full
@@ -100,10 +101,14 @@ Shift+click / Shift+Enter first opens a compact dialog showing the rendered
 formula and an instruction field. Its primary **Edit with Agent** button
 creates or focuses a Codex Agent conversation in the side flyout, with the
 project, full file path, exact formula, line/range, and requested change in
-the navigator intent metadata. The formula and requested change are visible
-in the Agent chat; its operational instructions, raw TeX, and metadata are
-inside a collapsible details block. The Agent must carry out that explicit
-request against the live sync document rather than a stale filesystem copy.
+the agent prompt. The formula and requested change are sent as
+`visiblePrompt`; operational instructions, raw TeX, and metadata are sent in a
+separate `prompt`. `formula-agent.tsx` first tries the project workspace chat
+requesting the Agents flyout via `openFloating: true`, then falls back to
+dispatching a navigator intent. The
+Agent is instructed to edit and verify the live sync document rather than a
+stale filesystem copy. Dispatching the request does not itself confirm that
+the edit succeeded.
 
 ### Per-document math macros
 
@@ -114,8 +119,10 @@ matches the real compile:
   before `\begin{document}`; the whole text if there is none) for
   `\newcommand` / `\renewcommand` / `\providecommand`, `\def\name…`, and
   `\DeclareMathOperator`, producing a KaTeX-compatible macro map
-  (e.g. `\R → \mathbb{R}`). Preamble-only scanning bounds the per-edit
-  cost to the prologue rather than the full (possibly large) buffer.
+  (e.g. `\R → \mathbb{R}`). Definition scanning is restricted to that
+  preamble, but the manager still obtains the full buffer with `cm.getValue()`
+  and `extractMacros` strips comments before selecting the preamble; this is
+  not a constant-cost operation independent of document length.
 - The widget manager re-scans on change, diffs the map by
   `JSON.stringify`, and on change disposes **all** live marks so every
   formula re-renders with the new macros. The map is delivered to
@@ -133,27 +140,27 @@ matches the real compile:
 
 ### What renders
 
-| Family         | Constructs                                                                                                             |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| Sectioning     | `\part` … `\subparagraph` (+ starred)                                                                                  |
-| Text style     | `\textit` `\textbf` `\emph` `\underline` `\texttt` `\textsc` `\textsf` `\textrm` `\textsuperscript` `\textsubscript`   |
-| Color          | `\textcolor{c}{text}`                                                                                                  |
-| Font size      | braced form only: `{\Large …}` (full `\tiny`…`\Huge` ladder → em scale); bare declarations stay raw                    |
-| Inline math    | `$…$`, `\(…\)`                                                                                                         |
-| Display math   | `\[…\]`, `$$…$$` (single-line) — rendered as a centered block on its own line                                          |
-| Math envs      | `equation` `align` `gather` `multline` (+ starred; auto-numbering stripped in preview so KaTeX doesn't show fake tags) |
-| Verbatim       | `\verb` (inline) and `\begin{verbatim\|Verbatim}…\end{…}`                                                              |
-| Links          | `\href{url}{text}`, `\url{url}`                                                                                        |
-| Lists          | `itemize` `enumerate` `description` — `\begin/\end` markers + `\item` chips                                            |
-| Tier 2 inline  | `\footnote` `\ref` `\cite` `\label` `\caption` `\sout` (ulem) `\hl` (soul)                                             |
-| Prose envs     | `abstract` + theorem family — narrow begin/end chips so inner widgets in the body still render                         |
-| Code listings  | `\begin{lstlisting\|minted}…\end{…}` — covering widget, body is raw code                                               |
-| Document-level | `\title` `\author` `\date` `\maketitle` `\tableofcontents`                                                             |
-| Graphics       | `\includegraphics[opts]{path}` — via `raw_url`; width from `[width=N\textwidth]`; "image not found" fallback           |
-| Glyphs         | `\TeX` `\LaTeX` — typographic logos                                                                                    |
-| Structural     | `\newpage` `\clearpage` `\pagebreak` `\linebreak` `\bigskip` `\medskip` `\smallskip`                                   |
-| Tabular        | `\begin{tabular}…` — fail-open: emitted only when the colspec parses and every row's cell count matches                |
-| Custom-macro   | unknown `\cmd{…}` not in any allowlist → neutral chip, body in tooltip                                                 |
+| Family         | Constructs                                                                                                                         |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Sectioning     | `\part` … `\subparagraph` (+ starred)                                                                                              |
+| Text style     | `\textit` `\textbf` `\emph` `\underline` `\texttt` `\textsc` `\textsf` `\textrm` `\textsuperscript` `\textsubscript`               |
+| Color          | `\textcolor{c}{text}`                                                                                                              |
+| Font size      | braced form only: `{\Large …}` (full `\tiny`…`\Huge` ladder → em scale); bare declarations stay raw                                |
+| Inline math    | `$…$`, `\(…\)`                                                                                                                     |
+| Display math   | `\[…\]`, `$$…$$` (single- or multi-line, within scanner bounds) — centered scrollable block                                        |
+| Math envs      | `equation` `align` `gather` `multline` `displaymath` `eqnarray` (supported starred forms; numbering/labels normalized for preview) |
+| Verbatim       | `\verb` (inline) and `\begin{verbatim\|Verbatim}…\end{…}`                                                                          |
+| Links          | `\href{url}{text}`, `\url{url}`                                                                                                    |
+| Lists          | `itemize` `enumerate` `description` — `\begin/\end` markers + `\item` chips                                                        |
+| Tier 2 inline  | `\footnote` `\ref` `\cite` `\label` `\caption` `\sout` (ulem) `\hl` (soul)                                                         |
+| Prose envs     | `abstract` + theorem family — narrow begin/end chips so inner widgets in the body still render                                     |
+| Code listings  | `\begin{lstlisting\|minted}…\end{…}` — covering widget, body is raw code                                                           |
+| Document-level | `\title` `\author` `\date` `\maketitle` `\tableofcontents`                                                                         |
+| Graphics       | `\includegraphics[opts]{path}` — via `raw_url`; width from `[width=N\textwidth]`; "image not found" fallback                       |
+| Glyphs         | `\TeX` `\LaTeX` — typographic logos                                                                                                |
+| Structural     | `\newpage` `\clearpage` `\pagebreak` `\linebreak` `\bigskip` `\medskip` `\smallskip`                                               |
+| Tabular        | `\begin{tabular}…` — fail-open: emitted only when the colspec parses and every row's cell count matches                            |
+| Custom-macro   | unknown `\cmd{…}` not in any allowlist → neutral chip, body in tooltip                                                             |
 
 **Empty-arg handling.** `\section{}`, `\textbf{}`, etc. still render as a
 widget with dimmed placeholder text ("empty heading" / "empty math" / …),
@@ -170,9 +177,10 @@ part dissolves the whole construct to source.
 
 **Acknowledged gaps.** `\ref`/`\cite` show the literal key (no aux/bib
 resolution); `figure`/`table` floats aren't structured (bare
-`\includegraphics` is); deep `enumerate` lettering renders flat `1. 2. 3.`
-at every depth; `\mathbf`/`\mathcal`/… are rendered by KaTeX inside math
-widgets, not as separate text-mode widgets.
+`\includegraphics` is); class/package-specific list-label definitions are
+not evaluated. Nested lists use depth-aware default markers (`1.`, `a.`, `i.`,
+`A.` for enumerate; distinct bullets for itemize). `\mathbf`/`\mathcal`/…
+are rendered by KaTeX inside math widgets, not as separate text-mode widgets.
 
 ## Architecture
 
@@ -190,7 +198,7 @@ widgets, not as separate text-mode widgets.
 │  │     - wait for actions._cm[id] (CM ready, via polling)      │  │
 │  │     - cm.on("change", debounced rescan)                     │  │
 │  │     - cm.on("viewportChange", rescan)                       │  │
-│  │     - cm.on("cursorActivity", edit-zone + popover)          │  │
+│  │     - cm.on("cursorActivity", edit-zone reconciliation)          │  │
 │  │     on Rich-Text-off / unmount: clear marks, unmount roots  │  │
 │  │       React roots (deferred), detach handlers               │  │
 │  └────────────────────────────────────────────────────────────┘  │
@@ -205,43 +213,49 @@ all `EditorComponentProps` unchanged to the underlying `CodemirrorEditor`
 
 ### Marker manager
 
-The parser is **pure** — `parse(text, viewport) → WidgetDescriptor[]`,
-same input always yields same output. A descriptor's saved range is
-"as parsed" and goes stale the moment the buffer is edited, so the
-manager **never** uses saved coordinates for diffing live state. Instead
-it keeps a live, document-ordered registry per CM instance:
+The pure entry point is
+`parseLines(source: LineSource, fromLine, toLine) → WidgetDescriptor[]`;
+`parseViewport` adapts a live CodeMirror editor to that interface. A parsed
+range can become stale after an edit, so the manager resolves each live
+marker's current range before matching it against fresh descriptors. Its
+per-instance registry records:
 
 ```ts
 interface LiveMark {
   marker: CodeMirror.TextMarker; // CM5 handle — use .find() for current range
   type: WidgetType;
-  payloadHash: string; // stable hash of payload (excludes counters/positions)
+  source: string; // captured source, checked against the current buffer
+  payloadKey: string; // serialized payload; detects changes such as numbering
   host: HTMLElement; // attached DOM
   root: ReactDOM.Root; // mounted React root
+  rerender: (descriptor: WidgetDescriptor) => void;
 }
 ```
 
-**One rescan step:** parse the viewport text → resolve each LiveMark's
-current range via `marker.find()` (drop ones that return null — CM
-cleared them, e.g. `clearOnEnter` fired) → filter both sequences to the
-viewport ± hysteresis margin → LCS/document-order pairing on
-`(type, payloadHash)`: matched pairs keep their marker+host+root and just
-re-render the React tree; unmatched fresh descriptors get
-`createRoot` + `markText`; unmatched live entries get `marker.clear()` +
-`setTimeout(0, root.unmount)` + `host.remove()` → finally a
-belt-and-braces sweep removes any stranded widget hosts in the CM
-wrapper.
+**One reconciliation step:** parse the viewport plus its hysteresis margin,
+or reuse the cached parse for a cursor-only change. Index fresh descriptors by
+`(from.line, from.ch, type, source)`. For each live marker, resolve its current
+range with `marker.find()`, exclude the active edit zone, and match using that
+current position. Also verify that the live buffer range still equals its
+captured source.
 
-**Why `markText` can't reconcile itself:** clearing and re-creating a
-mark (even with the same DOM) detaches the old DOM and re-inserts the
-new one, triggering a React unmount. Reuse is only possible by keeping
-the same `TextMarker` alive across rescans — so markers are
-added/removed only when a descriptor actually appears/disappears.
+A matched marker keeps its marker, host, and React root. It only re-renders
+when the serialized payload changes, for example when list items are
+renumbered. Unmatched live entries are disposed; unmatched fresh descriptors
+outside the edit zone get `createRoot` and `markText`. This is key-based
+matching, not LCS. Disposal clears the marker, removes its host, and schedules
+the React unmount. Teardown flushes pending unmounts and detaches handlers;
+there is no separate post-rescan DOM sweep.
+
+Keeping a matching `TextMarker` alive lets the manager reuse its host and React
+root. The manager also disposes markers when their ranges enter the edit zone or
+document macros change; disposal explicitly schedules the React unmount.
 
 **Hysteresis** (~±50 lines) prevents tear-down/remount thrash on a
-single-line scroll. PDF-scroll → SyncTeX → CM `viewportChange` is the
-worst-case trigger and is silent: `marker.find()` returns unchanged
-positions, so all markers survive and no work happens.
+single-line scroll. PDF-scroll → SyncTeX → CM `viewportChange` is
+a frequent viewport-change trigger. Markers whose current key and source
+still match can survive, but a viewport event invalidates the parse cache and
+schedules reconciliation; it is not a no-work path.
 
 ### Parser strategy
 
@@ -259,12 +273,14 @@ parsing is suspended inside `verbatim` / `lstlisting` / `minted` and
 
 `\item` chips render only within balanced
 `\begin{itemize|enumerate|description}…\end{…}` whose stack context is
-known from the visible viewport. If balance is uncertain (an `\end` just
+known within the scanner's bounded context (up to 200 lines of lookback and
+500 lines of forward environment search). If balance is uncertain (an `\end` just
 deleted, or the `\begin` is far above without context), **all** list
 marks for that env are cleared and the source shows — better
 source-visible than misleading. The `enumerate` counter is computed from
-the live document-order index, **not** stored in `payloadHash`, so chips
-don't remount when a sibling `\item` is inserted/deleted. Prose between
+each item's document-order index in its environment. It is stored in the
+payload but excluded from the marker matching key, so chips can update their
+numbering without remounting when a sibling `\item` is inserted/deleted. Prose between
 items stays live, so inner `\textbf` / `$…$` render through the normal
 pipeline.
 
@@ -274,8 +290,8 @@ The Agent action must capture the marker's current source and range after a
 fresh `marker.find()` lookup. The compact dialog requires an explicit user
 instruction before it follows the existing `help-me-fix` navigator-intent
 pattern to open or reuse the project’s Agent flyout. The Agent receives the
-file path and live-document caveat, then makes and verifies the requested
-edit.
+file path and live-document caveat, and is instructed to make and verify the
+requested edit.
 
 ### React roots & FrameContext
 
@@ -284,7 +300,8 @@ editor's `<FrameContext.Provider>`. So every render re-wraps children in
 `<FrameContext.Provider value={frameContext}><MathMacrosContext.Provider …>`
 (see `widget-manager.tsx`), otherwise frame-context hooks silently return
 defaults. Unmounts are deferred via `setTimeout(0)` to avoid racing
-React's render cycle, plus the post-rescan stranded-host sweep.
+React's render cycle; teardown cancels timers and flushes pending root
+unmounts.
 
 **useEffect deps must exclude unstable refs.** `useFrameContext()` returns
 a new object identity on every parent render (the provider value is built
@@ -305,6 +322,7 @@ rich-edit/
 ├── types.ts               WidgetType, WidgetDescriptor, WidgetProps
 ├── parser.ts              parseLines / viewport scanner
 ├── widget-manager.tsx     Live registry + reconcile + CM hooks + macro scan
+├── formula-agent.tsx      Formula instruction dialog + Agent prompt dispatch
 ├── widget-renderer.tsx    Dispatch via Record<WidgetType, Component>
 ├── latex-macros.ts        extractMacros(text) → KaTeX macro map
 ├── math-macros-context.ts MathMacrosContext (per-document macros)
@@ -337,10 +355,10 @@ ones:
 
 1. **CodeMirror 5** (`codemirror@^5.65.18`). `cm.markText(from, to, {
 replacedWith, clearOnEnter, handleMouseEvents, … })` replaces a range
-   visually with a DOM node. The only other call site is legacy SageWS
-   ([sagews.coffee:791](../packages/frontend/sagews/sagews.coffee)) — it
-   does **not** combine `clearOnEnter` + React + viewport rescans, which
-   is why this engine had to validate that combination from scratch.
+   visually with a DOM node. The current implementation combines that
+   CodeMirror API with a live marker registry and React roots in
+   `rich-edit/widget-manager.tsx`. The former SageWS source reference is
+   absent from the current tree; consult history for that earlier comparison.
 2. **Device-wide mode.** `mode.ts` stores `latex` or `rich` under the
    `latex-editor-mode` localStorage key. A same-window event updates every
    mounted LaTeX frame immediately, and the browser `storage` event carries
@@ -354,23 +372,23 @@ replacedWith, clearOnEnter, handleMouseEvents, … })` replaces a range
 
 ## Risks & mitigations
 
-| Risk                                         | Mitigation                                                                                                                 |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
-| Parser perf on every keystroke               | Debounce; scope to the viewport; reconcile via LCS so unchanged widgets keep their marker/host/root.                       |
-| React mount leaks on rescans                 | Reuse host+root by live-marker identity; defer unmount via `setTimeout(0)`; sweep stranded DOM after each rescan.          |
-| Cursor edit-point lost on re-mark            | Never move the cursor on re-mark; only re-mark ranges whose text didn't change.                                            |
-| Partial viewport when half an env is visible | Fail-open: render env-spanning constructs only when balance is known; else revert to source.                               |
-| Switch state confuses collaborators          | Per-frame in localStorage; never sent through syncdb.                                                                      |
-| Chat/bookmark markers conflict               | Chat uses gutter+bookmark; we use `markText({replacedWith})`. `% chat:` / `% bookmark:` lines are comments → skipped.      |
-| Future formula Agent action races with edits | Resolve the live marker range when creating the intent; the Agent must use live document APIs and re-check before editing. |
-| Custom macros silently mis-render            | Unknown `\cmd{…}` → neutral chip with hover-source (no false render). Unknown KaTeX macros → raw LaTeX fallback.           |
+| Risk                                         | Mitigation                                                                                                                          |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| Parser perf on every keystroke               | Debounce; parse with bounded viewport context; match current position/type/source so unchanged widgets keep their marker/host/root. |
+| React mount leaks on rescans                 | Reuse marker/host/root; defer unmount via `setTimeout(0)`; flush pending root unmounts during teardown.                             |
+| Cursor edit-point lost on re-mark            | Never move the cursor on re-mark; only re-mark ranges whose text didn't change.                                                     |
+| Partial viewport when half an env is visible | Fail-open: render env-spanning constructs only when balance is known; else revert to source.                                        |
+| Switch state confuses collaborators          | Device-wide localStorage preference shared by mounted frames and same-origin tabs; never sent through syncdb.                       |
+| Chat/bookmark markers conflict               | Chat uses gutter+bookmark; we use `markText({replacedWith})`. `% chat:` / `% bookmark:` lines are comments → skipped.               |
+| Formula Agent action races with edits        | Resolve the live marker range when creating the intent; the Agent must use live document APIs and re-check before editing.          |
+| Custom macros silently mis-render            | Unknown `\cmd{…}` → neutral chip with hover-source (no false render). Unknown KaTeX macros → raw LaTeX fallback.                    |
 
 ## References
 
-- [latex.md](latex.md) — current LaTeX editor architecture
-- [frame-editors.md](frame-editors.md) — frame-editor framework
-- [frontend.md](frontend.md) — frontend state management
+- [latex-editor/editor.ts](../packages/frontend/frame-editors/latex-editor/editor.ts) — LaTeX frame wiring
+- [rich-edit/index.tsx](../packages/frontend/frame-editors/latex-editor/rich-edit/index.tsx) — wrapper and manager lifecycle
+- [rich-edit/widget-manager.tsx](../packages/frontend/frame-editors/latex-editor/rich-edit/widget-manager.tsx) — current marker matching and cleanup
+- [rich-edit/formula-agent.tsx](../packages/frontend/frame-editors/latex-editor/rich-edit/formula-agent.tsx) — visible and operational Agent prompts
 - [code-editor/codemirror-gutter-marker.tsx](../packages/frontend/frame-editors/code-editor/codemirror-gutter-marker.tsx) — reference for `createRoot` + `FrameContext.Provider`
 - [frame-editors/ai/help-me-fix.tsx](../packages/frontend/frame-editors/ai/help-me-fix.tsx) — navigator-intent and Agent-flyout pattern used by formula editing
 - [misc/math-to-html.ts](../packages/frontend/misc/math-to-html.ts) — KaTeX rendering wrapper (`mathToHtml`, extra-macros arg)
-- [sagews/sagews.coffee:791](../packages/frontend/sagews/sagews.coffee) — the only other `markText({replacedWith})` site (legacy, no `clearOnEnter`)

@@ -14,10 +14,26 @@ import {
 
 interface Options {
   account_id: string;
-  subscription_id: number;
+  subscription_id: number | string;
   reason?: string;
   client?: PoolClient;
   notify?: boolean;
+}
+
+export function parseSubscriptionId(value: unknown): number {
+  const subscriptionId =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && /^[1-9][0-9]*$/.test(value)
+        ? Number(value)
+        : NaN;
+  if (!Number.isSafeInteger(subscriptionId) || subscriptionId <= 0) {
+    throw Object.assign(new Error("invalid subscription id"), {
+      code: 400,
+      status: 400,
+    });
+  }
+  return subscriptionId;
 }
 
 export default async function cancelSubscription({
@@ -27,6 +43,7 @@ export default async function cancelSubscription({
   client,
   notify = true,
 }: Options) {
+  const subscriptionId = parseSubscriptionId(subscription_id);
   const pool = client ?? (await getTransactionClient());
   const useTransaction = client == null;
   const now = new Date();
@@ -38,28 +55,28 @@ export default async function cancelSubscription({
         SET status='canceled', canceled_at=$1, canceled_reason=$2
       WHERE id=$3 AND account_id=$4
       RETURNING metadata, interval, current_period_start, current_period_end`,
-      [now, reason, subscription_id, account_id],
+      [now, reason, subscriptionId, account_id],
     );
     if (update.rowCount != 1) {
-      throw Error(`You do not have a subscription with id ${subscription_id}.`);
+      throw Error(`You do not have a subscription with id ${subscriptionId}.`);
     }
     const row = update.rows[0];
     if (row?.metadata?.type === "membership") {
       await cancelOpenSubscriptionRenewalAttempts({
-        subscription_id,
+        subscription_id: subscriptionId,
         account_id,
         reason,
         client: pool,
       });
       await recordMembershipAnalyticsEvent({
-        event_key: `subscription:${subscription_id}:canceled:${now.toISOString()}`,
+        event_key: `subscription:${subscriptionId}:canceled:${now.toISOString()}`,
         event_type: "membership_canceled",
         event_time: now,
         account_id,
         membership_class: row.metadata.class,
         source: "subscription",
         interval: row.interval,
-        subscription_id,
+        subscription_id: subscriptionId,
         period_start: row.current_period_start,
         period_end: row.current_period_end,
         trial_status: row.metadata.trial === true ? "canceled" : "none",
@@ -80,7 +97,7 @@ export default async function cancelSubscription({
     }
   }
   if (notify) {
-    await sendCancelNotification({ subscription_id, client });
+    await sendCancelNotification({ subscription_id: subscriptionId, client });
   }
 }
 

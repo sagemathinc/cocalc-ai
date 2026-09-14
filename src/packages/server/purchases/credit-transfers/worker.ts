@@ -14,23 +14,27 @@ const logger = getLogger("purchases:credit-transfers");
 /** Continue committed deliveries even when NEW transfers are disabled. Duplicate
  * workers are harmless: the receiver fence and sender settlement are idempotent.
  */
-export async function getPendingCreditTransferManifests(): Promise<
-  CreditTransferManifest[]
-> {
+export async function getPendingCreditTransferManifests(
+  limit = 100,
+): Promise<CreditTransferManifest[]> {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    throw Error("Invalid transfer reconciliation limit");
   const { rows } = await getPool().query<{ manifest: CreditTransferManifest }>(
     `SELECT t.manifest FROM credit_transfers t
      JOIN accounts a ON a.account_id=t.sender_account_id
      JOIN account_funding_authorities f ON f.payer_account_id=t.sender_account_id
      WHERE t.state='pending' AND f.state='active' AND f.home_bay_id=$1
        AND COALESCE(NULLIF(BTRIM(a.home_bay_id),''),$1)=$1
-     ORDER BY t.updated_at LIMIT 100`,
-    [getConfiguredBayId()],
+     ORDER BY t.updated_at LIMIT $2`,
+    [getConfiguredBayId(), limit],
   );
   return rows.map(({ manifest }) => manifest);
 }
 
-export default async function maintainCreditTransfers(): Promise<void> {
-  for (const manifest of await getPendingCreditTransferManifests()) {
+export default async function maintainCreditTransfers({
+  limit = 100,
+}: { limit?: number } = {}): Promise<void> {
+  for (const manifest of await getPendingCreditTransferManifests(limit)) {
     try {
       await reconcileCreditTransfer(manifest, creditTransferTransport);
     } catch (error) {

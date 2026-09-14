@@ -7,14 +7,14 @@ import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
 import {
   COURSE_ASSIGNMENT_BODY,
-  COURSE_COMPUTE_BODY,
   COURSE_RESTRICT_STUDENT_PROJECTS_BODY,
   COURSE_SHARED_PROJECT_BODY,
   COURSE_STUDENT_PROJECT_ROOTFS_BODY,
   COURSE_STUDENT_PAY_BODY,
   COURSE_WORKFLOW_BODY,
   NBGRADER_BODY,
-} from "../content";
+} from "../content/teaching";
+import { COURSE_COMPUTE_BODY } from "../content/course-compute";
 
 export const TEACHING_ENTRIES: DocsEntry[] = [
   {

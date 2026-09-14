@@ -251,6 +251,7 @@ export interface HostIntrusionSnapshotResponse {
       size: number;
       type: "file" | "symlink";
       sha256?: string;
+      link_target?: string;
     }>;
     truncated: boolean;
   };

@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import getConn from "@cocalc/server/stripe/connection";
+import { registerBillingAuthorityAccount } from "./billing-authority/context";
 import type { ProviderRefundAttempt } from "./provider-refund-attempts";
 import {
   readClaimedProviderRefund,
@@ -104,6 +105,7 @@ export async function reconcileClaimedProviderRefund(
     throw Error("Invalid refund lookup timeout");
   let error: ReconciliationError | null = "reconciliation_failed";
   try {
+    await registerBillingAuthorityAccount(attempt.account_id);
     if (!attempt.reconcile_token)
       throw Error("Refund reconciliation requires a claim");
     const current = await readClaimedProviderRefund(

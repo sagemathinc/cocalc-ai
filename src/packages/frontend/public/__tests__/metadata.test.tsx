@@ -335,3 +335,55 @@ describe("robots noindex tag management", () => {
     ).toBeNull();
   });
 });
+
+describe("research compute product metadata", () => {
+  const route = {
+    section: "features" as const,
+    route: { view: "detail" as const, slug: "research-compute" },
+  };
+
+  it.each(["/", "/prefix", "/docs"])(
+    "uses the existing not-found metadata on Plus at base path %s",
+    (basePath) => {
+      const metadata = getPublicRouteMetadata(
+        route,
+        { cocalc_product: "plus", site_name: "CoCalc" },
+        { basePath },
+      );
+      expect(metadata.notFound).toBe(true);
+      expect(metadata.canonicalPath).toBe(
+        `${basePath === "/" ? "" : basePath}/features`,
+      );
+      expect(metadata.title).not.toContain("CPU, RAM, and GPU");
+    },
+  );
+
+  it.each(["launchpad", "rocket"])(
+    "preserves compute metadata for %s and the raw catalog default",
+    (product) => {
+      const metadata = getPublicRouteMetadata(
+        route,
+        { cocalc_product: product, site_name: "CoCalc" },
+        { basePath: "/prefix" },
+      );
+      expect(metadata.notFound).toBeFalsy();
+      expect(metadata.canonicalPath).toBe("/prefix/features/research-compute");
+      expect(metadata.title).toContain("CPU, RAM, and GPU");
+      expect(getPublicRouteMetadata(route).title).toContain(
+        "CPU, RAM, and GPU",
+      );
+    },
+  );
+
+  it("does not change other feature metadata on Plus", () => {
+    const terminalRoute = {
+      section: "features" as const,
+      route: { view: "detail" as const, slug: "terminal" },
+    };
+    expect(
+      getPublicRouteMetadata(terminalRoute, { cocalc_product: "plus" }),
+    ).toEqual(
+      getPublicRouteMetadata(terminalRoute, { cocalc_product: "launchpad" }),
+    );
+  });
+});

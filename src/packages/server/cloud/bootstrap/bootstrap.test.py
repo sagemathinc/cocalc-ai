@@ -4229,6 +4229,14 @@ reserve_project_startup_io_capacity
                 namespace["process_cgroup"](proc),
                 "/cocalc-backup-browsers/browser-*",
             )
+            target = proc / "target.mount"
+            target.write_text("mount unit", encoding="utf-8")
+            link = proc / "target.mount.link"
+            link.symlink_to(target)
+            self.assertEqual(
+                namespace["file_record"](str(link))["link_target"],
+                str(target),
+            )
         oversized = {
             "coverage": "complete",
             "accounts": {"uid_zero": [], "interactive": []},

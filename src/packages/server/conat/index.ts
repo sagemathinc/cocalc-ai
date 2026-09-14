@@ -57,6 +57,7 @@ import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-
 import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
 import { startSiteFundedCodexMaintenance } from "@cocalc/server/ai/site-funded-codex-maintenance";
 import startPurchasesMaintenanceLoop from "@cocalc/server/purchases/maintenance";
+import { startBillingAuthorityService } from "@cocalc/server/purchases/billing-authority/service";
 import { startLroExpirationMaintenance } from "@cocalc/server/lro/expiration-maintenance";
 import { startUsageRetentionMaintenance } from "@cocalc/server/membership/usage-retention-maintenance";
 import { startActiveUserMapHistoryMaintenance } from "@cocalc/server/active-user-map-history";
@@ -211,6 +212,7 @@ export async function initConatApi({
   configureHubServiceAdmissionDenialRecorder();
   startConatAdmissionSettingsRefresh();
   logProjectionReadModes();
+  startBillingAuthorityService();
   enableDbAccountRowFeedPublishing();
   enableDbCollaboratorAccountFeedPublishing();
   enableDbProjectAccountFeedPublishing();

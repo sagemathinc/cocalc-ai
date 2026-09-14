@@ -1,14 +1,14 @@
 # Chat
 
-## State / normalization (2025-02)
+## Current cache and compatibility readers
 
 - Chat data now lives in a single source of truth: the SyncDoc backed by Patchflow/Immer. `message-cache.ts` listens to SyncDoc change events and exposes plain JS message maps plus thread metadata indexes. Thread config is keyed by `thread_id`; legacy date-key indexes remain only for compatibility with older helpers and root-message lookups. Messages are stored as the raw frozen syncdb objects to avoid extra copies.
-- Normalization upgrades legacy rows (adds `schema_version`, coerces dates, flattens history/payload) and writes the upgraded record back once so disk stays consistent.
+- `normalizeChatMessage` returns a shallow normalized copy for compatibility consumers. It can supply legacy identity fields, coerce dates, and convert old payload fields. The current cache and sync readers do not write that copy back merely because normalization ran; reading is not a file migration.
 - The Redux store still uses immutable.js for unrelated UI state, but chat messages themselves are plain JS objects served from the cache/context.
 
 ## Timestamps
 
-- Stored on disk as ISO strings; in memory we normalize to `Date` objects for all chat messages.
+- Message dates are stored as ISO strings. Cache records can retain those strings; compatibility readers can return `Date` values. Use helpers such as `dateValue` instead of assuming every cached date is a `Date`.
 - Legacy thread/message date keys use the millisecond timestamp as a string (e.g., `"1733958748000"`). New thread metadata/config lookups should prefer `thread_id` and only fall back to date keys when working with root-message compatibility paths.
 
 ## Overview
@@ -21,7 +21,10 @@ CoCalc has two chat views.
 The constricting factors are primarily keyboard related or screen size related.
 ie., you cannot use certain hotkeys without a physical keyboard and certain things don't fit well on a smaller screen.
 
-## JSON message format
+## Historical message example
+
+The example below illustrates an older message shape. For current message and
+thread records, see [the shared chat schema](../../chat/README.md).
 
 ```
 sender_id : String which is the original message sender's account id
@@ -55,13 +58,13 @@ Example object:
 
 ---
 
-Chat message shape after normalization (plain JS):
+Compatibility message fields (plain JS; not the complete current schema):
 
 ```
 sender_id : string
 event     : "chat" | "draft"
 date      : Date          // normalized from stored ISO
 history   : MessageHistory[]  // newest first
-editing   : string[]      // account_ids currently editing
-schema_version : number   // current schema version written back to disk
+editing   : string[] | object // legacy values may use an account-id map
+schema_version : number   // version on the returned normalized copy
 ```

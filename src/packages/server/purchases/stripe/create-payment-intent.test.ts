@@ -8,7 +8,7 @@ const mockGetConn = jest.fn();
 const mockDefaultReturnUrl = jest.fn();
 const mockGetStripeCustomerId = jest.fn();
 const mockSanityCheckAmount = jest.fn();
-const mockAssertValidUserMetadata = jest.fn();
+const mockAssertValidStripePaymentInput = jest.fn();
 const mockGetStripeLineItems = jest.fn();
 const mockCurrentStripeSite = jest.fn();
 const mockIsReadyToProcess = jest.fn();
@@ -29,11 +29,12 @@ jest.mock("@cocalc/server/stripe/connection", () => ({
 }));
 
 jest.mock("./util", () => ({
-  assertValidUserMetadata: (...args: any[]) =>
-    mockAssertValidUserMetadata(...args),
+  assertValidStripePaymentInput: (...args: any[]) =>
+    mockAssertValidStripePaymentInput(...args),
   defaultReturnUrl: (...args: any[]) => mockDefaultReturnUrl(...args),
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
   getStripeLineItems: (...args: any[]) => mockGetStripeLineItems(...args),
+  normalizeStripeLineItems: (lineItems: unknown) => lineItems,
   sanityCheckAmount: (...args: any[]) => mockSanityCheckAmount(...args),
   currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
 }));
@@ -107,7 +108,7 @@ describe("createPaymentIntent", () => {
     mockDefaultReturnUrl.mockResolvedValue("https://cocalc.example/return");
     mockGetStripeCustomerId.mockResolvedValue("cus_123");
     mockSanityCheckAmount.mockResolvedValue(undefined);
-    mockAssertValidUserMetadata.mockReturnValue(undefined);
+    mockAssertValidStripePaymentInput.mockReturnValue(undefined);
     mockCurrentStripeSite.mockResolvedValue("cocalc.ai");
     mockGetStripeLineItems.mockReturnValue({
       lineItemsWithoutCredit: lineItems,
@@ -206,6 +207,24 @@ describe("createPaymentIntent", () => {
     expect(stripe.invoices.voidInvoice).toHaveBeenCalledWith(
       "in_from_metadata",
     );
+  });
+
+  it("rechecks self-service ownership before canceling", async () => {
+    stripe.paymentIntents.retrieve.mockResolvedValue({
+      id: "pi_other",
+      metadata: { account_id: "other-account" },
+      status: "requires_payment_method",
+    });
+
+    await expect(
+      cancelPaymentIntent({
+        id: "pi_other",
+        reason: "abandoned",
+        expected_account_id: "self-account",
+      }),
+    ).rejects.toMatchObject({ code: 403, status: 403 });
+
+    expect(stripe.paymentIntents.cancel).not.toHaveBeenCalled();
   });
 
   it("creates an invoice and returns the default invoice payment intent", async () => {

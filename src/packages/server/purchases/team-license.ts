@@ -536,7 +536,19 @@ export async function getDueTeamLicensesForRenewal(): Promise<
         FROM team_licenses
        WHERE status='active'
          AND current_period_end <= NOW()
+         AND (last_renewal_attempt_at IS NULL
+              OR last_renewal_attempt_at < NOW() - INTERVAL '15 minutes')
          AND COALESCE(payment#>>'{status}', '') != 'active'
+         AND NOT EXISTS (
+           SELECT 1 FROM accounts AS account
+            WHERE account.account_id=team_licenses.owner_account_id
+              AND (account.banned IS TRUE OR account.deleted IS TRUE)
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM billing_authority_account_fences AS fence
+            WHERE fence.account_id=team_licenses.owner_account_id
+              AND fence.frozen
+         )
        ORDER BY current_period_end ASC
     `,
   );

@@ -124,7 +124,7 @@ describe("JupyterActions reconnect coordination", () => {
     const close = jest.fn();
     const client = { socket, close };
     mockJupyterClient.mockReturnValue(client);
-    projectConat.mockResolvedValue({ id: "project-conat-client" });
+    projectConat.mockResolvedValue({ state: "disconnected" });
 
     const actions: any = new JupyterActions("jupyter-test", {
       getStore: jest.fn(() => undefined),
@@ -153,6 +153,51 @@ describe("JupyterActions reconnect coordination", () => {
 
     await actions.close();
   });
+
+  it.each(["editor", "transport"])(
+    "abandons kernel startup when the %s closes during routing",
+    async (closing) => {
+      let finishRouting!: (client: any) => void;
+      projectConat.mockImplementationOnce(
+        () => new Promise((resolve) => (finishRouting = resolve)),
+      );
+      const actions: any = new JupyterActions("jupyter-test", {
+        getStore: jest.fn(() => undefined),
+        removeActions: jest.fn(),
+      } as any);
+      actions._state = "ready";
+      actions.waitUntilProjectIsRunning = jest.fn(async () => {});
+      const pending = actions.getJupyterClient();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      if (closing === "editor") await actions.close();
+      const transport = {
+        state: closing === "transport" ? "closed" : "connected",
+        close: jest.fn(),
+      };
+      mockJupyterClient.mockImplementation(() => {
+        throw Error("closed");
+      });
+      finishRouting(transport);
+
+      await expect(pending).resolves.toBeNull();
+      expect(mockJupyterClient).not.toHaveBeenCalled();
+      // This transport is shared with other editors, not owned by these actions.
+      expect(transport.close).not.toHaveBeenCalled();
+
+      if (closing === "transport") {
+        const socket = Object.assign(new EventEmitter(), {
+          state: "ready",
+          waitUntilReady: jest.fn(async () => {}),
+        });
+        const client = { socket, close: jest.fn() };
+        projectConat.mockResolvedValue({ state: "disconnected" });
+        mockJupyterClient.mockReturnValue(client);
+        await expect(actions.getJupyterClient()).resolves.toBe(client);
+        await actions.close();
+      }
+    },
+  );
 
   it("does not flush live-run replay after the actions close", async () => {
     let finishReplay!: () => void;

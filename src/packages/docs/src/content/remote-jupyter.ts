@@ -83,8 +83,21 @@ An inconclusive GPU check is shown as a warning, not treated as CPU-only.
 Without a GPU, you can create a regular Python environment. You can also select
 an existing discovered Jupyter kernel in **any language**, including Bash or
 SageJS; the feature is not restricted to Python. Install and register other
-kernels on the remote machine separately. If a kernelspec is outside the usual
-search paths, provide its directory through **Advanced**.
+kernels on the remote machine separately.
+
+For an installed R, Julia, or other non-Python kernel, choose its discovered
+entry under **Kernel**. **Advanced > Existing Python** and **Remote Python
+interpreter** are specifically for an existing Python executable; do not put an
+R or Julia executable in that field. A discovered kernel uses its remote
+kernelspec path instead of a Python installation recipe.
+
+If a kernelspec is outside the usual search paths, enter its directory in
+**Advanced > Additional remote kernelspec directory**, then click **Refresh
+discovery** and select the discovered kernel. After **Set up kernel** succeeds,
+run a small computation in the selected language and record its version,
+working directory, and active package environment. Successful discovery or
+registration alone does not verify those details or the packages needed by
+your analysis.
 
 For a Python kernel, check where code runs with:
 

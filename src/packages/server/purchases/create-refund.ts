@@ -32,6 +32,7 @@ import {
 } from "./provider-refund-attempts";
 import type { ProviderRefundAttempt } from "./provider-refund-attempts";
 import { inspectProviderRefundCharge } from "./provider-refund-reader";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchase:create-refund");
 
@@ -60,16 +61,24 @@ export default async function createRefund(opts: {
   }
 
   const { rows } = await getPool().query<{
+    account_id: string;
     description: any;
     service: Service;
     invoice_id: string | null;
-  }>("SELECT description, service, invoice_id FROM purchases WHERE id=$1", [
-    purchase_id,
-  ]);
-  const { description, service, invoice_id } = rows[0] ?? {};
-  if (!service) {
+  }>(
+    "SELECT account_id, description, service, invoice_id FROM purchases WHERE id=$1",
+    [purchase_id],
+  );
+  const {
+    account_id: targetAccountId,
+    description,
+    service,
+    invoice_id,
+  } = rows[0] ?? {};
+  if (!service || !targetAccountId) {
     throw Error(`No purchase with id ${purchase_id}`);
   }
+  await registerBillingAuthorityAccount(targetAccountId);
   if (service === "credit-transfer") {
     throw Error(
       "Credit transfers require a separately approved compensating transfer",

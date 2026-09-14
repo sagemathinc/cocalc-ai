@@ -41,7 +41,7 @@ import { hasPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-me
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
-import { maintainMonthlyCollections } from "./monthly-collection-worker";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchase:maintain-automatic-payments");
 
@@ -73,6 +73,12 @@ WITH latest_statements AS (
   WHERE
     a.stripe_usage_subscription IS NOT NULL
     AND a.monthly_collection IS NULL
+    AND a.banned IS NOT TRUE
+    AND a.deleted IS NOT TRUE
+    AND NOT EXISTS (
+      SELECT 1 FROM billing_authority_account_fences AS fence
+       WHERE fence.account_id=a.account_id AND fence.frozen
+    )
     AND s.interval = 'month'
 )
 SELECT
@@ -87,15 +93,20 @@ WHERE
   AND automatic_payment IS NULL
   AND automatic_payment_intent_id IS NULL
   AND paid_purchase_id IS NULL
-  AND balance < 0;
+  AND balance < 0
 `;
 
-export default async function maintainAutomaticPayments() {
-  await maintainMonthlyCollections();
+export default async function maintainAutomaticPayments({
+  max_statements = Number.POSITIVE_INFINITY,
+}: { max_statements?: number } = {}) {
   const { pay_as_you_go_min_payment, site_name } = await getServerSettings();
 
   const pool = getPool();
-  const { rows } = await pool.query(QUERY);
+  const bounded = Number.isFinite(max_statements);
+  const { rows } = await pool.query(
+    `${QUERY} ORDER BY time, statement_id${bounded ? " LIMIT $1" : ""}`,
+    bounded ? [Math.max(0, Math.floor(max_statements))] : [],
+  );
   logger.debug("Got ", rows.length, " statements to automatically pay");
   for (const { time, account_id, balance, statement_id } of rows) {
     const balanceValue = toDecimal(balance);
@@ -103,6 +114,7 @@ export default async function maintainAutomaticPayments() {
     logger.debug(description);
     const amount = balanceValue.neg();
     try {
+      await registerBillingAuthorityAccount(account_id);
       // Set that automatic_payment has been *processed* for this statement.
       // This only means there was an actual payment attempt if the balance was negative.
       await pool.query(

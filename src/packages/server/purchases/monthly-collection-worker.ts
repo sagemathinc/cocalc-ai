@@ -18,6 +18,8 @@ import {
 import { readMonthlyCollection } from "./monthly-collection";
 import createPaymentIntent from "./stripe/create-payment-intent";
 import send from "@cocalc/server/messages/send";
+import { registerBillingAuthorityAccount } from "./billing-authority/context";
+import { COST_OR_METERED_COST } from "./get-balance";
 
 const logger = getLogger("purchases:monthly-collection");
 
@@ -81,17 +83,37 @@ export async function claimMonthlyCollection(
   });
 }
 
-export async function maintainMonthlyCollections() {
-  const pool = getPool();
-  const { rows } = await pool.query(
-    "SELECT account_id FROM accounts WHERE monthly_collection->>'enabled'='true' AND banned IS NOT TRUE AND deleted IS NOT TRUE",
-  );
-  if (!rows.length) return;
+export async function maintainMonthlyCollections({
+  limit = 100,
+}: { limit?: number } = {}) {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
+    throw Error("Invalid monthly collection limit");
   const settings = await getServerSettings();
   if (!settings.stripe_secret_key || !settings.stripe_publishable_key) return;
+  const minimum = settings.pay_as_you_go_min_payment ?? 0;
+  const pool = getPool();
+  // Apply the claim's eligibility filters before LIMIT. Otherwise an already
+  // covered or below-minimum statement can starve every later account.
+  const { rows } = await pool.query(
+    `SELECT a.account_id FROM accounts a
+     JOIN LATERAL (SELECT id,time,automatic_payment,paid_purchase_id,balance,automatic_payment_intent_id FROM statements
+       WHERE account_id=a.account_id AND interval='month' AND time<=clock_timestamp() ORDER BY time DESC,id DESC LIMIT 1) s ON TRUE
+     WHERE a.monthly_collection->>'enabled'='true' AND a.banned IS NOT TRUE AND a.deleted IS NOT TRUE
+       AND a.monthly_collection->>'terms_version'='1'
+       AND s.automatic_payment IS NULL AND s.paid_purchase_id IS NULL AND s.balance<0
+       AND s.automatic_payment_intent_id IS NULL AND -s.balance >= $2
+       AND NOT EXISTS (SELECT 1 FROM statements p WHERE p.account_id=a.account_id AND p.id<>s.id
+         AND p.paid_purchase_id IS NULL AND (p.monthly_collection->>'state' IN ('claimed','requires_review','issued') OR p.automatic_payment_intent_id IS NOT NULL))
+       AND (SELECT ROUND(-COALESCE(SUM(${COST_OR_METERED_COST}),0),2) FROM purchases WHERE account_id=a.account_id) <= s.balance
+       AND NOT EXISTS (SELECT 1 FROM billing_authority_account_fences f WHERE f.account_id=a.account_id AND f.frozen)
+     ORDER BY s.time,s.id LIMIT $1`,
+    [limit, minimum],
+  );
+  if (!rows.length) return;
   for (const { account_id } of rows) {
     let claim: Awaited<ReturnType<typeof claimMonthlyCollection>>;
     try {
+      await registerBillingAuthorityAccount(account_id);
       claim = await claimMonthlyCollection(
         account_id,
         settings.pay_as_you_go_min_payment ?? 0,
