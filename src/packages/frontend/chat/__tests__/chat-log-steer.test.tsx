@@ -830,6 +830,7 @@ describe("ChatLog immediate steer rendering", () => {
   });
 
   it("keeps steer attached to the assistant turn after completion when that activity stays expanded", () => {
+    const actions = { clearScrollRequest: jest.fn() } as any;
     const messages = new Map([
       [
         "1000",
@@ -868,12 +869,12 @@ describe("ChatLog immediate steer rendering", () => {
       ],
     ]) as any;
 
-    const { rerender } = render(
+    const view = render(
       <ChatLog
         project_id="project-1"
         path="thread.chat"
         mode="standalone"
-        actions={{ clearScrollRequest: jest.fn() } as any}
+        actions={actions}
         selectedThread="thread-1"
         acpState={new Map([["message:steer-1", "sending"]]) as any}
         messages={messages}
@@ -889,12 +890,13 @@ describe("ChatLog immediate steer rendering", () => {
       acp_state: "sent",
     });
 
-    rerender(
+    view.unmount();
+    render(
       <ChatLog
         project_id="project-1"
         path="thread.chat"
         mode="standalone"
-        actions={{ clearScrollRequest: jest.fn() } as any}
+        actions={actions}
         selectedThread="thread-1"
         acpState={new Map([["message:steer-1", "sent"]]) as any}
         messages={messages}
@@ -905,6 +907,7 @@ describe("ChatLog immediate steer rendering", () => {
     expect(userProps?.attachedSteers).toBeUndefined();
     const assistantProps = lastRenderedMessageProps("assistant-1");
     expect(assistantProps?.expandedCodexActivity).toBe(true);
+    expect(assistantProps?.allowAsyncCompletedCodexActivityLoad).toBe(true);
     expect(assistantProps?.attachedSteers).toEqual([]);
     expect(assistantProps?.activitySteers).toEqual([
       expect.objectContaining({
@@ -914,6 +917,52 @@ describe("ChatLog immediate steer rendering", () => {
         state: "sent",
       }),
     ]);
+  });
+
+  it("does not reopen explicitly hidden activity on updates or remount", () => {
+    const actions = { clearScrollRequest: jest.fn() } as any;
+    const messages = new Map([
+      [
+        "2000",
+        {
+          date: 2000,
+          message_id: "assistant-1",
+          thread_id: "thread-1",
+          sender_id: "acct-codex",
+          acp_account_id: "acct-codex",
+          generating: true,
+          history: [{ content: "hello" }],
+        },
+      ],
+    ]);
+    const chat = () => (
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={actions}
+        selectedThread="thread-1"
+        messages={new Map(messages) as any}
+      />
+    );
+    const view = render(chat());
+    expect(lastRenderedMessageProps("assistant-1")?.expandedCodexActivity).toBe(
+      true,
+    );
+    act(() => {
+      lastRenderedMessageProps("assistant-1")?.onExpandedCodexActivityChange(
+        false,
+      );
+    });
+    view.rerender(chat());
+    expect(lastRenderedMessageProps("assistant-1")?.expandedCodexActivity).toBe(
+      false,
+    );
+    view.unmount();
+    render(chat());
+    expect(lastRenderedMessageProps("assistant-1")?.expandedCodexActivity).toBe(
+      false,
+    );
   });
 
   it("auto-expands only the newest live assistant turn in a thread", () => {
