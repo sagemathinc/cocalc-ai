@@ -120,6 +120,7 @@ export default function init({
         client: workspaceFileDownloadClient,
         readServiceName,
         statSubject,
+        account_id: authenticatedAccountId,
       });
       return;
     }

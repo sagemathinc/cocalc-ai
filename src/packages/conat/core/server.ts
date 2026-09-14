@@ -28,6 +28,8 @@ cd packages/server
 */
 
 import type { ConnectionStats, ServerInfo } from "./types";
+import { stampFileReadPrincipal } from "../files/read-principal";
+import { validateMessageHeaders } from "./message-headers";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -1479,6 +1481,15 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
+    // Includes CN-Reply validation; malformed input must be rejected here,
+    // not delivered to a service that would fail trying to answer it.
+    validateMessageHeaders(data[5]);
+    stampFileReadPrincipal({
+      subject,
+      data,
+      user: from,
+      trusted: isHubUser(from),
+    });
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();
 

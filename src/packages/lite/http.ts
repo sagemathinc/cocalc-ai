@@ -216,7 +216,7 @@ export async function initApp({
 
   // file download
   const handleProjectFileDownload = async (req: Request, res: Response) => {
-    await handleFileDownload({ req, res, client: conatClient });
+    await handleFileDownload({ req, res, client: conatClient, account_id });
   };
   app.get(`/${project_id}/files/*path`, handleProjectFileDownload);
   app.head(`/${project_id}/files/*path`, handleProjectFileDownload);

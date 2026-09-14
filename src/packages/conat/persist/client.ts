@@ -1020,6 +1020,41 @@ class PersistStreamClient extends EventEmitter {
     return sub;
   };
 
+  private async *getAllResponses(opts: GetAllOpts) {
+    const sub = await this.requestGetAll(opts);
+    let seq = 0;
+    try {
+      for await (const { data, headers } of sub) {
+        if (this.isClosed() || this.socket.state === "closed")
+          throw Error("closed");
+        if (headers?.error) {
+          throw new ConatError(`${headers.error}`, {
+            code: headers.code as string | number,
+          });
+        }
+        // Completion frames participate in sequencing too. A dropped first or
+        // last data frame must not turn into an empty successful bootstrap.
+        if (headers?.seq !== seq) {
+          throw new ConatError(
+            `data dropped, probably due to load -- please try again; expected seq=${seq}, but got ${headers?.seq}`,
+            { code: 503 },
+          );
+        }
+        seq++;
+        if (data != null && !Array.isArray(data)) {
+          throw new ConatError("invalid persistence replay data", {
+            code: 503,
+          });
+        }
+        yield { data, headers };
+        if (data == null) return;
+      }
+      throw new ConatError("incomplete persistence response", { code: 503 });
+    } finally {
+      sub.cancel();
+    }
+  }
+
   // returns async iterator over arrays of stored messages.
   // It's must safer to use getAll below, but less memory
   // efficient.
@@ -1037,7 +1072,7 @@ class PersistStreamClient extends EventEmitter {
     if (this.isClosed()) {
       return;
     }
-    const sub = await this.requestGetAll({
+    const sub = this.getAllResponses({
       start_seq,
       start_checkpoint,
       end_seq,
@@ -1052,17 +1087,11 @@ class PersistStreamClient extends EventEmitter {
       // done with this
       return;
     }
-    let seq = 0; // next expected seq number for the sub (not the data)
     let firstChunk = true;
     let chunks = 0;
     let totalMessages = 0;
     for await (const { data, headers } of sub) {
-      if (headers?.error) {
-        throw new ConatError(`${headers.error}`, {
-          code: headers.code as string | number,
-        });
-      }
-      if (data == null || this.socket.state == "closed") {
+      if (data == null) {
         this.emitInitPhase("persist_request_many_done", {
           chunks,
           messages: totalMessages,
@@ -1070,22 +1099,12 @@ class PersistStreamClient extends EventEmitter {
         // done
         return;
       }
-      if (typeof headers?.seq != "number" || headers?.seq != seq) {
-        throw new ConatError(
-          `data dropped, probably due to load -- please try again; expected seq=${seq}, but got ${headers?.seq}`,
-          {
-            code: 503,
-          },
-        );
-      } else {
-        seq = headers?.seq + 1;
-      }
       chunks += 1;
       totalMessages += data.length;
       if (firstChunk) {
         firstChunk = false;
         this.emitInitPhase("persist_request_many_first_chunk", {
-          seq: headers?.seq,
+          seq: Number(headers.seq),
           chunk_messages: data.length,
         });
       }
@@ -1142,7 +1161,7 @@ class PersistStreamClient extends EventEmitter {
       let effective_start_seq: number | undefined;
       let oldest_retained_seq: number | undefined;
       let newest_retained_seq: number | undefined;
-      const sub = await this.requestGetAll({
+      const sub = this.getAllResponses({
         ...opts,
         includeConfig: true,
         includeMetadata: true,
@@ -1151,15 +1170,9 @@ class PersistStreamClient extends EventEmitter {
       if (this.isClosed()) {
         throw Error("closed");
       }
-      let seq = 0;
       let firstChunk = true;
       let chunks = 0;
       for await (const { data, headers } of sub) {
-        if (headers?.error) {
-          throw new ConatError(`${headers.error}`, {
-            code: headers.code as string | number,
-          });
-        }
         if (headers?.config != null && config == null) {
           config = headers.config as unknown as Configuration;
         }
@@ -1187,23 +1200,14 @@ class PersistStreamClient extends EventEmitter {
         ) {
           newest_retained_seq = Number(headers.newest_retained_seq);
         }
-        if (data == null || this.socket.state == "closed") {
+        if (data == null) {
           break;
         }
-        if (typeof headers?.seq != "number" || headers?.seq != seq) {
-          throw new ConatError(
-            `data dropped, probably due to load -- please try again; expected seq=${seq}, but got ${headers?.seq}`,
-            {
-              code: 503,
-            },
-          );
-        }
-        seq = headers.seq + 1;
         chunks += 1;
         if (firstChunk) {
           firstChunk = false;
           this.emitInitPhase("persist_request_many_first_chunk", {
-            seq: headers.seq,
+            seq: Number(headers.seq),
             chunk_messages: data.length,
             received_config: config != null,
             received_metadata: metadata !== undefined,
@@ -1214,6 +1218,13 @@ class PersistStreamClient extends EventEmitter {
       }
       if (this.isClosed()) {
         throw Error("closed");
+      }
+      // An unset metadata value is legitimate (and omitted by legacy servers),
+      // but config and checkpoints are always present in a complete info reply.
+      if (config == null || checkpoints == null) {
+        throw new ConatError("incomplete persistence bootstrap state", {
+          code: 503,
+        });
       }
       if (opts.changefeed) {
         this.changefeedActive = true;
