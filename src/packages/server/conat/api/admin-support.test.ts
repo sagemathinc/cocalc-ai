@@ -14,6 +14,7 @@ import {
   buildTriageGroups,
   extractSupportImages,
   getImage,
+  getAttachment,
   list,
   merge,
   planMerge,
@@ -446,6 +447,232 @@ describe("admin support API", () => {
     } finally {
       global.fetch = originalFetch;
     }
+  });
+
+  describe("document attachment downloads", () => {
+    const pdf = Buffer.from("%PDF-1.6\nexample\n%%EOF\n");
+    const opts = {
+      account_id: "admin-account",
+      session_hash: "fresh-session",
+      ticket_id: 123,
+      attachment_id: 987,
+      reason: "review vendor form",
+    };
+    let attachment: any;
+    let client: any;
+    let fetchMock: jest.Mock;
+    const originalFetch = global.fetch;
+
+    beforeEach(() => {
+      attachment = {
+        id: 987,
+        size: pdf.length,
+        content_type: "application/pdf",
+        file_name: "../../private@example.com.pdf",
+        content_url: "https://example.zendesk.com/attachments/private-token",
+        malware_scan_result: "malware_not_found",
+      };
+      client = {
+        config: {
+          subdomain: "example",
+          username: "agent@example.com",
+          token: "zendesk-secret",
+        },
+        tickets: {
+          show: jest.fn(async () => ({ result: ticket() })),
+          get: jest.fn(async () => ({
+            result: [
+              {
+                id: 1,
+                author_id: 44,
+                public: true,
+                plain_body: "Form attached",
+                attachments: [attachment],
+              },
+            ],
+          })),
+        },
+        attachments: {
+          show: jest.fn(async () => ({ result: { attachment } })),
+        },
+      };
+      mockGetZendeskClient.mockResolvedValue(client);
+      fetchMock = jest.fn(async () => new Response(pdf));
+      global.fetch = fetchMock as typeof fetch;
+    });
+    afterEach(() => {
+      global.fetch = originalFetch;
+    });
+
+    it("lists generated document references without filenames or private URLs", async () => {
+      const result = await show(opts);
+      expect(result.comments[0].attachments).toEqual([
+        {
+          attachment_id: 987,
+          filename: "zendesk-attachment-987.pdf",
+          content_type: "application/pdf",
+          size: pdf.length,
+        },
+      ]);
+      expect(result.comments[0].images).toEqual([]);
+      expect(JSON.stringify(result)).not.toContain("private@example.com");
+      expect(JSON.stringify(result)).not.toContain("private-token");
+    });
+
+    it("downloads PDFs with fresh auth, ticket binding, integrity metadata and an audit", async () => {
+      const result = await getAttachment(opts);
+      expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith(
+        expect.objectContaining({
+          account_id: "admin-account",
+          session_hash: "fresh-session",
+        }),
+      );
+      expect(result).toMatchObject({
+        ticket_id: 123,
+        comment_id: 1,
+        attachment_id: 987,
+        filename: "ticket-123-attachment-987.pdf",
+        content_type: "application/pdf",
+        size: pdf.length,
+        data_base64: pdf.toString("base64"),
+        sha256: expect.stringMatching(/^[0-9a-f]{64}$/),
+      });
+      expect(mockCentralLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: expect.objectContaining({
+            mode: "get_attachment",
+            attachment_id: 987,
+            result_bytes: pdf.length,
+          }),
+        }),
+      );
+      expect(JSON.stringify(result)).not.toContain("private-token");
+    });
+
+    it("downloads DOCX as opaque ZIP-container bytes, never extracting contents", async () => {
+      attachment.content_type =
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      const data = Buffer.from([0x50, 0x4b, 0x03, 0x04, 0, 0]);
+      attachment.size = data.length;
+      fetchMock.mockImplementation(async () => new Response(data));
+      expect(await getAttachment(opts)).toMatchObject({
+        filename: "ticket-123-attachment-987.docx",
+        data_base64: data.toString("base64"),
+      });
+    });
+
+    it("preserves the image-only endpoint", async () => {
+      await expect(getImage(opts)).rejects.toThrow("not a supported download");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects non-admins and stale auth before Zendesk access", async () => {
+      mockIsAdmin.mockResolvedValueOnce(false);
+      await expect(getAttachment(opts)).rejects.toThrow("admin privileges");
+      mockRequireDangerousSessionAuth.mockRejectedValueOnce(
+        new Error("fresh auth is required"),
+      );
+      await expect(getAttachment(opts)).rejects.toThrow("fresh auth");
+      expect(client.tickets.get).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a missing reason and an attachment from another ticket", async () => {
+      await expect(getAttachment({ ...opts, reason: "" })).rejects.toThrow(
+        "reason",
+      );
+      await expect(
+        getAttachment({ ...opts, attachment_id: 999 }),
+      ).rejects.toThrow("not part of ticket");
+      expect(client.attachments.show).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { deleted: true },
+      { malware_scan_result: "malware_found" },
+      { content_type: "text/html" },
+      { content_type: "application/vnd.ms-word.document.macroEnabled.12" },
+    ])("rejects unsupported/deleted/malware metadata %j", async (change) => {
+      Object.assign(attachment, change);
+      await expect(getAttachment(opts)).rejects.toThrow(
+        "not a supported download",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects changed attachment metadata", async () => {
+      client.attachments.show.mockResolvedValueOnce({
+        result: { attachment: { ...attachment, id: 999 } },
+      });
+      await expect(getAttachment(opts)).rejects.toThrow(
+        "metadata did not match",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      "http://example.zendesk.com/file",
+      "https://evil.example/file",
+      "https://example.zendesk.com:444/file",
+    ])("rejects untrusted URLs %s", async (url) => {
+      attachment.content_url = url;
+      await expect(getAttachment(opts)).rejects.toThrow("untrusted host");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("never forwards credentials to the CDN and rejects an off-domain redirect", async () => {
+      fetchMock.mockImplementationOnce(
+        async () =>
+          new Response(null, {
+            status: 302,
+            headers: {
+              location: "https://example.zdusercontent.com/document.pdf",
+            },
+          }),
+      );
+      fetchMock.mockImplementationOnce(async (_url, init) => {
+        expect(init.headers).not.toHaveProperty("Authorization");
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://evil.example/file" },
+        });
+      });
+      await expect(getAttachment(opts)).rejects.toThrow("untrusted host");
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    it("bounds both declared size and streamed bytes", async () => {
+      await expect(getAttachment({ ...opts, max_bytes: 8 })).rejects.toThrow(
+        "maximum",
+      );
+      expect(fetchMock).not.toHaveBeenCalled();
+      attachment.size = 1;
+      await expect(getAttachment({ ...opts, max_bytes: 8 })).rejects.toThrow(
+        "maximum",
+      );
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("rejects empty or disguised content and audits the failure", async () => {
+      fetchMock.mockImplementationOnce(async () => new Response(""));
+      await expect(getAttachment(opts)).rejects.toThrow("empty");
+      fetchMock.mockImplementationOnce(
+        async () => new Response("<html>login</html>"),
+      );
+      await expect(getAttachment(opts)).rejects.toThrow(
+        "content does not match",
+      );
+      expect(mockCentralLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          value: expect.objectContaining({
+            mode: "get_attachment",
+            attachment_id: 987,
+            error: expect.stringContaining("content does not match"),
+          }),
+        }),
+      );
+    });
   });
 
   it("runs bounded ticket-only Zendesk searches", async () => {
