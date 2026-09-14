@@ -169,7 +169,7 @@ describe("core server inbound socket admission", () => {
     await server.close();
   });
 
-  it("discards queued publishes after their socket disconnects", async () => {
+  it("runs queued publishes after disconnect without deleted stats", async () => {
     const server = init({ port: 0 });
     const client = connect({
       address: server.address(),
@@ -214,8 +214,11 @@ describe("core server inbound socket admission", () => {
     expect(Object.keys(server.getStatsSnapshot())).toHaveLength(0);
 
     releaseFirst();
-    await delay(50);
-    expect(publish).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 100; i++) {
+      if (publish.mock.calls.length === 2) break;
+      await delay(10);
+    }
+    expect(publish).toHaveBeenCalledTimes(2);
 
     await server.close();
   });

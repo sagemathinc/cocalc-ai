@@ -1845,17 +1845,17 @@ export class ConatServer extends EventEmitter {
       const [subject, ...data] = payload;
       const handlerStart = Date.now();
       const stats = this.stats[socket.id];
-      if (stats == null) {
-        // The per-socket publish queue can outlive a disconnected socket.
-        // Discard queued work after teardown instead of touching deleted state.
-        return;
-      }
-      if (data?.[2]) {
+      // The per-socket publish queue can outlive a disconnected socket. The
+      // publish must still run (the same logical client may have reconnected),
+      // but its deleted connection statistics can no longer be updated.
+      if (stats != null && data?.[2]) {
         // done
         stats.send.messages += 1;
       }
-      stats.send.bytes += data[4]?.length ?? 0;
-      stats.active = Date.now();
+      if (stats != null) {
+        stats.send.bytes += data[4]?.length ?? 0;
+        stats.active = Date.now();
+      }
       // this.log(JSON.stringify(this.stats));
 
       try {

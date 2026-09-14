@@ -1460,6 +1460,7 @@ export async function recordBillingAuthorityProviderMutationStart({
 
 export async function claimNextBillingAuthorityCommand(
   identity: BillingAuthorityLeaseIdentity,
+  db?: Queryable,
 ): Promise<
   | { record: BillingAuthorityCommandRecord; command: BillingAuthorityCommand }
   | undefined
@@ -1573,7 +1574,7 @@ export async function claimNextBillingAuthorityCommand(
       }
     }
     return undefined;
-  });
+  }, db);
 }
 
 export async function finishBillingAuthorityCommand({
