@@ -25,6 +25,11 @@ import { agentThreadUrl } from "@cocalc/frontend/chat/agent-thread-url";
 import type { SettingsPageDefinition } from "./settings-page";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useBoundAgentAccount } from "@cocalc/frontend/agents/use-bound-account";
+import {
+  formatConnectionTime,
+  groupPersonalConnections,
+  latestConnectionObservation,
+} from "@cocalc/frontend/agents/connection-groups";
 
 export function MyAgentsPage() {
   const accountId = useTypedRedux("account", "account_id");
@@ -133,14 +138,14 @@ function AccountAgentsPage() {
     <Space
       orientation="vertical"
       size="middle"
-      style={{ width: "100%", maxWidth: 1000 }}
+      style={{ width: "100%", maxWidth: 1000, minWidth: 0 }}
     >
       <p>
         Your names and communication permissions across all projects on this
         site. Listing agents reads metadata only; Open navigates to their
         existing thread. Shared chat history remains shared.
       </p>
-      <Space wrap>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
         <Input.Search
           aria-label="Search My Agents"
           placeholder="Name, thread or project"
@@ -158,7 +163,7 @@ function AccountAgentsPage() {
         >
           Refresh My Agents
         </Button>
-      </Space>
+      </div>
       {(directoryError || error) && (
         <div role="alert">
           <Alert
@@ -280,102 +285,161 @@ function AccountAgentsPage() {
         {connections?.controls?.paused && (
           <div role="status">All your agent communication is paused.</div>
         )}
-        {(connections?.connections ?? [])
+        {groupPersonalConnections(connections?.connections ?? [])
           .filter(
-            (connection) =>
+            (group) =>
               !filter ||
-              connection.source.agent_id === filter ||
-              connection.target.agent_id === filter,
+              group.connections.some(
+                (connection) =>
+                  connection.source.agent_id === filter ||
+                  connection.target.agent_id === filter,
+              ),
           )
-          .map((connection) => (
-            <Card
-              key={connection.link_id}
-              size="small"
-              style={{ marginTop: 8 }}
-            >
-              <Space
-                orientation="vertical"
-                style={{ width: "100%", overflowWrap: "anywhere" }}
+          .map((group) => {
+            const connection = group.connections[0];
+            const statuses = [
+              ...new Set(group.connections.map((entry) => entry.status)),
+            ];
+            const expiries = [
+              ...new Set(group.connections.map((entry) => entry.expires_at)),
+            ];
+            const allRevoked = statuses.every((status) => status === "revoked");
+            const needsApproval = statuses.some(
+              (status) => status === "revoked" || status === "expired",
+            );
+            const allPaused = group.connections.every((entry) => entry.paused);
+            const label = group.bidirectional
+              ? `${endpointLabel(connection.source)} and ${endpointLabel(connection.target)}`
+              : `${endpointLabel(connection.source)} sends to ${endpointLabel(connection.target)}`;
+            return (
+              <Card
+                key={group.id}
+                role="group"
+                aria-label={`Connection: ${label}`}
+                size="small"
+                style={{ marginTop: 8 }}
               >
-                <strong>
-                  {endpointLabel(connection.source)} sends to{" "}
-                  {endpointLabel(connection.target)}
-                </strong>
-                <div>
-                  Status: {connection.status}.{" "}
-                  {connection.expires_at
-                    ? `Expires ${new Date(connection.expires_at).toLocaleString()}`
-                    : "Never expires"}
-                  .
-                </div>
-                <Space wrap>
-                  {(connection.status === "revoked" ||
-                    connection.status === "expired") && (
-                    <Button
-                      disabled={busy || connections?.controls?.paused}
-                      onClick={() =>
-                        setApproval({
-                          source: connection.source,
-                          target: connection.target,
-                          sourceLabel: endpointLabel(connection.source),
-                          targetLabel: endpointLabel(connection.target),
-                          sourceName: directory?.agents.find((agent) =>
-                            sameEndpoint(agent.endpoint, connection.source),
-                          ),
-                          targetName: directory?.agents.find((agent) =>
-                            sameEndpoint(agent.endpoint, connection.target),
-                          ),
-                        })
-                      }
-                    >
-                      {connection.status === "revoked"
-                        ? "Approve new connection"
-                        : "Renew connection"}
-                    </Button>
+                <Space
+                  orientation="vertical"
+                  style={{ width: "100%", overflowWrap: "anywhere" }}
+                >
+                  <strong>{label}</strong>
+                  {group.bidirectional && (
+                    <div>Communication in both directions</div>
                   )}
-                  {connection.status !== "revoked" && (
-                    <Button
-                      disabled={busy}
-                      aria-label={`${connection.paused ? "Resume" : "Pause"} connection ${connection.link_id}`}
-                      onClick={() =>
-                        connectionAction(
-                          connection.direction_group_id,
-                          connection.paused ? "active" : "paused",
-                        )
-                      }
-                    >
-                      {connection.paused ? "Resume" : "Pause"}
-                    </Button>
-                  )}
-                  {connection.status !== "revoked" && (
-                    <Button
-                      danger
-                      disabled={busy}
-                      aria-label={`Revoke connection ${connection.link_id}`}
-                      onClick={() =>
-                        connectionAction(
-                          connection.direction_group_id,
-                          "revoked",
-                        )
-                      }
-                    >
-                      Revoke
-                    </Button>
-                  )}
+                  <div>
+                    Status: {statuses.join(" / ")}
+                    {statuses.length > 1 ? " (varies by direction)" : ""}.{" "}
+                    {expiries.length > 1
+                      ? "Expiry varies by direction"
+                      : connection.expires_at == null
+                        ? "Never expires"
+                        : `Expires ${formatConnectionTime(connection.expires_at)}`}
+                    .
+                  </div>
+                  <div>
+                    Last observed attempt
+                    {group.bidirectional ? " (either direction)" : ""}:{" "}
+                    {formatConnectionTime(
+                      latestConnectionObservation(
+                        group.connections,
+                        "last_attempt_at",
+                      ),
+                    )}
+                  </div>
+                  <div>
+                    Last observed acceptance
+                    {group.bidirectional ? " (either direction)" : ""}:{" "}
+                    {formatConnectionTime(
+                      latestConnectionObservation(
+                        group.connections,
+                        "last_accepted_at",
+                      ),
+                    )}
+                  </div>
+                  <Space wrap>
+                    {needsApproval && (
+                      <Button
+                        disabled={busy || connections?.controls?.paused}
+                        onClick={() =>
+                          setApproval({
+                            source: connection.source,
+                            target: connection.target,
+                            sourceLabel: endpointLabel(connection.source),
+                            targetLabel: endpointLabel(connection.target),
+                            bothDirections: group.bidirectional,
+                            sourceName: directory?.agents.find((agent) =>
+                              sameEndpoint(agent.endpoint, connection.source),
+                            ),
+                            targetName: directory?.agents.find((agent) =>
+                              sameEndpoint(agent.endpoint, connection.target),
+                            ),
+                          })
+                        }
+                      >
+                        {statuses.includes("revoked")
+                          ? "Approve new connection"
+                          : "Renew connection"}
+                      </Button>
+                    )}
+                    {!allRevoked && (!allPaused || !needsApproval) && (
+                      <Button
+                        disabled={busy}
+                        aria-label={`${allPaused ? "Resume" : "Pause"} connection: ${label}`}
+                        onClick={() =>
+                          connectionAction(
+                            group.id,
+                            allPaused ? "active" : "paused",
+                          )
+                        }
+                      >
+                        {allPaused ? "Resume" : "Pause"}
+                      </Button>
+                    )}
+                    {!allRevoked && (
+                      <Button
+                        danger
+                        disabled={busy}
+                        aria-label={`Revoke connection: ${label}`}
+                        onClick={() => connectionAction(group.id, "revoked")}
+                      >
+                        Revoke
+                      </Button>
+                    )}
+                  </Space>
+                  <details>
+                    <summary>Connection details</summary>
+                    <p>Direction group: {group.id}</p>
+                    {group.connections.map((direction) => (
+                      <div key={direction.link_id}>
+                        <strong>
+                          {endpointLabel(direction.source)} sends to{" "}
+                          {endpointLabel(direction.target)}
+                        </strong>
+                        <p>Direction status: {direction.status}</p>
+                        <p>
+                          Expires:{" "}
+                          {direction.expires_at == null
+                            ? "Never expires"
+                            : formatConnectionTime(direction.expires_at)}
+                        </p>
+                        <p>Reason: {direction.reason}</p>
+                        <p>Grant: {direction.link_id}</p>
+                        <p>
+                          Last attempt:{" "}
+                          {formatConnectionTime(direction.last_attempt_at)}
+                        </p>
+                        <p>
+                          Last accepted:{" "}
+                          {formatConnectionTime(direction.last_accepted_at)}
+                        </p>
+                      </div>
+                    ))}
+                  </details>
                 </Space>
-                <details>
-                  <summary>Connection details</summary>
-                  <p>Reason: {connection.reason}</p>
-                  <p>Grant: {connection.link_id}</p>
-                  <p>Paired direction group: {connection.direction_group_id}</p>
-                  <p>Last attempt: {connection.last_attempt_at ?? "Unknown"}</p>
-                  <p>
-                    Last accepted: {connection.last_accepted_at ?? "Unknown"}
-                  </p>
-                </details>
-              </Space>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
         {connections?.connections.length === 0 && (
           <p>
             No connections yet. Select a named agent with @ in an agent composer

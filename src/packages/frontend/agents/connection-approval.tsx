@@ -20,6 +20,7 @@ export interface ApprovalTarget {
   sourceName?: NamedAgent;
   targetName?: NamedAgent;
   namingAccountId?: string;
+  bothDirections?: boolean;
 }
 
 export function ConnectionApproval({
@@ -33,7 +34,9 @@ export function ConnectionApproval({
   const accountId = useTypedRedux("account", "account_id");
   const boundAccount = useBoundAgentAccount();
   const [ttl, setTtl] = useState<number | null>(86400);
-  const [bothDirections, setBothDirections] = useState(false);
+  const [bothDirections, setBothDirections] = useState(
+    value.bothDirections ?? false,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const lock = useRef(false);

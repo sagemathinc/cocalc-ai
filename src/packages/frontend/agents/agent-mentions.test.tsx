@@ -1,5 +1,5 @@
 import React, { useRef } from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
@@ -499,4 +499,125 @@ test("My Agents drops old connections and destructive dialog on account switch",
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(screen.queryByText(/Status: active/)).toBeNull();
   expect(mockApi.setPersonalMessagingState).not.toHaveBeenCalled();
+});
+
+test("My Agents presents a bidirectional pair once with shared keyboard-operable controls", async () => {
+  mockApi.listPersonalConnections.mockResolvedValue({
+    enabled: true,
+    connections: [
+      activeConnection,
+      {
+        ...activeConnection,
+        link_id: "reverse",
+        source: target,
+        target: source,
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  render(<MyAgentsPage />);
+  await screen.findByText("Communication in both directions");
+  const groups = screen.getAllByRole("group", { name: /^Connection:/ });
+  expect(groups).toHaveLength(1);
+  const pause = within(groups[0]).getByRole("button", {
+    name: /^Pause connection:/,
+  });
+  expect(
+    within(groups[0]).getAllByRole("button", { name: /^Revoke connection:/ }),
+  ).toHaveLength(1);
+  pause.focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(mockApi.setPersonalConnectionState).toHaveBeenCalledWith({
+      direction_group_id: "group",
+      state: "paused",
+    }),
+  );
+  expect(mockApi.setPersonalConnectionState).toHaveBeenCalledTimes(1);
+  await waitFor(() => expect(pause).toBeEnabled());
+  await user.click(
+    within(groups[0]).getByRole("button", { name: /^Revoke connection:/ }),
+  );
+  await waitFor(() =>
+    expect(mockApi.setPersonalConnectionState).toHaveBeenLastCalledWith({
+      direction_group_id: "group",
+      state: "revoked",
+    }),
+  );
+  expect(mockApi.setPersonalConnectionState).toHaveBeenCalledTimes(2);
+  await user.click(
+    screen.getByRole("button", { name: "Connections for @reviewer" }),
+  );
+  expect(screen.getByRole("heading", { name: "Connections" })).toHaveFocus();
+  expect(screen.getAllByRole("group", { name: /^Connection:/ })).toHaveLength(
+    1,
+  );
+});
+
+test("bidirectional renewal offers one approval preserving both directions", async () => {
+  mockApi.listPersonalConnections.mockResolvedValue({
+    enabled: true,
+    connections: [
+      { ...activeConnection, status: "expired" },
+      {
+        ...activeConnection,
+        status: "expired",
+        link_id: "reverse",
+        source: target,
+        target: source,
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  render(<MyAgentsPage />);
+  await user.click(
+    await screen.findByRole("button", { name: "Renew connection" }),
+  );
+  expect(
+    screen.getByRole("checkbox", {
+      name: "Allow communication in both directions",
+    }),
+  ).toBeChecked();
+  await user.click(screen.getByRole("button", { name: "Approve connection" }));
+  await waitFor(() =>
+    expect(mockApi.grantPersonalConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ source, target, both_directions: true }),
+    ),
+  );
+  expect(mockApi.grantPersonalConnection).toHaveBeenCalledTimes(1);
+});
+
+test("pair observations use latest valid timestamps and mixed states stay explicit", async () => {
+  const latest = "2026-09-14T12:00:00Z";
+  mockApi.listPersonalConnections.mockResolvedValue({
+    enabled: true,
+    connections: [
+      {
+        ...activeConnection,
+        last_attempt_at: "2026-09-13T12:00:00Z",
+        last_accepted_at: "invalid",
+      },
+      {
+        ...activeConnection,
+        link_id: "reverse",
+        source: target,
+        target: source,
+        status: "paused",
+        paused: true,
+        last_attempt_at: latest,
+        last_accepted_at: null,
+      },
+    ],
+  });
+  render(<MyAgentsPage />);
+  await screen.findByText(/Status: active \/ paused \(varies by direction\)/);
+  expect(
+    screen.getByText(
+      `Last observed attempt (either direction): ${new Date(latest).toLocaleString()}`,
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText("Last observed acceptance (either direction): Unknown"),
+  ).toBeTruthy();
+  expect(screen.queryByText(/Invalid Date/)).toBeNull();
 });
