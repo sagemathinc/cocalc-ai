@@ -173,4 +173,16 @@ describe("billing authority service boundary", () => {
       error: { message: "card declined" },
     });
   });
+
+  it("serializes terminal errors as PostgreSQL-safe bounded text", () => {
+    const error = Object.assign(new Error(`${"a".repeat(3997)}\u{1f600}`), {
+      code: "code\0\ud800tail",
+      status: 400,
+    });
+    expect(__test__.serializeError(error)).toEqual({
+      message: "a".repeat(3997),
+      code: "code\uFFFD\uFFFDtail",
+      status: 400,
+    });
+  });
 });

@@ -27,6 +27,12 @@ export default async function cancelSubscription({
   client,
   notify = true,
 }: Options) {
+  if (!Number.isSafeInteger(subscription_id) || subscription_id <= 0) {
+    throw Object.assign(new Error("invalid subscription id"), {
+      code: 400,
+      status: 400,
+    });
+  }
   const pool = client ?? (await getTransactionClient());
   const useTransaction = client == null;
   const now = new Date();

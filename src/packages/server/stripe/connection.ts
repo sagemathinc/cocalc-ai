@@ -35,6 +35,18 @@ let last: number = 0;
 
 type StripeHttpClient = ReturnType<typeof Stripe.createNodeHttpClient>;
 
+function stripeResponseRequestsRetry(
+  response: Awaited<ReturnType<StripeHttpClient["makeRequest"]>>,
+): boolean {
+  const retryHeader = Object.entries(response.getHeaders?.() ?? {}).find(
+    ([name]) => name.toLowerCase() === "stripe-should-retry",
+  )?.[1];
+  return (Array.isArray(retryHeader) ? retryHeader : [retryHeader]).some(
+    (value) =>
+      typeof value === "string" && value.trim().toLowerCase() === "true",
+  );
+}
+
 export function createAuthorityGuardedStripeHttpClient(
   delegate: StripeHttpClient,
 ): StripeHttpClient {
@@ -72,6 +84,7 @@ export function createAuthorityGuardedStripeHttpClient(
           finishStripeMutation({
             key,
             status: response.getStatusCode?.(),
+            retry_requested: stripeResponseRequestsRetry(response),
           });
           return response;
         } catch (err) {

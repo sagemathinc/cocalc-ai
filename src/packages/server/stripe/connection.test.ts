@@ -3,6 +3,8 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import Stripe from "stripe";
+
 import {
   createBillingAuthorityProviderMutationTracker,
   enableStripeMutationAuthorityEnforcement,
@@ -190,6 +192,120 @@ describe("authority-guarded Stripe HTTP client", () => {
     );
     expect(keys[1]).toBe(keys[0]);
     expect(keys[2]).not.toBe(keys[1]);
+  });
+
+  it("keeps one anonymous key across a Stripe-directed DELETE retry", async () => {
+    enableStripeMutationAuthorityEnforcement();
+    const responses = [
+      {
+        status: 400,
+        headers: { "stripe-should-retry": "true" },
+        body: { error: { type: "api_error", message: "retry requested" } },
+      },
+      {
+        status: 200,
+        headers: {},
+        body: { id: "sub_retry", object: "subscription", status: "canceled" },
+      },
+    ];
+    const makeRequest = jest.fn(async () => {
+      const response = responses.shift()!;
+      return {
+        getStatusCode: () => response.status,
+        getHeaders: () => response.headers,
+        getRawResponse: () => ({}),
+        toStream: () => {
+          throw new Error("unexpected streaming response");
+        },
+        toJSON: async () => response.body,
+      };
+    });
+    const guarded = createAuthorityGuardedStripeHttpClient({
+      getClientName: () => "test",
+      makeRequest,
+    } as any);
+    const stripe = new Stripe("sk_test_authority_retry", {
+      apiVersion: "2026-04-22.dahlia",
+      httpClient: guarded,
+      maxNetworkRetries: 1,
+      telemetry: false,
+    });
+    // Exercise RequestSender's real response-directed retry without waiting for
+    // its randomized production backoff.
+    (stripe as any)._requestSender._getSleepTimeInMS = () => 0;
+    const tracker = createBillingAuthorityProviderMutationTracker();
+
+    await runInBillingAuthorityContext({
+      operation: "test",
+      request_id: "55555555-5555-4555-8555-555555555555",
+      provider_tracker: tracker,
+      fn: async () => await stripe.subscriptions.cancel("sub_retry"),
+    });
+
+    expect(makeRequest).toHaveBeenCalledTimes(2);
+    const keys = makeRequest.mock.calls.map(
+      (call) => call[4]["Idempotency-Key"],
+    );
+    expect(keys[0]).toMatch(/^cocalc-ba-v2-/);
+    expect(keys[1]).toBe(keys[0]);
+    expect(getBillingAuthorityProviderMutationOutcome(tracker)).toEqual({
+      started: true,
+      successful: true,
+      ambiguous: false,
+    });
+  });
+
+  it("resolves a response-directed ambiguity with a definitive failure", async () => {
+    enableStripeMutationAuthorityEnforcement();
+    const statuses = [
+      { status: 400, retry: true },
+      { status: 402, retry: false },
+    ];
+    const makeRequest = jest.fn(async () => {
+      const response = statuses.shift()!;
+      return {
+        getStatusCode: () => response.status,
+        getHeaders: () =>
+          response.retry ? { "stripe-should-retry": "true" } : {},
+        getRawResponse: () => ({}),
+        toStream: () => {
+          throw new Error("unexpected streaming response");
+        },
+        toJSON: async () => ({
+          error: { type: "card_error", message: "card declined" },
+        }),
+      };
+    });
+    const guarded = createAuthorityGuardedStripeHttpClient({
+      getClientName: () => "test",
+      makeRequest,
+    } as any);
+    const stripe = new Stripe("sk_test_authority_retry", {
+      apiVersion: "2026-04-22.dahlia",
+      httpClient: guarded,
+      maxNetworkRetries: 1,
+      telemetry: false,
+    });
+    (stripe as any)._requestSender._getSleepTimeInMS = () => 0;
+    const tracker = createBillingAuthorityProviderMutationTracker();
+
+    await expect(
+      runInBillingAuthorityContext({
+        operation: "test",
+        request_id: "66666666-6666-4666-8666-666666666666",
+        provider_tracker: tracker,
+        fn: async () => await stripe.subscriptions.cancel("sub_retry"),
+      }),
+    ).rejects.toThrow("card declined");
+    expect(makeRequest).toHaveBeenCalledTimes(2);
+    expect(makeRequest.mock.calls[1][4]["Idempotency-Key"]).toBe(
+      makeRequest.mock.calls[0][4]["Idempotency-Key"],
+    );
+    expect(getBillingAuthorityProviderMutationOutcome(tracker)).toEqual({
+      started: true,
+      successful: false,
+      ambiguous: false,
+    });
   });
 
   it("records a lost Stripe response as ambiguous", async () => {

@@ -23,6 +23,7 @@ import type {
   BillingAuthorityLane,
   BillingAuthoritySubmitRequest,
 } from "./protocol";
+import { normalizeBillingAuthorityError } from "./error-normalization";
 import {
   billingAuthorityAccountIds,
   billingAuthorityAccountsAllowedWhenFrozen,
@@ -37,8 +38,6 @@ const ADMISSION_LOCK = 1_111_575_378;
 export const BILLING_AUTHORITY_EXECUTION_LOCK = 1_111_575_379;
 const MAX_COMMAND_BYTES = 1024 * 1024;
 const MAX_REASON_LENGTH = 4000;
-const MAX_ERROR_MESSAGE_LENGTH = 4000;
-const MAX_ERROR_CODE_LENGTH = 256;
 const MAX_DEDUPLICATION_MS = 24 * 60 * 60_000;
 const PAYLOAD_RETENTION = "48 hours";
 const AUDIT_RETENTION = "400 days";
@@ -115,22 +114,13 @@ function boundedTerminalError(
   error: BillingAuthorityError | undefined,
   status: "failed" | "uncertain",
 ): BillingAuthorityError {
-  const code =
-    typeof error?.code === "number"
-      ? error.code
-      : typeof error?.code === "string"
-        ? error.code.slice(0, MAX_ERROR_CODE_LENGTH)
-        : status === "uncertain"
-          ? "billing_authority_outcome_uncertain"
-          : "billing_authority_command_failed";
-  return {
-    message: `${error?.message ?? `billing authority command ${status}`}`.slice(
-      0,
-      MAX_ERROR_MESSAGE_LENGTH,
-    ),
-    code,
-    ...(typeof error?.status === "number" ? { status: error.status } : {}),
-  };
+  return normalizeBillingAuthorityError(error, {
+    fallbackMessage: `billing authority command ${status}`,
+    fallbackCode:
+      status === "uncertain"
+        ? "billing_authority_outcome_uncertain"
+        : "billing_authority_command_failed",
+  });
 }
 
 function iso(value?: Date | string | null): string | undefined {

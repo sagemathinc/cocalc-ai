@@ -316,15 +316,18 @@ export function finishStripeMutation({
   key,
   status,
   ambiguous = false,
+  retry_requested = false,
 }: {
   key: string;
   status?: number;
   ambiguous?: boolean;
+  retry_requested?: boolean;
 }): void {
   const context = storage.getStore();
   if (!context) return;
   if (
     ambiguous ||
+    retry_requested ||
     status == null ||
     status === 408 ||
     status === 409 ||
@@ -339,9 +342,9 @@ export function finishStripeMutation({
     context.provider_tracker.anonymous_fingerprint_by_key.delete(key);
     context.provider_tracker.anonymous_key_aliases.delete(anonymousFingerprint);
   }
+  context.provider_tracker.ambiguous_keys.delete(key);
   if (status != null && status >= 200 && status < 300) {
     context.provider_tracker.successful = true;
-    context.provider_tracker.ambiguous_keys.delete(key);
   }
 }
 

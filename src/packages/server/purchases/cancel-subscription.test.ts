@@ -47,6 +47,21 @@ describe("cancelSubscription", () => {
     mockClient.release.mockReset();
   });
 
+  it("rejects malformed subscription identifiers before database access", async () => {
+    await expect(
+      cancelSubscription({
+        account_id: "owner-account",
+        subscription_id: `${"a".repeat(3959)}\u{1f600}` as unknown as number,
+      }),
+    ).rejects.toMatchObject({
+      message: "invalid subscription id",
+      code: 400,
+      status: 400,
+    });
+    expect(mockPoolQuery).not.toHaveBeenCalled();
+    expect(mockClient.release).not.toHaveBeenCalled();
+  });
+
   it("does not send a cancellation notification when the account does not own the subscription", async () => {
     mockPoolQuery
       .mockResolvedValueOnce({ rows: [] })

@@ -278,6 +278,69 @@ describePostgres("billing authority PostgreSQL journal", () => {
     });
   });
 
+  it("persists PostgreSQL-safe bounded terminal errors", async () => {
+    const lease = await acquireBillingAuthorityLease({
+      instance_id: INSTANCE_A,
+      lease_ms: 30_000,
+    });
+    const identity = { instance_id: INSTANCE_A, generation: lease!.generation };
+    const cases = [
+      {
+        error: {
+          message: `${"a".repeat(3997)}\u{1f600}`,
+          code: "boundary",
+        },
+        expected: {
+          message: "a".repeat(3997),
+          code: "boundary",
+        },
+      },
+      {
+        error: {
+          message: "before\ud800after",
+          code: "code\udc00tail",
+        },
+        expected: {
+          message: "before\uFFFDafter",
+          code: "code\uFFFDtail",
+        },
+      },
+      {
+        error: {
+          message: "before\0after",
+          code: "code\0tail",
+        },
+        expected: {
+          message: "before\uFFFDafter",
+          code: "code\uFFFDtail",
+        },
+      },
+    ];
+
+    for (const { error, expected } of cases) {
+      const item = request({ kind: "maintenance", task: "statements" });
+      await submitBillingAuthorityCommand(item);
+      await claimNextBillingAuthorityCommand(identity);
+      await finishBillingAuthorityCommand({
+        ...identity,
+        command_id: item.command_id,
+        status: "failed",
+        error,
+      });
+      const record = await getBillingAuthorityCommand(item.command_id);
+      expect(record).toMatchObject({
+        status: "failed",
+        finished_at: expect.any(String),
+        error: expected,
+      });
+      expect(
+        Buffer.byteLength(record!.error!.message, "utf8"),
+      ).toBeLessThanOrEqual(4000);
+      expect(record!.error!.message).not.toContain("\0");
+      expect(record!.error!.code).not.toContain("\0");
+    }
+  });
+
   it("coalesces identical retry commands onto one durable outcome", async () => {
     await acquireBillingAuthorityLease({
       instance_id: INSTANCE_A,

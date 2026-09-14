@@ -22,6 +22,7 @@ import {
 } from "./context";
 import { isBillingAuthorityEnabled } from "./config";
 import { dispatchBillingAuthorityCommand } from "./dispatch";
+import { normalizeBillingAuthorityError } from "./error-normalization";
 import type {
   BillingAuthorityAccountLocalOperation,
   BillingAuthorityCommercialMaintenanceTask,
@@ -109,22 +110,7 @@ function delay(ms: number): Promise<void> {
 }
 
 function serializeError(err: unknown): BillingAuthorityError {
-  const candidate = err as {
-    message?: unknown;
-    code?: unknown;
-    status?: unknown;
-  };
-  const code =
-    typeof candidate?.code === "number" || typeof candidate?.code === "string"
-      ? candidate.code
-      : undefined;
-  const status =
-    typeof candidate?.status === "number" ? candidate.status : undefined;
-  return {
-    message: `${candidate?.message ?? err}`.slice(0, 4000),
-    ...(code == null ? {} : { code }),
-    ...(status == null ? {} : { status }),
-  };
+  return normalizeBillingAuthorityError(err);
 }
 
 function classifyCommandOutcome({
@@ -892,5 +878,6 @@ export const __test__ = {
   classifyCommandOutcome,
   failStopBillingAuthorityWorker,
   isSubmitRequest,
+  serializeError,
   runtime,
 };
