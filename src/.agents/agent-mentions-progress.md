@@ -15,7 +15,7 @@ controls at the human's home bay. Project-owner bays retain agent identities and
 execution routing. Neither listing nor approval starts work. Addressing metadata
 never grants execution authority.
 
-## Implemented, Awaiting Live Verification
+## Implemented
 
 - Account-home directory, retired-name reservations, principal-scoped grants,
   finite/never expiry, paired directional approval, pause/revoke controls, and
@@ -48,8 +48,9 @@ never grants execution authority.
   four shared mention codec tests also passed.
 - Project/tools packaging ran successfully during development; rebuild final
   artifacts after the last source change before rollout.
-- New implementation has not yet been deployed or live-verified. Existing
-  foundation deployment is not evidence for these changes.
+- The opt-in implementation is deployed on the three local bays and both test
+  hosts. Live named request/reply evidence is below; earlier foundation tests
+  are not counted as verification of personal authority.
 
 ## Validation Commands
 
@@ -69,15 +70,155 @@ pnpm -C src/packages/project-host exec jest codex-project.test.ts project-start-
 Logs: `/tmp/agent-mentions-{cli,server,conat,host}-tests.log` and
 `/tmp/agent-mentions-build-final.log`.
 
-## Prepared Rollout (Not Executed)
+## Deployment And First Live Pass
 
 The ignored wrapper `/home/user/cocalc-ai/src/.local/agent-mentions-hub.sh`
 selects this worktree and the existing three dev bay databases. It adds
 `COCALC_AGENT_PERSONAL_MESSAGING_ENABLED=1` alongside the existing messaging flags.
 Host override files in `/tmp/agent-mentions-{source,qa}-host.local.env` have been
-installed on both hosts, preserving existing settings. Running host processes
-have not yet been restarted to load them.
-The running site still uses the PR558 deployment wrapper.
+installed on both hosts, preserving existing settings. All three hubs now use
+this worktree. Both hosts initially installed candidate `26bf9c3202fa`, then
+the corrected runtime bundle
+`20260914T022146Z-fa7a97079f35-dirty-280f3d36`. The dirty suffix includes pending
+documentation/frontend work, not an unrecorded runtime patch. Merely restarting
+the host did not update its desired ACP worker runtime pin. Supported
+`host rollout HOST --component acp-worker --reason REASON --wait` was required.
+Verified actual worker bundle-version/path fields, not just process cwd.
+Both test projects restarted successfully and the installed CLI inside A exposes
+`project chat send --to`.
+
+The outer development project's CLI remains a read-only September 11 tools
+mount. Human setup integration tests use the regular authenticated Conat API
+with the existing home-origin CLI cookie, not a different CLI binary or copied
+cross-bay credentials. Agent CLI validation runs inside the test projects.
+
+- Named A `builder`, cross-host recv `reviewer`, and B `local-helper` through
+  authenticated account-home API calls. No legacy grants were converted.
+- Browser keyboard selection in Markdown showed Agents before People and the
+  correct recv thread/project context. Selecting reviewer opened inline approval
+  and retained the UUID-bound draft. Canceling fresh auth preserved the draft.
+- Browser fresh-auth needs the human's actual verification. The separate genuine
+  CLI session approved a one-hour bidirectional QA connection via the normal
+  typed API; this is not evidence that browser verification completed.
+- First selected-mention turn failed before execution with `api.getIdentity is
+not a function`. No inter-agent message was sent. Commit `1c7bfb3c87` adds the
+  missing source-host-authenticated mention lookup; 34 server, 38 Conat, six host,
+  and three runtime tests passed. Commit `fa7a97079f` avoids redundant naming
+  registration and moves technical provenance into collapsed details.
+- The corrected full build passed and both ACP workers were rolled forward.
+  `21ec3abd05` subsequently groups paired permissions into one UI control and
+  improves narrow-screen account navigation. Its static build passed; 46 focused
+  tests, frontend typecheck and lint passed.
+
+## Live Named Request/Reply
+
+Account: `27b3d681-3468-44cc-b025-305cbdba4453`, home bay 0.
+
+| Name         | Project                                | Chat                   | Host / bay                |
+| ------------ | -------------------------------------- | ---------------------- | ------------------------- |
+| builder      | `1ce4fe78-19c7-40a8-a598-947975744cd9` | `/home/user/A.chat`    | host-1 / 0                |
+| reviewer     | `66db94af-0745-4088-b922-879c58942201` | `/home/user/recv.chat` | agent-rpc-qa-20260912 / 1 |
+| local-helper | `250ac07f-6ce8-43f9-b845-0ffb10c4d041` | `/home/user/B.chat`    | host-1 / 0                |
+
+- Warm correlation `mentions-warm-20260914-03`: builder used its scoped identity
+  and `project chat send --to reviewer --stdin --json`. Accepted attempt
+  `521ddf85-b62e-47b7-b003-4b9c5b0ea519`; correlated reverse PONG attempt
+  `3736d74c-75a5-438e-85df-7c87f1b049f9`. Builder acknowledged locally only.
+- Cold correlation `mentions-cold-20260914-01`: receiver stopped with normal
+  project stop and read-only metadata confirmed `opened` before sending.
+  The single named send was accepted in 4081 ms, attempt
+  `aa74abd3-39f9-48e4-a3b6-bda1f45e8fff`. Metadata then showed `running` on the
+  same QA host. Reverse PONG attempt `6be2037f-49fa-4aae-b0af-a8e7536638d0`.
+  Neither source agent nor test harness issued a separate target start command.
+  Attempted browser offline isolation timed out on old hung tabs; the observed
+  stopped-before/running-after state and source transcript are the evidence,
+  not a claim of complete browser-network isolation.
+- No message retry, legacy grant fallback, or alternate agent credentials were
+  used. Expired QA connections were renewed explicitly through normal human API
+  authorization before the next test, not by a delivery worker.
+
+Local reproduction: use the two named threads above, select `@reviewer` in A,
+approve communication in both directions, and request a single correlated send
+and reply. For cold testing stop the reviewer project first; do not open its
+thread or run target commands before sending. Inspecting My Agents must not
+start it. Acceptance is not completion; the separate PONG proves the latter.
+
+Evidence: `/tmp/agent-mentions-warm3-ui.json`,
+`/tmp/agent-mentions-cold-{stop,after,running,ui-final}.json`,
+`/tmp/agent-mentions-{grant,cold-grant}.json`.
+
+## Browser UI Checks
+
+A newly opened My Agents tab verified build `21ec3abd0586`, rather than relying
+on an old tab's cached frontend. At 320px, light/dark directory views and grouped
+bidirectional controls are readable without My Agents horizontal overflow.
+Keyboard account-menu and connection-details checks passed. No grant mutation,
+project opening, or private draft change was needed for these checks.
+31 additional focused frontend tests passed and lint remained clean.
+
+Screenshots: `/tmp/agent-mentions-21ec-build-proof.png`,
+`/tmp/agent-mentions-21ec-320-{initial,directory-dark,original-group-dark,keyboard-dark}.png`.
+The existing global Docs toolbar clipping is outside this prototype's UI.
+
+## Renewal Runtime Correction
+
+The first real expiry test (`mentions-renew-20260914-01`) failed safely before
+request creation: after a 75-second wait the CLI found neither an approved
+destination nor the turn's selected reference. No request or message was sent.
+The deployed Codex protocol ignores `turn/start.env`; successful ordinary sends
+had used approved discovery and therefore had not proved reference handoff.
+
+`d008eaa275` exports an identity-relative reference sidecar path at process spawn.
+ACP populates it before the turn and removes it afterward. Each scoped runtime
+has a distinct identity directory; the CLI still checks agent/run binding.
+76 AI tests and 30 host tests passed, including a mock that ignores per-turn env
+and checks actual spawn arguments. The host bundle build/typecheck passed.
+No CLI/tools update is required. Both hosts and their actual ACP worker pins now
+use `20260914T032339Z-21ec3abd0586-dirty-a5620e5a`, containing the source committed
+as `d008eaa275`. The QA host operation watcher returned `unknown`, so installation
+was verified independently using the current symlink and the running worker's
+bundle-version field.
+
+The explicit follow-up `mentions-renew-20260914-02` passed live:
+
+- The agent waited 75 seconds, then resolved the selected name despite expiry.
+- Request `c2945674-6075-42ab-8a31-193390bb3bac` appeared in the current chat as
+  a typed messaging approval with both endpoint names and project context.
+- The fresh-authenticated human QA session approved that exact request. Browser
+  human verification itself remains a separate manual check.
+- The initial read-only CLI wait reached its deadline. The agent inspected the
+  same request read-only, saw `approved`, and explicitly sent once.
+- Accepted attempt `a74fb38e-1947-4b05-92fb-bc799f33227f`; no repeated approval
+  mutation, message retry, or alternative credentials. The receiver completed
+  its local acknowledgment without replying.
+
+Evidence: `/tmp/agent-mentions-renew2-{requests,pending-ui,approved,result-ui}.json`.
+The QA connection expires at `2026-09-14T04:46:39Z`; it was not made permanent.
+
+The browser's one-click **Pause all communication** updated the account control
+to paused and visibly paused the directory. Restored it through the normal
+fresh-authenticated resume API and refreshed the UI. Before/after per-link
+attempt/acceptance timestamps were identical: resume did not send/replay work.
+Evidence: `/tmp/agent-mentions-{paused-api,paused-ui,resumed-api,resumed-directory,resumed-ui}.json`.
+
+## Two-Human Live Checks
+
+- Genuine Q was denied steering P's active turn.
+- P then Q automation settings writes transferred responsibility/revision to Q;
+  a later P acknowledgment retained Q and its revision.
+- An actual scoped agent was denied a human-only automation mutation.
+- Q's ordinary execution was rejected by `queued_per_account 0/0`. No funds,
+  execution entitlements, or provider credentials were added for this test.
+- Adding Q to the cross-bay receiver failed with
+  `projects.createCollabInvite: account not found`. No database bypass was used.
+- Removed only the Q membership added to A and the disposable QA automation;
+  retained QA chats and evidence. No host or provider cleanup was necessary.
+
+Detailed local evidence and exact commands:
+`src/.local/human-turn-qa/RESULTS.md` and `CLEANUP.md`.
+
+Live evidence: `/tmp/agent-mentions-{grant,picker-open,inline-approval,warm-running}.json`,
+`/tmp/agent-mentions-picker.png`, and host/project upgrade logs with this prefix.
 
 ## Deliberate Limitations
 
@@ -91,11 +232,19 @@ The running site still uses the PR558 deployment wrapper.
 
 ## Remaining Acceptance Work
 
-Integrate and validate package changes, then build/deploy the opt-in path. Test
-named composer approval and real request/reply across hosts/bays, including a
-stopped receiver. Test successive turns from two authenticated humans and
-cross-human steering rejection. Verify rename stability, pause/revoke, expired
-approval renewal, cancellation/draft preservation, and honest unknown outcomes.
+Live expiry/renewal and mobile UI checks are complete as described above.
+Deterministic tests also cover rename stability, pause/revoke, expiry, credential
+isolation and honest unknown outcomes; they are not substituted for unperformed
+live checks.
 
-No product decision is currently blocking implementation. Unfinished integration
-and verification are not external blockers.
+Actual external validation blockers are completing browser human verification
+and obtaining a runnable second QA account plus its cross-bay project access.
+Positive successive P/Q turns have not been live-proven. The new path stays
+opt-in; these gaps prevent a claim that every acceptance test is complete.
+
+Next concrete manual step: open account **My Agents**, open `builder`, type `@`
+and select `reviewer` (the recv chat on the QA host, not `local-helper` in B).
+After the temporary grant expires, selecting the mention should offer inline
+approval. Complete browser fresh auth and choose the intended direction/duration.
+Then ask builder for one correlated send/reply. A bare typed name without picker
+selection is not the same as a UUID-bound mention.
