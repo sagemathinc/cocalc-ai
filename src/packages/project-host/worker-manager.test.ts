@@ -14,6 +14,7 @@ import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   hasQueuedOrRunningAcpJobs,
+  latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
   oldestQueuedAcpJobTimestamp,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
@@ -33,6 +34,7 @@ jest.mock("@cocalc/lite/hub/sqlite/acp-jobs", () => ({
   countRunningAcpJobsForWorker: jest.fn(() => 0),
   decodeAcpJobRequest: jest.fn((row) => JSON.parse(row.request_json ?? "{}")),
   hasQueuedOrRunningAcpJobs: jest.fn(() => false),
+  latestAcpJobUpdateForWorker: jest.fn(() => undefined),
   listRunningAcpJobsByWorker: jest.fn(() => []),
   oldestQueuedAcpJobTimestamp: jest.fn(() => undefined),
 }));
@@ -56,6 +58,10 @@ const mockHasQueuedOrRunningAcpJobs =
 const mockCountRunningAcpJobsForWorker =
   countRunningAcpJobsForWorker as jest.MockedFunction<
     typeof countRunningAcpJobsForWorker
+  >;
+const mockLatestAcpJobUpdateForWorker =
+  latestAcpJobUpdateForWorker as jest.MockedFunction<
+    typeof latestAcpJobUpdateForWorker
   >;
 const mockListRunningAcpJobsByWorker =
   listRunningAcpJobsByWorker as jest.MockedFunction<
@@ -82,6 +88,8 @@ beforeEach(() => {
   mockHasQueuedOrRunningAcpJobs.mockReturnValue(false);
   mockCountRunningAcpJobsForWorker.mockReset();
   mockCountRunningAcpJobsForWorker.mockReturnValue(0);
+  mockLatestAcpJobUpdateForWorker.mockReset();
+  mockLatestAcpJobUpdateForWorker.mockReturnValue(undefined);
   mockListRunningAcpJobsByWorker.mockReset();
   mockListRunningAcpJobsByWorker.mockReturnValue([]);
   mockDecodeAcpJobRequest.mockClear();
@@ -801,6 +809,28 @@ describe("queue-stalled ACP workers", () => {
         stallMs: 60_000,
       }),
     ).toBe(false);
+  });
+
+  it("does not terminate immediately after a long-running job completes", () => {
+    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockLatestAcpJobUpdateForWorker.mockReturnValue(199_000);
+
+    expect(
+      __test__.shouldTerminateQueueStalledWorker({
+        worker: worker as any,
+        status: {
+          worker_id: "worker-stalled",
+          started_at: 1_000,
+          last_queue_progress_at: 10_000,
+          running_turn_leases: 0,
+        } as any,
+        now: 200_000,
+        stallMs: 60_000,
+      }),
+    ).toBe(false);
+    expect(mockLatestAcpJobUpdateForWorker).toHaveBeenCalledWith(
+      "worker-stalled",
+    );
   });
 
   it("does not attribute another worker's running turn to the replacement worker", () => {

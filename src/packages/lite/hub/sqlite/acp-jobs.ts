@@ -140,6 +140,9 @@ function init(): void {
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_state_available_idx ON ${TABLE}(state, available_at, created_at)`,
   );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
+  );
   ensureAcpTableMigrated(TABLE);
 }
 
@@ -491,6 +494,23 @@ export function oldestQueuedAcpJobTimestamp(): number | undefined {
     .get(Date.now()) as { oldest?: number | null } | undefined;
   const oldest = Number(row?.oldest ?? 0);
   return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
+}
+
+export function latestAcpJobUpdateForWorker(
+  worker_id: string,
+): number | undefined {
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) return undefined;
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `SELECT MAX(updated_at) AS latest
+       FROM ${TABLE}
+       WHERE worker_id = ?`,
+    )
+    .get(workerId) as { latest?: number | null } | undefined;
+  const latest = Number(row?.latest ?? 0);
+  return Number.isFinite(latest) && latest > 0 ? latest : undefined;
 }
 
 export function nextQueuedAcpJobAvailability(): number | undefined {

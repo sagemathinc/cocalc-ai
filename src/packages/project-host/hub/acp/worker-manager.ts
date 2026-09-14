@@ -27,6 +27,7 @@ import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   hasQueuedOrRunningAcpJobs,
+  latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
   oldestQueuedAcpJobTimestamp,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
@@ -442,6 +443,7 @@ export function shouldTerminateQueueStalledWorker({
   const queueProgressAt = Math.max(
     numberOrUndefined(status?.last_queue_progress_at) ?? 0,
     numberOrUndefined(row?.last_queue_progress_at) ?? 0,
+    latestAcpJobUpdateForWorker(worker_id) ?? 0,
     startedAt,
   );
   return queueProgressAt <= 0 || now - queueProgressAt >= stallMs;
