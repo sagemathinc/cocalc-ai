@@ -6,6 +6,9 @@ const { EventEmitter } = require("node:events");
 const test = require("node:test");
 
 process.env.COCALC_BAY_FRONTDOOR_UNHEALTHY_THRESHOLD = "3";
+process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_THRESHOLD = "3";
+process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_WINDOW_MS = "60000";
+process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_QUARANTINE_MS = "90000";
 process.env.COCALC_BAY_PUBLIC_INGRESS_MODE = "cloudflare-proxy";
 
 const {
@@ -16,9 +19,11 @@ const {
   isTopLevelDocumentNavigation,
   prepareResponseHeaders,
   proxyRequestHeaders,
+  recordWorkerApplicationTimeout,
   recordWorkerHealth,
   selectWorkerCandidate,
   serializeProxyRequest,
+  workerIsQuarantined,
 } = require("./bay-frontdoor.js");
 
 test("recognizes only top-level browser document navigations", () => {
@@ -323,4 +328,57 @@ test("evicts upgraded sockets only after repeated worker health failures", () =>
   assert.equal(worker.healthy, true);
   assert.equal(worker.consecutiveFailures, 0);
   assert.equal(worker.lastError, "");
+});
+
+test("quarantines repeated application timeouts without trusting shallow health", () => {
+  const socket = new MockSocket();
+  const upstream = new MockSocket();
+  const connection = { socket, upstream };
+  const worker = {
+    id: 3,
+    healthy: true,
+    consecutiveFailures: 0,
+    lastOk: 1_000,
+    lastError: "",
+    applicationTimeouts: [],
+    quarantinedUntil: 0,
+    upgrades: new Set([connection]),
+  };
+
+  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 1", 10_000), false);
+  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 2", 20_000), false);
+  assert.equal(worker.healthy, true);
+  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 3", 30_000), true);
+  assert.equal(worker.healthy, false);
+  assert.equal(workerIsQuarantined(worker, 30_001), true);
+  assert.equal(socket.destroyed, true);
+  assert.equal(upstream.destroyed, true);
+
+  recordWorkerHealth(worker, true, "", 40_000);
+  assert.equal(worker.healthy, false);
+  assert.equal(worker.applicationTimeouts.length, 3);
+
+  recordWorkerHealth(worker, true, "", 120_001);
+  assert.equal(worker.healthy, true);
+  assert.equal(worker.applicationTimeouts.length, 0);
+  assert.equal(worker.quarantinedUntil, 0);
+});
+
+test("application timeout accounting uses a sliding window", () => {
+  const worker = {
+    id: 4,
+    healthy: true,
+    consecutiveFailures: 0,
+    lastOk: 1_000,
+    lastError: "",
+    applicationTimeouts: [],
+    quarantinedUntil: 0,
+    upgrades: new Set(),
+  };
+
+  recordWorkerApplicationTimeout(worker, "old timeout", 1_000);
+  recordWorkerApplicationTimeout(worker, "timeout 1", 62_000);
+  recordWorkerApplicationTimeout(worker, "timeout 2", 63_000);
+  assert.equal(worker.healthy, true);
+  assert.deepEqual(worker.applicationTimeouts, [62_000, 63_000]);
 });
