@@ -286,9 +286,12 @@ Still unverified against the full plan:
   reused-session credential rotation, not just negative steering tests.
 - Positive approval/renewal through the native attention card. Live display,
   pending-state restoration across refresh, expiry, and denial now pass below.
-- Browser passkey completion for positive approval is still unverified. Composer
-  selection/review/cancel, the pending attention card, and My Agents naming/table
-  now pass at actual 200% browser zoom below.
+- A forced stale-session browser challenge on the exact current candidate has
+  not been repeated. The human reports successful fresh-auth approval earlier
+  and successful approval with new threads now; the shared fresh-auth component
+  is unchanged from the RPC foundation. This is not a blocker to further
+  messaging tests. Composer selection/review/cancel, the pending attention card,
+  and My Agents naming/table also pass at actual 200% browser zoom below.
 
 The remaining external prerequisite for the positive P/Q test is a trusted,
 agent-capable second QA account. Its last execution attempt hit a zero
@@ -598,3 +601,20 @@ selection is not the same as a UUID-bound mention.
   `/tmp/agent-mentions-Q-trust-current.json`, and
   `/tmp/agent-mentions-trust-settings.json`. Browser passkey completion remains
   a separate human action; the positive two-human execution gate is still open.
+
+## Human Follow-Up
+
+- The human verified Q's email. A read through Q's own authenticated session at
+  07:33:43 UTC confirmed `email_verified: true`, queue allowance 20, and running
+  allowance 3. Evidence: `/tmp/agent-mentions-Q-user-verified.jsonl`. The known
+  email-verification prerequisite is resolved; normal runtime and provider
+  admission still need to be exercised, not bypassed.
+- The human reports that fresh-auth approval worked earlier, and that a new
+  test using new threads worked well. Signing in again left their session fresh,
+  so this latest report does not independently demonstrate an expired-session
+  challenge. `frontend/auth/fresh-auth.tsx` has no diff from foundation commit
+  `4a1c89014e`. Record the successful current new-thread workflow without claiming
+  a fresh challenge was observed or requiring repeated sign-ins.
+- Next concrete step: resume genuine successive P/Q turns in the shared QA
+  thread with distinct personal reviewers, current per-turn credentials, and
+  normal project/provider gates. Do not hold that test for another auth prompt.
