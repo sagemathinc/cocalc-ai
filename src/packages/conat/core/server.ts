@@ -1844,12 +1844,18 @@ export class ConatServer extends EventEmitter {
       }
       const [subject, ...data] = payload;
       const handlerStart = Date.now();
+      const stats = this.stats[socket.id];
+      if (stats == null) {
+        // The per-socket publish queue can outlive a disconnected socket.
+        // Discard queued work after teardown instead of touching deleted state.
+        return;
+      }
       if (data?.[2]) {
         // done
-        this.stats[socket.id].send.messages += 1;
+        stats.send.messages += 1;
       }
-      this.stats[socket.id].send.bytes += data[4]?.length ?? 0;
-      this.stats[socket.id].active = Date.now();
+      stats.send.bytes += data[4]?.length ?? 0;
+      stats.active = Date.now();
       // this.log(JSON.stringify(this.stats));
 
       try {

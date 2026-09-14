@@ -9,6 +9,7 @@ jest.mock("@cocalc/conat/logger", () => ({
 }));
 
 import { Client, connect } from "./client";
+import { delay } from "awaiting";
 import { setServiceAdmissionLimitOverrides } from "@cocalc/conat/admission/limits";
 import { ConatServer, init } from "./server";
 
@@ -165,6 +166,57 @@ describe("core server inbound socket admission", () => {
     expect(server.getUsage()["inbound-identity-deny:count"]).toBeGreaterThan(0);
 
     client.close();
+    await server.close();
+  });
+
+  it("discards queued publishes after their socket disconnects", async () => {
+    const server = init({ port: 0 });
+    const client = connect({
+      address: server.address(),
+      noCache: true,
+    });
+    await client.waitUntilSignedIn({ timeout: 5000 });
+
+    let releaseFirst!: () => void;
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      markFirstStarted = resolve;
+    });
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const originalPublish = server.publish.bind(server);
+    const publish = jest
+      .spyOn(server, "publish")
+      .mockImplementation(async (opts) => {
+        markFirstStarted();
+        await firstBlocked;
+        return await originalPublish(opts);
+      });
+    const payload = [
+      "queued.publish.disconnect",
+      "chunk-id",
+      0,
+      1,
+      "json",
+      Buffer.from("null"),
+    ];
+
+    client.conn.emit("publish", payload);
+    await firstStarted;
+    client.conn.emit("publish", payload);
+    await delay(20);
+    client.close();
+    for (let i = 0; i < 100; i++) {
+      if (Object.keys(server.getStatsSnapshot()).length === 0) break;
+      await delay(10);
+    }
+    expect(Object.keys(server.getStatsSnapshot())).toHaveLength(0);
+
+    releaseFirst();
+    await delay(50);
+    expect(publish).toHaveBeenCalledTimes(1);
+
     await server.close();
   });
 });

@@ -60,6 +60,18 @@ const unhealthyThreshold = intEnv(
   "COCALC_BAY_FRONTDOOR_UNHEALTHY_THRESHOLD",
   3,
 );
+const applicationTimeoutThreshold = intEnv(
+  "COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_THRESHOLD",
+  3,
+);
+const applicationTimeoutWindowMs = intEnv(
+  "COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_WINDOW_MS",
+  60_000,
+);
+const applicationTimeoutQuarantineMs = intEnv(
+  "COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_QUARANTINE_MS",
+  90_000,
+);
 const healthErrorMaxBytes = intEnv(
   "COCALC_BAY_FRONTDOOR_HEALTH_ERROR_MAX_BYTES",
   2048,
@@ -78,6 +90,8 @@ const workers = Array.from({ length: workerCount }, (_, index) => ({
   consecutiveFailures: 0,
   lastOk: 0,
   lastError: "not checked yet",
+  applicationTimeouts: [],
+  quarantinedUntil: 0,
   upgrades: new Set(),
 }));
 
@@ -126,13 +140,23 @@ function evictWorkerUpgrades(worker) {
   }
 }
 
-function recordWorkerHealth(worker, ok, error = "") {
+function workerIsQuarantined(worker, now = Date.now()) {
+  return (worker.quarantinedUntil ?? 0) > now;
+}
+
+function recordWorkerHealth(worker, ok, error = "", now = Date.now()) {
   const wasHealthy = worker.healthy;
   if (ok) {
-    worker.healthy = true;
-    worker.consecutiveFailures = 0;
-    worker.lastOk = Date.now();
-    worker.lastError = "";
+    if (workerIsQuarantined(worker, now)) {
+      worker.healthy = false;
+    } else {
+      worker.healthy = true;
+      worker.consecutiveFailures = 0;
+      worker.lastOk = now;
+      worker.lastError = "";
+      worker.applicationTimeouts = [];
+      worker.quarantinedUntil = 0;
+    }
   } else {
     worker.consecutiveFailures += 1;
     worker.lastError = error;
@@ -150,6 +174,36 @@ function recordWorkerHealth(worker, ok, error = "") {
   } else if (!wasHealthy && worker.healthy) {
     log("worker recovered", { worker_id: worker.id });
   }
+}
+
+function recordWorkerApplicationTimeout(worker, error, now = Date.now()) {
+  const cutoff = now - applicationTimeoutWindowMs;
+  worker.applicationTimeouts = (worker.applicationTimeouts ?? []).filter(
+    (observedAt) => observedAt >= cutoff,
+  );
+  worker.applicationTimeouts.push(now);
+  worker.lastError = error;
+  if (worker.applicationTimeouts.length < applicationTimeoutThreshold) {
+    return false;
+  }
+
+  const wasHealthy = worker.healthy;
+  worker.healthy = false;
+  worker.quarantinedUntil = Math.max(
+    worker.quarantinedUntil ?? 0,
+    now + applicationTimeoutQuarantineMs,
+  );
+  if (wasHealthy) {
+    log("worker quarantined after repeated application timeouts", {
+      worker_id: worker.id,
+      timeout_count: worker.applicationTimeouts.length,
+      timeout_window_ms: applicationTimeoutWindowMs,
+      quarantine_ms: applicationTimeoutQuarantineMs,
+      error,
+    });
+    evictWorkerUpgrades(worker);
+  }
+  return true;
 }
 
 function formatHealthError(statusCode, body) {
@@ -519,6 +573,10 @@ function writeHealth(res) {
         drained: drained.has(worker.id),
         consecutive_failures: worker.consecutiveFailures,
         active_upgrades: worker.upgrades.size,
+        application_timeouts: worker.applicationTimeouts.length,
+        quarantined_until: worker.quarantinedUntil
+          ? new Date(worker.quarantinedUntil).toISOString()
+          : null,
         last_ok: worker.lastOk ? new Date(worker.lastOk).toISOString() : null,
         last_error: worker.lastError || null,
       })),
@@ -552,6 +610,8 @@ function proxyHttp(req, res) {
   const { worker, changed } = selected;
 
   const headers = proxyRequestHeaders(req, worker);
+  let receivedUpstreamResponse = false;
+  let recordedApplicationTimeout = false;
 
   const upstream = http.request(
     {
@@ -563,6 +623,7 @@ function proxyHttp(req, res) {
       timeout: upstreamTimeoutMs,
     },
     (upstreamRes) => {
+      receivedUpstreamResponse = true;
       const statusCode = upstreamRes.statusCode ?? 502;
       res.writeHead(
         statusCode,
@@ -578,12 +639,22 @@ function proxyHttp(req, res) {
     },
   );
   upstream.on("timeout", () => {
+    if (!receivedUpstreamResponse) {
+      recordedApplicationTimeout = true;
+      const pathname = `${req.url ?? ""}`.split("?", 1)[0].slice(0, 512);
+      recordWorkerApplicationTimeout(
+        worker,
+        `upstream timeout before response: ${req.method} ${pathname}`,
+      );
+    }
     upstream.destroy(new Error("upstream timeout"));
   });
   upstream.on("error", (err) => {
-    // Client/proxy request failures are not health checks. The poller owns
-    // worker health so one reset/timeout cannot briefly remove the whole bay.
-    worker.lastError = err.message;
+    // Isolated client/proxy failures do not change health. Repeated failures
+    // before response headers are handled by the timeout circuit breaker.
+    if (!recordedApplicationTimeout) {
+      worker.lastError = err.message;
+    }
     if (!res.headersSent) {
       res.writeHead(502, { "content-type": "text/plain; charset=utf-8" });
     }
@@ -658,6 +729,9 @@ function start() {
       healthPath,
       workerHealthPath,
       unhealthyThreshold,
+      applicationTimeoutThreshold,
+      applicationTimeoutWindowMs,
+      applicationTimeoutQuarantineMs,
       publicIngressMode,
     });
     await scheduleHealthRefresh();
@@ -679,7 +753,9 @@ module.exports = {
   isTopLevelDocumentNavigation,
   prepareResponseHeaders,
   proxyRequestHeaders,
+  recordWorkerApplicationTimeout,
   recordWorkerHealth,
   selectWorkerCandidate,
   serializeProxyRequest,
+  workerIsQuarantined,
 };
