@@ -4871,7 +4871,7 @@ describe("CodexAppServerAgent", () => {
     expect(proc.killed).toBe(true);
   });
 
-  it("installs fresh scoped identity and refs on successive real evaluate calls in one session", async () => {
+  it("hands refs to shell processes without turn/start.env on successive scoped turns", async () => {
     const dir = mkdtempSync(path.join(tmpdir(), "acp-human-turns-"));
     const processes: FakeCodexAppServerProc[] = [];
     const observed: any[] = [];
@@ -4882,6 +4882,12 @@ describe("CodexAppServerAgent", () => {
         identityPath,
         JSON.stringify({ agent_id: "source", run_id: `run-${n}` }),
       );
+      // Model the deployed protocol: turn/start.env is ignored. Shell commands
+      // only see the immutable environment captured when the process spawned.
+      const processEnv = {
+        COCALC_AGENT_IDENTITY_FILE: identityPath,
+        COCALC_AGENT_MENTION_REFERENCES_FILE: `${identityPath}.mentions.json`,
+      };
       const proc = new FakeCodexAppServerProc((fake, message) => {
         if (
           message.method === "thread/start" ||
@@ -4889,7 +4895,7 @@ describe("CodexAppServerAgent", () => {
         ) {
           fake.sendResponse(message.id, { thread: { id: "shared-session" } });
         } else if (message.method === "turn/start") {
-          const file = message.params.env.COCALC_AGENT_MENTION_REFERENCES_FILE;
+          const file = processEnv.COCALC_AGENT_MENTION_REFERENCES_FILE;
           observed.push({
             account: opts.accountId,
             file,
@@ -4911,7 +4917,7 @@ describe("CodexAppServerAgent", () => {
         cmd: "fake",
         args: [],
         cwd: dir,
-        runtimeEnv: { COCALC_AGENT_IDENTITY_FILE: identityPath },
+        runtimeEnv: { ...processEnv },
       };
     });
     setCodexProjectSpawner({
@@ -4963,6 +4969,57 @@ describe("CodexAppServerAgent", () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it.each([undefined, "/stale/previous-human.json"])(
+    "rejects a missing or mismatched spawn handoff (%s) before model execution",
+    async (mentionFile) => {
+      const methods: string[] = [];
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        methods.push(message.method);
+        if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      });
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake",
+          args: [],
+          runtimeEnv: {
+            COCALC_AGENT_IDENTITY_FILE: "/current-run/identity.json",
+            ...(mentionFile == null
+              ? {}
+              : { COCALC_AGENT_MENTION_REFERENCES_FILE: mentionFile }),
+          },
+        }),
+      });
+      const agent = new CodexAppServerAgent();
+      const events: any[] = [];
+      try {
+        await agent.evaluate({
+          project_id: "project",
+          account_id: "Q",
+          prompt: "work",
+          mentionReferences: [],
+          stream: async (event) => {
+            events.push(event);
+          },
+        });
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            error: expect.stringContaining(
+              "Scoped mention environment was not installed at process spawn",
+            ),
+          }),
+        );
+        expect(methods).not.toContain("turn/start");
+      } finally {
+        await agent.dispose();
+      }
+    },
+  );
 
   it("steers an active app-server turn without interrupting it", async () => {
     const steerRequests: any[] = [];

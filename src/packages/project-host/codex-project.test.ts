@@ -296,6 +296,60 @@ describe("initCodexProjectRunner", () => {
     expect(hubApi.agent.endIdentityRun).toHaveBeenCalledTimes(1);
   });
 
+  it("exports each scoped run's reference sidecar in the actual process environment", async () => {
+    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+    spawnMock.mockImplementation(() => new FakeProc());
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-spawn-mentions-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "spawn-mentions",
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+      agent_id: "registered-agent",
+      run_id,
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    }));
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const paths: string[] = [];
+    for (const accountId of ["P", "Q"]) {
+      const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId,
+        cwd: "/home/user",
+        env: {
+          COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+          COCALC_CODEX_THREAD_ID: "thread-1",
+          COCALC_AGENT_MENTION_REFERENCES_FILE: "/stale/prior-human.json",
+        },
+      });
+      try {
+        const identityPath = spawned.runtimeEnv!.COCALC_AGENT_IDENTITY_FILE;
+        const file = spawned.runtimeEnv!.COCALC_AGENT_MENTION_REFERENCES_FILE;
+        expect(identityPath).toMatch(/\/identity.json$/);
+        expect(file).toBe(`${identityPath}.mentions.json`);
+        const args = spawnMock.mock.calls.at(-1)![1];
+        expect(args).toContain(`COCALC_AGENT_MENTION_REFERENCES_FILE=${file}`);
+        expect(args.join(" ")).not.toContain("/stale/prior-human.json");
+        // The ACP evaluator populates this reserved path before turn/start.
+        await expect(
+          fs.stat(file.replace("/home/user", home)),
+        ).rejects.toThrow();
+        paths.push(file);
+      } finally {
+        for (const listener of spawned.proc.listeners("exit"))
+          await listener(0);
+      }
+    }
+    expect(paths[0]).not.toBe(paths[1]);
+  });
+
   it("uses authenticated real-project app-server exec", async () => {
     spawnMock.mockReturnValue(new FakeProc());
     execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
@@ -333,6 +387,7 @@ describe("initCodexProjectRunner", () => {
       cwd: "/home/user",
       env: {
         FOO: "bar",
+        COCALC_AGENT_MENTION_REFERENCES_FILE: "/stale/previous-turn.json",
         COCALC_API_URL: "http://localhost:7103",
         COCALC_PROFILE: "prod",
       },
@@ -383,6 +438,8 @@ describe("initCodexProjectRunner", () => {
       ]),
     );
     expect(args).not.toContain("OPENAI_API_KEY=secret-key");
+    expect(args).toContain("COCALC_AGENT_MENTION_REFERENCES_FILE=");
+    expect(args.join(" ")).not.toContain("/stale/previous-turn.json");
     expect(args).not.toContain(
       'model_providers.cocalc-openai-api-key={name="OpenAI",base_url="https://api.openai.com/v1",env_key="OPENAI_API_KEY",wire_api="responses",requires_openai_auth=false,supports_websockets=true,stream_idle_timeout_ms=1800000,websocket_connect_timeout_ms=60000}',
     );

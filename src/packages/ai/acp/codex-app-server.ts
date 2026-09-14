@@ -10,6 +10,7 @@ import { assertSameTurnPrincipal } from "./turn-principal";
 import {
   materializeTurnMentionFile,
   TURN_MENTION_FILE_ENV,
+  turnMentionFilePath,
 } from "./turn-mention-file";
 import { Readable } from "node:stream";
 import getLogger from "@cocalc/backend/logger";
@@ -2734,7 +2735,7 @@ export class CodexAppServerAgent implements AcpAgent {
         ...(spawned.runtimeEnv ?? {}),
       }).filter(([, value]) => typeof value === "string" && !!`${value}`),
     ) as Record<string, string>;
-    // An empty override also clears a stale variable in a retained process.
+    // Prompt guidance uses this map; shell tools use the spawner's process env.
     turnEnv[TURN_MENTION_FILE_ENV] = "";
     let cleanupMentionFile = async () => {};
     // Goal lifecycle belongs to Codex and explicit user actions. Starting a
@@ -2861,6 +2862,15 @@ export class CodexAppServerAgent implements AcpAgent {
     try {
       if (request.mentionReferences != null) {
         const identityPath = spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE;
+        if (
+          identityPath &&
+          spawned.runtimeEnv?.[TURN_MENTION_FILE_ENV] !==
+            turnMentionFilePath(identityPath)
+        ) {
+          throw new Error(
+            "Scoped mention environment was not installed at process spawn; restart the ACP runtime",
+          );
+        }
         const file = await materializeTurnMentionFile({
           identityPath,
           identityHostPath: identityPath

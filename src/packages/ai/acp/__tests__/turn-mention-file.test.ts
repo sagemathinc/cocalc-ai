@@ -41,13 +41,14 @@ it("binds the current identity and replaces prior turn references, including wit
     expect((await fs.stat(first.file!)).mode & 0o777).toBe(0o600);
     await first.cleanup();
     await expect(fs.stat(first.file!)).rejects.toThrow();
+    const nextIdentityPath = path.join(dir, "identity-Q.json");
     await fs.writeFile(
-      identityPath,
+      nextIdentityPath,
       JSON.stringify({ agent_id: "agent", run_id: "Q-run" }),
     );
     const second = await materializeTurnMentionFile({
-      identityPath,
-      identityHostPath: identityPath,
+      identityPath: nextIdentityPath,
+      identityHostPath: nextIdentityPath,
       references: [],
     });
     expect(JSON.parse(await fs.readFile(second.file!, "utf8"))).toEqual({

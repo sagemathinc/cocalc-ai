@@ -24,6 +24,8 @@ import type {
 import {
   codexAuthJsonToAppServerLogin,
   setCodexProjectSpawner,
+  TURN_MENTION_FILE_ENV,
+  turnMentionFilePath,
 } from "@cocalc/ai/acp";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { which } from "@cocalc/backend/which";
@@ -1924,9 +1926,16 @@ async function spawnCodexAppServerInProjectRuntime({
   delete execEnv.COCALC_BEARER_TOKEN_FILE;
   delete execEnv.COCALC_AGENT_TOKEN_FILE;
   delete execEnv.COCALC_AGENT_IDENTITY_FILE;
+  // Never inherit another turn's reference path. Codex shell commands inherit
+  // the process environment, not the unsupported turn/start.env field.
+  execEnv[TURN_MENTION_FILE_ENV] = "";
   if (cliTokenLease) {
-    if (cliTokenLease.identityContainerPath)
+    if (cliTokenLease.identityContainerPath) {
       execEnv.COCALC_AGENT_IDENTITY_FILE = cliTokenLease.identityContainerPath;
+      execEnv[TURN_MENTION_FILE_ENV] = turnMentionFilePath(
+        cliTokenLease.identityContainerPath,
+      );
+    }
     execEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
     execEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
   }
@@ -2113,8 +2122,8 @@ async function spawnCodexAppServerInProjectRuntime({
     setAgentSessionKey: cliTokenLease
       ? async (agentSessionKey) => {
           await cliTokenLease.setAgentSessionKey(agentSessionKey);
-          // turn/start supplies this environment to new commands; the app-server
-          // and its existing background work do not need to be restarted.
+          // Refresh keeps this run's identity path stable. A newly registered
+          // identity needs a fresh process before it can be used by shell tools.
           if (cliTokenLease.identityContainerPath) {
             runtimeEnv.COCALC_AGENT_IDENTITY_FILE =
               cliTokenLease.identityContainerPath;
