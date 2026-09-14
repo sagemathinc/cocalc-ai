@@ -51,6 +51,7 @@ describe("managedVmBootstrapScript", () => {
     expect(script).toContain("/run/cocalc-managed-vm/bootstrap-ready");
     expect(script).toContain("'2'");
     expect(script).not.toContain("/work");
+    expect(script).not.toContain("/ssh-host-keys");
   });
 
   it("mounts persistent home and installs an idempotent ext4 growth timer", () => {
@@ -84,6 +85,12 @@ describe("managedVmBootstrapScript", () => {
     expect(script).toContain("cocalc-restore-managed-ssh-keys.service");
     expect(script).toContain("Before=ssh.service sshd.service");
     expect(script).toContain("/var/lib/cocalc-managed-vm/authorized_keys");
+    expect(script).toContain("/var/lib/cocalc-managed-vm/ssh-host-keys");
+    expect(script).toContain("/etc/ssh/sshd_config.d/00-cocalc-host-keys.conf");
+    expect(script).toContain("/usr/sbin/sshd -t");
+    expect(script.indexOf("/usr/sbin/sshd -t")).toBeLessThan(
+      script.indexOf("systemctl reload ssh.service"),
+    );
     expect(decodeBootstrapKeys(script)).toBe(
       "ssh-ed25519 AAAAOWNER owner\nssh-ed25519 AAAACONTROLLER controller\nssh-ed25519 AAAAPROJECT project\n",
     );
