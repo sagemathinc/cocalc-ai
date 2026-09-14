@@ -12,8 +12,9 @@ not being resumed. This document records evidence, not a completion claim.
 Candidate `97a1f748d6`: 478 focused regression tests passed in the September 14
 consolidated audit (commands and counts at the end). Cross-host request/reply,
 isolated autostart, personal P/Q/P destination selection, and fault/control
-tests have live evidence below. Native renewal approval is still awaiting actual
-browser/device fresh-auth completion; CLI approval is not substituted for it.
+tests have live evidence below. Native renewal approval remains unverified: its
+QA request expired without browser/device fresh-auth completion. CLI approval
+is not substituted for it. The goal is blocked on that external verification.
 The included-Codex one-concurrent-turn policy remains intact and can prevent
 receiver execution while its sender runs. This is a documented execution-gate
 limitation, not permission to add retries or redesign billing in this prototype.
@@ -773,3 +774,24 @@ account-home inspection still returned pending for request
 credential, database-auth mutation, repeated request, or send was attempted.
 Evidence: `/tmp/agent-mentions-native-verify-{after.json,state.jsonl}`. The existing
 request deadline is 08:33:46 UTC; an expired request is not to be replayed.
+
+## September 14 Blocked Audit
+
+At 08:39 UTC, authoritative request inspection returned `expired` for
+`63b5898b-9a28-487b-86b6-b248530bafe8`; the QA Chromium tab had no approval card
+or open dialog. A read-only account-home query confirmed zero grants for that
+request. Its source agent had already ended normally at 08:22:48 with `pending`.
+There is no live agent wait to restart, and no send was replayed.
+
+Actual browser/device fresh-auth completion remained unresolved across three
+consecutive goal turns. The last two added callback coverage and consolidated
+regression evidence, but neither substitutes for that live approval. With no
+new implementation failure identified, mark the goal blocked rather than
+manufacturing more requests or rerunning green tests. Resume when the human can
+complete the normal verification in the QA Chromium session, using a deliberately
+new renewal request. Do not reuse this expired request or copy CLI auth into the
+browser. No additional account, email-verification update, or database change is
+needed for this step.
+
+Evidence: `/tmp/agent-mentions-native-blocked-{audit.jsonl,ui.json}` and
+`/tmp/agent-mentions-native-expired-grant-check.json`.
