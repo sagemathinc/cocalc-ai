@@ -289,8 +289,8 @@ Still unverified against the full plan:
   as an independent cause.
 - Live pause/revoke while the target is stopped and while its owning bay is
   unavailable; a live lost-acknowledgment/unknown outcome without replay.
-- Explicit 200% browser-zoom validation. The recorded 320 CSS pixel light/dark
-  and keyboard checks do not substitute for this.
+- The composer approval and pending attention card still need live 200% zoom
+  checks. My Agents naming/table checks at actual browser zoom now pass below.
 
 Actual external validation blockers are completing browser human verification
 and obtaining a runnable second QA account. Cross-bay collaborator setup has
@@ -341,6 +341,23 @@ selection is not the same as a UUID-bound mention.
   agent/attention tests, frontend typecheck, and frontend lint passed; the final
   focused naming suite also checks dismiss/reopen behavior (9 tests).
 - Logs: `/tmp/agent-mentions-poll-error-{before,tests,final-tests,tsc,lint}.log`.
+- Deployed frontend commit `b75decce59`; the static build completed successfully.
+  Runtime/hub code and project permissions were unchanged by this fix.
+
+## September 14 Actual Browser Zoom Check
+
+- Used Chromium's visible Appearance / Page zoom setting, not CSS zoom or a
+  viewport emulation. At 200%, `outerWidth` remained 1920 while `innerWidth`
+  changed from 1920 to 960 and `devicePixelRatio` from 1 to 2.
+- My Agents had no horizontal document overflow; its connection table fit the
+  content area. Enter opened the naming dialog, duplicate-name feedback disabled
+  Save immediately, Tab reached the footer and scrolled it into view, and Escape
+  restored focus to Rename @builder. Enter also expanded connection Details.
+  No name, grant, or message was saved by these checks.
+- Restored the original 100% setting through the same browser UI and verified
+  width 1920 / DPR 1 again. All temporary browser zoom changes are cleaned up.
+- Evidence: `/tmp/agent-mentions-zoom-{before,after,dialog,dialog-footer,focus-return,table,restored}.json`
+  and `/tmp/agent-mentions-zoom-{dialog,dialog-footer,table}.png`.
 
 ## September 14 In-App Agent Navigation
 
