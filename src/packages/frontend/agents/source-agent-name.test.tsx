@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ConnectionApproval } from "./connection-approval";
 import { NameAgent } from "./name-agent";
@@ -258,6 +258,7 @@ test("typed request names the source before approving its exact request", async 
 });
 
 test("typed request shows a naming failure inside its modal and never grants", async () => {
+  const intervals = jest.spyOn(global, "setInterval");
   const user = await openUnnamedRequest();
   mockApi.nameAgent.mockRejectedValue(new Error("name already taken"));
   await user.type(
@@ -269,6 +270,23 @@ test("typed request shows a naming failure inside its modal and never grants", a
   );
   expect(await screen.findByText("Error: name already taken")).toBeVisible();
   expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+  const refresh = intervals.mock.calls.find(([, ms]) => ms === 15000)?.[0];
+  expect(typeof refresh).toBe("function");
+  await act(async () => {
+    (refresh as () => void)();
+  });
+  expect(screen.getByText("Error: name already taken")).toBeVisible();
+  expect(
+    screen.getByRole("textbox", { name: "Source agent name" }),
+  ).toHaveValue("builder");
+  expect(mockApi.nameAgent).toHaveBeenCalledTimes(1);
+  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Later" }));
+  await user.click(
+    screen.getByRole("button", { name: /^Review messaging request:/ }),
+  );
+  expect(screen.queryByText("Error: name already taken")).toBeNull();
+  intervals.mockRestore();
 });
 
 test("validation normalizes names, permits the same endpoint, and checks syntax", () => {

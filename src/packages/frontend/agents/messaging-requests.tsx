@@ -43,6 +43,7 @@ function AccountMessagingRequests({
   const [busy, setBusy] = useState(false);
   const sourceNaming = useSourceAgentName(selected?.source, undefined, busy);
   const [error, setError] = useState("");
+  const [loadError, setLoadError] = useState("");
   const [revision, setRevision] = useState(0);
   const lock = useRef(false);
   const alive = useRef(true);
@@ -68,7 +69,7 @@ function AccountMessagingRequests({
         if (!enabled) {
           setRequests([]);
           setSelected(undefined);
-          setError("");
+          setLoadError("");
           return;
         }
         const identity =
@@ -80,7 +81,7 @@ function AccountMessagingRequests({
               })
             : undefined;
         if (!disposed) {
-          setError("");
+          setLoadError("");
           setRequests(
             requests.filter(
               (request) =>
@@ -109,7 +110,7 @@ function AccountMessagingRequests({
           );
         }
       } catch (err) {
-        if (!disposed) setError(`${err}`);
+        if (!disposed) setLoadError(`${err}`);
       } finally {
         loading = false;
       }
@@ -169,7 +170,7 @@ function AccountMessagingRequests({
       setBusy(false);
     }
   }
-  if (!requests.length && !error) return null;
+  if (!requests.length && !error && !loadError) return null;
   return (
     <section aria-label="Agent messaging approvals">
       <div role="status">
@@ -178,18 +179,24 @@ function AccountMessagingRequests({
       </div>
       {requests.map((request) => (
         <div key={request.request_id}>
-          <Button size="small" onClick={() => setSelected(request)}>
+          <Button
+            size="small"
+            onClick={() => {
+              setError("");
+              setSelected(request);
+            }}
+          >
             Review messaging request: {label(request.source)} to{" "}
             {label(request.target)}
           </Button>
         </div>
       ))}
-      {error && !selected && (
+      {(error || loadError) && !selected && (
         <div role="alert">
           <Alert
             type="warning"
             title="Messaging approvals unavailable"
-            description={error}
+            description={error || loadError}
           />
         </div>
       )}
@@ -198,7 +205,13 @@ function AccountMessagingRequests({
         title="Agent requests messaging approval"
         footer={
           <Space wrap>
-            <Button disabled={busy} onClick={() => setSelected(undefined)}>
+            <Button
+              disabled={busy}
+              onClick={() => {
+                setError("");
+                setSelected(undefined);
+              }}
+            >
               Later
             </Button>
             <Button danger disabled={busy} onClick={() => void resolve("deny")}>
@@ -215,7 +228,10 @@ function AccountMessagingRequests({
           </Space>
         }
         onCancel={() => {
-          if (!busy) setSelected(undefined);
+          if (!busy) {
+            setError("");
+            setSelected(undefined);
+          }
         }}
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
@@ -228,6 +244,9 @@ function AccountMessagingRequests({
             <p>Reason: {selected.reason}</p>
             {sourceNaming.field}
             {error && <Alert type="error" title={error} role="alert" />}
+            {loadError && (
+              <Alert type="warning" title={loadError} role="alert" />
+            )}
             <p>
               Direction:{" "}
               {selected.both_directions ? "Both directions" : "One way"}.

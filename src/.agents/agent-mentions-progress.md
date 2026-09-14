@@ -274,10 +274,23 @@ Live evidence: `/tmp/agent-mentions-{grant,picker-open,inline-approval,warm-runn
 
 ## Remaining Acceptance Work
 
-Live expiry/renewal and mobile UI checks are complete as described above.
+The specific live expiry/renewal and mobile UI checks above passed.
 Deterministic tests also cover rename stability, pause/revoke, expiry, credential
 isolation and honest unknown outcomes; they are not substituted for unperformed
 live checks.
+
+Still unverified against the full plan:
+
+- Positive successive P/Q turns with different personal reviewers and actual
+  reused-session credential rotation, not just negative steering tests.
+- A live request displayed and decided through the new attention card, including
+  pending-state restoration across refresh.
+- Cold receiver start with all receiver UIs closed, excluding browser startup
+  as an independent cause.
+- Live pause/revoke while the target is stopped and while its owning bay is
+  unavailable; a live lost-acknowledgment/unknown outcome without replay.
+- Explicit 200% browser-zoom validation. The recorded 320 CSS pixel light/dark
+  and keyboard checks do not substitute for this.
 
 Actual external validation blockers are completing browser human verification
 and obtaining a runnable second QA account. Cross-bay collaborator setup has
@@ -310,6 +323,24 @@ selection is not the same as a UUID-bound mention.
   without a recorded tool call; no request had reached the account store.
   This is not evidence of a successful approval test and was not retried.
   Persisted activity: `src/.local/human-turn-qa/logs/attention-native-activity.json`.
+- At 04:59 UTC explicitly interrupted only that bounded QA turn through the
+  authenticated execution API after ten minutes without a recorded tool call.
+  The API initially returned `queued`; subsequent supported live chat inspection
+  at 05:00 confirmed `generating=false`, `acp_interrupted=true`, manager finished,
+  and no background terminals. The request ID never entered the personal request
+  list. No request, grant, or send was replayed. Evidence:
+  `src/.local/human-turn-qa/logs/live-attention-{interrupt,status}-*.jsonl`.
+
+## September 14 Approval Error Persistence
+
+- Reproduced a failed naming/approval error disappearing on the next successful
+  background refresh. Separated read errors from action errors; refresh now
+  preserves the failure and source-name draft. Explicitly reopening the request
+  clears the old action error, and attempting approval again remains deliberate.
+- The regression test failed before the fix and passed after it. 77 focused
+  agent/attention tests, frontend typecheck, and frontend lint passed; the final
+  focused naming suite also checks dismiss/reopen behavior (9 tests).
+- Logs: `/tmp/agent-mentions-poll-error-{before,tests,final-tests,tsc,lint}.log`.
 
 ## September 14 In-App Agent Navigation
 
