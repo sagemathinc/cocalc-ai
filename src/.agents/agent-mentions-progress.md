@@ -15,9 +15,11 @@ isolated autostart, personal P/Q/P destination selection, and fault/control
 tests have live evidence below. Native renewal approval remains unverified: its
 QA request expired without browser/device fresh-auth completion. CLI approval
 is not substituted for it. The goal is blocked on that external verification.
-The included-Codex one-concurrent-turn policy remains intact and can prevent
-receiver execution while its sender runs. This is a documented execution-gate
-limitation, not permission to add retries or redesign billing in this prototype.
+The live audit used an included-Codex one-concurrent-turn policy, which prevented
+receiver execution while its sender ran. The subsequent user-approved policy
+change below raises the default to two; it is built and tested, but the running
+dev hubs have not yet been reloaded for that change. Capacity can still be
+exhausted; no waiting scheduler or automatic retry has been added.
 Do not mark the full acceptance milestone complete yet.
 
 ## Architecture
@@ -795,3 +797,37 @@ needed for this step.
 
 Evidence: `/tmp/agent-mentions-native-blocked-{audit.jsonl,ui.json}` and
 `/tmp/agent-mentions-native-expired-grant-check.json`.
+
+## Funded Concurrency And Attachment Follow-Up
+
+The user approved raising the hardcoded funded-turn per-account concurrency
+limit from one to two. Policy version 6 makes that change and uses limit-neutral
+denial text. It does not change operator global concurrency settings, funding
+budgets, eligibility, or ordinary execution permission gates. Capacity denial
+remains immediate; this change adds neither waiting nor automatic retransmission.
+
+Validation: server TypeScript build passed, 17 server policy/reservation tests
+passed, and 9 util policy tests passed. The reservation test submits four
+concurrent attempts for one account with distinct project/host IDs, admits exactly
+two, rejects the rest, and admits a replacement after a slot is released. A
+separate regression verifies that the operator global concurrency cap still
+applies across accounts. These use isolated test storage, not live grants or
+provider turns. The running dev hubs have not been reloaded for this change.
+
+```sh
+pnpm -C src/packages/server exec tsc --build
+NODE_OPTIONS=--experimental-vm-modules COCALC_TEST_USE_PGLITE=1 pnpm -C src/packages/server exec jest ai/site-funded-codex-policy.test.ts ai/site-funded-codex-reservations.integration.test.ts --runInBand
+pnpm -C src/packages/util exec jest ai/site-funded-codex.test.ts --runInBand
+```
+
+Attachment design decisions for the next increment, not implemented here:
+
+- Same-project agents may exchange file paths as live references rather than
+  unnecessarily copying shared files.
+- Cross-project attachments are bounded file snapshots placed in a random
+  destination `/tmp` directory with a manifest of actual local paths. They are
+  ephemeral, not backed up; project restart may remove them. Missing attachments
+  must be reported rather than silently treated as available.
+- Keep normal file permissions and bounded transfer/retention checks. Temporary
+  storage does not itself provide an authorization boundary.
+- Federation is wishlist only, explicitly outside this implementation.
