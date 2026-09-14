@@ -283,17 +283,20 @@ Still unverified against the full plan:
 
 - Positive successive P/Q turns with different personal reviewers and actual
   reused-session credential rotation, not just negative steering tests.
-- A live request displayed and decided through the new attention card, including
-  pending-state restoration across refresh.
+- Positive approval/renewal through the native attention card. Live display,
+  pending-state restoration across refresh, expiry, and denial now pass below.
 - Cold receiver start with all receiver UIs closed, excluding browser startup
   as an independent cause.
 - Live pause/revoke while the target is stopped and while its owning bay is
   unavailable; a live lost-acknowledgment/unknown outcome without replay.
-- The composer approval and pending attention card still need live 200% zoom
-  checks. My Agents naming/table checks at actual browser zoom now pass below.
+- The composer approval still needs live 200% zoom checks. The pending attention
+  card and My Agents naming/table now pass at actual browser zoom below.
 
-Actual external validation blockers are completing browser human verification
-and obtaining a runnable second QA account. Cross-bay collaborator setup has
+The remaining external prerequisite for the positive P/Q test is a runnable
+second QA account; its last execution attempt hit a zero queued-turn limit.
+Do not change its membership, billing, or provider credentials without human
+direction. Browser approval checks are unfinished work, not a current external
+blocker: the local dev fresh-auth session is working. Cross-bay collaborator setup has
 now been fixed and live-verified; temporary access was removed after the test.
 Positive successive P/Q turns have not been live-proven. The new path stays
 opt-in; these gaps prevent a claim that every acceptance test is complete.
@@ -375,3 +378,45 @@ selection is not the same as a UUID-bound mention.
   unchanged, proving same-document navigation rather than a reload.
   Reproduction helpers: `/tmp/agent-mentions-navigation-{before,after}.js`;
   check logs: `/tmp/agent-mentions-navigation-{tests,tsc,lint,static}.log`.
+
+## September 14 Native Request And Responsive Review
+
+- Real agent request `83a363ea-6d87-4655-a8f7-13a3ca462e9c` was denied in the
+  My Agents recovery inbox. The waiting CLI returned `denied`, and the agent
+  ended without sending. Exact assistant activity is in
+  `src/.local/human-turn-qa/logs/native2-final.json`.
+- An initial suspicion that the native card was missing came from truncated
+  whole-page text. Targeted DOM/component inspection disproved that diagnosis;
+  no speculative attention polling/routing change was made.
+- Diagnostic request `404be82f-0099-4de8-ba33-134cdb47f94b` appeared in the exact
+  source chat and survived a page reload. At 320 CSS pixels, its review button
+  was 1305px wide, clipping the destination. Commit `e38fd723a1` separates
+  wrapping endpoint context from a compact 204px review button, retaining the
+  complete accessible name. Dialog identifiers wrap as well.
+- At 320px after deployment: Enter opened Review; duplicate `reviewer` feedback
+  immediately disabled approval; Tab reached the footer and scrolled it into
+  view; Escape returned focus to Review. No horizontal document/dialog overflow.
+  This diagnostic expired before the first zoom check finished; authoritative
+  state became `expired` and the card/dialog disappeared. It was not renewed,
+  approved, or replayed.
+- Fresh bounded request `17b95918-482b-471b-8740-7873a56a961b` tested actual
+  Chromium 200% zoom: outer width 1920, content width 960, DPR 2. Enter opened
+  the native card, Tab reached Deny, and Enter submitted the exact typed denial.
+  The account-home API confirmed `denied`; the dialog/card cleared. Restored
+  100% zoom (width 1920, DPR 1) and closed the temporary browser settings tab.
+  All three requests were approval-only tests with no message dispatch or grant.
+- Validation: 45 focused tests across source naming, mentions, attention hook,
+  and attention cards; frontend typecheck, frontend lint, static build all pass.
+  Static build log: `/tmp/agent-mentions-attention-narrow-static.log`.
+- Reproduction: create a fresh scoped `request-connection` with `--wait-seconds 0`
+  in the disposable `human-turn-qa-1789350561320.chat` thread, open that same
+  thread, reload, focus Review and press Enter. Check at 320px and Chromium's
+  Appearance / Page zoom 200%, then explicitly deny. Do not resubmit the guarded
+  completed integration cases. Browser helpers and JSON/screenshots are under
+  `/tmp/agent-mentions-attention-{narrow,zoom2}-*`; authoritative outcomes are
+  `/tmp/agent-mentions-native3-current.json` and
+  `/tmp/agent-mentions-attention-zoom2-denied.json`. CLI terminal summaries are
+  `/tmp/agent-mentions-native{3,4}-final.json`.
+- Next concrete step: exercise positive naming/approval and composer preflight
+  at 200%, then the stopped-receiver test with all receiver UIs closed. The
+  positive two-human test and live fault-injection cases above remain open.
