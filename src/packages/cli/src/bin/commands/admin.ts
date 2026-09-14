@@ -1294,16 +1294,10 @@ Merge comments are private unless their corresponding --*-comment-public flag is
             expires_at,
             metadata,
           };
-          const quote = await ctx.hub.purchases.getMembershipPackageQuote({
+          const quote = await ctx.hub.purchases.adminGetMembershipPackageQuote({
             account_id: ctx.accountId,
-            kind,
-            membership_class,
-            seat_count,
-            interval,
-            course_project_id,
-            starts_at,
-            expires_at,
-            metadata: metadata ?? null,
+            user_account_id,
+            product,
           });
           const idempotency_key =
             `${opts.idempotencyKey ?? ""}`.trim() ||

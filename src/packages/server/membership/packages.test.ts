@@ -63,6 +63,7 @@ import {
   listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
+  resolveAdminMembershipPackageQuote,
   resolveMembershipPackageQuote,
   revokeMembershipPackageSeat,
   updateMembershipPackage,
@@ -502,6 +503,38 @@ describe("membership packages", () => {
     expect(quote.package_id).toBe(package_id);
     expect(quote.seat_price).toBe(17.5);
     expect(quote.total_price).toBe(87.5);
+  });
+
+  it("reserves custom package periods for admin-assisted purchases", async () => {
+    const starts_at = new Date("2026-09-01T00:00:00.000Z");
+    const expires_at = new Date("2027-09-01T00:00:00.000Z");
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: teamTier,
+      seat_count: 1,
+      interval: "month" as const,
+      starts_at,
+      expires_at,
+    };
+
+    await expect(resolveMembershipPackageQuote(product)).rejects.toThrow(
+      "custom membership package periods require an admin-assisted purchase",
+    );
+    await expect(
+      purchaseMembershipPackage({
+        account_id: uuid(),
+        amount: 20,
+        product,
+      }),
+    ).rejects.toThrow(
+      "custom membership package periods require an admin-assisted purchase",
+    );
+
+    const adminQuote = await resolveAdminMembershipPackageQuote(product);
+    expect(adminQuote.starts_at).toEqual(starts_at);
+    expect(adminQuote.expires_at).toEqual(expires_at);
+    expect(adminQuote.total_price).toBe(adminQuote.seat_price);
   });
 
   it("quotes course seats from the selected course-visible membership tier", async () => {

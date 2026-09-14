@@ -12,6 +12,7 @@ import {
   type MoneyValue,
 } from "@cocalc/util/money";
 import dayjs from "dayjs";
+import { boundedMembershipTierLabel } from "@cocalc/util/membership-tier-label";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import createPaymentIntent from "./create-payment-intent";
 import getBalance from "@cocalc/server/purchases/get-balance";
@@ -257,7 +258,10 @@ async function membershipRenewalDescription({
   client?: PoolClient;
 }): Promise<string> {
   const tier = await getMembershipTierById({ id: membershipClass, client });
-  const label = cleanString(tier?.label) ?? membershipClass;
+  const label = boundedMembershipTierLabel({
+    id: membershipClass,
+    label: cleanString(tier?.label),
+  });
   return `${label} membership renewal, ${
     interval == "month" ? "monthly" : "annual"
   }`;

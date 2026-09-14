@@ -1195,6 +1195,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin custom-price membership package and billing mutation",
   },
+  "purchases.adminGetMembershipPackageQuote": {
+    decision: "fresh-auth-required",
+    reason: "admin custom-period membership package pricing preview",
+  },
   "purchases.adminResetMembershipUsageWindows": {
     decision: "fresh-auth-required",
     reason: "admin operation resets user-visible membership usage windows",

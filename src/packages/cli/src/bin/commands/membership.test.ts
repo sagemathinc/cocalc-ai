@@ -295,8 +295,6 @@ test("membership quote resolves course projects and metadata json", async () => 
     seat_count: 12,
     interval: undefined,
     course_project_id: "44444444-4444-4444-4444-444444444444",
-    starts_at: undefined,
-    expires_at: undefined,
     metadata: { source: "cli" },
   });
   assert.equal(captured?.total_price, 300);

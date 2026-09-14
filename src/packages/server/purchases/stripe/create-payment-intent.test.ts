@@ -8,7 +8,7 @@ const mockGetConn = jest.fn();
 const mockDefaultReturnUrl = jest.fn();
 const mockGetStripeCustomerId = jest.fn();
 const mockSanityCheckAmount = jest.fn();
-const mockAssertValidUserMetadata = jest.fn();
+const mockAssertValidStripePaymentInput = jest.fn();
 const mockGetStripeLineItems = jest.fn();
 const mockCurrentStripeSite = jest.fn();
 const mockIsReadyToProcess = jest.fn();
@@ -28,11 +28,12 @@ jest.mock("@cocalc/server/stripe/connection", () => ({
 }));
 
 jest.mock("./util", () => ({
-  assertValidUserMetadata: (...args: any[]) =>
-    mockAssertValidUserMetadata(...args),
+  assertValidStripePaymentInput: (...args: any[]) =>
+    mockAssertValidStripePaymentInput(...args),
   defaultReturnUrl: (...args: any[]) => mockDefaultReturnUrl(...args),
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
   getStripeLineItems: (...args: any[]) => mockGetStripeLineItems(...args),
+  normalizeStripeLineItems: (lineItems: unknown) => lineItems,
   sanityCheckAmount: (...args: any[]) => mockSanityCheckAmount(...args),
   currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
 }));
@@ -101,7 +102,7 @@ describe("createPaymentIntent", () => {
     mockDefaultReturnUrl.mockResolvedValue("https://cocalc.example/return");
     mockGetStripeCustomerId.mockResolvedValue("cus_123");
     mockSanityCheckAmount.mockResolvedValue(undefined);
-    mockAssertValidUserMetadata.mockReturnValue(undefined);
+    mockAssertValidStripePaymentInput.mockReturnValue(undefined);
     mockCurrentStripeSite.mockResolvedValue("cocalc.ai");
     mockGetStripeLineItems.mockReturnValue({
       lineItemsWithoutCredit: lineItems,

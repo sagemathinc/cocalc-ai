@@ -75,6 +75,7 @@ export const TABLE_OWNERSHIP = {
       "account_resource_quarantine_audit_log",
       "account_second_factor_recovery_codes",
       "account_second_factors",
+      "admin_membership_package_intents",
       "api_keys",
       "membership_grants",
       "membership_package_assignments",

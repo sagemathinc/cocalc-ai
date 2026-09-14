@@ -34,9 +34,16 @@ import { initAuth } from "./auth-token";
 import { getCustomizePayload } from "./hub/settings";
 import { getOrCreateSelfSigned } from "./tls";
 import { attachProxyServer } from "@cocalc/project/servers/proxy/proxy";
-import { assertLocalBindOrInsecure } from "@cocalc/backend/network/policy";
+import {
+  assertLocalBindOrInsecure,
+  isLoopbackHost,
+} from "@cocalc/backend/network/policy";
 import { maybeHandleLiteStaticAppRequest } from "./static-apps";
 import { isApiV2Enabled } from "./api-v2";
+import {
+  authorizeLiteSiteSettings,
+  configureLiteSiteSettingsFreshAuth,
+} from "./site-settings-fresh-auth";
 
 const logger = getLogger("lite:static");
 
@@ -124,8 +131,34 @@ export async function initHttpServer({ AUTH_TOKEN }): Promise<{
   return { httpServer, app, port: actualPort, isHttps, hostname };
 }
 
-export async function initApp({ app, conatClient, AUTH_TOKEN, isHttps }) {
+export async function initApp({
+  app,
+  conatClient,
+  AUTH_TOKEN,
+  isHttps,
+  hostname = "",
+}) {
   initAuth({ app, AUTH_TOKEN, isHttps });
+  configureLiteSiteSettingsFreshAuth(AUTH_TOKEN, {
+    allow_tokenless_local: !AUTH_TOKEN && isLoopbackHost(hostname),
+  });
+  app.post(
+    "/api/v2/auth/lite-site-settings-authorize",
+    express.json({ limit: "4kb", strict: true }),
+    (req, res) => {
+      try {
+        res.json(
+          authorizeLiteSiteSettings({
+            access_token: req.body?.access_token,
+            account_id,
+            browser_id: req.body?.browser_id,
+          }),
+        );
+      } catch (err) {
+        res.status(403).json({ error: `${err}`.replace(/^Error:\s*/, "") });
+      }
+    },
+  );
   if (isApiV2Enabled()) {
     const { createApiV2Router } = await import("@cocalc/http-api");
     app.use("/api/v2", createApiV2Router({ browserCors: "request-origin" }));

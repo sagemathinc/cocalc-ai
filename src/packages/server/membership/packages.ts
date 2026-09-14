@@ -86,6 +86,14 @@ type CourseSeatProjectValidation = {
   email_address?: string;
 };
 
+export interface TrustedCourseProjectQuoteContext {
+  project_id: string;
+  owning_bay_id: string;
+  ownership_epoch: number;
+  course_path?: string;
+  course_title?: string;
+}
+
 interface RawMembershipPackageRecord {
   id: string;
   owner_account_id: string;
@@ -1560,31 +1568,43 @@ async function getCourseSeatQuote({
   product,
   course_project_id,
   client,
+  trusted_course_project,
 }: {
   product: MembershipPackageProduct;
   course_project_id: string;
   client?: PoolClient;
+  trusted_course_project?: TrustedCourseProjectQuoteContext;
 }): Promise<MembershipPackageQuote> {
-  const { rows } = await getQueryClient(client).query(
-    `SELECT course, title
-     FROM projects
-     WHERE project_id=$1`,
-    [course_project_id],
-  );
+  if (
+    trusted_course_project != null &&
+    trusted_course_project.project_id !== course_project_id
+  ) {
+    throw Error("trusted course project does not match the requested course");
+  }
+  const { rows } = trusted_course_project
+    ? { rows: [] }
+    : await getQueryClient(client).query(
+        `SELECT course, title
+           FROM projects
+          WHERE project_id=$1`,
+        [course_project_id],
+      );
   const row = rows[0];
   const metadata = normalizeMetadata(product.metadata);
   const verifiedStudentCoursePurchase =
     metadata?.verified_student_course_purchase === true &&
     metadata?.direct_student_purchase === true &&
     `${metadata?.course_project_id ?? ""}`.trim() === course_project_id;
-  if (!row && !verifiedStudentCoursePurchase) {
+  if (!row && !verifiedStudentCoursePurchase && !trusted_course_project) {
     throw Error("course project not found");
   }
   const course = row?.course as CourseInfo | undefined;
   const coursePath =
+    trusted_course_project?.course_path ??
     course?.path ??
     `${verifiedStudentCoursePurchase ? metadata?.course_path : ""}`;
   const courseTitle =
+    trusted_course_project?.course_title ??
     row?.title ??
     `${verifiedStudentCoursePurchase ? metadata?.course_title : ""}`;
   const membership_class = `${product.membership_class ?? ""}`.trim();
@@ -1696,10 +1716,26 @@ async function getTierSeatQuote({
   };
 }
 
-export async function resolveMembershipPackageQuote(
+async function resolveMembershipPackageQuoteInternal(
   product: MembershipPackageProduct,
-  client?: PoolClient,
+  {
+    client,
+    allow_custom_period,
+    trusted_course_project,
+  }: {
+    client?: PoolClient;
+    allow_custom_period: boolean;
+    trusted_course_project?: TrustedCourseProjectQuoteContext;
+  },
 ): Promise<MembershipPackageQuote> {
+  if (
+    !allow_custom_period &&
+    (product.starts_at != null || product.expires_at != null)
+  ) {
+    throw Error(
+      "custom membership package periods require an admin-assisted purchase",
+    );
+  }
   const seat_count = normalizeSeatCount(product.seat_count);
   if (product.package_id) {
     const existing = await getMembershipPackage({
@@ -1774,6 +1810,7 @@ export async function resolveMembershipPackageQuote(
       product: { ...product, kind, seat_count },
       course_project_id,
       client,
+      trusted_course_project,
     });
   }
 
@@ -1791,6 +1828,28 @@ export async function resolveMembershipPackageQuote(
     interval,
     starts_at: asDate(product.starts_at),
     expires_at: asDate(product.expires_at),
+  });
+}
+
+export async function resolveMembershipPackageQuote(
+  product: MembershipPackageProduct,
+  client?: PoolClient,
+): Promise<MembershipPackageQuote> {
+  return await resolveMembershipPackageQuoteInternal(product, {
+    client,
+    allow_custom_period: false,
+  });
+}
+
+export async function resolveAdminMembershipPackageQuote(
+  product: MembershipPackageProduct,
+  client?: PoolClient,
+  trusted_course_project?: TrustedCourseProjectQuoteContext,
+): Promise<MembershipPackageQuote> {
+  return await resolveMembershipPackageQuoteInternal(product, {
+    client,
+    allow_custom_period: true,
+    trusted_course_project,
   });
 }
 

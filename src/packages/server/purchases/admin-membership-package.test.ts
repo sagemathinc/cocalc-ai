@@ -222,6 +222,247 @@ describe("admin membership package purchase", () => {
     expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
   });
 
+  it("canonicalizes UUID spelling before funding and reuses the same purchase", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const idempotency_key = `uppercase-${uuid()}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    mockCreatePaymentIntent.mockImplementation(async ({ account_id }) => {
+      const payment_intent = `pi_${uuid()}`;
+      await getPool().query(
+        `INSERT INTO purchases
+           (service, time, account_id, cost, description, invoice_id)
+         VALUES ('credit', NOW(), $1, -20, '{}'::JSONB, $2)`,
+        [account_id, payment_intent],
+      );
+      return {
+        payment_intent,
+        hosted_invoice_url: `https://stripe.test/${payment_intent}`,
+      };
+    });
+    const options = {
+      admin_account_id: admin_account_id.toUpperCase(),
+      user_account_id: user_account_id.toUpperCase(),
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: membershipClass,
+        seat_count: 1,
+        interval: "month" as const,
+      },
+      price: 20,
+      source: "card" as const,
+      reason: "canonical UUID retry",
+      idempotency_key,
+    };
+
+    const created = await adminCreateMembershipPackagePurchase(options);
+    const repeated = await adminCreateMembershipPackagePurchase({
+      ...options,
+      admin_account_id,
+      user_account_id,
+    });
+
+    expect(repeated).toMatchObject({
+      package_id: created.package_id,
+      purchase_id: created.purchase_id,
+      existing: true,
+    });
+    expect(mockCreatePaymentIntent).toHaveBeenCalledTimes(1);
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: user_account_id,
+        metadata: expect.objectContaining({ admin_account_id }),
+      }),
+    );
+    const { rows } = await getPool().query(
+      `SELECT account_id, invoice_id
+         FROM purchases
+        WHERE id=$1`,
+      [created.purchase_id],
+    );
+    expect(rows).toEqual([
+      {
+        account_id: user_account_id,
+        invoice_id: `admin-membership-package:${admin_account_id}:${idempotency_key}`,
+      },
+    ]);
+  });
+
+  it("rejects cross-account reuse of an explicit key before card funding", async () => {
+    const admin_account_id = uuid();
+    const first_account_id = uuid();
+    const second_account_id = uuid();
+    const idempotency_key = `cross-account-${uuid()}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(first_account_id);
+    await createTestAccount(second_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    const common = {
+      admin_account_id,
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: membershipClass,
+        seat_count: 1,
+        interval: "month" as const,
+      },
+      price: 20,
+      reason: "explicit idempotency key must identify one target purchase",
+      idempotency_key,
+    };
+
+    await adminCreateMembershipPackagePurchase({
+      ...common,
+      user_account_id: first_account_id,
+      source: "free",
+    });
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        ...common,
+        user_account_id: second_account_id,
+        source: "card",
+      }),
+    ).rejects.toThrow("idempotency key belongs to an incompatible purchase");
+
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    const secondAccountPurchases = await getPool().query(
+      "SELECT id FROM purchases WHERE account_id=$1",
+      [second_account_id],
+    );
+    expect(secondAccountPurchases.rows).toHaveLength(0);
+    const secondAccountIntents = await getPool().query(
+      "SELECT invoice_id FROM admin_membership_package_intents WHERE account_id=$1",
+      [second_account_id],
+    );
+    expect(secondAccountIntents.rows).toHaveLength(0);
+  });
+
+  it("fulfills the immutable approved quote when tier configuration changes after funding", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const mutableMembershipClass = `admin-package-mutable-${uuid()}`;
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await createTestMembershipTier({
+      id: mutableMembershipClass,
+      priority: 25,
+      price_monthly: 20,
+      price_yearly: 200,
+      team_visible: true,
+    });
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+    mockCreatePaymentIntent.mockImplementation(async ({ account_id }) => {
+      const payment_intent = `pi_${uuid()}`;
+      await getPool().query(
+        `INSERT INTO purchases
+           (service, time, account_id, cost, description, invoice_id)
+         VALUES ('credit', NOW(), $1, -25, $2::jsonb, $3)`,
+        [
+          account_id,
+          { type: "credit", purpose: "admin-membership-package-purchase" },
+          payment_intent,
+        ],
+      );
+      await getPool().query(
+        "UPDATE membership_tiers SET disabled=TRUE, updated=NOW() WHERE id=$1",
+        [mutableMembershipClass],
+      );
+      return {
+        payment_intent,
+        hosted_invoice_url: `https://stripe.test/${payment_intent}`,
+      };
+    });
+
+    try {
+      const created = await adminCreateMembershipPackagePurchase({
+        admin_account_id,
+        user_account_id,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: mutableMembershipClass,
+          seat_count: 5,
+          interval: "month",
+        },
+        price: 25,
+        source: "card",
+        reason: "approved quote must survive post-funding configuration drift",
+        idempotency_key: "post-funding-tier-drift",
+      });
+
+      expect(created).toMatchObject({
+        price: 25,
+        standard_price: 100,
+        existing: false,
+      });
+      const pkg = await getPool().query(
+        `SELECT membership_class, seat_count, metadata
+           FROM membership_packages
+          WHERE id=$1`,
+        [created.package_id],
+      );
+      expect(pkg.rows[0]).toMatchObject({
+        membership_class: mutableMembershipClass,
+        seat_count: 5,
+        metadata: expect.objectContaining({ standard_total_price: 100 }),
+      });
+      const intents = await getPool().query(
+        "SELECT invoice_id FROM admin_membership_package_intents WHERE account_id=$1",
+        [user_account_id],
+      );
+      expect(intents.rows).toHaveLength(0);
+    } finally {
+      await getPool().query(
+        "UPDATE membership_tiers SET disabled=FALSE, updated=NOW() WHERE id=$1",
+        [mutableMembershipClass],
+      );
+    }
+  });
+
+  it("validates package dates before attempting card funding", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    await createTestAccount(admin_account_id);
+    await createTestAccount(user_account_id);
+    await getPool().query(
+      "UPDATE accounts SET groups=$2::TEXT[] WHERE account_id=$1",
+      [admin_account_id, ["admin"]],
+    );
+
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        admin_account_id,
+        user_account_id,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: membershipClass,
+          seat_count: 1,
+          interval: "month",
+          starts_at: new Date("2026-10-02T00:00:00Z"),
+          expires_at: new Date("2026-10-01T00:00:00Z"),
+        },
+        price: 25,
+        source: "card",
+        reason: "invalid date ordering must fail before Stripe",
+        idempotency_key: "invalid-dates-before-card",
+      }),
+    ).rejects.toThrow("expires_at must be after starts_at");
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+  });
+
   it("does not create a package when card funding needs user action", async () => {
     const admin_account_id = uuid();
     const user_account_id = uuid();
@@ -271,5 +512,10 @@ describe("admin membership package purchase", () => {
       [user_account_id],
     );
     expect(purchases.rows).toHaveLength(0);
+    const intents = await getPool().query(
+      "SELECT invoice_id FROM admin_membership_package_intents WHERE account_id=$1",
+      [user_account_id],
+    );
+    expect(intents.rows).toHaveLength(1);
   });
 });

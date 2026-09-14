@@ -4,9 +4,10 @@ import {
   defaultReturnUrl,
   getStripeCustomerId,
   sanityCheckAmount,
-  assertValidUserMetadata,
+  assertValidStripePaymentInput,
   getStripeLineItems,
   currentStripeSite,
+  normalizeStripeLineItems,
 } from "./util";
 import type {
   LineItem,
@@ -69,6 +70,7 @@ export default async function createPaymentIntent({
   // Restrict automatic collection to explicitly supported instant methods.
   allowedPaymentMethodTypes?: string[];
 }): Promise<{ payment_intent: string; hosted_invoice_url: string }> {
+  lineItems = normalizeStripeLineItems(lineItems) as LineItem[];
   logger.debug("createPaymentIntent", {
     account_id,
     purpose,
@@ -77,11 +79,8 @@ export default async function createPaymentIntent({
     return_url,
     force,
   });
-  if (!purpose) {
-    throw Error("purpose must be set");
-  }
+  assertValidStripePaymentInput({ purpose, description, lineItems, metadata });
   await assertPaymentCheckoutAllowed();
-  assertValidUserMetadata(metadata);
 
   const { lineItemsWithoutCredit, total_excluding_tax_usd } =
     getStripeLineItems(lineItems);

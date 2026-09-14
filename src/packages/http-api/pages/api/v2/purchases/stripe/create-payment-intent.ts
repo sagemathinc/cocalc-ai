@@ -9,6 +9,7 @@ import {
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import throttle from "@cocalc/util/api/throttle";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { assertInteractivePaymentPurpose } from "@cocalc/server/purchases/stripe/util";
 
 export default async function handle(req, res) {
   try {
@@ -74,6 +75,7 @@ async function get(req) {
       account_id,
       allow_actor_impersonation: true,
     });
+    assertInteractivePaymentPurpose(purpose);
     result = await createPaymentIntent({
       account_id,
       description,

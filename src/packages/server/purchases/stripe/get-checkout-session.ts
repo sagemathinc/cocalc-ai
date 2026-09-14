@@ -1,7 +1,8 @@
 import getConn from "@cocalc/server/stripe/connection";
 import getLogger from "@cocalc/backend/logger";
 import {
-  assertValidUserMetadata,
+  assertInteractivePaymentPurpose,
+  assertValidStripePaymentInput,
   getStripeCustomerId,
   sanityCheckAmount,
   getStripeLineItems,
@@ -11,7 +12,6 @@ import type {
   CheckoutSessionSecret,
   CheckoutSessionOptions,
 } from "@cocalc/util/stripe/types";
-import { isEqual } from "lodash";
 import { createHash } from "node:crypto";
 import { decimalToStripe } from "@cocalc/util/stripe/calc";
 import { url } from "@cocalc/server/messages/send";
@@ -68,11 +68,9 @@ export default async function getCheckoutSession({
     return_url,
     metadata,
   });
-  if (!purpose) {
-    throw Error("purpose must be set");
-  }
+  assertInteractivePaymentPurpose(purpose);
+  assertValidStripePaymentInput({ purpose, description, lineItems, metadata });
   await assertPaymentCheckoutAllowed();
-  assertValidUserMetadata(metadata);
 
   let total = toDecimal(0);
   for (const { amount } of lineItems) {
@@ -100,7 +98,6 @@ export default async function getCheckoutSession({
   metadata = {
     ...baseMetadata,
     checkout_key,
-    lineItems: JSON.stringify(lineItems),
   };
 
   if (!return_url) {
@@ -119,7 +116,6 @@ export default async function getCheckoutSession({
     if (session.metadata?.purpose == purpose && session.client_secret) {
       if (
         session.metadata?.checkout_key != checkout_key ||
-        !isEqual(session.metadata?.lineItems, JSON.stringify(lineItems)) ||
         session.created <= cutoff
       ) {
         logger.debug("getCheckoutSession: expiring checkout session");

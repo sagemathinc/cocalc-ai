@@ -309,7 +309,7 @@ describe("purchases Stripe fresh-auth routes", () => {
 
   it("requires fresh auth before creating a checkout session", async () => {
     mockGetParams.mockReturnValue({
-      purpose: "membership",
+      purpose: "membership-change",
       description: "Membership",
       lineItems: [{ description: "Membership", amount: 10 }],
       metadata: { membership_id: "membership-1" },
@@ -339,7 +339,7 @@ describe("purchases Stripe fresh-auth routes", () => {
 
   it("creates a checkout session after fresh auth", async () => {
     mockGetParams.mockReturnValue({
-      purpose: "membership",
+      purpose: "membership-change",
       description: "Membership",
       lineItems: [{ description: "Membership", amount: 10 }],
       return_url: "https://example.com/return",
@@ -359,12 +359,29 @@ describe("purchases Stripe fresh-auth routes", () => {
     });
     expect(mockGetCheckoutSession).toHaveBeenCalledWith({
       account_id: "acct-1",
-      purpose: "membership",
+      purpose: "membership-change",
       description: "Membership",
       lineItems: [{ description: "Membership", amount: 10 }],
-      return_url: "https://example.com/return",
       metadata: { membership_id: "membership-1" },
     });
+  });
+
+  it("rejects arbitrary self-service payment purposes", async () => {
+    mockGetParams.mockReturnValue({
+      purpose: "subscription-renewal",
+      description: "Untrusted payment",
+      lineItems: [{ description: "Credit", amount: 10 }],
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/create-payment-intent");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "invalid interactive payment purpose",
+    });
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   const billingMutationRoutes = [
