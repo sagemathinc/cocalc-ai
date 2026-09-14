@@ -282,8 +282,10 @@ live checks.
 
 Still unverified against the full plan:
 
-- Positive successive P/Q turns with different personal reviewers and actual
-  reused-session credential rotation, not just negative steering tests.
+- Successive P/Q/P turns now demonstrate different personal reviewers and actual
+  reused-session credential rotation (see the final section). Q's simultaneous
+  site-funded sender/receiver execution is still denied by the one-turn policy;
+  it is not an end-to-end receiver-completion pass.
 - Positive approval/renewal through the native attention card. Live display,
   pending-state restoration across refresh, expiry, and denial now pass below.
 - A forced stale-session browser challenge on the exact current candidate has
@@ -293,20 +295,19 @@ Still unverified against the full plan:
   messaging tests. Composer selection/review/cancel, the pending attention card,
   and My Agents naming/table also pass at actual 200% browser zoom below.
 
-The remaining external prerequisite for the positive P/Q test is a trusted,
-agent-capable second QA account. Its last execution attempt hit a zero
-queued-turn limit, but the September 14 recheck below traced this to the product
-access trust gate, not a zero free-membership allowance. Do not bypass email
-verification or change its membership, billing, or provider credentials without
-human direction. The dev CLI has working fresh auth, but it is not the browser's
+The second account's email-verification prerequisite is resolved and real turns
+now execute under Q. The subsequent cross-bay account lookup bug was fixed and
+deployed; the site-funded concurrency limit is separate. Do not bypass email
+verification or change membership, billing, or provider credentials to make QA
+pass. The dev CLI has working fresh auth, but it is not the browser's
 session. Completing the browser's passkey confirmation requires the human;
 canceling it and approving through the typed CLI is not a browser approval pass.
 Cross-bay collaborator setup has now been fixed and live-verified; temporary
 access was removed after the test.
 Live stopped-target revocation, account controls during an owning-bay outage,
 and the accepted-to-unknown response-loss test now pass; see the final sections.
-Positive successive P/Q turns have not been live-proven. The new path stays
-opt-in; these gaps prevent a claim that every acceptance test is complete.
+The new path stays opt-in; these gaps prevent a claim that every acceptance test
+is complete.
 
 Next concrete manual step: open account **My Agents**, open `builder`, type `@`
 and select `reviewer` (the recv chat on the QA host, not `local-helper` in B).
@@ -618,3 +619,69 @@ selection is not the same as a UUID-bound mention.
 - Next concrete step: resume genuine successive P/Q turns in the shared QA
   thread with distinct personal reviewers, current per-turn credentials, and
   normal project/provider gates. Do not hold that test for another auth prompt.
+
+## September 14 Successive Humans And Remote Execution
+
+- Restored only Q's temporary collaborator access to the two QA projects, after
+  recording existing members. P and Q each approved a separate 30-minute,
+  one-way connection from the same disposable source agent. Both personally
+  named their different destinations `reviewer`; Q's destination is a distinct
+  disposable thread in the receiver project, not P's `/home/user/recv.chat`.
+- Actual source turns P1, Q1, P2 reused Codex conversation
+  `01a09d9b-1c00-7df1-add3-cb9e77eef6a2`. Each ran the installed CLI's `whoami`,
+  `destinations`, and one `send --to reviewer`. Destination discovery exposed
+  only that turn's human's grant and endpoint. Source-owner run records confirm
+  principals P, Q, P for run IDs `d492bb97-5af0-49ed-a72e-e12b5dc92551`,
+  `a9f0ddb6-9041-4364-bd25-a9afe951a808`, and
+  `64900360-7bf3-432b-b443-a75fe1d3b4ca`, respectively. All three sends were
+  accepted. P's two receiver turns completed local acknowledgments.
+- Q1 attempt `923a9513-b7a0-411b-86fe-0aa688de5dff` was accepted, but its
+  receiver failed the included-Codex verification gate. Read-only inspection
+  established Q is verified in the seed directory and has no account/directory
+  row on receiver bay-1. `reserveSiteFundedCodexTurn` incorrectly used a local
+  directory lookup. It now uses the existing routed `getClusterAccountById`;
+  no account rows, credentials, trust flags, or permissions were copied or
+  changed to resolve this. The regression reproduced the exact denial before
+  the fix. Server build passed and all three dev hubs were restarted with it.
+- A new explicit Q2 attempt `8b316f92-8bd5-4fa2-a00d-b923f43a4f34` selected Q's
+  destination and was accepted. Verification now passed, but receiver execution
+  correctly failed with `Another site-funded Codex turn is already active for
+this account.` The included-Codex policy permits one simultaneous turn per
+  account, and the sender was still active. Neither accepted attempt was
+  automatically retried or reinterpreted as rejection. Their saved failure
+  histories remain intact. This policy currently prevents overlapping
+  site-funded agents from completing this workflow; transport acceptance does
+  not promise eventual execution.
+- After Q2 completed, a separate, explicit human-Q turn in that same receiver
+  completed with `Q receiver execution confirmed` at 08:12:08 UTC. Receiver
+  assistant `5ad96a70-e3da-4ab7-acab-7eafd93218cc`, run
+  `edbc8a84-cd84-45fe-9dfd-f7798a9f6ee5`, has Q's account in bay-1's run registry,
+  despite P being the original thread registrant. This proves routed admission
+  and execution as Q, not completion or replay of either prior agent message.
+- Validation: server build passed; 126 host API tests passed, including seven
+  new routed-admission cases covering remote eligibility, home-bay entitlement,
+  principal attribution, denied accounts, directory outage, and host access.
+  Broad `tsc -p tsconfig.test.json --noEmit` still fails on existing unrelated
+  test errors (including unused params, unique-symbol typing, and obsolete Host
+  fields); no new test block errors were reported. No frontend code changed.
+- Revoked both temporary QA connection groups after completion. Removed only
+  the temporary Q collaborator memberships, preserving P/Blaec and chat history.
+  Existing QA names remain; the disposable Q receiver model was set to the
+  supported `gpt-5.6-sol`, with normal site-funded selection left in force.
+- Evidence: `/tmp/agent-mentions-PQ-{P1,Q1,P2}-final.json`,
+  `PQ-source-runs-final.json`, `PQ-Q2-final.json`, `PQ-Q-isolated-activity.json`,
+  `PQ-Q-receiver-runs.txt`, and `PQ-cleanup-grants.jsonl`, all under the same
+  `/tmp/agent-mentions-` prefix. One-shot integration scripts/state and typed
+  CLI evidence are in `.local/human-turn-qa/`; completed cases reject replay.
+- Reproduce: approve fresh bounded personal grants for two authenticated humans
+  to distinct named reviewers, then submit P/Q/P sequentially in one shared
+  source thread. Read activity and source/receiver run-account IDs without
+  credential fields. For included-Codex accounts, explicitly distinguish the
+  concurrent receiver denial from a subsequent isolated human receiver turn.
+  Focused checks: `pnpm -C src/packages/server build` and
+  `pnpm -C src/packages/server exec jest conat/api/hosts.test.ts --runInBand`.
+- Next: positive native attention approval/renewal with the current browser
+  session. Separately decide the desired scheduling/product behavior when the
+  included-Codex concurrency allowance is one; do not add message retries or
+  relax funding limits implicitly. No new human authentication action is needed
+  to explain or fix the cross-bay lookup issue resolved here.

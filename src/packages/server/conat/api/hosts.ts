@@ -58,6 +58,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import { getClusterAccountsByIdsDirect } from "@cocalc/server/accounts/cluster-directory";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import type {
   AccountUsageOverview,
   MembershipEffectiveLimits,
@@ -3318,8 +3319,8 @@ export async function reserveSiteFundedCodexTurn({
         "Site-funded Codex is disabled. Connect a ChatGPT plan or personal OpenAI API key to continue.",
     };
   }
-  const accounts = await getClusterAccountsByIdsDirect([account_id]);
-  const account = accounts.find((entry) => entry.account_id === account_id);
+  // The host's bay need not store the executing human's account or directory row.
+  const account = await getClusterAccountById(account_id);
   if (!account || account.banned || !account.email_address_verified) {
     return {
       allowed: false,
