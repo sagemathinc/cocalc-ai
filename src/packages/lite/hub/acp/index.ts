@@ -361,6 +361,10 @@ const agentProjectIds = new WeakMap<AcpAgent, string>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
+const queuedAcpJobThreadRetryTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
 let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
 let acpExecutionOwnedByCurrentProcess = false;
 let acpInterruptPollerStarted = false;
@@ -481,6 +485,10 @@ const ACP_BLOB_MATERIALIZE_SLOW_MS = envNumber(
   250,
 );
 const ACP_WORKER_POLL_MS = envNumber("COCALC_ACP_WORKER_POLL_MS", 1000);
+const ACP_QUEUE_ADMISSION_RETRY_MS = Math.max(
+  250,
+  envNumber("COCALC_ACP_QUEUE_ADMISSION_RETRY_MS", 5000),
+);
 const ACP_WORKER_IDLE_EXIT_MS = envNumber(
   "COCALC_ACP_WORKER_IDLE_EXIT_MS",
   5000,
@@ -9883,13 +9891,14 @@ function kickQueuedAcpJobsForThread({
   path: string;
   thread_id: string;
 }): void {
+  const key = acpJobThreadKey({ project_id, path, thread_id });
+  if (queuedAcpJobThreadRetryTimers.has(key)) return;
   const nextQueued = nextQueuedAcpJobForThread({
     project_id,
     path,
     thread_id,
   });
   if (!nextQueued || !detachedWorkerCanClaimQueuedJob(nextQueued)) return;
-  const key = acpJobThreadKey({ project_id, path, thread_id });
   if (pumpingAcpJobThreads.has(key)) {
     return;
   }
@@ -9909,21 +9918,40 @@ function kickQueuedAcpJobsForThread({
     })
     .finally(() => {
       pumpingAcpJobThreads.delete(key);
-      if (
-        countQueuedAcpJobsForThread({
-          project_id,
-          path,
-          thread_id,
-        }) > 0 &&
-        !acpThreadHasRunningJob({
-          project_id,
-          path,
-          thread_id,
-        })
-      ) {
-        kickQueuedAcpJobsForThread({ project_id, path, thread_id });
-      }
+      scheduleQueuedAcpJobThreadRetry({ project_id, path, thread_id });
     });
+}
+
+function scheduleQueuedAcpJobThreadRetry({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): void {
+  if (
+    countQueuedAcpJobsForThread({ project_id, path, thread_id }) === 0 ||
+    acpThreadHasRunningJob({ project_id, path, thread_id })
+  ) {
+    return;
+  }
+  const key = acpJobThreadKey({ project_id, path, thread_id });
+  if (queuedAcpJobThreadRetryTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    queuedAcpJobThreadRetryTimers.delete(key);
+    kickQueuedAcpJobsForThread({ project_id, path, thread_id });
+  }, ACP_QUEUE_ADMISSION_RETRY_MS);
+  timer.unref?.();
+  queuedAcpJobThreadRetryTimers.set(key, timer);
+}
+
+function cancelQueuedAcpJobThreadRetries(): void {
+  for (const timer of queuedAcpJobThreadRetryTimers.values()) {
+    clearTimeout(timer);
+  }
+  queuedAcpJobThreadRetryTimers.clear();
 }
 
 let delayedAcpQueueWakeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -11925,6 +11953,7 @@ async function interruptCodexSession(
 }
 
 export async function disposeAcpAgents(): Promise<void> {
+  cancelQueuedAcpJobThreadRetries();
   const pending: Promise<void>[] = [];
   for (const [key, agent] of agents.entries()) {
     if (typeof agent.dispose !== "function") continue;
@@ -11976,6 +12005,10 @@ export const acpTestInternals = {
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,
+  kickQueuedAcpJobsForThread,
+  scheduleQueuedAcpJobThreadRetry,
+  queuedAcpJobThreadRetryCount: () => queuedAcpJobThreadRetryTimers.size,
+  cancelQueuedAcpJobThreadRetries,
   scheduleNextDelayedAcpQueueWake,
   delayedAcpQueueWakeAt: () => delayedAcpQueueWakeAt,
   persistAcpGuidanceDeliveryProjection,
