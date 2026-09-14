@@ -86,6 +86,8 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 }));
 
 const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+// PGlite does not expose independent backend lock waits in pg_stat_activity.
+const postgresIt = process.env.COCALC_TEST_USE_PGLITE === "1" ? it.skip : it;
 beforeAll(async () => {
   process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "personal-volume-funding-test";
   await before({ noConat: true });
@@ -933,47 +935,51 @@ it("settles every existing disk growth slice at the same personal cutover", asyn
   }
 });
 
-it("uses volume-before-VM locks while a concurrent disk operation holds the volume", async () => {
-  const f = await fixtureWithHome();
-  await stopForHomeHandoff(f);
-  // The normal test pool has two connections. Keep the competing resource
-  // operation outside it so this tests PostgreSQL locks, not pool starvation.
-  const db = getClient();
-  await db.connect();
-  let handoff: Promise<void> | undefined;
-  try {
-    await db.query("BEGIN");
-    await db.query("SELECT id FROM compute_volumes WHERE id=$1 FOR UPDATE", [
-      f.volumeId,
-    ]);
-    handoff = processVmPersonalFundingHandoffs();
-    let waiting = false;
-    for (let i = 0; i < 200; i++) {
-      const { rows } = await getPool().query(
-        "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM compute_volumes%'",
-      );
-      if (rows.length) {
-        waiting = true;
-        break;
+postgresIt(
+  "uses volume-before-VM locks while a concurrent disk operation holds the volume",
+  async () => {
+    const f = await fixtureWithHome();
+    await stopForHomeHandoff(f);
+    // The normal test pool has two connections. Keep the competing resource
+    // operation outside it so this tests PostgreSQL locks, not pool starvation.
+    const db = getClient();
+    await db.connect();
+    let handoff: Promise<void> | undefined;
+    try {
+      await db.query("BEGIN");
+      await db.query("SELECT id FROM compute_volumes WHERE id=$1 FOR UPDATE", [
+        f.volumeId,
+      ]);
+      handoff = processVmPersonalFundingHandoffs();
+      let waiting = false;
+      for (let i = 0; i < 200; i++) {
+        const { rows } = await getPool().query(
+          "SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE 'SELECT id FROM compute_volumes%'",
+        );
+        if (rows.length) {
+          waiting = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
       }
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(waiting).toBe(true);
+      await db.query(
+        "SELECT id FROM compute_vms WHERE id=$1 FOR UPDATE NOWAIT",
+        [f.vmId],
+      );
+      await db.query("COMMIT");
+      await handoff;
+      expect(
+        courseVolumeBinding((await getComputeVolumeById(f.volumeId))!).source
+          .kind,
+      ).toBe("personal");
+    } finally {
+      await db.query("ROLLBACK");
+      await db.end();
+      await handoff;
     }
-    expect(waiting).toBe(true);
-    await db.query("SELECT id FROM compute_vms WHERE id=$1 FOR UPDATE NOWAIT", [
-      f.vmId,
-    ]);
-    await db.query("COMMIT");
-    await handoff;
-    expect(
-      courseVolumeBinding((await getComputeVolumeById(f.volumeId))!).source
-        .kind,
-    ).toBe("personal");
-  } finally {
-    await db.query("ROLLBACK");
-    await db.end();
-    await handoff;
-  }
-});
+  },
+);
 
 it("rolls back the VM reservation when the combined home-volume reservation exceeds the approved cap", async () => {
   const f = await fixtureWithHome();

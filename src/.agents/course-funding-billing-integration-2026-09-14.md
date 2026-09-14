@@ -45,12 +45,24 @@ or seed-local operation only. Its authenticated attached-bay transport is not
 implemented upstream. This integration does not introduce an inter-bay bypass.
 Authority-enabled account funding operations reject attached-bay execution.
 
-Lite2b currently has three bays. Install the merged code there without changing
-the activation flag, sponsorship rollout gates, or customer settings. Test
-authority-enabled operation in the existing isolated one-bay development
-database and compute namespace instead. Production activation still requires the
+Lite2b currently has three bays. The merged code is installed there without
+changing the activation flag, sponsorship rollout gates, or customer settings.
+Authority-enabled operation was tested in the existing isolated one-bay
+development database and compute namespace instead. Production activation requires the
 coordinated stop/drain procedure in `docs/billing-authority.md`; do not activate
 the authority on a multibay installation.
+
+All three lite2b hubs were stopped and restarted on the merged code. The online
+project host completed its project-host, project, tools, and bootstrap upgrade;
+bootstrap reconciliation reports no drift. The public frontend manifest exactly
+matches the local production-style build at `8d76afaae3`. Runtime bundles were
+built from the merged worktree before the merge commit was recorded, so the
+project-host build identifier includes the previous revision and `dirty`; this
+is not an old unmerged bundle. Installed versions match the requested artifacts.
+The public landing and sign-in pages rendered with no failed script responses;
+the sign-in screenshot was inspected. An authenticated command executed in the
+running validation project after the host upgrade. All three hub HTTP endpoints
+responded successfully.
 
 ## Validation
 
@@ -64,12 +76,23 @@ the authority on a multibay installation.
   Earlier closure failures were caused by thousands of unrelated retained
   fixtures in the shared test database exhausting a single bounded worker pass;
   no production bounds or shared test records were changed to make tests pass.
+- An additional PostgreSQL run passed 107 tests in five suites for VM funding,
+  personal fallback, multibay sponsorship, recovery, and volume funding. The
+  PGlite run passed its 85 applicable tests. A cross-backend lock-wait test now
+  explicitly requires PostgreSQL, like the existing multibay suite; its lock
+  assertion is unchanged and passed against PostgreSQL.
 - The merged isolated one-bay hub ran with authority activation on, one serving
   lease, and successful maintenance commands. Instructor allocation was approved
   through actual independent password/MFA sign-in. The student selected that
   allowance and created a disposable GCP CPU VM. It reached ready, stopped on its
-  three-minute timer, and was deleted through the normal API. Final metering and
-  pool return are still being observed at this checkpoint.
+  three-minute timer, and was deleted through the normal API. Final metering
+  closed the reservation and pool and released its backing. Its short run
+  correctly rounded to zero cents. A second CPU VM ran long enough to post one
+  cent, attributed to the instructor rather than the student, and was then
+  deleted through the normal API. Normal egress finalization closed its
+  reservation. Independently approved instructor closure returned USD 1.99 from
+  that USD 2 allocation, leaving zero reserved funds and exactly one USD 0.01
+  purchase on the instructor's ledger, with no charge to the student.
 - A USD 10 Stripe test-mode purchase produced one USD 10 credit, including after
   repeated processing. A separately approved USD 1 credit transfer produced one
   receipt for each QA account; replay did not duplicate it.
@@ -77,6 +100,11 @@ the authority on a multibay installation.
   checks at 320/720/1440 widths in light/dark themes. The narrow dark-mode
   screenshot was inspected. Consent was not enabled by this audit.
 
-Deployment to lite2b and final cloud settlement checks are in progress. These
-checks do not substitute for independent review, the full acceptance matrix, or
-production pilot authorization.
+Deployment and these integration checks are complete. The provider inventory
+reconciler confirmed zero remaining QA instances, disks, public addresses, or
+orphans after cleanup. The disposable PostgreSQL test server was stopped; the
+isolated QA and lite2b development hubs remain available. Production was not
+deployed and customer sponsorship was not enabled.
+
+These checks do not substitute for independent review, the full acceptance
+matrix, or production pilot authorization.
