@@ -1,5 +1,8 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import { setCustomer } from "@cocalc/server/purchases/stripe/customer";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
 import getParams from "@cocalc/http-api/lib/api/get-params";
@@ -11,6 +14,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -27,6 +31,6 @@ async function get(req) {
   throttle({ account_id, endpoint: "purchases/stripe/set-customer" });
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { changes } = getParams(req);
-  await setCustomer(account_id, changes);
+  await executeBillingHttpCommand("set-customer", { account_id, changes });
   return { success: true };
 }

@@ -7,6 +7,10 @@ export {};
 
 const getMembershipMock = jest.fn();
 const recordPrincipalDenialMock = jest.fn(async () => true);
+const executeBillingHubApiCallMock = jest.fn(
+  async (call) => await billingHubApiExecutor?.(call),
+);
+let billingHubApiExecutor: ((call: any) => Promise<unknown>) | undefined;
 
 jest.mock("@cocalc/server/accounts/security-state", () => ({
   __esModule: true,
@@ -27,6 +31,20 @@ jest.mock("./purchases", () => ({
   getMembership: (...args: any[]) => getMembershipMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingHubApiCall: (...args: any[]) =>
+    executeBillingHubApiCallMock(...args),
+  isBillingAuthorityHubApiCall: (name: string) => name.startsWith("purchases."),
+}));
+
+jest.mock("@cocalc/server/purchases/billing-authority/dispatch", () => ({
+  registerBillingAuthorityHubApiExecutor: (
+    executor: (call: any) => Promise<unknown>,
+  ) => {
+    billingHubApiExecutor = executor;
+  },
+}));
+
 jest.mock("./principal-policy-denials", () => ({
   __esModule: true,
   recordHubApiPrincipalDenial: (...args: any[]) =>
@@ -40,6 +58,8 @@ describe("hub purchases principal enforcement", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    billingHubApiExecutor = undefined;
+    executeBillingHubApiCallMock.mockClear();
     getMembershipMock.mockReset().mockResolvedValue({ source: "test" });
     recordPrincipalDenialMock.mockClear();
   });

@@ -54,6 +54,7 @@ import {
   assertCommercialAutomaticTax,
   assertCommercialInvoiceLineTax,
 } from "../tax";
+import { registerCommercialOrderBillingAccount } from "../billing-authority";
 
 const logger = getLogger("server:commercial-orders:stripe-quotes");
 const FLOW = "commercial_quote";
@@ -1527,6 +1528,7 @@ export async function reconcileStripeCommercialQuoteById(opts: {
   actor_account_id?: string;
 }): Promise<CommercialOrder> {
   const order = await getCommercialOrder(opts.order_id);
+  await registerCommercialOrderBillingAccount(order);
   const quote = await getCommercialQuote(order.id, opts.commercial_quote_id);
   if (quote.provider !== "stripe") throw Error("quote is not Stripe-backed");
   const stripe = await getConn();

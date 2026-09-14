@@ -3,8 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { createHash } from "node:crypto";
-
 import getPool, { getClient, type PoolClient } from "@cocalc/database/pool";
 import { recordAccountAdminAuditEvent } from "@cocalc/server/accounts/admin-audit";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
@@ -26,20 +24,23 @@ import {
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
-import { MAX_COST } from "@cocalc/util/db-schema/purchases";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
-import { moneyRound2Up, moneyToCurrency, toDecimal } from "@cocalc/util/money";
+import { toDecimal } from "@cocalc/util/money";
 import {
   resolveAdminCourseProjectQuoteContext,
   resolveLockedLocalAdminCourseProjectQuoteContext,
 } from "./admin-course-project";
 import {
+  adminMembershipPackageBusinessIdentityHash,
   adminMembershipPackageInvoiceId,
+  legacyAdminMembershipPackageRequestHash,
+  normalizeAdminMembershipPackageBusinessIdentity,
   normalizeAdminMembershipPackageProduct,
   normalizeAdminMembershipPackageUuid,
 } from "./admin-membership-package-identity";
+import type { AdminMembershipPackageSource } from "./admin-membership-package-identity";
 
-export type AdminMembershipPackageSource = "card" | "credit" | "free";
+export type { AdminMembershipPackageSource } from "./admin-membership-package-identity";
 
 export interface AdminMembershipPackagePurchaseOptions {
   admin_account_id: string;
@@ -106,21 +107,6 @@ export async function adminGetMembershipPackageQuote({
   );
 }
 
-function normalizeRequiredText(
-  value: string | undefined,
-  name: string,
-  maxLength: number,
-): string {
-  const normalized = `${value ?? ""}`.trim();
-  if (!normalized) {
-    throw Error(`${name} is required`);
-  }
-  if (normalized.length > maxLength) {
-    throw Error(`${name} must be at most ${maxLength} characters`);
-  }
-  return normalized;
-}
-
 function normalizeDate(value: Date | string | undefined, name: string): Date {
   const date = value instanceof Date ? value : new Date(`${value ?? ""}`);
   if (!Number.isFinite(date.valueOf())) {
@@ -153,77 +139,6 @@ interface PackageIntentRow {
   admin_account_id: string;
   request_hash: string;
   snapshot: unknown;
-}
-
-function canonical(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonical);
-  if (value != null && typeof value === "object") {
-    const toJSON = (value as { toJSON?: unknown }).toJSON;
-    if (typeof toJSON === "function") {
-      return canonical(toJSON.call(value));
-    }
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, item]) => item !== undefined)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([key, item]) => [key, canonical(item)]),
-    );
-  }
-  return value;
-}
-
-function packageIntentRequestHash({
-  admin_account_id,
-  user_account_id,
-  product,
-  custom_price,
-  source,
-  reason,
-  pricing_note,
-}: {
-  admin_account_id: string;
-  user_account_id: string;
-  product: MembershipPackageProduct;
-  custom_price: number;
-  source: AdminMembershipPackageSource;
-  reason: string;
-  pricing_note?: string;
-}): string {
-  const normalizedProduct = {
-    ...product,
-    ...(product.starts_at == null
-      ? {}
-      : {
-          starts_at: normalizeDate(
-            product.starts_at,
-            "starts_at",
-          ).toISOString(),
-        }),
-    ...(product.expires_at == null
-      ? {}
-      : {
-          expires_at: normalizeDate(
-            product.expires_at,
-            "expires_at",
-          ).toISOString(),
-        }),
-  };
-  return createHash("sha256")
-    .update(
-      JSON.stringify(
-        canonical({
-          version: 1,
-          admin_account_id,
-          user_account_id,
-          product: normalizedProduct,
-          custom_price,
-          source,
-          reason,
-          pricing_note: pricing_note || null,
-        }),
-      ),
-    )
-    .digest("hex");
 }
 
 function parseApprovedPackageSnapshot(value: unknown): ApprovedPackageSnapshot {
@@ -263,13 +178,13 @@ async function getPackageIntent({
   invoice_id,
   account_id,
   admin_account_id,
-  request_hash,
+  accepted_request_hashes,
 }: {
   client: PoolClient;
   invoice_id: string;
   account_id: string;
   admin_account_id: string;
-  request_hash: string;
+  accepted_request_hashes: readonly string[];
 }): Promise<ApprovedPackageSnapshot | undefined> {
   const { rows } = await client.query<PackageIntentRow>(
     `SELECT account_id, admin_account_id, request_hash, snapshot
@@ -283,7 +198,7 @@ async function getPackageIntent({
   if (
     row.account_id !== account_id ||
     row.admin_account_id !== admin_account_id ||
-    row.request_hash !== request_hash
+    !accepted_request_hashes.includes(row.request_hash)
   ) {
     throw Error("idempotency key belongs to an incompatible purchase intent");
   }
@@ -361,12 +276,12 @@ async function resolveValidatedPackageQuote({
 async function getExistingPurchase({
   account_id,
   invoice_id,
-  request_hash,
+  accepted_request_hashes,
   client,
 }: {
   account_id: string;
   invoice_id: string;
-  request_hash?: string;
+  accepted_request_hashes?: readonly string[];
   client?: PoolClient;
 }): Promise<AdminMembershipPackagePurchaseResult | undefined> {
   const { rows } = await (client ?? getPool("medium")).query(
@@ -388,9 +303,9 @@ async function getExistingPurchase({
     throw Error("idempotency key belongs to an incompatible purchase");
   }
   if (
-    request_hash &&
+    accepted_request_hashes &&
     description.admin_request_hash &&
-    description.admin_request_hash !== request_hash
+    !accepted_request_hashes.includes(description.admin_request_hash)
   ) {
     throw Error("idempotency key belongs to an incompatible purchase");
   }
@@ -446,7 +361,6 @@ async function fundPurchaseFromCard({
       },
     ],
     metadata: {
-      admin_account_id,
       admin_purchase_idempotency_key: idempotency_key,
     },
     force: true,
@@ -488,6 +402,7 @@ export default async function adminCreateMembershipPackagePurchase({
   pricing_note,
   trusted_admin = false,
 }: AdminMembershipPackagePurchaseOptions): Promise<AdminMembershipPackagePurchaseResult> {
+  const legacyProduct = product;
   admin_account_id = normalizeAdminMembershipPackageUuid(
     admin_account_id,
     "admin_account_id",
@@ -506,35 +421,36 @@ export default async function adminCreateMembershipPackagePurchase({
   if (product?.type !== "membership-package" || product.package_id) {
     throw Error("product must create a new membership package");
   }
-  if (source !== "card" && source !== "credit" && source !== "free") {
-    throw Error("source must be card, credit, or free");
-  }
-  const normalizedReason = normalizeRequiredText(reason, "reason", 4000);
-  const normalizedPricingNote = pricing_note?.trim() || undefined;
-  const idempotencyKey = normalizeRequiredText(
-    idempotency_key,
-    "idempotency_key",
-    120,
-  );
-  const customPrice = moneyRound2Up(toDecimal(price));
-  if (!Number.isFinite(customPrice.toNumber()) || customPrice.lt(0)) {
-    throw Error("price must be a finite nonnegative number");
-  }
-  if (customPrice.gt(MAX_COST)) {
-    throw Error(
-      `price exceeds the maximum allowed cost of ${moneyToCurrency(MAX_COST)}`,
-    );
-  }
-
-  const request_hash = packageIntentRequestHash({
+  const businessIdentity = normalizeAdminMembershipPackageBusinessIdentity({
     admin_account_id,
     user_account_id,
     product,
-    custom_price: customPrice.toNumber(),
+    price,
     source,
-    reason: normalizedReason,
-    pricing_note: normalizedPricingNote,
+    reason,
+    idempotency_key,
+    pricing_note,
   });
+  product = businessIdentity.product;
+  source = businessIdentity.source;
+  const normalizedReason = businessIdentity.reason;
+  const normalizedPricingNote = businessIdentity.pricing_note ?? undefined;
+  const idempotencyKey = businessIdentity.idempotency_key;
+  const customPrice = toDecimal(businessIdentity.custom_price);
+  const request_hash =
+    adminMembershipPackageBusinessIdentityHash(businessIdentity);
+  const accepted_request_hashes = [
+    request_hash,
+    legacyAdminMembershipPackageRequestHash({
+      admin_account_id,
+      user_account_id,
+      product: legacyProduct,
+      custom_price: businessIdentity.custom_price,
+      source,
+      reason: normalizedReason,
+      pricing_note: normalizedPricingNote,
+    }),
+  ];
   const invoice_id = adminMembershipPackageInvoiceId(
     admin_account_id,
     idempotencyKey,
@@ -542,7 +458,7 @@ export default async function adminCreateMembershipPackagePurchase({
   const existing = await getExistingPurchase({
     account_id: user_account_id,
     invoice_id,
-    request_hash,
+    accepted_request_hashes,
   });
   if (existing) return existing;
   // Use a dedicated session rather than consuming the bounded application
@@ -591,7 +507,7 @@ export default async function adminCreateMembershipPackagePurchase({
     const existing = await getExistingPurchase({
       account_id: user_account_id,
       invoice_id,
-      request_hash,
+      accepted_request_hashes,
       client,
     });
     if (existing) {
@@ -603,7 +519,7 @@ export default async function adminCreateMembershipPackagePurchase({
       invoice_id,
       account_id: user_account_id,
       admin_account_id,
-      request_hash,
+      accepted_request_hashes,
     });
     if (!approvedSnapshot) {
       const { quote, starts_at, expires_at } =
@@ -677,7 +593,7 @@ export default async function adminCreateMembershipPackagePurchase({
     const existingAfterFunding = await getExistingPurchase({
       account_id: user_account_id,
       invoice_id,
-      request_hash,
+      accepted_request_hashes,
       client,
     });
     if (existingAfterFunding) {
@@ -693,7 +609,7 @@ export default async function adminCreateMembershipPackagePurchase({
       invoice_id,
       account_id: user_account_id,
       admin_account_id,
-      request_hash,
+      accepted_request_hashes,
     });
     if (!finalSnapshot) {
       throw Error("approved admin membership package intent is missing");
@@ -828,7 +744,7 @@ export default async function adminCreateMembershipPackagePurchase({
       const existing = await getExistingPurchase({
         account_id: user_account_id,
         invoice_id,
-        request_hash,
+        accepted_request_hashes,
       });
       if (existing) return existing;
     }

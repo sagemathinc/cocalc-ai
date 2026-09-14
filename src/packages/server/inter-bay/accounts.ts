@@ -87,6 +87,7 @@ import {
 } from "@cocalc/server/cluster-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { disablePublicDirectorySharesForBannedAccountAcrossCluster } from "@cocalc/server/public-directory-shares/ban-containment";
+import { setBillingAccountFrozen } from "@cocalc/server/purchases/billing-authority/client";
 import { isValidUUID } from "@cocalc/util/misc";
 import {
   displayNameFromParts,
@@ -664,9 +665,31 @@ export async function setLocalClusterAccountBan({
       actor_account_id,
       reason: reason ?? "account ban",
       home_bay_id: currentBayId(),
+      fence_cause: "ban",
+    }).catch((err) => {
+      // The account ban and cluster propagation are independently protective.
+      // A billing transport outage must not stop those later containment steps.
+      logger.error("failed to quarantine billing during account ban", {
+        account_id,
+        err: `${err}`,
+      });
     });
   } else {
     await removeUserBan(account_id);
+    await setBillingAccountFrozen({
+      account_id,
+      frozen: false,
+      cause: "ban",
+      reason: reason ?? "account ban removed",
+      actor_account_id: actor_account_id ?? undefined,
+    }).catch((err) => {
+      // Fail closed: leaving a billing fence behind is safer than aborting the
+      // account recovery after authentication state already changed.
+      logger.error("failed to remove account-ban billing fence", {
+        account_id,
+        err: `${err}`,
+      });
+    });
   }
   await recordAccountBanAuditEvent({
     account_id,

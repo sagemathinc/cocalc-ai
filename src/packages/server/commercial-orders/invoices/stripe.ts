@@ -61,6 +61,7 @@ import {
   normalizePositiveMoney,
   requireReason,
 } from "../state";
+import { registerCommercialOrderBillingAccount } from "../billing-authority";
 
 const logger = getLogger("server:commercial-orders:stripe");
 const FLOW = "commercial_order";
@@ -1570,6 +1571,7 @@ export async function reconcileStripeCommercialInvoice(
 ): Promise<CommercialOrder> {
   const reason = requireReason(opts.reason);
   const order = await getCommercialOrder(opts.id);
+  await registerCommercialOrderBillingAccount(order);
   const invoice = await getCommercialInvoice(
     order.id,
     opts.commercial_invoice_id,

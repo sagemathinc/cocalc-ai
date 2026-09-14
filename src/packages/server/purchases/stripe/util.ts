@@ -50,6 +50,12 @@ const RESERVED_USER_METADATA_KEYS = new Set([
   "processed",
   "recorded",
   "total_excluding_tax_usd",
+  "actor_account_id",
+  "admin_account_id",
+  "customer_account_id",
+  "owner_account_id",
+  "target_account_id",
+  "user_account_id",
 ]);
 
 const logger = getLogger("purchases:stripe:util");

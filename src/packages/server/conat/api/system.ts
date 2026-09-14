@@ -373,6 +373,7 @@ import type {
   LaunchHealthLevel,
   LaunchHealthStatus,
   LaunchSmokeResult,
+  BillingAuthorityStatus,
   ProjectBackupShardAdminStatus,
   SiteSettingsSyncResult,
 } from "@cocalc/conat/hub/api/system";
@@ -389,6 +390,12 @@ import {
   recordServiceAdmissionNearLimitLocal,
 } from "./service-admission-denials";
 import type { ServiceAdmissionDenialEvent } from "@cocalc/conat/admission/denials";
+import {
+  drainBillingAuthority as drainBillingAuthority0,
+  getBillingAuthorityHealth,
+  handoffBillingAuthority as handoffBillingAuthority0,
+  resumeBillingAuthority as resumeBillingAuthority0,
+} from "@cocalc/server/purchases/billing-authority/service";
 
 const logger = getLogger("server:conat:api:system");
 const ACCOUNT_ACTIVITY_TOUCH_MIN_INTERVAL_MS = 120_000;
@@ -2414,6 +2421,95 @@ export async function getLaunchHealth({
     counts,
     checks,
   };
+}
+
+export async function getBillingAuthorityStatus({
+  account_id,
+}: { account_id?: string } = {}): Promise<BillingAuthorityStatus> {
+  await assertAdmin(account_id);
+  return await getBillingAuthorityHealth();
+}
+
+async function requireBillingAuthorityOperator({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+}): Promise<void> {
+  await assertAdmin(account_id);
+  await requireDangerousSessionAuth({
+    account_id,
+    browser_id,
+    session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+}
+
+function billingAuthorityLifecycleTimeout(timeout_ms?: number): number {
+  return Math.max(1_000, Math.min(10 * 60_000, Number(timeout_ms) || 60_000));
+}
+
+export async function drainBillingAuthority({
+  account_id,
+  browser_id,
+  session_hash,
+  timeout_ms,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  timeout_ms?: number;
+} = {}): Promise<BillingAuthorityStatus> {
+  await requireBillingAuthorityOperator({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  return await drainBillingAuthority0({
+    timeout_ms: billingAuthorityLifecycleTimeout(timeout_ms),
+  });
+}
+
+export async function resumeBillingAuthority({
+  account_id,
+  browser_id,
+  session_hash,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+} = {}): Promise<BillingAuthorityStatus> {
+  await requireBillingAuthorityOperator({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  return await resumeBillingAuthority0();
+}
+
+export async function handoffBillingAuthority({
+  account_id,
+  browser_id,
+  session_hash,
+  timeout_ms,
+}: {
+  account_id?: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  timeout_ms?: number;
+} = {}): Promise<BillingAuthorityStatus> {
+  await requireBillingAuthorityOperator({
+    account_id,
+    browser_id,
+    session_hash,
+  });
+  return await handoffBillingAuthority0({
+    timeout_ms: billingAuthorityLifecycleTimeout(timeout_ms),
+  });
 }
 
 export async function getProjectBackupShards({

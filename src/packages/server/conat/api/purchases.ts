@@ -1,4 +1,4 @@
-import getBalance from "@cocalc/server/purchases/get-balance";
+import getBalance0 from "@cocalc/server/purchases/get-balance";
 import getMinBalance0 from "@cocalc/server/purchases/get-min-balance";
 import { db } from "@cocalc/database";
 import {
@@ -197,7 +197,14 @@ import type {
 import { searchClusterAccounts } from "@cocalc/server/inter-bay/accounts";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 
-export { getBalance };
+export async function getBalance({
+  account_id,
+}: {
+  account_id?: string;
+} = {}): Promise<MoneyValue> {
+  if (!account_id) throw Error("account_id required");
+  return await getBalance0({ account_id, noSave: true });
+}
 
 function getSeedBayId(): string {
   return getConfiguredClusterSeedBayId();

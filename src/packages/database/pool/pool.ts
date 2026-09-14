@@ -171,6 +171,7 @@ export default function getPool(options?: PoolOptionInput): Pool {
     return pglitePool as unknown as Pool;
   }
   if (pool == null) {
+    const { host: primaryHost, port } = getPrimaryHost();
     if (ensureExists && ensureExistsPromise == null) {
       ensureExistsPromise = ensureDatabaseExists().catch((err) => {
         ensureExistsPromise = undefined;
@@ -185,12 +186,13 @@ export default function getPool(options?: PoolOptionInput): Pool {
       });
     }
     L.debug(
-      `creating a new Pool(host:${host}, database:${database}, user:${user}, ssl:${JSON.stringify(ssl)} statement_timeout:${STATEMENT_TIMEOUT_MS}ms)`,
+      `creating a new Pool(host:${primaryHost}, port:${port}, database:${database}, user:${user}, ssl:${JSON.stringify(ssl)} statement_timeout:${STATEMENT_TIMEOUT_MS}ms)`,
     );
     pool = new Pool({
       password: dbPassword(),
       user,
-      host,
+      host: primaryHost,
+      port,
       database,
       statement_timeout: STATEMENT_TIMEOUT_MS, // fixes https://github.com/sagemathinc/cocalc/issues/6014
       // the test suite assumes small pool, or there will be random failures sometimes (?)
@@ -357,7 +359,9 @@ export async function withSessionAdvisoryLock<T>({
       }
 
       try {
-        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
+        await client.query("SELECT pg_advisory_unlock(hashtext($1))", [
+          lockKey,
+        ]);
       } catch (err) {
         unlockFailed = true;
         unlockError = err;
@@ -402,7 +406,19 @@ export function getClient(): Client {
   if (isPgliteEnabled()) {
     return getPgliteClient() as unknown as Client;
   }
-  return new Client({ password: dbPassword(), user, host, database, ssl });
+  const { host: primaryHost, port } = getPrimaryHost();
+  return new Client({
+    password: dbPassword(),
+    user,
+    host: primaryHost,
+    port,
+    database,
+    ssl,
+    // Keep dedicated sessions consistent with getPool(). Timestamp columns
+    // are stored without a timezone and rely on every database session using
+    // UTC for comparisons and serialization.
+    options: "-c timezone=UTC",
+  });
 }
 
 export { isPgliteEnabled };
@@ -433,10 +449,12 @@ export async function initEphemeralDatabase({
       `You can't use initEphemeralDatabase() and test using the database if the env variabe PGDATABASE is not set to ${TEST}!`,
     );
   }
+  const { host: primaryHost, port } = getPrimaryHost();
   const db = new Pool({
     password: dbPassword(),
     user,
-    host,
+    host: primaryHost,
+    port,
     database: "smc",
     statement_timeout: STATEMENT_TIMEOUT_MS,
     ssl,
