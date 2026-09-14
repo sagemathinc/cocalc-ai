@@ -103,6 +103,78 @@ describe("useChatAudioRecorder", () => {
 
   afterEach(() => jest.clearAllMocks());
 
+  it("retries a background timeout without entering the recording error channel", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValueOnce(
+        new Error("timeout - callHub: system.getChatSpeechCapabilities"),
+      );
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ projectId: "project-1", onTranscript: jest.fn() }),
+    );
+    try {
+      await act(async () => {});
+      expect(hook.result.current.error).toBeUndefined();
+      expect(hook.result.current.status).toBe("loading");
+      await act(async () => {
+        jest.advanceTimersByTime(5_000);
+      });
+      expect(hook.result.current.status).toBe("idle");
+      expect(hook.result.current.capabilities).toEqual(capabilities);
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("retries on reconnect and cancels retries on unmount", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValue(new Error("disconnected"));
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ projectId: "project-1", onTranscript: jest.fn() }),
+    );
+    try {
+      await act(async () => {});
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(2);
+      hook.unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+      });
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(2);
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("ignores a capability result for the previous project", async () => {
+    let resolve!: (value: any) => void;
+    jest.mocked(getChatSpeechCapabilities).mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    const hook = renderHook(
+      ({ projectId }) =>
+        useChatAudioRecorder({ projectId, onTranscript: jest.fn() }),
+      { initialProps: { projectId: "old" } },
+    );
+    hook.rerender({ projectId: "new" });
+    await waitFor(() => expect(hook.result.current.status).toBe("idle"));
+    await act(async () =>
+      resolve({ ...capabilities, input: { enabled: false } }),
+    );
+    expect(hook.result.current.capabilities).toEqual(capabilities);
+    hook.unmount();
+  });
+
   it("requests microphone permission only after activation and cleans up on cancel", async () => {
     const media = makeMedia();
     const onTranscript = jest.fn();
