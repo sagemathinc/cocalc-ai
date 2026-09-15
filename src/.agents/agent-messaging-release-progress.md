@@ -92,3 +92,59 @@ dev deployment and release handoff remain unfinished work, not completed gates.
 Next concrete step: build/deploy these checkpoints on the dev deployment and
 verify opt-out and site-off management through real authenticated accounts,
 then continue the complete security and resource-bound review matrix.
+
+## Dev verification checkpoint: 2026-09-15
+
+Clean source build `f9ba2aad6d85d6d1bf6fbc5303a96378900d1b06` passed
+`pnpm -C src build:dev`. The frontend and all three dev hubs were rebuilt/restarted
+from this worktree. This is not yet an exact all-host release deployment: project
+hosts/tools retain the versions recorded in the attachment/login progress file.
+Build log: `/tmp/agent-messaging-release-build.log`.
+
+Fresh browser tab at `/settings/ai`: switch was off without changing the account
+preference; keyboard focus reached it; management link remained available. Scoped
+axe audit: zero violations, 13 passing rules. My Agents displayed existing names,
+connections and revoked installation history with setup controls hidden. External
+installation audit: zero violations, five passing rules. No user preference was
+toggled and no active user grant/credential was revoked by these checks.
+
+Real cookie-backed accounts P (`27b3d681-3468-44cc-b025-305cbdba4453`) and Q
+(`1fe45c93-6f59-4282-a208-598222e2bf22`) were authenticated independently at their
+existing home origins, with ambient credentials disabled. P saw seven names / 26
+connections; Q saw two / one. Q's attempt to override the payload account ID still
+returned only Q's directory. A foreign account subject was denied by publish
+authorization (wrapped by the client as code 408). Both native source and remote
+receiver identity reads required collaborator access and denied Q. These are
+human read-boundary tests, not scoped-agent execution or revocation-race tests.
+Evidence: `/tmp/agent-messaging-release-accounts.jsonl` (classified errors only).
+
+All five messaging flags were temporarily disabled on the three dev hubs using
+an ignored config overlay. Both accounts could still inspect the same records
+with `enabled:false`. External installation list and revoke APIs also succeeded
+with `enabled:false`; the revoke target was only the already-revoked disposable
+QA installation, not an active credential. Active-to-revoked behavior while
+site-disabled still needs a separate live fixture. The test script restores the
+original config on exit. Restoration completed successfully: all three hubs
+restarted and both accounts again reported `enabled:true` with unchanged counts
+(`/tmp/agent-messaging-release-restored-accounts.jsonl`). Direct process-env
+inspection was denied by `/proc` permissions; no permission workaround was used.
+Evidence: `/tmp/agent-messaging-release-disabled-accounts.jsonl`,
+`/tmp/agent-messaging-release-disabled-installations.json`,
+`/tmp/agent-messaging-release-disabled-revoke.json`, and the restart/restore logs.
+
+Additional focused regression checks: 59 server socket-auth/external tests and
+20 Conat receive-budget/receive-limit/inbound-admission tests passed.
+
+Isolated fragment-assembly memory measurement (not network transport): two
+subscriptions retained four 32 MiB incomplete messages each, while 200 additional
+1 MiB incomplete messages per subscription were rejected. Peak process RSS was
+450020 KiB (about 439 MiB), versus 91 MiB baseline and 93 MiB after closure. An
+oversized continuation was dropped and a healthy message was accepted afterward.
+Evidence: `/tmp/agent-messaging-receive-stress.jsonl`; disposable reproduction:
+`/opt/cocalc/bin/node --expose-gc src/.local/receive-stress.cjs`.
+This does NOT establish a total hub memory bound: network buffers, decoding,
+completed-message queues, services and concurrent users remain to be measured.
+
+Next: align host/tools artifacts to a clean SHA, then run scoped native/external
+credential adversarial tests and active revocation/expiry races. The live UI and
+management checkpoint above does not replace that remaining release gate.
