@@ -3,7 +3,36 @@
 Status: in progress, not a production readiness attestation. No production
 deployment or production flag changes are authorized by this work.
 
-## Awaiting prerequisites
+## Latest live verification: September 15, 19:04-19:06 UTC
+
+The maintainer approved both directions for `messaging-qa` and `reviewer`.
+Read-only account-home inspection confirmed both active until
+`2026-10-15T18:57:47.033Z`; no agent renewed or changed permissions.
+
+One ordinary source turn performed the post-rollback cross-host/cross-bay smoke:
+
+- Source: project `1ce4fe78-19c7-40a8-a598-947975744cd9`, agent
+  `1ec8ed25-623a-4ce2-9d44-d608155196ef`, on the bay-0 source host.
+- Recipient: project `66db94af-0745-4088-b922-879c58942201`, agent
+  `a2a945d0-711d-460f-b208-aba824ef1e7b`, on the bay-1 QA host.
+- Correlation: `release-smoke-20260915-1905`.
+- Request attempt `c53db913-1c80-47ca-b207-2803047f9ff7`: accepted. Recipient
+  chat has the attributed message and destination-local attachment manifest.
+- Attachment: 28 bytes, SHA-256
+  `7db394239f6605330dd51cba327418d1d33bde5d0ef416b928fe8425f1cb3bfc`.
+  Recipient reported the same digest and size through the explicit reverse link.
+- Reply attempt `f4baa78e-6359-402e-9105-eec7d1330ab2`: accepted; source chat
+  contains the correlated reply and a local-only acknowledgment.
+- Both agents' final chat records have `generating=false`. No retry or reply
+  loop was observed. Live chat state was read via the normal project-host session,
+  not filesystem chat JSON. Local QA adapter: `/tmp/agent-release-connections-read.cjs`.
+
+The expired-approval prerequisite below is resolved. This qualifies an ordinary
+post-rollback round trip on the current dev deployment, not a new cold-start,
+maximum-size, external-enrollment, or final matched-fleet test. Review stays
+paused; no production changes or UI polish were performed.
+
+## Earlier prerequisite checkpoint (resolved for native smoke)
 
 At clean checkpoint `2dc3a2dd17`, rechecked the live account-home connection
 directory: the required QA pair remains expired/revoked. This prerequisite has

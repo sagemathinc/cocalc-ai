@@ -122,6 +122,16 @@ final-candidate rollback has been exercised.
 
 ## Current prerequisites and next step
 
+Update September 15, 19:06 UTC: the maintainer renewed the QA pair in both
+directions, and the post-rollback native cross-bay round trip passed. Request
+`c53db913-1c80-47ca-b207-2803047f9ff7` and reply
+`f4baa78e-6359-402e-9105-eec7d1330ab2` were accepted. The reviewer returned the
+same 28-byte attachment digest, and the source acknowledged locally without a
+reply loop. Both turns finished. See the progress document for exact evidence.
+The historical expired-link checkpoint below no longer blocks native smoke.
+Final matched-artifact qualification, external enrollment smoke and independent
+review remain separate unfinished work.
+
 Read-only account-home inspection on September 15 found all dedicated
 `messaging-qa`/`reviewer` and `builder`/`reviewer` QA connections expired or revoked.
 Only `x -> local-helper` remained active, which is not the required receiver-host
