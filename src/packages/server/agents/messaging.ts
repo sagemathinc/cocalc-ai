@@ -96,6 +96,13 @@ export async function startAgentMessaging(
   if (!agentMessagingEnabled()) return async () => {};
   const subscription = await client.subscribe("agent-messaging.*.*", {
     queue: "agent-messaging-v1",
+    // This subject currently accepts metadata/text only, never file bytes.
+    receiveLimits: {
+      maxMessageBytes: 64 * 1024,
+      maxInflightBytes: 2 * 1024 * 1024,
+      maxInflightMessages: 32,
+    },
+    maxQueue: 32,
   });
   let closed = false;
   const activeRpc = new Set<Promise<void>>();
@@ -112,7 +119,8 @@ export async function startAgentMessaging(
           !reply.startsWith(`${agentInboxPrefix(agent_id, run_id)}.`)
         )
           continue;
-        if (message.data?.version === 2) {
+        const request = message.data;
+        if (request?.version === 2) {
           if (activeRpc.size >= 32) {
             await message.respond({
               error: "agent RPC admission capacity reached",
@@ -122,7 +130,7 @@ export async function startAgentMessaging(
           const task = (async () => {
             try {
               await message.respond({
-                result: await acceptAgentRpc(message.subject, message.data),
+                result: await acceptAgentRpc(message.subject, request),
               });
             } catch (error) {
               await message
@@ -142,7 +150,7 @@ export async function startAgentMessaging(
           void task.finally(() => activeRpc.delete(task));
           continue;
         }
-        const result = await acceptAgentMessage(message.subject, message.data);
+        const result = await acceptAgentMessage(message.subject, request);
         await message.respond({ result });
       } catch (error) {
         await message
