@@ -20,9 +20,23 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   outcome: "accepted" | "rejected" | "unknown";
   observed_at: number;
   reason?: string;
+  code?: AgentRpcFailureCode;
   chat_effect?: "none" | "saved" | "unknown";
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
 }
+
+export const AGENT_RPC_FAILURE_CODES = [
+  "host_overloaded",
+  "project_overloaded",
+  "autostart_disabled",
+  "project_slot_limit",
+  "project_not_startable",
+  "startup_deadline",
+  "execution_not_allowed",
+  "execution_ack_unknown",
+  "submission_deadline",
+] as const;
+export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
 
 export interface AgentRpcLink {
   /** Present only on an account-home authoritative personal grant. */
@@ -129,7 +143,7 @@ export function rpcOutcome(
   attempt: AgentRpcAttempt,
   outcome: AgentRpcOutcome["outcome"],
   extra: Partial<
-    Pick<AgentRpcOutcome, "reason" | "chat_effect" | "operation">
+    Pick<AgentRpcOutcome, "reason" | "code" | "chat_effect" | "operation">
   > = {},
 ): AgentRpcOutcome {
   return {
@@ -155,6 +169,8 @@ export function validateAgentRpcOutcome(
     !["accepted", "rejected", "unknown"].includes(value.outcome) ||
     !Number.isFinite(value.observed_at) ||
     (value.reason !== undefined && typeof value.reason !== "string") ||
+    (value.code !== undefined &&
+      !AGENT_RPC_FAILURE_CODES.includes(value.code)) ||
     (value.chat_effect !== undefined &&
       !["none", "saved", "unknown"].includes(value.chat_effect)) ||
     (value.operation !== undefined &&

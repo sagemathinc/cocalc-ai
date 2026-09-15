@@ -2,6 +2,7 @@ import type { Client } from "@cocalc/conat/core/client";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import { extractRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
+import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
 import {
   rpcOutcome,
   validateAgentRpcRequest,
@@ -45,18 +46,33 @@ async function waitForStartup(e: AgentRpcEnvelope, start: () => Promise<void>) {
   }
 }
 
-function startFailureReason(error: unknown): string {
+function startFailure(
+  error: unknown,
+): Pick<AgentRpcOutcome, "code" | "reason"> {
   const message = `${error}`;
   if (/automatic starts.*disabled|autostart.*disabled/i.test(message))
-    return "Recipient project has automatic starts disabled";
+    return {
+      code: "autostart_disabled",
+      reason:
+        "Recipient project has automatic starts disabled; start it manually or enable automatic starts",
+    };
   if (extractRuntimeSponsorDenial(error))
-    return "Recipient runtime sponsor has no available running-project slots";
-  return "Recipient project could not start under its runtime policy; no message was submitted";
+    return {
+      code: "project_slot_limit",
+      reason:
+        "Recipient runtime sponsor has no available running-project slots; free capacity or change the sponsor allowance",
+    };
+  return {
+    code: "project_not_startable",
+    reason:
+      "Recipient project could not start under its runtime policy; no message was submitted",
+  };
 }
 
 export function createAgentRpcService(
   deps: AgentRpcExecutionAdapter,
   attempts = new AgentRpcAttempts(),
+  capacity = new AgentRpcCapacity(),
 ) {
   return {
     inspect: (
@@ -85,6 +101,14 @@ export function createAgentRpcService(
         e.source,
         e,
         async () => {
+          const lease = capacity.acquire(e.target.project_id);
+          if ("code" in lease)
+            return rpcOutcome(e, "rejected", {
+              code: lease.code,
+              reason:
+                "Recipient messaging capacity is full; no message was submitted or queued for retry",
+              chat_effect: "none",
+            });
           let admissionStarted = false;
           let chatEffect: "none" | "saved" | "unknown" = "none";
           let starting = false;
@@ -125,7 +149,7 @@ export function createAgentRpcService(
               // not globally unique execution identities or legacy delivery IDs.
               await guard();
               starting = true;
-              await waitForStartup(e, () => deps.ensureRunning(e));
+              await waitForStartup(e, () => lease.track(deps.ensureRunning(e)));
               if (Date.now() >= e.deadline) throw new StartupDeadline();
               starting = false;
               // Startup may have taken time; recheck link, deadline and actor.
@@ -175,15 +199,32 @@ export function createAgentRpcService(
               admissionStarted || startupUnknown ? "unknown" : "rejected",
               {
                 chat_effect: chatEffect,
-                reason: startupUnknown
-                  ? "Project startup was not confirmed before the deadline; no message was submitted and no delivery will be retried"
+                ...(startupUnknown
+                  ? {
+                      code: "startup_deadline" as const,
+                      reason:
+                        "Project startup was not confirmed before the deadline; no message was submitted and no delivery will be retried",
+                    }
                   : starting
-                    ? startFailureReason(error)
+                    ? startFailure(error)
                     : admissionStarted
-                      ? "Execution acknowledgment unavailable; inspect before any explicit retry"
-                      : "Execution was not submitted; target validation, authorization or chat preparation failed",
+                      ? {
+                          code: "execution_ack_unknown" as const,
+                          reason:
+                            "Execution acknowledgment unavailable; inspect before any explicit retry",
+                        }
+                      : {
+                          code:
+                            Date.now() >= e.deadline
+                              ? ("submission_deadline" as const)
+                              : ("execution_not_allowed" as const),
+                          reason:
+                            "Execution was not submitted; target validation, authorization or chat preparation failed",
+                        }),
               },
             );
+          } finally {
+            lease.release();
           }
         },
         e.account_id,
@@ -194,6 +235,8 @@ export function createAgentRpcService(
 
 // Process-local evidence shared by host RPC invocations; never persisted in V1.
 const attempts = new AgentRpcAttempts();
+// Host control creates a service facade per call; admission must be shared.
+const capacity = new AgentRpcCapacity();
 export function createLocalAgentRpcService(
   client: Client,
   api: Pick<AgentApi, "authorizeRpcAdmission">,
@@ -231,5 +274,6 @@ export function createLocalAgentRpcService(
         admitPreparedChatSend({ prepared, client, timeoutMs: 15_000 }),
     },
     attempts,
+    capacity,
   );
 }

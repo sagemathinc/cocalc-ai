@@ -7,6 +7,7 @@ import {
 import type { AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
 import { rpcOutcome } from "@cocalc/conat/agents/rpc";
 import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
+import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
 
 function fixture() {
   const e: AgentRpcEnvelope = {
@@ -294,4 +295,77 @@ test("inspection never falls back to legacy unscoped evidence", async () => {
   expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
   expect(deps.ensureRunning).not.toHaveBeenCalled();
   expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("host admission is shared across service facades and rejects before chat or startup", async () => {
+  const capacity = new AgentRpcCapacity(1, 1);
+  const first = fixture(),
+    second = fixture();
+  let finish!: () => void, entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  first.deps.ensureRunning = () =>
+    new Promise<void>((resolve) => {
+      finish = resolve;
+      entered();
+    });
+  const a = createAgentRpcService(first.deps, new AgentRpcAttempts(), capacity);
+  const b = createAgentRpcService(
+    second.deps,
+    new AgentRpcAttempts(),
+    capacity,
+  );
+  second.deps.withChat = jest.fn(second.deps.withChat);
+  const pending = a.submit(first.e);
+  await started;
+  try {
+    expect(await b.submit(second.e)).toMatchObject({
+      outcome: "rejected",
+      code: "host_overloaded",
+      chat_effect: "none",
+    });
+    expect(second.deps.withChat).not.toHaveBeenCalled();
+    expect(second.deps.ensureRunning).not.toHaveBeenCalled();
+    expect(second.deps.admit).not.toHaveBeenCalled();
+  } finally {
+    finish();
+  }
+  await pending;
+  expect(
+    (await b.submit({ ...second.e, attempt_id: randomUUID() })).outcome,
+  ).toBe("accepted");
+});
+
+test("startup timeout retains host capacity until the actual startup settles", async () => {
+  jest.useFakeTimers();
+  try {
+    const { e, deps, db } = fixture();
+    const capacity = new AgentRpcCapacity(1, 1);
+    let finish!: () => void;
+    deps.ensureRunning = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    const service = createAgentRpcService(
+      deps,
+      new AgentRpcAttempts(),
+      capacity,
+    );
+    e.deadline = Date.now() + 30;
+    const pending = service.submit(e);
+    await jest.advanceTimersByTimeAsync(31);
+    expect(await pending).toMatchObject({
+      code: "startup_deadline",
+      chat_effect: "none",
+    });
+    expect(capacity.acquire("other")).toEqual({ code: "host_overloaded" });
+    finish();
+    await jest.advanceTimersByTimeAsync(1);
+    expect("code" in capacity.acquire("other")).toBe(false);
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+  }
 });
