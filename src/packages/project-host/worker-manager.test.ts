@@ -1,10 +1,13 @@
+import fs from "node:fs";
 import {
   __test__,
+  configureProjectHostAcpWorkerLauncher,
   partitionManageableProjectHostAcpWorkers,
   partitionExpectedProjectHostAcpWorkers,
   planProjectHostAcpWorkerRollout,
   shouldTerminateOverdueDrainingWorker,
 } from "./hub/acp/worker-manager";
+import { acpDaemonControlClient } from "@cocalc/conat/ai/acp/daemon-control";
 import {
   getAcpWorker,
   listAcpWorkers,
@@ -40,6 +43,15 @@ jest.mock("@cocalc/lite/hub/sqlite/acp-jobs", () => ({
 }));
 jest.mock("@cocalc/lite/hub/sqlite/acp-turns", () => ({
   countRunningAcpTurnLeasesForWorker: jest.fn(() => 0),
+}));
+jest.mock("@cocalc/conat/ai/acp/daemon-control", () => ({
+  acpDaemonControlClient: jest.fn(),
+}));
+jest.mock("./runtime-client", () => ({
+  getProjectHostConatClient: jest.fn(),
+}));
+jest.mock("./hub/acp/worker-target", () => ({
+  readProjectHostAcpWorkerTarget: jest.fn(),
 }));
 
 const mockGetAcpWorker = getAcpWorker as jest.MockedFunction<
@@ -766,6 +778,11 @@ describe("ACP worker control startup grace", () => {
 });
 
 describe("queue-stalled ACP workers", () => {
+  afterEach(() => {
+    jest.restoreAllMocks();
+    jest.useRealTimers();
+  });
+
   const worker = {
     pid: 1101,
     env: {
@@ -1011,6 +1028,87 @@ describe("queue-stalled ACP workers", () => {
 
     expect(result.confirmed).toBe(true);
   });
+
+  it.each(["delay", "status refresh"])(
+    "keeps the healthy worker when the newer candidate exits during %s",
+    async (exitDuring) => {
+      jest.useFakeTimers({ now: 200_000 });
+      const entryPoint =
+        "/opt/cocalc/project-host/bundles/current/main/index.js";
+      configureProjectHostAcpWorkerLauncher({ entryPoint });
+      const healthyPid = 1100;
+      const candidatePid = 1101;
+      let candidateAlive = true;
+      jest
+        .spyOn(fs, "readdirSync")
+        .mockReturnValue([String(healthyPid), String(candidatePid)] as any);
+      jest.spyOn(fs, "readFileSync").mockImplementation((filename) => {
+        const pid = Number(String(filename).split("/")[2]);
+        if (String(filename).endsWith("/environ")) {
+          return [
+            "COCALC_PROJECT_HOST_ACP_WORKER=1",
+            "COCALC_PROJECT_HOST_ACP_WORKER_CAPABILITY=rolling-v1",
+            "COCALC_PROJECT_HOST_ACP_WORKER_STARTED_AT=1000",
+            `COCALC_ACP_INSTANCE_ID=worker-${pid}`,
+            "PROJECT_HOST_ID=host-1",
+          ].join("\0");
+        }
+        if (String(filename).endsWith("/cmdline")) {
+          return [process.execPath, entryPoint].join("\0");
+        }
+        throw new Error(`Unexpected read: ${filename}`);
+      });
+      jest.spyOn(fs, "writeFileSync").mockImplementation(() => {});
+      jest.spyOn(fs, "rmSync").mockImplementation(() => {});
+      const kill = jest
+        .spyOn(process, "kill")
+        .mockImplementation((pid, signal) => {
+          if (signal !== 0) throw new Error("Unexpected worker termination");
+          if (pid === candidatePid && !candidateAlive) throw new Error("ESRCH");
+          return true;
+        });
+      const requestDrain = jest.fn(async () => ({ state: "draining" }));
+      let candidateStatusReads = 0;
+      jest.mocked(acpDaemonControlClient).mockImplementation(
+        ({ worker_id }) =>
+          ({
+            health: async () => {
+              if (worker_id === `worker-${candidatePid}`) {
+                candidateStatusReads += 1;
+                if (
+                  exitDuring === "status refresh" &&
+                  candidateStatusReads === 2
+                ) {
+                  candidateAlive = false;
+                }
+              }
+              return {
+                worker_id,
+                state: "active",
+                started_at: 1_000,
+                last_queue_progress_at:
+                  worker_id === `worker-${healthyPid}` ? 199_000 : 10_000,
+                running_turn_leases: 0,
+              };
+            },
+            requestDrain,
+          }) as any,
+      );
+      mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+
+      const reconciliation = __test__.reconcileProjectHostAcpWorkers();
+      if (exitDuring === "delay") {
+        setTimeout(() => {
+          candidateAlive = false;
+        }, 500);
+      }
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      await expect(reconciliation).resolves.toBe(healthyPid);
+      expect(requestDrain).not.toHaveBeenCalled();
+      expect(kill.mock.calls.every(([, signal]) => signal === 0)).toBe(true);
+    },
+  );
 });
 
 describe("stale ACP worker row cleanup", () => {

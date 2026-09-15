@@ -957,10 +957,11 @@ async function reconcileProjectHostAcpWorkers({
       const confirmation = await confirmQueueStalledWorkerTermination({
         worker,
       });
+      // An exited candidate must not displace a live worker in the rollout plan.
+      if (!isPidAlive(worker.pid)) continue;
       const finalRow = getAcpWorker(workerIdOf(worker));
       if (
         !confirmation.confirmed ||
-        !isPidAlive(worker.pid) ||
         !shouldTerminateQueueStalledWorker({
           worker,
           status: confirmation.status,
@@ -1347,4 +1348,5 @@ export const __test__ = {
   staleAcpWorkerRowsToStop,
   shouldTerminateQueueStalledWorker,
   confirmQueueStalledWorkerTermination,
+  reconcileProjectHostAcpWorkers,
 };
