@@ -24,6 +24,42 @@ export interface ExternalDestination {
   expires_at: string;
 }
 
+function waitForExternalSignIn(
+  client: ReturnType<typeof connect>,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = (error?: Error) => {
+      clearTimeout(timer);
+      client.off("info", check);
+      client.off("connected", check);
+      client.off("closed", closed);
+      client.conn.off("connect_error", failed);
+      if (error) reject(error);
+      else resolve();
+    };
+    const check = () => {
+      if (client.info?.user?.error) failed();
+      else if (client.isConnected() && client.isSignedIn()) finish();
+    };
+    // Do not relay raw connection errors, which may contain credential details.
+    const failed = () =>
+      finish(
+        new Error("External agent sign-in failed; no submission attempted"),
+      );
+    const closed = () =>
+      finish(new Error("External agent connection closed before sign-in"));
+    const timer = setTimeout(
+      () => finish(new Error("External agent sign-in deadline exceeded")),
+      10_000,
+    );
+    client.on("info", check);
+    client.on("connected", check);
+    client.on("closed", closed);
+    client.conn.on("connect_error", failed);
+    check();
+  });
+}
+
 /** An explicit profile pins both identity and site; ambient human auth/API is ignored. */
 export async function sendExternalAgentMessage(
   profile: string,
@@ -47,11 +83,17 @@ export async function sendExternalAgentMessage(
   const client = connect({
     address: credential.api_url,
     noCache: true,
+    reconnection: false,
     rejectUnauthorized: true,
     auth: { bearer: credential.token },
     inboxPrefix: externalAgentInbox(account_id, installation_id),
   });
+  let submissionStarted = false;
   try {
+    // Authenticate before creating a publish. A denied connection must not sit
+    // in Conat's sign-in wait or send later after the caller has given up.
+    await waitForExternalSignIn(client);
+    submissionStarted = true;
     const response = await withTimeout(
       client.request(
         externalAgentSubject(account_id, installation_id),
@@ -75,6 +117,11 @@ export async function sendExternalAgentMessage(
     else validateAgentRpcOutcome(result, request);
     return result;
   } catch (error) {
+    if (!submissionStarted && request.action === "send")
+      return rpcOutcome(request, "rejected", {
+        chat_effect: "none",
+        reason: "External agent sign-in unavailable; no submission attempted.",
+      });
     if (request.action === "prepare-attachments")
       return rpcOutcome(request, "rejected", {
         code: "attachment_preparation_unavailable",
