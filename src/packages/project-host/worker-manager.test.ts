@@ -955,6 +955,62 @@ describe("queue-stalled ACP workers", () => {
       }),
     ).toBe(false);
   });
+
+  it("cancels termination when execution settles during confirmation", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(200_000);
+    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-stalled",
+      pid: worker.pid,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 199_000,
+      last_queue_progress_at: 199_000,
+    } as any);
+
+    const result = await __test__.confirmQueueStalledWorkerTermination({
+      worker: worker as any,
+      sleep: async () => {},
+      readStatus: async () =>
+        ({
+          worker_id: "worker-stalled",
+          started_at: 1_000,
+          last_queue_progress_at: 10_000,
+          running_turn_leases: 0,
+        }) as any,
+      isAlive: () => true,
+    });
+
+    expect(result.confirmed).toBe(false);
+  });
+
+  it("confirms termination when the worker remains stalled", async () => {
+    jest.spyOn(Date, "now").mockReturnValue(200_000);
+    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockGetAcpWorker.mockReturnValue({
+      worker_id: "worker-stalled",
+      pid: worker.pid,
+      state: "active",
+      started_at: 1_000,
+      last_heartbeat_at: 199_000,
+      last_queue_progress_at: 10_000,
+    } as any);
+
+    const result = await __test__.confirmQueueStalledWorkerTermination({
+      worker: worker as any,
+      sleep: async () => {},
+      readStatus: async () =>
+        ({
+          worker_id: "worker-stalled",
+          started_at: 1_000,
+          last_queue_progress_at: 10_000,
+          running_turn_leases: 0,
+        }) as any,
+      isAlive: () => true,
+    });
+
+    expect(result.confirmed).toBe(true);
+  });
 });
 
 describe("stale ACP worker row cleanup", () => {
