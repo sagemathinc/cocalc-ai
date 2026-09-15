@@ -5,6 +5,40 @@ deployment or production flag changes are authorized by this work.
 
 ## Current work direction: September 15
 
+### Latest checkpoint: host-history routing
+
+Application commit `57086e3d96` fixes host-scoped operation history: account-home
+requests resolve the host owner and read that bay's operation log using the
+existing destination access checks. Owner errors propagate rather than returning
+stale local history. No messaging semantics, permissions, or UI changes.
+
+Verification: server `pnpm tsc --build` passed; server
+`pnpm exec jest --runInBand conat/api/lro.test.ts` passed 9 tests; Conat
+`pnpm exec jest --runInBand inter-bay/api.test.ts` passed 8 tests.
+Restarted only the three local dev hubs with the rebuilt source. The normal
+account-home CLI against lite1b now returns both recorded operations as succeeded:
+upgrade `331f0fa3-204c-4f2f-a9d1-2929cf4fb3af` and rollback
+`090e5317-9387-4d92-8b4a-72d4242fe40d`. Neither operation was resubmitted.
+
+Reproduce after loading the matching `dev:hub:env`:
+
+```sh
+"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --profile agent-attachments-qa host deploy history b96028c9-7d3e-4953-a8c9-52f8a5ce52ca --limit 5 --json
+```
+
+Deployment order: update receiving/owning bays before callers; an older owner
+does not implement the new read RPC and callers will error instead of falling
+back to a stale replica. No schema migration is required. Rolling callers back
+restores the previous local-history limitation; it does not replay operations.
+Dev project-host artifacts remain at the previously restored baseline. No
+production deployment or site flags changed.
+
+Remaining limitations: generic `op get <UUID>` still lacks owner routing;
+host-scoped history is the verified inspection path. Post-rollback messaging
+still needs a new ordinary request/reply smoke test with valid approvals.
+Independent review remains paused and outstanding. The next concrete step is
+that messaging smoke test and final artifact/release handoff, not more UI polish.
+
 At the maintainer's request, pause security-review/adversarial work and continue
 non-security production preparation. Independent security review remains an
 outstanding release gate, not a pass or a requirement removed from readiness.
