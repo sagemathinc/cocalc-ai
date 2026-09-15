@@ -78,14 +78,9 @@ function isLocalAuthorityBay(): boolean {
 }
 
 export function assertBillingAuthorityTopology(): void {
-  if (isBillingAuthorityEnabled() && !isLocalAuthorityBay()) {
-    throw Object.assign(
-      new Error(
-        "billing is unavailable on attached bays until the authority has a dedicated authenticated transport",
-      ),
-      { code: 503, status: 503 },
-    );
-  }
+  // Attached bays use the authenticated inter-bay transport. Configuration
+  // errors are surfaced when that transport constructs its fabric client.
+  if (!isBillingAuthorityEnabled()) return;
 }
 
 function deterministicUuid(value: string): string {
@@ -177,12 +172,8 @@ async function transport(
   request: BillingAuthorityTransportRequest,
 ): Promise<unknown> {
   if (!isLocalAuthorityBay()) {
-    throw Object.assign(
-      new Error(
-        "billing is unavailable on attached bays until the authority has a dedicated authenticated transport",
-      ),
-      { code: 503, status: 503 },
-    );
+    const { callSeedBillingAuthority } = await import("./inter-bay");
+    return unwrapTransport(await callSeedBillingAuthority(request));
   }
   const { handleBillingAuthorityTransportRequest } = await import("./service");
   return unwrapTransport(await handleBillingAuthorityTransportRequest(request));
