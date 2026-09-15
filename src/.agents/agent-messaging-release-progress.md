@@ -3,6 +3,32 @@
 Status: in progress, not a production readiness attestation. No production
 deployment or production flag changes are authorized by this work.
 
+## Clean workspace and CLI build: September 15, 19:09 UTC
+
+Built from clean SHA `0b3e34f358601cbf8f0b3826714623fbcb5b1072`.
+`pnpm build:dev` from `src` passed, including browser bundling and Python API
+documentation; worktree remained clean. Browser manifest has 1,075 assets,
+build date `2026-09-15T19:09:34.059Z`, and that source SHA. Its bytes served at
+`https://lite1b.cocalc.ai/static/frontend-build.json` exactly match the local file.
+Manifest SHA-256: `5f8940deda0e38f763a82c9247950b2f4f7c1559d6c25a9c5e81c5fc2104020d`.
+The nonfatal debug-log EACCES warning persists; permissions were not changed.
+
+Packaged CLI separately with `node sea/build-bundle.mjs
+/tmp/agent-release-cli-0b3e34f358` from `src/packages/cli`; build and
+`node --check /tmp/agent-release-cli-0b3e34f358/index.js` passed.
+Bundle SHA-256:
+
+- `index.js`: `58bed477999b240f5ed4e9c40daf1eba155038dc49e69d81ed8a5445f07ed142`
+- `index.cjs`: `37ba5965b7042f78b128eaed205ad076153e32468efb2796ddf706feb25e4e06`
+- `licenses.txt`: `48008afd381117bcf616334d10636e545f79e3a758f538fbc1e3ec9d0d44f642`
+
+These are dev-build/package checks, not production-mode build qualification or
+deployment of the CLI/host/runtime fleet. No hosts were upgraded or services
+restarted in this step. Rebuilding static removed the earlier isolated canary
+staging directory; the original archive in `/tmp` remains the rebuild source
+if that canary must be staged again. Existing browser sessions need a reload
+to use the new bundle. Final matched fleet and review remain unfinished.
+
 ## Latest live verification: September 15, 19:04-19:06 UTC
 
 The maintainer approved both directions for `messaging-qa` and `reviewer`.
