@@ -11,6 +11,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { startChatSpeech } from "./audio/chat-speech-player";
 import { useContext } from "react";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
+import { lite } from "@cocalc/frontend/lite";
 
 const READ_ALOUD_DISCLOSURE_KEY = "cocalc-chat-speech-output-disclosed";
 
@@ -30,6 +31,7 @@ export function ChatReadAloudButton({
   showLabel?: boolean;
 }) {
   const paneId = useContext(SpeechPaneContext);
+  if (lite) return null;
   const start = () =>
     startChatSpeech({
       paneId,

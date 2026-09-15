@@ -9,6 +9,7 @@ import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { copyTextToClipboard } from "@cocalc/frontend/components/copy-to-clipboard-util";
 import type { ChatInputControl } from "../input";
 import { useChatAudioRecorder } from "./use-chat-audio-recorder";
+import { lite } from "@cocalc/frontend/lite";
 import type { MarkdownPosition } from "@cocalc/frontend/editors/markdown-input/types";
 
 const DISCLOSURE_KEY = "cocalc-chat-speech-input-disclosed";
@@ -48,19 +49,25 @@ function DictationLiveStatus({ label }: { label: string }) {
   );
 }
 
-export function DictateButton({
-  projectId,
-  path,
-  threadId,
-  session,
-  inputControlRef,
-}: {
+interface DictateButtonProps {
   projectId?: string;
   path?: string;
   threadId?: string;
   session: number;
   inputControlRef: MutableRefObject<ChatInputControl | null>;
-}) {
+}
+
+export function DictateButton(props: DictateButtonProps) {
+  return lite ? null : <EnabledDictateButton {...props} />;
+}
+
+function EnabledDictateButton({
+  projectId,
+  path,
+  threadId,
+  session,
+  inputControlRef,
+}: DictateButtonProps) {
   const currentSessionRef = useRef(session);
   currentSessionRef.current = session;
 

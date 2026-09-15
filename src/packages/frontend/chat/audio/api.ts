@@ -9,6 +9,7 @@ import type {
   ChatSpeechTranscriptionResult,
 } from "@cocalc/conat/hub/api/system";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { lite } from "@cocalc/frontend/lite";
 import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 
 const capabilityCache = new Map<
@@ -23,6 +24,26 @@ export function newSpeechRequestId(): string {
 export async function getChatSpeechCapabilities(
   projectId?: string,
 ): Promise<ChatSpeechCapabilities> {
+  // Lite/Plus has no speech backend. Do not probe an unimplemented hub RPC.
+  if (lite) {
+    return {
+      input: {
+        enabled: false,
+        reason: "Speech is not supported in CoCalc Plus.",
+        max_bytes: 0,
+        max_duration_ms: 0,
+        supported_content_types: [],
+      },
+      output: {
+        enabled: false,
+        reason: "Speech is not supported in CoCalc Plus.",
+        max_characters: 0,
+        voices: [],
+        default_voice: "",
+        speeds: [],
+      },
+    };
+  }
   const key = projectId ?? "account";
   const cached = capabilityCache.get(key);
   if (cached && cached.expires > Date.now()) return await cached.promise;
