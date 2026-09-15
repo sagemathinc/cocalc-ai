@@ -6,8 +6,9 @@ contains operational evidence only; private review material stays private.
 
 ## Candidate and evidence
 
-- Current application checkpoint: `57086e3d96` (host-history routing fix).
-- Clean documentation checkpoint: `fa42c1dafa7b702ce8c362b6280e6efb949fedaf`.
+- Workspace/browser/CLI build checkpoint: `0b3e34f358601cbf8f0b3826714623fbcb5b1072`.
+- Host archive checkpoint: `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41`.
+- Only progress documentation differs between those source checkpoints.
 - Comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
 - Worktree: `/home/user/scratch/agent-mentions`, branch `feature/agent-mentions`.
 - These are preparation checkpoints, not a final independently reviewed SHA.
@@ -122,26 +123,22 @@ final-candidate rollback has been exercised.
 
 ## Current prerequisites and next step
 
-Update September 15, 19:06 UTC: the maintainer renewed the QA pair in both
-directions, and the post-rollback native cross-bay round trip passed. Request
-`c53db913-1c80-47ca-b207-2803047f9ff7` and reply
-`f4baa78e-6359-402e-9105-eec7d1330ab2` were accepted. The reviewer returned the
-same 28-byte attachment digest, and the source acknowledged locally without a
-reply loop. Both turns finished. See the progress document for exact evidence.
-The historical expired-link checkpoint below no longer blocks native smoke.
-Final matched-artifact qualification, external enrollment smoke and independent
-review remain separate unfinished work.
+Update September 15, 19:21 UTC: native QA approval is resolved. The receiver QA
+host now runs `20260915T191304Z-e43a2ccb10a7` across all four managed components,
+following successful operation `711e8f1b-1a5d-4b30-b0e4-2708ce865940`.
+The earlier rollback paragraph is historical evidence, not its current version.
 
-Read-only account-home inspection on September 15 found all dedicated
-`messaging-qa`/`reviewer` and `builder`/`reviewer` QA connections expired or revoked.
-Only `x -> local-helper` remained active, which is not the required receiver-host
-request/reply pair. No permissions were renewed and no work was started.
+Post-activation request `8a74dc85-870a-4dab-b411-3a5605a7332c` and reply
+`c07f8d45-b38d-435c-a604-b92c0ef53a2d` were accepted. The reviewer returned the
+matching 28-byte attachment digest, and the source acknowledged locally without
+a reply loop. Both turns finished. Do not request another native approval merely
+because the earlier evidence archive records expired links.
 
-The next live test needs a new explicit, finite, bidirectional QA approval in the
-normal first-party UI for `messaging-qa` and `reviewer`. Then start one source turn
-that sends once with a unique correlation ID and a small attachment, asks for one
-reply, and forbids retries/reply loops. Record both attempts and verify the file
-digest at the recipient. Do not substitute the unrelated active connection.
+Next: settle the final review/release checkpoint, then qualify the intended
+matched test fleet and final external enrollment/send flow. Independent review
+remains paused; no production rollout is authorized. These are unfinished steps,
+not regressions inferred from the passing native smoke test.
 
-Detailed chronological evidence: `agent-messaging-release-progress.md` and
-`agent-attachments-login-progress.md`. Neither replaces final-candidate testing.
+Current status: `agent-messaging-release-progress.md`. Detailed evidence:
+`agent-messaging-release-evidence-20260915.md` and
+`agent-attachments-login-progress.md`.
