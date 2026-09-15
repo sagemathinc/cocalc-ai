@@ -6,6 +6,7 @@ import {
   assertExternalAgentLoginEnabled,
   externalStore,
 } from "@cocalc/server/agents/external";
+import { AgentStore } from "@cocalc/server/agents/store";
 
 /** Human account-home management only. Revocation narrows authority immediately. */
 export default async function externalAgentInstallations(req, res) {
@@ -17,19 +18,19 @@ export default async function externalAgentInstallations(req, res) {
     if (!account_id || !getRememberMeHash(req))
       throw new Error("must be signed in");
     const { action = "list", installation_id } = getParams(req);
-    if (
-      action === "list" &&
-      process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED !== "1"
-    ) {
-      res.json({ enabled: false, installations: [] });
-      return;
-    }
-    assertExternalAgentLoginEnabled();
-    const store = externalStore();
-    if (action === "revoke") await store.revoke(account_id, installation_id);
-    else if (action !== "list")
+    if (action !== "list" && action !== "revoke")
       throw new Error("unsupported installation action");
-    res.json({ enabled: true, installations: await store.list(account_id) });
+    // The store still fences account-home ownership and account security.
+    // Inspection/revocation must survive disabling new external admissions.
+    const store = externalStore(new AgentStore());
+    if (action === "revoke") await store.revoke(account_id, installation_id);
+    let enabled = true;
+    try {
+      assertExternalAgentLoginEnabled();
+    } catch {
+      enabled = false;
+    }
+    res.json({ enabled, installations: await store.list(account_id) });
   } catch (error) {
     res.json({ error: `${error instanceof Error ? error.message : error}` });
   }

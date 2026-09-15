@@ -40,9 +40,10 @@ From repository root: `pnpm -C src lint:frontend`.
 
 ## Operational work still required
 
-- Separate restrictive management from feature enablement. Current site-off
-  paths can hide records or prevent revocation; retain authenticated home-bay
-  inspection and pause/revoke while continuing to reject new authority/admission.
+- Site-off restrictive management is now implemented for personal connections
+  and external installations. Reads/pause/revoke/denial remain available while
+  new approvals and resume remain gated. Account-home and security checks remain
+  in place. This change has not yet been deployed or verified live.
 - Trace the master, RPC, personal, attachment and external-login gates through
   every entry point, including already-connected clients and in-flight work.
 - Document configuration reload/restart requirements and exact admission cutoff;
@@ -50,9 +51,23 @@ From repository root: `pnpm -C src lint:frontend`.
 - Verify migration, mixed-version rejection, deployment ordering and rollback
   without modifying legacy pending/uncertain records.
 
+Management checkpoint checks: server and HTTP API typechecks passed; frontend
+typecheck/lint passed; 24 deterministic policy/control tests and 31 frontend
+tests passed. Three PGlite integration suites / 66 tests passed, including
+master/personal switches off and simulated source-to-home revocation routing.
+These are not real multi-bay account boundary tests. The first PGlite invocation
+failed because it omitted the required Node VM-module flag; the corrected
+reproduction from `src/packages/server` is:
+
+```sh
+NODE_OPTIONS=--experimental-vm-modules COCALC_TEST_USE_PGLITE=1 pnpm exec jest agents/personal-store.integration.test.ts agents/external-store.integration.test.ts agents/rpc.integration.test.ts --runInBand --forceExit
+pnpm exec jest agents/management.test.ts agents/personal-management.test.ts --runInBand --forceExit
+```
+
 ## Security review work still required
 
-- Build an entry-point/capability/ownership map for the entire comparison diff.
+- Initial entry-point/capability/ownership map: `agent-messaging-security-map.md`.
+  Complete the source review and verify the invariants in that map.
 - Verify two real accounts and scoped identities across bays: impersonation,
   destination authorization, non-messaging APIs, suspension, membership removal,
   steering, connected-token revocation and expiry at each admission stage.
@@ -74,5 +89,6 @@ This sentence is not evidence that the unreviewed code is safe.
 
 No external blocker established. Security review, adversarial verification,
 dev deployment and release handoff remain unfinished work, not completed gates.
-Next concrete step: finish the UI checkpoint, then test and implement site-off
-restrictive management without weakening account-home ownership/authentication.
+Next concrete step: build/deploy these checkpoints on the dev deployment and
+verify opt-out and site-off management through real authenticated accounts,
+then continue the complete security and resource-bound review matrix.

@@ -19,6 +19,7 @@ import {
   grantPersonalConnection,
   nameAgent,
   listNamedAgents,
+  listPersonalConnections,
   setPersonalMessagingState,
   setPersonalConnectionState,
   resolvePersonalConnectionRequest,
@@ -837,13 +838,54 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     expect(await send()).toMatchObject({ outcome: "accepted" });
   });
 
-  test("disabled personal mode is opt in and directory reads touch no authority", async () => {
+  test("disabled personal mode keeps management reads but rejects new approvals", async () => {
     expect(await listNamedAgents({ account_id: account })).toEqual({
       enabled: false,
       agents: [],
+      controls: { paused: false, generation: 0 },
     });
     expect(routedCalls).toEqual([]);
     await expect(personalApproval()).rejects.toThrow("not enabled");
+  });
+
+  test("master and personal kill switches preserve home-routed revocation without resume", async () => {
+    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
+    const [grant] = await personalApproval();
+    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "0";
+    process.env.COCALC_AGENT_MESSAGING_ENABLED = "0";
+    try {
+      const directory = await context.run("source-bay", () =>
+        listPersonalConnections({ account_id: account }),
+      );
+      expect(directory.enabled).toBe(false);
+      expect(directory.connections).toHaveLength(1);
+      await context.run("source-bay", () =>
+        setPersonalConnectionState({
+          account_id: account,
+          direction_group_id: grant.direction_group_id,
+          state: "revoked",
+        }),
+      );
+      expect(
+        (await listPersonalConnections({ account_id: account })).connections[0]
+          .status,
+      ).toBe("revoked");
+      await expect(
+        setPersonalMessagingState({
+          account_id: account,
+          action: "resume",
+          session_hash: "home-only-secret",
+        }),
+      ).rejects.toThrow("not enabled");
+      expect(
+        routedCalls.some(
+          (call) => call.bay === "home" && call.method === "personal",
+        ),
+      ).toBe(true);
+      expect(admitted).not.toHaveBeenCalled();
+    } finally {
+      process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+    }
   });
 
   test("telemetry failure cannot change acceptance or trigger another submission", async () => {

@@ -27,8 +27,8 @@ export function assertExternalAgentLoginEnabled() {
       throw new Error("external agent login is not enabled");
 }
 
-export function externalStore() {
-  return new ExternalAgentStore(agentStore(), async (account_id, target) => {
+export function externalStore(db = agentStore()) {
+  return new ExternalAgentStore(db, async (account_id, target) => {
     const identity = await getIdentity({ account_id, ...target });
     if (identity.disabled_at) throw new Error("agent_unavailable");
   });

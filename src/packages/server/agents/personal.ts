@@ -17,7 +17,8 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
-import { agentStore } from "./store";
+import { AgentStore, agentStore, agentMessagingEnabled } from "./store";
+import { isRestrictiveAgentManagement } from "./management";
 import { getIdentity } from "./api";
 import { agentRpcControl } from "./rpc";
 import { PersonalAgentStore } from "./personal-store";
@@ -25,8 +26,9 @@ import { assertPersonalAccountAuthority } from "./personal-rehome";
 
 export const personalMessagingEnabled = () =>
   process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED === "1";
-function enabled() {
-  if (!personalMessagingEnabled())
+function enabled(request: PersonalControlRequest) {
+  if (isRestrictiveAgentManagement(request)) return;
+  if (!personalMessagingEnabled() || !agentMessagingEnabled())
     throw new Error("personal agent messaging is not enabled on this bay");
 }
 function fresh(at?: number) {
@@ -69,9 +71,9 @@ async function principal(source: AgentEndpoint, run_id: string) {
     throw new Error("personal source mode changed");
   return proof.account_id;
 }
-export function personalStore() {
+export function personalStore(db = agentStore()) {
   return new PersonalAgentStore(
-    agentStore(),
+    db,
     (account_id, endpoint) => getIdentity({ account_id, ...endpoint }),
     principal,
     assertPersonalAccountAuthority,
@@ -83,7 +85,7 @@ export async function withPersonalHome(
   request: PersonalControlRequest,
   fresh_auth_at?: number,
 ) {
-  enabled();
+  enabled(request);
   requireUuid(account_id, "account_id");
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
   if (!home_bay_id) throw new Error("account home unavailable");
@@ -95,7 +97,7 @@ export async function withPersonalHome(
 }
 
 export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
-  enabled();
+  enabled(opts.request);
   requireUuid(opts.account_id, "account_id");
   const { home_bay_id } = await resolveAccountHomeBay({
     account_id: opts.account_id,
@@ -108,7 +110,9 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
     else throw new PersonalAgentAuthorizationError("account_disabled");
   const request = opts.request;
   if (requiresFresh(request)) fresh(opts.fresh_auth_at);
-  const store = personalStore(),
+  const store = personalStore(
+      isRestrictiveAgentManagement(request) ? new AgentStore() : agentStore(),
+    ),
     account = opts.account_id;
   // Reads reject stale routing too; writes/checks recheck under their own
   // transaction fence after any remote endpoint validation has completed.
@@ -116,7 +120,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
   switch (request.action) {
     case "listNamedAgents":
       return {
-        enabled: true,
+        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
         agents: await store.names(account),
         controls: await store.controls(account),
       };
@@ -124,7 +128,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       return store.name(account, request.options);
     case "listPersonalConnections":
       return {
-        enabled: true,
+        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
         connections: await store.connections(account),
         controls: await store.controls(account),
       };
@@ -164,7 +168,10 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
         request.options.accepted,
       );
     case "listPersonalConnectionRequests":
-      return { enabled: true, requests: await store.requests(account) };
+      return {
+        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
+        requests: await store.requests(account),
+      };
     case "resolvePersonalConnectionRequest":
       return store.resolveRequest(
         account,
@@ -180,7 +187,6 @@ async function human<K extends PersonalHumanMethod>(
   action: K,
   opts: Parameters<AgentApi[K]>[0],
 ): Promise<Awaited<ReturnType<AgentApi[K]>>> {
-  enabled();
   requireUuid(opts.account_id, "account_id");
   const { account_id, session_hash } = opts as AgentHumanAuth;
   const fields: Record<PersonalHumanMethod, string[]> = {
@@ -213,6 +219,7 @@ async function human<K extends PersonalHumanMethod>(
       .map((key) => [key, opts[key]]),
   );
   const request = { action, options } as PersonalControlRequest;
+  enabled(request);
   let fresh_auth_at: number | undefined;
   if (requiresFresh(request)) {
     await requireDangerousSessionAuth({
@@ -230,17 +237,12 @@ async function human<K extends PersonalHumanMethod>(
   )) as Awaited<ReturnType<AgentApi[K]>>;
 }
 export const listNamedAgents: AgentApi["listNamedAgents"] = (opts) =>
-  personalMessagingEnabled()
-    ? human("listNamedAgents", opts)
-    : Promise.resolve({ enabled: false, agents: [] });
+  human("listNamedAgents", opts);
 export const nameAgent: AgentApi["nameAgent"] = (opts) =>
   human("nameAgent", opts);
 export const listPersonalConnections: AgentApi["listPersonalConnections"] = (
   opts,
-) =>
-  personalMessagingEnabled()
-    ? human("listPersonalConnections", opts)
-    : Promise.resolve({ enabled: false, connections: [] });
+) => human("listPersonalConnections", opts);
 export const grantPersonalConnection: AgentApi["grantPersonalConnection"] = (
   opts,
 ) => human("grantPersonalConnection", opts);
@@ -249,9 +251,6 @@ export const setPersonalConnectionState: AgentApi["setPersonalConnectionState"] 
 export const setPersonalMessagingState: AgentApi["setPersonalMessagingState"] =
   (opts) => human("setPersonalMessagingState", opts);
 export const listPersonalConnectionRequests: AgentApi["listPersonalConnectionRequests"] =
-  (opts) =>
-    personalMessagingEnabled()
-      ? human("listPersonalConnectionRequests", opts)
-      : Promise.resolve({ enabled: false, requests: [] });
+  (opts) => human("listPersonalConnectionRequests", opts);
 export const resolvePersonalConnectionRequest: AgentApi["resolvePersonalConnectionRequest"] =
   (opts) => human("resolvePersonalConnectionRequest", opts);

@@ -289,7 +289,11 @@ function AccountAgentsPage() {
         </p>
         <Space wrap>
           <Button
-            disabled={busy || !connections?.enabled}
+            disabled={
+              busy ||
+              !connections ||
+              (!!connections.controls?.paused && !connections.enabled)
+            }
             onClick={() =>
               accountAction(connections?.controls?.paused ? "resume" : "pause")
             }
@@ -300,7 +304,7 @@ function AccountAgentsPage() {
           </Button>
           <Button
             danger
-            disabled={busy || !connections?.enabled}
+            disabled={busy || !connections}
             onClick={() => setRevokeAll(true)}
           >
             Revoke all connections
@@ -503,7 +507,9 @@ function AccountAgentsPage() {
                                     {messagingUI && needsApproval && (
                                       <Button
                                         disabled={
-                                          busy || connections?.controls?.paused
+                                          busy ||
+                                          !connections?.enabled ||
+                                          connections?.controls?.paused
                                         }
                                         onClick={() =>
                                           setApproval({
@@ -541,7 +547,10 @@ function AccountAgentsPage() {
                                     {!allRevoked &&
                                       (!allPaused || !needsApproval) && (
                                         <Button
-                                          disabled={busy}
+                                          disabled={
+                                            busy ||
+                                            (allPaused && !connections?.enabled)
+                                          }
                                           aria-label={`${allPaused ? "Resume" : "Pause"} connection: ${label}`}
                                           onClick={() =>
                                             connectionAction(

@@ -41,12 +41,10 @@ test("keyboard revocation removes action and restores focus to the section headi
   });
   await user.tab();
   expect(document.activeElement).toBe(revoke);
-  jest
-    .mocked(postAuthApi)
-    .mockResolvedValueOnce({
-      enabled: true,
-      installations: [{ ...installation, state: "revoked" }],
-    });
+  jest.mocked(postAuthApi).mockResolvedValueOnce({
+    enabled: true,
+    installations: [{ ...installation, state: "revoked" }],
+  });
   await user.keyboard("{Enter}");
   await waitFor(() =>
     expect(document.activeElement).toBe(
@@ -76,4 +74,24 @@ test("changed account prevents an action rather than reusing the new session", a
   await user.click(revoke);
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(postAuthApi).toHaveBeenCalledTimes(1);
+});
+
+test("site kill switch leaves existing installations inspectable and revocable", async () => {
+  jest
+    .mocked(postAuthApi)
+    .mockResolvedValue({ enabled: false, installations: [installation] });
+  const user = userEvent.setup();
+  render(<ExternalAgentInstallations />);
+  const revoke = await screen.findByRole("button", {
+    name: "Revoke Security assistant",
+  });
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "External sending is disabled",
+  );
+  await user.click(revoke);
+  expect(postAuthApi).toHaveBeenLastCalledWith({
+    origin: "https://home.test",
+    endpoint: "auth/cli/agent/installations",
+    body: { action: "revoke", installation_id: installation.installation_id },
+  });
 });
