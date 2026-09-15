@@ -37,6 +37,7 @@ import { normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { path_split, tab_to_path } from "@cocalc/util/misc";
 import { pathMatchesWorkspaceRoot } from "@cocalc/conat/workspaces";
 import { getDefaultCodexNewChatDefaults } from "@cocalc/frontend/chat/codex-defaults";
+import { accountAwareCodexDefault } from "@cocalc/frontend/chat/codex-model-discovery";
 
 const NAVIGATOR_INTENT_QUEUE_KEY = "cocalc:navigator:intent-queue";
 export const NAVIGATOR_SUBMIT_PROMPT_EVENT = "cocalc:navigator:submit-prompt";
@@ -592,6 +593,17 @@ async function writeNavigatorPromptInWorkspaceChat(
     const forceCodex = opts.forceCodex !== false;
     const defaultCodexConfig = getNavigatorDefaultCodexConfig(forceCodex);
     if (!project_id || !basePrompt) return false;
+    if (forceCodex && !requestedModel && defaultCodexConfig.model) {
+      const model = await accountAwareCodexDefault(
+        project_id,
+        defaultCodexConfig.model,
+      );
+      if (model !== defaultCodexConfig.model) {
+        defaultCodexConfig.model = model;
+        defaultCodexConfig.reasoning = undefined;
+        defaultCodexConfig.serviceTier = "standard";
+      }
+    }
 
     const account_id =
       `${redux.getStore("account")?.get?.("account_id") ?? ""}`.trim();

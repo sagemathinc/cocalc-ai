@@ -192,7 +192,9 @@ export type AcpControlRequest = {
   path: string;
   thread_id: string;
   user_message_id: string;
-  action: "cancel" | "send_immediately" | "resend";
+  action: "cancel" | "send_immediately" | "resend" | "resend_with_model";
+  // Only for retrying a confirmed ChatGPT model-unavailable rejection.
+  model_recovery?: { model: string; expected_model: string };
 };
 
 export type AcpControlResponse = {

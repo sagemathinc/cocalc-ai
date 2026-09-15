@@ -683,9 +683,11 @@ export async function sendQueuedAcpTurnImmediately({
 export async function resendCanceledAcpTurn({
   actions,
   message,
+  modelRecovery,
 }: {
   actions: ChatActions;
   message: ChatMessage;
+  modelRecovery?: { model: string; expected_model: string };
 }): Promise<boolean> {
   const { store } = actions;
   if (!store) return false;
@@ -708,7 +710,8 @@ export async function resendCanceledAcpTurn({
       path,
       thread_id: threadId,
       user_message_id: messageId,
-      action: "resend",
+      action: modelRecovery ? "resend_with_model" : "resend",
+      ...(modelRecovery ? { model_recovery: modelRecovery } : {}),
     });
     if (result?.ok) {
       cleanupGeneratedAcpFailureReplies({ actions, messageId, threadId });
@@ -720,7 +723,7 @@ export async function resendCanceledAcpTurn({
       });
       return true;
     }
-    if (result?.state !== "missing") {
+    if (modelRecovery || result?.state !== "missing") {
       setAcpMessageState({
         actions,
         message,

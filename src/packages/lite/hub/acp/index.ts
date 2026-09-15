@@ -11447,7 +11447,10 @@ async function handleAcpControlRequest(
       throw err;
     }
   }
-  if (request.action === "resend") {
+  if (request.action === "resend" || request.action === "resend_with_model") {
+    if (request.action === "resend_with_model" && !request.model_recovery) {
+      throw new Error("Model recovery requires a replacement model");
+    }
     const current = getAcpJob({ project_id, path, user_message_id });
     if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
@@ -11466,6 +11469,13 @@ async function handleAcpControlRequest(
       project_id,
       path,
       user_message_id,
+      modelRecovery: request.model_recovery
+        ? {
+            ...request.model_recovery,
+            account_id: request.account_id,
+            thread_id,
+          }
+        : undefined,
     });
     if (!row || row.state !== "queued") {
       return { ok: false, state: row?.state ?? "missing" };

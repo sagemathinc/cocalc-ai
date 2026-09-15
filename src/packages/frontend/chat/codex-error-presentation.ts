@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { unavailableChatGptCodexModel } from "@cocalc/util/ai/codex-model-recovery";
+
 export const CODEX_PROJECT_RESTART_HINT =
   "Click settings on the left rail, restart the project, then try again.";
 
@@ -37,6 +39,9 @@ export function formatCodexErrorForDisplay(
   liteMode = false,
 ): string {
   const detail = `${error ?? ""}`;
+  const model = unavailableChatGptCodexModel(detail);
+  if (model)
+    return `${model} isn't available with your connected ChatGPT account. Choose an available model in Agent settings and retry.`;
   if (!isCodexUpgradeRequiredError(detail)) {
     return detail;
   }
@@ -49,6 +54,8 @@ export function formatCodexErrorMarkdown(
   liteMode = false,
 ): string {
   const detail = `${error ?? ""}`;
+  if (unavailableChatGptCodexModel(detail))
+    return formatCodexErrorForDisplay(detail, liteMode);
   if (!isCodexUpgradeRequiredError(detail)) {
     return detail;
   }

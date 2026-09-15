@@ -1,4 +1,8 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
+import {
+  codexModelRecoveryConfig,
+  unavailableChatGptCodexModel,
+} from "@cocalc/util/ai/codex-model-recovery";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 import { upsertAcpSessionFromJob } from "./acp-sessions";
 
@@ -1189,19 +1193,58 @@ export function resendCanceledAcpJob({
   project_id,
   path,
   user_message_id,
+  modelRecovery,
 }: {
   project_id: string;
   path: string;
   user_message_id: string;
+  modelRecovery?: {
+    model: string;
+    expected_model: string;
+    account_id: string;
+    thread_id: string;
+  };
 }): AcpJobRow | undefined {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  let replacement: string | null = null;
+  let expectedRequest: string | null = null;
+  if (modelRecovery) {
+    const current = getAcpJob({ project_id, path, user_message_id });
+    if (
+      !current ||
+      current.state !== "error" ||
+      current.account_id !== modelRecovery.account_id ||
+      current.thread_id !== modelRecovery.thread_id ||
+      unavailableChatGptCodexModel(current.error ?? "") !==
+        modelRecovery.expected_model ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(modelRecovery.model) ||
+      modelRecovery.model === modelRecovery.expected_model
+    )
+      return undefined;
+    const request = decodeAcpJobRequest(current);
+    if (
+      request.request_kind === "command" ||
+      request.config?.model !== modelRecovery.expected_model ||
+      ![undefined, "auto", "subscription"].includes(
+        request.config?.paymentSource,
+      )
+    )
+      return undefined;
+    expectedRequest = current.request_json;
+    replacement = JSON.stringify({
+      ...request,
+      config: codexModelRecoveryConfig(request.config, modelRecovery.model),
+    });
+  }
   // Historical name: this also retries terminal error jobs, which keep the
   // original request_json needed to resubmit the same user turn.
-  db.prepare(
-    `UPDATE ${TABLE}
+  const updated = db
+    .prepare(
+      `UPDATE ${TABLE}
       SET state = 'queued',
+          request_json = COALESCE(?, request_json),
           available_at = NULL,
           priority = CASE
             WHEN send_mode = 'immediate' THEN 1
@@ -1217,8 +1260,19 @@ export function resendCanceledAcpJob({
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?
-        AND state IN ('canceled', 'error')`,
-  ).run(now, project_id, path, user_message_id);
+        AND state IN ('canceled', 'error')
+        AND (? IS NULL OR (state = 'error' AND request_json = ?))`,
+    )
+    .run(
+      replacement,
+      now,
+      project_id,
+      path,
+      user_message_id,
+      expectedRequest,
+      expectedRequest,
+    );
+  if (modelRecovery && updated.changes !== 1) return undefined;
   const job = getAcpJob({ project_id, path, user_message_id });
   mirrorAcpJobSession(job);
   return job;
