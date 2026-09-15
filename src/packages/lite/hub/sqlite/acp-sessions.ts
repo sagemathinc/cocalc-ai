@@ -5,6 +5,7 @@ import getLogger from "@cocalc/backend/logger";
 
 const TABLE = "acp_sessions";
 const logger = getLogger("lite:acp-session-publication");
+const PUBLICATION_RETRY_MS = 10_000;
 
 export type AcpSessionState = AiSessionState;
 
@@ -209,32 +210,53 @@ export function setAcpSessionPublisher(
   if (publisher) {
     publicationTimer = setInterval(() => {
       try {
-        publishPendingAcpSessions();
+        publishPendingAcpSessions({ respectRetryDelay: true });
       } catch (err) {
         logger.warn("unable to read pending session publications", {
           err: `${err}`,
         });
       }
-    }, 10_000);
+    }, PUBLICATION_RETRY_MS);
     publicationTimer.unref?.();
   }
 }
 
-function publishAcpSession(row: AcpSessionRow | undefined): void {
-  if (!row || !publisher) return;
+function publishAcpSession(
+  row: AcpSessionRow | undefined,
+  {
+    force = false,
+    respectRetryDelay = false,
+  }: { force?: boolean; respectRetryDelay?: boolean } = {},
+): boolean {
+  if (!row || !publisher) return false;
   const key = row.session_key;
-  if (publishing.has(key)) return;
+  if (publishing.has(key)) return false;
   const send = publisher;
-  // Read the revision from the same SQLite snapshot as the payload. Another
-  // worker may update the row between this read and the eventual acknowledgement.
-  const revision = (row as AcpSessionRow & { publication_revision: number })
-    .publication_revision;
-  if (revision == null) return;
-  getAcpDatabase()
+  const persisted = row as AcpSessionRow & {
+    publication_revision: number;
+    publication_pending: number;
+    publication_attempted_at: number;
+  };
+  // The conditional update is a cross-process claim on this outbox revision.
+  const revision = Number(persisted.publication_revision);
+  const previousAttempt = Number(persisted.publication_attempted_at) || 0;
+  const now = Date.now();
+  if (!Number.isFinite(revision)) return false;
+  if (respectRetryDelay && now - previousAttempt < PUBLICATION_RETRY_MS) {
+    return false;
+  }
+  const claimed = getAcpDatabase()
     .prepare(
-      `UPDATE ${TABLE} SET publication_attempted_at=? WHERE session_key=?`,
+      `UPDATE ${TABLE}
+       SET publication_attempted_at=?,
+           publication_pending=CASE WHEN ?=1 THEN 1 ELSE publication_pending END
+       WHERE session_key=?
+         AND publication_revision=?
+         AND publication_attempted_at=?
+         AND (?=1 OR publication_pending=1)`,
     )
-    .run(Date.now(), key);
+    .run(now, force ? 1 : 0, key, revision, previousAttempt, force ? 1 : 0);
+  if (claimed.changes !== 1) return false;
   publishing.add(key);
   void (async () => {
     let delivered = false;
@@ -268,18 +290,29 @@ function publishAcpSession(row: AcpSessionRow | undefined): void {
       }
     }
   })();
+  return true;
 }
 
-export function publishPendingAcpSessions(): number {
+export function publishPendingAcpSessions({
+  respectRetryDelay = false,
+}: { respectRetryDelay?: boolean } = {}): number {
   if (!publisher) return 0;
   ensureInit();
+  const retryBefore = Date.now() - PUBLICATION_RETRY_MS;
   const rows = getAcpDatabase()
     .prepare(
-      `SELECT * FROM ${TABLE} WHERE publication_pending=1 ORDER BY publication_attempted_at ASC, updated_at ASC LIMIT 500`,
+      `SELECT * FROM ${TABLE}
+       WHERE publication_pending=1
+         AND (?=0 OR publication_attempted_at <= ?)
+       ORDER BY publication_attempted_at ASC, updated_at ASC
+       LIMIT 500`,
     )
-    .all() as AcpSessionRow[];
-  for (const row of rows) publishAcpSession(row);
-  return rows.length;
+    .all(respectRetryDelay ? 1 : 0, retryBefore) as AcpSessionRow[];
+  let claimed = 0;
+  for (const row of rows) {
+    if (publishAcpSession(row, { respectRetryDelay })) claimed += 1;
+  }
+  return claimed;
 }
 
 export function publishActiveAcpSessions({
@@ -288,10 +321,18 @@ export function publishActiveAcpSessions({
   limit?: number;
 } = {}): number {
   const rows = listAcpSessions({ activeOnly: true, limit });
+  let claimed = 0;
   for (const row of rows) {
-    publishAcpSession(row);
+    if (
+      publishAcpSession(row, {
+        force: true,
+        respectRetryDelay: true,
+      })
+    ) {
+      claimed += 1;
+    }
   }
-  return rows.length;
+  return claimed;
 }
 
 function ensureInit(): void {
