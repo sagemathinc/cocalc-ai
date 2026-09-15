@@ -7,6 +7,7 @@ import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agen
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
+import { list as listOperations } from "@cocalc/server/conat/api/lro";
 
 import {
   createInterBayAuthTokenHandlers,
@@ -2438,6 +2439,13 @@ async function startProjectCollabInviteService(): Promise<void> {
 async function startHostConnectionService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayHostConnectionApi = {
+    listHostOperations: async ({ account_id, host_id, include_completed }) =>
+      await listOperations({
+        account_id,
+        scope_type: "host",
+        scope_id: host_id,
+        include_completed,
+      }),
     get: async ({ account_id, host_id }) => {
       const connection = await resolveHostConnectionLocal({
         account_id,

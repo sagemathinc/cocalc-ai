@@ -2651,6 +2651,7 @@ export type HostConnectionMethod =
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
   | "list-host-runtime-deployments"
+  | "list-host-operations"
   | "set-host-runtime-deployments"
   | "get-host-managed-component-status"
   | "get-project-start-metadata"
@@ -3386,6 +3387,11 @@ export interface InterBayExternalCredentialsApi {
 }
 
 export interface InterBayHostConnectionApi {
+  listHostOperations: (opts: {
+    account_id?: string;
+    host_id: string;
+    include_completed?: boolean;
+  }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
   listHostAccess: (
@@ -3747,6 +3753,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "listHostRuntimeDeployments",
     method: "list-host-runtime-deployments",
   },
+  { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "setHostRuntimeDeployments",
     method: "set-host-runtime-deployments",
