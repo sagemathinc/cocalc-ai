@@ -33,6 +33,29 @@ No production deployment or flag changes are authorized.
 Remaining non-security release work includes full build completion, matching
 artifact provenance, live UI smoke testing, and qualified deployment/rollback.
 
+### Browser build and serving verification
+
+Explicit `pnpm run build:dev` in `src/packages/static` passed from clean commit
+`a218dc7302ebc27f5dbc1654e1aa2273db13ff2c`; Rspack completed successfully.
+Build date: `2026-09-15T18:00:54.170Z`. The build emitted a non-fatal debug-log
+permission warning; no permission changes were made.
+
+Both `http://localhost:9100/static/frontend-build.json` and
+`https://lite1b.cocalc.ai/static/frontend-build.json` exactly match the local
+manifest, including its 1,075 assets. Three emitted chunks referencing My Agents,
+the messaging preference, and connection approval were fetched from the public
+dev URL and compared by SHA-256 with local files; all matched. This establishes
+that the dev server serves the rebuilt UI, not that an existing browser tab has
+loaded it or that backend/host versions are aligned. No production changes or
+service restarts were performed.
+
+The previous CLI login handle is missing, no matching login process remains,
+and the primary profile's fresh `auth status --check` reports interactive sign-in
+required. Started one new first-party login request and gave its approval URL
+to the maintainer. Authenticated UI smoke testing waits for that approval.
+Security review remains paused as requested. The next non-security step is to
+verify the opt-in and management UI in a browser using the matching bundle.
+
 ## Review baseline
 
 - Worktree: `/home/user/scratch/agent-mentions`, `feature/agent-mentions`.
