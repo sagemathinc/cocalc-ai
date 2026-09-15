@@ -2852,8 +2852,25 @@ export class SubscriptionEmitter extends EventEmitter {
     }
     const traceEnabled = conatTraceListeners.size > 0;
     const [id, seq, done, encoding, buffer, headers] = data;
+    if (
+      this.receiveBudget &&
+      !(buffer instanceof Uint8Array || buffer instanceof ArrayBuffer)
+    ) {
+      delete this.incoming[id];
+      this.receiveBudget.remove(id);
+      return;
+    }
     // console.log({ id, seq, done, encoding, buffer, headers });
-    const chunk = { seq, done, encoding, buffer, headers };
+    const chunk = {
+      seq,
+      done,
+      encoding,
+      buffer:
+        this.receiveBudget && buffer instanceof ArrayBuffer
+          ? new Uint8Array(buffer)
+          : buffer,
+      headers,
+    };
     const { incoming } = this;
     if (incoming[id] == null) {
       if (seq != 0) {

@@ -59,6 +59,36 @@ test("wrong sequence frees fragment accounting and cannot emit partial content",
   }
 });
 
+test.each(["text", { length: 1 }, [1], null])(
+  "malformed fragment bodies are dropped without retaining partial data (%p)",
+  (body) => {
+    const { sub, received, chunk } = fixture();
+    try {
+      chunk("bad", 0, 0, Buffer.alloc(5));
+      expect(() => chunk("bad", 1, 1, body as any)).not.toThrow();
+      expect(received).toHaveLength(0);
+      expect(Object.keys((sub as any).incoming)).toHaveLength(0);
+      chunk("good", 0, 1, Buffer.alloc(10));
+      expect(received).toHaveLength(1);
+    } finally {
+      sub.close(true);
+    }
+  },
+);
+
+test("bounded binary assembly accepts Buffer, Uint8Array and ArrayBuffer", () => {
+  const { sub, received, chunk } = fixture();
+  try {
+    chunk("binary", 0, 0, Buffer.from([0xa2]));
+    chunk("binary", 1, 0, new Uint8Array([97]) as any);
+    chunk("binary", 2, 1, new Uint8Array([98]).buffer as any);
+    expect(received).toHaveLength(1);
+    expect(received[0].data).toBe("ab");
+  } finally {
+    sub.close(true);
+  }
+});
+
 test("abandoned fragment expiry releases the aggregate budget", async () => {
   jest.useFakeTimers();
   const { sub, received, chunk } = fixture();
