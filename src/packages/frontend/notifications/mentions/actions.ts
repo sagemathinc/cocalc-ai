@@ -189,6 +189,8 @@ function matchesProjectKey(
 
 export class MentionsActions extends Actions<MentionsState> {
   private refreshInFlight?: Promise<void>;
+  private bulkReadDepth = 0;
+  private bulkReadVersion = 0;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -300,7 +302,7 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   public refresh = async (background = false): Promise<void> => {
-    if (this.destroyed) {
+    if (this.destroyed || this.bulkReadDepth > 0) {
       return;
     }
     if (this.refreshInFlight != null) {
@@ -313,6 +315,7 @@ export class MentionsActions extends Actions<MentionsState> {
   };
 
   private async refreshImpl(background: boolean): Promise<void> {
+    const bulkReadVersion = this.bulkReadVersion;
     if (!webapp_client.is_signed_in()) {
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;
@@ -345,6 +348,9 @@ export class MentionsActions extends Actions<MentionsState> {
         rows: snapshot.rows,
         counts,
       });
+      if (this.bulkReadDepth > 0 || bulkReadVersion !== this.bulkReadVersion) {
+        return;
+      }
       this.setState({
         loading: false,
         mentions: buildNotificationInboxMap({ account_id, rows }),
@@ -630,6 +636,9 @@ export class MentionsActions extends Actions<MentionsState> {
         this.notificationRowProjectionVersion += 1;
         return;
       case "notification.counts":
+        // Multi-project marking publishes intermediate counts. Reconcile once
+        // after every write, not against the optimistically updated whole inbox.
+        if (this.bulkReadDepth > 0) return;
         this.setState({ unread_count: event.counts.unread });
         if (
           event.counts.unread !==
@@ -824,6 +833,10 @@ export class MentionsActions extends Actions<MentionsState> {
       )
       .keySeq()
       .toArray();
+    if (as === "read") {
+      this.bulkReadDepth += 1;
+      this.bulkReadVersion += 1;
+    }
     this.applyOptimisticReadState(notification_ids, as === "read");
     try {
       if (as === "read") {
@@ -852,7 +865,6 @@ export class MentionsActions extends Actions<MentionsState> {
             read_through_revision,
           });
         }
-        await this.refresh(true);
       } else {
         await this.updateReadState({
           notification_ids,
@@ -861,7 +873,17 @@ export class MentionsActions extends Actions<MentionsState> {
       }
     } catch (err) {
       console.warn("WARNING: notifications markAll error -- ", err);
-      await this.refresh(true);
+      if (as !== "read") await this.refresh(true);
+    } finally {
+      if (as === "read") {
+        // Keep intermediate feed repairs suppressed while an older snapshot
+        // drains; it must not satisfy the final reconciliation for this batch.
+        if (this.bulkReadDepth === 1) await this.refreshInFlight;
+        this.bulkReadDepth -= 1;
+        if (this.bulkReadDepth === 0) {
+          await this.refresh(true);
+        }
+      }
     }
   }
 

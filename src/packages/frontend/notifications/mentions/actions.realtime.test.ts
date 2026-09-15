@@ -874,9 +874,13 @@ describe("MentionsActions realtime feed", () => {
     }
   });
 
-  it.each(["project", "everything"])(
-    "marks %s read through the loaded snapshot without blanking the inbox",
-    async (scope) => {
+  it.each([
+    { scope: "project", inFlight: false },
+    { scope: "everything", inFlight: false },
+    { scope: "everything", inFlight: true },
+  ])(
+    "marks $scope read without blanking the inbox (older refresh: $inFlight)",
+    async ({ scope, inFlight }) => {
       const project_id = "project-1";
       const initialRow = {
         notification_id: "n-1",
@@ -922,6 +926,15 @@ describe("MentionsActions realtime feed", () => {
       );
       mockedWebappClient.conat_client.hub.notifications.markAllRead.mockImplementation(
         async () => {
+          const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+          feed.emit("change", {
+            type: "notification.counts",
+            account_id: "acct-1",
+            ts: Date.now(),
+            counts: { unread: 2 },
+          });
+          // A reconnect can also request a snapshot between project writes.
+          feed.emit("history-gap", {});
           mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue(
             {
               total: 1,
@@ -984,17 +997,43 @@ describe("MentionsActions realtime feed", () => {
         });
         await flushMicrotasks();
 
+        let releaseOldSnapshot: ((snapshot: any) => void) | undefined;
+        let olderRefresh: Promise<void> | undefined;
+        if (inFlight) {
+          mockedWebappClient.conat_client.hub.notifications.listSnapshot.mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                releaseOldSnapshot = resolve;
+              }),
+          );
+          olderRefresh = actions.refresh(true);
+          await flushMicrotasks();
+        }
         redux._set_state.mockClear();
-        await actions.markAll(
+        const marking = actions.markAll(
           scope === "everything" ? undefined : project_id,
           "read",
         );
+        await flushMicrotasks();
+        releaseOldSnapshot?.({
+          rows: [initialRow],
+          read_through_revision: "37",
+        });
+        await olderRefresh;
+        await marking;
 
         expect(
           redux._set_state.mock.calls.some(
             ([patch]) => patch.mentions?.loading === true,
           ),
         ).toBe(false);
+        expect(
+          mockedWebappClient.conat_client.hub.notifications.listSnapshot,
+        ).toHaveBeenCalledTimes(inFlight ? 3 : 2);
+        expect(mentionsStore.get("unread_count")).toBe(0);
+        expect(
+          (mentionsStore.get("mentions") as ImmutableMap<any, any>).size,
+        ).toBe(0);
 
         expect(
           mockedWebappClient.conat_client.hub.notifications.markAllRead,
