@@ -90,6 +90,41 @@ Use explicit project/browser targets and re-list after each full navigation.
 Next: operational deployment/rollback qualification. Independent review remains
 paused and outstanding; no production rollout is authorized.
 
+### Isolated operational canary artifact: September 15, 18:16 UTC
+
+First-party `host deploy status` for QA receiver host
+`b96028c9-7d3e-4953-a8c9-52f8a5ce52ca` reports project-host, router, persist and
+ACP worker all running/aligned at `20260915T052328Z-40fdca411123`.
+`host deploy rollback <host> --artifact project-host --last-known-good --dry-run`
+resolves that same current version. This is a read-only target-resolution check,
+not a rollback rehearsal. Do not use the unqualified default previous version.
+
+Built an isolated new bundle without changing the served host archive:
+
+```sh
+cd src/packages/project-host/sea
+./build-bundle.sh /tmp/agent-release-canary-02a5d1d824/bundle /tmp/agent-release-canary-02a5d1d824/bundle-linux.tar.xz --message 'Dev-only controlled rollout and rollback qualification; public checkpoint 02a5d1d824'
+```
+
+- Source: `02a5d1d82477b80a5b7aed321506b54cf529343b`, clean throughout build.
+- Build ID: `20260915T181641Z-02a5d1d82477`; identity records `git_dirty:false`.
+- Archive size: 84,510,564 bytes.
+- SHA-256: `ef967276c0324b8b9924c63ab5a6985bf35d4553cda9ebdbb32ee50b8f7fbe40`.
+- Build validates the tar archive, native-module presence and runner templates.
+- `node --check` passes for both `bundle/index.js` and `main/index.js`.
+
+Application package sources are unchanged from the current public host
+checkpoint `40fdca411123`; later public commits are documentation only. This
+canary will qualify deployment mechanics, not a functional-code migration or
+the separate paused review work. It is neither published nor installed. No host,
+project, flag, approval or desired deployment state was mutated in this step.
+
+Next: preserve the existing known-good archive, stage this version via the dev
+software endpoint without changing production defaults, arrange a bounded
+receiver-host maintenance window, deploy once, observe the operation to terminal
+state, and explicitly roll back to the known-good version. Verify all four
+components afterward; do not equate an operation acknowledgment with convergence.
+
 ## Review baseline
 
 - Worktree: `/home/user/scratch/agent-mentions`, `feature/agent-mentions`.
