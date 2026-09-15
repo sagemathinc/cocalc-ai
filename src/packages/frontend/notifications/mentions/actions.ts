@@ -367,11 +367,11 @@ export class MentionsActions extends Actions<MentionsState> {
         return;
       }
       this.setState({ loading: false });
-      this.scheduleRefreshRetry();
+      this.scheduleRefreshRetry(background);
     }
   }
 
-  private scheduleRefreshRetry(): void {
+  private scheduleRefreshRetry(background: boolean): void {
     if (
       this.destroyed ||
       this.refreshRetryTimer != null ||
@@ -387,7 +387,7 @@ export class MentionsActions extends Actions<MentionsState> {
     this.refreshRetryTimer = setTimeout(() => {
       this.refreshRetryTimer = undefined;
       if (!this.destroyed) {
-        void this.refresh();
+        void this.refresh(background);
       }
     }, delayMs);
   }

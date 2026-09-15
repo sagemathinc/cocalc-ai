@@ -874,13 +874,82 @@ describe("MentionsActions realtime feed", () => {
     }
   });
 
+  it.each([false, true])(
+    "keeps bulk-read recovery retries in the background (write failure: %s)",
+    async (writeFailure) => {
+      jest.useFakeTimers();
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const notifications = mockedWebappClient.conat_client.hub.notifications;
+      const row = {
+        notification_id: "n-1",
+        kind: "mention",
+        project_id: null,
+        summary: { title: "Notice" },
+        read_state: { read: false, saved: false },
+      };
+      notifications.listSnapshot.mockResolvedValueOnce({
+        rows: [row],
+        read_through_revision: "37",
+      });
+      notifications.counts.mockResolvedValue({ unread: 1 });
+      let mentionsStore = ImmutableMap({ mentions: ImmutableMap() });
+      const redux = {
+        getStore: (name: string) =>
+          name === "account"
+            ? ImmutableMap({ account_id: "acct-1" })
+            : mentionsStore,
+        _set_state: jest.fn((patch) => {
+          mentionsStore = mentionsStore.merge(patch.mentions);
+        }),
+        removeActions: jest.fn(),
+      } as any;
+      const actions = new MentionsActions("mentions", redux);
+      try {
+        await actions.refresh();
+        redux._set_state.mockClear();
+        notifications.listSnapshot
+          .mockRejectedValueOnce(new Error("timeout"))
+          .mockResolvedValueOnce({
+            rows: [
+              { ...row, read_state: { read: !writeFailure, saved: false } },
+            ],
+            read_through_revision: "38",
+          });
+        if (writeFailure) {
+          notifications.markAllRead.mockRejectedValueOnce(new Error("timeout"));
+        }
+        notifications.counts.mockResolvedValue({
+          unread: writeFailure ? 1 : 0,
+        });
+        await actions.markAll(undefined, "read");
+        expect(notifications.listSnapshot).toHaveBeenCalledTimes(2);
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(notifications.listSnapshot).toHaveBeenCalledTimes(3);
+        expect(mentionsStore.get("unread_count")).toBe(writeFailure ? 1 : 0);
+        expect(
+          mentionsStore.getIn(["mentions", "n-1", "users", "acct-1", "read"]),
+        ).toBe(!writeFailure);
+        expect(
+          redux._set_state.mock.calls.some(
+            ([patch]) => patch.mentions?.loading === true,
+          ),
+        ).toBe(false);
+      } finally {
+        actions.destroy();
+        warnSpy.mockRestore();
+        jest.useRealTimers();
+      }
+    },
+  );
+
   it.each([
-    { scope: "project", inFlight: false },
-    { scope: "everything", inFlight: false },
-    { scope: "everything", inFlight: true },
+    { scope: "project", inFlight: false, concurrent: false },
+    { scope: "everything", inFlight: false, concurrent: false },
+    { scope: "everything", inFlight: true, concurrent: false },
+    { scope: "everything", inFlight: true, concurrent: true },
   ])(
-    "marks $scope read without blanking the inbox (older refresh: $inFlight)",
-    async ({ scope, inFlight }) => {
+    "marks $scope read without blanking the inbox (older refresh: $inFlight, overlapping mark: $concurrent)",
+    async ({ scope, inFlight, concurrent }) => {
       const project_id = "project-1";
       const initialRow = {
         notification_id: "n-1",
@@ -1014,12 +1083,16 @@ describe("MentionsActions realtime feed", () => {
           scope === "everything" ? undefined : project_id,
           "read",
         );
+        const overlappingMark = concurrent
+          ? actions.markAll("project-2", "read")
+          : undefined;
         await flushMicrotasks();
         releaseOldSnapshot?.({
           rows: [initialRow],
           read_through_revision: "37",
         });
         await olderRefresh;
+        await overlappingMark;
         await marking;
 
         expect(
@@ -1043,7 +1116,9 @@ describe("MentionsActions realtime feed", () => {
         });
         expect(
           mockedWebappClient.conat_client.hub.notifications.markAllRead,
-        ).toHaveBeenCalledTimes(scope === "everything" ? 3 : 1);
+        ).toHaveBeenCalledTimes(
+          (scope === "everything" ? 3 : 1) + (concurrent ? 1 : 0),
+        );
         if (scope === "everything") {
           for (const project_id of ["project-2", null]) {
             expect(
