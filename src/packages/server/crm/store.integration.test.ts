@@ -1392,6 +1392,92 @@ describePglite("integrated CRM store", () => {
     }
   });
 
+  it.each(["name", "email"] as const)(
+    "searches people by %s across statuses with complete cursor pagination",
+    async (searchBy) => {
+      const prefix = `status-search-${randomUUID()}`;
+      const statuses = ["active", "merged", "archived"] as const;
+      const ids = statuses.map(() => randomUUID());
+      const unrelatedId = randomUUID();
+      // Equal timestamps exercise the UUID tie-breaker on every page.
+      const updatedAt = "2026-08-01T12:00:00.000Z";
+      for (const [index, status] of statuses.entries()) {
+        await pool.query(
+          `INSERT INTO crm_people
+             (id,display_name,status,merged_into_person_id,
+              created_by_account_id,updated_by_account_id,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$5,$6)`,
+          [
+            ids[index],
+            searchBy === "name"
+              ? `${prefix} ${status}`
+              : `Synthetic ${status} contact`,
+            status,
+            status === "merged" ? ids[0] : null,
+            actor,
+            updatedAt,
+          ],
+        );
+        if (searchBy === "email") {
+          const email = `${prefix}-${status}@example.com`;
+          await pool.query(
+            `INSERT INTO crm_person_emails
+               (id,person_id,email_address,normalized_email)
+             VALUES ($1,$2,$3,$3)`,
+            [randomUUID(), ids[index], email],
+          );
+        }
+      }
+      await pool.query(
+        `INSERT INTO crm_people
+           (id,display_name,created_by_account_id,updated_by_account_id,updated_at)
+         VALUES ($1,'Unrelated synthetic contact',$2,$2,$3)`,
+        [unrelatedId, actor, updatedAt],
+      );
+      const request = {
+        search: prefix,
+        reason: "verify synthetic contact status search",
+        max_bytes: 100_000,
+      };
+      const expectedIds = [...ids].sort().reverse();
+      const all = await store.listPeople(request);
+      expect(all.people.map(({ id }) => id)).toEqual(expectedIds);
+      expect(all.truncated).toBe(false);
+      expect(all.next_cursor).toBeUndefined();
+
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let index = 0; index < ids.length; index++) {
+        const page = await store.listPeople({ ...request, limit: 1, cursor });
+        expect(page.people.map(({ id }) => id)).toEqual([expectedIds[index]]);
+        expect(page.truncated).toBe(index < ids.length - 1);
+        if (index < ids.length - 1) {
+          expect(page.next_cursor).toEqual(expect.any(String));
+          expect(page.next_cursor).not.toBe(cursor);
+        } else {
+          expect(page.next_cursor).toBeUndefined();
+        }
+        seen.push(...page.people.map(({ id }) => id));
+        cursor = page.next_cursor;
+      }
+      expect(seen).toEqual(expectedIds);
+      expect(new Set(seen).size).toBe(ids.length);
+      expect(seen).not.toContain(unrelatedId);
+
+      for (const [index, status] of statuses.entries()) {
+        const filtered = await store.listPeople({
+          ...request,
+          status,
+          limit: 1,
+        });
+        expect(filtered.people.map(({ id }) => id)).toEqual([ids[index]]);
+        expect(filtered.people[0].status).toBe(status);
+        expect(filtered.truncated).toBe(false);
+        expect(filtered.next_cursor).toBeUndefined();
+      }
+    },
+  );
+
   it("binds, discovers, and paginates reviewed person source references", async () => {
     const organizationId = randomUUID();
     const otherOrganizationId = randomUUID();
