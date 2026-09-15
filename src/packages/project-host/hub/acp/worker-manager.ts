@@ -403,10 +403,14 @@ function workerRetainsQueuedJobAffinity(
   now: number,
 ): boolean {
   if (row.state === "stopped") return false;
-  const referenceAt = Math.max(
-    Number(row.last_heartbeat_at ?? 0),
-    Number(row.started_at ?? 0),
-  );
+  const heartbeatAt = Number(row.last_heartbeat_at ?? 0);
+  const startedAt = Number(row.started_at ?? 0);
+  const referenceAt =
+    Number.isFinite(heartbeatAt) && heartbeatAt > 0
+      ? heartbeatAt
+      : Number.isFinite(startedAt) && startedAt > 0
+        ? startedAt
+        : 0;
   if (referenceAt > 0 && now - referenceAt < ACP_WORKER_AFFINITY_STALE_MS) {
     return true;
   }
