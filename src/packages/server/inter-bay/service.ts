@@ -547,6 +547,7 @@ import {
   getRootfsQuotaReport,
   getServiceAdmissionDenialReport,
   getSiteSettingsOnSeed,
+  isSeedOnlySiteSetting,
   setSiteSettingsOnSeed,
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
@@ -769,6 +770,12 @@ async function startBayOpsService(): Promise<void> {
     setWebappCrashResolution: async (opts) =>
       await setWebappCrashResolutionLocal(opts),
     setServerSetting: async (opts) => {
+      if (
+        bay_id !== getConfiguredClusterSeedBayId() &&
+        isSeedOnlySiteSetting(opts.name)
+      ) {
+        throw Error(`setting '${opts.name}' is seed-only`);
+      }
       await callback2(db().set_server_setting, opts);
     },
     checkCloudflareBlobEnvironment: async () => {
