@@ -953,7 +953,7 @@ export function MessageList({
     explicit: explicitCodexActivityByMessageId,
     setExpanded: setExpandedCodexActivityByMessageId,
     setExplicit: setExplicitCodexActivityByMessageId,
-  } = useActivityVisibility(actions);
+  } = useActivityVisibility(actions?.store ?? actions);
   const codexActivityBlocksStoreRef = useRef<
     CodexActivityBlocksStore | undefined
   >(undefined);

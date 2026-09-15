@@ -78,6 +78,45 @@ jest.mock("../composing", () => ({
 }));
 
 describe("ChatLog immediate steer rendering", () => {
+  it("retains activity when a frame is replaced while its document remains open", () => {
+    const store = {};
+    const messages = new Map([
+      [
+        "2000",
+        {
+          date: 2000,
+          message_id: "assistant-1",
+          thread_id: "thread-1",
+          sender_id: "acct-codex",
+          acp_account_id: "acct-codex",
+          generating: true,
+          history: [{ content: "hello" }],
+        },
+      ],
+    ]);
+    const chat = () => (
+      <ChatLog
+        project_id="project-1"
+        path="thread.chat"
+        mode="standalone"
+        actions={{ store, clearScrollRequest: jest.fn() } as any}
+        selectedThread="thread-1"
+        messages={new Map(messages) as any}
+      />
+    );
+    const first = render(chat());
+    expect(lastRenderedMessageProps("assistant-1")?.expandedCodexActivity).toBe(
+      true,
+    );
+    first.unmount();
+    messages.set("2000", { ...messages.get("2000")!, generating: false });
+    const second = render(chat());
+    expect(lastRenderedMessageProps("assistant-1")?.expandedCodexActivity).toBe(
+      true,
+    );
+    second.unmount();
+  });
+
   beforeEach(() => {
     renderedMessages = [];
     latestVirtuosoProps = undefined;

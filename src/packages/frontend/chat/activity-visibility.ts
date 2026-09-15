@@ -25,8 +25,8 @@ function createStore() {
   };
 }
 
-// The document actions outlive thread/virtual-row mounts but are released when
-// the chat closes. Persist only visibility flags here, never streamed events.
+// Use the shared document store, not its per-frame ChatActions, so replacing a
+// frame retains the flags until the chat closes. Never persist streamed events.
 const stores = new WeakMap<object, ReturnType<typeof createStore>>();
 
 export function useActivityVisibility(document?: object) {
