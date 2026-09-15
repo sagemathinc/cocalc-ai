@@ -856,9 +856,12 @@ Attachment design decisions for the next increment, not implemented here:
 Follow-up implementation status, exact reproduction commands, and remaining work
 are tracked in [agent-attachments-login-progress.md](./agent-attachments-login-progress.md).
 Host/project fail-fast admission and same-project file references are implemented
-and tested in the worktree. Snapshot preparation, binary transport through owner
-routing, and sandboxed destination staging are now connected. A real Conat test
-passes a 32 MiB payload across three test bay services with digest verification;
-the execution adapter remains mocked. External sender login is not implemented.
-None of this increment is deployed; do not interpret these tests as live
-cross-host attachment verification.
+and deployed. Snapshot preparation, binary transport through owner routing, and
+sandboxed destination staging are connected. A real agent sent a 32 MiB snapshot
+across hosts/bays and the recipient verified its full digest. A stopped recipient
+started and received its attachment; disabled autostart rejected without a chat
+entry. Same-project smoke testing found an optional MsgPack argument bug, fixed
+in `7bf8e885d2`; a new live attempt was accepted and the recipient verified the
+original file's size and digest. External sender login is not
+implemented. See the follow-up document for attempt IDs, exact deployed versions,
+operational corrections, and remaining work.
