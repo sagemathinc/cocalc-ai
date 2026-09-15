@@ -119,12 +119,17 @@ async function objectIds() {
 }
 
 describe("agent messaging declarative schema", () => {
+  let oldDatabase: string | undefined;
   beforeEach(async () => {
+    oldDatabase = process.env.COCALC_DB;
+    process.env.COCALC_DB = "pglite";
     db = new PglitePool();
     await db.query("CREATE TABLE projects(project_id UUID PRIMARY KEY)");
   });
   afterEach(async () => {
     await db.end();
+    if (oldDatabase == null) delete process.env.COCALC_DB;
+    else process.env.COCALC_DB = oldDatabase;
   });
 
   test("all tables are durable and private, without local account foreign keys", () => {

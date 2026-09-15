@@ -127,11 +127,16 @@ async function seed() {
 }
 
 describe("personal agent account-home declarative schema", () => {
+  let oldDatabase: string | undefined;
   beforeEach(() => {
+    oldDatabase = process.env.COCALC_DB;
+    process.env.COCALC_DB = "pglite";
     db = new PglitePool();
   });
   afterEach(async () => {
     await db.end();
+    if (oldDatabase == null) delete process.env.COCALC_DB;
+    else process.env.COCALC_DB = oldDatabase;
   });
 
   test("durable private tables need no local accounts/projects/identities", async () => {
