@@ -149,6 +149,7 @@ function hasString(value: Record<string, unknown>, key: string): boolean {
 
 const ACCOUNT_LOCAL_OPERATIONS = new Set<BillingAuthorityAccountLocalOperation>(
   [
+    "apply-funding-approval",
     "admin-create-membership-package-purchase",
     "admin-provision-site-license",
     "legacy-apply-financial-home-bay",
@@ -188,6 +189,9 @@ const HTTP_OPERATIONS = new Set<BillingAuthorityHttpOperation>([
 ]);
 
 const MAINTENANCE_TASKS = new Set<BillingAuthorityMaintenanceTask>([
+  "monthly-collections",
+  "credit-transfers",
+  "provider-refunds",
   "automatic-payments",
   "auto-balance",
   "payment-intents",

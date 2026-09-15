@@ -478,6 +478,35 @@ import {
   upsertProjectedCollabInviteDirect,
 } from "@cocalc/server/projects/collab-invite-inbox";
 import { assertLocalProjectCollaborator } from "@cocalc/server/conat/project-local-access";
+import * as computeFunding from "@cocalc/server/conat/api/compute-funding";
+import { checkFundingApprovalRecipientsOnHome } from "@cocalc/server/compute/funding/approval-recipients";
+import {
+  getCourseVmRecommendationsOnOwningBay,
+  setCourseVmRecommendationsOnOwningBay,
+  getPublishedCourseVmRecommendationsOnOwningBay,
+} from "@cocalc/server/compute/funding/course-vm-recommendations";
+import {
+  reserveComputeVmFundingLocal,
+  lookupComputeVmFundingLocal,
+  getComputeVmFallbackDecisionLocal,
+  checkComputeVmFundingLocal,
+  settleComputeVmFundingLocal,
+} from "@cocalc/server/compute/funding/vm-funding";
+import {
+  previewCreditTransfer,
+  proposeCreditTransfer,
+  getCreditTransferStatus,
+  listCreditTransfers,
+  creditTransferRecipient,
+  creditTransferVerifyRoot,
+  creditTransferOutgoing,
+  creditTransferDeliver,
+} from "@cocalc/server/purchases/credit-transfers/api";
+import {
+  getMonthlyCollection,
+  proposeMonthlyCollection,
+} from "@cocalc/server/purchases/monthly-collection";
+import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/sources";
 import {
   copyEmailProjectInviteLink,
   createCollabInvite,
@@ -1075,11 +1104,95 @@ async function startAccountDirectoryService(): Promise<void> {
 async function startAccountLocalService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayAccountLocalApi = {
+    reserveComputeVmFunding: reserveComputeVmFundingLocal,
+    lookupComputeVmFunding: lookupComputeVmFundingLocal,
+    getComputeVmFallbackDecision: getComputeVmFallbackDecisionLocal,
+    checkComputeVmFunding: checkComputeVmFundingLocal,
+    settleComputeVmFunding: settleComputeVmFundingLocal,
+    previewCreditTransfer,
+    proposeCreditTransfer,
+    getMonthlyCollection,
+    proposeMonthlyCollection,
+    getCreditTransferStatus,
+    listCreditTransfers,
+    creditTransferRecipient,
+    creditTransferVerifyRoot,
+    creditTransferOutgoing,
+    creditTransferDeliver,
+    computeFundingGetCourseSummary: computeFunding.getCourseSummary,
+    computeFundingGetOwnedPools: computeFunding.getOwnedPools,
+    computeOwnerResources: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-routing")
+      ).computeOwnerResourcesOnBay(opts),
+    computeProjectResources: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-routing")
+      ).computeProjectResourcesOnBay(opts),
+    computeProjectAuthorizeSsh: async (opts) =>
+      (
+        await import("@cocalc/server/conat/api/compute")
+      ).authorizeProjectSshKeyOnBay(opts),
+    computeCreateVmWithVolume: async (opts) =>
+      (
+        await import("@cocalc/server/compute/volume-placement")
+      ).createVmWithVolumeOnBay(opts),
+    computeOwnerMutate: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-mutation")
+      ).computeOwnerMutationOnBay(opts),
+    computeOwnerCheckAgentGrant: async (opts) =>
+      (
+        await import("@cocalc/server/compute/turn-grants")
+      ).checkAgentComputeGrantOnHome(opts),
+    computeOwnerCheckFreshAuth: async (opts) =>
+      (
+        await import("@cocalc/server/compute/owner-resource-mutation")
+      ).checkComputeOwnerFreshAuthOnHome(opts),
+    computeFundingReviewPersonalResource: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/resource-review")
+      ).reviewPersonalResourceOnBay(opts),
+    computeFundingApplyPersonalVolumeHandoff: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/volume-personal-remote")
+      ).applyRemotePersonalVolumeHandoff(opts),
+    computeFundingPersonalVmHandoff: async (opts) =>
+      (
+        await import("@cocalc/server/compute/funding/vm-personal-remote-resource")
+      ).processPersonalVmHandoffOnBay(opts),
+    computeFundingReceiveResourceNotice: async (opts) =>
+      await (
+        await import("@cocalc/server/notifications/compute-resource")
+      ).receiveComputeResourceNotice(opts),
+    computeFundingGetCourseVmRecommendations:
+      getCourseVmRecommendationsOnOwningBay,
+    computeFundingSetCourseVmRecommendations:
+      setCourseVmRecommendationsOnOwningBay,
+    computeFundingGetPublishedCourseVmRecommendations:
+      getPublishedCourseVmRecommendationsOnOwningBay,
+    computeFundingPreviewPoolChange: computeFunding.previewPoolChange,
+    computeFundingProposePoolChange: computeFunding.proposePoolChange,
+    computeFundingGetRolloutCapabilities: async () =>
+      await (
+        await import("@cocalc/server/compute/funding/rollout")
+      ).getLocalFundingRolloutCapabilities(),
+    computeFundingListSourcesOnBay: listCourseFundingSourcesOnBay,
+    computeFundingCheckApprovalRecipients: (opts) =>
+      checkFundingApprovalRecipientsOnHome(opts),
+    computeFundingListSources: computeFunding.listSources,
+    computeFundingPreviewAllocation: computeFunding.previewAllocation,
+    computeFundingProposeAllocation: computeFunding.proposeAllocation,
+    computeFundingGetAllocationStatus: computeFunding.getAllocationStatus,
     create: async (opts) => await provisionLocalClusterAccount(opts),
     delete: async (opts) => await deleteLocalClusterAccount(opts),
     rehome: async (opts) => await rehomeAccountOnHomeBay(opts),
     acceptRehome: async (opts) => await acceptAccountRehome(opts),
     copyRehomeState: async (opts) => await copyAccountRehomeState(opts),
+    activateFinancialRehome: async (opts) =>
+      await (
+        await import("@cocalc/server/accounts/financial-rehome")
+      ).activateAccountFinancialState(opts),
     getRehomeOperation: async ({ op_id }) =>
       (await getAccountRehomeOperation(op_id)) ?? null,
     reconcileRehome: async (opts) => await reconcileAccountRehomeOnSource(opts),

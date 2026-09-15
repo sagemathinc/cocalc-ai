@@ -29,6 +29,7 @@ import {
   executeBillingAuthorityCommand,
   executeBillingHttpCommand,
   executeBillingHubApiCall,
+  assertBillingAuthorityTopology,
 } from "./client";
 import { resetBillingAuthorityContextForTests } from "./context";
 import type {
@@ -375,6 +376,7 @@ describe("durable billing authority client", () => {
 
   it("fails closed on attached bays without a dedicated authenticated transport", async () => {
     mockClusterRole.mockReturnValue("attached");
+    expect(() => assertBillingAuthorityTopology()).toThrow("attached bays");
     await expect(
       executeBillingAuthorityCommand({
         kind: "commercial-maintenance",

@@ -37,6 +37,59 @@ function snapshot(
 }
 
 describe("dedicated host billing enforcement", () => {
+  it("excludes committed postpaid backing from a personal host's runway", () => {
+    expect(
+      evaluateDedicatedHostBillingEnforcement({
+        snapshot: snapshot({
+          funding_mode: "account-postpaid",
+          has_usage_subscription: true,
+          effective_limits: {
+            credit_spend_limit_5h_usd: 300,
+            credit_spend_limit_7d_usd: 1000,
+          },
+          postpaid_committed_usd: "995",
+        }),
+        funding_lane: "credit",
+        hourly_cost_usd: "10",
+        lane_allowed: true,
+      }),
+    ).toMatchObject({
+      state: "draining",
+      limiting_window: "credit_7d",
+      limiting_runway_hours: 0.5,
+    });
+  });
+  it("uses unreserved prepaid credit for runway even when ledger balance is large", () => {
+    expect(
+      evaluateDedicatedHostBillingEnforcement({
+        snapshot: snapshot({
+          balance: "1000",
+          prepaid_spendable_balance: "15",
+        }),
+        funding_lane: "prepaid",
+        hourly_cost_usd: "10",
+        lane_allowed: true,
+      }),
+    ).toMatchObject({
+      state: "at_risk",
+      reason_code: "prepaid_runway_low",
+      limiting_window: "prepaid_balance",
+    });
+  });
+
+  it("reports exhausted prepaid credit when all remaining balance is held", () => {
+    expect(
+      evaluateDedicatedHostBillingEnforcement({
+        snapshot: snapshot({ balance: "1000", prepaid_spendable_balance: "0" }),
+        funding_lane: "prepaid",
+        hourly_cost_usd: "10",
+        lane_allowed: false,
+      }),
+    ).toMatchObject({
+      state: "draining",
+      reason_code: "prepaid_balance_exhausted",
+    });
+  });
   it("keeps prepaid hosts ok when runway is above the warning window", () => {
     const decision = evaluateDedicatedHostBillingEnforcement({
       snapshot: snapshot({ balance: "100" }),

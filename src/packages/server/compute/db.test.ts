@@ -171,6 +171,25 @@ function volumeInput(
 }
 
 describe("compute VM durable state", () => {
+  it("persists a scheduled stop separately from deletion and does not refresh it on create retry", async () => {
+    const input = {
+      ...vmInput(),
+      stop_after_minutes: 360,
+      stop_at: new Date(Date.now() + 360 * 60000),
+      stop_generation: 1,
+      expires_at: null,
+    };
+    const created = await insertComputeVm(input);
+    expect(created.stop_after_minutes).toBe(360);
+    expect(created.stop_at).toEqual(input.stop_at);
+    expect(created.expires_at).toBeNull();
+    const retry = await insertComputeVm({
+      ...input,
+      stop_at: new Date(Date.now() + 720 * 60000),
+    });
+    expect(retry.stop_at).toEqual(created.stop_at);
+    expect(retry.stop_generation).toBe(1);
+  });
   it("records provider interruptions on the active instance generation", async () => {
     const vm = await insertComputeVm(vmInput());
     await insertComputeInstance(vm);

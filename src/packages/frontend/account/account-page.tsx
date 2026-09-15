@@ -255,7 +255,7 @@ export const AccountPage: React.FC = () => {
       setHidden(!hidden);
     }
 
-    if (IS_MOBILE) {
+    if (IS_MOBILE || !isWide) {
       return renderMobileLoggedInView();
     }
 

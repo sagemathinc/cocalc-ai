@@ -303,6 +303,8 @@ describe("account rehome", () => {
       if (sql.includes("SELECT * FROM account_rehome_operations")) {
         return { rows: [operationRow] };
       }
+      if (sql.includes("to_regclass('public.account_financial_handoffs')"))
+        return { rows: [{ name: null }] };
       throw new Error(`unexpected query: ${sql}`);
     });
     resolveAccountHomeBayMock = jest.fn(
@@ -706,6 +708,8 @@ describe("account rehome", () => {
       if (sql.includes("SELECT * FROM account_rehome_operations")) {
         return { rows: [operationRow] };
       }
+      if (sql.includes("to_regclass('public.account_financial_handoffs')"))
+        return { rows: [{ name: null }] };
       throw new Error(`unexpected query: ${sql}`);
     });
 

@@ -10,6 +10,8 @@ import {
   buildVmSshConfigBlock,
   isTransientVmPollError,
   parseTtlMinutes,
+  scheduledStopOptions,
+  courseFundingSource,
   registerVmCommand,
   removeVmSshConfigBlock,
   resolveVmRsyncEndpoint,
@@ -19,6 +21,104 @@ import {
   vmWaitProgress,
   volumeListSummary,
 } from "./vm";
+
+describe("scheduled stop options", () => {
+  it("distinguishes omitted, explicit disabled, and a duration", () => {
+    assert.deepEqual(scheduledStopOptions({}), {});
+    assert.deepEqual(scheduledStopOptions({ scheduledStop: false }), {
+      stop_after_minutes: null,
+    });
+    assert.deepEqual(scheduledStopOptions({ stopAfter: "6h" }), {
+      stop_after_minutes: 360,
+    });
+    assert.throws(
+      () => scheduledStopOptions({ stopAfter: "6h", scheduledStop: false }),
+      /cannot be combined/,
+    );
+    for (const stopAfter of ["0m", "-1h", "366d", "never"])
+      assert.throws(() => scheduledStopOptions({ stopAfter }));
+  });
+  it("passes the stop choice through the existing start command", async () => {
+    const { program, stateCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "start",
+      "timer",
+      "--stop-after",
+      "2h",
+    ]);
+    assert.equal(stateCalls[0].opts.stop_after_minutes, 120);
+  });
+});
+
+describe("course VM funding flags", () => {
+  const payer = "10000000-0000-4000-8000-000000000001";
+  const pool = "10000000-0000-4000-8000-000000000002";
+  const grant = "10000000-0000-4000-8000-000000000003";
+  it("requires all three UUIDs and leaves omitted personal funding unchanged", () => {
+    assert.equal(courseFundingSource({}), undefined);
+    for (let mask = 1; mask < 7; mask++) {
+      assert.throws(
+        () =>
+          courseFundingSource({
+            fundingPayer: mask & 1 ? payer : undefined,
+            fundingPool: mask & 2 ? pool : undefined,
+            fundingGrant: mask & 4 ? grant : undefined,
+          }),
+        /required together/,
+      );
+    }
+    assert.throws(
+      () =>
+        courseFundingSource({
+          fundingPayer: "bad",
+          fundingPool: pool,
+          fundingGrant: grant,
+        }),
+      /UUID/,
+    );
+  });
+  it("passes the full source to the existing create API", async () => {
+    const { program, createCalls } = harness();
+    await program.parseAsync([
+      "node",
+      "cocalc",
+      "vm",
+      "create",
+      "funded-vm",
+      "--funding-payer",
+      payer,
+      "--funding-pool",
+      pool,
+      "--funding-grant",
+      grant,
+    ]);
+    assert.deepEqual(createCalls[0].funding_source, {
+      kind: "course",
+      payer_account_id: payer,
+      pool_id: pool,
+      grant_id: grant,
+    });
+  });
+  it("rejects incomplete funding before any create request", async () => {
+    const { program, createCalls } = harness();
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "cocalc",
+        "vm",
+        "create",
+        "funded-vm",
+        "--funding-pool",
+        pool,
+      ]),
+      /required together/,
+    );
+    assert.equal(createCalls.length, 0);
+  });
+});
 
 function harness(
   opts: {
@@ -411,6 +511,8 @@ describe("vm availability", () => {
         ip: "203.0.113.10",
         ssh_alias: "build-vm",
         expires: "never",
+        stops: "never",
+        stop_after_minutes: null,
       },
     );
   });
@@ -817,6 +919,7 @@ describe("vm list", () => {
           zone: "us-central1-a",
           ip: "203.0.113.10",
           expires: "2026-08-04T00:00:00.000Z",
+          stops: "never",
           project: "project-id",
         },
       ],

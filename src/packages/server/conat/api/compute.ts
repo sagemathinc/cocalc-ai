@@ -4,6 +4,44 @@
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
+import type { ComputeProjectSshRequest } from "@cocalc/conat/inter-bay/api";
+import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { routeVmToHomeVolume } from "@cocalc/server/compute/volume-placement";
+import {
+  routeComputeOwnerMutation,
+  requireComputeOwnerFreshAuth,
+} from "@cocalc/server/compute/owner-resource-mutation";
+import {
+  routeComputeOwnerRead,
+  listComputeOwnerResources,
+  listComputeProjectResources,
+  selectOwnedComputeResource,
+  withLocalComputeResource,
+} from "@cocalc/server/compute/owner-resource-routing";
+import { mapParallelLimit } from "@cocalc/util/async-utils";
+import {
+  normalizeVmFundingSource,
+  requireSponsoredVmAdmission,
+  hasCourseVmFunding,
+  denyCourseVmMutation,
+  reserveCourseVmLaunch,
+  requireCourseVmService,
+  publicVmFundingStatus,
+} from "@cocalc/server/compute/funding/vm-funding";
+import {
+  createStopSchedule,
+  requestScheduledVmState,
+  startStopSchedule,
+} from "@cocalc/server/compute/scheduled-stop";
+import { prepareCourseVmRestart } from "@cocalc/server/compute/funding/vm-restart";
+import {
+  hasCourseVolumeFunding,
+  publicVolumeFundingStatus,
+  reserveCourseVolume,
+  requireCourseVolumeService,
+} from "@cocalc/server/compute/funding/volume-funding";
+import { reserveCourseVolumeGrowth } from "@cocalc/server/compute/funding/volume-growth";
 import type {
   ComputeCatalog,
   ComputeVolume,
@@ -154,6 +192,22 @@ function requireAccount(accountId?: string) {
   return value;
 }
 
+export {
+  previewVolumePersonalFunding,
+  proposeVolumePersonalFunding,
+  getVolumePersonalFunding,
+  switchVolumePersonalFunding,
+  clearVolumePersonalFunding,
+} from "@cocalc/server/compute/funding/volume-personal";
+
+export {
+  previewVmPersonalFunding,
+  proposeVmPersonalFunding,
+  getVmPersonalFunding,
+  clearVmPersonalFunding,
+  switchVmPersonalFunding,
+} from "@cocalc/server/compute/funding/vm-personal";
+
 function resolveComputeActor(
   opts: {
     account_id?: string;
@@ -244,11 +298,10 @@ async function authorizeComputeMutation(opts: {
     });
   }
   if (opts.require_fresh_auth) {
-    await requireDangerousSessionAuth({
+    await requireComputeOwnerFreshAuth({
       account_id: requireAccount(opts.actor.account_id),
       browser_id: opts.actor.browser_id,
       session_hash: opts.actor.session_hash,
-      require_second_factor: "if_enabled",
     });
   }
 }
@@ -316,6 +369,7 @@ function cachedEgressSummary(vm: ComputeVmRow) {
 }
 
 async function egressSummary(vm: ComputeVmRow) {
+  if (hasCourseVmFunding(vm)) return cachedEgressSummary(vm);
   try {
     const { rows } = await getPool("medium").query(
       `WITH intervals AS (
@@ -397,6 +451,7 @@ async function publicVmWithTiming(
     : undefined;
   return {
     ...result,
+    funding_status: publicVmFundingStatus(vm),
     operating_system: vm.operating_system ?? "linux",
     operating_system_version: vm.operating_system_version ?? "ubuntu-24.04",
     os_license_hourly_price: vm.os_license_hourly_price ?? "0.000000",
@@ -438,7 +493,13 @@ async function publicVm(vm: ComputeVmRow): Promise<ComputeVm> {
 
 function publicVolume(volume: ComputeVolumeRow): ComputeVolume {
   const { idempotency_key: _key, ...result } = volume;
-  return result;
+  const status = publicVolumeFundingStatus(volume);
+  return {
+    ...result,
+    metadata: publicComputeVmMetadata(volume.metadata),
+    funding_source: status?.source,
+    funding_status: status,
+  };
 }
 
 async function resolveOwned(
@@ -690,9 +751,6 @@ export async function getCatalog(opts: {
     ),
   );
   const allowedFunding = fundingModes.find(({ allowed }) => allowed);
-  if (!allowedFunding) {
-    throw new Error("no managed compute funding lane is currently available");
-  }
   const providerCatalogs: ComputeCatalog["provider_catalogs"] = {
     gcp: gcpCatalog,
   };
@@ -704,11 +762,19 @@ export async function getCatalog(opts: {
   } catch {
     // Nebius is omitted until its provider credentials/catalog are configured.
   }
+  let sponsoredHomeVolumes = false;
+  try {
+    await requireSponsoredVmAdmission();
+    sponsoredHomeVolumes = true;
+  } catch {
+    /* Existing personal compute remains available during funding rollout. */
+  }
   return {
+    sponsored_home_volumes: sponsoredHomeVolumes,
     providers: providerCatalogs.nebius ? ["gcp", "nebius"] : ["gcp"],
     provider_catalogs: providerCatalogs,
     funding_modes: fundingModes,
-    default_funding_mode: allowedFunding.value,
+    default_funding_mode: allowedFunding?.value ?? "account-prepaid",
     operating_systems: [
       {
         value: "linux",
@@ -753,6 +819,20 @@ export async function createVm(
   opts: CreateComputeVmRequest & { agent_auth?: ComputeAgentAuth },
 ) {
   const { accountId, actorKind } = resolveComputeActor(opts, opts.project_id);
+  const placed = await routeVmToHomeVolume(opts);
+  if (placed !== undefined) return placed;
+  const fundingSource = normalizeVmFundingSource(opts.funding_source);
+  if (fundingSource) {
+    await requireSponsoredVmAdmission();
+    if (opts.funding_mode === "site-funded" || opts.allow_on_demand_fallback)
+      throw new Error(
+        "Course funding requires an account lane, independently funded volumes, and no unreserved price fallback",
+      );
+  }
+  const stopSchedule = createStopSchedule(
+    opts.stop_after_minutes,
+    actorKind === "agent",
+  );
   const config = await getComputeVmConfig();
   requireComputeVmCreateAllowed(config, accountId);
   if (opts.project_id) {
@@ -776,12 +856,14 @@ export async function createVm(
       "Windows managed compute is currently available only on GCP",
     );
   }
-  const fundingMode = await requireComputeFunding({
-    account_id: accountId,
-    action: "create",
-    funding_mode: opts.funding_mode,
-    provider,
-  });
+  const fundingMode = fundingSource
+    ? normalizeFundingMode(opts.funding_mode ?? "account-prepaid")
+    : await requireComputeFunding({
+        account_id: accountId,
+        action: "create",
+        funding_mode: opts.funding_mode,
+        provider,
+      });
 
   const name = normalizeName(opts.name);
   if (provider === "gcp" && !opts.zone) {
@@ -807,6 +889,16 @@ export async function createVm(
   let homeVolume = opts.home_volume
     ? await resolveOwnedVolume(accountId, opts.home_volume)
     : undefined;
+  if (homeVolume) await requireCourseVolumeService(homeVolume);
+  if (
+    homeVolume &&
+    hasCourseVolumeFunding(homeVolume) &&
+    opts.expected_home_volume_funding_version !==
+      homeVolume.metadata.billing.course_funding.funding_epoch
+  )
+    throw new Error(
+      "Home volume funding version changed; review its independent storage policy",
+    );
   if (homeVolume && homeVolume.provider !== provider) {
     throw new Error("home volume and VM must use the same provider");
   }
@@ -1033,7 +1125,7 @@ export async function createVm(
     id,
     config.environment,
   );
-  const vm = await insertComputeVm(
+  let vm = await insertComputeVm(
     {
       id,
       name,
@@ -1088,6 +1180,7 @@ export async function createVm(
       ssh_public_key: configureProjectSsh ? "" : sshPublicKey,
       expires_at:
         ttlMinutes == null ? null : new Date(Date.now() + ttlMinutes * 60_000),
+      ...stopSchedule,
       allow_on_demand_fallback: allowOnDemandFallback,
       authorized_fallback_hours: authorizedFallbackHours,
       spot_hourly_price: `${spotRate.hourly_cost_usd}`,
@@ -1108,6 +1201,8 @@ export async function createVm(
       metadata: {
         machine: { cpu: machine.cpu, ram_gb: machine.ram_gb },
         provider_instance_name: providerInstanceId,
+        expected_home_volume_funding_version:
+          opts.expected_home_volume_funding_version,
         ssh_public_keys:
           !configureProjectSsh && sshPublicKey ? [sshPublicKey] : [],
         project_ssh_public_keys:
@@ -1120,6 +1215,14 @@ export async function createVm(
         max_ttl_minutes: config.max_ttl_minutes,
         billing: {
           funding_mode: fundingMode,
+          ...(fundingSource
+            ? {
+                course_funding: {
+                  source: fundingSource,
+                  funding_epoch: randomUUID(),
+                },
+              }
+            : {}),
           spot_supported: spotSupported,
           running_rates: {
             spot: spotRate,
@@ -1134,6 +1237,17 @@ export async function createVm(
       max_active_total: config.max_active_total,
     },
   );
+  if (fundingSource || hasCourseVmFunding(vm)) {
+    const existingSource = vm.metadata?.billing?.course_funding?.source;
+    if (
+      !fundingSource ||
+      existingSource?.pool_id !== fundingSource.pool_id ||
+      existingSource?.grant_id !== fundingSource.grant_id ||
+      existingSource?.payer_account_id !== fundingSource.payer_account_id
+    )
+      throw new Error("VM create retry selected a different funding source");
+    vm = await reserveCourseVmLaunch(vm);
+  }
   if (opts.project_id && configureProjectSsh && projectKey) {
     await grantComputeVmProjectAccess({
       owner_account_id: accountId,
@@ -1155,6 +1269,8 @@ export async function createVm(
       machine_type: vm.machine_type,
       pricing_model: vm.desired_pricing_model,
       expires_at: vm.expires_at,
+      stop_at: vm.stop_at,
+      stop_after_minutes: vm.stop_after_minutes,
       funding_mode: fundingMode,
       home_volume_id: vm.home_volume_id,
     },
@@ -1170,6 +1286,16 @@ export async function createVm(
 export async function createVolume(
   opts: CreateComputeVolumeRequest & { agent_auth?: ComputeAgentAuth },
 ) {
+  const fundingSource = normalizeVmFundingSource(opts.funding_source);
+  if (fundingSource) {
+    await requireSponsoredVmAdmission();
+    if (opts.funding_mode === "site-funded")
+      throw new Error("Course volumes require an account funding lane");
+    if (opts.accept_course_retention !== true)
+      throw new Error(
+        "Course volumes require acceptance of their independent funded retention and deletion policy",
+      );
+  }
   const { accountId, actorKind } = resolveComputeActor(opts, opts.project_id);
   const config = await getComputeVmConfig();
   requireComputeVmCreateAllowed(config, accountId);
@@ -1185,12 +1311,14 @@ export async function createVolume(
   if (provider !== "gcp" && provider !== "nebius") {
     throw new Error("provider must be gcp or nebius");
   }
-  const fundingMode = await requireComputeFunding({
-    account_id: accountId,
-    action: "create",
-    funding_mode: opts.funding_mode,
-    provider,
-  });
+  const fundingMode = fundingSource
+    ? normalizeFundingMode(opts.funding_mode ?? "account-prepaid")
+    : await requireComputeFunding({
+        account_id: accountId,
+        action: "create",
+        funding_mode: opts.funding_mode,
+        provider,
+      });
   const name = normalizeVolumeName(opts.name);
   const zone =
     provider === "gcp"
@@ -1258,7 +1386,7 @@ export async function createVolume(
     require_fresh_auth: true,
   });
   const id = randomUUID();
-  const volume = await insertComputeVolume(
+  let volume = await insertComputeVolume(
     {
       id,
       name,
@@ -1295,11 +1423,40 @@ export async function createVolume(
           ? "project-host-provider-context"
           : "dedicated-compute-provider-context",
         price_snapshot_kind: "dedicated-host-catalog",
-        billing: { funding_mode: fundingMode, rate: volumeRate },
+        billing: {
+          funding_mode: fundingMode,
+          rate: volumeRate,
+          ...(fundingSource
+            ? {
+                course_funding: {
+                  source: fundingSource,
+                  funding_epoch: randomUUID(),
+                  retention_agreement: {
+                    version: 1,
+                    accepted_by: accountId,
+                    accepted_at: new Date().toISOString(),
+                    max_grace_hours: 72,
+                    independent_of_vm: true,
+                  },
+                },
+              }
+            : {}),
+        },
       },
     },
     config.max_volumes_per_account,
   );
+  if (fundingSource) {
+    const selected = volume.metadata?.billing?.course_funding?.source;
+    if (
+      selected?.pool_id !== fundingSource.pool_id ||
+      selected?.grant_id !== fundingSource.grant_id ||
+      selected?.payer_account_id !== fundingSource.payer_account_id
+    )
+      throw new Error("Volume retry changed its funding source");
+    volume = await reserveCourseVolume(volume);
+  } else if (hasCourseVolumeFunding(volume))
+    throw new Error("Volume retry changed its funding source");
   await appendComputeVolumeEvent({
     volume,
     actor_account_id: accountId,
@@ -1328,6 +1485,12 @@ export async function listVolumes(opts: {
   include_deleted?: boolean;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead())
+    return listComputeOwnerResources({
+      ...opts,
+      account_id: accountId,
+      kind: "volume",
+    });
   return (
     await listOwnedComputeVolumes({
       owner_account_id: accountId,
@@ -1342,12 +1505,18 @@ export async function getVolume(opts: {
   id_or_name: string;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead())
+    return selectOwnedComputeResource(
+      await listVolumes({ account_id: accountId, include_deleted: true }),
+      opts.id_or_name,
+    );
   return publicVolume(
     await resolveOwnedVolume(accountId, opts.id_or_name, true),
   );
 }
 
-export async function resizeVolume(opts: {
+async function resizeVolumeLocal(opts: {
+  expected_funding_version?: string;
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -1364,12 +1533,20 @@ export async function resizeVolume(opts: {
   requireComputeVmCreateAllowed(config, accountId);
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
   const { actorKind } = resolveComputeActor(opts, volume.project_id ?? "");
-  const fundingMode = await requireComputeFunding({
-    account_id: accountId,
-    action: "resize",
-    funding_mode: opts.funding_mode ?? volume.funding_mode,
-    provider: volume.provider,
-  });
+  if (
+    hasCourseVolumeFunding(volume) &&
+    opts.funding_mode &&
+    opts.funding_mode !== volume.funding_mode
+  )
+    throw new Error("Volume growth cannot change its payer or funding lane");
+  const fundingMode = hasCourseVolumeFunding(volume)
+    ? volume.funding_mode
+    : await requireComputeFunding({
+        account_id: accountId,
+        action: "resize",
+        funding_mode: opts.funding_mode ?? volume.funding_mode,
+        provider: volume.provider,
+      });
   const sizeGb = volumeAuthorization({
     provider: volume.provider,
     size_gb: opts.size_gb,
@@ -1415,6 +1592,36 @@ export async function resizeVolume(opts: {
     require_fresh_auth: true,
   });
   const fundingChanging = fundingMode !== volume.funding_mode;
+  if (hasCourseVolumeFunding(volume)) {
+    const next = await reserveCourseVolumeGrowth(volume, {
+      operation_id: normalizeIdempotencyKey(opts.idempotency_key),
+      expected_funding_version: opts.expected_funding_version,
+      size_gb: sizeGb,
+      rate: volumeRate,
+    });
+    await appendComputeVolumeEvent({
+      volume: next,
+      actor_account_id: accountId,
+      actor_kind: actorKind,
+      action: "resize",
+      idempotency_key: opts.idempotency_key,
+      old_state: volume.state,
+      new_state: next.state,
+      status: "requested",
+      details: { old_size_gb: volume.size_gb, desired_size_gb: sizeGb },
+    });
+    if (next.desired_size_gb > next.size_gb)
+      await enqueueComputeWork({
+        resource_kind: "volume",
+        resource_id: volume.id,
+        action: "resize_volume",
+        idempotency_key: opts.idempotency_key,
+        payload: {
+          funding_epoch: next.metadata.billing.course_funding.funding_epoch,
+        },
+      });
+    return publicVolume(next);
+  }
   const pendingFundingMode = volume.metadata?.billing?.pending_funding_mode;
   if (pendingFundingMode && pendingFundingMode !== fundingMode) {
     throw new Error(
@@ -1468,7 +1675,7 @@ export async function resizeVolume(opts: {
   return publicVolume(next);
 }
 
-export async function setVolumeFundingMode(opts: {
+async function setVolumeFundingModeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -1481,6 +1688,10 @@ export async function setVolumeFundingMode(opts: {
     opts.agent_auth?.account_id ?? opts.account_id,
   );
   const volume = await resolveOwnedVolume(accountId, opts.id_or_name);
+  if (hasCourseVolumeFunding(volume))
+    throw new Error(
+      "Volume funding changes require separately approved personal terms",
+    );
   const { actorKind } = resolveComputeActor(opts, volume.project_id ?? "");
   const fundingMode = await requireComputeFunding({
     account_id: accountId,
@@ -1543,7 +1754,7 @@ export async function setVolumeFundingMode(opts: {
   return publicVolume(next);
 }
 
-export async function deleteVolume(opts: {
+async function deleteVolumeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -1605,6 +1816,12 @@ export async function listVms(opts: {
   include_deleted?: boolean;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead())
+    return listComputeOwnerResources({
+      ...opts,
+      account_id: accountId,
+      kind: "vm",
+    });
   const rows = await listOwnedComputeVms({
     owner_account_id: accountId,
     project_id: opts.project_id,
@@ -1619,6 +1836,32 @@ export async function listVmProjectAccess(opts: {
   include_revoked?: boolean;
 }) {
   const accountId = requireAccount(opts.account_id);
+  if (routeComputeOwnerRead()) {
+    const resources = await listComputeOwnerResources({
+      account_id: accountId,
+      kind: "vm",
+      include_deleted: true,
+    });
+    const selected = opts.id_or_name
+      ? [selectOwnedComputeResource(resources, opts.id_or_name)]
+      : resources;
+    return (
+      await mapParallelLimit(
+        selected,
+        async (vm) => {
+          const request = { ...opts, account_id: accountId, id_or_name: vm.id };
+          return (
+            (await routeComputeOwnerMutation(
+              "listVmProjectAccess",
+              request,
+              vm,
+            )) ?? withLocalComputeResource(() => listVmProjectAccess(request))
+          );
+        },
+        4,
+      )
+    ).flat();
+  }
   const vm = opts.id_or_name
     ? await resolveOwned(accountId, opts.id_or_name, true)
     : undefined;
@@ -1640,14 +1883,15 @@ export async function grantVmProjectAccess(opts: {
   ssh_public_key?: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("grantVmProjectAccess", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const projectId = `${opts.project_id ?? ""}`.trim();
   if (!projectId) throw new Error("project_id is required");
-  await requireDangerousSessionAuth({
+  await requireComputeOwnerFreshAuth({
     account_id: accountId,
     browser_id: opts.browser_id,
     session_hash: opts.session_hash,
-    require_second_factor: "if_enabled",
   });
   await requireProjectMembership(accountId, projectId);
   const vm = await resolveOwned(accountId, opts.id_or_name);
@@ -1696,6 +1940,8 @@ export async function revokeVmProjectAccess(opts: {
   project_id: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("revokeVmProjectAccess", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const projectId = `${opts.project_id ?? ""}`.trim();
   if (!projectId) throw new Error("project_id is required");
@@ -1737,6 +1983,12 @@ export async function listProjectVms(opts: {
     action: "read",
     project_id: projectId,
   });
+  if (routeComputeOwnerRead())
+    return listComputeProjectResources({
+      project_id: projectId,
+      kind: "vm",
+      include_deleted: opts.include_deleted,
+    });
   return await publicVms(
     await listProjectComputeVms({
       project_id: projectId,
@@ -1747,7 +1999,22 @@ export async function listProjectVms(opts: {
 
 export async function getVm(opts: { account_id?: string; id_or_name: string }) {
   const accountId = requireAccount(opts.account_id);
-  return publicVm(await resolveOwned(accountId, opts.id_or_name, true));
+  const result = routeComputeOwnerRead()
+    ? selectOwnedComputeResource(
+        await listVms({ account_id: accountId, include_deleted: true }),
+        opts.id_or_name,
+      )
+    : await publicVm(await resolveOwned(accountId, opts.id_or_name, true));
+  if (result.funding_status && result.owner_account_id === accountId) {
+    const { getVmPersonalFunding } =
+      await import("@cocalc/server/compute/funding/vm-personal");
+    result.funding_status.personal_consent =
+      (await getVmPersonalFunding({
+        account_id: accountId,
+        vm_id: result.id,
+      })) ?? undefined;
+  }
+  return result;
 }
 
 export async function getProjectVm(opts: {
@@ -1758,6 +2025,19 @@ export async function getProjectVm(opts: {
   agent_auth?: ComputeAgentAuth;
 }) {
   const projectId = await requireComputeProjectReadIdentity(opts);
+  if (routeComputeOwnerRead()) {
+    const vm = selectOwnedComputeResource(
+      await listProjectVms(opts),
+      opts.id_or_name,
+    );
+    await requireAgentComputeGrant({
+      auth: opts.agent_auth,
+      action: "read",
+      project_id: projectId,
+      vm_id: vm.id,
+    });
+    return vm;
+  }
   const vm = await resolveProjectComputeVm({
     project_id: projectId,
     id_or_name: `${opts.id_or_name ?? ""}`.trim(),
@@ -1785,6 +2065,12 @@ export async function listProjectVolumes(opts: {
     action: "read",
     project_id: projectId,
   });
+  if (routeComputeOwnerRead())
+    return listComputeProjectResources({
+      project_id: projectId,
+      kind: "volume",
+      include_deleted: opts.include_deleted,
+    });
   return (
     await listProjectComputeVolumes({
       project_id: projectId,
@@ -1801,6 +2087,11 @@ export async function getProjectVolume(opts: {
   agent_auth?: ComputeAgentAuth;
 }) {
   const projectId = await requireComputeProjectReadIdentity(opts);
+  if (routeComputeOwnerRead())
+    return selectOwnedComputeResource(
+      await listProjectVolumes({ ...opts, include_deleted: true }),
+      opts.id_or_name,
+    );
   const volume = await resolveProjectComputeVolume({
     project_id: projectId,
     id_or_name: `${opts.id_or_name ?? ""}`.trim(),
@@ -1845,6 +2136,8 @@ export async function authorizeSshKey(opts: {
   ssh_public_key: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("authorizeSshKey", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
   if (!key) throw new Error("ssh_public_key is required");
@@ -1856,11 +2149,10 @@ export async function authorizeSshKey(opts: {
     actor_account_id: accountId,
     actor_kind: "human",
     beforeAdd: async () => {
-      await requireDangerousSessionAuth({
+      await requireComputeOwnerFreshAuth({
         account_id: accountId,
         browser_id: opts.browser_id,
         session_hash: opts.session_hash,
-        require_second_factor: "if_enabled",
       });
     },
   });
@@ -1886,6 +2178,8 @@ export async function listVmSshKeys(opts: {
   account_id?: string;
   id_or_name: string;
 }) {
+  const routed = await routeComputeOwnerMutation("listVmSshKeys", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const vm = await resolveOwned(accountId, opts.id_or_name);
   return computeVmSshPublicKeys(vm).map(publicVmSshKey);
@@ -1897,6 +2191,8 @@ export async function revokeSshKey(opts: {
   ssh_public_key: string;
   idempotency_key: string;
 }) {
+  const routed = await routeComputeOwnerMutation("revokeSshKey", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
   const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
   if (!key) throw new Error("ssh_public_key is required");
@@ -1936,12 +2232,13 @@ export async function prepareWindowsRdp(opts: {
   session_hash?: string;
   id_or_name: string;
 }) {
+  const routed = await routeComputeOwnerMutation("prepareWindowsRdp", opts);
+  if (routed !== undefined) return routed;
   const accountId = requireAccount(opts.account_id);
-  await requireDangerousSessionAuth({
+  await requireComputeOwnerFreshAuth({
     account_id: accountId,
     browser_id: opts.browser_id,
     session_hash: opts.session_hash,
-    require_second_factor: "if_enabled",
   });
   const vm = await resolveOwned(accountId, opts.id_or_name);
   if ((vm.operating_system ?? "linux") !== "windows") {
@@ -2050,11 +2347,6 @@ async function authorizeVerifiedProjectSshKey(opts: {
   if (!projectId) throw new Error("must be a project");
   const key = normalizeManagedVmSshPublicKey(opts.ssh_public_key);
   if (!key) throw new Error("ssh_public_key is required");
-  const vm = await resolveProjectComputeVm({
-    project_id: projectId,
-    id_or_name: `${opts.id_or_name ?? ""}`.trim(),
-  });
-  if (!vm) throw new Error(`compute VM '${opts.id_or_name}' not found`);
   if (!opts.key_verified_by_host) {
     if (!opts.agent_auth) {
       throw Object.assign(
@@ -2077,6 +2369,45 @@ async function authorizeVerifiedProjectSshKey(opts: {
       );
     }
   }
+  const discovered = routeComputeOwnerRead()
+    ? selectOwnedComputeResource(
+        await listComputeProjectResources({
+          project_id: projectId,
+          kind: "vm",
+        }),
+        opts.id_or_name,
+      )
+    : undefined;
+  if (discovered && discovered.owning_bay_id !== getConfiguredBayId()) {
+    await requireAgentComputeGrant({
+      auth: opts.agent_auth,
+      action: "data-plane",
+      project_id: projectId,
+      vm_id: discovered.id,
+    });
+    const result = await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: discovered.owning_bay_id,
+      timeout: 15_000,
+    }).computeProjectAuthorizeSsh({
+      project_id: projectId,
+      vm_id: discovered.id,
+      ssh_public_key: key,
+      idempotency_key: opts.idempotency_key,
+      agent_auth: opts.agent_auth,
+    });
+    if (
+      result.id !== discovered.id ||
+      result.owning_bay_id !== discovered.owning_bay_id
+    )
+      throw Error("Compute resource authority changed; refresh and retry.");
+    return result;
+  }
+  const vm = await resolveProjectComputeVm({
+    project_id: projectId,
+    id_or_name: discovered?.id ?? `${opts.id_or_name ?? ""}`.trim(),
+  });
+  if (!vm) throw new Error(`compute VM '${opts.id_or_name}' not found`);
   await requireAgentComputeGrant({
     auth: opts.agent_auth,
     action: "data-plane",
@@ -2108,6 +2439,28 @@ async function authorizeVerifiedProjectSshKey(opts: {
     idempotency_key: `project-ssh-config:${opts.idempotency_key}`,
   });
   return await publicVm(vm);
+}
+
+/** Private fabric entry: the origin verified the exact deploy key using the
+ * project host or scoped agent. Recheck live project access on the resource bay. */
+export async function authorizeProjectSshKeyOnBay(
+  opts: ComputeProjectSshRequest,
+) {
+  const { rows } = await getPool().query(
+    "SELECT id FROM compute_vms WHERE id=$1 AND owning_bay_id=$2 AND deleted_at IS NULL",
+    [opts.vm_id, getConfiguredBayId()],
+  );
+  if (rows.length !== 1) throw Error("Compute VM not found on this bay.");
+  return withLocalComputeResource(() =>
+    authorizeVerifiedProjectSshKey({
+      project_id: opts.project_id,
+      id_or_name: opts.vm_id,
+      ssh_public_key: opts.ssh_public_key,
+      idempotency_key: opts.idempotency_key,
+      agent_auth: opts.agent_auth,
+      key_verified_by_host: true,
+    }),
+  );
 }
 
 export async function authorizeProjectSshKey(opts: {
@@ -2158,6 +2511,7 @@ async function requestState(opts: {
   id_or_name: string;
   idempotency_key: string;
   desired_state: "running" | "stopped";
+  stop_after_minutes?: number | null;
   agent_auth?: ComputeAgentAuth;
 }) {
   const accountId = requireAccount(
@@ -2169,17 +2523,19 @@ async function requestState(opts: {
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
   if (opts.desired_state === "running") {
-    await requireComputeFunding({
-      account_id: accountId,
-      action: "start",
-      funding_mode: vm.funding_mode,
-      provider: vm.provider,
-    });
+    if (hasCourseVmFunding(vm)) {
+      if (!vm.stopped_at) await requireCourseVmService(vm);
+    } else
+      await requireComputeFunding({
+        account_id: accountId,
+        action: "start",
+        funding_mode: vm.funding_mode,
+        provider: vm.provider,
+      });
   }
   if (vm.expires_at && vm.expires_at.valueOf() <= Date.now()) {
     throw new Error("compute VM lease has expired");
   }
-  const action = opts.desired_state === "running" ? "start" : "stop";
   const selectedRate =
     vm.desired_pricing_model === "spot"
       ? vm.spot_hourly_price
@@ -2235,41 +2591,39 @@ async function requestState(opts: {
       { code: 403 },
     );
   }
-  const next = (await updateComputeVm(vm.id, {
+  const preparedFunding =
+    opts.desired_state === "running" && hasCourseVmFunding(vm) && vm.stopped_at
+      ? await prepareCourseVmRestart(
+          vm,
+          normalizeIdempotencyKey(opts.idempotency_key),
+          startStopSchedule(vm, opts.stop_after_minutes, actorKind === "agent")
+            .stop_at,
+        )
+      : undefined;
+  const next = await requestScheduledVmState({
+    vm,
     desired_state: opts.desired_state,
-    state: opts.desired_state === "running" ? "starting" : "stopping",
-    error: null,
-  }))!;
-  await appendComputeEvent({
-    vm: next,
-    actor_account_id: accountId,
+    stop_after_minutes: opts.stop_after_minutes,
     actor_kind: actorKind,
-    action,
     idempotency_key: normalizeIdempotencyKey(opts.idempotency_key),
-    old_state: vm.state,
-    new_state: next.state,
-    status: "requested",
-  });
-  await enqueueComputeWork({
-    resource_id: vm.id,
-    action,
-    idempotency_key: opts.idempotency_key,
+    prepared_funding: preparedFunding,
   });
   return publicVm(next);
 }
 
-export async function startVm(opts: {
+async function startVmLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
   id_or_name: string;
+  stop_after_minutes?: number | null;
   idempotency_key: string;
   agent_auth?: ComputeAgentAuth;
 }) {
   return await requestState({ ...opts, desired_state: "running" });
 }
 
-export async function stopVm(opts: {
+async function stopVmLocal(opts: {
   account_id?: string;
   id_or_name: string;
   idempotency_key: string;
@@ -2278,7 +2632,7 @@ export async function stopVm(opts: {
   return await requestState({ ...opts, desired_state: "stopped" });
 }
 
-export async function setVmTtl(opts: {
+async function setVmTtlLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2294,6 +2648,7 @@ export async function setVmTtl(opts: {
   const config = await getComputeVmConfig();
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
+  denyCourseVmMutation(vm, "Deletion deadline change");
   if (vm.desired_state === "deleted" || vm.state === "deleting") {
     throw new Error("cannot change the TTL of a deleting VM");
   }
@@ -2406,7 +2761,7 @@ export async function setVmTtl(opts: {
   return publicVm(next);
 }
 
-export async function setVmFundingMode(opts: {
+async function setVmFundingModeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2420,6 +2775,7 @@ export async function setVmFundingMode(opts: {
   );
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
+  denyCourseVmMutation(vm, "Funding source change");
   if (actorKind === "agent" && !vm.expires_at) {
     throw Object.assign(
       new Error(
@@ -2508,7 +2864,7 @@ export async function setVmFundingMode(opts: {
   return publicVm(next);
 }
 
-export async function setVmMachineType(opts: {
+async function setVmMachineTypeLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2522,6 +2878,7 @@ export async function setVmMachineType(opts: {
   );
   const vm = await resolveOwned(accountId, opts.id_or_name);
   const { actorKind, projectId } = await resolveVmMutationActor(opts, vm);
+  denyCourseVmMutation(vm, "Machine or pricing change");
   if (vm.state !== "stopped" || vm.desired_state !== "stopped") {
     throw new Error("stop the VM before changing its machine type");
   }
@@ -2705,7 +3062,7 @@ export async function setVmMachineType(opts: {
   return await publicVm(next);
 }
 
-export async function setVmPricingModel(opts: {
+async function setVmPricingModelLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2722,6 +3079,7 @@ export async function setVmPricingModel(opts: {
   if (vm.state !== "stopped" || vm.desired_state !== "stopped") {
     throw new Error("stop the VM before changing its pricing model");
   }
+  denyCourseVmMutation(vm, "Pricing change");
   if (opts.pricing_model !== "spot" && opts.pricing_model !== "on_demand") {
     throw new Error("pricing_model must be spot or on_demand");
   }
@@ -2778,7 +3136,7 @@ export async function setVmPricingModel(opts: {
   return publicVm(next);
 }
 
-export async function deleteVm(opts: {
+async function deleteVmLocal(opts: {
   account_id?: string;
   browser_id?: string;
   session_hash?: string;
@@ -2823,6 +3181,73 @@ export async function deleteVm(opts: {
     idempotency_key: opts.idempotency_key,
   });
   return publicVm(next);
+}
+
+export async function startVm(opts: Parameters<typeof startVmLocal>[0]) {
+  return (
+    (await routeComputeOwnerMutation("startVm", opts)) ?? startVmLocal(opts)
+  );
+}
+export async function stopVm(opts: Parameters<typeof stopVmLocal>[0]) {
+  return (await routeComputeOwnerMutation("stopVm", opts)) ?? stopVmLocal(opts);
+}
+export async function deleteVm(opts: Parameters<typeof deleteVmLocal>[0]) {
+  return (
+    (await routeComputeOwnerMutation("deleteVm", opts)) ?? deleteVmLocal(opts)
+  );
+}
+export async function setVmTtl(opts: Parameters<typeof setVmTtlLocal>[0]) {
+  return (
+    (await routeComputeOwnerMutation("setVmTtl", opts)) ?? setVmTtlLocal(opts)
+  );
+}
+export async function setVmFundingMode(
+  opts: Parameters<typeof setVmFundingModeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVmFundingMode", opts)) ??
+    setVmFundingModeLocal(opts)
+  );
+}
+export async function setVmMachineType(
+  opts: Parameters<typeof setVmMachineTypeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVmMachineType", opts)) ??
+    setVmMachineTypeLocal(opts)
+  );
+}
+export async function setVmPricingModel(
+  opts: Parameters<typeof setVmPricingModelLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVmPricingModel", opts)) ??
+    setVmPricingModelLocal(opts)
+  );
+}
+export async function resizeVolume(
+  opts: Parameters<typeof resizeVolumeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("resizeVolume", opts)) ??
+    resizeVolumeLocal(opts)
+  );
+}
+export async function setVolumeFundingMode(
+  opts: Parameters<typeof setVolumeFundingModeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("setVolumeFundingMode", opts)) ??
+    setVolumeFundingModeLocal(opts)
+  );
+}
+export async function deleteVolume(
+  opts: Parameters<typeof deleteVolumeLocal>[0],
+) {
+  return (
+    (await routeComputeOwnerMutation("deleteVolume", opts)) ??
+    deleteVolumeLocal(opts)
+  );
 }
 
 export async function listOrphans(opts: {

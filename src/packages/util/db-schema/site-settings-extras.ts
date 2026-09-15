@@ -352,6 +352,8 @@ export type SiteSettingsExtrasKeys =
   | "pay_as_you_go_section"
   | "pay_as_you_go_min_payment"
   | "compute_vm_mode"
+  | "compute_vm_course_funding_enabled"
+  | "compute_sponsorship_enabled"
   | "compute_vm_emergency_stop"
   | "compute_vm_admin_allowlist"
   | "compute_vm_gcp_service_account_json"
@@ -1769,6 +1771,25 @@ export const EXTRAS: SettingsExtras = {
         "enabled",
       ].includes(`${value ?? ""}`.trim().toLowerCase()),
     tags: ["Cloud", "Security"],
+    group: "Compute / Managed VMs",
+    subgroup: "Admission",
+  },
+  compute_vm_course_funding_enabled: {
+    name: "Managed Compute VMs: Course Funding",
+    desc: "Enable reserved course VM funding only after hold-aware billing writers, funding schema, payer routing and enforcement workers are deployed. Unsupported funding transitions remain blocked.",
+    default: "no",
+    to_val: to_bool,
+    tags: ["Cloud", "Pay as you Go", "Security"],
+    group: "Compute / Managed VMs",
+    subgroup: "Limits",
+  },
+  compute_sponsorship_enabled: {
+    name: "Course Compute: New Sponsorship",
+    desc: "Enable new course funding commitments only after every authoritative bay verifies hold-aware account writers and isolated sponsored-resource workers. Disabling does not block summaries, revocation, closure, metering or cleanup. Independent of credit transfers and VM launch admission.",
+    default: "no",
+    to_val: to_bool,
+    valid: only_booleans,
+    tags: ["Cloud", "Pay as you Go", "Security"],
     group: "Compute / Managed VMs",
     subgroup: "Admission",
   },

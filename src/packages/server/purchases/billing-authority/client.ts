@@ -77,6 +77,17 @@ function isLocalAuthorityBay(): boolean {
   );
 }
 
+export function assertBillingAuthorityTopology(): void {
+  if (isBillingAuthorityEnabled() && !isLocalAuthorityBay()) {
+    throw Object.assign(
+      new Error(
+        "billing is unavailable on attached bays until the authority has a dedicated authenticated transport",
+      ),
+      { code: 503, status: 503 },
+    );
+  }
+}
+
 function deterministicUuid(value: string): string {
   const bytes = createHash("sha256").update(value).digest().subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -129,6 +140,15 @@ function intrinsicCommandId(
       break;
     case "account-local":
       key = recordField(command.input, "idempotency_key");
+      if (command.operation === "apply-funding-approval") {
+        // Bind retries to both the reviewed intent and independent sign-in.
+        // A new sign-in must not reuse a prior session's failed authorization.
+        key = JSON.stringify([
+          command.input.intent_id,
+          command.input.terms_hash,
+          command.input.approved_session_hash,
+        ]);
+      }
       break;
     case "hub-api":
       key = recordField(command.call.args[0], "idempotency_key");

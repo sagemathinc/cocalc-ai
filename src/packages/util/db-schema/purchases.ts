@@ -43,6 +43,8 @@ export const MEMBERSHIP_CHANGE = "membership-change";
 
 // purchase or expand a membership package directly in-app
 export const MEMBERSHIP_PACKAGE_PURCHASE = "membership-package-purchase";
+export const ADMIN_MEMBERSHIP_PACKAGE_PURCHASE =
+  "admin-membership-package-purchase";
 
 // create or expand a team license directly in-app
 export const TEAM_LICENSE_CHANGE = "team-license-change";
@@ -67,6 +69,7 @@ export type Reason =
 // not user-editable per-service purchase quotas.
 export type ComputeService =
   | "credit"
+  | "credit-transfer"
   | "auto-credit"
   | "refund"
   | "membership"
@@ -213,6 +216,12 @@ export interface Refund {
 
 export type Description =
   | Credit
+  | {
+      type: "credit-transfer";
+      transfer_id: string;
+      direction: "sent" | "received" | "compensation";
+      counterpart_account_id: string;
+    }
   | Refund
   | DedicatedHostPurchase
   | Membership

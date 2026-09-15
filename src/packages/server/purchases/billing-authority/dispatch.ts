@@ -167,6 +167,10 @@ async function dispatchAccountLocal(
   switch (operation) {
     case "admin-create-membership-package-purchase":
       return await adminCreateMembershipPackagePurchase(input as any);
+    case "apply-funding-approval":
+      return await (
+        await import("@cocalc/server/compute/funding/approvals")
+      ).applyFundingApprovalCommand(input as any);
     case "admin-provision-site-license":
       return await adminProvisionSiteLicense(input as any);
     case "legacy-apply-financial-home-bay":
@@ -190,6 +194,19 @@ async function dispatchMaintenance(
   task: Extract<BillingAuthorityCommand, { kind: "maintenance" }>["task"],
 ): Promise<void> {
   switch (task) {
+    case "monthly-collections":
+      return await (
+        await import("../monthly-collection-worker")
+      ).maintainMonthlyCollections({ limit: 1 });
+    case "credit-transfers":
+      return await (
+        await import("../credit-transfers/worker")
+      ).default({ limit: 1 });
+    case "provider-refunds":
+      await (
+        await import("../provider-refund-worker")
+      ).reconcileProviderRefunds({ limit: 1 });
+      return;
     case "automatic-payments":
       return await maintainAutomaticPayments({ max_statements: 1 });
     case "auto-balance":

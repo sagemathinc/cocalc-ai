@@ -6,6 +6,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { COMPUTE_VM_V2_SQL } from "./contract";
+import { computeVmDnsLabelPrefix } from "./resource-names";
 import type {
   ComputeVmInstanceTimingRow,
   ComputeVmRow,
@@ -30,7 +31,8 @@ function sameProviderLocation(
 
 export async function allocateComputeVmPublicHostname(
   dns: string,
-  generateLabel = () => `vm-${randomBytes(16).toString("hex")}`,
+  generateLabel = () =>
+    `${computeVmDnsLabelPrefix()}${randomBytes(16).toString("hex")}`,
 ): Promise<string> {
   const hostname = `${dns ?? ""}`
     .trim()
@@ -42,7 +44,7 @@ export async function allocateComputeVmPublicHostname(
   }
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const label = generateLabel().trim().toLowerCase();
-    if (!/^vm-[a-f0-9]{32}$/.test(label)) {
+    if (!new RegExp(`^${computeVmDnsLabelPrefix()}[a-f0-9]{32}$`).test(label)) {
       throw new Error("invalid managed compute public DNS label");
     }
     const candidate = `${label}.${hostname}`;
@@ -135,12 +137,13 @@ export async function insertComputeVm(
          allow_on_demand_fallback, authorized_fallback_hours,
          spot_hourly_price, on_demand_hourly_price, authorized_cost,
          accrued_cost, billing_state, spot_recovery_policy,
-         spot_recovery_state, idempotency_key, error, metadata
+         spot_recovery_state, idempotency_key, error, metadata,
+         stop_at, stop_after_minutes, stop_generation
        ) VALUES (
          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,
          $20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,
          $37,$38,NOW(),NOW(),$39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,
-         $51,$52,$53,$54
+         $51,$52,$53,$54,$55,$56,$57
        ) RETURNING *`,
       [
         row.id,
@@ -197,6 +200,9 @@ export async function insertComputeVm(
         row.idempotency_key,
         row.error ?? null,
         row.metadata,
+        row.stop_at ?? null,
+        row.stop_after_minutes ?? null,
+        row.stop_generation ?? 0,
       ],
     );
     if (row.home_volume_id) {
@@ -208,6 +214,17 @@ export async function insertComputeVm(
       );
       const volume = volumes[0];
       if (!volume) throw new Error("compute volume not found or access denied");
+      (await import("./funding/volume-funding")).assertCourseVolumeAttachable(
+        volume,
+      );
+      if (
+        volume.metadata?.billing?.course_funding &&
+        row.metadata?.expected_home_volume_funding_version !==
+          volume.metadata.billing.course_funding.funding_epoch
+      )
+        throw new Error(
+          "Home volume funding changed during attachment admission",
+        );
       if (!sameProviderLocation(volume, row)) {
         throw new Error(
           "compute volume and VM must use the same provider location",
@@ -620,8 +637,11 @@ export async function removeComputeVmSshPublicKey({
   }
 }
 
-export async function insertComputeInstance(vm: ComputeVmRow) {
-  await pool().query(
+export async function insertComputeInstance(
+  vm: ComputeVmRow,
+  db: Pick<ReturnType<typeof pool>, "query"> = pool(),
+) {
+  await db.query(
     `INSERT INTO compute_vm_instances (
        id, vm_id, owner_account_id, owning_bay_id, project_id, generation,
        provider_instance_id, machine_type, pricing_model, public_ip,

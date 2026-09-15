@@ -49,6 +49,7 @@ prices, subscriptions".
 
 import getConn from "@cocalc/server/stripe/connection";
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import getLogger from "@cocalc/backend/logger";
 import getEmailAddress from "@cocalc/server/accounts/get-email-address";
@@ -351,16 +352,26 @@ export async function collectPayment({
 
 export async function hasUsageSubscription(
   account_id: string,
+  client?: PoolClient,
 ): Promise<boolean> {
-  const pool = getPool();
+  const pool = client ?? getPool();
   const { rows } = await pool.query(
-    "SELECT stripe_usage_subscription FROM accounts WHERE account_id=$1",
+    `SELECT stripe_usage_subscription, monthly_collection,
+       EXISTS(SELECT 1 FROM statements WHERE account_id=$1 AND paid_purchase_id IS NULL
+         AND (monthly_collection->>'state'='requires_review' OR
+           (monthly_collection->>'state' IN ('claimed','issued') AND automatic_payment<clock_timestamp()-interval '10 minutes'))) AS collection_blocked
+     FROM accounts WHERE account_id=$1`,
     [account_id],
   );
   if (rows.length == 0) {
     throw Error(`no such account ${account_id}`);
   }
-  return !!rows[0].stripe_usage_subscription;
+  // Explicit account consent supersedes legacy enrollment, including opt-out.
+  return rows[0].monthly_collection != null
+    ? !rows[0].collection_blocked &&
+        rows[0].monthly_collection.enabled === true &&
+        rows[0].monthly_collection.terms_version === 1
+    : !!rows[0].stripe_usage_subscription;
 }
 
 /*
