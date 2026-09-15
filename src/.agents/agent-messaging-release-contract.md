@@ -1,6 +1,7 @@
 # Agent Messaging Release Contract
 
-Date: September 15, 2026. Status: **draft for William's approval**.
+Date: September 15, 2026. Status: **draft for William's approval**, incorporating
+his explicit restart-boundary decision and agreement on bounded resource policy.
 
 This is the proposed product and authorization contract for the first controlled
 release, not a statement that the implementation satisfies it. William decides
@@ -9,9 +10,10 @@ and separately identify residual risks or recommend changes. No SOC-2 policy
 change is proposed here.
 
 Once approved, this document takes precedence over earlier messaging prototypes
-and plans where they differ. Unresolved decisions in section 10 remain unresolved;
-neither an implementation default nor a reviewer assumption settles them. A review
-must identify its contract revision, implementation SHA, and comparison base.
+and plans where they differ. Section 10 distinguishes declared requirements from
+implementation choices and verification tasks. Neither an implementation default
+nor a reviewer assumption changes those requirements. A review must identify its
+contract revision, implementation SHA, and comparison base.
 
 ## 1. Scope And Architecture
 
@@ -126,21 +128,47 @@ or attachment preparation. Already authorized in-flight admission may finish;
 accepted work is not silently canceled. Revocation does not retract a received
 message. Resuming a connection never replays work.
 
-Suggested membership UI copy: "Prevents new agent work from being authorized
-under this account. Already-running work is not stopped. Previously authorized
-work may still be in flight."
+**Required restart boundary (declared by William):** after committing a removal
+or downgrade, the user must explicitly restart the project if they need to ensure
+the old authority can no longer be exercised. Once that restart successfully
+completes, the removed user has no project access and a read-only user cannot
+write or execute with their former collaborator privileges. Pre-restart agent
+and other project-local processes must be stopped. Old sessions, cached grants,
+credentials, scheduled jobs, or queued/recovered work must not restore those
+former privileges. Work may resume only under currently valid permissions and
+execution policy. A still-valid credential is not permission to keep old rights.
+The same boundary applies when restarting to enforce a changed agent execution
+mode. This is not a requirement to invalidate every unrelated login or installation.
 
-William's intended operational remedy for stopping ongoing project work is an
-explicit project restart. Before documenting it as a guarantee, verify that local
-processes stop and queued/restored work cannot resume under removed authority.
-Restart cannot undo external effects or guarantee termination of work launched on
-other computers. Broader file/terminal/session revocation promises are not defined
-by this messaging contract. See decision D3.
+Suggested membership UI copy: "Removing or downgrading a collaborator does not
+automatically stop their running work. If you need to ensure they have no access
+or only read-only access now, you MUST restart the project after making the change.
+When the restart completes, their previous access must no longer work."
 
-Host movement must route new receives to the current adapter and require current
-placement authority for new credential issuance. The validity window for existing
-source credentials after movement is explicitly undecided (D1). Restore must not
-silently resurrect revoked approvals or credentials.
+Failure of this boundary is **P0 and release-blocking**, as specified by William.
+It is a declared requirement, not a verified implementation claim. Review/test
+the full project-facing paths necessary to support that promise, not only agent
+messaging; report any broader platform gap privately rather than narrowing the
+promise to make a messaging test pass. A failed/incomplete restart must not be
+reported as having established the boundary.
+
+Restart does not undo prior writes, revoke copies of data already taken, undo
+external effects, or promise to terminate work on another computer/project.
+A message already admitted at another project follows that project's execution
+lifecycle. These limits do not permit continued old authority in the restarted
+project. See verification task D3.
+
+Project movement uses stop-before-move semantics: the old project container and
+agent do not keep running normally through the move. Verify this lifecycle and
+any host-side controllers or queued work rather than assume a surviving old agent.
+Route new receives to the current adapter and require current placement authority
+for new credential issuance. Separately examine copied credentials and existing
+connections, if applicable; container termination alone does not prove a bearer
+credential is unusable elsewhere. Do not impose a new instantaneous credential
+invalidation mechanism merely by assuming adversarial collaborators or a surviving
+container. D1 now requests evidence about this lifecycle, not a choice between
+immediate cancellation and ten minutes. Restore must not silently resurrect
+revoked approvals or credentials or bypass the required restart boundary.
 
 ## 5. Outcomes And Conversations
 
@@ -202,8 +230,10 @@ capacity still occupied by real work. No unlimited waiting queue is introduced.
 Ordinary bounded contention can reject a request; perfect scheduling fairness is
 not promised. Partitioning/budgets must prevent one principal from monopolizing
 all retained evidence or unbounded shared work. Measure actual resource usage;
-per-message limits alone do not establish a process memory bound. Numerical
-aggregate limits and retention durations require approval under D2.
+per-message limits alone do not establish a process memory bound. William agrees
+with conservative configurable limits and clear limit-reached errors. Choose,
+test and document initial aggregate limits and retention durations under D2;
+the earlier suggested numbers are not individually approved or measured capacity.
 
 ## 7. Transcript, Lifecycle, And UI
 
@@ -255,23 +285,53 @@ State prerequisites, affected boundary, impact, code revision, and evidence.
 Separate mocked tests from real boundaries and source inspection from probes.
 
 Do not require isolation between collaborators sharing a project OS user,
-tamper-proof project transcripts, instantaneous cancellation of running work, or
-guaranteed replies. Do check that scoped credentials, human principals, unrelated
-tenants, operational limits and approved lifetime rules are enforced.
+tamper-proof project transcripts, automatic instantaneous cancellation on a
+permission edit alone, or guaranteed replies. Do require the explicit restart
+boundary in C8, including termination of old project-local processes and no
+revival of former authority. Do check that scoped credentials, human principals,
+unrelated tenants, operational limits and approved lifetime rules are enforced.
 
 Report unspecified policy as an open decision, not a silently assumed requirement.
 Follow SECURITY.md for private findings/fixes. Do not publish report details to
 the public PR. No fixes are authorized by this documentation task.
 
-## 10. Decisions Before Release Qualification
+## 10. Decisions And Verification Before Release
 
-| ID  | Decision needed                                                                                          | Recommendation, not yet approved                                                                                                                                                                                                                                                                                                                                                       |
-| --- | -------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | Existing source credential validity after project movement, plus maximum authorization freshness windows | Reject obsolete placement at subsequent authorization checks; retain already-admitted work. If a bounded old-credential window is chosen instead, state its duration, affected operations and non-renewability explicitly.                                                                                                                                                             |
-| D2  | Aggregate resource limits, durable cardinality caps and retention periods                                | Start from current host/project concurrency 4/2; propose 2 active sends per principal, 60 messages and 128 MiB attachment transfer per minute per principal and destination project, and 256 MiB destination attachment scratch. Validate feasibility; storage enforcement/cleanup and durable record retention still need an explicit policy. These are not measured capacity claims. |
-| D3  | Exact project-restart termination/resume guarantee and user-facing guidance                              | Verify existing process/queue behavior, then document restart as terminating project-local work without undoing external effects or resuming unauthorized work. Do not claim this is currently verified.                                                                                                                                                                               |
+### D1. Project Movement: Verify The Actual Lifecycle
 
-William's approval should record a contract revision and decisions or explicitly
-defer them. Review may begin with open decisions, but cannot certify conformance
-to an unspecified window or budget. After approval, changes to requirements need
-an explicit revision rather than being inferred from whatever the code does.
+Do not ask the maintainer to choose a lifetime for an assumed agent that keeps
+running after its container has stopped. Trace stop, container teardown, host-side
+controllers, credential renewal, placement change and any queued work. Distinguish
+normal operation from copied/stolen credentials, and state the actual preconditions
+for any remaining old-host authority. Separate a credentials-lifetime observation
+from a demonstrated violation of C8. If a policy choice remains after this
+inspection, explain the concrete scenario to William rather than invent a rule.
+Document any authorization freshness windows; none can extend old privileges
+beyond the successful restart boundary.
+
+### D2. Bounded Resources: Direction Agreed, Defaults To Qualify
+
+William agrees to conservative configurable limits and clear errors, with values
+chosen, tested and documented before release. Starting candidates: host/project
+concurrency 4/2; 2 active sends per principal; 60 messages and 128 MiB attachment
+transfer per minute per principal and destination project; 256 MiB destination
+attachment scratch. These numbers remain proposals, not approved exact limits or
+measured capacity claims. Specify actual enforcement scope, storage cleanup,
+durable cardinality and retention policy, and record test evidence. Escalate
+substantial product tradeoffs rather than silently expanding the architecture.
+
+### D3. Restart Boundary: Requirement Settled, Verification Outstanding
+
+Implementations must satisfy C8. Restart after removal/downgrade must stop old
+project-local execution and prevent the old permissions returning through files,
+terminals, agents, existing sessions, credentials, automation or queue recovery.
+Test ordinary restarts and the equivalent stop/start boundary during project
+moves, including already-connected clients and outstanding work. Failure is P0,
+not an optional hardening recommendation or permission to wait for a token TTL.
+No such full-platform verification is claimed in this document.
+
+The complete contract still awaits William's approval; the explicit restart rule
+and resource-policy direction above are recorded decisions, not open questions.
+Review may identify implementation gaps now. Release qualification must include
+the exact enforced resource policy and evidence for the declared restart boundary.
+Later requirement changes need an explicit revision, not inference from code.

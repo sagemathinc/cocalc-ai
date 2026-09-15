@@ -7,6 +7,12 @@ The next step is maintainer approval of the
 exact remotely accessible review target. The full candidate has not passed
 independent review. Private material remains outside this document.
 
+William has declared restart after removal/downgrade the required enforcement
+boundary; violation is P0. That requirement is not yet verified. Conservative
+configurable resource limits are agreed in principle. The contract records the
+remaining lifecycle investigation and qualification work, not three open policy
+questions. Its complete draft still awaits approval.
+
 Implementation is on hold while that contract and handoff are settled, not because
 native messaging is known to be unavailable. At the last recorded check, the
 first-party external installation list showed that all three QA installations
