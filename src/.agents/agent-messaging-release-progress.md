@@ -5,6 +5,35 @@ deployment or production flag changes are authorized by this work.
 
 ## Current work direction: September 15
 
+### Operator handoff and schema checks
+
+Added `agent-messaging-operator-handoff.md`: checkpoint/base, gate names,
+default-off UI semantics, deployment order, qualified rollback evidence, and
+explicit remaining checks. It does not declare the candidate ready or publish
+private review material.
+
+Read-only account-home API inspection confirmed the dedicated cross-bay QA links
+are expired/revoked. The only active connection was `x -> local-helper`; this
+cannot establish the required receiver-host request/reply workflow. No grant
+renewal or agent execution was performed. A fresh explicit finite bidirectional
+approval for `messaging-qa` and `reviewer` is the live smoke prerequisite.
+
+Reran schema convergence fixtures. Initial execution lacked PGlite's required
+VM-module flag. With it, two tests exposed a fixture configuration error:
+the suites constructed PGlite without selecting `COCALC_DB=pglite`, causing
+unsupported concurrent index DDL. Matched the existing index-convergence test
+setup and restored the original environment after each test. No production
+DDL or migration logic changed. All 11 tests now pass, as does database build.
+These tests cover embedded schema convergence/preservation, not live PostgreSQL
+migration under production load or all external-login tables.
+
+Reproduce from `src/packages/database`:
+
+```sh
+NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --runInBand postgres/schema/agent-messaging.test.ts postgres/schema/agent-personal.test.ts
+pnpm tsc --build
+```
+
 ### Latest checkpoint: host-history routing
 
 Application commit `57086e3d96` fixes host-scoped operation history: account-home
