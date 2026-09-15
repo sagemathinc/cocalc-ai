@@ -97,6 +97,7 @@ export function validateAgentRpcRequest(value: AgentRpcRequest): void {
         });
       if (
         typeof value.body !== "string" ||
+        value.body.length > 32768 ||
         !value.body.trim() ||
         new TextEncoder().encode(value.body).length > 32768
       )

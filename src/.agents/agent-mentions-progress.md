@@ -850,3 +850,13 @@ Attachment design decisions for the next increment, not implemented here:
   starting bounds, not deployed settings or exact resident-memory guarantees;
   transport buffering/copies and multiple hub processes need explicit accounting.
 - Federation is wishlist only, explicitly outside this implementation.
+
+## September 15 Attachment Implementation
+
+Follow-up implementation status, exact reproduction commands, and remaining work
+are tracked in [agent-attachments-login-progress.md](./agent-attachments-login-progress.md).
+Host/project fail-fast admission and same-project file references are implemented
+and tested in the worktree. Snapshot validation, bounded preparation, and sandboxed
+staging have internal adapter tests, but cross-project binary transport and
+external sender login are not connected yet. None of this increment is deployed;
+do not interpret these tests as live cross-host attachment verification.

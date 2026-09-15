@@ -61,6 +61,7 @@ export function validateAttachmentMetadata(value: AgentAttachments): void {
         file.kind !== "project-file" ||
         typeof file.path !== "string" ||
         !file.path.startsWith("/") ||
+        file.path.length > 4096 ||
         new TextEncoder().encode(file.path).length > 4096 ||
         /[\x00-\x1f\x7f]/.test(file.path) ||
         file.path.split("/").some((part) => part === ".." || part === ".")
@@ -78,6 +79,7 @@ export function validateAttachmentMetadata(value: AgentAttachments): void {
       !file ||
       typeof file.name !== "string" ||
       !file.name ||
+      file.name.length > 255 ||
       new TextEncoder().encode(file.name).length > 255 ||
       /[\\/\x00-\x1f\x7f]/.test(file.name) ||
       file.name === "." ||
