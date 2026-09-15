@@ -724,7 +724,7 @@ export interface HostControlApi {
   inspectAgentRpc: (opts: {
     /** Trusted run principal in personal mode, absent only for legacy RPC. */
     account_id?: string;
-    source: import("@cocalc/conat/agents/rpc").AgentEndpoint;
+    source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
     request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt;
   }) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
   probePublicRouteOrigin: () => Promise<ProjectHostOriginHealth>;

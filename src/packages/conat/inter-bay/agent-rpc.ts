@@ -77,6 +77,10 @@ export interface RpcSource {
   source: AgentEndpoint;
   run_id: string;
 }
+export interface RpcSubmissionSource {
+  source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
+  run_id?: string;
+}
 export interface AgentRpcControlApi {
   external(
     opts: import("@cocalc/conat/agents/external").ExternalAgentControlRequest,
@@ -118,16 +122,19 @@ export interface AgentRpcControlApi {
   >;
   submit(
     opts: RpcRoute &
-      RpcSource & { request: AgentRpcSend; snapshot_payload?: AgentSnapshot[] },
+      RpcSubmissionSource & {
+        request: AgentRpcSend;
+        snapshot_payload?: AgentSnapshot[];
+      },
   ): Promise<AgentRpcOutcome>;
   prepareAttachments(
-    opts: RpcRoute & RpcSource & { request: AgentRpcSend },
+    opts: RpcRoute & RpcSubmissionSource & { request: AgentRpcSend },
   ): Promise<AgentRpcPreparation>;
   cancelAttachments(
-    opts: RpcRoute & RpcSource & { request: AgentRpcSend },
+    opts: RpcRoute & RpcSubmissionSource & { request: AgentRpcSend },
   ): Promise<AgentRpcOutcome>;
   inspect(
-    opts: RpcRoute & RpcSource & { request: AgentRpcAttempt },
+    opts: RpcRoute & RpcSubmissionSource & { request: AgentRpcAttempt },
   ): Promise<AgentRpcOutcome>;
 }
 function subject(bay: string) {

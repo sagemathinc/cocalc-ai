@@ -1,4 +1,8 @@
-import { acceptAgentRpc } from "./rpc";
+import { acceptAgentRpc, acceptExternalAgentRpc } from "./rpc";
+import {
+  parseExternalAgentSubject,
+  externalAgentInbox,
+} from "@cocalc/conat/agents/external";
 import type { Client } from "@cocalc/conat/core/client";
 import {
   agentInboxPrefix,
@@ -92,39 +96,54 @@ export async function acceptAgentMessage(
 
 export async function startAgentMessaging(
   client: Client,
+  external = false,
 ): Promise<() => Promise<void>> {
   if (!agentMessagingEnabled()) return async () => {};
   const binary = process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED === "1";
-  const subscription = await client.subscribe("agent-messaging.*.*", {
-    queue: "agent-messaging-v1",
-    receiveLimits: binary
-      ? {
-          maxMessageBytes: 33 * 1024 * 1024,
-          maxInflightBytes: 132 * 1024 * 1024,
-          maxInflightMessages: 4,
-          maxFragmentsPerMessage: 4096,
-        }
-      : {
-          maxMessageBytes: 128 * 1024,
-          maxInflightBytes: 4 * 1024 * 1024,
-          maxInflightMessages: 32,
-        },
-    maxQueue: binary ? 4 : 32,
-  });
+  const stopExternal =
+    !external && process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED === "1"
+      ? await startAgentMessaging(client, true)
+      : undefined;
+  const subscription = await client.subscribe(
+    external ? "agent-external.*.*" : "agent-messaging.*.*",
+    {
+      queue: "agent-messaging-v1",
+      receiveLimits: binary
+        ? {
+            maxMessageBytes: 33 * 1024 * 1024,
+            maxInflightBytes: 132 * 1024 * 1024,
+            maxInflightMessages: 4,
+            maxFragmentsPerMessage: 4096,
+          }
+        : {
+            maxMessageBytes: 128 * 1024,
+            maxInflightBytes: 4 * 1024 * 1024,
+            maxInflightMessages: 32,
+          },
+      maxQueue: binary ? 4 : 32,
+    },
+  );
   let closed = false;
   const activeRpc = new Set<Promise<void>>();
   const requests = (async () => {
     for await (const message of subscription) {
       if (closed) break;
       try {
-        const { agent_id, run_id } = parseAgentMessagingSubject(
-          message.subject,
-        );
+        const replyPrefix = external
+          ? (() => {
+              const { account_id, installation_id } = parseExternalAgentSubject(
+                message.subject,
+              );
+              return externalAgentInbox(account_id, installation_id);
+            })()
+          : (() => {
+              const { agent_id, run_id } = parseAgentMessagingSubject(
+                message.subject,
+              );
+              return agentInboxPrefix(agent_id, run_id);
+            })();
         const reply = message.headers?.["CN-Reply"];
-        if (
-          typeof reply !== "string" ||
-          !reply.startsWith(`${agentInboxPrefix(agent_id, run_id)}.`)
-        )
+        if (typeof reply !== "string" || !reply.startsWith(`${replyPrefix}.`))
           continue;
         const request = message.data;
         if (request?.version === 2) {
@@ -137,7 +156,9 @@ export async function startAgentMessaging(
           const task = (async () => {
             try {
               await message.respond({
-                result: await acceptAgentRpc(message.subject, request),
+                result: await (
+                  external ? acceptExternalAgentRpc : acceptAgentRpc
+                )(message.subject, request),
               });
             } catch (error) {
               await message
@@ -157,6 +178,7 @@ export async function startAgentMessaging(
           void task.finally(() => activeRpc.delete(task));
           continue;
         }
+        if (external) throw new Error("external agents require RPC version 2");
         const result = await acceptAgentMessage(message.subject, request);
         await message.respond({ result });
       } catch (error) {
@@ -177,5 +199,6 @@ export async function startAgentMessaging(
     subscription.close();
     await requests;
     await Promise.allSettled(activeRpc);
+    await stopExternal?.();
   };
 }

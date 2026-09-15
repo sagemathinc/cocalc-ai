@@ -11,6 +11,10 @@ import { claimExternalAgentLoginChallenge } from "@cocalc/server/auth/cli-auth";
 import { ExternalAgentStore } from "./external-store";
 import { agentStore } from "./store";
 import { getIdentity } from "./api";
+import {
+  validateExternalAgentSource,
+  type ExternalAgentSource,
+} from "@cocalc/conat/agents/external";
 
 export function assertExternalAgentLoginEnabled() {
   for (const flag of [
@@ -49,6 +53,21 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
   const home_bay_id = await home(opts.account_id);
   if (home_bay_id !== opts.home_bay_id)
     throw new Error("stale external account home");
+  if (opts.action === "check-send") {
+    if (home_bay_id !== getConfiguredBayId())
+      throw new Error("external send requires account home");
+    validateExternalAgentSource(opts.source);
+    if (opts.source.account_id !== opts.account_id)
+      throw new Error("external principal mismatch");
+    const proof = await externalStore().check(
+      opts.account_id,
+      opts.source.installation_id,
+      opts.target,
+    );
+    if (proof.source.agent_id !== opts.source.agent_id)
+      throw new Error("external identity mismatch");
+    return { proof };
+  }
   if (opts.action === "claim-enrollment") {
     if (
       !Number.isFinite(opts.fresh_auth_at) ||
@@ -76,6 +95,25 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
   }
   throw new Error("unsupported external agent control operation");
 };
+
+export async function checkExternalAgentSend(
+  source: ExternalAgentSource,
+  target: AgentEndpoint,
+) {
+  assertExternalAgentLoginEnabled();
+  validateExternalAgentSource(source);
+  const home_bay_id = await home(source.account_id);
+  const result = await control(home_bay_id).external({
+    action: "check-send",
+    account_id: source.account_id,
+    home_bay_id,
+    source,
+    target,
+  });
+  if (!("proof" in result))
+    throw new Error("invalid external authorization response");
+  return result.proof;
+}
 
 export async function approveExternalAgentLogin(opts: {
   account_id: string;

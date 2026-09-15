@@ -233,3 +233,25 @@ Next: wire external identity authentication and approved-destination checks into
 the existing bounded Conat submission path; add installation revocation UI,
 then deploy and test browser enrollment plus external CLI attachments end to end.
 These are unfinished implementation tasks, not user-input blockers.
+
+### External transport checkpoint (2026-09-15)
+
+External credentials now authenticate only at account home and may publish only
+their installation-sealed Conat subject and subscribe only to their isolated
+response inbox. They cannot use normal account/project/native-agent APIs.
+Every operation rechecks installation state; sends and host admission route
+explicit destination checks to account home, including after startup.
+
+The existing receiver, capacity admission, attachment reservations and attempt
+evidence support an explicit external source (account/agent/installation), never
+a manufactured project or native run. External files are always snapshots;
+guidance and receiving are disallowed. The CLI uses explicit `--external-agent
+PROFILE` on send, destinations and inspect, ignoring ambient human credentials
+and API routing. My Agents lists installations and can revoke them immediately.
+
+Focused verification: Conat protocol/reservation/attempt tests 45 passed;
+receiver tests 36; server transport/store/routing tests 93 (including native
+regressions); CLI transport/commands 20; external revocation keyboard tests 2.
+Server, Lite, HTTP API, CLI and frontend typechecks and frontend lint passed.
+Deployment and actual external browser/CLI workflow are still pending; do not
+interpret this checkpoint as live external-send verification.

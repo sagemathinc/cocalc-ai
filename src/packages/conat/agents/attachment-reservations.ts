@@ -11,7 +11,9 @@ import type { AgentRpcEnvelope, AgentRpcOutcome } from "./rpc";
 import {
   validateAgentRpcOutcome,
   validateAgentRpcRequest,
-  validateAgentEndpoint,
+  validateAgentRpcSource,
+  agentRpcSourceKey,
+  isExternalAgentSource,
 } from "./rpc";
 import { requireUuid } from "./protocol";
 
@@ -68,6 +70,9 @@ function binding({ envelope: e, files }: AttachmentReservationRequest): string {
         e.body,
         e.guidance === true,
         files.map(({ name, size, sha256 }) => [name, size, sha256]),
+        ...(isExternalAgentSource(e.source)
+          ? [agentRpcSourceKey(e.source)]
+          : []),
       ]),
     )
     .digest("hex");
@@ -77,9 +82,8 @@ function snapshot(
   request: AttachmentReservationRequest,
 ): AttachmentReservationRequest {
   const e = request.envelope;
-  validateAgentEndpoint(e.source);
+  validateAgentRpcSource(e.source, e.run_id);
   for (const key of [
-    "run_id",
     "account_id",
     "link_id",
     "permit_id",
@@ -116,9 +120,9 @@ function snapshot(
       version: e.version,
       body: e.body,
       guidance: e.guidance,
-      source: { project_id: e.source.project_id, agent_id: e.source.agent_id },
+      source: { ...e.source },
       target: { project_id: e.target.project_id, agent_id: e.target.agent_id },
-      run_id: e.run_id,
+      ...(e.run_id ? { run_id: e.run_id } : {}),
       account_id: e.account_id,
       link_id: e.link_id,
       permit_id: e.permit_id,

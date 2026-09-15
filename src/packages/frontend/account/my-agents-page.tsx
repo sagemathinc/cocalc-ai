@@ -15,6 +15,7 @@ import { NameAgent } from "@cocalc/frontend/agents/name-agent";
 import { ConnectionApproval } from "@cocalc/frontend/agents/connection-approval";
 import type { ApprovalTarget } from "@cocalc/frontend/agents/connection-approval";
 import { AgentMessagingRequests } from "@cocalc/frontend/agents/messaging-requests";
+import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import {
   personalAgentApi,
   refreshNamedAgents,
@@ -676,6 +677,7 @@ function AccountAgentsPage() {
         )}
       </section>
       <AgentMessagingRequests />
+      <ExternalAgentInstallations revision={revision} />
       {approval && (
         <ConnectionApproval
           value={approval}

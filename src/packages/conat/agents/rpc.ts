@@ -1,5 +1,9 @@
 import { requireUuid } from "./protocol";
 import {
+  validateExternalAgentSource,
+  type ExternalAgentSource,
+} from "./external";
+import {
   validateAttachmentMetadata,
   validateAttachmentPayload,
   type AgentFileReference,
@@ -10,6 +14,35 @@ import {
 export interface AgentEndpoint {
   project_id: string;
   agent_id: string;
+}
+
+export type AgentRpcSource = AgentEndpoint | ExternalAgentSource;
+
+export function isExternalAgentSource(
+  source: AgentRpcSource,
+): source is ExternalAgentSource {
+  return "kind" in source && source.kind === "external";
+}
+
+/** Installation credentials are never represented as native project runs. */
+export function validateAgentRpcSource(
+  source: AgentRpcSource,
+  run_id?: string,
+): void {
+  if (isExternalAgentSource(source)) {
+    validateExternalAgentSource(source);
+    if (run_id !== undefined)
+      throw new Error("external source cannot claim a native run");
+  } else {
+    validateAgentEndpoint(source);
+    requireUuid(run_id, "run_id");
+  }
+}
+
+export function agentRpcSourceKey(source: AgentRpcSource): string {
+  return isExternalAgentSource(source)
+    ? `external/${source.account_id}/${source.agent_id}/${source.installation_id}`
+    : `${source.project_id}/${source.agent_id}`;
 }
 
 export interface AgentRpcAttempt {
@@ -273,8 +306,8 @@ export function validateAgentRpcOutcome(
 /** Trusted owner-to-host envelope, not an agent-supplied authority claim. */
 export interface AgentRpcEnvelope extends AgentRpcSend {
   permit_id: string;
-  source: AgentEndpoint;
-  run_id: string;
+  source: AgentRpcSource;
+  run_id?: string;
   link_id: string;
   account_id: string;
   path: string;
@@ -307,5 +340,7 @@ export function agentRpcEnvelopeKey(e: AgentRpcEnvelope): string {
       sha256,
     ]) ?? null,
     e.attachment_reservation ?? null,
+    // Preserve native permit keys while binding all external authority fields.
+    ...(isExternalAgentSource(e.source) ? [agentRpcSourceKey(e.source)] : []),
   ]);
 }

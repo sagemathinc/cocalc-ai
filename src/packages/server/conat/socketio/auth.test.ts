@@ -14,6 +14,16 @@ import {
 
 const identityAuthenticate = jest.fn();
 const identityActiveRun = jest.fn();
+const externalAuthenticate = jest.fn();
+const externalStatus = jest.fn();
+const externalEnabled = jest.fn();
+jest.mock("@cocalc/server/agents/external", () => ({
+  assertExternalAgentLoginEnabled: () => externalEnabled(),
+  externalStore: () => ({
+    authenticate: externalAuthenticate,
+    enrollmentStatus: externalStatus,
+  }),
+}));
 jest.mock("@cocalc/server/agents/store", () => ({
   agentStore: () => ({
     authenticate: identityAuthenticate,
@@ -155,6 +165,65 @@ function projectHostBearerToken(nonce?: string) {
     nonce,
   })}.signature`;
 }
+
+describe("external send-only transport", () => {
+  it("authenticates installation without using human or native credentials and rechecks every subject", async () => {
+    externalEnabled.mockReset();
+    const installation = {
+      installation_id: project_id2,
+      agent_id: project_id3,
+      account_id,
+      created_at: new Date().toISOString(),
+      expires_at: new Date(Date.now() + 60000).toISOString(),
+    };
+    externalAuthenticate.mockResolvedValue(installation);
+    externalStatus.mockResolvedValue(installation);
+    const user = await getUser({
+      handshake: {
+        auth: {
+          bearer: `cocalc_external_agent_v1.${account_id}.${project_id2}.${"a".repeat(64)}`,
+          agent_id: host_id,
+        },
+        headers: {},
+      },
+    });
+    expect(user).toMatchObject({
+      account_id,
+      auth_agent_id: project_id3,
+      auth_external_installation_id: project_id2,
+      auth_scopes: [],
+    });
+    expect(user).not.toHaveProperty("auth_agent_run_id");
+    expect(user).not.toHaveProperty("auth_session_hash");
+    const subject = `agent-external.${account_id}.${project_id2}`;
+    expect(await isAllowed({ user, subject, type: "pub" })).toBe(true);
+    expect(
+      await isAllowed({
+        user,
+        subject: `_INBOX.${subject}.reply`,
+        type: "sub",
+      }),
+    ).toBe(true);
+    for (const denied of [
+      `hub.account.${account_id}.api`,
+      `agent-messaging.${project_id3}.${project_id2}`,
+      `agent-external.${account_id}.${host_id}`,
+      "public.test",
+      "_INBOX.someone.response",
+    ])
+      for (const type of ["pub", "sub"] as const)
+        expect(await isAllowed({ user, subject: denied, type })).toBe(false);
+    externalStatus.mockRejectedValueOnce(new Error("revoked"));
+    expect(await isAllowed({ user, subject, type: "pub" })).toBe(false);
+    externalEnabled.mockImplementationOnce(() => {
+      throw new Error("disabled");
+    });
+    expect(await isAllowed({ user, subject, type: "pub" })).toBe(false);
+    expect(
+      await isAllowed({ user: { account_id }, subject, type: "pub" }),
+    ).toBe(false);
+  });
+});
 
 describe("registered agent identity transport", () => {
   const agent_id = project_id2,

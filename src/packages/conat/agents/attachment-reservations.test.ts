@@ -65,6 +65,40 @@ describe("attachment preparation admission", () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
+  test("external reservation preserves identity and cannot be used by another installation", async () => {
+    const s = setup();
+    s.envelope.source = {
+      kind: "external",
+      account_id: s.envelope.account_id,
+      agent_id: randomUUID(),
+      installation_id: randomUUID(),
+    };
+    delete s.envelope.run_id;
+    const ready = await s.reservations.prepare(s.request);
+    expect(s.start).toHaveBeenCalledWith(
+      expect.objectContaining({ source: s.envelope.source }),
+    );
+    const changed = {
+      ...s.request,
+      envelope: {
+        ...s.envelope,
+        source: { ...s.envelope.source, installation_id: randomUUID() },
+      },
+    };
+    await expect(
+      s.reservations.commit(ready.reservation_id, changed, s.files, s.adapter),
+    ).rejects.toThrow("unavailable");
+    expect(s.adapter.stage).not.toHaveBeenCalled();
+    expect(
+      await s.reservations.commit(
+        ready.reservation_id,
+        s.request,
+        s.files,
+        s.adapter,
+      ),
+    ).toMatchObject({ outcome: "accepted" });
+  });
+
   test("preparation starts the project but never stages files or submits work", async () => {
     const s = setup();
     const ticket = await s.reservations.prepare(s.request);

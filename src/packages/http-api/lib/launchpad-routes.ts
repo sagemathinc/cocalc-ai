@@ -21,6 +21,7 @@ import authCliSessionStatus from "../pages/api/v2/auth/cli/session-status";
 import authAgentStart from "../pages/api/v2/auth/cli/agent/start";
 import authAgentApprove from "../pages/api/v2/auth/cli/agent/approve";
 import authAgentDestinations from "../pages/api/v2/auth/cli/agent/destinations";
+import authAgentInstallations from "../pages/api/v2/auth/cli/agent/installations";
 import accountSendVerificationEmail from "../pages/api/v2/accounts/send-verification-email";
 import accountSetEmailAddress from "../pages/api/v2/accounts/set-email-address";
 
@@ -45,6 +46,7 @@ export function getLaunchpadApiV2Routes(): ApiV2RouteEntry[] {
     { path: "/auth/cli/agent/start", handler: authAgentStart },
     { path: "/auth/cli/agent/approve", handler: authAgentApprove },
     { path: "/auth/cli/agent/destinations", handler: authAgentDestinations },
+    { path: "/auth/cli/agent/installations", handler: authAgentInstallations },
     {
       path: "/accounts/send-verification-email",
       handler: accountSendVerificationEmail,

@@ -66,6 +66,51 @@ function attachmentFixture() {
   return { ...f, files: [{ ...metadata, data }] };
 }
 
+test("external snapshot send preserves attribution and target execution account without a fake run", async () => {
+  const { e, deps, service, db, files } = attachmentFixture();
+  e.source = {
+    kind: "external",
+    account_id: e.account_id,
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  delete e.run_id;
+  const ready = await service.prepareAttachments(e);
+  expect(ready.outcome).toBe("prepared");
+  if (ready.outcome !== "prepared") throw new Error("preparation failed");
+  e.attachment_reservation = ready.reservation_id;
+  expect(await service.submit(e, files)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+  });
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  const row = db.set.mock.calls[0][0];
+  expect(row.agent_rpc.source).toEqual(e.source);
+  expect(row.agent_rpc).not.toHaveProperty("source_run_id");
+  expect(JSON.stringify(row)).toContain("external agent");
+  expect(JSON.stringify(row)).toContain("cannot receive messages");
+});
+
+test("external source cannot use live paths or guidance", async () => {
+  const { e, deps, service, db } = fixture();
+  e.source = {
+    kind: "external",
+    account_id: e.account_id,
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  delete e.run_id;
+  e.guidance = true;
+  await expect(service.submit(e)).rejects.toThrow("external agents");
+  e.guidance = false;
+  e.file_references = [
+    { kind: "project-file", path: "/home/user/secret" } as any,
+  ];
+  await expect(service.submit(e)).rejects.toThrow("external agents");
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(db.set).not.toHaveBeenCalled();
+});
+
 test.each([
   ["adapter", "attachment_unavailable"],
   ["authorization", "execution_not_allowed"],

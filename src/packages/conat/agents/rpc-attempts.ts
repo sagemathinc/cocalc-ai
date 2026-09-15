@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import {
   rpcOutcome,
-  type AgentEndpoint,
+  type AgentRpcSource,
+  agentRpcSourceKey,
+  isExternalAgentSource,
   type AgentRpcAttempt,
   type AgentRpcOutcome,
   type AgentRpcSend,
@@ -34,11 +36,11 @@ export class AgentRpcAttempts {
     return this.options.now?.() ?? Date.now();
   }
   private key(
-    source: AgentEndpoint,
+    source: AgentRpcSource,
     attempt: AgentRpcAttempt,
     accountId?: string,
   ) {
-    return `${JSON.stringify(accountId ?? null)}/${source.project_id}/${source.agent_id}/${attempt.target.project_id}/${attempt.target.agent_id}/${attempt.attempt_id}`;
+    return `${JSON.stringify(accountId ?? null)}/${agentRpcSourceKey(source)}/${attempt.target.project_id}/${attempt.target.agent_id}/${attempt.attempt_id}`;
   }
   private prune() {
     for (const [key, entry] of this.entries)
@@ -49,7 +51,7 @@ export class AgentRpcAttempts {
   }
 
   inspect(
-    source: AgentEndpoint,
+    source: AgentRpcSource,
     attempt: AgentRpcAttempt,
     accountId?: string,
   ): AgentRpcOutcome {
@@ -63,7 +65,7 @@ export class AgentRpcAttempts {
   }
 
   async send(
-    source: AgentEndpoint,
+    source: AgentRpcSource,
     request: AgentRpcSend,
     execute: () => Promise<AgentRpcOutcome>,
     accountId?: string,
@@ -94,7 +96,9 @@ export class AgentRpcAttempts {
         reason: "Attempt evidence capacity reached",
         chat_effect: "none",
       });
-    const sourceKey = `${source.project_id}/${source.agent_id}`;
+    const sourceKey = isExternalAgentSource(source)
+      ? `external/${source.account_id}`
+      : agentRpcSourceKey(source);
     let window = this.sources.get(sourceKey);
     if (!window) {
       window = { since: this.now(), count: 0, active: 0 };

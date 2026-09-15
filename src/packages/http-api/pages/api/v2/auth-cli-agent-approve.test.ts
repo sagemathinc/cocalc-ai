@@ -1,11 +1,14 @@
 /** @jest-environment node */
 import { createMocks } from "@cocalc/http-api/lib/api/test-framework";
 import handler from "./auth/cli/agent/approve";
+import installations from "./auth/cli/agent/installations";
 
 const mockAccount = jest.fn(),
   mockParams = jest.fn(),
   mockSession = jest.fn(),
   mockApprove = jest.fn();
+const mockRevoke = jest.fn(),
+  mockList = jest.fn();
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
   default: (...args) => mockAccount(...args),
@@ -19,24 +22,45 @@ jest.mock("@cocalc/server/auth/remember-me", () => ({
 }));
 jest.mock("@cocalc/server/agents/external", () => ({
   approveExternalAgentLogin: (...args) => mockApprove(...args),
+  assertExternalAgentLoginEnabled: jest.fn(),
+  externalStore: () => ({ revoke: mockRevoke, list: mockList }),
 }));
 
 beforeEach(() => {
   mockAccount.mockReset().mockResolvedValue("real-account");
   mockSession.mockReset().mockReturnValue("real-session");
-  mockParams
-    .mockReset()
-    .mockReturnValue({
-      account_id: "forged-account",
-      session_hash: "forged-session",
-      origin_bay_id: "origin",
-      challenge_id: "challenge",
-      targets: [],
-      ttl_seconds: 3600,
-    });
+  mockParams.mockReset().mockReturnValue({
+    account_id: "forged-account",
+    session_hash: "forged-session",
+    origin_bay_id: "origin",
+    challenge_id: "challenge",
+    targets: [],
+    ttl_seconds: 3600,
+  });
   mockApprove
     .mockReset()
     .mockResolvedValue({ installation: { installation_id: "challenge" } });
+});
+
+test("installation revocation uses the signed-in account, not supplied authority", async () => {
+  mockParams.mockReturnValue({
+    action: "revoke",
+    installation_id: "installation",
+    account_id: "forged",
+  });
+  mockRevoke.mockReset().mockResolvedValue(undefined);
+  mockList.mockReset().mockResolvedValue([]);
+  const { req, res } = createMocks({ method: "POST" });
+  await installations(req, res);
+  expect(mockRevoke).toHaveBeenCalledWith("real-account", "installation");
+  expect(res._getJSONData()).toEqual({ enabled: true, installations: [] });
+  const keyed = createMocks({
+    method: "POST",
+    headers: { authorization: "Bearer external-token" },
+  });
+  await installations(keyed.req, keyed.res);
+  expect(keyed.res._getJSONData().error).toMatch(/browser session/);
+  expect(mockRevoke).toHaveBeenCalledTimes(1);
 });
 
 test("external approval takes principal and bound session only from authenticated request", async () => {

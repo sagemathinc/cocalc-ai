@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import type { ProjectCommandDeps } from "../project";
 import { sendIdentityMessage } from "../../core/agent-message";
+import { sendExternalAgentMessage } from "../../core/external-agent-message";
 import { randomUUID } from "node:crypto";
 import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { validateAgentEndpoint } from "@cocalc/conat/agents/rpc";
@@ -25,18 +26,27 @@ export function registerChatAgentCommands(
     .description("V2 single-attempt messaging; separate from legacy delivery");
   agent
     .command("destinations")
+    .option(
+      "--external-agent <profile>",
+      "use an external send-only installation",
+    )
     .description(
       "discover destinations approved for this turn's human principal",
     )
-    .action(async (_opts, cmd) => {
+    .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
       emitSuccess(
         { globals },
         "project chat agent destinations",
-        await sendIdentityMessage(
-          { version: 2, action: "destinations" },
-          globals.api,
-        ),
+        opts.externalAgent
+          ? await sendExternalAgentMessage(opts.externalAgent, {
+              version: 2,
+              action: "destinations",
+            })
+          : await sendIdentityMessage(
+              { version: 2, action: "destinations" },
+              globals.api,
+            ),
       );
     });
   agent
@@ -139,19 +149,34 @@ export function registerChatAgentCommands(
         ),
       );
     });
-  rpc.command("destinations").action(async (_opts, cmd) => {
-    const globals = globalsFrom(cmd);
-    emitSuccess(
-      { globals },
-      "project chat agent rpc destinations",
-      await sendIdentityMessage(
-        { version: 2, action: "destinations" },
-        globals.api,
-      ),
-    );
-  });
+  rpc
+    .command("destinations")
+    .option(
+      "--external-agent <profile>",
+      "use an external send-only installation",
+    )
+    .action(async (opts, cmd) => {
+      const globals = globalsFrom(cmd);
+      emitSuccess(
+        { globals },
+        "project chat agent rpc destinations",
+        opts.externalAgent
+          ? await sendExternalAgentMessage(opts.externalAgent, {
+              version: 2,
+              action: "destinations",
+            })
+          : await sendIdentityMessage(
+              { version: 2, action: "destinations" },
+              globals.api,
+            ),
+      );
+    });
   rpc
     .command("inspect <attempt-id>")
+    .option(
+      "--external-agent <profile>",
+      "use an external send-only installation",
+    )
     .requiredOption("--to-agent <id>", "target from the original receipt")
     .requiredOption(
       "--target-project <id>",
@@ -159,18 +184,29 @@ export function registerChatAgentCommands(
     )
     .action(async (attempt_id, opts, cmd) => {
       const globals = globalsFrom(cmd);
+      const request = {
+        version: 2 as const,
+        action: "inspect" as const,
+        attempt_id,
+        target: { project_id: opts.targetProject, agent_id: opts.toAgent },
+      };
       emitSuccess(
         { globals },
         "project chat agent rpc inspect",
-        await sendIdentityMessage(
-          {
-            version: 2,
-            action: "inspect",
-            attempt_id,
-            target: { project_id: opts.targetProject, agent_id: opts.toAgent },
-          },
-          globals.api,
-        ),
+        opts.externalAgent
+          ? await sendExternalAgentMessage(opts.externalAgent, request)
+          : await sendIdentityMessage(
+              {
+                version: 2,
+                action: "inspect",
+                attempt_id,
+                target: {
+                  project_id: opts.targetProject,
+                  agent_id: opts.toAgent,
+                },
+              },
+              globals.api,
+            ),
       );
     });
   rpc

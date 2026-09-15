@@ -9,6 +9,7 @@ import {
   grantRpcLink,
   revokeRpcLink,
   acceptAgentRpc,
+  acceptExternalAgentRpc,
   authorizeRpcAdmission,
 } from "./rpc";
 import { agentMessagingSubject } from "@cocalc/conat/agents/protocol";
@@ -22,6 +23,8 @@ import {
   setPersonalConnectionState,
   resolvePersonalConnectionRequest,
 } from "./personal";
+import { externalStore } from "./external";
+import { externalAgentSubject } from "@cocalc/conat/agents/external";
 
 const context = new AsyncLocalStorage<string>();
 const owners = new Map<string, string>();
@@ -177,6 +180,8 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
           "agent_personal_grants",
           "agent_personal_controls",
           "agent_personal_requests",
+          "agent_external_identities",
+          "agent_external_installations",
         ].map((name) => [name, SCHEMA[name]]),
       ),
     );
@@ -201,6 +206,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     wireClient = undefined;
     delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
     delete process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED;
+    delete process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED;
     offlineBay = undefined;
     fresh.mockReset().mockResolvedValue(undefined);
     collab.mockReset().mockResolvedValue(undefined);
@@ -215,6 +221,8 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
       "agent_personal_grants",
       "agent_personal_controls",
       "agent_personal_requests",
+      "agent_external_installations",
+      "agent_external_identities",
     ])
       await agentStore().query(`DELETE FROM ${table}`);
   });
@@ -238,6 +246,66 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
         body: "request-or-correlated-reply",
       }),
     );
+
+  test("external home-approved source sends across owners, with no native run; revocation after startup rejects", async () => {
+    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
+    process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED = "1";
+    const installation = await externalStore().enroll(
+      account,
+      "fresh-human-home",
+      {
+        installation_id: randomUUID(),
+        label: "SOC-2 QA",
+        secret_hash: "a".repeat(64),
+        targets: [target],
+        ttl_seconds: 3600,
+      },
+    );
+    const subject = externalAgentSubject(account, installation.installation_id);
+    const request = {
+      version: 2 as const,
+      action: "send" as const,
+      attempt_id: randomUUID(),
+      target,
+      body: "external evidence",
+    };
+    expect(await acceptExternalAgentRpc(subject, request)).toMatchObject({
+      outcome: "accepted",
+    });
+    const envelope = admitted.mock.calls[0][0];
+    expect(envelope.source).toEqual({
+      kind: "external",
+      account_id: account,
+      agent_id: installation.agent_id,
+      installation_id: installation.installation_id,
+    });
+    expect(envelope).not.toHaveProperty("run_id");
+    expect(envelope.account_id).toBe(account);
+    expect(
+      routedCalls.some(
+        (c) =>
+          c.bay === "home" &&
+          c.method === "external" &&
+          c.opts.action === "check-send",
+      ),
+    ).toBe(true);
+    beforeAdmission.mockImplementationOnce(async () =>
+      context.run("home", () =>
+        externalStore().revoke(account, installation.installation_id),
+      ),
+    );
+    const next = await acceptExternalAgentRpc(subject, {
+      ...request,
+      attempt_id: randomUUID(),
+    });
+    // This host stub throws rather than returning the receiver's rejection;
+    // the sending hub must not reinterpret a failed RPC acknowledgment.
+    expect(next).toMatchObject({ outcome: "unknown" });
+    expect(admitted).toHaveBeenCalledTimes(1);
+    await expect(
+      acceptExternalAgentRpc(subject, { ...request, attempt_id: randomUUID() }),
+    ).rejects.toThrow();
+  });
 
   test("home human approval, scoped discovery and explicit cross-owner reverse reply", async () => {
     await approve();

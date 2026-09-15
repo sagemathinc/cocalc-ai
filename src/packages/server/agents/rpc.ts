@@ -13,6 +13,9 @@ import {
   validateAgentRpcOutcome,
   validateAgentRpcPreparation,
   agentRpcEnvelopeKey,
+  validateAgentRpcSource,
+  isExternalAgentSource,
+  type AgentRpcSource,
   type AgentEndpoint,
   type AgentRpcEnvelope,
   type AgentRpcLink,
@@ -34,7 +37,13 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { agentStore } from "./store";
-import { externalControl } from "./external";
+import {
+  externalControl,
+  checkExternalAgentSend,
+  assertExternalAgentLoginEnabled,
+  externalStore,
+} from "./external";
+import { parseExternalAgentSubject } from "@cocalc/conat/agents/external";
 import { assertActor, assertAgent, assertRun } from "./access";
 import { getIdentity } from "./api";
 import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
@@ -183,6 +192,35 @@ async function hostFor(endpoint: AgentEndpoint) {
   };
 }
 
+async function submissionProof(
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  target: AgentEndpoint,
+  guidance: boolean,
+) {
+  validateAgentRpcSource(source, run_id);
+  if (isExternalAgentSource(source)) {
+    if (guidance) throw new Error("external agents cannot steer turns");
+    const proof = await checkExternalAgentSend(source, target);
+    return {
+      link: {
+        link_id: proof.destination.link_id,
+        approved_by: source.account_id,
+        principal_account_id: source.account_id,
+      },
+    };
+  }
+  return routed(source.project_id, (api, route) =>
+    api.check({
+      ...route,
+      source,
+      run_id: run_id!,
+      target,
+      guidance,
+    }),
+  );
+}
+
 async function submitAgentRpcOperation(
   opts: Parameters<AgentRpcControlApi["submit"]>[0],
   phase: "send" | "prepare" | "cancel" = "send",
@@ -218,15 +256,17 @@ async function submitAgentRpcOperation(
   let observation: { account_id: string; link_id: string } | undefined;
   let accepted = false;
   try {
-    const proof = await routed(opts.source.project_id, (api, route) =>
-      api.check({
-        ...route,
-        source: opts.source,
-        run_id: opts.run_id,
-        target: opts.request.target,
-        guidance: opts.request.guidance === true,
-      }),
+    const proof = await submissionProof(
+      opts.source,
+      opts.run_id,
+      opts.request.target,
+      opts.request.guidance === true,
     );
+    if (
+      isExternalAgentSource(opts.source) &&
+      opts.request.file_references !== undefined
+    )
+      throw new Error("external agents cannot send project file references");
     if ("denied" in proof)
       return rpcOutcome(opts.request, "rejected", { reason: proof.denied });
     const target = await sourceIdentity(opts.request.target);
@@ -247,7 +287,7 @@ async function submitAgentRpcOperation(
       throw new Error("target approver changed");
     await assertActor(proof.link.approved_by, target.project_id);
     const host = await hostFor(opts.request.target);
-    if (personalMessagingEnabled())
+    if (personalMessagingEnabled() && !isExternalAgentSource(opts.source))
       observation = {
         account_id: proof.link.approved_by,
         link_id: proof.link.link_id,
@@ -257,7 +297,7 @@ async function submitAgentRpcOperation(
     const envelope: AgentRpcEnvelope = {
       ...opts.request,
       source: opts.source,
-      run_id: opts.run_id,
+      ...(opts.run_id ? { run_id: opts.run_id } : {}),
       permit_id: randomUUID(),
       link_id: proof.link.link_id,
       account_id: personalMessagingEnabled()
@@ -541,37 +581,39 @@ export const agentRpcControl: AgentRpcControlApi = {
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
     // Source authentication is checked at its owning bay. The host returns only
     // evidence for this exact source/target/attempt, never receiver content.
-    const account_id = await routed(
-      opts.source.project_id,
-      async (api, route) => {
-        const principal = await api.principal({
-          ...route,
-          source: opts.source,
-          run_id: opts.run_id,
+    validateAgentRpcSource(opts.source, opts.run_id);
+    const source = opts.source;
+    const account_id = isExternalAgentSource(source)
+      ? (await checkExternalAgentSend(source, opts.request.target)).source
+          .account_id
+      : await routed(source.project_id, async (api, route) => {
+          const principal = await api.principal({
+            ...route,
+            source,
+            run_id: opts.run_id!,
+          });
+          if (principal.personal_messaging !== personalMessagingEnabled())
+            throw new Error("personal messaging mode mismatch between bays");
+          if (personalMessagingEnabled()) {
+            const proof = await api.check({
+              ...route,
+              source,
+              run_id: opts.run_id!,
+              target: opts.request.target,
+              guidance: false,
+            });
+            if ("denied" in proof)
+              throw new PersonalAgentAuthorizationError(proof.denied);
+            if (proof.link.principal_account_id !== proof.link.approved_by)
+              throw new Error("principal_mismatch");
+            return proof.link.approved_by;
+          } else
+            await api.links({
+              ...route,
+              source,
+              run_id: opts.run_id!,
+            });
         });
-        if (principal.personal_messaging !== personalMessagingEnabled())
-          throw new Error("personal messaging mode mismatch between bays");
-        if (personalMessagingEnabled()) {
-          const proof = await api.check({
-            ...route,
-            source: opts.source,
-            run_id: opts.run_id,
-            target: opts.request.target,
-            guidance: false,
-          });
-          if ("denied" in proof)
-            throw new PersonalAgentAuthorizationError(proof.denied);
-          if (proof.link.principal_account_id !== proof.link.approved_by)
-            throw new Error("principal_mismatch");
-          return proof.link.approved_by;
-        } else
-          await api.links({
-            ...route,
-            source: opts.source,
-            run_id: opts.run_id,
-          });
-      },
-    );
     try {
       const outcome = await (
         await hostFor(opts.request.target)
@@ -659,14 +701,13 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
     target.thread_id !== e.thread_id
   )
     throw new Error("target identity changed");
-  const proof = await routed(e.source.project_id, (api, route) =>
-    api.check({
-      ...route,
-      source: e.source,
-      run_id: e.run_id,
-      target: e.target,
-      guidance: e.guidance === true,
-    }),
+  if (isExternalAgentSource(e.source) && e.file_references !== undefined)
+    throw new Error("external agents cannot send project file references");
+  const proof = await submissionProof(
+    e.source,
+    e.run_id,
+    e.target,
+    e.guidance === true,
   );
   if ("denied" in proof)
     throw new PersonalAgentAuthorizationError(proof.denied);
@@ -734,4 +775,91 @@ export async function acceptAgentRpc(
         })
       : api.inspect({ ...route, source, run_id, request: attempt }),
   );
+}
+
+/** Only the external credential's exact sealed Conat subject reaches here. */
+export async function acceptExternalAgentRpc(
+  subject: string,
+  request: AgentRpcRequest,
+) {
+  assertExternalAgentLoginEnabled();
+  validateAgentRpcRequest(request);
+  const { account_id, installation_id } = parseExternalAgentSubject(subject);
+  const installation = await externalStore().activeInstallation(
+    account_id,
+    installation_id,
+  );
+  const source = {
+    kind: "external" as const,
+    account_id,
+    installation_id,
+    agent_id: installation.agent_id,
+  };
+  if (
+    request.action === "request-connection" ||
+    request.action === "connection-request"
+  )
+    throw new Error(
+      "External destination changes require a new browser-approved installation",
+    );
+  if (request.action === "destinations") {
+    const destinations: Array<{
+      link_id: string;
+      target: AgentEndpoint;
+      target_name?: string;
+      expires_at: string;
+    }> = [];
+    // Read-only checks; disappearing access does not wake any target.
+    const names = await withPersonalHome(account_id, {
+      action: "listNamedAgents",
+      options: {},
+    });
+    for (const destination of installation.destinations) {
+      try {
+        await externalStore().check(
+          account_id,
+          installation_id,
+          destination.target,
+        );
+        const name =
+          names && "agents" in names
+            ? names.agents.find(
+                (n) =>
+                  n.endpoint.project_id === destination.target.project_id &&
+                  n.endpoint.agent_id === destination.target.agent_id,
+              )
+            : undefined;
+        destinations.push({
+          ...destination,
+          target_name:
+            name && "name" in name ? (name.name as string) : undefined,
+          expires_at: installation.expires_at,
+        });
+      } catch {
+        /* Do not disclose targets whose approval/access is no longer valid. */
+      }
+    }
+    await externalStore().activeInstallation(account_id, installation_id);
+    return destinations;
+  }
+  await externalStore().check(account_id, installation_id, request.target);
+  const { action, ...rest } = request;
+  const { snapshot_payload, ...attempt } = rest as typeof rest & {
+    snapshot_payload?: import("@cocalc/conat/agents/attachments").AgentSnapshot[];
+  };
+  return routed(request.target.project_id, (api, route) => {
+    const opts = { ...route, source, request: attempt };
+    if (action === "inspect") return api.inspect(opts);
+    const sendOpts = {
+      ...opts,
+      request: attempt as import("@cocalc/conat/agents/rpc").AgentRpcSend,
+    };
+    if (action === "prepare-attachments")
+      return api.prepareAttachments(sendOpts);
+    if (action === "cancel-attachments") return api.cancelAttachments(sendOpts);
+    return api.submit({
+      ...sendOpts,
+      ...(snapshot_payload ? { snapshot_payload } : {}),
+    });
+  });
 }

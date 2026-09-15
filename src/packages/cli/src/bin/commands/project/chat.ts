@@ -2,6 +2,10 @@ import { Command } from "commander";
 import { randomUUID } from "node:crypto";
 import { sendIdentityMessage } from "../../core/agent-message";
 import {
+  sendExternalAgentMessage,
+  resolveExternalAgentName,
+} from "../../core/external-agent-message";
+import {
   readAgentFileReferences,
   readAgentAttachmentSnapshots,
 } from "../../core/agent-attachments";
@@ -100,6 +104,10 @@ export function registerProjectChatCommands(
     )
     .option("--rpc", "opt in to V2 single-attempt RPC (no delivery retries)")
     .option(
+      "--external-agent <profile>",
+      "use only this browser-approved external send profile",
+    )
+    .option(
       "--attempt-id <uuid>",
       "V2 attempt identifier; deliberate retries require a NEW identifier",
     )
@@ -120,6 +128,7 @@ export function registerProjectChatCommands(
           to?: string;
           requestId?: string;
           rpc?: boolean;
+          externalAgent?: string;
           attemptId?: string;
           attach?: string[];
         },
@@ -129,7 +138,9 @@ export function registerProjectChatCommands(
           throw new Error("use either message arguments or --stdin, not both");
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
-        if (opts.rpc || opts.to) {
+        if (opts.rpc || opts.to || opts.externalAgent) {
+          if (opts.externalAgent && opts.guidance)
+            throw new Error("External agents cannot steer turns");
           if (
             (!opts.toAgent && !opts.to) ||
             (opts.toAgent && opts.to) ||
@@ -145,14 +156,22 @@ export function registerProjectChatCommands(
           const attempt_id = opts.attemptId || randomUUID();
           requireUuid(attempt_id, "attempt-id");
           const globals = deps.globalsFrom(command);
+          const send = (
+            request: import("@cocalc/conat/agents/rpc").AgentRpcRequest,
+          ) =>
+            opts.externalAgent
+              ? sendExternalAgentMessage(opts.externalAgent, request)
+              : sendIdentityMessage(request, globals.api);
           let target: AgentEndpoint;
           if (opts.to) {
-            target = await resolveRuntimeAgentName(opts.to, globals.api);
+            target = opts.externalAgent
+              ? await resolveExternalAgentName(opts.externalAgent, opts.to)
+              : await resolveRuntimeAgentName(opts.to, globals.api);
           } else {
-            const destinations = (await sendIdentityMessage(
-              { version: 2, action: "destinations" },
-              globals.api,
-            )) as AgentRpcLink[];
+            const destinations = (await send({
+              version: 2,
+              action: "destinations",
+            })) as AgentRpcLink[];
             const destination = destinations.find(
               (link) =>
                 link.target.agent_id === opts.toAgent &&
@@ -172,11 +191,13 @@ export function registerProjectChatCommands(
             | Awaited<ReturnType<typeof readAgentAttachmentSnapshots>>
             | undefined;
           if (opts.attach?.length) {
-            const self = (await sendIdentityMessage(
-              { action: "whoami" },
-              globals.api,
-            )) as AgentSelf;
-            if (self.identity?.project_id !== target.project_id) {
+            const self = opts.externalAgent
+              ? undefined
+              : ((await sendIdentityMessage(
+                  { action: "whoami" },
+                  globals.api,
+                )) as AgentSelf);
+            if (self?.identity?.project_id !== target.project_id) {
               snapshots = await readAgentAttachmentSnapshots(opts.attach);
             } else {
               const metadata = await readAgentFileReferences(opts.attach);
@@ -197,10 +218,10 @@ export function registerProjectChatCommands(
             if (snapshots.metadata.kind !== "snapshots")
               throw new Error("invalid snapshot metadata");
             request.snapshot_manifest = snapshots.metadata.files;
-            const ready = (await sendIdentityMessage(
-              { ...request, action: "prepare-attachments" },
-              globals.api,
-            )) as AgentRpcPreparation;
+            const ready = (await send({
+              ...request,
+              action: "prepare-attachments",
+            })) as AgentRpcPreparation;
             validateAgentRpcPreparation(ready, request);
             if (ready.outcome !== "prepared") {
               deps.emitSuccess({ globals }, "project chat send", ready);
@@ -218,14 +239,11 @@ export function registerProjectChatCommands(
                 "Attachment preparation expired before transfer; no message was sent",
               );
           }
-          const result = (await sendIdentityMessage(
-            {
-              ...request,
-              action: "send",
-              ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
-            },
-            globals.api,
-          )) as AgentRpcOutcome;
+          const result = (await send({
+            ...request,
+            action: "send",
+            ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
+          })) as AgentRpcOutcome;
           deps.emitSuccess({ globals }, "project chat send", result);
           process.exitCode =
             result.outcome === "accepted"

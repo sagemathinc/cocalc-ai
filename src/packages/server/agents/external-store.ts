@@ -314,6 +314,13 @@ export class ExternalAgentStore {
     });
   }
 
+  /** Trusted sealed-service lookup; never an installation-ID login endpoint. */
+  async activeInstallation(account: string, installation: string) {
+    return this.locked(account, async (db, controls) =>
+      this.public(await this.active(db, account, installation, controls)),
+    );
+  }
+
   /** Only the trusted origin bay, after validating the challenge poll secret,
    * may use its immutable credential hash to inspect enrollment completion. */
   async enrollmentStatus(
