@@ -542,6 +542,14 @@ listed bays using a temporary secret file copied over SSH. Use `--secret-file`
 to install a pre-generated shared secret, or `--no-rotate-secret` to only update
 topology and preserve existing secrets.
 
+The same command creates a distinct opaque Conat fabric credential for each
+bay. Each raw credential is installed only on its owning bay as
+`/etc/cocalc/bay-credential`; the seed additionally receives a digest-only
+bootstrap manifest. To rotate one bay after installation, use the seed-side
+`pnpm --dir packages/server bay-credential` command documented in
+`docs/multibay-credentials.md`, install the replacement file on that bay, and
+restart only that bay's hub workers before revoking the old credential.
+
 ## Important Constraints
 
 - The wrapper scripts expect environment to come from:

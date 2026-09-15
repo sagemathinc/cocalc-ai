@@ -14,11 +14,13 @@ import { conatPassword } from "@cocalc/backend/data";
 import {
   ACCOUNT_ID_COOKIE_NAME,
   API_COOKIE_NAME,
+  BAY_CREDENTIAL_COOKIE_NAME,
   HUB_PASSWORD_COOKIE_NAME,
   PROJECT_SECRET_COOKIE_NAME,
   PROJECT_ID_COOKIE_NAME,
   REMEMBER_ME_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
+import { authenticateBayCredential } from "@cocalc/server/inter-bay/bay-credentials";
 import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
@@ -68,7 +70,7 @@ import {
 
 startAccountSecurityStateSyncLoop();
 
-const COOKIES = `'${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
+const COOKIES = `'${BAY_CREDENTIAL_COOKIE_NAME}', '${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
 const DEFAULT_AGENT_SCOPES = ["browser_session", "project_session"] as const;
 
 function readCookieValue(
@@ -282,6 +284,11 @@ export async function getUser(
   }
 
   const cookies = parse(socket.handshake.headers.cookie);
+
+  const bayCredential = cookies[BAY_CREDENTIAL_COOKIE_NAME];
+  if (bayCredential) {
+    return await authenticateBayCredential(bayCredential);
+  }
 
   if (systemAccounts != null) {
     for (const cookieName in systemAccounts) {

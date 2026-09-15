@@ -47,6 +47,7 @@
     "build": "../node_modules/.bin/tsc --build",
     "inter-bay:dev:fabric": "node dist/inter-bay/dev-fabric.js",
     "inter-bay:dev:listener": "node dist/inter-bay/dev-listener.js",
+    "bay-credential": "node dist/inter-bay/bay-credential-cli.js",
     "membership-analytics:fixtures": "node dist/membership/allocation-analytics-fixtures.js",
     "compute-analytics:fixtures": "node dist/purchases/compute-revenue-analytics-fixtures.js",
     "customer:fixtures": "node dist/crm/development-fixtures.js",

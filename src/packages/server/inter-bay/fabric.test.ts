@@ -14,6 +14,7 @@ jest.mock("@cocalc/backend/data", () => ({
 jest.mock("@cocalc/backend/auth/cookie-names", () => ({
   __esModule: true,
   HUB_PASSWORD_COOKIE_NAME: "hub",
+  BAY_CREDENTIAL_COOKIE_NAME: "bay",
 }));
 
 jest.mock("@cocalc/conat/core/client", () => ({
@@ -28,6 +29,7 @@ describe("inter-bay fabric config", () => {
     seed_password: process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD,
     server: process.env.COCALC_INTER_BAY_CONAT_SERVER,
     password: process.env.COCALC_INTER_BAY_CONAT_PASSWORD,
+    credential: process.env.COCALC_BAY_CREDENTIAL,
   };
 
   beforeEach(() => {
@@ -37,6 +39,7 @@ describe("inter-bay fabric config", () => {
     delete process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD;
     delete process.env.COCALC_INTER_BAY_CONAT_SERVER;
     delete process.env.COCALC_INTER_BAY_CONAT_PASSWORD;
+    delete process.env.COCALC_BAY_CREDENTIAL;
   });
 
   afterAll(() => {
@@ -45,13 +48,16 @@ describe("inter-bay fabric config", () => {
     process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD = env.seed_password;
     process.env.COCALC_INTER_BAY_CONAT_SERVER = env.server;
     process.env.COCALC_INTER_BAY_CONAT_PASSWORD = env.password;
+    process.env.COCALC_BAY_CREDENTIAL = env.credential;
   });
 
   it("falls back to the current local conat config", async () => {
     const { getInterBayFabricConfig } = await import("./fabric");
     expect(getInterBayFabricConfig()).toEqual({
       address: "http://default-fabric",
-      password: "default-password",
+      cookieName: "hub",
+      credential: "default-password",
+      bayId: "hub",
     });
   });
 
@@ -61,18 +67,34 @@ describe("inter-bay fabric config", () => {
     const { getInterBayFabricConfig } = await import("./fabric");
     expect(getInterBayFabricConfig()).toEqual({
       address: "http://router-fabric",
-      password: "router-secret",
+      cookieName: "hub",
+      credential: "router-secret",
+      bayId: "hub",
     });
   });
 
   it("uses the seed fabric in attached mode", async () => {
     process.env.COCALC_CLUSTER_ROLE = "attached";
     process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = "http://seed-fabric";
-    process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD = "seed-secret";
+    process.env.COCALC_BAY_CREDENTIAL = "bay-secret";
     const { getInterBayFabricConfig } = await import("./fabric");
     expect(getInterBayFabricConfig()).toEqual({
       address: "http://seed-fabric",
-      password: "seed-secret",
+      cookieName: "bay",
+      credential: "bay-secret",
+      bayId: "bay-0",
+    });
+  });
+
+  it("uses the local fabric and distinct credential in seed mode", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    process.env.COCALC_BAY_CREDENTIAL = "seed-bay-secret";
+    const { getInterBayFabricConfig } = await import("./fabric");
+    expect(getInterBayFabricConfig()).toEqual({
+      address: "http://default-fabric",
+      cookieName: "bay",
+      credential: "seed-bay-secret",
+      bayId: "bay-0",
     });
   });
 

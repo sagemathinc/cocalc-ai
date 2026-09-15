@@ -23,6 +23,8 @@ BAYS=()
 SSH_ARGS=()
 TEMP_DIR=""
 GENERATED_SECRET_FILE=0
+BAY_CREDENTIAL_FILES=()
+BAY_CREDENTIAL_BOOTSTRAP_FILE=""
 
 usage() {
   cat <<'EOF'
@@ -303,19 +305,75 @@ prepare_seed_conat_password_file() {
   chmod 0600 "$SEED_CONAT_PASSWORD_FILE"
 }
 
+prepare_bay_credentials() {
+  BAY_CREDENTIAL_BOOTSTRAP_FILE="${TEMP_DIR}/bay-credential-bootstrap.json"
+  local entry bay_id credential_file
+  for entry in "${BAYS[@]}"; do
+    bay_id="$(bay_id_at "$entry")"
+    credential_file="${TEMP_DIR}/${bay_id}-credential"
+    printf 'cocalc-bay-v1.%s.%s\n' "$(cat /proc/sys/kernel/random/uuid)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')" > "$credential_file"
+    chmod 0600 "$credential_file"
+    BAY_CREDENTIAL_FILES+=("${bay_id}=${credential_file}")
+  done
+  python3 - "$CLUSTER_ID" "$BAY_CREDENTIAL_BOOTSTRAP_FILE" "${BAY_CREDENTIAL_FILES[@]}" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+cluster_id = sys.argv[1]
+output = Path(sys.argv[2])
+entries = []
+for item in sys.argv[3:]:
+    bay_id, filename = item.split("=", 1)
+    credential = Path(filename).read_text(encoding="utf-8").strip()
+    prefix, credential_id, secret = credential.split(".")
+    if prefix != "cocalc-bay-v1":
+        raise SystemExit("invalid generated bay credential")
+    entries.append({
+        "cluster_id": cluster_id,
+        "bay_id": bay_id,
+        "credential_id": credential_id,
+        "secret_digest": hashlib.sha256(secret.encode()).hexdigest(),
+    })
+output.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+PY
+  chmod 0600 "$BAY_CREDENTIAL_BOOTSTRAP_FILE"
+}
+
+bay_credential_file() {
+  local requested="$1" item
+  for item in "${BAY_CREDENTIAL_FILES[@]}"; do
+    if [[ "${item%%=*}" == "$requested" ]]; then
+      printf '%s' "${item#*=}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 remote_install_command() {
   local remote_topology="$1"
   local remote_secret="$2"
   local remote_seed_conat_password="$3"
+  local remote_bay_credential="$4"
+  local remote_credential_bootstrap="$5"
   cat <<EOF
 set -euo pipefail
 sudo install -o root -g root -m 0644 $(q "$remote_topology") /etc/cocalc/bay-topology.env
-sudo python3 - $(q "$remote_secret") $(q "$remote_seed_conat_password") <<'PY'
+sudo install -o cocalc-bay -g cocalc-bay -m 0600 $(q "$remote_bay_credential") /etc/cocalc/bay-credential
+if [[ -n $(q "$remote_credential_bootstrap") ]]; then
+  sudo install -o cocalc-bay -g cocalc-bay -m 0600 $(q "$remote_credential_bootstrap") /etc/cocalc/bay-credential-bootstrap.json
+else
+  sudo rm -f /etc/cocalc/bay-credential-bootstrap.json
+fi
+sudo python3 - $(q "$remote_secret") $(q "$remote_seed_conat_password") $(q "$remote_credential_bootstrap") <<'PY'
 from pathlib import Path
 import sys
 
 cluster_secret_path = Path(sys.argv[1]) if sys.argv[1] else None
 seed_conat_password_path = Path(sys.argv[2]) if sys.argv[2] else None
+credential_bootstrap_path = Path(sys.argv[3]) if sys.argv[3] else None
 path = Path("/etc/cocalc/bay-secrets.env")
 text = path.read_text(encoding="utf-8") if path.exists() else ""
 lines = text.splitlines()
@@ -336,12 +394,20 @@ if cluster_secret_path and cluster_secret_path.is_file():
 if seed_conat_password_path and seed_conat_password_path.is_file():
     seed_conat_password = seed_conat_password_path.read_text(encoding="utf-8").strip()
     set_env("COCALC_CLUSTER_SEED_CONAT_PASSWORD", seed_conat_password)
-    set_env("COCALC_INTER_BAY_CONAT_PASSWORD", seed_conat_password)
+
+set_env("COCALC_BAY_CREDENTIAL_FILE", "/etc/cocalc/bay-credential")
+set_env(
+    "COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE",
+    "/etc/cocalc/bay-credential-bootstrap.json" if credential_bootstrap_path else "",
+)
 
 path.write_text("\\n".join(lines) + "\\n", encoding="utf-8")
 PY
 sudo chmod 0600 /etc/cocalc/bay-secrets.env
-rm -f $(q "$remote_topology") $(q "$remote_secret") $(q "$remote_seed_conat_password")
+rm -f $(q "$remote_topology") $(q "$remote_secret") $(q "$remote_seed_conat_password") $(q "$remote_bay_credential")
+if [[ -n $(q "$remote_credential_bootstrap") ]]; then
+  rm -f $(q "$remote_credential_bootstrap")
+fi
 sudo systemctl daemon-reload
 sudo systemctl restart cocalc-bay-peer-health.service
 if [[ $(q "$RESTART_HUB_WORKERS") == "1" ]]; then
@@ -360,11 +426,12 @@ install_topology() {
   TEMP_DIR="$(mktemp -d)"
   prepare_secret_file
   prepare_seed_conat_password_file
+  prepare_bay_credentials
   if [[ -z "$TOPOLOGY_EPOCH" ]]; then
     TOPOLOGY_EPOCH="$(date +%s)"
   fi
 
-  local entry bay_id remote topology_file remote_topology remote_secret remote_seed_conat_password
+  local entry bay_id remote topology_file remote_topology remote_secret remote_seed_conat_password remote_bay_credential remote_credential_bootstrap credential_file
   for entry in "${BAYS[@]}"; do
     bay_id="$(bay_id_at "$entry")"
     remote="$(bay_remote_at "$entry")"
@@ -380,7 +447,15 @@ install_topology() {
     fi
     remote_seed_conat_password="/tmp/cocalc-${bay_id}-seed-conat-password.$$"
     scp_to_remote "$SEED_CONAT_PASSWORD_FILE" "$remote" "$remote_seed_conat_password"
-    ssh_remote "$remote" "$(remote_install_command "$remote_topology" "$remote_secret" "$remote_seed_conat_password")"
+    credential_file="$(bay_credential_file "$bay_id")"
+    remote_bay_credential="/tmp/cocalc-${bay_id}-credential.$$"
+    scp_to_remote "$credential_file" "$remote" "$remote_bay_credential"
+    remote_credential_bootstrap=""
+    if [[ "$bay_id" == "$SEED_BAY_ID" ]]; then
+      remote_credential_bootstrap="/tmp/cocalc-bay-credential-bootstrap.$$"
+      scp_to_remote "$BAY_CREDENTIAL_BOOTSTRAP_FILE" "$remote" "$remote_credential_bootstrap"
+    fi
+    ssh_remote "$remote" "$(remote_install_command "$remote_topology" "$remote_secret" "$remote_seed_conat_password" "$remote_bay_credential" "$remote_credential_bootstrap")"
   done
 }
 
@@ -421,4 +496,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

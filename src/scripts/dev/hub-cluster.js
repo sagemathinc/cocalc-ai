@@ -3,6 +3,7 @@
 
 const fs = require("node:fs");
 const path = require("node:path");
+const crypto = require("node:crypto");
 
 const ROOT = path.resolve(__dirname, "../..");
 
@@ -28,6 +29,38 @@ function localHubUrl(host, port) {
     urlHost = `[${urlHost}]`;
   }
   return `http://${urlHost}:${toNumber(port, 9100)}`;
+}
+
+function ensureCredentialFile(stateDir) {
+  const filename = path.join(stateDir, "bay-credential");
+  fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  if (!fs.existsSync(filename)) {
+    const credential = `cocalc-bay-v1.${crypto.randomUUID()}.${crypto.randomBytes(32).toString("base64url")}`;
+    fs.writeFileSync(filename, `${credential}\n`, { mode: 0o600 });
+  }
+  fs.chmodSync(filename, 0o600);
+  return filename;
+}
+
+function writeCredentialBootstrap(clusterId, seedStateDir, bays) {
+  const filename = path.join(seedStateDir, "bay-credential-bootstrap.json");
+  const entries = bays.map((bay) => {
+    const credential = fs.readFileSync(bay.credentialFile, "utf8").trim();
+    const [, credential_id, secret] = credential.split(".");
+    if (!credential_id || !secret)
+      throw new Error("invalid bay credential file");
+    return {
+      cluster_id: clusterId,
+      bay_id: bay.id,
+      credential_id,
+      secret_digest: crypto.createHash("sha256").update(secret).digest("hex"),
+    };
+  });
+  fs.writeFileSync(filename, `${JSON.stringify(entries, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  fs.chmodSync(filename, 0o600);
+  return filename;
 }
 
 function readStructuredClusterConfig(env, root) {
@@ -323,6 +356,18 @@ function normalizeHubCluster(env = process.env, opts = {}) {
       bay.seedConatServer = seedServer;
     }
   }
+  const clusterId = trim(env.COCALC_CLUSTER_ID) || `dev-${seed.id}`;
+  let credentialBootstrapFile = "";
+  if (bays.length > 1) {
+    for (const bay of bays) {
+      bay.credentialFile = ensureCredentialFile(bay.stateDir);
+    }
+    credentialBootstrapFile = writeCredentialBootstrap(
+      clusterId,
+      seed.stateDir,
+      bays,
+    );
+  }
   return {
     root,
     stateDir,
@@ -333,6 +378,8 @@ function normalizeHubCluster(env = process.env, opts = {}) {
     bays,
     primary,
     seed,
+    clusterId,
+    credentialBootstrapFile,
   };
 }
 
@@ -341,10 +388,13 @@ function toEnvLines(cluster) {
     `COCALC_BAY_ID=${cluster.primary.id}`,
     `COCALC_BAY_LABEL=${cluster.primary.label}`,
     `COCALC_BAY_REGION=${cluster.primary.region}`,
+    `COCALC_CLUSTER_ID=${cluster.clusterId}`,
     `COCALC_CLUSTER_ROLE=${cluster.primary.role}`,
     `COCALC_CLUSTER_SEED_BAY_ID=${cluster.primary.seedBayId}`,
     `COCALC_CLUSTER_SEED_CONAT_SERVER=${cluster.primary.seedConatServer}`,
     `COCALC_CLUSTER_SEED_CONAT_PASSWORD=${cluster.primary.seedConatPassword}`,
+    `COCALC_BAY_CREDENTIAL_FILE=${cluster.primary.credentialFile ?? ""}`,
+    `COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE=${cluster.credentialBootstrapFile}`,
     `HUB_CMD=${cluster.primary.cmd}`,
     `HUB_PORT=${cluster.primary.port}`,
     `HUB_BIND_HOST=${cluster.primary.bindHost}`,
@@ -378,6 +428,7 @@ function toEnvLines(cluster) {
     lines.push(`${prefix}SEED_BAY_ID=${bay.seedBayId}`);
     lines.push(`${prefix}SEED_CONAT_SERVER=${bay.seedConatServer}`);
     lines.push(`${prefix}SEED_CONAT_PASSWORD=${bay.seedConatPassword}`);
+    lines.push(`${prefix}CREDENTIAL_FILE=${bay.credentialFile ?? ""}`);
     lines.push(`${prefix}SOFTWARE_BASE_URL_FORCE=${bay.softwareBaseUrlForce}`);
     lines.push(`${prefix}SELF_HOST_PAIR_URL=${bay.selfHostPairUrl}`);
     lines.push(`${prefix}PUBLIC_URL=${bay.publicUrl}`);

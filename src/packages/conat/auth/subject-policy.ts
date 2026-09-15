@@ -21,6 +21,8 @@ export type CoCalcUser =
       account_id?: string;
       project_id?: string;
       hub_id: string;
+      bay_id?: string;
+      bay_credential_id?: string;
       host_id?: string;
       error?: string;
       auth_iat_s?: number;

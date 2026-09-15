@@ -99,6 +99,35 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
     assert.equal(cluster.bays[0].publicUrl, "");
     assert.equal(cluster.bays[1].publicUrl, "");
     assert.equal(cluster.bays[2].publicUrl, "");
+    assert.match(cluster.clusterId, /^dev-/);
+    assert.ok(cluster.credentialBootstrapFile);
+    const credentials = cluster.bays.map((bay) =>
+      fs.readFileSync(bay.credentialFile, "utf8").trim(),
+    );
+    assert.equal(new Set(credentials).size, 3);
+    for (const bay of cluster.bays) {
+      assert.equal(fs.statSync(bay.credentialFile).mode & 0o777, 0o600);
+    }
+    const bootstrap = JSON.parse(
+      fs.readFileSync(cluster.credentialBootstrapFile, "utf8"),
+    );
+    assert.deepEqual(
+      bootstrap.map(({ bay_id }) => bay_id),
+      ["bay-0", "bay-1", "bay-2"],
+    );
+    assert.ok(
+      bootstrap.every(({ secret_digest }) =>
+        /^[0-9a-f]{64}$/.test(secret_digest),
+      ),
+    );
+    assert.ok(
+      bootstrap.every(
+        (entry) =>
+          !credentials.some((credential) =>
+            credential.includes(entry.secret_digest),
+          ),
+      ),
+    );
 
     const envLines = toEnvLines(cluster);
     assert.ok(envLines.includes("HUB_CLUSTER_BAY_COUNT=3"));
@@ -109,6 +138,14 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
       ),
     );
     assert.ok(envLines.includes("HUB_CLUSTER_BAY_PUBLIC_URLS="));
+    assert.ok(
+      envLines.some((line) => line.startsWith("COCALC_BAY_CREDENTIAL_FILE=")),
+    );
+    assert.ok(
+      envLines.some((line) =>
+        line.startsWith("COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE="),
+      ),
+    );
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

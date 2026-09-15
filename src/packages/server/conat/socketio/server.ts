@@ -61,8 +61,42 @@ import { handleMetrics, initMetrics } from "./metrics";
 import { startHubConatManagedEgressLoop } from "./managed-egress";
 import { configureHubServiceAdmissionDenialRecorder } from "../api/service-admission-denials";
 import { startConatAdmissionSettingsRefresh } from "../admission-settings";
+import {
+  ensureLocalSeedBayCredential,
+  isBayCredentialUserActive,
+} from "@cocalc/server/inter-bay/bay-credentials";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 
 const logger = getLogger("conat-server");
+const BAY_CREDENTIAL_SWEEP_MS = 5_000;
+
+function startBayCredentialRevocationSweep(server: ConatServer): void {
+  if (getConfiguredClusterRole() !== "seed") return;
+  const timer = setInterval(async () => {
+    try {
+      const revoked: string[] = [];
+      for (const [id, stats] of Object.entries(server.getStatsSnapshot())) {
+        const user = stats.user as any;
+        if (
+          user?.bay_credential_id &&
+          !(await isBayCredentialUserActive(user))
+        ) {
+          revoked.push(id);
+        }
+      }
+      if (revoked.length) {
+        logger.info("disconnecting revoked bay credential connections", {
+          count: revoked.length,
+        });
+        server.disconnectSockets(revoked);
+      }
+    } catch (err) {
+      logger.error("failed to check bay credential revocations", err);
+    }
+  }, BAY_CREDENTIAL_SWEEP_MS);
+  timer.unref?.();
+  server.once("closed", () => clearInterval(timer));
+}
 
 async function checkPortAvailable(port: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -139,6 +173,9 @@ export async function init(
   logger.debug("init");
   configureHubServiceAdmissionDenialRecorder();
   startConatAdmissionSettingsRefresh();
+  if (getConfiguredClusterRole() === "seed") {
+    await ensureLocalSeedBayCredential();
+  }
   const { kucalc, ...options } = options0;
 
   if (kucalc) {
@@ -174,6 +211,7 @@ export async function init(
     // things would get fixed by k8s within SCAN_INTERVAL.
     opts.forgetClusterNodeInterval = 4 * SCAN_INTERVAL;
     const server = createConatServer(opts);
+    startBayCredentialRevocationSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
@@ -192,6 +230,7 @@ export async function init(
       httpServer: undefined,
       port: standalonePort,
     });
+    startBayCredentialRevocationSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
@@ -208,6 +247,7 @@ export async function init(
       clusterName: "default",
       id: "node",
     });
+    startBayCredentialRevocationSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
