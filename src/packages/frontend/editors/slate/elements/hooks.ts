@@ -10,6 +10,7 @@ export {
   useSlateSelection,
 } from "../slate-react";
 
+import $ from "jquery";
 import {
   useEffect,
   useFrameContext,

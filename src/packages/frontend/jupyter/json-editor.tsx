@@ -12,6 +12,7 @@ There is a ticket regarding removing this component, but it is currently used fo
 SEE https://github.com/sagemathinc/cocalc/issues/4295
 */
 
+import $ from "jquery";
 import {
   React,
   useRef,

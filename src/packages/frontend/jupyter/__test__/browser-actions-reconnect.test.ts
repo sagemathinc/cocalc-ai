@@ -24,6 +24,7 @@ jest.mock("../widgets/manager", () => ({
 }));
 
 import { JupyterActions } from "../browser-actions";
+import * as projectStart from "../project-start";
 
 describe("JupyterActions reconnect coordination", () => {
   beforeEach(() => {
@@ -34,6 +35,10 @@ describe("JupyterActions reconnect coordination", () => {
     });
     projectConat.mockReset();
     mockJupyterClient.mockReset();
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
   });
 
   it("captures the project id when open tracing starts before initialization", () => {
@@ -332,6 +337,48 @@ describe("JupyterActions reconnect coordination", () => {
     actions.store = undefined;
 
     expect(() => actions.updateContentsNow()).not.toThrow();
+  });
+
+  it("does not start a project after actions teardown removes redux and store", async () => {
+    const actions: any = new JupyterActions("jupyter-test", {
+      getStore: jest.fn(() => undefined),
+      removeActions: jest.fn(),
+    } as any);
+    actions._state = "ready";
+    await actions.close();
+    expect(actions.isClosed()).toBe(true);
+    expect(actions.redux).toBeUndefined();
+    expect(actions.store).toBeUndefined();
+    const closeClient = jest.fn();
+    actions.closeJupyterClient = closeClient;
+    await expect(actions.waitUntilProjectIsRunning()).resolves.toBeUndefined();
+    expect(closeClient).not.toHaveBeenCalled();
+  });
+
+  it("does not invalidate a runtime client when project startup finishes after teardown", async () => {
+    let finish!: (result: { started: boolean; wasRunning: boolean }) => void;
+    const starting = new Promise<{ started: boolean; wasRunning: boolean }>(
+      (resolve) => (finish = resolve),
+    );
+    const ensureRunning = jest
+      .spyOn(projectStart, "ensureProjectRunningForJupyter")
+      .mockReturnValueOnce(starting);
+    const actions: any = new JupyterActions("jupyter-test", {
+      getStore: jest.fn(() => undefined),
+      removeActions: jest.fn(),
+    } as any);
+    actions._state = "ready";
+    const closeClient = jest.fn();
+    actions.closeJupyterClient = closeClient;
+
+    const pending = actions.waitUntilProjectIsRunning();
+    expect(ensureRunning).toHaveBeenCalledTimes(1);
+    await actions.close();
+    expect(actions.isClosed()).toBe(true);
+    finish({ started: true, wasRunning: false });
+
+    await expect(pending).resolves.toBeUndefined();
+    expect(closeClient).not.toHaveBeenCalled();
   });
 
   it("does not fetch kernels after actions teardown removes redux and store", async () => {

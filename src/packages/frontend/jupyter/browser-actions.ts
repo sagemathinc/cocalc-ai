@@ -2560,12 +2560,13 @@ export class JupyterActions extends JupyterActions0 {
   }
 
   waitUntilProjectIsRunning = reuseInFlight(async () => {
+    if (this.isClosed()) return;
     const result = await ensureProjectRunningForJupyter({
       redux: this.redux,
       project_id: this.project_id,
       isClosed: () => this.isClosed(),
     });
-    if (!result.wasRunning) {
+    if (!this.isClosed() && !result.wasRunning) {
       this.closeJupyterClient("project_runtime_restarted");
     }
   });

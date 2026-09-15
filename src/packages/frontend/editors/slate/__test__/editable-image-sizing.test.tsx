@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import $ from "jquery";
 import type { ComponentType } from "react";
 
 let mockImage: ComponentType<any>;
@@ -29,16 +30,13 @@ jest.mock("@cocalc/frontend/lib/file-context", () => ({
 
 import "../elements/image/editable";
 
-const originalDollar = globalThis.$;
 beforeEach(() => {
   mockWidth = mockHeight = 0;
-  globalThis.$ = (() => ({
-    width: () => mockWidth,
-    height: () => mockHeight,
-  })) as any;
+  jest.spyOn($.fn, "width").mockImplementation(() => mockWidth);
+  jest.spyOn($.fn, "height").mockImplementation(() => mockHeight);
 });
 afterEach(() => {
-  globalThis.$ = originalDollar;
+  jest.restoreAllMocks();
 });
 
 test.each([undefined, "320px"])(

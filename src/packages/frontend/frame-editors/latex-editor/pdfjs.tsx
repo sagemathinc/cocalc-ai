@@ -8,6 +8,7 @@
 const HIGHLIGHT_TIME_S: number = 6;
 
 import { Alert } from "antd";
+import $ from "jquery";
 import { delay } from "awaiting";
 import type { Set as iSet } from "immutable";
 import type { PDFDocumentProxy, PDFPageProxy } from "pdfjs-dist/webpack.mjs";

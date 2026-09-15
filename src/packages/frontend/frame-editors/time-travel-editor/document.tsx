@@ -8,6 +8,7 @@ Render a static version of a document for use in TimeTravel.
 */
 
 import * as CodeMirror from "codemirror";
+import $ from "jquery";
 import { useEffect, useMemo, useRef } from "react";
 import type { AccountState } from "@cocalc/frontend/account/types";
 import "../generic/codemirror-plugins";

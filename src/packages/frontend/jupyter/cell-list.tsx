@@ -6,6 +6,7 @@
 // React component that renders the ordered list of cells
 
 import jquery from "jquery";
+import { findCellElement } from "./find-cell-element";
 import useResizeObserver from "use-resize-observer";
 import { delay } from "awaiting";
 import * as immutable from "immutable";
@@ -556,8 +557,9 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     // supported scroll positions are in types.ts
     if (scroll.startsWith("cell ")) {
       // Handle "cell visible" and "cell top"
-      const cell = $(node).find(`#${cur_id}`);
-      if (cell.length == 0) return;
+      const element = findCellElement(cellListDivRef.current, cur_id);
+      if (element == null) return;
+      const cell = $(element);
       if (scroll.startsWith("cell visible")) {
         cell[0]?.scrollIntoView({ block: "nearest" });
       } else if (scroll == "cell top") {

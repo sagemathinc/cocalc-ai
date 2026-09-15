@@ -4,6 +4,7 @@
  */
 
 import { filename_extension_notilde, path_split } from "@cocalc/util/misc";
+import $ from "jquery";
 import { file_associations } from "./file-associations";
 import { icon as file_icon } from "./file-editors";
 
