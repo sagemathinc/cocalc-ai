@@ -263,6 +263,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin-only bounded and audited read-only host integrity snapshot without file contents, key material, argv, or process environments",
   },
+  "adminSupport.getAttachment": {
+    decision: "fresh-auth-required",
+    reason: "downloads unredacted customer support documents to an operator",
+  },
   "adminSupport.update": {
     decision: "fresh-auth-required",
     reason: "posts comments or changes customer-visible Zendesk ticket state",
