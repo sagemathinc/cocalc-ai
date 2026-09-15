@@ -6,9 +6,7 @@ const { EventEmitter } = require("node:events");
 const test = require("node:test");
 
 process.env.COCALC_BAY_FRONTDOOR_UNHEALTHY_THRESHOLD = "3";
-process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_THRESHOLD = "3";
 process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_WINDOW_MS = "60000";
-process.env.COCALC_BAY_FRONTDOOR_APPLICATION_TIMEOUT_QUARANTINE_MS = "90000";
 process.env.COCALC_BAY_PUBLIC_INGRESS_MODE = "cloudflare-proxy";
 
 const {
@@ -21,9 +19,9 @@ const {
   proxyRequestHeaders,
   recordWorkerApplicationTimeout,
   recordWorkerHealth,
+  recentApplicationTimeouts,
   selectWorkerCandidate,
   serializeProxyRequest,
-  workerIsQuarantined,
 } = require("./bay-frontdoor.js");
 
 test("recognizes only top-level browser document navigations", () => {
@@ -330,7 +328,7 @@ test("evicts upgraded sockets only after repeated worker health failures", () =>
   assert.equal(worker.lastError, "");
 });
 
-test("quarantines repeated application timeouts without trusting shallow health", () => {
+test("application timeouts never alter independently probed worker health", () => {
   const socket = new MockSocket();
   const upstream = new MockSocket();
   const connection = { socket, upstream };
@@ -341,27 +339,24 @@ test("quarantines repeated application timeouts without trusting shallow health"
     lastOk: 1_000,
     lastError: "",
     applicationTimeouts: [],
-    quarantinedUntil: 0,
+    lastApplicationTimeout: 0,
+    lastApplicationTimeoutError: "",
     upgrades: new Set([connection]),
   };
 
-  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 1", 10_000), false);
-  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 2", 20_000), false);
+  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 1", 10_000), 1);
+  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 2", 20_000), 2);
   assert.equal(worker.healthy, true);
-  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 3", 30_000), true);
-  assert.equal(worker.healthy, false);
-  assert.equal(workerIsQuarantined(worker, 30_001), true);
-  assert.equal(socket.destroyed, true);
-  assert.equal(upstream.destroyed, true);
+  assert.equal(recordWorkerApplicationTimeout(worker, "timeout 3", 30_000), 3);
+  assert.equal(worker.healthy, true);
+  assert.equal(socket.destroyed, false);
+  assert.equal(upstream.destroyed, false);
+  assert.equal(worker.lastApplicationTimeout, 30_000);
+  assert.equal(worker.lastApplicationTimeoutError, "timeout 3");
 
   recordWorkerHealth(worker, true, "", 40_000);
-  assert.equal(worker.healthy, false);
-  assert.equal(worker.applicationTimeouts.length, 3);
-
-  recordWorkerHealth(worker, true, "", 120_001);
   assert.equal(worker.healthy, true);
-  assert.equal(worker.applicationTimeouts.length, 0);
-  assert.equal(worker.quarantinedUntil, 0);
+  assert.equal(worker.applicationTimeouts.length, 3);
 });
 
 test("application timeout accounting uses a sliding window", () => {
@@ -372,7 +367,8 @@ test("application timeout accounting uses a sliding window", () => {
     lastOk: 1_000,
     lastError: "",
     applicationTimeouts: [],
-    quarantinedUntil: 0,
+    lastApplicationTimeout: 0,
+    lastApplicationTimeoutError: "",
     upgrades: new Set(),
   };
 
@@ -381,4 +377,22 @@ test("application timeout accounting uses a sliding window", () => {
   recordWorkerApplicationTimeout(worker, "timeout 2", 63_000);
   assert.equal(worker.healthy, true);
   assert.deepEqual(worker.applicationTimeouts, [62_000, 63_000]);
+  assert.deepEqual(recentApplicationTimeouts(worker, 123_001), []);
+});
+
+test("application timeout observations remain bounded", () => {
+  const worker = {
+    id: 4,
+    healthy: true,
+    applicationTimeouts: [],
+    lastApplicationTimeout: 0,
+    lastApplicationTimeoutError: "",
+  };
+
+  for (let i = 0; i < 1100; i += 1) {
+    recordWorkerApplicationTimeout(worker, `timeout ${i}`, 10_000 + i);
+  }
+  assert.equal(worker.applicationTimeouts.length, 1024);
+  assert.equal(worker.applicationTimeouts[0], 10_076);
+  assert.equal(worker.applicationTimeouts.at(-1), 11_099);
 });
