@@ -340,6 +340,8 @@ import {
   upsertProjectCollabInviteDirectoryDirect,
 } from "@cocalc/server/projects/collab-invite-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { createBillingAuthorityInterBayService } from "@cocalc/server/purchases/billing-authority/inter-bay";
+import { handleBillingAuthorityTransportRequest } from "@cocalc/server/purchases/billing-authority/service";
 import { applyRemoteNotificationTargetOnHomeBay } from "@cocalc/server/notifications/remote-feed";
 import {
   handleProjectControlAddress,
@@ -613,6 +615,7 @@ export async function initInterBayServices(): Promise<void> {
     await startDirectoryService();
     await startAuthTokenService();
     await startBayRegistryService();
+    startBillingAuthorityInterBayService();
     await startBayOpsService();
     await startAccountDirectoryService();
     await startAccountLocalService();
@@ -635,6 +638,13 @@ export async function initInterBayServices(): Promise<void> {
     serviceStarted = false;
     throw err;
   }
+}
+
+function startBillingAuthorityInterBayService(): void {
+  const service = createBillingAuthorityInterBayService({
+    handle: handleBillingAuthorityTransportRequest,
+  });
+  if (service) services.push(service);
 }
 
 async function startBayRegistryService(): Promise<void> {
