@@ -784,6 +784,18 @@ function noteDetachedWorkerQueueProgress(): void {
   });
 }
 
+function noteDetachedWorkerExecutionSettled(op_id: string): void {
+  try {
+    noteDetachedWorkerQueueProgress();
+  } catch (err) {
+    // Queue bookkeeping must not change the result of a completed ACP turn.
+    logger.warn("failed recording settled ACP execution queue progress", {
+      op_id,
+      err,
+    });
+  }
+}
+
 function noteDetachedWorkerQueuePoll({
   context = currentDetachedWorkerContext,
   now = Date.now(),
@@ -9769,7 +9781,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
     });
     // The live-turn lease is released before automation finalization. Record
     // progress now so the host watchdog cannot mistake that gap for a stall.
-    noteDetachedWorkerQueueProgress();
+    noteDetachedWorkerExecutionSettled(job.op_id);
     await finalizeAutomationRun({
       automation_id: refreshedRequest.chat?.automation_id,
       terminalState: result.terminalState,
@@ -9803,7 +9815,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       }
     }
   } catch (err) {
-    noteDetachedWorkerQueueProgress();
+    noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
