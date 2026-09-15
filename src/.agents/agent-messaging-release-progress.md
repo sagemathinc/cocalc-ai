@@ -3,6 +3,20 @@
 Status: in progress, not a production readiness attestation. No production
 deployment or production flag changes are authorized by this work.
 
+## Awaiting prerequisites
+
+At clean checkpoint `2dc3a2dd17`, rechecked the live account-home connection
+directory: the required QA pair remains expired/revoked. This prerequisite has
+persisted across the recent preparation turns. Independent review also remains
+paused by maintainer instruction. Autonomous release preparation is now blocked,
+not complete; do not repeat unrelated tests or renew permissions silently.
+
+Resume the ordinary smoke after explicit finite bidirectional approval for
+`messaging-qa` and `reviewer` through the first-party UI. Independent review and
+its resulting final source checkpoint must precede final release qualification.
+Matching final artifacts/fleet verification and external enrollment smoke remain
+unfinished, not passed. No production deployment or flag changes have occurred.
+
 ## Current work direction: September 15
 
 ### Real PostgreSQL schema fixture qualification
