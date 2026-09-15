@@ -24,3 +24,5 @@ export * from "./troubleshooting";
 export * from "./research-workflows";
 export * from "./research-remote";
 export * from "./research-specialist";
+export * from "./research-compute";
+export * from "./research-native";

@@ -20,6 +20,13 @@ import {
   RESEARCH_QUARTO_BODY,
 } from "../content/research-specialist";
 
+import {
+  RESEARCH_STREAMING_BODY,
+  RESEARCH_PARALLEL_BODY,
+} from "../content/research-compute";
+
+import { RESEARCH_NATIVE_BODY } from "../content/research-native";
+
 export const RESEARCH_ENTRIES: DocsEntry[] = [
   {
     body: RESEARCH_REPRODUCE_BODY.trim(),
@@ -163,5 +170,53 @@ export const RESEARCH_ENTRIES: DocsEntry[] = [
     summary:
       "Render a complete R analysis and plot to HTML, inspect the output, and preserve the inputs and environment for a collaborator.",
     title: "Create a reproducible R report with Quarto",
+  },
+  {
+    body: RESEARCH_STREAMING_BODY.trim(),
+    audiences: ["agents", "researchers", "teams"],
+    category: "Research workflows",
+    id: "research.streaming-analysis",
+    lastReviewed: "2026-09-13",
+    noActionReason:
+      "This multi-step guide uses example files and a project selected by the reader.",
+    searchKeywords:
+      "streaming CSV large data bounded memory grouped statistics sample variance independent reference",
+    slug: "research/streaming-analysis",
+    status: "ready",
+    summary:
+      "Read a synthetic CSV one row at a time, check saved means and variances independently, and recognize incomplete results.",
+    title: "Analyze a CSV with streaming group statistics",
+  },
+  {
+    body: RESEARCH_PARALLEL_BODY.trim(),
+    audiences: ["agents", "researchers", "teams"],
+    category: "Research workflows",
+    id: "research.parallel-cpu",
+    lastReviewed: "2026-09-13",
+    noActionReason:
+      "This multi-step guide uses example files and a project selected by the reader.",
+    searchKeywords:
+      "parallel CPU multiprocessing process pool workers parameter sweep independent numerical integral",
+    slug: "research/parallel-cpu",
+    status: "ready",
+    summary:
+      "Compare one and two worker processes, check numerical integrals independently, and verify complete saved results.",
+    title: "Run and verify a bounded parallel CPU sweep",
+  },
+  {
+    body: RESEARCH_NATIVE_BODY.trim(),
+    audiences: ["agents", "researchers", "teams"],
+    category: "Research workflows",
+    id: "research.native-python",
+    lastReviewed: "2026-09-13",
+    noActionReason:
+      "This multi-step guide uses example files and a project selected by the reader.",
+    searchKeywords:
+      "compiled C numerical Python ctypes shared library compiler ABI weighted fit independent reference",
+    slug: "research/native-python",
+    status: "ready",
+    summary:
+      "Compile a C numerical routine, call it from Python, compare independent results, and retain source and build evidence.",
+    title: "Compile and verify a C numerical component from Python",
   },
 ];

@@ -173,6 +173,15 @@ Require successful command completion, \`ok:true\`, and \`data.error_count:0\`.
 This command follows execution by default. \`--jsonl\` is a different, streaming
 output format; do not parse it as one JSON result.
 
+For a noisy cell, add \`--limit 40\` to that same run command to limit output
+initially streamed by the backend. The limit must be a positive integer; it is
+not a row count, a calculation limit, or a bound on the saved result file.
+In a followed JSON run, \`data.more_output_count\` counts additional-output
+notifications, not omitted rows. Inspect the retained cell output and independently
+validate complete files as described in
+[Keep complete results when output is limited](/docs/jupyter/use-jupyter).
+A zero error count alone does not establish scientific correctness or completeness.
+
 ## Step 3: Inspect output and save
 
 ~~~bash

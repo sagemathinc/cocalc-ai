@@ -432,6 +432,11 @@ agents need to reproduce the project. For an isolated notebook environment, see
 [Custom Jupyter kernels with uv](/docs/jupyter/custom-kernels) and check the
 recipe's operating-system requirements.
 
+On CoCalc AI, to connect an existing C numerical routine to Python, follow
+[Compile and verify a C numerical component from Python](https://cocalc.ai/docs/research/native-python).
+The example checks a compiled result against an independent Python reference
+and records the source and build information. It requires an existing compiler.
+
 ## Why this matters in CoCalc
 
 CoCalc lets Python move naturally from notebook to script to paper in one

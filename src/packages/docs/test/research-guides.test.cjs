@@ -1,13 +1,18 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { getDocsEntry, listDocsChapters, listDocsEntries } = require("../dist");
+const {
+  getDocsEntry,
+  listDocsChapters,
+  listDocsEntries,
+  searchDocsEntries,
+} = require("../dist");
 const { verifyDocsStatic } = require("../dist/verification");
 
 test("research chapter exposes all workflows and resolves their internal links", () => {
   const entries = listDocsEntries().filter(
     (e) => e.category === "Research workflows",
   );
-  assert.equal(entries.length, 9);
+  assert.equal(entries.length, 12);
   assert.ok(
     listDocsChapters().some(
       (c) => c.startEntryId === "research.reproduce-analysis",
@@ -54,5 +59,33 @@ test("external documentation URLs do not hide broken site-relative links", () =>
     }
   } finally {
     entry.body = original;
+  }
+});
+
+test("research compute guides are discoverable through full and Essential registries", () => {
+  const essential = require("../dist/essential");
+  for (const [id, slug, query] of [
+    [
+      "research.streaming-analysis",
+      "research/streaming-analysis",
+      "streaming group statistics",
+    ],
+    [
+      "research.parallel-cpu",
+      "research/parallel-cpu",
+      "bounded parallel CPU sweep",
+    ],
+    [
+      "research.native-python",
+      "research/native-python",
+      "C Python ctypes compiler",
+    ],
+  ]) {
+    assert.equal(getDocsEntry(slug)?.id, id);
+    assert.equal(essential.getDocsEntry(slug)?.id, id);
+    assert.ok(searchDocsEntries(query, 5).some((entry) => entry.id === id));
+    assert.ok(
+      essential.searchDocsEntries(query, 5).some((entry) => entry.id === id),
+    );
   }
 });

@@ -78,8 +78,9 @@ export const JUPYTER_ENTRIES: DocsEntry[] = [
       "/public/docs/use-jupyter-bcc9b49c.webp",
       "A collaborative Jupyter notebook with output and a running kernel",
     ),
-    lastReviewed: "2026-09-07",
-    searchKeywords: "sagews ipynb legacy worksheet conversion saved outputs",
+    lastReviewed: "2026-09-13",
+    searchKeywords:
+      "sagews ipynb legacy worksheet conversion saved outputs truncated output retained result files missing kernel",
     slug: "jupyter/use-jupyter",
     status: "ready",
     summary:

@@ -106,6 +106,33 @@ in your site's [Docs index](/docs). A project or kernel stop loses in-memory
 variables; inspect saved files and outputs before rerunning work. See
 [kernel recovery](/docs/troubleshooting/jupyter-kernel-terminated).
 
+## Keep complete results when output is limited
+
+Select an available, compatible kernel before running a notebook. A Python
+interpreter in the terminal does not by itself establish that a Python kernel
+is installed and registered. If the selector has no usable kernel, see
+[Custom Jupyter kernels](/docs/jupyter/custom-kernels).
+
+A run can limit the output initially displayed in the notebook. When available,
+**Fetch additional output...** retrieves more output retained by the backend.
+That output can become unavailable; a saved or read-only view may not offer the
+same retrieval control. Many printed lines can be combined into fewer output
+messages, so the number of visible lines is not a reliable completeness check.
+
+For research results, have the calculation write the complete table, array, or
+other artifact to a file. Record its actual location and validate its expected
+records and scientific results. A remote kernel may write on another machine;
+transfer the file into the project before looking for it in **Files**.
+Save the notebook as well: the live
+notebook, its saved \`.ipynb\` file, and a separately written result are different
+artifacts.
+
+Download the result through **Files** and check the downloaded copy. Comparing
+hashes verifies matching bytes, not scientific correctness. Retain the inputs,
+code, environment information, and result together. A truncated display does
+not prove that the result file is incomplete, and a successful-looking preview
+does not prove that it is complete.
+
 ## Choose a notebook view
 
 A notebook frame can use the classic cell-oriented layout or the content-first
