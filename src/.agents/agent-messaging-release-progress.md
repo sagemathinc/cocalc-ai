@@ -3,6 +3,30 @@
 Status: in progress, not a production readiness attestation. No production
 deployment or production flag changes are authorized by this work.
 
+## Project-host candidate archive: September 15, 19:13 UTC
+
+Clean source `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41` produced build
+`20260915T191304Z-e43a2ccb10a7`, package version `0.7.20`, `git_dirty=false`.
+Archive: `/tmp/agent-release-host-e43a2ccb10/bundle-linux.tar.xz`.
+Size: 84,448,580 bytes. SHA-256:
+`8bc816a921d180aaa6f6e79aa61ae921d86001785e3cc871fe9b549c8e701a92`.
+
+The normal project-host bundle script completed its native module/template
+checks. `xz -t` and `node --check` for `bundle/index.js` and `main/index.js`
+passed. This archive has not been installed or promoted on any host.
+
+Reproduction from `src/packages/project-host/sea`:
+
+```sh
+./build-bundle.sh /tmp/agent-release-host-e43a2ccb10/bundle /tmp/agent-release-host-e43a2ccb10/bundle-linux.tar.xz --message 'Controlled release candidate packaging; no production deployment'
+```
+
+The included browser assets retain checkpoint `0b3e34f358`; comparing that SHA
+to `e43a2ccb10` shows only the progress document changed. These are matching
+application sources, not identical commit labels. Packaging is complete for
+this dev host candidate, but its installation/activation and final fleet
+qualification remain unfinished. Production and review status are unchanged.
+
 ## Clean workspace and CLI build: September 15, 19:09 UTC
 
 Built from clean SHA `0b3e34f358601cbf8f0b3826714623fbcb5b1072`.
