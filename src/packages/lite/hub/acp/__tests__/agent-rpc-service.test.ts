@@ -91,6 +91,43 @@ test("external snapshot send preserves attribution and target execution account 
   expect(JSON.stringify(row)).toContain("cannot receive messages");
 });
 
+test("startup must not admit a thread changed away from ACP", async () => {
+  const { e, deps, service, db } = fixture();
+  (deps.ensureRunning as jest.Mock).mockImplementation(async () => {
+    Object.assign(db.get()[0], {
+      agent_kind: "none",
+      agent_model: undefined,
+      acp_config: null,
+    });
+  });
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "rejected",
+    chat_effect: "none",
+  });
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("startup uses current thread configuration and chat ancestry", async () => {
+  const { e, deps, service, db } = fixture();
+  const parent = randomUUID();
+  (deps.ensureRunning as jest.Mock).mockImplementation(async () => {
+    db.get()[0].name = "Updated during startup";
+    db.get().push({
+      event: "chat",
+      thread_id: e.thread_id,
+      message_id: parent,
+      date: new Date().toISOString(),
+    });
+  });
+  expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+  expect(db.set.mock.calls[0][0].parent_message_id).toBe(parent);
+  const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+  expect(prepared.request.chat.thread_title).toBe("Updated during startup");
+  expect(prepared.request.account_id).toBe(e.account_id);
+  expect(prepared.request.chat.agent_message).toBe(true);
+});
+
 test("external source cannot use live paths or guidance", async () => {
   const { e, deps, service, db } = fixture();
   e.source = {

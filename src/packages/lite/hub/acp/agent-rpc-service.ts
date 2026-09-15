@@ -220,7 +220,7 @@ export function createAgentRpcService(
               (staged
                 ? `\n\nAttached file snapshots in this project (temporary; copy into the project home to retain across restart):\n${JSON.stringify(staged)}`
                 : "");
-            const prepared = prepareChatSend({
+            prepareChatSend({
               projectId: e.target.project_id,
               accountId: e.account_id,
               path: e.path,
@@ -229,7 +229,6 @@ export function createAgentRpcService(
               prompt,
               guidance: e.guidance,
             });
-            prepared.request.chat.agent_message = true;
             // Separate random chat IDs: attempt IDs are scoped to a sender,
             // not globally unique execution identities or legacy delivery IDs.
             await guard();
@@ -260,6 +259,18 @@ export function createAgentRpcService(
             );
             if (!latestThread || latestThread.archived)
               throw new Error("target thread unavailable after startup");
+            // Startup and file checks may outlive a thread configuration edit
+            // or another message. Revalidate and build from the live state.
+            const prepared = prepareChatSend({
+              projectId: e.target.project_id,
+              accountId: e.account_id,
+              path: e.path,
+              thread: latestThread,
+              rows: latestRows,
+              prompt,
+              guidance: e.guidance,
+            });
+            prepared.request.chat.agent_message = true;
             chatEffect = "unknown";
             db.set({
               ...prepared.message,
