@@ -189,6 +189,8 @@ function matchesProjectKey(
 
 export class MentionsActions extends Actions<MentionsState> {
   private refreshInFlight?: Promise<void>;
+  private bulkReadDepth = 0;
+  private bulkReadVersion = 0;
   private signedInListener?: () => void;
   private signedOutListener?: () => void;
   private conatConnectedListener?: () => void;
@@ -299,20 +301,21 @@ export class MentionsActions extends Actions<MentionsState> {
     this.setState({ mentions: current_mentions });
   }
 
-  public refresh = async (): Promise<void> => {
-    if (this.destroyed) {
+  public refresh = async (background = false): Promise<void> => {
+    if (this.destroyed || this.bulkReadDepth > 0) {
       return;
     }
     if (this.refreshInFlight != null) {
       return await this.refreshInFlight;
     }
-    this.refreshInFlight = this.refreshImpl().finally(() => {
+    this.refreshInFlight = this.refreshImpl(background).finally(() => {
       this.refreshInFlight = undefined;
     });
     return await this.refreshInFlight;
   };
 
-  private async refreshImpl(): Promise<void> {
+  private async refreshImpl(background: boolean): Promise<void> {
+    const bulkReadVersion = this.bulkReadVersion;
     if (!webapp_client.is_signed_in()) {
       this.setState({ mentions: Map(), unread_count: 0, loading: false });
       return;
@@ -332,7 +335,7 @@ export class MentionsActions extends Actions<MentionsState> {
       this.setState({ loading: true });
       return;
     }
-    this.setState({ loading: true });
+    if (!background) this.setState({ loading: true });
     try {
       const [snapshot, counts] = await Promise.all([
         notifications.listSnapshot({
@@ -345,6 +348,9 @@ export class MentionsActions extends Actions<MentionsState> {
         rows: snapshot.rows,
         counts,
       });
+      if (this.bulkReadDepth > 0 || bulkReadVersion !== this.bulkReadVersion) {
+        return;
+      }
       this.setState({
         loading: false,
         mentions: buildNotificationInboxMap({ account_id, rows }),
@@ -361,11 +367,11 @@ export class MentionsActions extends Actions<MentionsState> {
         return;
       }
       this.setState({ loading: false });
-      this.scheduleRefreshRetry();
+      this.scheduleRefreshRetry(background);
     }
   }
 
-  private scheduleRefreshRetry(): void {
+  private scheduleRefreshRetry(background: boolean): void {
     if (
       this.destroyed ||
       this.refreshRetryTimer != null ||
@@ -381,7 +387,7 @@ export class MentionsActions extends Actions<MentionsState> {
     this.refreshRetryTimer = setTimeout(() => {
       this.refreshRetryTimer = undefined;
       if (!this.destroyed) {
-        void this.refresh();
+        void this.refresh(background);
       }
     }, delayMs);
   }
@@ -630,6 +636,9 @@ export class MentionsActions extends Actions<MentionsState> {
         this.notificationRowProjectionVersion += 1;
         return;
       case "notification.counts":
+        // Multi-project marking publishes intermediate counts. Reconcile once
+        // after every write, not against the optimistically updated whole inbox.
+        if (this.bulkReadDepth > 0) return;
         this.setState({ unread_count: event.counts.unread });
         if (
           event.counts.unread !==
@@ -808,7 +817,7 @@ export class MentionsActions extends Actions<MentionsState> {
   }
 
   public async markAll(
-    project_id: ProjectKey,
+    project_id: ProjectKey | undefined,
     as: "read" | "unread",
   ): Promise<void> {
     const account_id = this.getAccountId();
@@ -818,11 +827,16 @@ export class MentionsActions extends Actions<MentionsState> {
     const notification_ids = this.getMentions()
       .filter(
         (mention) =>
-          matchesProjectKey(mention, project_id) &&
+          (project_id === undefined ||
+            matchesProjectKey(mention, project_id)) &&
           mention.getIn(["users", account_id, "read"]) !== (as === "read"),
       )
       .keySeq()
       .toArray();
+    if (as === "read") {
+      this.bulkReadDepth += 1;
+      this.bulkReadVersion += 1;
+    }
     this.applyOptimisticReadState(notification_ids, as === "read");
     try {
       if (as === "read") {
@@ -830,12 +844,27 @@ export class MentionsActions extends Actions<MentionsState> {
         if (read_through_revision == null) {
           throw Error("notification snapshot is not available");
         }
+        // Undefined means every loaded tile; null still means General only.
+        // Capture the groups and revision before awaiting any writes so newly
+        // arriving notifications are not marked read by a later request.
+        const project_ids =
+          project_id === undefined
+            ? [
+                ...new Set(
+                  this.getMentions()
+                    .valueSeq()
+                    .toArray()
+                    .map((mention) => mention.get("project_id") ?? null),
+                ),
+              ]
+            : [project_id];
         await this.ensureSignedIn();
-        await webapp_client.conat_client.hub.notifications.markAllRead({
-          project_id,
-          read_through_revision,
-        });
-        await this.refresh();
+        for (const project_id of project_ids) {
+          await webapp_client.conat_client.hub.notifications.markAllRead({
+            project_id,
+            read_through_revision,
+          });
+        }
       } else {
         await this.updateReadState({
           notification_ids,
@@ -844,7 +873,17 @@ export class MentionsActions extends Actions<MentionsState> {
       }
     } catch (err) {
       console.warn("WARNING: notifications markAll error -- ", err);
-      await this.refresh();
+      if (as !== "read") await this.refresh(true);
+    } finally {
+      if (as === "read") {
+        // Keep intermediate feed repairs suppressed while an older snapshot
+        // drains; it must not satisfy the final reconciliation for this batch.
+        if (this.bulkReadDepth === 1) await this.refreshInFlight;
+        this.bulkReadDepth -= 1;
+        if (this.bulkReadDepth === 0) {
+          await this.refresh(true);
+        }
+      }
     }
   }
 
