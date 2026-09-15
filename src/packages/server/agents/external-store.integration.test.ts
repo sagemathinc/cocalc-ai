@@ -246,6 +246,43 @@ describeDb("external sender approved credential lifecycle", () => {
     await expect(store.authenticate(token)).rejects.toThrow("account rehome");
   });
 
+  test.each(
+    ["authenticate", "installation", "enrollment", "send"].flatMap((method) =>
+      [-1, 0, 1].map((offset) => ({ method, offset })),
+    ),
+  )(
+    "$method rechecks expiry after account security (offset $offset)",
+    async ({ method, offset }) => {
+      const { approved, token, options } = await active();
+      const deadline = new Date(approved.expires_at).getTime();
+      const clock = jest.spyOn(Date, "now").mockReturnValue(deadline - 1000);
+      let issuedChecks = 0;
+      security.mockImplementation(async (_account, issuedAt) => {
+        if (issuedAt != null && ++issuedChecks === (method === "send" ? 2 : 1))
+          clock.mockReturnValue(deadline + offset);
+      });
+      try {
+        const result =
+          method === "authenticate"
+            ? store.authenticate(token)
+            : method === "installation"
+              ? store.activeInstallation(account, approved.installation_id)
+              : method === "enrollment"
+                ? store.enrollmentStatus(
+                    account,
+                    approved.installation_id,
+                    options.secret_hash,
+                  )
+                : store.check(account, approved.installation_id, target);
+        if (offset < 0) await expect(result).resolves.toBeDefined();
+        else
+          await expect(result).rejects.toThrow("external_credential_inactive");
+      } finally {
+        clock.mockRestore();
+      }
+    },
+  );
+
   test("fresh auth expiring during remote validation prevents enrollment", async () => {
     freshAuth
       .mockResolvedValueOnce(undefined)

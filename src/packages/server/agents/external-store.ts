@@ -295,6 +295,9 @@ export class ExternalAgentStore {
       account,
       row.created_at,
     );
+    // The credential may expire while the asynchronous checks are running.
+    if (row.expires_at.getTime() <= Date.now())
+      throw new Error("external_credential_inactive");
     return row;
   }
 
