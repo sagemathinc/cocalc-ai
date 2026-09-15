@@ -833,6 +833,24 @@ describe("queue-stalled ACP workers", () => {
     );
   });
 
+  it("does not terminate after execution settles but before its job transition", () => {
+    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+
+    expect(
+      __test__.shouldTerminateQueueStalledWorker({
+        worker: worker as any,
+        status: {
+          worker_id: "worker-stalled",
+          started_at: 1_000,
+          last_queue_progress_at: 199_000,
+          running_turn_leases: 0,
+        } as any,
+        now: 200_000,
+        stallMs: 60_000,
+      }),
+    ).toBe(false);
+  });
+
   it("does not attribute another worker's running turn to the replacement worker", () => {
     expect(
       __test__.shouldTerminateQueueStalledWorker({
