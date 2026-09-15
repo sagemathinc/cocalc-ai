@@ -31,6 +31,7 @@ const remote = {
 const remoteClient = jest.fn(() => remote);
 const sourceHostAccess = jest.fn();
 const localProject = jest.fn();
+const chatReady = jest.fn();
 let bay = "entry";
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => bay,
@@ -60,7 +61,10 @@ jest.mock("./inspection", () => ({
   ownMessageReceipts: (...a) => receipts(...a),
 }));
 jest.mock("./chat", () => ({
-  withAgentChat: (a, fn) => fn({}, { name: "test" }),
+  withAgentChat: async (a, fn) => {
+    await chatReady();
+    return fn({}, { name: "test" });
+  },
 }));
 jest.mock("@cocalc/server/conat/api/dangerous-session-auth", () => ({
   requireDangerousSessionAuth: (o) => fresh(o),
@@ -80,6 +84,7 @@ beforeEach(() => {
   fresh.mockReset().mockResolvedValue(undefined);
   sourceHostAccess.mockReset().mockResolvedValue(undefined);
   localProject.mockReset().mockResolvedValue(undefined);
+  chatReady.mockReset().mockResolvedValue(undefined);
   query.mockReset().mockResolvedValue({ rows: [{ agent_id: "registered" }] });
   find.mockReset().mockResolvedValue({ agent_id: "resolved" });
   get.mockReset().mockResolvedValue({
@@ -309,6 +314,25 @@ test("failed human auth never routes registration", async () => {
   expect(fabric).not.toHaveBeenCalled();
 });
 
+test.each([
+  "account is disabled",
+  "collaborator removed",
+  "project owner changed",
+])(
+  "registration rechecks authority after chat readiness: %s",
+  async (reason) => {
+    bay = "owner";
+    chatReady.mockImplementation(async () => {
+      expect(actor).toHaveBeenCalledWith(account_id, project_id);
+      actor.mockRejectedValue(new Error(reason));
+    });
+    await expect(registerIdentity(request)).rejects.toThrow(reason);
+    expect(chatReady).toHaveBeenCalledTimes(1);
+    expect(query).not.toHaveBeenCalled();
+    expect(find).not.toHaveBeenCalled();
+  },
+);
+
 test.each([null, "offline"])(
   "unknown or unavailable owner %s has no fallback",
   async (value) => {
@@ -342,7 +366,7 @@ test("owner rechecks local access before identity reads and registration", async
   await agentIdentityControl.list(opts);
   await agentIdentityControl.resolve(opts);
   await agentIdentityControl.register({ ...opts, fresh_auth_at: Date.now() });
-  expect(actor).toHaveBeenCalledTimes(3);
+  expect(actor).toHaveBeenCalledTimes(4); // registration also checks after chat readiness
   expect(fresh).not.toHaveBeenCalled(); // attested on entry; no remote session copy
   expect(remoteClient).not.toHaveBeenCalled();
 });

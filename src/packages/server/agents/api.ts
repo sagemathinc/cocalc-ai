@@ -62,6 +62,8 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
       created_by: account_id,
     },
     async (_db, thread) => {
+      // Loading the live chat may wait on routing or synchronization.
+      await assertActor(account_id, opts.project_id);
       const { rows } = await db.query(
         `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
       VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(project_id,path,thread_id) DO NOTHING RETURNING *`,
