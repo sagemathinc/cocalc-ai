@@ -125,6 +125,34 @@ receiver-host maintenance window, deploy once, observe the operation to terminal
 state, and explicitly roll back to the known-good version. Verify all four
 components afterward; do not equate an operation acknowledgment with convergence.
 
+### Dev-only canary staging: September 15, 18:24 UTC
+
+First-party `auth elevate --dev` succeeded for the existing interactive dev
+session. No production account/session was used. The normal local software
+endpoint supports one current artifact, so it was not replaced to stage this
+test. Instead, copied the public-source canary archive plus its checksum and
+manifest into this ignored static output prefix:
+
+`src/packages/static/dist/agent-release-qa-02a5d1d824/software`
+
+Explicit canary base URL:
+`https://lite1b.cocalc.ai/static/agent-release-qa-02a5d1d824/software`
+
+A streamed HTTP download of all 84,510,564 bytes matched the recorded SHA-256.
+The first-party CLI recognizes the staged version as available:
+
+```sh
+"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --profile agent-attachments-qa host versions --artifact project-host --base-url https://lite1b.cocalc.ai/static/agent-release-qa-02a5d1d824/software --json
+```
+
+The normal `/software/project-host/latest-linux.json` still resolves
+`20260915T052328Z-40fdca411123`. No host base URL, desired deployment, runtime
+version, global default or production flag changed. The static staging prefix
+is temporary and a frontend rebuild deletes it; preserve the source archive in
+`/tmp/agent-release-canary-02a5d1d824` and revalidate availability immediately
+before use. Do not install this temporary base URL as a persistent host default.
+The disruptive canary installation and explicit rollback are still outstanding.
+
 ## Review baseline
 
 - Worktree: `/home/user/scratch/agent-mentions`, `feature/agent-mentions`.
