@@ -397,7 +397,13 @@ export function shouldFallbackToFirstVisibleGitCommit({
   if (
     commit &&
     incomingCommit &&
-    commit.trim().toLowerCase() === incomingCommit.trim().toLowerCase()
+    (commit.trim().toLowerCase() === incomingCommit.trim().toLowerCase() ||
+      (/^[a-f0-9]{7,64}$/i.test(incomingCommit.trim()) &&
+        /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(commit.trim()) &&
+        commit
+          .trim()
+          .toLowerCase()
+          .startsWith(incomingCommit.trim().toLowerCase())))
   ) {
     return false;
   }
