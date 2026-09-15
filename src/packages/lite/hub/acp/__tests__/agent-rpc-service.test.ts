@@ -66,6 +66,37 @@ function attachmentFixture() {
   return { ...f, files: [{ ...metadata, data }] };
 }
 
+test.each([
+  ["adapter", "attachment_unavailable"],
+  ["authorization", "execution_not_allowed"],
+  ["thread", "execution_not_allowed"],
+  ["startup", "autostart_disabled"],
+])(
+  "attachment preparation distinguishes %s failures",
+  async (failure, code) => {
+    const { e, deps, service, db } = attachmentFixture();
+    if (failure === "adapter") delete deps.stageAttachments;
+    if (failure === "authorization")
+      (deps.authorize as jest.Mock).mockRejectedValue(
+        new Error("grant revoked"),
+      );
+    if (failure === "thread") db.get().length = 0;
+    if (failure === "startup")
+      (deps.ensureRunning as jest.Mock).mockRejectedValue(
+        new Error("Automatic starts disabled"),
+      );
+    expect(await service.prepareAttachments(e)).toMatchObject({
+      outcome: "rejected",
+      code,
+      chat_effect: "none",
+    });
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+    if (failure !== "startup")
+      expect(deps.ensureRunning).not.toHaveBeenCalled();
+  },
+);
+
 test("cross-project snapshots prepare, stage and admit using target execution identity", async () => {
   const { e, files, deps, service, db } = attachmentFixture();
   const ready = await service.prepareAttachments(e);

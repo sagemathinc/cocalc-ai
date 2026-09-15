@@ -47,6 +47,11 @@ export interface AgentRpcExecutionAdapter {
 }
 
 class StartupDeadline extends Error {}
+class PreparationFailure extends Error {
+  constructor(readonly failure: Pick<AgentRpcOutcome, "code" | "reason">) {
+    super(failure.reason);
+  }
+}
 
 async function waitForStartup(e: AgentRpcEnvelope, start: () => Promise<void>) {
   const remaining = e.deadline - Date.now();
@@ -115,7 +120,11 @@ export function createAgentRpcService(
           guidance: e.guidance,
         });
       });
-      await deps.ensureRunning(e);
+      try {
+        await deps.ensureRunning(e);
+      } catch (error) {
+        throw new PreparationFailure(startFailure(error));
+      }
     },
   );
   const execute = async (
@@ -335,7 +344,10 @@ export function createAgentRpcService(
           !deps.discardAttachments ||
           !e.snapshot_manifest
         )
-          throw new Error("attachment staging unavailable");
+          throw new PreparationFailure({
+            code: "attachment_unavailable",
+            reason: "Attachment staging is not available on the recipient host",
+          });
         const prepared = await reservations.prepare({
           envelope: e,
           files: e.snapshot_manifest,
@@ -350,13 +362,19 @@ export function createAgentRpcService(
       } catch (error) {
         const code = (error as { code?: string })?.code;
         const failure =
-          code === "host_overloaded" ||
-          code === "project_overloaded" ||
-          code === "attachment_preparation_expired" ||
-          code === "attachment_invalid" ||
-          code === "attachment_limit_exceeded"
-            ? ({ code, reason: code } as const)
-            : startFailure(error);
+          error instanceof PreparationFailure
+            ? error.failure
+            : code === "host_overloaded" ||
+                code === "project_overloaded" ||
+                code === "attachment_preparation_expired" ||
+                code === "attachment_invalid" ||
+                code === "attachment_limit_exceeded"
+              ? ({ code, reason: code } as const)
+              : {
+                  code: "execution_not_allowed" as const,
+                  reason:
+                    "Recipient thread or attachment authorization is unavailable; no message was submitted",
+                };
         return rpcOutcome(e, "rejected", { ...failure, chat_effect: "none" });
       }
     },
@@ -450,7 +468,11 @@ export function createLocalAgentRpcService(
           envelope.snapshot_manifest &&
           process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1"
         )
-          throw new Error("binary agent attachments disabled on host");
+          throw new PreparationFailure({
+            code: "attachment_unavailable",
+            reason:
+              "Binary agent attachments are disabled on the recipient host",
+          });
         await api.authorizeRpcAdmission({
           account_id: envelope.account_id,
           envelope,
