@@ -191,7 +191,9 @@ export function ExternalAgentApproval({
                 type="primary"
                 onClick={approve}
                 loading={busy}
-                disabled={!selected.length || directory.controls?.paused}
+                disabled={
+                  busy || !selected.length || directory.controls?.paused
+                }
               >
                 Approve Send-Only Access
               </Button>

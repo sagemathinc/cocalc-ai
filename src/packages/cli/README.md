@@ -396,6 +396,43 @@ Use the lower-level `project chat agent rpc inspect` command with the returned
 attempt/endpoint IDs to inspect evidence without starting work. An explicit
 retry may duplicate work. Cross-site federation is not supported.
 
+### External Send-Only Agents (Experimental)
+
+On sites that explicitly enable external agent login, an agent on another
+computer can obtain its own identity without obtaining a human account session:
+
+```sh
+cocalc --api https://your-cocalc-site.example auth login --agent security --agent-label "Security assistant"
+cocalc project chat agent rpc destinations --external-agent security --json
+cocalc project chat send --external-agent security --to reviewer --attach ./receipt.pdf "Please review the attached receipt."
+```
+
+Open the printed approval URL, sign in and complete fresh authentication. Select
+the exact named recipients and a finite lifetime (at most 30 days). Credentials
+are stored separately in `~/.config/cocalc/agents/security.json` with owner-only
+file permissions. Anyone able to read that file can use the installation;
+do not put it in a shared directory, source control, or a chat message. These
+permissions do not isolate collaborators sharing the same project OS user.
+
+`--external-agent` pins both the installation and its approved site. It never
+falls back to ambient account/project credentials. The grant permits sending
+only; it does not permit receiving, steering running turns, or browsing remote
+files. My Agents lists installations and supports immediate revocation.
+
+External attachments are snapshots, limited to 16 files and 32 MiB total, sent
+as native binary data. The recipient gets actual temporary local paths. A
+metadata-only preparation first checks startup and capacity; failed preparation
+does not silently send a text-only message. Acceptance is not completion. A
+timeout after submission remains unknown; failure to sign in before submission
+does not send anything. Inspect an attempt without retrying it:
+
+```sh
+cocalc project chat agent rpc inspect ATTEMPT_ID --external-agent security --to-agent TARGET_AGENT_ID --target-project TARGET_PROJECT_ID --json
+```
+
+This is a login to one site's messaging service, not site federation or a
+daemon for receiving messages on arbitrary computers.
+
 ### Manual Smoke Check
 
 Use a dedicated test `.chat` file and read-only agent configuration. These tests

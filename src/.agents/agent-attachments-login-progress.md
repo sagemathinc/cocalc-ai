@@ -5,14 +5,19 @@ Updated September 15, 2026. Worktree `/home/user/scratch/agent-mentions`, branch
 
 ## Status
 
-**Native attachments and fail-fast admission are deployed on lite1b's three bays
-and two QA hosts. Real cross-host/cross-bay 32 MiB and stopped-target tests pass.
-External agent login is not usable yet.** Same-project smoke testing exposed an
-optional-argument wire bug; its committed fix now passes live verification too.
+**Native attachments, fail-fast admission, and external sender login are
+implemented and deployed on lite1b.** Native cross-host/cross-bay 32 MiB,
+stopped-target startup, disabled-autostart rejection, and same-project live-file
+tests pass. A separately enrolled external CLI also sent 32 MiB across hosts and
+bays; the real recipient verified the exact size and SHA-256. Inspection returned
+the original acceptance receipt without another turn.
 
-There is no identified external blocker to continuing implementation. The old
-browser fresh-auth renewal test does not block this work. The remaining items
-below are unfinished engineering, not requests for user action.
+External QA enrollment used the ordinary approval API with the existing
+cookie-backed dev fresh-auth session at account home, scoped to one named target
+for one hour. The browser correctly displayed the fresh-auth modal, but that
+separate challenge timed out waiting for human verification. Do not count the API
+test as a completed browser passkey/fresh-auth ceremony. See the final live
+checkpoint below for evidence, deployment versions and remaining limitations.
 
 ## Implemented And Tested
 
@@ -150,7 +155,7 @@ inspect LABEL` for inspection only. New sends use `send NEW_LABEL`; these requir
 a still-valid explicit QA grant and intentionally run real agents. The full
 32 MiB case uses label `max` and has already run; do not reuse it.
 
-## Next Concrete Steps
+## Historical Implementation Sequence (Completed)
 
 1. Connect external enrollment to the existing CLI-auth challenge/browser flow,
    using a distinct challenge kind that cannot redeem a human session. The client
@@ -162,7 +167,7 @@ a still-valid explicit QA grant and intentionally run real agents. The full
 3. Test external credential expiry/revocation, no native impersonation, no broad
    account fallback, and cross-bay sends with attachments. Federation remains out.
 
-## External Login: Backend Lifecycle Only
+## Historical Checkpoint: Backend Lifecycle Only
 
 The protocol and `server/agents/external-store.ts` now implement the internal
 approved-installation lifecycle. The new canonical schema is in
@@ -212,7 +217,7 @@ Two independent enrollments can connect native agents on two CoCalc sites; each
 destination wakes its own native recipient. No new receiver daemon or general
 federation is necessary. Arbitrary-computer receiving and federation stay deferred.
 
-### External enrollment checkpoint (2026-09-15)
+### Historical Enrollment Checkpoint (2026-09-15)
 
 Implemented behind `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED=1` (not enabled on the
 live dev hubs): `auth login --agent <profile> --agent-label <label>` starts an
@@ -234,7 +239,7 @@ the existing bounded Conat submission path; add installation revocation UI,
 then deploy and test browser enrollment plus external CLI attachments end to end.
 These are unfinished implementation tasks, not user-input blockers.
 
-### External transport checkpoint (2026-09-15)
+### Historical Transport Checkpoint (2026-09-15)
 
 External credentials now authenticate only at account home and may publish only
 their installation-sealed Conat subject and subscribe only to their isolated
@@ -255,3 +260,95 @@ regressions); CLI transport/commands 20; external revocation keyboard tests 2.
 Server, Lite, HTTP API, CLI and frontend typechecks and frontend lint passed.
 Deployment and actual external browser/CLI workflow are still pending; do not
 interpret this checkpoint as live external-send verification.
+
+## Live External Checkpoint (2026-09-15)
+
+Implemented commits: `e1d0ba73e0` (enrollment), `3ff5331b20` (transport and
+revocation UI), `b85b4c1568` (fail sign-in before publishing). The last fix came
+from live revocation testing: the old client denied access but waited its entire
+50-second RPC deadline. The new client disables reconnect, bounds sign-in at
+10 seconds, handles explicit connection failure immediately, and never creates
+a publish before authentication. Lost acknowledgments after submission remain
+unknown. Its focused CLI tests pass (20 tests including native regressions).
+
+### Proven Workflow
+
+- Remote exact installed CLI in source project `1ce4fe78-19c7-40a8-a598-947975744cd9`
+  ran `auth login --agent external-api-qa-20260915`. Approval used the standard
+  `auth/cli/agent/approve` endpoint with the existing cookie-backed dev fresh-auth
+  session at account home, not an API key, DB edit, or copied inter-bay cookie.
+- One-hour installation `0057ff8f-f8c2-467a-9545-0a1bdb6592f9`, distinct external
+  agent `73ed4810-9471-47de-8bff-819d6dec4416`, approved only `@reviewer` in project
+  `66db94af-0745-4088-b922-879c58942201` on the other host/bay. CLI login completed,
+  saved its separate credential profile, and left human profiles unchanged.
+- External discovery returned precisely that destination. Attempt
+  `7b5008ef-2e1b-4427-9674-32d159e1daa4` sent a 33,554,432-byte binary snapshot.
+  CLI result: `accepted`, `chat_effect: saved`, elapsed 7.546 seconds. The native
+  recipient ran and confirmed SHA-256
+  `70c4eaba55c4010d636ac5b46ee640423ddcd44736057ad95429ea4fa4440e8a` and byte count.
+  Live chat metadata preserves external account/agent/installation attribution.
+- External `rpc inspect` returned the original acceptance, not a new turn.
+  Recipient evidence was read through its live chat sync API, not `.chat` JSON.
+- At 320 CSS pixels, My Agents had no horizontal overflow. Keyboard Enter on
+  the installation's Revoke control revoked it, restored focus to the section
+  heading, and announced that already accepted work is not canceled. The normal
+  account-home list API independently reported `state: revoked`.
+- After deploying the sign-in fix, remote CLI discovery with that revoked
+  credential failed in 0.741 seconds with `External agent sign-in failed; no
+submission attempted` (job `29e6a819-44c4-4571-8d08-034f7ce71441`). Recipient
+  inspection showed no extra message from the negative test. No retry was sent.
+- Focused installation accessibility audits before/after revocation: zero
+  violations, eight passing rules. A fresh approval-page audit with its actual
+  fresh-auth modal open: zero violations, 30 passing rules. This caught and fixed
+  a loading-button contrast issue by disabling approval while it is pending.
+  Six focused frontend tests, frontend typecheck and frontend lint pass.
+
+Live evidence: `/tmp/agent-external-final-inspect.jsonl`,
+`/tmp/agent-external-runtime-completed.jsonl`, and disposable `.local` QA drivers.
+No external credential is included in this document or those evidence files.
+
+### Deployment
+
+All three dev hubs enable `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED=1` alongside the
+existing messaging, personal-connection and attachment flags. Host1 and the QA
+receiver host have all four runtime components aligned to
+`20260915T034541Z-e1d0ba73e0b5-dirty-a2912596`. This artifact was built before the
+transport commit, from the implementation subsequently committed as `3ff5331b20`;
+do not mistake its dirty build tag for an exact clean-commit release artifact.
+Both hosts now have tools `1789445586088`, containing the sign-in fix. Source
+project restart `0190f449-008f-4f1e-8832-8fbed54ce665` succeeded to load those tools.
+Tools builds succeeded for amd64 and arm64; frontend static assets were rebuilt.
+
+The receiver upgrade's home-bay CLI watcher initially showed unknown, but its
+owner-bay operation `fad6d18f-0ed0-4671-8d96-163fc407b563` ultimately succeeded and
+runtime inspection confirms alignment. No operation history was erased.
+
+### Reproduce And Remaining Scope
+
+In a project with the new tools, use the exact installed command:
+
+```sh
+"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --api https://lite1b.cocalc.ai auth login --agent security --agent-label "Security assistant"
+"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" project chat agent rpc destinations --external-agent security --json
+"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" project chat send --external-agent security --to reviewer --attach ./receipt.pdf "Review this receipt."
+```
+
+Approve only the intended recipients at the printed URL. QA installation above
+has been revoked; do not reuse it as working authority. No federation, arbitrary
+computer receiver daemon, outbox, automatic delivery retries, or capacity waiting
+has been added. Normal execution/startup permissions and finite scratch storage
+still apply; acceptance is not execution completion.
+
+The separate browser challenge `2f83359c-38f5-4dd6-b24f-d377267a56b9` expired while
+waiting for human fresh-auth verification. The later UI-only audit challenge was
+canceled without approval. Successful end-to-end browser fresh-auth remains a
+manual verification item, not a claimed result of the API enrollment test.
+
+This development workspace's own `/opt/cocalc/bin2` is an older read-only mount;
+it was not overwritten. Live external CLI tests use the upgraded source project.
+External credential files must be private at the OS-user boundary: mode 0600
+does not isolate collaborators sharing the same project user.
+
+Next: human review and manual external login/approval UX testing using the new
+tools. Production rollout, general federation and receiving on arbitrary
+computers remain outside this milestone.

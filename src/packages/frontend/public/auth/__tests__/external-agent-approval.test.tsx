@@ -40,20 +40,18 @@ beforeAll(() => {
   });
 });
 beforeEach(() => {
-  api
-    .mockReset()
-    .mockResolvedValue({
-      enabled: true,
-      agents: [
-        {
-          name: "reviewer",
-          available: true,
-          endpoint,
-          project_title: "Security",
-          thread_title: "Review",
-        },
-      ],
-    });
+  api.mockReset().mockResolvedValue({
+    enabled: true,
+    agents: [
+      {
+        name: "reviewer",
+        available: true,
+        endpoint,
+        project_title: "Security",
+        thread_title: "Review",
+      },
+    ],
+  });
 });
 
 test("keyboard selection grants only the selected recipient at the home origin", async () => {
@@ -117,4 +115,26 @@ test("signed-out visitors cannot enumerate or approve destinations", async () =>
     screen.queryByRole("button", { name: "Approve Send-Only Access" }),
   ).toBeNull();
   expect(api).not.toHaveBeenCalled();
+});
+
+test("pending approval disables submission until the action settles", async () => {
+  const user = userEvent.setup();
+  render(<ExternalAgentApproval {...props} />);
+  await user.click(await screen.findByRole("checkbox", { name: /reviewer/ }));
+  let finish!: (value: object) => void;
+  api.mockImplementationOnce(
+    () => new Promise((resolve) => (finish = resolve)),
+  );
+  const approve = screen.getByRole("button", {
+    name: "Approve Send-Only Access",
+  });
+  await user.click(approve);
+  expect((approve as HTMLButtonElement).disabled).toBe(true);
+  await user.click(approve);
+  expect(api).toHaveBeenCalledTimes(2);
+  finish({});
+  expect(await screen.findByRole("status")).toHaveProperty(
+    "textContent",
+    expect.stringContaining("Approved"),
+  );
 });
