@@ -1,7 +1,9 @@
 import path from "node:path";
+import { hubApi } from "../api";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
+import { authorizeAgentDeliveryExecution } from "./agent-delivery-authorization";
 import { promises as fs } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -7582,6 +7584,7 @@ async function executeAcpRequest({
   if (!projectId) {
     throw Error("project_id must be set");
   }
+  await authorizeAgentDeliveryExecution(request, hubApi.agent);
   const executor: AcpExecutor = preferContainerExecutor()
     ? new ContainerExecutor({
         projectId,

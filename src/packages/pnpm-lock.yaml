@@ -1928,6 +1928,9 @@ importers:
       '@cocalc/backend':
         specifier: workspace:*
         version: link:../backend
+      '@cocalc/chat':
+        specifier: workspace:*
+        version: link:../chat
       '@cocalc/cloud':
         specifier: workspace:*
         version: link:../cloud

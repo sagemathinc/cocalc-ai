@@ -3121,13 +3121,17 @@ describe("CodexAppServerAgent", () => {
         }
       });
 
-    const setAgentSessionKey = jest.fn(async () => {});
+    const runtimeEnv: Record<string, string> = {};
+    const setAgentSessionKey = jest.fn(async () => {
+      runtimeEnv.COCALC_AGENT_IDENTITY_FILE = "/tmp/runtime/identity.json";
+    });
     const spawnCodexAppServer = jest.fn(async () => ({
       proc: makeProc(++spawnCount) as any,
       cmd: "fake-codex",
       args: ["app-server"],
       cwd: "/tmp/project",
       setAgentSessionKey,
+      runtimeEnv,
     }));
     setCodexProjectSpawner({
       spawnCodexExec: async () => {
@@ -3190,6 +3194,12 @@ describe("CodexAppServerAgent", () => {
     );
     expect(setAgentSessionKey).toHaveBeenCalledWith(
       "research-thread\u00002026-08-14T12:05:00.000Z",
+    );
+    const turns = appServerCalls.filter((call) => call.method === "turn/start");
+    expect(turns).toHaveLength(2);
+    expect(turns[0].params.env?.COCALC_AGENT_IDENTITY_FILE).toBeUndefined();
+    expect(turns[1].params.env?.COCALC_AGENT_IDENTITY_FILE).toBe(
+      "/tmp/runtime/identity.json",
     );
   });
 
@@ -4054,6 +4064,21 @@ describe("CodexAppServerAgent", () => {
     expect(text).toContain("project build -h");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
+    expect(text).toContain("project chat agent rpc destinations --json");
+    expect(text).toContain("first inspect experimental RPC (V2) destinations");
+    expect(text).toContain("Legacy grants do not authorize RPC sends");
+    expect(text).toContain(
+      "protocol_version describes identity authentication",
+    );
+    expect(text).toContain("project chat send --rpc --to-agent ID");
+    expect(text).toContain(
+      "supply it with a pipe or heredoc in the same shell invocation",
+    );
+    expect(text).toContain("A timeout is unknown, never proof of rejection");
+    expect(text).toContain("Do not automatically retry");
+    expect(text).toContain(
+      "Replies require a separately approved reverse link",
+    );
     expect(text).not.toContain("COCALC_BROWSER_ID");
     expect(text).not.toContain("browser files --project-id");
     expect(text).not.toContain("browser workspace-state");

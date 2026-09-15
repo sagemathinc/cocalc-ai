@@ -26,7 +26,7 @@ export namespace QueryParams {
     } else {
       url.searchParams.delete(p);
     }
-    history.pushState({}, "", url.href);
+    if (url.href !== location.href) history.pushState({}, "", url.href);
   }
 
   // val = undefined means to remove it, since won't be represented in query param anyways.
@@ -38,6 +38,6 @@ export namespace QueryParams {
     } else {
       url.searchParams.set(p, val);
     }
-    history.pushState({}, "", url.href);
+    if (url.href !== location.href) history.pushState({}, "", url.href);
   }
 }

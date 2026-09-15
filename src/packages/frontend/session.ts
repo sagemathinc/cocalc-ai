@@ -89,6 +89,14 @@ export async function restoreProjectFiles(
   }
 }
 
+export function loadSessionUrlTarget(): void {
+  // The browser is already at this URL. Startup must not add intermediate
+  // project/file-list entries or discard the browser's Forward stack.
+  if (should_load_target_url()) {
+    load_target(target, true, false);
+  }
+}
+
 class SessionManager {
   private name: string;
   private redux: AppRedux;
@@ -101,7 +109,7 @@ class SessionManager {
 
   constructor(name: string, redux: AppRedux) {
     /* IMPORTANT: run some code below ALWAYS in order to run
-       this.load_url_target to load what the user's browser URL
+       loadSessionUrlTarget to load what the user's browser URL
        is requesting, but do not actually create a session if
        this.name==''.
     */
@@ -121,15 +129,6 @@ class SessionManager {
     }
     if (this.name) {
       this.save = throttle(this.save, 1000);
-    }
-  }
-
-  private static load_url_target(): void {
-    // **after** a possible session is restored,
-    // and project tabs are in correct order (or nothing is opened yet)
-    // we open up the URL target and put it into foreground
-    if (should_load_target_url()) {
-      load_target(target, true);
     }
   }
 
@@ -171,7 +170,7 @@ class SessionManager {
 
       this._initialized = true;
       // ... and load a target URL
-      SessionManager.load_url_target();
+      loadSessionUrlTarget();
       // and finally possibly do a sign in action if the user just signed up
       // or signed in after a while:
       await signInAction();

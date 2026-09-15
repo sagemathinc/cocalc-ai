@@ -711,6 +711,13 @@ export interface ApplyHostExamRunRequest {
 }
 
 export interface HostControlApi {
+  submitAgentRpc: (
+    envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+  ) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
+  inspectAgentRpc: (opts: {
+    source: import("@cocalc/conat/agents/rpc").AgentEndpoint;
+    request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt;
+  }) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
   probePublicRouteOrigin: () => Promise<ProjectHostOriginHealth>;
   restartCloudflared: (opts: {
     reason: "public-route-probe";
@@ -956,18 +963,23 @@ export function createHostControlClient({
   host_id,
   client,
   timeout,
+  noRetry,
 }: {
   host_id: string;
   client: Client;
   timeout?;
+  noRetry?: boolean;
 }): HostControlApi {
   return createServiceClient<HostControlApi>({
     service: "project-host",
     subject: subjectForHost(host_id),
     client,
     timeout,
+    noRetry,
     transport:
-      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
+      noRetry || (timeout != null && timeout > MAX_INTEREST_TIMEOUT)
+        ? "request"
+        : undefined,
   });
 }
 

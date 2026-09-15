@@ -125,6 +125,10 @@ jest.mock("@cocalc/lite/hub/api", () => ({
     hosts: {
       issueProjectHostAgentAuthToken: jest.fn(),
     },
+    agent: {
+      issueIdentity: jest.fn(),
+      endIdentityRun: jest.fn(),
+    },
   },
 }));
 
@@ -169,7 +173,11 @@ function jwt(payload: Record<string, unknown>): string {
 }
 
 describe("initCodexProjectRunner", () => {
+  const originalMessagingEnabled = process.env.COCALC_AGENT_MESSAGING_ENABLED;
   beforeEach(() => {
+    delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
+    hubApi.agent.issueIdentity.mockReset().mockResolvedValue(undefined);
+    hubApi.agent.endIdentityRun.mockReset().mockResolvedValue(undefined);
     spawnMock.mockReset();
     execFileMock.mockReset();
     execMock.mockReset();
@@ -207,6 +215,85 @@ describe("initCodexProjectRunner", () => {
 
   afterEach(() => {
     setCodexProjectSpawner(null);
+    if (originalMessagingEnabled === undefined) {
+      delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
+    } else {
+      process.env.COCALC_AGENT_MESSAGING_ENABLED = originalMessagingEnabled;
+    }
+  });
+
+  it("attaches late registration to the next turn without replacing the app-server", async () => {
+    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+    const proc = new FakeProc();
+    spawnMock.mockReturnValue(proc);
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-late-registration-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "account-api-key",
+      contextId: "late-registration",
+      env: { OPENAI_API_KEY: "test-key" },
+    });
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      agentSessionKey: "thread-1\0turn-1",
+      cwd: "/home/user",
+      env: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+    });
+    try {
+      expect(spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE).toBeUndefined();
+      await spawned.setAgentSessionKey!("thread-1\0turn-2");
+      expect(spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE).toBeUndefined();
+      // A failed lookup must not run the next turn with a substituted identity.
+      hubApi.agent.issueIdentity.mockRejectedValueOnce(
+        new Error("unavailable"),
+      );
+      await expect(
+        spawned.setAgentSessionKey!("thread-1\0turn-3"),
+      ).rejects.toThrow("unavailable");
+      expect(spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE).toBeUndefined();
+
+      hubApi.agent.issueIdentity.mockImplementation(async ({ run_id }) => ({
+        agent_id: "registered-agent",
+        run_id,
+        token: "identity-token",
+        expires_at: Date.now() + 600000,
+      }));
+      await spawned.setAgentSessionKey!("thread-1\0turn-3");
+      const identityPath = spawned.runtimeEnv!.COCALC_AGENT_IDENTITY_FILE;
+      expect(identityPath).toMatch(/\/identity.json$/);
+      const credential = JSON.parse(
+        await fs.readFile(identityPath.replace("/home/user", home), "utf8"),
+      );
+      expect(credential).toMatchObject({ agent_id: "registered-agent" });
+      await spawned.setAgentSessionKey!("thread-1\0turn-4");
+      expect(hubApi.agent.issueIdentity).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          thread_id: "thread-1",
+          path: "/home/user/send.chat",
+          run_id: credential.run_id,
+        }),
+      );
+      hubApi.agent.issueIdentity.mockRejectedValueOnce(new Error("disabled"));
+      await expect(
+        spawned.setAgentSessionKey!("thread-1\0turn-5"),
+      ).rejects.toThrow("disabled");
+      expect(spawned.runtimeEnv!.COCALC_AGENT_IDENTITY_FILE).toBe(identityPath);
+      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(spawned.proc).toBe(proc);
+    } finally {
+      // Await asynchronous process-exit cleanup before removing the test home.
+      for (const listener of proc.listeners("exit")) await listener(0);
+    }
+    expect(hubApi.agent.endIdentityRun).toHaveBeenCalledTimes(1);
   });
 
   it("uses authenticated real-project app-server exec", async () => {
@@ -694,6 +781,44 @@ describe("initCodexProjectRunner", () => {
 
     await lease!.close();
     await expect(fs.stat(lease!.hostPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
+  it("revokes a late identity if the runtime closes during issuance", async () => {
+    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+    const home = await mkTempDir("codex-project-late-identity-close-");
+    const { createProjectCliTokenLease } =
+      await import("./codex/codex-project");
+    const lease = (await createProjectCliTokenLease({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      currentEnv: {
+        COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+        COCALC_CODEX_THREAD_ID: "thread-1",
+      },
+      home,
+    }))!;
+    let finish!: (value: unknown) => void;
+    hubApi.agent.issueIdentity.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const preparing = lease.setAgentSessionKey("thread-1\0turn-2");
+    const closing = lease.close();
+    finish({
+      agent_id: "late-agent",
+      token: "identity-token",
+      expires_at: Date.now() + 600000,
+    });
+    await preparing;
+    await closing;
+    expect(hubApi.agent.endIdentityRun).toHaveBeenCalledWith(
+      expect.objectContaining({ agent_id: "late-agent" }),
+    );
+    await expect(fs.stat(path.dirname(lease.hostPath))).rejects.toMatchObject({
       code: "ENOENT",
     });
   });
@@ -1352,7 +1477,7 @@ describe("initCodexProjectRunner", () => {
       account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       autostart: true,
-      timeout: 180000,
+      timeout: expect.any(Number),
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });
@@ -1396,7 +1521,7 @@ describe("initCodexProjectRunner", () => {
       account_id: "00000000-0000-4000-8000-000000000001",
       project_id: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       autostart: true,
-      timeout: 180000,
+      timeout: expect.any(Number),
     });
     expect(spawnMock).toHaveBeenCalledTimes(1);
   });

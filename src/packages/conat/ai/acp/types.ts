@@ -73,6 +73,9 @@ export interface AcpAutomationRecord {
 }
 
 export interface AcpChatContext {
+  // Revalidate the directional grant before executing a queued agent message.
+  agent_delivery_id?: string;
+  agent_delivery_generation?: string;
   project_id: string;
   path: string;
   message_date: string;

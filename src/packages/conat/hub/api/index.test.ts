@@ -51,6 +51,11 @@ describe("hub API argument transforms", () => {
 
   it("requires review of every RPC that preserves account_id as target data", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
+      "agent.authorizeDelivery",
+      "agent.authorizeRpcAdmission",
+      "agent.beginMessageAdmission",
+      "agent.endIdentityRun",
+      "agent.issueIdentity",
       "aiSessions.upsertProjectHostSession",
       "hosts.checkCodexSiteUsageAllowance",
       "hosts.getAccountEffectiveLimits",
@@ -72,6 +77,60 @@ describe("hub API argument transforms", () => {
   });
 
   it.each([
+    "agent.issueIdentity",
+    "agent.endIdentityRun",
+    "agent.authorizeDelivery",
+    "agent.beginMessageAdmission",
+  ])(
+    "binds %s to the trusted host while preserving the execution account target",
+    async (name) => {
+      expect(
+        await transformArgs({
+          name,
+          args: [{ host_id: "forged", account_id: "execution-account" }],
+          host_id: "actual-host",
+        }),
+      ).toEqual([{ host_id: "actual-host", account_id: "execution-account" }]);
+      for (const actor of [
+        { account_id: "account" },
+        { project_id: "project" },
+        { account_id: "account", auth_actor: "agent" as const },
+      ]) {
+        await expect(
+          transformArgs({ name, args: [{}], ...actor }),
+        ).rejects.toThrow();
+      }
+    },
+  );
+
+  it.each([
+    "agent.registerIdentity",
+    "agent.grantMessaging",
+    "agent.revokeMessaging",
+    "agent.disableIdentity",
+  ])("requires a human and binds %s to the actual session", async (name) => {
+    const args = await transformArgs({
+      name,
+      args: [{ account_id: "forged", session_hash: "forged" }],
+      account_id: "human",
+      auth_session_hash: "verified",
+    });
+    expect(args[0]).toMatchObject({
+      account_id: "human",
+      session_hash: "verified",
+    });
+    await expect(
+      transformArgs({
+        name,
+        args: [{}],
+        account_id: "agent",
+        auth_actor: "agent",
+      }),
+    ).rejects.toThrow();
+  });
+
+  it.each([
+    "agent.listMessageReceipts",
     "purchases.getMembership",
     "org.get",
     "sync.history",

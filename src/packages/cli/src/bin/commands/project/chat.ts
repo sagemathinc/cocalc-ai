@@ -1,4 +1,9 @@
 import { Command } from "commander";
+import { randomUUID } from "node:crypto";
+import { sendIdentityMessage } from "../../core/agent-message";
+import { registerChatAgentCommands } from "./chat-agents";
+import { requireUuid } from "@cocalc/conat/agents/protocol";
+import type { AgentRpcLink, AgentRpcOutcome } from "@cocalc/conat/agents/rpc";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -42,6 +47,7 @@ export function registerProjectChatCommands(
   } = deps;
 
   const chat = project.command("chat").description("project chat operations");
+  registerChatAgentCommands(chat, deps);
 
   const thread = chat.command("thread").description("project chat threads");
 
@@ -54,13 +60,26 @@ export function registerProjectChatCommands(
       "[message...]",
       "message text (use --stdin for multiline text or JSON)",
     )
-    .requiredOption("--path <path>", "chat document path inside the project")
-    .requiredOption(
+    .option("--path <path>", "chat document path inside the project")
+    .option(
       "--thread-id <id>",
       "thread id from 'project chat thread list' or Codex settings",
     )
     .option("-w, --project <project>", "project id or name")
+    .option(
+      "--to-agent <id>",
+      "registered target agent; requires a runtime identity credential",
+    )
+    .option(
+      "--request-id <uuid>",
+      "stable idempotency key for identity sends and receipt lookup",
+    )
     .option("--stdin", "read the message from standard input")
+    .option("--rpc", "opt in to V2 single-attempt RPC (no delivery retries)")
+    .option(
+      "--attempt-id <uuid>",
+      "V2 attempt identifier; deliberate retries require a NEW identifier",
+    )
     .option(
       "--guidance",
       "guide the running turn if possible; otherwise start a normal turn",
@@ -74,6 +93,10 @@ export function registerProjectChatCommands(
           project?: string;
           stdin?: boolean;
           guidance?: boolean;
+          toAgent?: string;
+          requestId?: string;
+          rpc?: boolean;
+          attemptId?: string;
         },
         command: Command,
       ) => {
@@ -81,6 +104,66 @@ export function registerProjectChatCommands(
           throw new Error("use either message arguments or --stdin, not both");
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
+        if (opts.rpc) {
+          if (
+            !opts.toAgent ||
+            opts.requestId ||
+            opts.project ||
+            opts.path ||
+            opts.threadId
+          )
+            throw new Error(
+              "--rpc requires --to-agent and cannot use legacy --request-id or project/path/thread options",
+            );
+          requireUuid(opts.toAgent, "to-agent");
+          const attempt_id = opts.attemptId || randomUUID();
+          requireUuid(attempt_id, "attempt-id");
+          const globals = deps.globalsFrom(command);
+          const destinations = (await sendIdentityMessage(
+            { version: 2, action: "destinations" },
+            globals.api,
+          )) as AgentRpcLink[];
+          const destination = destinations.find(
+            (link) =>
+              link.target.agent_id === opts.toAgent &&
+              (!opts.guidance || link.allow_guidance),
+          );
+          if (!destination)
+            throw new Error(
+              "No approved RPC destination; no submission attempted",
+            );
+          process.stderr.write(
+            `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(destination.target)}\n`,
+          );
+          const result = (await sendIdentityMessage(
+            {
+              version: 2,
+              action: "send",
+              attempt_id,
+              target: destination.target,
+              body: prompt,
+              guidance: opts.guidance,
+            },
+            globals.api,
+          )) as AgentRpcOutcome;
+          deps.emitSuccess({ globals }, "project chat send", result);
+          process.exitCode =
+            result.outcome === "accepted"
+              ? 0
+              : result.outcome === "rejected"
+                ? 2
+                : 3;
+          return;
+        }
+        if (opts.attemptId) throw new Error("--attempt-id requires --rpc");
+        if (
+          opts.toAgent ||
+          opts.requestId ||
+          process.env.COCALC_AGENT_IDENTITY_FILE
+        )
+          throw new Error(
+            "Scoped agent sends require --rpc and --to-agent; legacy delivery is retired",
+          );
         await withContext(command, "project chat send", async (ctx) => {
           return await projectChatSendData({
             ctx,
