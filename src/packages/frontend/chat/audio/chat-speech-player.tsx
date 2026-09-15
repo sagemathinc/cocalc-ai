@@ -6,6 +6,7 @@
 import { Button, Modal, Select, Slider, Space, Typography } from "antd";
 import { useContext, useEffect, useState, useSyncExternalStore } from "react";
 import { SpeechPaneContext } from "./speech-pane-context";
+import { lite } from "@cocalc/frontend/lite";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -250,6 +251,7 @@ async function playChunk(
 }
 
 export async function startChatSpeech(options: StartOptions): Promise<void> {
+  if (lite) return;
   stopChatSpeech();
   const speechText = markdownToSpeechText(options.markdown);
   chunks = splitSpeechText(speechText);
@@ -352,6 +354,7 @@ export function ChatSpeechPlayer({
     [playerOwnerId, paneId],
   );
   if (
+    lite ||
     player.status === "hidden" ||
     player.ownerId !== playerOwnerId ||
     player.paneId !== paneId
