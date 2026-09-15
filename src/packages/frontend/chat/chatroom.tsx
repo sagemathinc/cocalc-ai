@@ -799,7 +799,6 @@ function ChatPanelContent({
     useState<ChatRoomThreadActionHandlers | null>(null);
   const submitMentionsRef = useRef<SubmitMentionsFn | undefined>(undefined);
   const scrollToBottomRef = useRef<any>(null);
-  const previousSelectedThreadKeyRef = useRef<string | null>(null);
   const indexedAgentSessionsRef = useRef<Map<string, string>>(new Map());
   useEffect(() => {
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
@@ -1953,31 +1952,6 @@ function ChatPanelContent({
     if (readOnly) return;
     markChatAsReadIfUnseen(project_id, path);
   }, [project_id, path, readOnly]);
-
-  useEffect(() => {
-    if (!singleThreadView) {
-      previousSelectedThreadKeyRef.current = null;
-      return;
-    }
-    if (!selectedThreadKey) {
-      previousSelectedThreadKeyRef.current = null;
-      return;
-    }
-    if (previousSelectedThreadKeyRef.current === selectedThreadKey) return;
-    previousSelectedThreadKeyRef.current = selectedThreadKey;
-    if (fragmentId || scrollToDate != null || scrollToIndex != null) return;
-    if (activityJumpDate || activityJumpToken) return;
-    actions?.scrollToIndex?.(Number.MAX_SAFE_INTEGER);
-  }, [
-    singleThreadView,
-    selectedThreadKey,
-    fragmentId,
-    scrollToDate,
-    scrollToIndex,
-    activityJumpDate,
-    activityJumpToken,
-    actions,
-  ]);
 
   const totalUnread = useMemo(
     () => threadSections.reduce((sum, section) => sum + section.unreadCount, 0),

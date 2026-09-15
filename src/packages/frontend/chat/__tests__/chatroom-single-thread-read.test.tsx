@@ -52,7 +52,7 @@ jest.mock("../threads", () => ({
 
 jest.mock("../thread-selection", () => ({
   useChatThreadSelection: () => ({
-    selectedThreadKey: "thread-1",
+    selectedThreadKey: currentThread.key,
     setSelectedThreadKey: jest.fn(),
     setAllowAutoSelectThread: jest.fn(),
     singleThreadView: true,
@@ -188,6 +188,26 @@ describe("ChatPanel selected thread read tracking", () => {
 
     expect(actions.markThreadRead).toHaveBeenCalledTimes(1);
     expect(actions.markThreadRead).toHaveBeenCalledWith("thread-1", 2);
+  });
+
+  it("lets ChatLog restore its viewport when switching threads instead of forcing the bottom", () => {
+    const { actions, rerender } = renderPanel();
+    expect(actions.scrollToIndex).not.toHaveBeenCalled();
+    for (const key of ["thread-2", "thread-1"]) {
+      currentThread = { ...currentThread, key };
+      currentThreads = [currentThread];
+      rerender(
+        <ChatPanel
+          actions={actions}
+          project_id="project-1"
+          path="chat/test.chat"
+          messages={new Map()}
+          threadIndex={undefined}
+          docVersion={0}
+        />,
+      );
+      expect(actions.scrollToIndex).not.toHaveBeenCalled();
+    }
   });
 
   it("makes resolved thread messages read-only", () => {
