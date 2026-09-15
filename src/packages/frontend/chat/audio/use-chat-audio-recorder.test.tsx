@@ -103,6 +103,160 @@ describe("useChatAudioRecorder", () => {
 
   afterEach(() => jest.clearAllMocks());
 
+  it("retries a background timeout without entering the recording error channel", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValueOnce(
+        new Error("timeout - callHub: system.getChatSpeechCapabilities"),
+      );
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ projectId: "project-1", onTranscript: jest.fn() }),
+    );
+    try {
+      await act(async () => {});
+      expect(hook.result.current.error).toBeUndefined();
+      expect(hook.result.current.status).toBe("loading");
+      await act(async () => {
+        jest.advanceTimersByTime(5_000);
+      });
+      expect(hook.result.current.status).toBe("idle");
+      expect(hook.result.current.capabilities).toEqual(capabilities);
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("retries on reconnect and cancels retries on unmount", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValue(new Error("disconnected"));
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ projectId: "project-1", onTranscript: jest.fn() }),
+    );
+    try {
+      await act(async () => {});
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+      });
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(2);
+      hook.unmount();
+      await act(async () => {
+        jest.advanceTimersByTime(60_000);
+      });
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(2);
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("ignores a capability result for the previous project", async () => {
+    let resolve!: (value: any) => void;
+    jest.mocked(getChatSpeechCapabilities).mockImplementationOnce(
+      () =>
+        new Promise((r) => {
+          resolve = r;
+        }),
+    );
+    const hook = renderHook(
+      ({ projectId }) =>
+        useChatAudioRecorder({ projectId, onTranscript: jest.fn() }),
+      { initialProps: { projectId: "old" } },
+    );
+    hook.rerender({ projectId: "new" });
+    await waitFor(() => expect(hook.result.current.status).toBe("idle"));
+    await act(async () =>
+      resolve({ ...capabilities, input: { enabled: false } }),
+    );
+    expect(hook.result.current.capabilities).toEqual(capabilities);
+    hook.unmount();
+  });
+
+  it("caps transient backoff at 60 seconds and stops probing after success", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValue(new Error("timeout"));
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ projectId: "project-1", onTranscript: jest.fn() }),
+    );
+    try {
+      await act(async () => {});
+      let calls = 1;
+      for (const delay of [5_000, 10_000, 20_000, 40_000, 60_000, 60_000]) {
+        await act(async () => jest.advanceTimersByTimeAsync(delay - 1));
+        expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(calls);
+        await act(async () => jest.advanceTimersByTimeAsync(1));
+        expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(++calls);
+        expect(hook.result.current.error).toBeUndefined();
+      }
+      jest
+        .mocked(getChatSpeechCapabilities)
+        .mockResolvedValue(capabilities as any);
+      await act(async () => jest.advanceTimersByTimeAsync(60_000));
+      expect(hook.result.current.status).toBe("idle");
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+        document.dispatchEvent(new Event("visibilitychange"));
+        await jest.advanceTimersByTimeAsync(120_000);
+      });
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(calls + 1);
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("keeps permanent capability errors visible without retrying", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValue(new Error("permission denied"));
+    const hook = renderHook(() =>
+      useChatAudioRecorder({ projectId: "project-1", onTranscript: jest.fn() }),
+    );
+    try {
+      await act(async () => {});
+      expect(hook.result.current.status).toBe("error");
+      expect(hook.result.current.error).toBe("permission denied");
+      await act(async () => {
+        window.dispatchEvent(new Event("online"));
+        document.dispatchEvent(new Event("visibilitychange"));
+        await jest.advanceTimersByTimeAsync(120_000);
+      });
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(1);
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
+  it("cancels a scheduled probe retry when switching projects", async () => {
+    jest.useFakeTimers();
+    jest
+      .mocked(getChatSpeechCapabilities)
+      .mockRejectedValueOnce(new Error("timeout"));
+    const hook = renderHook(
+      ({ projectId }) =>
+        useChatAudioRecorder({ projectId, onTranscript: jest.fn() }),
+      { initialProps: { projectId: "old" } },
+    );
+    try {
+      await act(async () => {});
+      hook.rerender({ projectId: "new" });
+      await act(async () => jest.advanceTimersByTimeAsync(120_000));
+      expect(getChatSpeechCapabilities).toHaveBeenCalledTimes(2);
+      expect(getChatSpeechCapabilities).toHaveBeenLastCalledWith("new");
+      expect(hook.result.current.status).toBe("idle");
+    } finally {
+      hook.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it("requests microphone permission only after activation and cleans up on cancel", async () => {
     const media = makeMedia();
     const onTranscript = jest.fn();

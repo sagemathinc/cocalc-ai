@@ -98,18 +98,60 @@ export function useChatAudioRecorder<T>({
   }, []);
 
   useEffect(() => {
-    mountedRef.current = true;
-    void getChatSpeechCapabilities(projectId)
-      .then((value) => {
-        if (!mountedRef.current) return;
+    let canceled = false;
+    let pending = false;
+    let retry = false;
+    let retryDelay = 5_000;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setCapabilities(undefined);
+    setStatus("loading");
+    const load = async () => {
+      if (canceled || pending) return;
+      clearTimeout(timer);
+      pending = true;
+      try {
+        const value = await getChatSpeechCapabilities(projectId);
+        if (canceled) return;
+        retry = false;
         setCapabilities(value);
-        setStatus("idle");
-      })
-      .catch((err) => {
-        if (!mountedRef.current) return;
-        setError(chatSpeechErrorMessage(err));
-        setStatus("error");
-      });
+        setStatus((current) => (current === "loading" ? "idle" : current));
+      } catch (err) {
+        if (canceled) return;
+        const code = String((err as any)?.code ?? "");
+        retry =
+          ["408", "429", "502", "503", "504"].includes(code) ||
+          /timeout|timed out|disconnected|not connected|network|connection closed/i.test(
+            chatSpeechErrorMessage(err),
+          );
+        // This is a background availability probe, not a user recording.
+        // Keep transient failures out of the recorder's error/toast channel.
+        if (retry) {
+          timer = setTimeout(() => void load(), retryDelay);
+          retryDelay = Math.min(60_000, retryDelay * 2);
+        } else {
+          setError(chatSpeechErrorMessage(err));
+          setStatus("error");
+        }
+      } finally {
+        pending = false;
+      }
+    };
+    const resume = () => {
+      if (retry && document.visibilityState !== "hidden") void load();
+    };
+    void load();
+    window.addEventListener("online", resume);
+    document.addEventListener("visibilitychange", resume);
+    return () => {
+      canceled = true;
+      clearTimeout(timer);
+      window.removeEventListener("online", resume);
+      document.removeEventListener("visibilitychange", resume);
+    };
+  }, [projectId]);
+
+  useEffect(() => {
+    mountedRef.current = true;
     return () => {
       mountedRef.current = false;
       canceledRef.current = true;
