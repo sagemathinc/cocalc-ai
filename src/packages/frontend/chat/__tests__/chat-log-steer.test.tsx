@@ -881,6 +881,10 @@ describe("ChatLog immediate steer rendering", () => {
       />,
     );
 
+    expect(
+      lastRenderedMessageProps("assistant-1")
+        ?.allowAsyncCompletedCodexActivityLoad,
+    ).toBe(false);
     messages.set("2000", {
       ...messages.get("2000"),
       generating: false,

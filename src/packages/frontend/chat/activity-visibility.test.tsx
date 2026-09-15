@@ -1,6 +1,17 @@
 import { act, renderHook } from "@testing-library/react";
 import { useActivityVisibility } from "./activity-visibility";
 
+it("supports actionless viewers without sharing their visibility", () => {
+  const first = renderHook(() => useActivityVisibility());
+  const second = renderHook(() => useActivityVisibility());
+  act(() => first.result.current.setExpanded(() => ({ turn: true })));
+  first.rerender();
+  expect(first.result.current.expanded.turn).toBe(true);
+  expect(second.result.current.expanded).toEqual({});
+  first.unmount();
+  second.unmount();
+});
+
 it("retains expansion and explicit collapse for the open document, not the row lifetime", () => {
   const document = {};
   const first = renderHook(() => useActivityVisibility(document));

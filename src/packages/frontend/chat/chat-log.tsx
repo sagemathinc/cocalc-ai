@@ -1358,6 +1358,7 @@ export function MessageList({
       : undefined;
     const allowAsyncCompletedCodexActivityLoad =
       expandedCodexActivity &&
+      field<boolean>(message, "generating") !== true &&
       (explicitCodexActivityByMessageId[messageId] === true ||
         cachedCodexActivityBlocks == null);
 

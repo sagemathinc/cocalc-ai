@@ -1,4 +1,4 @@
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 
 type Flags = Record<string, boolean>;
 type Update = (previous: Flags) => Flags;
@@ -29,12 +29,16 @@ function createStore() {
 // the chat closes. Persist only visibility flags here, never streamed events.
 const stores = new WeakMap<object, ReturnType<typeof createStore>>();
 
-export function useActivityVisibility(document: object) {
-  let store = stores.get(document);
-  if (!store) {
+export function useActivityVisibility(document?: object) {
+  // Public/time-travel viewers have no actions. Keep their state private to
+  // this mounted viewer instead of sharing a global fallback document key.
+  const [localStore] = useState(createStore);
+  let store = document == null ? localStore : stores.get(document);
+  if (!store && document != null) {
     store = createStore();
     stores.set(document, store);
   }
+  store ??= localStore;
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot);
   return {
     ...snapshot,
