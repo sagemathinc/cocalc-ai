@@ -652,12 +652,13 @@ export function ChatLog({
 
   useEffect(() => {
     return () => {
+      bottomScrollTokenRef.current += 1;
       for (const timer of bottomScrollTimersRef.current) {
         clearTimeout(timer);
       }
       bottomScrollTimersRef.current = [];
     };
-  }, []);
+  }, [threadScrollCacheId]);
 
   useEffect(() => {
     if (scrollToBottomRef == null) return;
@@ -1073,6 +1074,8 @@ export function MessageList({
       visibilityRestoreTimersRef.current = [];
       anchorCaptureFrameRef.current = undefined;
       userScrollIntentRef.current = false;
+      suppressAnchorCaptureUntilRef.current = 0;
+      suppressAnchorRestoreUntilRef.current = 0;
     };
   }, [cacheId]);
 

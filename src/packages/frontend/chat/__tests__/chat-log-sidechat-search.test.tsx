@@ -91,6 +91,52 @@ jest.mock("../composing", () => ({
 }));
 
 describe("ChatLog sidechat search jumps", () => {
+  it("does not carry bottom retries across a thread switch after explicit navigation", () => {
+    jest.useFakeTimers();
+    const scrollToBottomRef = { current: undefined as any };
+    const props = {
+      project_id: "project-1",
+      path: "thread.chat",
+      scrollCacheId: "editor",
+      messages: new Map([
+        ["1000", { date: 1000, history: [{ content: "first" }] }],
+        ["2000", { date: 2000, history: [{ content: "second" }] }],
+      ]) as any,
+      actions: { clearScrollRequest: jest.fn() } as any,
+      mode: "sidechat" as const,
+      scrollToBottomRef,
+    };
+    saveChatViewportAnchor(JSON.stringify(["editor", "thread-b"]), {
+      atBottom: false,
+      date: "1000",
+      offsetPx: -5,
+      savedAt: Date.now(),
+    });
+    const view = render(<ChatLog {...props} selectedThread="thread-a" />);
+    try {
+      view.rerender(
+        <ChatLog {...props} selectedThread="thread-a" scrollToIndex={-1} />,
+      );
+      expect(mockScrollToIndex).toHaveBeenCalled();
+      view.rerender(<ChatLog {...props} selectedThread="thread-b" />);
+      expect(latestVirtuosoProps.initialTopMostItemIndex).toBe(0);
+      expect(mockScrollToIndex).toHaveBeenLastCalledWith({
+        index: 0,
+        align: "start",
+        behavior: "auto",
+      });
+      mockScrollToIndex.mockClear();
+      act(() => jest.advanceTimersByTime(600));
+      expect(mockScrollToIndex).not.toHaveBeenCalledWith({
+        index: Number.MAX_SAFE_INTEGER,
+        behavior: "auto",
+      });
+    } finally {
+      view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it("keeps each thread's reading position when switching away and back", async () => {
     const actions = { clearScrollRequest: jest.fn() } as any;
     const messages = new Map([
