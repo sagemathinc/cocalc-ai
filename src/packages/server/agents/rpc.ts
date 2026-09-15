@@ -314,10 +314,12 @@ async function submitAgentRpcOperation(
       });
     }
     submissionStarted = true;
-    const outcome = await host.api.submitAgentRpc(
-      envelope,
-      opts.snapshot_payload,
-    );
+    // Omit absent positional arguments: MsgPack transports undefined array
+    // elements as null, which is not a valid attachment payload.
+    const outcome =
+      opts.snapshot_payload === undefined
+        ? await host.api.submitAgentRpc(envelope)
+        : await host.api.submitAgentRpc(envelope, opts.snapshot_payload);
     validateAgentRpcOutcome(outcome, opts.request);
     accepted = outcome.outcome === "accepted";
     return outcome;

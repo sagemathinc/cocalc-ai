@@ -124,7 +124,12 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
         envelope: e,
       });
     },
-    submitAgentRpc: async (e, files) => {
+    submitAgentRpc: async (...args) => {
+      const [e, files] = args;
+      // An explicit undefined second argument becomes null on the wire.
+      // Require its absence for text and same-project reference sends.
+      if (!e.snapshot_manifest && args.length !== 1)
+        throw new Error("unexpected attachment payload");
       expect(opts.noRetry).toBe(true);
       await beforeAdmission(e);
       await authorizeRpcAdmission({
