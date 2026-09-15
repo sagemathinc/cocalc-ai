@@ -1,5 +1,8 @@
 import { authFirstRequireAccount, declareHubApiPrincipalPolicy } from "./util";
 
+export const PROJECT_HOST_SESSION_UNAUTHORIZED =
+  "PROJECT_HOST_SESSION_UNAUTHORIZED";
+
 export type AiSessionState =
   | "queued"
   | "running"

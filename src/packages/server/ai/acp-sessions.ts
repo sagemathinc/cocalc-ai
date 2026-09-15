@@ -19,6 +19,7 @@ import type {
   AiSessionsListOptions,
   AiSessionState,
 } from "@cocalc/conat/hub/api/ai-sessions";
+import { PROJECT_HOST_SESSION_UNAUTHORIZED } from "@cocalc/conat/hub/api/ai-sessions";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const TABLE = "ai_sessions";
@@ -223,7 +224,10 @@ async function assertHostCanReportSession({
     [project_id, host_id],
   );
   if (!rowCount) {
-    throw Error("host is not authorized for this project session");
+    throw Object.assign(
+      new Error("host is not authorized for this project session"),
+      { code: PROJECT_HOST_SESSION_UNAUTHORIZED },
+    );
   }
 }
 

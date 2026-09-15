@@ -2,6 +2,7 @@ import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { connect } from "@cocalc/conat/core/client";
 import { inboxPrefix } from "@cocalc/conat/names";
 import callHub from "@cocalc/conat/hub/call-hub";
+import { PROJECT_HOST_SESSION_UNAUTHORIZED } from "@cocalc/conat/hub/api/ai-sessions";
 import getLogger from "@cocalc/backend/logger";
 import { setConatPassword } from "@cocalc/backend/data";
 import { setConatClient } from "@cocalc/conat/client";
@@ -150,6 +151,14 @@ function configureProjectHostAcpSessionPublisher(): void {
         timeout: 5_000,
       });
     } catch (err) {
+      if ((err as any)?.code === PROJECT_HOST_SESSION_UNAUTHORIZED) {
+        logger.debug("discarding stale ACP session publication", {
+          host_id,
+          project_id: row.project_id,
+          session_key: row.session_key,
+        });
+        return;
+      }
       const now = Date.now();
       if (
         now - lastAcpSessionPublishWarningAt >=

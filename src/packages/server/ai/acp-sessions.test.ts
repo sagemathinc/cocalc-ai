@@ -4,7 +4,9 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { PROJECT_HOST_SESSION_UNAUTHORIZED } from "@cocalc/conat/hub/api/ai-sessions";
 import {
+  ensureAiSessionsSchema,
   interruptAiSessionForAdmin,
   interruptAiSessionForAccount,
   listAiSessionsForAdmin,
@@ -106,6 +108,22 @@ describe("AI ACP session registry interrupts", () => {
 
   afterAll(async () => {
     await getPool().end();
+  });
+
+  it("classifies publication from a non-owning host as permanent", async () => {
+    await ensureAiSessionsSchema();
+    await expect(
+      upsertProjectHostAiSession({
+        authenticated_host_id: HOST_ID,
+        record: {
+          session_key: "unauthorized-host-session",
+          project_id: PROJECT_ID,
+          state: "completed",
+          terminal: true,
+          updated_at: "2026-09-15T00:00:00.000Z",
+        },
+      }),
+    ).rejects.toMatchObject({ code: PROJECT_HOST_SESSION_UNAUTHORIZED });
   });
 
   it("keeps older active sessions ahead of terminal history when limiting results", async () => {
