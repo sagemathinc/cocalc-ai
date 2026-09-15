@@ -3,11 +3,15 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 import { randomUUID } from "node:crypto";
-import { PglitePool } from "@cocalc/database/pool/pglite";
+import {
+  agentSchemaBackend,
+  createAgentSchemaFixture,
+} from "./agent-schema-fixture";
+import type { AgentSchemaFixture } from "./agent-schema-fixture";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { schemaNeedsSync, syncSchema } from "./sync";
 
-let db: PglitePool;
+let db: AgentSchemaFixture;
 jest.mock("@cocalc/database/pool", () => ({
   ...jest.requireActual("@cocalc/database/pool"),
   getClient: () => ({
@@ -36,10 +40,10 @@ async function snapshot() {
 
 describe("external agent schema persistence", () => {
   let oldDatabase: string | undefined;
-  beforeEach(() => {
+  beforeEach(async () => {
     oldDatabase = process.env.COCALC_DB;
-    process.env.COCALC_DB = "pglite";
-    db = new PglitePool();
+    process.env.COCALC_DB = agentSchemaBackend();
+    db = await createAgentSchemaFixture();
   });
   afterEach(async () => {
     await db.end();

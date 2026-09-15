@@ -5,6 +5,23 @@ deployment or production flag changes are authorized by this work.
 
 ## Current work direction: September 15
 
+### Real PostgreSQL schema fixture qualification
+
+The three agent schema suites now support an opt-in disposable PostgreSQL
+backend via `COCALC_AGENT_SCHEMA_PG_SOCKET`; PGlite remains the default.
+Each PostgreSQL test creates and drops its own random database. The adapter
+uses a local Unix socket on port 55439 and does not select application databases.
+
+All 14 fixtures passed on PostgreSQL 18.4, including the PostgreSQL-specific
+concurrent index DDL, repeated schema convergence and preserved legacy records.
+Database build passed. The temporary cluster reported zero remaining fixture
+databases and was stopped. The operator handoff contains reproduction commands.
+No permissions, production flags, or dev-site database rows changed.
+
+This is real PostgreSQL fixture evidence, not a full production snapshot/load
+qualification or a final messaging smoke. Existing QA links still need explicit
+renewal for that smoke; independent review remains paused.
+
 ### Expanded schema persistence coverage
 
 Added external identity/installation schema fixtures and RPC-link/project-fence

@@ -24,11 +24,31 @@ contains operational evidence only; private review material stays private.
 
 ## Operator controls
 
-Schema persistence checks now cover legacy/personal tables, RPC links/project
+Schema persistence checks cover legacy/personal tables, RPC links/project
 fences and external identities/installations: 14 tests pass with
 `NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --runInBand postgres/schema/agent-external.test.ts postgres/schema/agent-messaging.test.ts postgres/schema/agent-personal.test.ts`
-from `src/packages/database`. These use PGlite; production PostgreSQL migration
-under load is not qualified by them.
+from `src/packages/database`. The default uses PGlite. The same 14 fixtures also
+pass on an isolated PostgreSQL 18.4 cluster, exercising concurrent index DDL.
+This qualifies these fixtures, not migration under production load or against a
+copy of the complete production database.
+
+For real PostgreSQL, start a disposable local cluster with a Unix socket on port
+55439 and set `COCALC_AGENT_SCHEMA_PG_SOCKET` to its socket directory. The fixture
+connects as the current OS user, creates a random database for each test, and
+drops only that database on teardown. It never selects an existing application
+database. Example (run from `src/packages/database`):
+
+```sh
+qa=$(mktemp -d /tmp/agent-schema-pg-XXXXXX)
+/usr/lib/postgresql/18/bin/initdb -D "$qa/data" --auth-local=trust --auth-host=reject --no-locale --encoding=UTF8
+/usr/lib/postgresql/18/bin/pg_ctl -D "$qa/data" -l "$qa/server.log" -o "-k $qa -p 55439 -h '' -c shared_buffers=32MB" -w start
+trap '/usr/lib/postgresql/18/bin/pg_ctl -D "$qa/data" -m fast -w stop' EXIT
+COCALC_AGENT_SCHEMA_PG_SOCKET="$qa" NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --runInBand postgres/schema/agent-external.test.ts postgres/schema/agent-messaging.test.ts postgres/schema/agent-personal.test.ts
+```
+
+September 15 verification used PostgreSQL 18.4, found zero leftover fixture
+databases after testing, and stopped the disposable cluster. No dev-site or
+production database was changed.
 
 These are process environment flags, not the account UI preference. Only the
 literal value `1` enables each flag; leave unset for a new, disabled deployment.

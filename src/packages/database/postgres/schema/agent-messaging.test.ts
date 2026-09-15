@@ -4,11 +4,15 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { PglitePool } from "@cocalc/database/pool/pglite";
+import {
+  agentSchemaBackend,
+  createAgentSchemaFixture,
+} from "./agent-schema-fixture";
+import type { AgentSchemaFixture } from "./agent-schema-fixture";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import { syncSchema, schemaNeedsSync } from "./sync";
 
-let db: PglitePool;
+let db: AgentSchemaFixture;
 jest.mock("@cocalc/database/pool", () => ({
   ...jest.requireActual("@cocalc/database/pool"),
   getClient: () => ({
@@ -122,8 +126,8 @@ describe("agent messaging declarative schema", () => {
   let oldDatabase: string | undefined;
   beforeEach(async () => {
     oldDatabase = process.env.COCALC_DB;
-    process.env.COCALC_DB = "pglite";
-    db = new PglitePool();
+    process.env.COCALC_DB = agentSchemaBackend();
+    db = await createAgentSchemaFixture();
     await db.query("CREATE TABLE projects(project_id UUID PRIMARY KEY)");
   });
   afterEach(async () => {
