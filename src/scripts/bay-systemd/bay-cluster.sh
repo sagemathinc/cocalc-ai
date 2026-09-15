@@ -307,11 +307,22 @@ prepare_seed_conat_password_file() {
 
 prepare_bay_credentials() {
   BAY_CREDENTIAL_BOOTSTRAP_FILE="${TEMP_DIR}/bay-credential-bootstrap.json"
-  local entry bay_id credential_file
+  local entry bay_id remote credential_file
   for entry in "${BAYS[@]}"; do
     bay_id="$(bay_id_at "$entry")"
+    remote="$(bay_remote_at "$entry")"
     credential_file="${TEMP_DIR}/${bay_id}-credential"
-    printf 'cocalc-bay-v1.%s.%s\n' "$(cat /proc/sys/kernel/random/uuid)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')" > "$credential_file"
+    # install-topology is routinely rerun to change addresses and ports. Keep
+    # the enrolled credential stable; rotation is a separate, explicit
+    # operator action that updates the live seed before replacing the bay file.
+    if ssh_remote "$remote" "sudo test -s /etc/cocalc/bay-credential"; then
+      log "Reuse existing credential for ${bay_id} (${remote})"
+      ssh_remote "$remote" "sudo cat /etc/cocalc/bay-credential" \
+        > "$credential_file"
+    else
+      log "Generate initial credential for ${bay_id} (${remote})"
+      printf 'cocalc-bay-v1.%s.%s\n' "$(cat /proc/sys/kernel/random/uuid)" "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')" > "$credential_file"
+    fi
     chmod 0600 "$credential_file"
     BAY_CREDENTIAL_FILES+=("${bay_id}=${credential_file}")
   done
