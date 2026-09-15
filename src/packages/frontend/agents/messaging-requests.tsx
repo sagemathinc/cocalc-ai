@@ -10,6 +10,7 @@ import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useSourceAgentName } from "./source-agent-name";
+import { useAgentMessagingUI } from "./use-ui-preference";
 
 /** A first-party typed request inbox. Reading/denying/approving never dispatches a message. */
 interface Props {
@@ -20,7 +21,8 @@ interface Props {
 }
 export function AgentMessagingRequests(props: Props) {
   const accountId = useTypedRedux("account", "account_id");
-  return accountId ? (
+  const enabled = useAgentMessagingUI();
+  return accountId && enabled ? (
     <AccountMessagingRequests
       key={`${accountId}:${props.projectId}:${props.path}:${props.threadId}`}
       accountId={accountId}

@@ -3,6 +3,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentCommunication } from "../agent-communication";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+jest.mock("@cocalc/frontend/agents/use-ui-preference", () => ({
+  useAgentMessagingUI: () => true,
+}));
 
 jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => null,

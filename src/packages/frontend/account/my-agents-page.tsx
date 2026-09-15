@@ -27,6 +27,7 @@ import type { SettingsPageDefinition } from "./settings-page";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { useBoundAgentAccount } from "@cocalc/frontend/agents/use-bound-account";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { useAgentMessagingUI } from "@cocalc/frontend/agents/use-ui-preference";
 import {
   formatConnectionTime,
   groupPersonalConnectionPairs,
@@ -40,6 +41,7 @@ export function MyAgentsPage() {
 }
 
 function AccountAgentsPage() {
+  const messagingUI = useAgentMessagingUI();
   const tableId = useId();
   const [expandedPair, setExpandedPair] = useState<string>();
   const boundAccount = useBoundAgentAccount();
@@ -151,6 +153,20 @@ function AccountAgentsPage() {
         site. Listing agents reads metadata only; Open navigates to their
         existing thread. Shared chat history remains shared.
       </p>
+      {!messagingUI && (
+        <Alert
+          type="info"
+          title="Experimental setup controls are hidden"
+          description={
+            <>
+              Existing communication permissions are unchanged. You can inspect,
+              pause or revoke them here. Enable experimental agent messaging in{" "}
+              <a href="/settings/ai">AI settings</a> to name agents or approve
+              new connections.
+            </>
+          }
+        />
+      )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
         <Input.Search
           aria-label="Search My Agents"
@@ -484,7 +500,7 @@ function AccountAgentsPage() {
                                     )}
                                   </div>
                                   <Space wrap>
-                                    {needsApproval && (
+                                    {messagingUI && needsApproval && (
                                       <Button
                                         disabled={
                                           busy || connections?.controls?.paused
@@ -671,14 +687,14 @@ function AccountAgentsPage() {
         </table>
         {connections?.connections.length === 0 && (
           <p>
-            No connections yet. Select a named agent with @ in an agent composer
-            to approve communication there.
+            No connections yet. Enable experimental agent messaging in AI
+            settings to set up communication using @ in an agent composer.
           </p>
         )}
       </section>
       <AgentMessagingRequests />
       <ExternalAgentInstallations revision={revision} />
-      {approval && (
+      {messagingUI && approval && (
         <ConnectionApproval
           value={approval}
           onClose={() => {

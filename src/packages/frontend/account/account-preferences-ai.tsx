@@ -18,6 +18,7 @@ import CodexSessionsPanel from "./codex-sessions-panel";
 import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import type { SettingsPageDefinition } from "./settings-page";
+import { AgentMessagingPreference } from "./agent-messaging-preference";
 
 export const ACCOUNT_PREFERENCES_AI_PAGE = {
   component: AccountPreferencesAI,
@@ -67,6 +68,7 @@ export function AccountPreferencesAI() {
     return (
       <>
         {codexSessionsSection}
+        <AgentMessagingPreference />
         <Typography.Title level={4} style={{ marginBottom: 8 }}>
           Choose one: ChatGPT Plan or OpenAI API key
         </Typography.Title>
@@ -90,6 +92,7 @@ export function AccountPreferencesAI() {
   return (
     <>
       {codexSessionsSection}
+      <AgentMessagingPreference />
       <OtherSettings
         other_settings={other_settings}
         is_stripe_customer={

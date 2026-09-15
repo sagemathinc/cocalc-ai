@@ -9,6 +9,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { cachedAgentNameContext } from "./name-context";
 
 jest.mock("./name-context", () => ({ cachedAgentNameContext: jest.fn() }));
+jest.mock("./use-ui-preference", () => ({ useAgentMessagingUI: () => true }));
 
 const account = "11111111-1111-4111-8111-111111111111";
 const source = {
@@ -149,12 +150,10 @@ test("composer approval shows and saves cached source context without another id
     thread_id: "a",
     thread_title: "Current draft thread",
   };
-  jest
-    .mocked(cachedAgentNameContext)
-    .mockReturnValue({
-      project_title: "Build project",
-      thread_title: "Current draft thread",
-    });
+  jest.mocked(cachedAgentNameContext).mockReturnValue({
+    project_title: "Build project",
+    thread_title: "Current draft thread",
+  });
   const user = userEvent.setup();
   render(
     <ConnectionApproval
@@ -185,12 +184,10 @@ test("composer approval shows and saves cached source context without another id
 });
 
 test("explicit naming preserves supplied titles and fills missing project context from the cache", async () => {
-  jest
-    .mocked(cachedAgentNameContext)
-    .mockReturnValue({
-      project_title: "Build project",
-      thread_title: "Cached title",
-    });
+  jest.mocked(cachedAgentNameContext).mockReturnValue({
+    project_title: "Build project",
+    thread_title: "Cached title",
+  });
   const user = userEvent.setup();
   render(
     <NameAgent
@@ -345,12 +342,10 @@ test("typed in-turn request requires a source name to approve but can still be d
 });
 
 test("typed request names the source before approving its exact request", async () => {
-  jest
-    .mocked(cachedAgentNameContext)
-    .mockReturnValue({
-      project_title: "Build project",
-      thread_title: "Build the PR",
-    });
+  jest.mocked(cachedAgentNameContext).mockReturnValue({
+    project_title: "Build project",
+    thread_title: "Build the PR",
+  });
   const user = await openUnnamedRequest();
   await user.type(
     screen.getByRole("textbox", { name: "Source agent name" }),

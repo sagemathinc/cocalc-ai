@@ -21,6 +21,7 @@ import {
 } from "@cocalc/frontend/agents/api";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
+import { useAgentMessagingUI } from "@cocalc/frontend/agents/use-ui-preference";
 
 interface Opts {
   avatarUserSize?: number;
@@ -33,13 +34,14 @@ export function useMentionableUsers(): (
 ) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
-  const { directory } = useNamedAgents();
+  const enabled = useAgentMessagingUI();
+  const { directory } = useNamedAgents(enabled);
   const { states } = useAgentMentionContext();
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {
       const query = search?.toLowerCase() ?? "";
-      const agents: Item[] = (directory?.agents ?? [])
+      const agents: Item[] = (enabled ? (directory?.agents ?? []) : [])
         .filter((agent) =>
           `${agent.name} ${agent.thread_title ?? ""} ${agent.project_title ?? ""}`
             .toLowerCase()
@@ -78,7 +80,7 @@ export function useMentionableUsers(): (
         }).map((item) => ({ ...item, group: "People" })),
       ];
     };
-  }, [project_id, user_map, directory, states]);
+  }, [project_id, user_map, directory, states, enabled]);
 }
 
 interface Props {

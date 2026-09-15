@@ -13,6 +13,10 @@ import { openAgentThread } from "./open-agent";
 jest.mock("./open-agent", () => ({ openAgentThread: jest.fn() }));
 
 let mockAccount = "11111111-1111-4111-8111-111111111111";
+let mockMessagingUI = true;
+jest.mock("./use-ui-preference", () => ({
+  useAgentMessagingUI: () => mockMessagingUI,
+}));
 let mockFreshAction: (() => Promise<void>) | undefined;
 let mockDeferAuth = false;
 let mockCancelAuth = false;
@@ -124,6 +128,7 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
 }));
 
 beforeEach(() => {
+  mockMessagingUI = true;
   jest.clearAllMocks();
   jest.mocked(openAgentThread).mockResolvedValue();
   mockAccount = reference.naming_account_id;
@@ -185,6 +190,40 @@ function Composer({
     </>
   );
 }
+
+test("opting out hides naming and approval without changing private draft or permissions", async () => {
+  mockMessagingUI = false;
+  const user = userEvent.setup();
+  const onSend = jest.fn();
+  render(
+    <>
+      <NameAgent
+        projectId={source.project_id}
+        path="/source.chat"
+        threadId="source"
+      />
+      <Composer onSend={onSend} />
+    </>,
+  );
+  expect(screen.queryByRole("button", { name: "Name agent" })).toBeNull();
+  const draft = (
+    screen.getByRole("textbox", {
+      name: "Private draft",
+    }) as HTMLTextAreaElement
+  ).value;
+  await user.click(screen.getByRole("button", { name: "Select reviewer" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Send" }));
+  expect(onSend).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("textbox", { name: "Private draft" })).toHaveValue(
+    draft,
+  );
+  expect(mockApi.resolveIdentity).not.toHaveBeenCalled();
+  expect(mockApi.registerIdentity).not.toHaveBeenCalled();
+  expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
+  expect(mockApi.setPersonalMessagingState).not.toHaveBeenCalled();
+  expect(mockApi.setPersonalConnectionState).not.toHaveBeenCalled();
+});
 
 test("Name agent opens by keyboard and Escape restores focus without registration", async () => {
   const user = userEvent.setup();

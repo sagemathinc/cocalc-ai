@@ -19,6 +19,7 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { useChatComposerDraft } from "./use-chat-composer-draft";
 import { agentThreadUrl, parseAgentThreadUrl } from "./agent-thread-url";
+import { useAgentMessagingUI } from "@cocalc/frontend/agents/use-ui-preference";
 
 type Api = Pick<
   AgentApi,
@@ -37,7 +38,9 @@ interface Props {
 }
 
 export function AgentCommunication(props: Props) {
+  const enabled = useAgentMessagingUI();
   const [open, setOpen] = useState(false);
+  if (!enabled) return null;
   return (
     <section aria-label="Agent communication" style={{ marginTop: 16 }}>
       <Button size="small" aria-expanded={open} onClick={() => setOpen(!open)}>

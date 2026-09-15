@@ -27,7 +27,7 @@ export function namedAgentReference(agent: NamedAgent): AgentMentionReference {
   };
 }
 
-export function useNamedAgents() {
+export function useNamedAgents(enabled = true) {
   const accountId = useTypedRedux("account", "account_id");
   const [revision, setRevision] = useState(0);
   const [state, setState] = useState<{
@@ -45,7 +45,7 @@ export function useNamedAgents() {
   }, []);
   useEffect(() => {
     let disposed = false;
-    if (!accountId) {
+    if (!accountId || !enabled) {
       setState({ loading: false });
       return;
     }
@@ -61,6 +61,10 @@ export function useNamedAgents() {
     return () => {
       disposed = true;
     };
-  }, [accountId, revision]);
-  return state.accountId === accountId ? state : { loading: !!accountId };
+  }, [accountId, revision, enabled]);
+  return !enabled
+    ? { loading: false }
+    : state.accountId === accountId
+      ? state
+      : { loading: !!accountId };
 }
