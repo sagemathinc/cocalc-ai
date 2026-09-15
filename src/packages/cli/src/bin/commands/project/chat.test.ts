@@ -72,6 +72,83 @@ test("named send uses one scoped attempt and never the human send path", async (
   }
 });
 
+test("same-project attachment send uses trusted identity and preserves selected paths", async () => {
+  const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  const paths = [
+    { kind: "project-file", path: "/tmp/report.pdf" },
+    { kind: "project-file", path: "/tmp/results.json" },
+  ];
+  const calls: any[] = [];
+  const resolver = mock.method(
+    require("../../core/agent-destination"),
+    "resolveRuntimeAgentName",
+    async () => target,
+  );
+  const reader = mock.method(
+    require("../../core/agent-attachments"),
+    "readAgentFileReferences",
+    async (input: string[]) => {
+      assert.deepEqual(input, ["report.pdf", "results.json"]);
+      return { kind: "project-files", files: paths };
+    },
+  );
+  let sourceProject = target.project_id;
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      calls.push(request);
+      if (request.action === "whoami")
+        return { identity: { project_id: sourceProject } };
+      return { ...request, outcome: "accepted", observed_at: Date.now() };
+    },
+  );
+  const program = new Command();
+  registerProjectChatCommands(program.command("project"), {
+    globalsFrom: () => ({}),
+    emitSuccess: () => {},
+    withContext: () => {
+      throw Error("broad auth fallback");
+    },
+  } as any);
+  const oldExit = process.exitCode;
+  const args = [
+    "project",
+    "chat",
+    "send",
+    "--to",
+    "reviewer",
+    "--attach",
+    "report.pdf",
+    "--attach",
+    "results.json",
+    "Review these",
+  ];
+  try {
+    await program.parseAsync(args, { from: "user" });
+    assert.deepEqual(
+      calls.map((c) => c.action),
+      ["whoami", "send"],
+    );
+    assert.deepEqual(calls[1].file_references, paths);
+    sourceProject = randomUUID();
+    await assert.rejects(
+      program.parseAsync(args, { from: "user" }),
+      /Cross-project attachments are not yet enabled/,
+    );
+    assert.deepEqual(
+      calls.map((c) => c.action),
+      ["whoami", "send", "whoami"],
+    );
+    assert.equal(reader.mock.callCount(), 1);
+  } finally {
+    process.exitCode = oldExit;
+    resolver.mock.restore();
+    reader.mock.restore();
+    transport.mock.restore();
+  }
+});
+
 function setup() {
   const program = new Command();
   program.exitOverride();

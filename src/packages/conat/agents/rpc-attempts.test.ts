@@ -176,3 +176,22 @@ test("validation bounds UTF-8 payloads and forbids claimed sender fields", () =>
     validateAgentRpcRequest({ ...send, version: 1 } as any),
   ).toThrow();
 });
+
+test("changing attached file references conflicts with an existing attempt", async () => {
+  const evidence = new AgentRpcAttempts(),
+    source = endpoint();
+  const send = {
+    ...request(),
+    file_references: [{ kind: "project-file" as const, path: "/tmp/first" }],
+  };
+  const execute = jest.fn(async () => rpcOutcome(send, "accepted"));
+  await evidence.send(source, send, execute);
+  const changed = {
+    ...send,
+    file_references: [{ kind: "project-file" as const, path: "/tmp/second" }],
+  };
+  expect((await evidence.send(source, changed, execute)).outcome).toBe(
+    "rejected",
+  );
+  expect(execute).toHaveBeenCalledTimes(1);
+});

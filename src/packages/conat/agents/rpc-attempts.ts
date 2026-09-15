@@ -71,7 +71,13 @@ export class AgentRpcAttempts {
     this.prune();
     const key = this.key(source, request, accountId);
     const hash = createHash("sha256")
-      .update(JSON.stringify([request.body, request.guidance === true]))
+      .update(
+        JSON.stringify([
+          request.body,
+          request.guidance === true,
+          request.file_references ?? null,
+        ]),
+      )
       .digest("hex");
     const previous = this.entries.get(key);
     if (previous) {

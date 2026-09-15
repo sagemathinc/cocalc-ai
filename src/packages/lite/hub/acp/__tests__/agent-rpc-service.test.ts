@@ -337,6 +337,51 @@ test("host admission is shared across service facades and rejects before chat or
   ).toBe("accepted");
 });
 
+test("same-project references are validated after startup and supplied with the prompt", async () => {
+  const { e, deps, service, db } = fixture();
+  e.target.project_id = e.source.project_id;
+  e.file_references = [{ kind: "project-file", path: "/tmp/report.pdf" }];
+  let running = false;
+  deps.ensureRunning = async () => {
+    running = true;
+  };
+  deps.validateFileReferences = jest.fn(async () => {
+    expect(running).toBe(true);
+  });
+  expect((await service.submit(e)).outcome).toBe("accepted");
+  expect(deps.validateFileReferences).toHaveBeenCalledWith(e);
+  expect(db.set.mock.calls[0][0].agent_rpc.file_references).toEqual(
+    e.file_references,
+  );
+  expect(JSON.stringify((deps.admit as jest.Mock).mock.calls[0][0])).toContain(
+    "/tmp/report.pdf",
+  );
+});
+
+test("missing attachment prevents chat insertion and execution without text-only fallback", async () => {
+  const { e, deps, service, db } = fixture();
+  e.target.project_id = e.source.project_id;
+  e.file_references = [{ kind: "project-file", path: "/tmp/missing" }];
+  deps.validateFileReferences = async () => {
+    throw new Error("ENOENT");
+  };
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "rejected",
+    code: "attachment_unavailable",
+    chat_effect: "none",
+  });
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("cross-project path references fail before any file/startup work", async () => {
+  const { e, deps, service, db } = fixture();
+  e.file_references = [{ kind: "project-file", path: "/home/user/secret" }];
+  await expect(service.submit(e)).rejects.toThrow("cannot cross projects");
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(db.set).not.toHaveBeenCalled();
+});
+
 test("startup timeout retains host capacity until the actual startup settles", async () => {
   jest.useFakeTimers();
   try {

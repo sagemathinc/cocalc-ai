@@ -1,4 +1,8 @@
 import { requireUuid } from "./protocol";
+import {
+  validateAttachmentMetadata,
+  type AgentFileReference,
+} from "./attachments";
 
 export interface AgentEndpoint {
   project_id: string;
@@ -14,6 +18,7 @@ export interface AgentRpcAttempt {
 export interface AgentRpcSend extends AgentRpcAttempt {
   body: string;
   guidance?: boolean;
+  file_references?: AgentFileReference[];
 }
 
 export interface AgentRpcOutcome extends AgentRpcAttempt {
@@ -35,6 +40,7 @@ export const AGENT_RPC_FAILURE_CODES = [
   "execution_not_allowed",
   "execution_ack_unknown",
   "submission_deadline",
+  "attachment_unavailable",
 ] as const;
 export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
 
@@ -83,7 +89,12 @@ export function validateAgentRpcRequest(value: AgentRpcRequest): void {
     requireUuid(value.attempt_id, "attempt_id");
     validateAgentEndpoint(value.target);
     if (value.action === "send") {
-      keys.push("body", "guidance");
+      keys.push("body", "guidance", "file_references");
+      if (value.file_references !== undefined)
+        validateAttachmentMetadata({
+          kind: "project-files",
+          files: value.file_references,
+        });
       if (
         typeof value.body !== "string" ||
         !value.body.trim() ||

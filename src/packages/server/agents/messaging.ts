@@ -98,8 +98,8 @@ export async function startAgentMessaging(
     queue: "agent-messaging-v1",
     // This subject currently accepts metadata/text only, never file bytes.
     receiveLimits: {
-      maxMessageBytes: 64 * 1024,
-      maxInflightBytes: 2 * 1024 * 1024,
+      maxMessageBytes: 128 * 1024,
+      maxInflightBytes: 4 * 1024 * 1024,
       maxInflightMessages: 32,
     },
     maxQueue: 32,

@@ -1,6 +1,8 @@
 import { Command } from "commander";
 import { randomUUID } from "node:crypto";
 import { sendIdentityMessage } from "../../core/agent-message";
+import { readAgentFileReferences } from "../../core/agent-attachments";
+import type { AgentSelf } from "@cocalc/conat/agents/protocol";
 import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { registerChatAgentCommands } from "./chat-agents";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
@@ -84,6 +86,12 @@ export function registerProjectChatCommands(
       "stable idempotency key for identity sends and receipt lookup",
     )
     .option("--stdin", "read the message from standard input")
+    .option(
+      "--attach <path>",
+      "attach a same-project live file reference (repeatable; cross-project snapshots not yet available)",
+      (value: string, paths: string[]) => [...paths, value],
+      [],
+    )
     .option("--rpc", "opt in to V2 single-attempt RPC (no delivery retries)")
     .option(
       "--attempt-id <uuid>",
@@ -107,6 +115,7 @@ export function registerProjectChatCommands(
           requestId?: string;
           rpc?: boolean;
           attemptId?: string;
+          attach?: string[];
         },
         command: Command,
       ) => {
@@ -152,6 +161,21 @@ export function registerProjectChatCommands(
           process.stderr.write(
             `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
           );
+          let file_references;
+          if (opts.attach?.length) {
+            const self = (await sendIdentityMessage(
+              { action: "whoami" },
+              globals.api,
+            )) as AgentSelf;
+            if (self.identity?.project_id !== target.project_id)
+              throw new Error(
+                "Cross-project attachments are not yet enabled; no message was sent",
+              );
+            const metadata = await readAgentFileReferences(opts.attach);
+            if (metadata.kind !== "project-files")
+              throw new Error("invalid file references");
+            file_references = metadata.files;
+          }
           const result = (await sendIdentityMessage(
             {
               version: 2,
@@ -160,6 +184,7 @@ export function registerProjectChatCommands(
               target,
               body: prompt,
               guidance: opts.guidance,
+              ...(file_references ? { file_references } : {}),
             },
             globals.api,
           )) as AgentRpcOutcome;
@@ -173,6 +198,10 @@ export function registerProjectChatCommands(
           return;
         }
         if (opts.attemptId) throw new Error("--attempt-id requires --rpc");
+        if (opts.attach?.length)
+          throw new Error(
+            "--attach requires a scoped agent send with --to or --rpc",
+          );
         if (
           opts.toAgent ||
           opts.requestId ||
