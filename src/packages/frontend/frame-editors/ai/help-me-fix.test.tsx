@@ -13,6 +13,19 @@ const dispatchNavigatorPromptIntent = jest.fn();
 const submitNavigatorPromptInWorkspaceChat = jest.fn();
 const createNavigatorIntentMessage = jest.fn();
 
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: () => "account-1",
+  useProjectMapField: () => "runtime-1",
+}));
+jest.mock("@cocalc/frontend/chat/codex-defaults", () => ({
+  getDefaultCodexNewChatDefaults: () => ({ model: "gpt-5.6-sol" }),
+}));
+jest.mock("@cocalc/frontend/chat/codex-model-discovery", () => ({
+  cachedAccountCodexModels: () => undefined,
+  discoverAccountCodexModels: async () => undefined,
+  preferredAvailableCodexModel: () => undefined,
+}));
+
 jest.mock("antd", () => {
   const Div = ({ children }: any) => <div>{children}</div>;
   const Select = ({ value, options, onChange }: any) => (

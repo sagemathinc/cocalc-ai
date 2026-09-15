@@ -106,6 +106,34 @@ it("ignores a credential revision mismatch from live discovery", async () => {
   expect(writeCachedCodexModelCatalog).not.toHaveBeenCalled();
 });
 
+it("accepts actual project-host responses without a credential revision", async () => {
+  (getLiveCodexUsageStatus as jest.Mock).mockResolvedValue({
+    paymentSource: { source: "subscription" },
+    models,
+  });
+  expect(await discoverAccountCodexModels("project", source, true)).toEqual(
+    models,
+  );
+  expect(writeCachedCodexModelCatalog).toHaveBeenCalledWith(
+    expect.objectContaining({ subscriptionRevision: "rev-1", models }),
+  );
+});
+
+it("rejects an in-flight catalog if the credential changed during discovery", async () => {
+  (getLiveCodexUsageStatus as jest.Mock).mockResolvedValue({
+    paymentSource: { source: "subscription" },
+    models,
+  });
+  (fetchCodexPaymentSourceForSubmit as jest.Mock).mockResolvedValue({
+    ...source,
+    subscriptionRevision: "new-credential",
+  });
+  expect(
+    await discoverAccountCodexModels("project", source, true),
+  ).toBeUndefined();
+  expect(writeCachedCodexModelCatalog).not.toHaveBeenCalled();
+});
+
 it("does not let an older probe overwrite a forced recovery refresh", async () => {
   let finishOld;
   (getLiveCodexUsageStatus as jest.Mock)

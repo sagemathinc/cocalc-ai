@@ -1041,8 +1041,9 @@ export default function Message({
         : formatCodexErrorMarkdown(
             linkifyCommitHashes(renderedMessageValue),
             lite,
+            acpState === "error",
           ),
-    [is_viewers_message, renderedMessageValue],
+    [is_viewers_message, renderedMessageValue, acpState],
   );
   const showCodexErrorHelp =
     isCodexThread && !is_viewers_message && acpState === "error";

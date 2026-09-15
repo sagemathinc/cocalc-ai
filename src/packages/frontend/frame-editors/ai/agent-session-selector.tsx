@@ -21,6 +21,7 @@ import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-s
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
+import { getDefaultCodexNewChatDefaults } from "@cocalc/frontend/chat/codex-defaults";
 import {
   cachedAccountCodexModels,
   discoverAccountCodexModels,
@@ -91,11 +92,12 @@ export function usePersistentAgentSessionSelection({
     "tools_version",
   ]);
   const modelScope = `${accountId}:${project_id}:${runtimeVersion}:${paymentSource?.source}:${paymentSource?.subscriptionRevision}`;
+  const preferredModel = getDefaultCodexNewChatDefaults().model;
   useEffect(() => {
     if (!enabled || paymentSource?.source !== "subscription") return;
     let cancelled = false;
     const apply = (models: CodexModelCapabilityInfo[] | undefined) => {
-      const model = preferredAvailableCodexModel(models)?.model;
+      const model = preferredAvailableCodexModel(models, preferredModel)?.model;
       if (!cancelled && model)
         setDiscoveredDefault({ scope: modelScope, model });
     };
@@ -106,7 +108,7 @@ export function usePersistentAgentSessionSelection({
     return () => {
       cancelled = true;
     };
-  }, [enabled, project_id, modelScope]);
+  }, [enabled, project_id, modelScope, preferredModel]);
   const defaultCodexModel =
     paymentSource?.source === "site-api-key" &&
     paymentSource.siteFundedCodex?.enabled
@@ -114,7 +116,7 @@ export function usePersistentAgentSessionSelection({
         DEFAULT_CODEX_MODEL_NAME)
       : discoveredDefault?.scope === modelScope
         ? discoveredDefault.model
-        : DEFAULT_CODEX_MODEL_NAME;
+        : preferredModel;
 
   useEffect(() => {
     if (!enabled) return;

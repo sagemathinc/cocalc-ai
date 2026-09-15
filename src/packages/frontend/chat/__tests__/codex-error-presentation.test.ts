@@ -15,6 +15,8 @@ it("recognizes only the specific ChatGPT model rejection and hides raw error mar
     "Choose an available model",
   );
   expect(formatCodexErrorMarkdown(error)).not.toContain("<span");
+  const explanation = `Here is an explanation of this error: ${error}\nMore useful information.`;
+  expect(formatCodexErrorMarkdown(explanation, false, false)).toBe(explanation);
   for (const other of [
     "model not found",
     "rate limit",

@@ -52,9 +52,10 @@ export function formatCodexErrorForDisplay(
 export function formatCodexErrorMarkdown(
   error: string,
   liteMode = false,
+  isError = true,
 ): string {
   const detail = `${error ?? ""}`;
-  if (unavailableChatGptCodexModel(detail))
+  if (isError && unavailableChatGptCodexModel(detail))
     return formatCodexErrorForDisplay(detail, liteMode);
   if (!isCodexUpgradeRequiredError(detail)) {
     return detail;
