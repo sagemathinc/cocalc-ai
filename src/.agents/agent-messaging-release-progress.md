@@ -5,6 +5,11 @@ qualified for production**. No production deployment or flag changes performed.
 Security/adversarial review remains paused at maintainer request; no claim of
 independent approval is made. Private material remains outside this document.
 
+Autonomous preparation is blocked on the remaining human/review prerequisites,
+not on native messaging. The first-party external installation list was checked:
+all three QA installations are revoked and expired. A new external enrollment
+must use its normal human approval flow. No credential was revived or replaced.
+
 ## Source and artifacts
 
 - Worktree: `/home/user/scratch/agent-mentions`, branch `feature/agent-mentions`.
