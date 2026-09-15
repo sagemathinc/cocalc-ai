@@ -17,19 +17,19 @@ import {
   acpDaemonControlClient,
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
-import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
+  getAcpWorker,
   listAcpWorkers,
   stopAcpWorker,
   type AcpWorkerRow,
+  type AcpWorkerState,
 } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
-  hasQueuedOrRunningAcpJobs,
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
-  oldestQueuedAcpJobTimestamp,
+  oldestClaimableQueuedAcpJobTimestamp,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
 import { countRunningAcpTurnLeasesForWorker } from "@cocalc/lite/hub/sqlite/acp-turns";
 import { getSoftwareVersions } from "../../software";
@@ -353,14 +353,10 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
   if (heartbeatIsFresh && Number(row.background_terminal_processes ?? 0) > 0) {
     return true;
   }
-  if (hasAcpBacklog()) {
+  if (acpBacklogStaleSince(worker_id, row.state) != null) {
     return !shouldTerminateQueueStalledWorker({ worker, row, now });
   }
   return heartbeatIsFresh;
-}
-
-function hasAcpBacklog(): boolean {
-  return hasQueuedOrRunningAcpJobs();
 }
 
 function acpJobReferenceTimestamp(row: {
@@ -373,8 +369,14 @@ function acpJobReferenceTimestamp(row: {
   return Number.isFinite(createdAt) && createdAt > 0 ? createdAt : undefined;
 }
 
-function acpBacklogStaleSince(worker_id: string): number | undefined {
-  let oldest = oldestQueuedAcpJobTimestamp();
+function acpBacklogStaleSince(
+  worker_id: string,
+  state: AcpWorkerState = "active",
+): number | undefined {
+  let oldest = oldestClaimableQueuedAcpJobTimestamp({
+    worker_id,
+    include_unassigned: state === "active",
+  });
   for (const row of listRunningAcpJobsByWorker(worker_id)) {
     const timestamp = acpJobReferenceTimestamp(row);
     if (timestamp == null) continue;
@@ -437,7 +439,9 @@ export function shouldTerminateQueueStalledWorker({
   );
   if (backgroundTerminalProcesses > 0) return false;
   if (workerHasRunningCommandJob(worker_id)) return false;
-  const backlogSince = acpBacklogStaleSince(worker_id);
+  const workerState = status?.state ?? row?.state ?? "active";
+  if (workerState === "stopped") return false;
+  const backlogSince = acpBacklogStaleSince(worker_id, workerState);
   if (backlogSince == null || now - backlogSince < stallMs) return false;
   const startedAt = Math.max(
     workerStartedAtMs(worker),

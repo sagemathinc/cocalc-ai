@@ -496,6 +496,50 @@ export function oldestQueuedAcpJobTimestamp(): number | undefined {
   return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
 }
 
+export function oldestClaimableQueuedAcpJobTimestamp({
+  worker_id,
+  include_unassigned,
+}: {
+  worker_id: string;
+  include_unassigned: boolean;
+}): number | undefined {
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) return undefined;
+  ensureInit();
+  // The queue pump only considers the first due job in each thread. A later
+  // unassigned job is not claimable while another worker owns the thread head.
+  const row = getAcpDatabase()
+    .prepare(
+      `WITH due AS (
+         SELECT *,
+                ROW_NUMBER() OVER (
+                  PARTITION BY project_id, path, thread_id
+                  ORDER BY ${THREAD_QUEUE_ORDER}
+                ) AS thread_position
+         FROM ${TABLE}
+         WHERE state = 'queued'
+           AND (available_at IS NULL OR available_at <= ?)
+       )
+       SELECT MIN(
+         CASE
+           WHEN updated_at IS NOT NULL AND updated_at > 0 THEN updated_at
+           ELSE created_at
+         END
+       ) AS oldest
+       FROM due
+       WHERE thread_position = 1
+         AND (
+           worker_id = ?
+           OR (? = 1 AND (worker_id IS NULL OR TRIM(worker_id) = ''))
+         )`,
+    )
+    .get(Date.now(), workerId, include_unassigned ? 1 : 0) as
+    | { oldest?: number | null }
+    | undefined;
+  const oldest = Number(row?.oldest ?? 0);
+  return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
+}
+
 export function latestAcpJobUpdateForWorker(
   worker_id: string,
 ): number | undefined {
