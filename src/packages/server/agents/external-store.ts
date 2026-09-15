@@ -140,7 +140,16 @@ export class ExternalAgentStore {
     account: string,
     session_hash: string,
     options: ExternalEnrollment,
+    approvalDeadline?: number,
   ) {
+    const current = () => {
+      if (
+        approvalDeadline !== undefined &&
+        (!Number.isFinite(approvalDeadline) || Date.now() >= approvalDeadline)
+      )
+        throw new Error("external login challenge expired");
+    };
+    current();
     validateExternalAgentApproval(options);
     validateExternalAgentLabel(options.label);
     if (
@@ -175,6 +184,7 @@ export class ExternalAgentStore {
       await this.validateTarget(account, target);
     await freshAuth(account, session_hash);
     return this.locked(account, async (db, controls) => {
+      current();
       if (controls.paused) throw new Error("messaging_paused");
       const previous = (
         await db.query(
@@ -218,6 +228,7 @@ export class ExternalAgentStore {
         target,
         link_id: randomUUID(),
       }));
+      current();
       const row = (
         await db.query(
           `INSERT INTO agent_external_installations
@@ -236,6 +247,7 @@ export class ExternalAgentStore {
           ],
         )
       ).rows[0];
+      current();
       return this.public(row);
     });
   }
@@ -298,6 +310,31 @@ export class ExternalAgentStore {
         !timingSafeEqual(expected, actual)
       )
         throw new Error("invalid external agent credential");
+      return this.public(row);
+    });
+  }
+
+  /** Only the trusted origin bay, after validating the challenge poll secret,
+   * may use its immutable credential hash to inspect enrollment completion. */
+  async enrollmentStatus(
+    account: string,
+    installation: string,
+    secret_hash: string,
+  ) {
+    if (typeof secret_hash !== "string" || !/^[a-f0-9]{64}$/.test(secret_hash))
+      throw new Error("invalid external secret hash");
+    return this.locked(account, async (db, controls) => {
+      requireUuid(installation, "installation_id");
+      const rows = (
+        await db.query(
+          "SELECT installation_id FROM agent_external_installations WHERE account_id=$1 AND installation_id=$2",
+          [account, installation],
+        )
+      ).rows;
+      if (!rows.length) return null;
+      const row = await this.active(db, account, installation, controls);
+      if (row.secret_hash !== secret_hash)
+        throw new Error("external_approval_conflict");
       return this.public(row);
     });
   }

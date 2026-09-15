@@ -34,6 +34,7 @@ import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { agentStore } from "./store";
+import { externalControl } from "./external";
 import { assertActor, assertAgent, assertRun } from "./access";
 import { getIdentity } from "./api";
 import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
@@ -358,6 +359,7 @@ async function submitAgentRpcOperation(
 }
 
 export const agentRpcControl: AgentRpcControlApi = {
+  external: externalControl,
   personal: (opts) => personalControl(opts),
   principal: async (opts) => {
     await local(opts, opts.source);

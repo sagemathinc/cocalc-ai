@@ -29,6 +29,25 @@ export interface ExternalAgentInstallation {
   destinations: ExternalAgentDestination[];
 }
 
+export type ExternalAgentControlRequest =
+  | {
+      action: "claim-enrollment";
+      account_id: string;
+      home_bay_id: string;
+      challenge_id: string;
+      fresh_auth_at: number;
+    }
+  | {
+      action: "enrollment-status";
+      account_id: string;
+      home_bay_id: string;
+      installation_id: string;
+      secret_hash: string;
+    };
+export type ExternalAgentControlResult =
+  | { challenge: { label: string; secret_hash: string; expires_at: string } }
+  | { installation: ExternalAgentInstallation | null };
+
 /** Parsing provides a routing hint, not authentication. */
 export function parseExternalAgentToken(token: string) {
   if (

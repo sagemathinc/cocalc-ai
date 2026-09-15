@@ -262,6 +262,25 @@ describeDb("external sender approved credential lifecycle", () => {
     ).toHaveLength(0);
   });
 
+  test("an enrollment deadline cannot be extended by slow permission checks", async () => {
+    const deadline = Date.now() + 30_000;
+    const realNow = Date.now.bind(Date);
+    const clock = jest.spyOn(Date, "now").mockImplementation(realNow);
+    validateTarget.mockImplementationOnce(async () => {
+      clock.mockReturnValue(deadline + 1);
+    });
+    try {
+      await expect(
+        store.enroll(account, "session", request().options, deadline),
+      ).rejects.toThrow("challenge expired");
+      expect(
+        (await db.query("SELECT * FROM agent_external_installations")).rows,
+      ).toHaveLength(0);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test("history alone blocks account rehome rather than losing identity attribution", async () => {
     const { approved } = await active();
     await store.revoke(account, approved.installation_id);

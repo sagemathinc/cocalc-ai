@@ -211,3 +211,25 @@ Remote credentials must not become ambient authority for other humans' turns.
 Two independent enrollments can connect native agents on two CoCalc sites; each
 destination wakes its own native recipient. No new receiver daemon or general
 federation is necessary. Arbitrary-computer receiving and federation stay deferred.
+
+### External enrollment checkpoint (2026-09-15)
+
+Implemented behind `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED=1` (not enabled on the
+live dev hubs): `auth login --agent <profile> --agent-label <label>` starts an
+existing CLI-auth challenge, generates its secret locally, and opens a browser
+approval flow with explicit named destinations and finite lifetime. Approval
+uses the human's home-bay fresh-auth session; only a sealed claim attestation
+crosses bays. Anonymous challenges do not create account-owned installations.
+External credentials are atomically stored separately from human profiles with
+0600 file permissions; the login never redeems a human session.
+
+Verification: public-auth/keyboard tests 59 passed, HTTP approval guards 8,
+challenge/routing tests 10, store/native-RPC/CLI-auth tests 43, new external CLI
+and profile tests 3. Frontend lint and package builds passed. The full dev build
+reached the final Python documentation build successfully. No live browser
+external enrollment or external send has been demonstrated yet.
+
+Next: wire external identity authentication and approved-destination checks into
+the existing bounded Conat submission path; add installation revocation UI,
+then deploy and test browser enrollment plus external CLI attachments end to end.
+These are unfinished implementation tasks, not user-input blockers.

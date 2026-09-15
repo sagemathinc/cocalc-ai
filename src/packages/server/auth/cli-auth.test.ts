@@ -122,6 +122,19 @@ describe("CLI auth login redemption", () => {
     });
   }
 
+  test("external agent challenges can never approve or redeem a human session", async () => {
+    mockApprovedChallenge({ kind: "external-agent" });
+    const { approveCliLoginChallenge, redeemCliLoginChallenge } =
+      await import("./cli-auth");
+    await expect(
+      approveCliLoginChallenge({ challenge_id, account_id }),
+    ).rejects.toThrow("unknown cli auth challenge");
+    await expect(
+      redeemCliLoginChallenge({ challenge_id, redeem_token }),
+    ).rejects.toThrow("unknown cli auth challenge");
+    expect(createClusterCliLoginSessionMock).not.toHaveBeenCalled();
+  });
+
   it("creates a cluster CLI session and records the redeemed session hash", async () => {
     mockApprovedChallenge();
     const { redeemCliLoginChallenge } = await import("./cli-auth");

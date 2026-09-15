@@ -78,6 +78,11 @@ export interface RpcSource {
   run_id: string;
 }
 export interface AgentRpcControlApi {
+  external(
+    opts: import("@cocalc/conat/agents/external").ExternalAgentControlRequest,
+  ): Promise<
+    import("@cocalc/conat/agents/external").ExternalAgentControlResult
+  >;
   personal(opts: {
     account_id: string;
     home_bay_id: string;
