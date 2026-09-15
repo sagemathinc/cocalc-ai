@@ -2,6 +2,10 @@
 
 Date: 2026-09-14.
 
+For proposed release-policy clarification, see the September 15
+[release contract](agent-messaging-release-contract.md), awaiting William's
+approval. This document remains prototype history, not final release approval.
+
 Status: approved for implementation on 2026-09-14. This is the prototype contract,
 not a claim of deployed behavior. Actual evidence and remaining work are recorded
 in `agent-mentions-progress.md`.

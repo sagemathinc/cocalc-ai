@@ -2,6 +2,11 @@
 
 Date: 2026-09-12.
 
+Release-policy clarification is proposed in the September 15
+[release contract](agent-messaging-release-contract.md), awaiting William's
+approval. Reviewers must identify which approved contract revision they use;
+this historical specification does not resolve its pending decisions.
+
 Status: adopted RPC foundation contract; updated 2026-09-13 after implementation
 and live experiments. The chosen architecture, validation, rollout requirements,
 and remaining limitations are recorded in

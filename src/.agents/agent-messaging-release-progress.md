@@ -2,12 +2,15 @@
 
 Updated September 15, 2026. Status: **dev candidate verified in part; not yet
 qualified for production**. No production deployment or flag changes performed.
-Security/adversarial review remains paused at maintainer request; no claim of
-independent approval is made. Private material remains outside this document.
+The next step is maintainer approval of the
+[release contract](agent-messaging-release-contract.md) and reconciliation of an
+exact remotely accessible review target. The full candidate has not passed
+independent review. Private material remains outside this document.
 
-Autonomous preparation is blocked on the remaining human/review prerequisites,
-not on native messaging. The first-party external installation list was checked:
-all three QA installations are revoked and expired. A new external enrollment
+Implementation is on hold while that contract and handoff are settled, not because
+native messaging is known to be unavailable. At the last recorded check, the
+first-party external installation list showed that all three QA installations
+were revoked and expired. A new external enrollment
 must use its normal human approval flow. No credential was revived or replaced.
 
 ## Source and artifacts
@@ -45,8 +48,9 @@ must use its normal human approval flow. No credential was revived or replaced.
 
 ## Remaining work and blockers
 
-- Independent review remains external/paused, not passed. Do not publish private
-  findings or fixes as part of ordinary release preparation.
+- Contract approval and a remotely accessible complete review candidate remain
+  outstanding. PR #558 is pinned to the earlier foundation, not this worktree.
+  Do not publish private findings or fixes as ordinary release preparation.
 - Final reviewed source/artifact pinning, fleet activation and production-mode
   qualification remain unfinished. Current dev evidence is not a substitute.
 - Final-version external enrollment/send smoke is unfinished; enrollment needs
@@ -56,9 +60,11 @@ must use its normal human approval flow. No credential was revived or replaced.
 - UI polish is intentionally deferred. Existing UX is sufficient for the tested
   workflow but remains awkward; no new visual redesign is required for this pass.
 
-Next: settle the final review/release checkpoint, then align only the intended
-test fleet and rerun final-version checks. No further native connection renewal
-is currently needed. Do not rebuild artifacts solely because this log changes.
+Next: William reviews the draft contract; prepare the appropriate remote private
+review PR and have the reviewer acknowledge its exact SHA, base and contract
+revision. No implementation fixes or remote publication were performed in this
+documentation pass. Later, qualify the intended matched test fleet. Recheck
+approvals when testing resumes; do not rebuild artifacts solely for doc changes.
 
 ## Reproduction and evidence
 

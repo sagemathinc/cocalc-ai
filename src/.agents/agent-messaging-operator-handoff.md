@@ -1,8 +1,10 @@
 # Agent messaging: controlled rollout handoff
 
-Status: release preparation, not permission to deploy to production. Independent
-review is paused at maintainer request and remains outstanding. This document
-contains operational evidence only; private review material stays private.
+Status: release preparation, not permission to deploy to production. Review of
+the complete candidate remains outstanding. First settle the draft
+[release contract](agent-messaging-release-contract.md) and exact remote review
+target. This document contains historical operational evidence only; private
+review material stays private. Later dated status supersedes earlier checkpoints.
 
 ## Candidate and evidence
 
