@@ -24,6 +24,12 @@ contains operational evidence only; private review material stays private.
 
 ## Operator controls
 
+Schema persistence checks now cover legacy/personal tables, RPC links/project
+fences and external identities/installations: 14 tests pass with
+`NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --runInBand postgres/schema/agent-external.test.ts postgres/schema/agent-messaging.test.ts postgres/schema/agent-personal.test.ts`
+from `src/packages/database`. These use PGlite; production PostgreSQL migration
+under load is not qualified by them.
+
 These are process environment flags, not the account UI preference. Only the
 literal value `1` enables each flag; leave unset for a new, disabled deployment.
 Changing service environment requires a controlled service reload/restart.

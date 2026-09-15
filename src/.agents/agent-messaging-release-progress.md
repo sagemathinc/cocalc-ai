@@ -5,6 +5,24 @@ deployment or production flag changes are authorized by this work.
 
 ## Current work direction: September 15
 
+### Expanded schema persistence coverage
+
+Added external identity/installation schema fixtures and RPC-link/project-fence
+coverage. Repeated sync preserves expired/revoked records, destination JSON,
+object IDs and legacy rows. External index/default drift repair preserves saved
+installation data. All three schema suites pass 14 tests; database build passes.
+No application behavior, live database, approvals, or deployment changed.
+
+```sh
+# src/packages/database
+NODE_OPTIONS=--experimental-vm-modules pnpm exec jest --runInBand postgres/schema/agent-external.test.ts postgres/schema/agent-messaging.test.ts postgres/schema/agent-personal.test.ts
+pnpm tsc --build
+```
+
+This closes the missing embedded schema coverage noted below, not live PostgreSQL
+migration qualification. Fresh QA permission and independent review remain
+separate outstanding prerequisites.
+
 ### Operator handoff and schema checks
 
 Added `agent-messaging-operator-handoff.md`: checkpoint/base, gate names,

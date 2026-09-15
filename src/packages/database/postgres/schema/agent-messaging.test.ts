@@ -132,6 +132,47 @@ describe("agent messaging declarative schema", () => {
     else process.env.COCALC_DB = oldDatabase;
   });
 
+  test("adding RPC tables preserves legacy state and repeated sync preserves links and fences", async () => {
+    await syncSchema(schema);
+    await seed();
+    const before = await snapshot();
+    const extended = {
+      ...schema,
+      agent_rpc_links: SCHEMA.agent_rpc_links,
+      agent_message_project_fences: SCHEMA.agent_message_project_fences,
+    };
+    await syncSchema(extended);
+    expect(await snapshot()).toEqual(before);
+    await db.query(
+      `INSERT INTO agent_rpc_links
+      (link_id,source_agent_id,target_agent_id,target_project_id,approved_by,reason,expires_at,revoked_at)
+      SELECT $1,agent_id,$2,$3,created_by,'expired QA link',now()-interval '1 hour',now()
+      FROM agent_identities ORDER BY agent_id LIMIT 1`,
+      [randomUUID(), randomUUID(), randomUUID()],
+    );
+    await db.query(
+      `INSERT INTO agent_message_project_fences(project_id,host_id,generation)
+      SELECT project_id,$1,$2 FROM projects`,
+      [randomUUID(), randomUUID()],
+    );
+    const records = async () => ({
+      links: (await db.query("SELECT * FROM agent_rpc_links")).rows,
+      fences: (await db.query("SELECT * FROM agent_message_project_fences"))
+        .rows,
+      objects: (
+        await db.query(`SELECT oid::text,relname FROM pg_class
+        WHERE relname IN ('agent_rpc_links','agent_message_project_fences','agent_rpc_link_source')
+        ORDER BY relname`)
+      ).rows,
+    });
+    const saved = await records();
+    await syncSchema(extended);
+    await syncSchema(extended);
+    expect(await schemaNeedsSync(extended)).toBe(false);
+    expect(await records()).toEqual(saved);
+    expect(await snapshot()).toEqual(before);
+  });
+
   test("all tables are durable and private, without local account foreign keys", () => {
     for (const table of tables) {
       expect(SCHEMA[table].user_query).toBeUndefined();
