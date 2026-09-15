@@ -8,7 +8,12 @@ production approval**. Keep findings and fixes private under SECURITY.md.
 - Repository: `sagemathinc/cocalc-ai-ghsa-rff5-g9ff-7qhf`, the temporary private
   fork of draft advisory `GHSA-rff5-g9ff-7qhf`.
 - Head branch: `review/full-agent-messaging-20260915`.
-- Base branch: `review/full-agent-messaging-base-20260915`.
+- Private review PR: https://github.com/sagemathinc/cocalc-ai-ghsa-rff5-g9ff-7qhf/pull/1
+- The advisory PR targets upstream `main`. At creation its base tip was
+  `81198e2ad82275b2c886b20bf9e4f275a671b395`; its verified merge base is the
+  comparison base below. Do not confuse the moving base tip with that fixed base.
+- A convenience branch `review/full-agent-messaging-base-20260915` also pins the
+  comparison base in the private fork; GitHub rejected it as an advisory PR base.
 - Comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
 - Application implementation checkpoint:
   `03a7db57cb6aa067695a0c79185c3423736dbd72`.
@@ -17,7 +22,7 @@ production approval**. Keep findings and fixes private under SECURITY.md.
 - This branch adds only this review packet to that checkpoint. No implementation
   fixes, deployments, credential changes or production flag changes accompany it.
 - The PR body pins the final head SHA (including this packet). Confirm that SHA,
-  the base and repository before reviewing. If they differ, report it; do not
+  the comparison base and repository before reviewing. If they differ, report it; do not
   silently review a moving branch or substitute another PR.
 
 Public PR #558 remains the earlier RPC foundation at
@@ -25,6 +30,10 @@ Public PR #558 remains the earlier RPC foundation at
 full base-to-head diff here, including personal connections, names/mentions,
 attachments, external sender login, UI opt-in/site controls and shared dependency
 changes, not merely the delta since the earlier review.
+
+No rebase/merge onto current main was performed to create this packet. At PR
+creation, main was 108 commits beyond the shared feature base. Integration with
+current main remains later qualification work, not silently included here.
 
 ## Contract And Maintainer Decisions
 
