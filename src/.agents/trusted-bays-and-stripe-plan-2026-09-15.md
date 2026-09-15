@@ -1,252 +1,209 @@
-# Trusted Bays And Stripe: Bounded Implementation Plan
+# Trusted Bays And Stripe: Minimal Implementation Plan
 
-Status: proposal for review, not authorization to implement or deploy.
+Status: maintainer-approved scope and trust model; this document describes work
+to implement, not completed work or authorization to deploy to production.
 
-This replaces the implementation approach in
-`multibay-identity-and-billing-plan-2026-09-14.md` if approved. Preserve that
-document and `/home/user/cocalc-bay-identities` as historical/reference work,
-including its uncommitted changes. Do not continue implementing its threat model.
-Do not claim that its acceptance criteria have been met.
+This supersedes the implementation approach and malicious-hub containment goals
+in `multibay-identity-and-billing-plan-2026-09-14.md`. Preserve that document and
+`/home/user/cocalc-bay-identities`, including uncommitted work, as references.
+Do not import that project's unfinished requirements into this plan.
 
-## 1. Decision And Business Purpose
+## 1. Purpose And Assumptions
 
-CoCalc hubs are trusted components of one application, distributed for capacity.
-A compromised hub is a site-level incident. We do not attempt to contain an
-actively malicious hub through independently authorized application RPCs.
+Multibay exists for one reason: **horizontal scaling to more simultaneous active
+users and projects**. Hubs may all run in one zone on operator-controlled VMs.
+This is not federation, tenant isolation, geographic distribution, high
+availability, or a new security architecture.
 
-Separate three objectives:
+Required outcome:
 
-1. Identify individual bays and rotate/revoke their credentials reliably.
-2. Preserve the existing billing authority's ordering, idempotency, recovery,
-   and financial invariants.
-3. Keep Stripe secrets and provider operations on the billing hub to reduce
-   accidental exposure and prevent unintended duplicate executors.
+1. Distinct bay credentials for reliable attribution and rotation one bay at a
+   time, without rotating the whole cluster.
+2. Accounts remain sharded across home bays. Financial operations and their
+   authoritative data go to the seed; other account/project behavior stays put.
+3. Only the seed receives global Stripe secrets and runs Stripe operations.
 
-The first and third are primarily operational hardening/least privilege. The
-second is correctness: duplicate charges, competing reservations, and ambiguous
-provider results matter even when every server is honest.
+**There are no non-development multibay deployments. Exactly three dev-only
+sites exist, with no real data that needs preserving.** Offline reset/recreation
+is acceptable. Do not build a production multibay migration, legacy-secret
+cleanup framework, or online compatibility rollout. Existing single-bay
+production data is different and must remain intact.
 
-None of this should become an indefinite prerequisite for Manchester. Production
-is currently single-bay according to the maintainer. Existing single-bay billing
-and course-sponsored compute can be tested/reviewed independently. This plan
-does not assert that sponsorship is already release-ready.
+Credential separation and fewer Stripe secret copies are operational hygiene.
+Billing ordering, transactions, idempotency, and recovery are correctness
+requirements even when every hub is honest. Both can be implemented without
+defending against a malicious enrolled hub.
 
-## 2. Explicit Security Model
+## 2. Trust Boundary
 
-Trusted: enrolled hubs, the seed, fabric/router infrastructure, operators, and
-their private databases. Trusted hubs may attest authenticated actors and perform
-internal application operations. Attribution identifies the credential used,
-not an incorruptible human actor after hub compromise.
+- Hubs, seed, fabric/router infrastructure, operators, and private databases are
+  trusted parts of one application. A hub may attest authenticated actor/session
+  context to another hub. Derive source bay identity from its credential.
+- Browsers, project processes, notebook content, and project-host principals do
+  not acquire hub authority. Preserve their existing authentication, resource
+  scopes, API authorization, input validation, and fresh-auth requirements.
+- Never promote browser-provided actor/admin flags into trusted internal context.
+  Once a hub has authenticated/authorized the request, other hubs trust that
+  context; they do not demand independently signed proof of every user action.
+- Keep hub secrets out of projects, browser assets, ordinary responses, and logs.
+  Use the existing protected transport, with TLS outside trusted loopback.
+- An operator distrusting a bay removes/disconnects it, revokes its credential,
+  and performs a full audit/reinstall. Hub compromise is a site-level incident;
+  per-bay revocation or seed-only Stripe keys do not promise containment.
 
-Untrusted: browsers, unauthenticated clients, students, notebook contents,
-project processes, and project-host principals. They must not receive hub
-credentials or access hub-only RPC merely by supplying a bay ID or actor ID.
-Project hosts retain their existing scoped permissions; they are not promoted
-to trusted hubs by this plan.
+No custom PKI, per-method delegation signatures, independent approval origin, or
+general-purpose authorization framework is needed.
 
-Required protections:
+## 3. Ownership: Keep Account Sharding
 
-- Authenticate the connection; derive bay identity from its credential, never
-  from a client-supplied label alone. Encrypt traffic outside trusted loopback.
-- Preserve public API authorization, account/project access checks, fresh-auth
-  requirements, input validation, rate limits, and safe error handling.
-- Keep hub credentials out of user projects, browser assets, logs, and ordinary
-  configuration responses. Audit the secret-setting replication path explicitly.
-- Use server-selected billing handlers and existing classified operations,
-  never user-selected modules, executable code, SQL, or arbitrary Stripe calls.
-- Revocation rejects new connections and disconnects existing ones. Suspected
-  compromise additionally requires network isolation and a site-wide incident
-  response; credential revocation is not proof the incident is contained.
+| Owner            | State and work                                                                                                                                                                                                     |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Account home bay | Sessions, passwords/MFA, ordinary account profile, user-facing control connections and projections.                                                                                                                |
+| Project/host bay | Project access and lifecycle, host/VM management, raw resource usage and its delivery.                                                                                                                             |
+| Seed             | Financial account fields, Stripe customer mappings/settings, purchases/balances/holds, subscription and purchased-entitlement source records, sponsorship accounting, transfers, billing journal/workers/webhooks. |
 
-Explicitly not promised: protection of other hubs or money from a malicious
-enrolled hub; independent financial approval in a browser controlled by that
-hub; trustworthy resource metering from a compromised component; automatic
-recovery from malicious database rollback. Do not add signed per-method actor
-delegations, independent authorization proofs, or a new certificate authority.
+Only financial calls and required financial data move. Files, terminals,
+notebooks, and other project traffic keep their existing paths. Ordinary account
+traffic must not start passing through the seed. Do not force account creation
+onto the seed or disable account sharding/rehome to simplify billing.
 
-## 3. Recommended Scope Reduction: Seed-Homed Accounts
+The request path is: user -> home hub's existing API authorization -> trusted
+internal billing call -> seed's existing executor/database -> result. Financial
+queries also go to seed; display caches and entitlement projections may stay at
+the account home, but are not authoritative balances or permission to spend.
 
-Proposed first supported topology:
+## 4. PR 1: Simple Per-Bay Credentials
 
-- All accounts, account sessions, membership, and financial records stay on the
-  seed. Account creation always chooses the seed.
-- Projects and project hosts may belong to attached bays; existing ownership
-  routing remains in use. Project data stays on project hosts.
-- Account rehome to an attached bay is rejected server-side, including operator
-  and background callers. Do not merely hide the UI option.
-- Stripe API work, payment webhooks, billing workers, and the financial journal
-  run on the seed. Resource bays send existing application requests/metering to
-  it over authenticated trusted-hub transport.
+Reuse existing Conat authentication, principal handling, and routing. Use opaque
+random credentials, not a new signing/enrollment protocol.
 
-Why: this aligns the existing account-local billing tables with the financial
-executor without extracting mixed account fields or migrating account-home
-financial state. It avoids the largest unfinished part of the previous plan.
+1. Store a per-bay credential registry at the seed: cluster ID, bay ID, credential
+   ID, secret digest, creation/revocation times. Generate 32 random bytes per
+   secret; install raw credentials only in the owning hub's restricted local
+   configuration. The seed has its own credential too.
+2. Authenticate hub connections with these credentials and attach the verified
+   bay/credential identity to requests and logs. A claimed bay ID cannot override
+   the authenticated one. Keep the existing hub-only service boundary; user and
+   project-host credentials must not gain access. No shared hub-password fallback
+   for multibay fabric connections.
+3. Preserve destination routing and existing service/reply scoping. Trusted hubs
+   may invoke existing internal application APIs; do not add hundreds of method
+   policies. A bay token is not a browser session or generic public admin token.
+4. Add small operator tooling to issue/list metadata/rotate/revoke. Rotation is
+   issue replacement -> install/reconnect that bay -> verify -> revoke old key.
+   An interrupted rotation can be resumed. Provision via trusted local tooling,
+   not a new public enrollment service.
+5. Revocation rejects reconnects and closes existing matching connections;
+   invalidate credential caches. Check this through the actual fabric/router
+   path and document any bounded propagation delay. No cluster-wide restart is
+   required for routine rotation.
+6. Update existing local-dev and systemd launch scripts to provision distinct
+   credentials securely. Keep single-bay behavior working. Do not redesign
+   deployment orchestration, account creation, or account rehome.
 
-Tradeoff: account/control-plane traffic is not horizontally sharded yet. This is
-not the final large-scale account architecture. Measure seed load before choosing
-when to implement account sharding; low financial volume alone does not prove
-the seed can support all account traffic.
+**Acceptance on lite2b:** three real hubs boot; accounts on both attached bays
+sign in and access projects across bays; source attribution is correct; invalid
+or revoked tokens and non-hub principals cannot access hub services. Rotate one
+bay while the others stay connected; revoke its old live connection and verify
+the old key cannot reconnect after restart. Exercise supported RPC transports.
 
-This topology needs explicit maintainer approval. If accounts must be distributed
-now, stop and estimate central financial storage separately. Do not smuggle that
-migration into a credential PR, proxy arbitrary database access, or copy entire
-account rows into a second database.
+## 5. PR 2: Seed Billing And Stripe, Not Seed Accounts
 
-## 4. PR 1: Distinct Credentials, Same Trusted Application
+### Route Existing Operations
 
-### Mechanism
+Use `server/purchases/billing-authority/client.ts` and its existing typed
+protocol/dispatcher. Replace the attached-bay transport rejection with a hub-only
+Conat call to seed; seed and standalone execution remain local. Do not build a
+second executor or a generic Stripe/SQL proxy.
 
-Prefer an opaque random per-bay credential over a new signing/enrollment protocol.
-Generate 32 random bytes; store a digest in the seed registry and the raw secret
-only in the destination bay's restricted local configuration (0600 file or the
-existing secret mechanism). Record cluster ID, bay ID, credential ID, creation
-time, expiration if used, and revocation time. Seed credentials are also distinct.
+Keep command IDs stable across routing retries and status/cancel calls. Reuse the
+existing classifier, journal, lease, transaction locks, fresh-auth checks, and
+uncertain-provider-result handling. Forward authenticated hub context, not raw
+user privilege claims. Status/results still require the requesting user's access.
+No attached execution fallback when seed is unavailable.
 
-Reuse the existing authenticated Conat connection/principal and routing layers.
-Choose the exact credential header/cookie after checking existing handshake code;
-it must not reuse a browser session or make a bay token a general HTTP admin key.
-Trust the fabric to carry authenticated source identity between routers. No new
-end-to-end signature envelope is required under this model.
+### Centralize Only Financial Dependencies
 
-### Implementation Steps
+Make one compact checklist of existing billing callers, their table/field
+dependencies, and the corresponding integration test. Include purchases and
+balances, customer/payment/setup/checkout flows, subscriptions/entitlements,
+refunds, collections, admin/commercial operations, webhooks/workers, and the
+existing sponsorship admission/settlement/transfer/cleanup paths.
 
-1. Inventory actual hub/fabric/router authentication consumers and project-host
-   subjects before editing. Identify which connections need a hub credential.
-2. Add registry lookup and a bay principal to the existing handshake. Unknown,
-   revoked, wrong-cluster, and malformed credentials fail closed. User and host
-   principals cannot subscribe/publish on internal hub-only subjects.
-3. Bind service registration to the addressed bay (and global services to seed).
-   Keep reply subscriptions scoped using existing transport facilities. Ordinary
-   authenticated hubs remain trusted callers; no hundreds-of-method policy audit.
-4. Update local and systemd launch scripts to provision distinct credentials.
-   Operators provision through local trusted tooling, not a public enrollment API.
-   Validate IDs, restrict file permissions, redact output, and avoid copying the
-   seed's shared password into attached configuration.
-5. Provide issue, list-metadata, rotate, and revoke operator commands. Rotation:
-   issue replacement, install/reconnect the chosen bay, verify identity, then
-   revoke old credential. Interrupted rotation is retryable; operator chooses
-   when to revoke, with no hidden grace period.
-6. Make live revocation effective by disconnecting matching authenticated
-   connections and invalidating authentication caches. Test the actual fabric
-   path, not just the registry helper. If remote routers cache trust, use bounded
-   revalidation and document/test the maximum revocation delay.
-7. Include authenticated source bay/credential ID in operational logs without
-   logging credential values. One-bay startup remains supported.
+- Store financial source records at seed, keyed by the existing account UUID.
+  Extract only billing fields currently embedded in `accounts` into a small
+  billing-account record, such as Stripe customer IDs and collection settings.
+  Do not copy entire accounts, passwords, or MFA data to satisfy billing joins.
+- Fix local database assumptions in those callers, including balance writes,
+  foreign keys, account-status reads, and transaction scopes. Fetch ordinary
+  profile/security facts through existing home-bay APIs where needed. Keep ledger
+  transactions local to seed; do not introduce distributed database transactions.
+- Keep account-home balance/entitlement displays updated using existing response
+  or projection mechanisms. Admission uses seed financial state, never a stale
+  display. Seed failure must not turn an unavailable balance into zero/free data.
+- Financial workers and provider fulfillment run only at seed. Resource bays
+  retain lifecycle control and deliver usage/cleanup results with stable retry
+  IDs using existing mechanisms. Preserve reservation, spending-limit, and cleanup
+  behavior; this is integration of sponsorship, not a rewrite of that product.
+- Financial records no longer move during account rehome. Update only affected
+  ownership metadata, export/import lists, and backup coverage. Home-bay deletion
+  or suspension must still reach existing financial fences; do not redesign the
+  account lifecycle.
 
-### Done Means
+Single-bay uses the same database and local call path. Any new billing-field
+extraction there needs a lossless, idempotent backfill preserving customer IDs,
+balances, and pending operation identities. Multibay development fixtures can be
+reset instead of migrated.
 
-Three real dev hubs start with distinct credentials; cross-bay project access and
-host control work; forged identity labels do not change attribution; project/user
-credentials cannot access hub services; rotating one bay leaves the others up;
-revoking a connected bay stops its access within the documented bound; restart
-does not restore revoked access. Test both deployed transport modes if both remain
-supported. No global per-method permission rewrite is part of this PR.
+### Keep Stripe Secrets On Seed
 
-## 5. PR 2: Seed-Only Billing For The Restricted Topology
+Exclude global Stripe API and webhook secrets from admin-settings replication
+and attached-hub settings responses; keep the publishable key available. Do not
+copy these secrets through launch scripts or environment generation. This is a
+small settings filter with focused tests, not a general secret-service project.
 
-This is not a generic Stripe HTTP proxy. Routing Stripe calls alone would leave
-ledger updates, retries, and fulfillment distributed and would not establish the
-intended correctness boundary.
+Route existing provider callers before removing their key access. Reject direct
+Stripe SDK use on attached bays, including cached clients. Route Stripe webhooks
+to seed and keep provider verification there. No custom cryptographic approval
+scheme is required. Seed-only secrets reduce copies, not malicious-hub authority.
 
-### Inventory Before Edits
+### Acceptance On lite2b
 
-Produce a compact caller checklist with destination and test for:
+- Instructor and student have different attached home bays; project/VM ownership
+  can be on another bay. Sign-in and ordinary account traffic remain home-routed.
+- Stripe test purchase, customer/payment-method flow, refund, webhook retry, and
+  a scheduled billing job work via seed. Attached settings/config have no global
+  Stripe secrets; direct attached Stripe calls fail. Single-bay regression tests
+  preserve the same financial results without remote routing.
+- Existing course allocation -> student funding selection -> small real managed
+  VM -> correct payer -> spend display -> exhaustion/shutdown/storage cleanup
+  works. Account rehome does not move or duplicate money/provider history.
+- Real-PostgreSQL concurrent spending/transfer tests conserve funds. Lost replies
+  and executor restart do not double-charge. Seed outage denies new financial
+  admission while retryable metering and cleanup are retained, not discarded.
 
-- Public purchase/payment-method/setup/checkout/customer-session paths.
-- Subscriptions, automatic collection, refunds, commercial/admin operations.
-- Stripe webhooks, fulfillment, scheduled billing and reconciliation workers.
-- Resource spending admission, usage delivery, sponsorship settlement/cleanup.
-- Stripe secret settings, environment/config generation, legacy SDK clients.
+## 6. Cutover And Limits
 
-Inspect actual runtime consumers, not just imports. Browser publishable keys are
-not secret; account-scoped customer-session secrets are not global API keys but
-still require normal account authorization and must not be logged.
+Implement as two reviewable PRs from current working code; select small useful
+pieces from the experimental branch, do not wholesale import it. First get PR 1
+booting three hubs, then connect PR 2 through actual callers. No runtime changes
+are made by updating this plan.
 
-### Implementation Steps
+For each of the three disposable dev sites: stop hubs/workers, reset/recreate
+affected local fixtures/config, issue distinct credentials, configure Stripe
+test secrets only on seed, and restart. Recreate accounts on multiple home bays.
+No valuable multibay data exists to migrate or preserve; optional fixture export
+is a convenience. Clean up real cloud resources before discarding their records.
+On failure, restore matching dev code/config/data together or recreate fixtures;
+do not replay uncertain Stripe operations. Never reset single-bay production.
 
-1. Enforce seed-homed account creation and disable account rehome away from seed.
-   Refuse billing activation when the directory contains an attached-home account
-   or attached databases contain financial source records requiring migration.
-2. Use existing account/project ownership routing for resource callers. Add only
-   the missing trusted-hub billing transport, keeping the existing command
-   classifier, journal, executor lease, locks, retry IDs, and uncertain outcomes.
-   Select handler/lane at the receiver. No direct-execution fallback on timeout.
-3. Preserve authenticated actor/session context at public ingress. Internal hub
-   assertions are trusted under this model; browser-provided privilege flags are
-   not. Status/cancel APIs still enforce access for the requesting user.
-4. Run provider-facing workers and webhook verification on seed only. Attached
-   startup must not schedule duplicate financial jobs. Route webhooks to seed;
-   do not accept a browser's or project's assertion of provider verification.
-5. Stop distributing global Stripe secrets, including webhook secrets, to
-   attached bays. Remove legacy stored copies during dev cutover. Ensure generic
-   settings retrieval/replication does not send them back. Make Stripe connection
-   creation reject attached-bay execution before consulting a cached client.
-6. Enable billing authority only after every required caller in the checklist is
-   routed. Test actual course sponsorship against this topology; retain student
-   VM ownership and resource-bay lifecycle while the seed owns payer accounting.
+Out of scope: federation, geographic routing, high availability, malicious-hub
+containment, a new ledger, a new authorization system, production multibay
+migration, or centralizing ordinary account state. Central financial dependencies
+are in scope; unrelated RPC/lifecycle rewrites are not. If such a rewrite appears
+necessary, report the specific dependency before expanding this plan.
 
-### Done Means
-
-An instructor on seed funds a student allowance; the student uses a project and
-small disposable VM assigned to an attached resource bay; the seed records the
-correct payer; both users see spending; exhaustion and storage cleanup work.
-Existing test-mode card purchase, payment-method flow, refund, webhook retry, and
-one scheduled billing path also pass. Direct attached Stripe access fails; current
-attached config/database/settings responses contain no global Stripe secrets.
-
-Lost replies and executor restart do not duplicate effects. Concurrent spending
-cannot use the same funds twice. Seed unavailability prevents new financial
-admission without losing already-running resource measurements or cleanup work.
-Use existing real-PostgreSQL concurrency suites plus targeted integration tests.
-
-Do not claim Stripe secret confinement prevents a malicious trusted hub from
-abusing allowed billing operations. Its value is fewer secret copies and a single
-controlled implementation path.
-
-## 6. Development Cutover And Rollback
-
-Exactly three multibay sites exist, all disposable development deployments per
-the maintainer. No valuable financial data requires a multibay migration.
-
-1. Preserve code/worktrees and optionally export fixtures. Inventory and clean
-   up real provider resources before resetting their database records.
-2. Stop all dev hubs/workers. Reset multibay fixtures or explicitly rebuild them
-   with every account homed on seed; keep project/host directory ownership valid.
-3. Provision distinct bay credentials and seed-only Stripe test secrets. Remove
-   attached legacy secret copies. Start seed/fabric, then attached bays.
-4. Verify three-bay readiness and credential attribution before enabling billing.
-   Run the acceptance workflows and save redacted evidence.
-5. On failure, stop the cluster and restore the matching code/config/database
-   snapshot together. Do not rerun ambiguous provider charges or enable legacy
-   financial fallbacks to get a green demo.
-
-Single-bay production financial history is never reset by this procedure. Its
-existing auth and billing regression tests must pass. No production deployment or
-real-customer sponsorship activation is authorized by this plan.
-
-## 7. Scope And Execution Controls
-
-- Start a clean branch from current reviewed code, not the large identity branch.
-  Reuse small proven pieces only after checking they fit this trust model.
-- First milestone is three hubs booting with attributable credentials. Finish
-  PR 1 before beginning broad billing edits; PR 2 depends on it.
-- Do not add account/financial field extraction, general account rehome, a new
-  financial ledger, a custom PKI, signed per-call delegation, independent browser
-  approval, or compromised-hub containment.
-- If a step requires touching hundreds of methods or moving financial tables
-  between databases, return for a scope decision. That violates this proposal.
-- Commit connected increments and report actual workflows. Do not count helper
-  tests as substitutes for a booting cluster. Review both PRs before release.
-- Do not promise an implementation duration until the consumer inventory confirms
-  the topology restriction removes the existing cross-home dependencies.
-
-## 8. What Can Be Deferred?
-
-For the immediate single-bay Manchester release, neither distinct multibay
-credentials nor multibay billing transport is inherently required. Prioritize
-the existing billing correctness work and sponsorship end-to-end review there.
-Use this project when multibay development/rollout is worth its opportunity cost.
-
-Approval requested: trusted-hub model (already agreed); seed-homed accounts for
-this release (new); two bounded PRs above rather than global financial extraction;
-and whether to do them now or after the single-bay sponsorship pilot.
+Completion requires the connected workflows above, focused regressions, and
+review of both PRs, not an isolated helper-test count. Do not promise that all
+billing integration fits in the settings filter's size. No production deployment
+or real-customer sponsorship activation is authorized here.
