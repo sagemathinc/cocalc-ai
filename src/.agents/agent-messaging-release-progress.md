@@ -3,6 +3,34 @@
 Status: in progress, not a production readiness attestation. No production
 deployment or production flag changes are authorized by this work.
 
+## Candidate activation and smoke: September 15, 19:18-19:21 UTC
+
+Staged the verified archive under the separate dev URL
+`/static/agent-release-qa-e43a2ccb10/software`; full HTTP download matched its
+84,448,580 bytes and recorded SHA-256. The default software manifest was not
+changed. QA host `b96028c9-7d3e-4953-a8c9-52f8a5ce52ca` initially had all four
+managed components running/aligned on `20260915T052328Z-40fdca411123`.
+
+Submitted one explicit project-host upgrade with `--align-runtime-stack` and
+the staged base URL. Operation `711e8f1b-1a5d-4b30-b0e4-2708ce865940` succeeded
+at `2026-09-15T19:18:29.355Z`. Normal account-home CLI inspection confirmed
+project-host, conat-router, conat-persist and acp-worker all running/aligned on
+`20260915T191304Z-e43a2ccb10a7`. No operation was retried.
+
+New post-activation correlation `release-smoke-20260915-1919` passed:
+
+- Request attempt `8a74dc85-870a-4dab-b411-3a5605a7332c`: accepted.
+- Recipient received a 28-byte attachment with SHA-256
+  `9c17d9c14e3bcb77e0e482803ce00c13e8b709d6fb5b3cea0e4486d31da682f3`.
+- Reply attempt `c07f8d45-b38d-435c-a604-b92c0ef53a2d`: accepted; source received
+  the correlated matching size/digest and acknowledged locally only.
+- Both final chat records have `generating=false`; no reply loop observed.
+
+The QA host remains on the candidate for continued testing. The source host,
+project/tools artifacts and installed CLI were not upgraded in this step; this
+is not a claim of identical fleet versions. No production flags, approvals or
+production deployments changed. Independent review remains paused.
+
 ## Project-host candidate archive: September 15, 19:13 UTC
 
 Clean source `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41` produced build
