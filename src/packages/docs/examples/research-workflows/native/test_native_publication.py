@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest import mock
+import unittest.mock
 
 ROOT = Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("native_example", ROOT / "check_native.py")
@@ -66,7 +66,7 @@ class NativePublicationTests(unittest.TestCase):
                 final.write_bytes(b"late writer result\n")
                 return real_link(source, target)
 
-            with mock.patch.object(example.os, "link", competing_publication):
+            with unittest.mock.patch.object(example.os, "link", competing_publication):
                 with self.assertRaises(FileExistsError):
                     example.publish_receipt(output, {"state": "PASS"})
             self.assertEqual(final.read_bytes(), b"late writer result\n")

@@ -349,6 +349,7 @@ with suite.owned_process([sys.executable, "-c", sys.argv[2], sys.argv[3]]) as ch
                     try:
                         os.killpg(nested_group, signal.SIGKILL)
                     except ProcessLookupError:
+                        # Earlier cleanup already removed the nested group.
                         pass
                 if process.poll() is None:
                     terminate_owned_group(process, grace_seconds=0.1)
