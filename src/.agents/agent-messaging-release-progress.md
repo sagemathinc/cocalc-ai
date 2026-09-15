@@ -153,6 +153,44 @@ is temporary and a frontend rebuild deletes it; preserve the source archive in
 before use. Do not install this temporary base URL as a persistent host default.
 The disruptive canary installation and explicit rollback are still outstanding.
 
+### Successful receiver-host canary and rollback: September 15, 18:27-18:30 UTC
+
+Submitted exactly one canary upgrade to QA receiver host
+`b96028c9-7d3e-4953-a8c9-52f8a5ce52ca`, using the explicit staged version and
+`--align-runtime-stack`. Operation `331f0fa3-204c-4f2f-a9d1-2929cf4fb3af`
+ran 18:27:11-18:27:50 UTC and succeeded. All four components reported running
+and aligned on `20260915T181641Z-02a5d1d82477`; the host-agent reported healthy,
+promoted, accepted at 18:27:42 UTC.
+
+Submitted exactly one explicit rollback with
+`host deploy rollback <host> --artifact project-host --to-version 20260915T052328Z-40fdca411123`.
+Operation `090e5317-9387-4d92-8b4a-72d4242fe40d` ran 18:28:41-18:29:43 UTC and
+succeeded. An intermediate observation showed component drift; waited rather
+than resubmitting or changing the running operation. Final observation shows
+project-host, conat-router, conat-persist and acp-worker all running/aligned on
+the original baseline. Host-agent reports healthy/promoted with acceptance at
+18:29:27 UTC and last-known-good restored to the baseline.
+
+Observation limitation: account-home `op get` could not find the owning-bay
+operation, and `host deploy history` returned old history rather than this run.
+Used read-only queries of the owning bay's `long_running_operations` table for
+terminal status and timestamps, plus first-party host deployment status for
+actual runtime convergence. No database state was edited and no credentials
+were copied between bays. Cross-bay operation observation is an unresolved
+operator usability defect, not an excuse to retry an uncertain operation.
+
+This qualifies installation and explicit rollback mechanics for these two clean
+public builds on the dev receiver host. Application source is unchanged between
+them; it does not establish compatibility with arbitrary older code or schemas,
+nor repeat end-to-end message delivery after rollback. No production deployment,
+production flags, schema rollback, grant changes, or legacy replay occurred.
+The temporary staged artifact remains available, with its original archive in
+`/tmp`; no persistent host software base URL was configured by this rehearsal.
+
+Next non-security work: resolve cross-bay operator observation, verify a normal
+message workflow on the restored runtime, and consolidate the release handoff.
+Independent review remains paused/outstanding, not self-certified complete.
+
 ## Review baseline
 
 - Worktree: `/home/user/scratch/agent-mentions`, `feature/agent-mentions`.
