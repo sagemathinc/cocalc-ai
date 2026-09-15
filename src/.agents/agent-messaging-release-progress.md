@@ -3,6 +3,36 @@
 Status: in progress, not a production readiness attestation. No production
 deployment or production flag changes are authorized by this work.
 
+## Current work direction: September 15
+
+At the maintainer's request, pause security-review/adversarial work and continue
+non-security production preparation. Independent security review remains an
+outstanding release gate, not a pass or a requirement removed from readiness.
+Earlier sections below are chronological checkpoints, not the current status
+of every requirement. Do not publish private review material with this document.
+
+Public source checkpoint `40fdca411123e1b8e26a1faa1ae4d889d29b18bb` was clean
+before this verification. Seven focused frontend suites pass 58 tests covering
+the default-off preference, agent mentions, installation management, source
+naming, chat controls and ordinary collaborator mentions. Frontend typecheck
+and `pnpm -C src lint:frontend` pass (zero warnings/errors). These are local
+component tests, not new live browser verification or an exact-fleet deployment.
+
+Reproduce from `src/packages/frontend`:
+
+```sh
+pnpm exec jest --runInBand agents/ui-preference.test.ts account/agent-messaging-preference.test.tsx agents/agent-mentions.test.tsx agents/__tests__/external-installations.test.tsx agents/source-agent-name.test.tsx chat/__tests__/agent-communication.test.tsx editors/markdown-input/mentionable-users.test.tsx
+pnpm tsc --build
+```
+
+`pnpm -C src build:dev` completed with exit 0, including Python API documentation.
+This uses the workspace's incremental build logic, not a clean rebuild of every
+artifact or a matching-fleet deployment. Only this progress document changed
+during verification; application source remains at the checkpoint above.
+No production deployment or flag changes are authorized.
+Remaining non-security release work includes full build completion, matching
+artifact provenance, live UI smoke testing, and qualified deployment/rollback.
+
 ## Review baseline
 
 - Worktree: `/home/user/scratch/agent-mentions`, `feature/agent-mentions`.
