@@ -4,10 +4,13 @@
  */
 
 import { render, waitFor } from "@testing-library/react";
+import $ from "jquery";
 import { FileContext } from "@cocalc/frontend/lib/file-context";
 import { useProcessLinks } from "../elements/hooks";
 
 const processSmcLinks = jest.fn();
+const plugins = $.fn as any;
+const originalProcessSmcLinks = plugins.process_smc_links;
 
 function HookHarness() {
   const ref = useProcessLinks(["image.png"], { doubleClick: false });
@@ -17,9 +20,15 @@ function HookHarness() {
 describe("Slate process_smc_links context", () => {
   beforeEach(() => {
     processSmcLinks.mockReset();
-    (globalThis as any).$ = jest.fn(() => ({
-      process_smc_links: processSmcLinks,
-    }));
+    plugins.process_smc_links = processSmcLinks;
+  });
+
+  afterEach(() => {
+    if (originalProcessSmcLinks == null) {
+      delete plugins.process_smc_links;
+    } else {
+      plugins.process_smc_links = originalProcessSmcLinks;
+    }
   });
 
   it("uses FileContext when rendered outside a frame", async () => {
