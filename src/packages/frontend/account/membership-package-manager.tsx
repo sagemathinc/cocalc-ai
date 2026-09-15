@@ -57,6 +57,7 @@ import {
   cancelSiteLicensePoolRequest,
   claimMembershipPackageSeat,
   getClaimableMembershipPackages,
+  getMembershipPackages,
   getTeamLicense,
   getTeamLicenseQuote,
   listSiteLicenseOverviews,
@@ -1450,6 +1451,9 @@ export function TeamPackageManager({
   const [teamLicense, setTeamLicense] = useState<TeamLicenseOverview | null>(
     null,
   );
+  const [fixedTermPackages, setFixedTermPackages] = useState<
+    MembershipPackageDetails[]
+  >([]);
   const [purchaseTarget, setPurchaseTarget] = useState<
     MembershipPackageDetails | null | undefined
   >(undefined);
@@ -1465,7 +1469,24 @@ export function TeamPackageManager({
       if (user_account_id) {
         throw Error("team-license user lookup is not supported here");
       }
-      setTeamLicense(await getTeamLicense());
+      const [license, packages] = await Promise.all([
+        getTeamLicense(),
+        getMembershipPackages(),
+      ]);
+      setTeamLicense(license);
+      const renewingPackageIds = new Set(
+        license?.seat_lines.map((line) => line.package_id) ?? [],
+      );
+      setFixedTermPackages(
+        packages.filter(
+          (pkg) =>
+            pkg.kind === "team" &&
+            !pkg.metadata?.team_license_id &&
+            !renewingPackageIds.has(pkg.id) &&
+            pkg.expires_at != null &&
+            new Date(pkg.expires_at).valueOf() > Date.now(),
+        ),
+      );
     } catch (err) {
       setError(`${err}`);
     } finally {
@@ -1476,6 +1497,7 @@ export function TeamPackageManager({
   useEffect(() => {
     if (!ownerAccountId) {
       setTeamLicense(null);
+      setFixedTermPackages([]);
       setAccountNames({});
       setError("");
       setLoading(false);
@@ -1498,10 +1520,15 @@ export function TeamPackageManager({
               .filter(isActiveAssignment)
               .map((assignment) => assignment.account_id),
           ),
+          ...fixedTermPackages.flatMap((pkg) =>
+            pkg.assignments
+              .filter(isActiveAssignment)
+              .map((assignment) => assignment.account_id),
+          ),
         ].filter((value): value is string => !!value),
       ),
     );
-  }, [teamSeatLines]);
+  }, [teamSeatLines, fixedTermPackages]);
 
   useEffect(() => {
     let canceled = false;
@@ -1547,11 +1574,17 @@ export function TeamPackageManager({
       ) : teamLicense == null ? (
         <Space vertical>
           <Text>
-            Create a team license to give membership seats to other CoCalc
-            accounts.
-            <br />
-            After setup, you can assign seats to the people who should receive
-            membership access.
+            {fixedTermPackages.length > 0 ? (
+              "Your fixed-term seats are ready to assign below. Setting up a separate annual team license is optional."
+            ) : (
+              <>
+                Create a team license to give membership seats to other CoCalc
+                accounts.
+                <br />
+                After setup, you can assign seats to the people who should
+                receive membership access.
+              </>
+            )}
           </Text>
           <Button type="primary" onClick={() => setPurchaseTarget(null)}>
             <Icon name="shopping-cart" /> Set up team license
@@ -1626,6 +1659,58 @@ export function TeamPackageManager({
           )}
         </Space>
       )}
+      {!loading && fixedTermPackages.length > 0 ? (
+        <section
+          aria-label="Fixed-term team packages"
+          style={{ marginTop: 20 }}
+        >
+          <Title level={4}>Fixed-term team packages</Title>
+          <Paragraph>
+            These seats are separate from an annual team license. They expire on
+            the dates below and do not renew automatically.
+          </Paragraph>
+          <Space vertical size="middle" style={{ width: "100%" }}>
+            {fixedTermPackages.map((pkg) => {
+              const tierLabel =
+                tiers.find((tier) => tier.id === pkg.membership_class)?.label ??
+                pkg.membership_class;
+              return (
+                <TeamLicenseSeatCard
+                  key={pkg.id}
+                  line={{
+                    id: pkg.id,
+                    seat_count: pkg.seat_count,
+                    package: pkg,
+                  }}
+                  tierLabel={tierLabel}
+                  description={`Expires ${formatTeamLicenseRenewalDate(pkg.expires_at!)}. No automatic renewal.`}
+                  accountNames={accountNames}
+                  onAssignSeat={(membershipPackage) =>
+                    setAssignmentTarget({
+                      membershipPackage,
+                      seatLabel: tierLabel,
+                    })
+                  }
+                  onRevokeSeat={async (membershipPackage, assignment) => {
+                    setError("");
+                    try {
+                      await runFreshAuthAction(async () => {
+                        await revokeSeatOrThrow({
+                          package_id: membershipPackage.id,
+                          assignment,
+                        });
+                        await handleChanged();
+                      });
+                    } catch (err) {
+                      setError(`${err}`);
+                    }
+                  }}
+                />
+              );
+            })}
+          </Space>
+        </section>
+      ) : null}
       <TeamPackagePurchaseModal
         open={purchaseTarget !== undefined}
         teamLicense={teamLicense}
@@ -4270,12 +4355,17 @@ function SiteLicenseManagersEditor({
 function TeamLicenseSeatCard({
   line,
   tierLabel,
+  description,
   accountNames,
   onAssignSeat,
   onRevokeSeat,
 }: {
-  line: TeamLicenseOverview["seat_lines"][number];
+  line: Pick<
+    TeamLicenseOverview["seat_lines"][number],
+    "id" | "seat_count" | "package"
+  >;
   tierLabel: string;
+  description?: string;
   accountNames: AccountNames;
   onAssignSeat: (membershipPackage: MembershipPackageDetails) => void;
   onRevokeSeat: (
@@ -4300,6 +4390,7 @@ function TeamLicenseSeatCard({
       title={`${tierLabel} - ${assignedCount} of ${line.seat_count} seats assigned`}
     >
       <Space vertical size="middle" style={{ width: "100%" }}>
+        {description ? <Text>{description}</Text> : null}
         <SeatAssignmentsTable
           accountNames={accountNames}
           canManage={canManageSeats}

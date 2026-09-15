@@ -537,6 +537,59 @@ describe("membership packages", () => {
     expect(adminQuote.total_price).toBe(adminQuote.seat_price);
   });
 
+  it("allows course-only tiers in admin team quotes, not public quotes or expansion", async () => {
+    const tier = `student-team-${uuid()}`;
+    await createTestMembershipTier({
+      id: tier,
+      course_store_visible: true,
+      team_visible: false,
+      price_monthly: 8,
+    });
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: tier,
+      seat_count: 10,
+      interval: "month" as const,
+    };
+    await expect(resolveMembershipPackageQuote(product)).rejects.toThrow(
+      "not available for team packages",
+    );
+    const quote = await resolveAdminMembershipPackageQuote({
+      ...product,
+      starts_at: "2026-09-15T00:00:00Z",
+      expires_at: "2026-12-12T08:00:00Z",
+    });
+    expect(quote.seat_count).toBe(10);
+    expect(quote.expires_at).toEqual(new Date("2026-12-12T08:00:00Z"));
+
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: tier,
+      seat_count: 10,
+      metadata: { interval: "month", seat_price: 0 },
+    });
+    await expect(
+      resolveMembershipPackageQuote({ ...product, package_id }),
+    ).rejects.toThrow("not available for team packages");
+    await getPool().query(
+      "UPDATE membership_tiers SET disabled=true WHERE id=$1",
+      [tier],
+    );
+    await expect(resolveAdminMembershipPackageQuote(product)).rejects.toThrow(
+      "not available for team packages",
+    );
+    await expect(
+      resolveAdminMembershipPackageQuote({
+        ...product,
+        membership_class: hiddenTeamTier,
+      }),
+    ).rejects.toThrow("not available for team packages");
+  });
+
   it("quotes course seats from the selected course-visible membership tier", async () => {
     const course_project_id = uuid();
     await getPool("medium").query(
