@@ -10,6 +10,11 @@ export const PERSONAL_AGENT_STATE_TABLES = [
   "agent_personal_requests",
 ] as const;
 
+export const EXTERNAL_AGENT_STATE_TABLES = [
+  "agent_external_identities",
+  "agent_external_installations",
+] as const;
+
 export type PersonalAuthorityDb = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
@@ -37,15 +42,19 @@ export async function assertNoPersonalStateForRehome(
   db: PersonalAuthorityDb,
   account_id: string,
 ) {
+  const tables = [
+    ...PERSONAL_AGENT_STATE_TABLES,
+    ...EXTERNAL_AGENT_STATE_TABLES,
+  ];
   const existing = new Set(
     (
       await db.query(
         "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name=ANY($1::text[])",
-        [[...PERSONAL_AGENT_STATE_TABLES]],
+        [tables],
       )
     ).rows.map((row) => row.table_name),
   );
-  for (const table of PERSONAL_AGENT_STATE_TABLES) {
+  for (const table of tables) {
     if (!existing.has(table)) continue;
     if (
       (

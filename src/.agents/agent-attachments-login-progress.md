@@ -7,7 +7,7 @@ Updated September 15, 2026. Worktree `/home/user/scratch/agent-mentions`, branch
 
 **Native attachments and fail-fast admission are deployed on lite1b's three bays
 and two QA hosts. Real cross-host/cross-bay 32 MiB and stopped-target tests pass.
-External agent login is not implemented.** Same-project smoke testing exposed an
+External agent login is not usable yet.** Same-project smoke testing exposed an
 optional-argument wire bug; its committed fix now passes live verification too.
 
 There is no identified external blocker to continuing implementation. The old
@@ -152,12 +152,54 @@ a still-valid explicit QA grant and intentionally run real agents. The full
 
 ## Next Concrete Steps
 
-1. Implement external sender enrollment, browser approval, scoped credentials,
-   destination discovery and sends using the now-proven native recipient path.
-2. Test external credential expiry/revocation, no native impersonation, no broad
+1. Connect external enrollment to the existing CLI-auth challenge/browser flow,
+   using a distinct challenge kind that cannot redeem a human session. The client
+   generates a 256-bit secret; approval binds its hash and challenge ID to the
+   installation. Only fresh human approval creates account-owned agent records.
+2. Add narrowly scoped external Conat authentication, account-home routing,
+   discovery, and native receiver submission. Carry the external source kind and
+   installation explicitly; never manufacture a project or native run identity.
+3. Test external credential expiry/revocation, no native impersonation, no broad
    account fallback, and cross-bay sends with attachments. Federation remains out.
 
-## External Login: Not Implemented
+## External Login: Backend Lifecycle Only
+
+The protocol and `server/agents/external-store.ts` now implement the internal
+approved-installation lifecycle. The new canonical schema is in
+`util/db-schema/agent-external.ts`. These modules are not connected to public
+endpoints, socket authentication, the CLI or browser UI and have not been enabled
+or live-tested as external login. This is not yet a sending implementation.
+
+Implemented boundaries:
+
+- A distinct stable external UUID can have independent installations. Revoking
+  one installation retains the identity and history; disabling the identity
+  invalidates every installation. Native/other-account UUIDs cannot be enrolled.
+- Only credential hashes are stored. Normal human sessions and native agent
+  credentials are not accepted as external credentials. Installation labels are
+  display metadata, not native `@` addresses or receiving endpoints.
+- Fresh approval binds at most 32 explicit native destinations and a finite
+  lifetime of at most 30 days. This prototype permits sending, not receiving or
+  guidance. Repeating approval cannot extend expiry, widen scope or revive a
+  revoked installation. No file-browsing authority is granted.
+- Account-home transaction fencing, account security/session revocation,
+  personal pause/revoke-all and fresh-auth rechecks apply. Destination permission
+  validation is injected from the owner-routing layer and must not start work.
+  Admission rechecks installation authority after remote validation.
+- Anonymous challenges must remain in the existing CLI-auth challenge flow.
+  They do not create personal controls or persistent external installations.
+  Retained approved external state blocks account rehome until portability exists.
+
+Latest verification: 13 protocol tests, 13 external store integration tests and
+60 existing personal/routed integration tests passed, along with the server
+TypeScript build. Fresh-auth and account-home adapters are mocked in the new
+store tests; existing home-fence tests also pass, but this is not a browser
+fresh-auth or cross-bay external-login demonstration.
+
+```sh
+pnpm -C src/packages/conat exec jest agents/external.test.ts --runInBand
+env NODE_OPTIONS=--experimental-vm-modules COCALC_TEST_USE_PGLITE=1 pnpm -C src/packages/server exec jest agents/external-store.integration.test.ts agents/personal-store.integration.test.ts agents/personal-rehome.integration.test.ts agents/rpc.integration.test.ts --runInBand
+```
 
 Use distinct stable external identities and installation credentials, not fake
 project IDs or native-thread impersonation. Reuse first-party browser login and

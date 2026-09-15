@@ -70,6 +70,7 @@ import "./listings";
 import "./ai-log";
 import "./agent-messaging";
 import "./agent-personal";
+import "./agent-external";
 import "./lti";
 import "./mentions";
 import "./account-entitlement-overrides";
