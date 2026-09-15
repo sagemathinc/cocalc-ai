@@ -56,6 +56,40 @@ to the maintainer. Authenticated UI smoke testing waits for that approval.
 Security review remains paused as requested. The next non-security step is to
 verify the opt-in and management UI in a browser using the matching bundle.
 
+### Authenticated UI smoke: September 15, 18:04-18:08 UTC
+
+The pending first-party login completed for the intended primary account at its
+home bay. No further login request was needed. Built the browser bundle again
+from clean checkpoint `312b1f2ffb8b46d21f9ea1d9fdb3a982505aa80c`
+and reloaded the existing My Agents settings page. The stale-build
+warning disappeared. Reload/navigation creates new browser session IDs; resolve
+the active session after navigation instead of retrying commands against old IDs.
+
+Using the actual rendered AI-settings switch, verified its initial value was off,
+enabled it and waited for the save to settle, then restored off and waited for
+that save to settle. No save error appeared. Reopened My Agents through its
+visible management link, which loaded a new browser session. Confirmed:
+
+- Experimental setup is hidden after the new page load.
+- All seven existing named agents still have Open controls.
+- Pause all and revoke all controls are present and enabled.
+- External Agent Installations remains visible.
+- No stale-build warning is present for the tested bundle.
+
+No grants, installation credentials, pause/revoke actions or sends were changed.
+The temporary UI preference change was restored to its original off value.
+This is live browser persistence/navigation evidence, not a new end-to-end
+message test or proof of all mention-picker states. Navigation between the two
+settings links performs full page loads; recorded as a nonblocking usability
+limitation rather than changed during this release check.
+
+Reproduction: approve first-party CLI login at account home, list the active
+browser session, open My Agents while opted out, follow AI settings, toggle
+the labeled switch on and back off, then follow the My Agents management link.
+Use explicit project/browser targets and re-list after each full navigation.
+Next: operational deployment/rollback qualification. Independent review remains
+paused and outstanding; no production rollout is authorized.
+
 ## Review baseline
 
 - Worktree: `/home/user/scratch/agent-mentions`, `feature/agent-mentions`.
