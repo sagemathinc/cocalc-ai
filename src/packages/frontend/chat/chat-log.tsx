@@ -511,6 +511,15 @@ export function ChatLog({
   readOnly = false,
 }: Props) {
   const singleThreadView = selectedThread != null;
+  // Threads have independent row indexes and reading positions even when
+  // they share one chat editor and its caller-provided cache namespace.
+  const threadScrollCacheId =
+    selectedThread == null
+      ? scrollCacheId
+      : JSON.stringify([
+          scrollCacheId ?? `${project_id}${path}`,
+          selectedThread,
+        ]);
   const messages = messagesProp ?? new Map();
   const visibleKeys = useMemo<Set<string> | undefined>(() => {
     if (!selectedThread || !threadIndex) return undefined;
@@ -643,12 +652,13 @@ export function ChatLog({
 
   useEffect(() => {
     return () => {
+      bottomScrollTokenRef.current += 1;
       for (const timer of bottomScrollTimersRef.current) {
         clearTimeout(timer);
       }
       bottomScrollTimersRef.current = [];
     };
-  }, []);
+  }, [threadScrollCacheId]);
 
   useEffect(() => {
     if (scrollToBottomRef == null) return;
@@ -710,7 +720,7 @@ export function ChatLog({
             selectedDate,
             numChildren,
             singleThreadView,
-            scrollCacheId,
+            scrollCacheId: threadScrollCacheId,
             isVisible,
             scrollToDate,
             scrollToBottomRef,
@@ -1062,8 +1072,12 @@ export function MessageList({
         clearTimeout(timer);
       }
       visibilityRestoreTimersRef.current = [];
+      anchorCaptureFrameRef.current = undefined;
+      userScrollIntentRef.current = false;
+      suppressAnchorCaptureUntilRef.current = 0;
+      suppressAnchorRestoreUntilRef.current = 0;
     };
-  }, []);
+  }, [cacheId]);
 
   useEffect(() => {
     const latestLiveCodexTurnIdsByThread = new Map<string, string>();

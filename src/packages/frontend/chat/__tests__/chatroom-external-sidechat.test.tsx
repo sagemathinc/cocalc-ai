@@ -239,10 +239,10 @@ describe("ChatPanel external side chat persistence", () => {
     ).toBe(false);
   });
 
-  it("opens selected threads at the newest message by default", () => {
+  it("leaves the selected thread viewport to ChatLog", () => {
     const actions = renderPanel();
 
-    expect(actions.scrollToIndex).toHaveBeenCalledWith(Number.MAX_SAFE_INTEGER);
+    expect(actions.scrollToIndex).not.toHaveBeenCalled();
   });
 
   it("does not override explicit fragment jumps when opening a thread", () => {
