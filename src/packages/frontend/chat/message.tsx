@@ -864,6 +864,7 @@ export default function Message({
       lastCodexLoadErrorRef.current = undefined;
     }
     if (
+      effectiveGenerating ||
       !allowAsyncCompletedCodexActivityLoad ||
       codexPreviewLog.loadState !== "error" ||
       !codexPreviewLog.loadError
@@ -875,12 +876,13 @@ export default function Message({
     }
     lastCodexLoadErrorRef.current = codexPreviewLog.loadError;
     antdMessage.error(`Unable to load activity: ${codexPreviewLog.loadError}`);
-    onExpandedCodexActivityChange?.(false);
+    // A failed preview fetch is not a user request to hide activity. Keep the
+    // visibility choice so reconnecting can recover the expanded preview.
   }, [
+    effectiveGenerating,
     allowAsyncCompletedCodexActivityLoad,
     codexPreviewLog.loadError,
     codexPreviewLog.loadState,
-    onExpandedCodexActivityChange,
   ]);
   const codexBodyValue = useMemo(() => {
     if (
