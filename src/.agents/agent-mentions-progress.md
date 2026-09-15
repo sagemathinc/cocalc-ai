@@ -830,4 +830,23 @@ Attachment design decisions for the next increment, not implemented here:
   must be reported rather than silently treated as available.
 - Keep normal file permissions and bounded transfer/retention checks. Temporary
   storage does not itself provide an authorization boundary.
+- Relay bounded binary attachment payloads through existing owner-routed Conat
+  hubs, not a new direct cross-host upload service. This supersedes the earlier
+  discussion's proposed direct destination-host endpoint. The bounded copy-archive
+  implementation in `server/projects/copy.ts` is the architectural precedent;
+  see the exception in `scalable-architecture.md`.
+- Before file transfer or chat insertion, an actual send must acquire bounded
+  destination capacity and ensure normal project startup succeeds. Disallowed
+  autostart, unavailable sponsor slots, or unavailable hosts fail the send without
+  copying files or inserting a chat message. Startup may continue after a caller
+  timeout; timeout alone does not prove whether final submission occurred.
+- Apply hard concurrent-message bounds per destination host and per destination
+  project, including text-only sends; reject overload rather than queue. Also
+  bound hub ingress/reassembly bytes and in-flight relays so the receiver's
+  handler cap cannot merely shift memory pressure to the hub.
+- Proposed initial implementation constants: 32 MiB total file content and 16
+  files per send, four in-flight sends per destination host, two per destination
+  project, and four attachment-bearing relays per hub process. These are proposed
+  starting bounds, not deployed settings or exact resident-memory guarantees;
+  transport buffering/copies and multiple hub processes need explicit accounting.
 - Federation is wishlist only, explicitly outside this implementation.
