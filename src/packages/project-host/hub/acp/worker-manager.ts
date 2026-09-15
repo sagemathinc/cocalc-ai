@@ -78,6 +78,14 @@ const ACP_WORKER_QUEUE_STALL_CONFIRM_MS = Math.max(
   250,
   Number(process.env.COCALC_ACP_WORKER_QUEUE_STALL_CONFIRM_MS ?? 1_000),
 );
+const ACP_WORKER_AFFINITY_STALE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_ACP_WORKER_STALE_MS ?? 15_000),
+);
+const ACP_WORKER_AFFINITY_PID_GRACE_MS = Math.max(
+  ACP_WORKER_AFFINITY_STALE_MS,
+  Number(process.env.COCALC_ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS ?? 2 * 60_000),
+);
 
 let supervisorStarted = false;
 let workerEntryPoint: string | undefined;
@@ -372,10 +380,15 @@ function acpJobReferenceTimestamp(row: {
 function acpBacklogStaleSince(
   worker_id: string,
   state: AcpWorkerState = "active",
+  now = Date.now(),
 ): number | undefined {
+  const affinity =
+    state === "active" ? queuedJobAffinityContext(now) : undefined;
   let oldest = oldestClaimableQueuedAcpJobTimestamp({
     worker_id,
     include_unassigned: state === "active",
+    known_worker_ids: affinity?.knownWorkerIds,
+    reclaimable_worker_ids: affinity?.reclaimableWorkerIds,
   });
   for (const row of listRunningAcpJobsByWorker(worker_id)) {
     const timestamp = acpJobReferenceTimestamp(row);
@@ -383,6 +396,38 @@ function acpBacklogStaleSince(
     oldest = oldest == null ? timestamp : Math.min(oldest, timestamp);
   }
   return oldest;
+}
+
+function workerRetainsQueuedJobAffinity(
+  row: AcpWorkerRow,
+  now: number,
+): boolean {
+  if (row.state === "stopped") return false;
+  const referenceAt = Math.max(
+    Number(row.last_heartbeat_at ?? 0),
+    Number(row.started_at ?? 0),
+  );
+  if (referenceAt > 0 && now - referenceAt < ACP_WORKER_AFFINITY_STALE_MS) {
+    return true;
+  }
+  return (
+    isPidAlive(row.pid ?? undefined) &&
+    referenceAt > 0 &&
+    now - referenceAt < ACP_WORKER_AFFINITY_PID_GRACE_MS
+  );
+}
+
+function queuedJobAffinityContext(now: number): {
+  knownWorkerIds: string[];
+  reclaimableWorkerIds: string[];
+} {
+  const workers = listAcpWorkers();
+  return {
+    knownWorkerIds: workers.map(({ worker_id }) => worker_id),
+    reclaimableWorkerIds: workers
+      .filter((row) => !workerRetainsQueuedJobAffinity(row, now))
+      .map(({ worker_id }) => worker_id),
+  };
 }
 
 function countRunningJobsForWorker(worker_id: string): number {
@@ -441,7 +486,7 @@ export function shouldTerminateQueueStalledWorker({
   if (workerHasRunningCommandJob(worker_id)) return false;
   const workerState = status?.state ?? row?.state ?? "active";
   if (workerState === "stopped") return false;
-  const backlogSince = acpBacklogStaleSince(worker_id, workerState);
+  const backlogSince = acpBacklogStaleSince(worker_id, workerState, now);
   if (backlogSince == null || now - backlogSince < stallMs) return false;
   const startedAt = Math.max(
     workerStartedAtMs(worker),

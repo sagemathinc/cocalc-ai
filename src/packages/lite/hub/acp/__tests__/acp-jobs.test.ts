@@ -212,6 +212,30 @@ describe("acp job queue ordering", () => {
         include_unassigned: false,
       }),
     ).toBe(10_000);
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+        known_worker_ids: [],
+        reclaimable_worker_ids: [],
+      }),
+    ).toBe(10_000);
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+        known_worker_ids: ["worker-old"],
+        reclaimable_worker_ids: [],
+      }),
+    ).toBeUndefined();
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+        known_worker_ids: ["worker-old"],
+        reclaimable_worker_ids: ["worker-old"],
+      }),
+    ).toBe(10_000);
   });
 
   it("reports a worker's latest job transition as queue progress", () => {

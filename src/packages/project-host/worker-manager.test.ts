@@ -837,6 +837,104 @@ describe("queue-stalled ACP workers", () => {
     expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
       worker_id: "worker-stalled",
       include_unassigned: true,
+      known_worker_ids: [],
+      reclaimable_worker_ids: [],
+    });
+  });
+
+  it("counts queue affinity owned by a stopped worker as reclaimable", () => {
+    mockListAcpWorkers.mockReturnValue([
+      {
+        worker_id: "worker-stopped",
+        state: "stopped",
+        started_at: 1_000,
+        last_heartbeat_at: 1_000,
+      } as any,
+    ]);
+
+    __test__.shouldTerminateQueueStalledWorker({
+      worker: worker as any,
+      status: {
+        worker_id: "worker-stalled",
+        state: "active",
+        started_at: 1_000,
+        last_queue_progress_at: 10_000,
+        running_turn_leases: 0,
+      } as any,
+      now: 200_000,
+      stallMs: 60_000,
+    });
+
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: ["worker-stopped"],
+      reclaimable_worker_ids: ["worker-stopped"],
+    });
+  });
+
+  it("counts queue affinity owned by a stale worker without a live pid", () => {
+    mockListAcpWorkers.mockReturnValue([
+      {
+        worker_id: "worker-stale",
+        state: "active",
+        started_at: 1_000,
+        last_heartbeat_at: 100_000,
+        pid: null,
+      } as any,
+    ]);
+
+    __test__.shouldTerminateQueueStalledWorker({
+      worker: worker as any,
+      status: {
+        worker_id: "worker-stalled",
+        state: "active",
+        started_at: 1_000,
+        last_queue_progress_at: 10_000,
+        running_turn_leases: 0,
+      } as any,
+      now: 200_000,
+      stallMs: 60_000,
+    });
+
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: ["worker-stale"],
+      reclaimable_worker_ids: ["worker-stale"],
+    });
+  });
+
+  it("preserves stale affinity while its pid is alive inside recovery grace", () => {
+    jest.spyOn(process, "kill").mockImplementation(() => true);
+    mockListAcpWorkers.mockReturnValue([
+      {
+        worker_id: "worker-recovering",
+        state: "active",
+        started_at: 1_000,
+        last_heartbeat_at: 100_000,
+        pid: 2202,
+      } as any,
+    ]);
+
+    __test__.shouldTerminateQueueStalledWorker({
+      worker: worker as any,
+      status: {
+        worker_id: "worker-stalled",
+        state: "active",
+        started_at: 1_000,
+        last_queue_progress_at: 10_000,
+        running_turn_leases: 0,
+      } as any,
+      now: 200_000,
+      stallMs: 60_000,
+    });
+
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: ["worker-recovering"],
+      reclaimable_worker_ids: [],
     });
   });
 

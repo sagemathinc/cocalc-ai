@@ -48,6 +48,8 @@ export interface AiSessionRecord {
   error?: string | null;
   metadata_json?: string | null;
   metadata?: Record<string, unknown> | null;
+  // Monotonic revision from the project host's durable session outbox.
+  source_revision?: number | null;
 }
 
 export interface AiSessionsListOptions {

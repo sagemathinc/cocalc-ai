@@ -499,13 +499,37 @@ export function oldestQueuedAcpJobTimestamp(): number | undefined {
 export function oldestClaimableQueuedAcpJobTimestamp({
   worker_id,
   include_unassigned,
+  known_worker_ids,
+  reclaimable_worker_ids,
 }: {
   worker_id: string;
   include_unassigned: boolean;
+  known_worker_ids?: string[];
+  reclaimable_worker_ids?: string[];
 }): number | undefined {
   const workerId = `${worker_id ?? ""}`.trim();
   if (!workerId) return undefined;
   ensureInit();
+  const knownWorkerIds = Array.from(
+    new Set(
+      (known_worker_ids ?? []).map((id) => `${id}`.trim()).filter(Boolean),
+    ),
+  );
+  const reclaimableWorkerIds = Array.from(
+    new Set(
+      (reclaimable_worker_ids ?? [])
+        .map((id) => `${id}`.trim())
+        .filter(Boolean),
+    ),
+  );
+  const reclaimableSql = reclaimableWorkerIds.length
+    ? `OR head.worker_id IN (${reclaimableWorkerIds.map(() => "?").join(", ")})`
+    : "";
+  const missingSql = known_worker_ids
+    ? knownWorkerIds.length
+      ? `OR head.worker_id NOT IN (${knownWorkerIds.map(() => "?").join(", ")})`
+      : "OR (head.worker_id IS NOT NULL AND TRIM(head.worker_id) != '')"
+    : "";
   // The queue pump only considers the first due job in each thread. A later
   // unassigned job is not claimable while another worker owns the thread head.
   const row = getAcpDatabase()
@@ -526,16 +550,25 @@ export function oldestClaimableQueuedAcpJobTimestamp({
            ELSE created_at
          END
        ) AS oldest
-       FROM due
+       FROM due AS head
        WHERE thread_position = 1
          AND (
-           worker_id = ?
-           OR (? = 1 AND (worker_id IS NULL OR TRIM(worker_id) = ''))
+           head.worker_id = ?
+           OR (? = 1 AND (
+             head.worker_id IS NULL
+             OR TRIM(head.worker_id) = ''
+             ${reclaimableSql}
+             ${missingSql}
+           ))
          )`,
     )
-    .get(Date.now(), workerId, include_unassigned ? 1 : 0) as
-    | { oldest?: number | null }
-    | undefined;
+    .get(
+      Date.now(),
+      workerId,
+      include_unassigned ? 1 : 0,
+      ...reclaimableWorkerIds,
+      ...knownWorkerIds,
+    ) as { oldest?: number | null } | undefined;
   const oldest = Number(row?.oldest ?? 0);
   return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
 }

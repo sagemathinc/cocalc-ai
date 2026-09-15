@@ -146,6 +146,7 @@ function configureProjectHostAcpSessionPublisher(): void {
           {
             ...row,
             terminal: row.terminal === 1,
+            source_revision: row.publication_revision,
           },
         ],
         timeout: 5_000,

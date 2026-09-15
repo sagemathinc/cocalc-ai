@@ -40,6 +40,7 @@ export interface AcpSessionRow {
   finished_at?: number | null;
   error?: string | null;
   metadata_json?: string | null;
+  publication_revision?: number;
 }
 
 export interface UpsertAcpSessionOptions {

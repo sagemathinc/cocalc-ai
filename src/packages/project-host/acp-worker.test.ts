@@ -315,6 +315,7 @@ describe("project-host ACP worker runtime wiring", () => {
       thread_id: "thread-1",
       title: "Test turn",
       updated_at: 2,
+      publication_revision: 7,
     });
 
     expect(callHubMock).toHaveBeenCalledWith({
@@ -327,6 +328,7 @@ describe("project-host ACP worker runtime wiring", () => {
           session_id: "session-1",
           state: "running",
           terminal: true,
+          source_revision: 7,
         }),
       ],
       timeout: 5_000,
