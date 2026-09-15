@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
@@ -101,7 +101,30 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
 }));
 jest.mock("@cocalc/conat/project-host/api", () => ({
   createHostControlClient: (opts) => ({
-    submitAgentRpc: async (e) => {
+    prepareAgentRpcAttachments: async (e) => {
+      expect(opts.noRetry).toBe(true);
+      await authorizeRpcAdmission({
+        account_id: e.account_id,
+        host_id: hostId,
+        envelope: e,
+      });
+      return {
+        version: 2,
+        target: e.target,
+        attempt_id: e.attempt_id,
+        outcome: "prepared",
+        reservation_id: randomUUID(),
+        expires_at: e.deadline,
+      };
+    },
+    cancelAgentRpcAttachments: async (e) => {
+      await authorizeRpcAdmission({
+        account_id: e.account_id,
+        host_id: hostId,
+        envelope: e,
+      });
+    },
+    submitAgentRpc: async (e, files) => {
       expect(opts.noRetry).toBe(true);
       await beforeAdmission(e);
       await authorizeRpcAdmission({
@@ -109,7 +132,7 @@ jest.mock("@cocalc/conat/project-host/api", () => ({
         host_id: hostId,
         envelope: e,
       });
-      await admitted(e);
+      await admitted(e, files);
       return rpcOutcome(e, "accepted");
     },
     inspectAgentRpc: async (opts) => {
@@ -172,6 +195,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   beforeEach(async () => {
     wireClient = undefined;
     delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+    delete process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED;
     offlineBay = undefined;
     fresh.mockReset().mockResolvedValue(undefined);
     collab.mockReset().mockResolvedValue(undefined);
@@ -308,7 +332,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
       }),
     );
 
-  test("personal denial codes survive real Conat home/source/target request serialization", async () => {
+  test("personal denials and bounded binary sends survive real Conat home/source/target serialization", async () => {
     process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const { init, ConatServer } = await import("@cocalc/conat/core/server");
     const { connect, Client } = await import("@cocalc/conat/core/client");
@@ -432,6 +456,62 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
       });
       expect(admitted).not.toHaveBeenCalled();
       expect(beforeAdmission).not.toHaveBeenCalled();
+
+      spy.mockRestore();
+      spy = undefined;
+      process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED = "1";
+      await personalApproval();
+      const data = Buffer.alloc(32 * 1024 * 1024, 171);
+      const metadata = {
+        name: "max-size.bin",
+        size: data.length,
+        sha256: createHash("sha256").update(data).digest("hex"),
+      };
+      const attempt = {
+        version: 2 as const,
+        target,
+        attempt_id: randomUUID(),
+        body: "Read the binary snapshot",
+        snapshot_manifest: [metadata],
+      };
+      const invoke = (request) =>
+        context.run("source-bay", () =>
+          acceptAgentRpc(agentMessagingSubject(source.agent_id, run), request),
+        );
+      const ready: any = await invoke({
+        ...attempt,
+        action: "prepare-attachments",
+      });
+      expect(ready.outcome).toBe("prepared");
+      expect(admitted).not.toHaveBeenCalled();
+      const preparedSend = {
+        ...attempt,
+        action: "send",
+        attachment_reservation: ready.reservation_id,
+        snapshot_payload: [{ ...metadata, data }],
+      };
+      expect(
+        await invoke({ ...preparedSend, body: "changed after approval" }),
+      ).toMatchObject({
+        outcome: "rejected",
+        code: "attachment_preparation_unavailable",
+      });
+      expect(admitted).not.toHaveBeenCalled();
+      expect(await invoke(preparedSend)).toMatchObject({ outcome: "accepted" });
+      expect(admitted).toHaveBeenCalledTimes(1);
+      const [envelope, payload] = admitted.mock.calls[0];
+      expect(envelope.snapshot_payload).toBeUndefined();
+      expect(envelope.snapshot_manifest).toEqual([metadata]);
+      expect(ArrayBuffer.isView(payload[0].data)).toBe(true);
+      expect(payload[0].data.byteLength).toBe(data.byteLength);
+      expect(createHash("sha256").update(payload[0].data).digest("hex")).toBe(
+        metadata.sha256,
+      );
+      expect(await invoke(preparedSend)).toMatchObject({
+        outcome: "rejected",
+        code: "attachment_preparation_unavailable",
+      });
+      expect(admitted).toHaveBeenCalledTimes(1);
     } finally {
       spy?.mockRestore();
       for (const service of services) service.close();

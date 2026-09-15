@@ -711,8 +711,15 @@ export interface ApplyHostExamRunRequest {
 }
 
 export interface HostControlApi {
+  prepareAgentRpcAttachments: (
+    envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+  ) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcPreparation>;
+  cancelAgentRpcAttachments: (
+    envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+  ) => Promise<void>;
   submitAgentRpc: (
     envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+    files?: import("@cocalc/conat/agents/attachments").AgentSnapshot[],
   ) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
   inspectAgentRpc: (opts: {
     /** Trusted run principal in personal mode, absent only for legacy RPC. */
@@ -1294,5 +1301,14 @@ export function createHostControlService({
     // timeout. Without parallel dispatch, unrelated starts serialize here.
     parallel: true,
     maxParallelHandlers: HOST_CONTROL_MAX_PARALLEL_HANDLERS,
+    // Preserve the existing <=64 MiB copy-archive path, with bounded request
+    // reassembly/queueing. Agent snapshots additionally need a host reservation.
+    receiveLimits: {
+      maxMessageBytes: 65 * 1024 * 1024,
+      maxInflightBytes: 260 * 1024 * 1024,
+      maxInflightMessages: 4,
+      maxFragmentsPerMessage: 8192,
+    },
+    maxQueue: 4,
   });
 }

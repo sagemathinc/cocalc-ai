@@ -6,9 +6,11 @@ import {
   rpcOutcome,
   validateAgentRpcRequest,
   validateAgentRpcOutcome,
+  validateAgentRpcPreparation,
   type AgentRpcRequest,
   type AgentRpcLink,
   type AgentRpcOutcome,
+  type AgentRpcPreparation,
 } from "@cocalc/conat/agents/rpc";
 import {
   AGENT_IDENTITY_FILE_ENV,
@@ -82,9 +84,16 @@ export function sendIdentityMessage(
   apiUrl?: string,
 ): Promise<AgentRpcOutcome>;
 export function sendIdentityMessage(
+  request: Extract<
+    AgentRpcRequest,
+    { action: "prepare-attachments" | "cancel-attachments" }
+  >,
+  apiUrl?: string,
+): Promise<AgentRpcPreparation>;
+export function sendIdentityMessage(
   request: AgentRpcRequest,
   apiUrl?: string,
-): Promise<AgentRpcLink[] | AgentRpcOutcome | AgentConnectionRequest>;
+): Promise<AgentRpcLink[] | AgentRpcPreparation | AgentConnectionRequest>;
 export async function sendIdentityMessage(
   request: AgentMessageRequest | AgentInspectionRequest | AgentRpcRequest,
   apiUrl?: string,
@@ -93,6 +102,7 @@ export async function sendIdentityMessage(
   | AgentInspectionResult
   | AgentRpcLink[]
   | AgentRpcOutcome
+  | AgentRpcPreparation
   | AgentConnectionRequest
 > {
   if (!("version" in request) && request.action === "send")
@@ -130,9 +140,13 @@ export async function sendIdentityMessage(
     if (response.data?.error) throw new Error(response.data.error);
     if (!response.data?.result)
       throw new Error("message receipt was not confirmed");
+    if ("version" in request && request.action === "prepare-attachments")
+      validateAgentRpcPreparation(response.data.result, request);
     if (
       "version" in request &&
-      (request.action === "send" || request.action === "inspect")
+      (request.action === "send" ||
+        request.action === "inspect" ||
+        request.action === "cancel-attachments")
     )
       validateAgentRpcOutcome(response.data.result, request);
     if (
@@ -167,6 +181,13 @@ export async function sendIdentityMessage(
     }
     return response.data.result;
   } catch (error) {
+    if ("version" in request && request.action === "prepare-attachments")
+      return rpcOutcome(request, "rejected", {
+        code: "attachment_preparation_unavailable",
+        chat_effect: "none",
+        reason:
+          "Attachment preparation was not acknowledged; no file payload or message was sent. Project startup may still finish.",
+      });
     if (
       "version" in request &&
       request.version === 2 &&

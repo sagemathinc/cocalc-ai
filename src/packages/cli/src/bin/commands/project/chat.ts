@@ -1,7 +1,10 @@
 import { Command } from "commander";
 import { randomUUID } from "node:crypto";
 import { sendIdentityMessage } from "../../core/agent-message";
-import { readAgentFileReferences } from "../../core/agent-attachments";
+import {
+  readAgentFileReferences,
+  readAgentAttachmentSnapshots,
+} from "../../core/agent-attachments";
 import type { AgentSelf } from "@cocalc/conat/agents/protocol";
 import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { registerChatAgentCommands } from "./chat-agents";
@@ -10,7 +13,10 @@ import type {
   AgentEndpoint,
   AgentRpcLink,
   AgentRpcOutcome,
+  AgentRpcPreparation,
+  AgentRpcSend,
 } from "@cocalc/conat/agents/rpc";
+import { validateAgentRpcPreparation } from "@cocalc/conat/agents/rpc";
 
 import type { ProjectCommandDeps } from "../project";
 
@@ -88,7 +94,7 @@ export function registerProjectChatCommands(
     .option("--stdin", "read the message from standard input")
     .option(
       "--attach <path>",
-      "attach a same-project live file reference (repeatable; cross-project snapshots not yet available)",
+      "attach a file (repeatable; same-project live references, cross-project snapshots up to 32 MiB total)",
       (value: string, paths: string[]) => [...paths, value],
       [],
     )
@@ -162,29 +168,61 @@ export function registerProjectChatCommands(
             `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
           );
           let file_references;
+          let snapshots:
+            | Awaited<ReturnType<typeof readAgentAttachmentSnapshots>>
+            | undefined;
           if (opts.attach?.length) {
             const self = (await sendIdentityMessage(
               { action: "whoami" },
               globals.api,
             )) as AgentSelf;
-            if (self.identity?.project_id !== target.project_id)
+            if (self.identity?.project_id !== target.project_id) {
+              snapshots = await readAgentAttachmentSnapshots(opts.attach);
+            } else {
+              const metadata = await readAgentFileReferences(opts.attach);
+              if (metadata.kind !== "project-files")
+                throw new Error("invalid file references");
+              file_references = metadata.files;
+            }
+          }
+          const request: AgentRpcSend = {
+            version: 2,
+            attempt_id,
+            target,
+            body: prompt,
+            guidance: opts.guidance,
+            ...(file_references ? { file_references } : {}),
+          };
+          if (snapshots) {
+            if (snapshots.metadata.kind !== "snapshots")
+              throw new Error("invalid snapshot metadata");
+            request.snapshot_manifest = snapshots.metadata.files;
+            const ready = (await sendIdentityMessage(
+              { ...request, action: "prepare-attachments" },
+              globals.api,
+            )) as AgentRpcPreparation;
+            validateAgentRpcPreparation(ready, request);
+            if (ready.outcome !== "prepared") {
+              deps.emitSuccess({ globals }, "project chat send", ready);
+              process.exitCode =
+                ready.outcome === "accepted"
+                  ? 0
+                  : ready.outcome === "rejected"
+                    ? 2
+                    : 3;
+              return;
+            }
+            request.attachment_reservation = ready.reservation_id;
+            if (ready.expires_at <= Date.now())
               throw new Error(
-                "Cross-project attachments are not yet enabled; no message was sent",
+                "Attachment preparation expired before transfer; no message was sent",
               );
-            const metadata = await readAgentFileReferences(opts.attach);
-            if (metadata.kind !== "project-files")
-              throw new Error("invalid file references");
-            file_references = metadata.files;
           }
           const result = (await sendIdentityMessage(
             {
-              version: 2,
+              ...request,
               action: "send",
-              attempt_id,
-              target,
-              body: prompt,
-              guidance: opts.guidance,
-              ...(file_references ? { file_references } : {}),
+              ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
             },
             globals.api,
           )) as AgentRpcOutcome;

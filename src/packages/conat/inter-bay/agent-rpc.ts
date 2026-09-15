@@ -10,7 +10,9 @@ import type {
   AgentRpcSend,
   AgentRpcAttempt,
   AgentRpcOutcome,
+  AgentRpcPreparation,
 } from "@cocalc/conat/agents/rpc";
+import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import type { AgentIdentityRoute } from "./agent-identities";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
@@ -110,6 +112,13 @@ export interface AgentRpcControlApi {
     { source: AgentIdentity; link: AgentRpcLink } | PersonalAgentDenial
   >;
   submit(
+    opts: RpcRoute &
+      RpcSource & { request: AgentRpcSend; snapshot_payload?: AgentSnapshot[] },
+  ): Promise<AgentRpcOutcome>;
+  prepareAttachments(
+    opts: RpcRoute & RpcSource & { request: AgentRpcSend },
+  ): Promise<AgentRpcPreparation>;
+  cancelAttachments(
     opts: RpcRoute & RpcSource & { request: AgentRpcSend },
   ): Promise<AgentRpcOutcome>;
   inspect(
@@ -144,5 +153,14 @@ export function createAgentRpcControlHandler(
     service: "agent-messaging-v2",
     subject: subject(bay),
     transport: "request",
+    parallel: true,
+    maxParallelHandlers: 4,
+    receiveLimits: {
+      maxMessageBytes: 33 * 1024 * 1024,
+      maxInflightBytes: 132 * 1024 * 1024,
+      maxInflightMessages: 4,
+      maxFragmentsPerMessage: 4096,
+    },
+    maxQueue: 4,
   });
 }

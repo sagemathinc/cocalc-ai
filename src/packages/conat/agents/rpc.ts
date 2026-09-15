@@ -1,7 +1,10 @@
 import { requireUuid } from "./protocol";
 import {
   validateAttachmentMetadata,
+  validateAttachmentPayload,
   type AgentFileReference,
+  type AgentSnapshotMetadata,
+  type AgentSnapshot,
 } from "./attachments";
 
 export interface AgentEndpoint {
@@ -19,7 +22,16 @@ export interface AgentRpcSend extends AgentRpcAttempt {
   body: string;
   guidance?: boolean;
   file_references?: AgentFileReference[];
+  snapshot_manifest?: AgentSnapshotMetadata[];
+  attachment_reservation?: string;
 }
+
+export interface AgentRpcPrepared extends AgentRpcAttempt {
+  outcome: "prepared";
+  reservation_id: string;
+  expires_at: number;
+}
+export type AgentRpcPreparation = AgentRpcPrepared | AgentRpcOutcome;
 
 export interface AgentRpcOutcome extends AgentRpcAttempt {
   outcome: "accepted" | "rejected" | "unknown";
@@ -41,6 +53,10 @@ export const AGENT_RPC_FAILURE_CODES = [
   "execution_ack_unknown",
   "submission_deadline",
   "attachment_unavailable",
+  "attachment_preparation_expired",
+  "attachment_preparation_unavailable",
+  "attachment_invalid",
+  "attachment_limit_exceeded",
 ] as const;
 export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
 
@@ -68,7 +84,8 @@ export type AgentRpcRequest =
       action: "request-connection";
     } & import("./personal").PersonalConnectionRequestOptions)
   | { version: 2; action: "connection-request"; request_id: string }
-  | (AgentRpcSend & { action: "send" })
+  | (AgentRpcSend & { action: "send"; snapshot_payload?: AgentSnapshot[] })
+  | (AgentRpcSend & { action: "prepare-attachments" | "cancel-attachments" })
   | (AgentRpcAttempt & { action: "inspect" })
   | { version: 2; action: "destinations" };
 
@@ -81,15 +98,55 @@ export function validateAgentEndpoint(value: AgentEndpoint): void {
     throw new Error("unexpected endpoint field");
 }
 
-export function validateAgentRpcRequest(value: AgentRpcRequest): void {
+export function validateAgentRpcRequest(
+  value: AgentRpcRequest,
+  metadataOnly = false,
+): void {
   if (value?.version !== 2) throw new Error("agent RPC version 2 required");
   const keys = ["version", "action"];
-  if (value.action === "send" || value.action === "inspect") {
+  if (
+    ["send", "inspect", "prepare-attachments", "cancel-attachments"].includes(
+      value.action,
+    )
+  ) {
+    if (!("attempt_id" in value)) throw new Error("attempt required");
     keys.push("attempt_id", "target");
     requireUuid(value.attempt_id, "attempt_id");
     validateAgentEndpoint(value.target);
-    if (value.action === "send") {
-      keys.push("body", "guidance", "file_references");
+    if (value.action !== "inspect") {
+      keys.push(
+        "body",
+        "guidance",
+        "file_references",
+        "snapshot_manifest",
+        "attachment_reservation",
+      );
+      if (value.action === "send") keys.push("snapshot_payload");
+      if (value.snapshot_manifest !== undefined) {
+        if (value.file_references !== undefined)
+          throw new Error("cannot mix snapshot and reference attachments");
+        validateAttachmentMetadata({
+          kind: "snapshots",
+          files: value.snapshot_manifest,
+        });
+        if (value.action === "prepare-attachments") {
+          if (value.attachment_reservation !== undefined)
+            throw new Error("preparation cannot reuse a reservation");
+        } else {
+          requireUuid(value.attachment_reservation, "attachment_reservation");
+          if (value.action === "send" && !metadataOnly)
+            validateAttachmentPayload(
+              { kind: "snapshots", files: value.snapshot_manifest },
+              value.snapshot_payload!,
+            );
+        }
+      } else if (
+        value.action !== "send" ||
+        value.attachment_reservation !== undefined ||
+        value.snapshot_payload !== undefined
+      ) {
+        throw new Error("snapshot manifest required");
+      }
       if (value.file_references !== undefined)
         validateAttachmentMetadata({
           kind: "project-files",
@@ -125,6 +182,25 @@ export function validateAgentRpcRequest(value: AgentRpcRequest): void {
   }
   if (Object.keys(value).some((key) => !keys.includes(key)))
     throw new Error("unexpected agent RPC field");
+}
+
+export function validateAgentRpcPreparation(
+  value: AgentRpcPreparation,
+  request: AgentRpcAttempt,
+): void {
+  if (value?.outcome !== "prepared")
+    return validateAgentRpcOutcome(value as AgentRpcOutcome, request);
+  requireUuid(value.reservation_id, "reservation_id");
+  if (
+    value.version !== 2 ||
+    value.attempt_id !== request.attempt_id ||
+    value.target?.project_id !== request.target.project_id ||
+    value.target?.agent_id !== request.target.agent_id ||
+    !Number.isFinite(value.expires_at)
+  )
+    throw new Error(
+      "Attachment preparation acknowledgment is invalid or mismatched",
+    );
 }
 
 export function validatePersonalApproval(value: {
@@ -204,4 +280,32 @@ export interface AgentRpcEnvelope extends AgentRpcSend {
   path: string;
   thread_id: string;
   deadline: number;
+}
+
+/** Stable metadata-only permit binding, independent of object insertion order. */
+export function agentRpcEnvelopeKey(e: AgentRpcEnvelope): string {
+  return JSON.stringify([
+    e.version,
+    e.permit_id,
+    e.deadline,
+    e.source.project_id,
+    e.source.agent_id,
+    e.target.project_id,
+    e.target.agent_id,
+    e.run_id,
+    e.link_id,
+    e.account_id,
+    e.path,
+    e.thread_id,
+    e.attempt_id,
+    e.body,
+    e.guidance === true,
+    e.file_references?.map(({ kind, path }) => [kind, path]) ?? null,
+    e.snapshot_manifest?.map(({ name, size, sha256 }) => [
+      name,
+      size,
+      sha256,
+    ]) ?? null,
+    e.attachment_reservation ?? null,
+  ]);
 }

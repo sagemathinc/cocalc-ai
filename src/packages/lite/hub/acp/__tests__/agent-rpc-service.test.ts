@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomUUID, createHash } from "node:crypto";
 import { encodeRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
 import {
   createAgentRpcService,
@@ -47,6 +47,143 @@ function fixture() {
   };
   return { e, db, deps, service: createAgentRpcService(deps) };
 }
+
+function attachmentFixture() {
+  const f = fixture();
+  const data = Buffer.from([0, 128, 255, 42]);
+  const metadata = {
+    name: "receipt.bin",
+    size: data.length,
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
+  f.e.snapshot_manifest = [metadata];
+  f.deps.stageAttachments = jest.fn(async () => ({
+    directory: "/tmp/staged",
+    manifest_path: "/tmp/staged/manifest.json",
+    files: [{ ...metadata, path: "/tmp/staged/0/receipt.bin" }],
+  }));
+  f.deps.discardAttachments = jest.fn(async () => {});
+  return { ...f, files: [{ ...metadata, data }] };
+}
+
+test("cross-project snapshots prepare, stage and admit using target execution identity", async () => {
+  const { e, files, deps, service, db } = attachmentFixture();
+  const ready = await service.prepareAttachments(e);
+  expect(ready.outcome).toBe("prepared");
+  if (ready.outcome !== "prepared") throw new Error("not prepared");
+  expect(deps.stageAttachments).not.toHaveBeenCalled();
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+  const send = { ...e, attachment_reservation: ready.reservation_id };
+  expect(await service.submit(send, files)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+  });
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
+  const request = (deps.admit as jest.Mock).mock.calls[0][0].request;
+  expect(request.account_id).toBe(e.account_id);
+  expect(request.prompt).toContain("/tmp/staged/0/receipt.bin");
+  expect(request.prompt).toContain("temporary");
+  expect(db.set.mock.calls[0][0].agent_rpc.attachments.files[0].path).toBe(
+    "/tmp/staged/0/receipt.bin",
+  );
+  expect(JSON.stringify(db.set.mock.calls[0][0])).not.toContain('"data"');
+  expect(deps.discardAttachments).not.toHaveBeenCalled();
+  expect(await service.submit(send, files)).toMatchObject({
+    outcome: "rejected",
+  });
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test.each(["quota", "hash", "revoked", "stopped"])(
+  "snapshot %s failure never falls back to a text-only message",
+  async (failure) => {
+    const { e, files, deps, service, db } = attachmentFixture();
+    const ready = await service.prepareAttachments(e);
+    if (ready.outcome !== "prepared") throw new Error("not prepared");
+    if (failure === "quota")
+      (deps.stageAttachments as jest.Mock).mockRejectedValue(
+        new Error("ENOSPC"),
+      );
+    if (failure === "hash") files[0].data[0] = 99;
+    if (failure === "revoked")
+      (deps.authorize as jest.Mock).mockRejectedValue(
+        new Error("grant_revoked"),
+      );
+    if (failure === "stopped")
+      (deps.ensureRunning as jest.Mock).mockRejectedValue(
+        new Error("Automatic starts disabled"),
+      );
+    expect(
+      await service.submit(
+        { ...e, attachment_reservation: ready.reservation_id },
+        files,
+      ),
+    ).toMatchObject({ outcome: "rejected", chat_effect: "none" });
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+  },
+);
+
+test("lost snapshot execution acknowledgment retains files and returns unknown", async () => {
+  const { e, files, deps, service } = attachmentFixture();
+  const ready = await service.prepareAttachments(e);
+  if (ready.outcome !== "prepared") throw new Error("not prepared");
+  (deps.admit as jest.Mock).mockRejectedValue(new Error("ack lost"));
+  expect(
+    await service.submit(
+      { ...e, attachment_reservation: ready.reservation_id },
+      files,
+    ),
+  ).toMatchObject({ outcome: "unknown", chat_effect: "saved" });
+  expect(deps.discardAttachments).not.toHaveBeenCalled();
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test("retained attempt evidence does not leak a newly staged duplicate attachment set", async () => {
+  const { e, files, deps, service } = attachmentFixture();
+  for (let i = 0; i < 2; i++) {
+    const ready = await service.prepareAttachments(e);
+    if (ready.outcome !== "prepared") throw new Error("not prepared");
+    expect(
+      await service.submit(
+        { ...e, attachment_reservation: ready.reservation_id },
+        files,
+      ),
+    ).toMatchObject({ outcome: "accepted" });
+  }
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  expect(deps.discardAttachments).toHaveBeenCalledTimes(1);
+});
+
+test("attachment preparations share capacity with ordinary text messages", async () => {
+  const { e, deps } = attachmentFixture();
+  const service = createAgentRpcService(
+    deps,
+    undefined,
+    new AgentRpcCapacity(1, 1),
+  );
+  const ready = await service.prepareAttachments(e);
+  if (ready.outcome !== "prepared") throw new Error("not prepared");
+  expect(
+    await service.submit({
+      ...e,
+      attempt_id: randomUUID(),
+      snapshot_manifest: undefined,
+    }),
+  ).toMatchObject({ outcome: "rejected", code: "host_overloaded" });
+  await service.cancelAttachments({
+    ...e,
+    attachment_reservation: ready.reservation_id,
+  });
+  expect(
+    await service.submit({
+      ...e,
+      attempt_id: randomUUID(),
+      snapshot_manifest: undefined,
+    }),
+  ).toMatchObject({ outcome: "accepted" });
+});
 
 test("idle wake and busy queue use one existing admission call with target identity", async () => {
   const { e, deps, service, db } = fixture();

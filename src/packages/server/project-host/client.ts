@@ -29,6 +29,16 @@ export async function getRoutedHostControlClient({
       timeout_ms: timeout,
     });
     return {
+      prepareAgentRpcAttachments: async () => {
+        throw new Error(
+          "agent attachments must route through the target owner",
+        );
+      },
+      cancelAgentRpcAttachments: async () => {
+        throw new Error(
+          "agent attachments must route through the target owner",
+        );
+      },
       submitAgentRpc: async () => {
         throw new Error("agent RPC must route through the target owner");
       },

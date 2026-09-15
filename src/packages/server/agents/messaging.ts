@@ -94,15 +94,22 @@ export async function startAgentMessaging(
   client: Client,
 ): Promise<() => Promise<void>> {
   if (!agentMessagingEnabled()) return async () => {};
+  const binary = process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED === "1";
   const subscription = await client.subscribe("agent-messaging.*.*", {
     queue: "agent-messaging-v1",
-    // This subject currently accepts metadata/text only, never file bytes.
-    receiveLimits: {
-      maxMessageBytes: 128 * 1024,
-      maxInflightBytes: 4 * 1024 * 1024,
-      maxInflightMessages: 32,
-    },
-    maxQueue: 32,
+    receiveLimits: binary
+      ? {
+          maxMessageBytes: 33 * 1024 * 1024,
+          maxInflightBytes: 132 * 1024 * 1024,
+          maxInflightMessages: 4,
+          maxFragmentsPerMessage: 4096,
+        }
+      : {
+          maxMessageBytes: 128 * 1024,
+          maxInflightBytes: 4 * 1024 * 1024,
+          maxInflightMessages: 32,
+        },
+    maxQueue: binary ? 4 : 32,
   });
   let closed = false;
   const activeRpc = new Set<Promise<void>>();
@@ -121,7 +128,7 @@ export async function startAgentMessaging(
           continue;
         const request = message.data;
         if (request?.version === 2) {
-          if (activeRpc.size >= 32) {
+          if (activeRpc.size >= (binary ? 4 : 32)) {
             await message.respond({
               error: "agent RPC admission capacity reached",
             });

@@ -76,6 +76,7 @@ export class AgentRpcAttempts {
           request.body,
           request.guidance === true,
           request.file_references ?? null,
+          request.snapshot_manifest ?? null,
         ]),
       )
       .digest("hex");

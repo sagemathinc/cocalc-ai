@@ -72,7 +72,7 @@ test("named send uses one scoped attempt and never the human send path", async (
   }
 });
 
-test("same-project attachment send uses trusted identity and preserves selected paths", async () => {
+test("attachment sends preserve same-project references and prepare cross-project bytes", async () => {
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
   const paths = [
     { kind: "project-file", path: "/tmp/report.pdf" },
@@ -93,6 +93,21 @@ test("same-project attachment send uses trusted identity and preserves selected 
     },
   );
   let sourceProject = target.project_id;
+  let allowPreparation = true;
+  const data = Buffer.from([0, 128, 255]);
+  const snapshot = {
+    name: "report.pdf",
+    size: data.length,
+    sha256: "a".repeat(64),
+  };
+  const snapshotReader = mock.method(
+    require("../../core/agent-attachments"),
+    "readAgentAttachmentSnapshots",
+    async () => ({
+      metadata: { kind: "snapshots", files: [snapshot] },
+      files: [{ ...snapshot, data }],
+    }),
+  );
   const transport = mock.method(
     require("../../core/agent-message"),
     "sendIdentityMessage",
@@ -100,6 +115,24 @@ test("same-project attachment send uses trusted identity and preserves selected 
       calls.push(request);
       if (request.action === "whoami")
         return { identity: { project_id: sourceProject } };
+      if (request.action === "prepare-attachments")
+        return allowPreparation
+          ? {
+              version: 2,
+              target,
+              attempt_id: request.attempt_id,
+              outcome: "prepared",
+              reservation_id: randomUUID(),
+              expires_at: Date.now() + 30_000,
+            }
+          : {
+              version: 2,
+              target,
+              attempt_id: request.attempt_id,
+              outcome: "rejected",
+              observed_at: Date.now(),
+              reason: "autostart disabled",
+            };
       return { ...request, outcome: "accepted", observed_at: Date.now() };
     },
   );
@@ -132,19 +165,25 @@ test("same-project attachment send uses trusted identity and preserves selected 
     );
     assert.deepEqual(calls[1].file_references, paths);
     sourceProject = randomUUID();
-    await assert.rejects(
-      program.parseAsync(args, { from: "user" }),
-      /Cross-project attachments are not yet enabled/,
-    );
+    await program.parseAsync(args, { from: "user" });
     assert.deepEqual(
       calls.map((c) => c.action),
-      ["whoami", "send", "whoami"],
+      ["whoami", "send", "whoami", "prepare-attachments", "send"],
     );
+    assert.equal(calls[3].snapshot_payload, undefined);
+    assert.deepEqual(calls[4].snapshot_payload[0].data, data);
+    assert.ok(calls[4].attachment_reservation);
+    allowPreparation = false;
+    await program.parseAsync(args, { from: "user" });
+    assert.equal(calls.at(-1).action, "prepare-attachments");
+    assert.equal(calls.filter((r) => r.action === "send").length, 2);
+    assert.equal(process.exitCode, 2);
     assert.equal(reader.mock.callCount(), 1);
   } finally {
     process.exitCode = oldExit;
     resolver.mock.restore();
     reader.mock.restore();
+    snapshotReader.mock.restore();
     transport.mock.restore();
   }
 });

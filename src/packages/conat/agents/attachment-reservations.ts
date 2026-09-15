@@ -126,6 +126,12 @@ function snapshot(
       thread_id: e.thread_id,
       path: e.path,
       deadline: e.deadline,
+      ...(e.snapshot_manifest
+        ? { snapshot_manifest: e.snapshot_manifest.map((f) => ({ ...f })) }
+        : {}),
+      ...(e.attachment_reservation
+        ? { attachment_reservation: e.attachment_reservation }
+        : {}),
     },
     files: request.files.map(({ name, size, sha256 }) => ({
       name,

@@ -11,11 +11,14 @@ import {
   validateAgentEndpoint,
   validateAgentRpcRequest,
   validateAgentRpcOutcome,
+  validateAgentRpcPreparation,
+  agentRpcEnvelopeKey,
   type AgentEndpoint,
   type AgentRpcEnvelope,
   type AgentRpcLink,
   type AgentRpcRequest,
 } from "@cocalc/conat/agents/rpc";
+import { validateAttachmentPayload } from "@cocalc/conat/agents/attachments";
 import {
   requireUuid,
   parseAgentMessagingSubject,
@@ -136,9 +139,23 @@ const permits = new Map<
   string,
   { envelope: string; expires: number; host_id: string }
 >();
+const preparations = new Map<
+  string,
+  { key: string; host_id: string; expires: number }
+>();
+function preparationKey(e: AgentRpcEnvelope) {
+  return agentRpcEnvelopeKey({
+    ...e,
+    permit_id: "",
+    deadline: 0,
+    attachment_reservation: undefined,
+  });
+}
 function prunePermits() {
   for (const [key, value] of permits)
     if (value.expires <= Date.now()) permits.delete(key);
+  for (const [key, value] of preparations)
+    if (value.expires <= Date.now()) preparations.delete(key);
 }
 async function hostFor(endpoint: AgentEndpoint) {
   const project = (
@@ -163,6 +180,179 @@ async function hostFor(endpoint: AgentEndpoint) {
       noRetry: true,
     }),
   };
+}
+
+async function submitAgentRpcOperation(
+  opts: Parameters<AgentRpcControlApi["submit"]>[0],
+  phase: "send" | "prepare" | "cancel" = "send",
+): Promise<import("@cocalc/conat/agents/rpc").AgentRpcPreparation> {
+  await local(opts, opts.request.target);
+  validateAgentRpcRequest(
+    {
+      ...opts.request,
+      action:
+        phase === "prepare"
+          ? "prepare-attachments"
+          : phase === "cancel"
+            ? "cancel-attachments"
+            : "send",
+    },
+    true,
+  );
+  if (opts.request.snapshot_manifest || phase !== "send") {
+    if (process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1")
+      return rpcOutcome(opts.request, "rejected", {
+        code: "attachment_unavailable",
+        reason: "Binary attachments are not enabled on the recipient bay",
+        chat_effect: "none",
+      });
+    if (phase === "send")
+      validateAttachmentPayload(
+        { kind: "snapshots", files: opts.request.snapshot_manifest! },
+        opts.snapshot_payload!,
+      );
+  } else if (opts.snapshot_payload !== undefined)
+    throw new Error("unexpected attachment bytes");
+  let submissionStarted = false;
+  let observation: { account_id: string; link_id: string } | undefined;
+  let accepted = false;
+  try {
+    const proof = await routed(opts.source.project_id, (api, route) =>
+      api.check({
+        ...route,
+        source: opts.source,
+        run_id: opts.run_id,
+        target: opts.request.target,
+        guidance: opts.request.guidance === true,
+      }),
+    );
+    if ("denied" in proof)
+      return rpcOutcome(opts.request, "rejected", { reason: proof.denied });
+    const target = await sourceIdentity(opts.request.target);
+    if (
+      personalMessagingEnabled() !==
+      (proof.link.principal_account_id !== undefined)
+    )
+      throw new Error("personal messaging mode mismatch between bays");
+    if (
+      personalMessagingEnabled() &&
+      proof.link.principal_account_id !== proof.link.approved_by
+    )
+      throw new PersonalAgentAuthorizationError("principal_mismatch");
+    if (
+      !personalMessagingEnabled() &&
+      target.created_by !== proof.link.approved_by
+    )
+      throw new Error("target approver changed");
+    await assertActor(proof.link.approved_by, target.project_id);
+    const host = await hostFor(opts.request.target);
+    if (personalMessagingEnabled())
+      observation = {
+        account_id: proof.link.approved_by,
+        link_id: proof.link.link_id,
+      };
+    prunePermits();
+    if (permits.size >= 1000) throw new Error("too many in-flight submissions");
+    const envelope: AgentRpcEnvelope = {
+      ...opts.request,
+      source: opts.source,
+      run_id: opts.run_id,
+      permit_id: randomUUID(),
+      link_id: proof.link.link_id,
+      account_id: personalMessagingEnabled()
+        ? proof.link.approved_by
+        : target.created_by,
+      path: target.path,
+      thread_id: target.thread_id,
+      deadline: Date.now() + 30_000,
+    };
+    if (phase !== "prepare" && envelope.snapshot_manifest) {
+      const prepared = preparations.get(envelope.attachment_reservation!);
+      if (
+        !prepared ||
+        prepared.key !== preparationKey(envelope) ||
+        prepared.host_id !== host.host_id
+      )
+        return rpcOutcome(opts.request, "rejected", {
+          code: "attachment_preparation_unavailable",
+          reason:
+            "Attachment preparation expired, changed, or was already used; no message was submitted",
+          chat_effect: "none",
+        });
+      envelope.deadline = Math.min(envelope.deadline, prepared.expires);
+      preparations.delete(envelope.attachment_reservation!);
+    }
+    permits.set(envelope.permit_id, {
+      envelope: agentRpcEnvelopeKey(envelope),
+      expires: envelope.deadline,
+      host_id: host.host_id,
+    });
+    if (phase === "prepare") {
+      if (preparations.size >= 1000)
+        throw new Error("attachment preparation capacity full");
+      const ready = await host.api.prepareAgentRpcAttachments(envelope);
+      validateAgentRpcPreparation(ready, opts.request);
+      if (ready.outcome === "prepared") {
+        if (
+          ready.expires_at > envelope.deadline ||
+          ready.expires_at <= Date.now()
+        )
+          throw new Error("attachment readiness expired or invalid");
+        preparations.set(ready.reservation_id, {
+          key: preparationKey(envelope),
+          host_id: host.host_id,
+          expires: ready.expires_at,
+        });
+      }
+      return ready;
+    }
+    if (phase === "cancel") {
+      await host.api.cancelAgentRpcAttachments(envelope);
+      return rpcOutcome(opts.request, "rejected", {
+        reason: "Attachment preparation cancelled; no message was submitted",
+        chat_effect: "none",
+      });
+    }
+    submissionStarted = true;
+    const outcome = await host.api.submitAgentRpc(
+      envelope,
+      opts.snapshot_payload,
+    );
+    validateAgentRpcOutcome(outcome, opts.request);
+    accepted = outcome.outcome === "accepted";
+    return outcome;
+  } catch (error) {
+    logger.warn("recipient submission failed", {
+      attempt_id: opts.request.attempt_id,
+      target: opts.request.target,
+      submissionStarted,
+      error: `${error}`,
+    });
+    return rpcOutcome(
+      opts.request,
+      submissionStarted ? "unknown" : "rejected",
+      {
+        reason: submissionStarted
+          ? "Recipient acknowledgment unavailable"
+          : personalMessagingEnabled() &&
+              error instanceof PersonalAgentAuthorizationError
+            ? error.denial
+            : "Link, execution account or target host unavailable",
+      },
+    );
+  } finally {
+    // Observations are not receipts. Unavailable telemetry cannot change an
+    // outcome or cause a send retry, and must not delay the host response.
+    if (submissionStarted && observation)
+      void withPersonalHome(observation.account_id, {
+        action: "observe",
+        options: { link_id: observation.link_id, accepted },
+      }).catch((error) =>
+        logger.warn("personal attempt observation unavailable", {
+          error: `${error}`,
+        }),
+      );
+  }
 }
 
 export const agentRpcControl: AgentRpcControlApi = {
@@ -332,106 +522,16 @@ export const agentRpcControl: AgentRpcControlApi = {
       link: link(row, opts.source),
     };
   },
-  submit: async (opts) => {
-    await local(opts, opts.request.target);
-    validateAgentRpcRequest({ ...opts.request, action: "send" });
-    let submissionStarted = false;
-    let observation: { account_id: string; link_id: string } | undefined;
-    let accepted = false;
-    try {
-      const proof = await routed(opts.source.project_id, (api, route) =>
-        api.check({
-          ...route,
-          source: opts.source,
-          run_id: opts.run_id,
-          target: opts.request.target,
-          guidance: opts.request.guidance === true,
-        }),
-      );
-      if ("denied" in proof)
-        return rpcOutcome(opts.request, "rejected", { reason: proof.denied });
-      const target = await sourceIdentity(opts.request.target);
-      if (
-        personalMessagingEnabled() !==
-        (proof.link.principal_account_id !== undefined)
-      )
-        throw new Error("personal messaging mode mismatch between bays");
-      if (
-        personalMessagingEnabled() &&
-        proof.link.principal_account_id !== proof.link.approved_by
-      )
-        throw new PersonalAgentAuthorizationError("principal_mismatch");
-      if (
-        !personalMessagingEnabled() &&
-        target.created_by !== proof.link.approved_by
-      )
-        throw new Error("target approver changed");
-      await assertActor(proof.link.approved_by, target.project_id);
-      const host = await hostFor(opts.request.target);
-      if (personalMessagingEnabled())
-        observation = {
-          account_id: proof.link.approved_by,
-          link_id: proof.link.link_id,
-        };
-      prunePermits();
-      if (permits.size >= 1000)
-        throw new Error("too many in-flight submissions");
-      const envelope: AgentRpcEnvelope = {
-        ...opts.request,
-        source: opts.source,
-        run_id: opts.run_id,
-        permit_id: randomUUID(),
-        link_id: proof.link.link_id,
-        account_id: personalMessagingEnabled()
-          ? proof.link.approved_by
-          : target.created_by,
-        path: target.path,
-        thread_id: target.thread_id,
-        deadline: Date.now() + 30_000,
-      };
-      permits.set(envelope.permit_id, {
-        envelope: JSON.stringify(envelope),
-        expires: envelope.deadline,
-        host_id: host.host_id,
-      });
-      submissionStarted = true;
-      const outcome = await host.api.submitAgentRpc(envelope);
-      validateAgentRpcOutcome(outcome, opts.request);
-      accepted = outcome.outcome === "accepted";
-      return outcome;
-    } catch (error) {
-      logger.warn("recipient submission failed", {
-        attempt_id: opts.request.attempt_id,
-        target: opts.request.target,
-        submissionStarted,
-        error: `${error}`,
-      });
-      return rpcOutcome(
-        opts.request,
-        submissionStarted ? "unknown" : "rejected",
-        {
-          reason: submissionStarted
-            ? "Recipient acknowledgment unavailable"
-            : personalMessagingEnabled() &&
-                error instanceof PersonalAgentAuthorizationError
-              ? error.denial
-              : "Link, execution account or target host unavailable",
-        },
-      );
-    } finally {
-      // Observations are not receipts. Unavailable telemetry cannot change an
-      // outcome or cause a send retry, and must not delay the host response.
-      if (submissionStarted && observation)
-        void withPersonalHome(observation.account_id, {
-          action: "observe",
-          options: { link_id: observation.link_id, accepted },
-        }).catch((error) =>
-          logger.warn("personal attempt observation unavailable", {
-            error: `${error}`,
-          }),
-        );
-    }
-  },
+  submit: async (opts) =>
+    (await submitAgentRpcOperation(
+      opts,
+    )) as import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
+  prepareAttachments: (opts) => submitAgentRpcOperation(opts, "prepare"),
+  cancelAttachments: async (opts) =>
+    (await submitAgentRpcOperation(
+      opts,
+      "cancel",
+    )) as import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
   inspect: async (opts) => {
     await local(opts, opts.request.target);
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
@@ -529,11 +629,16 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
   // admission; it does not retract saved messages or cancel running work.
   enabled();
   const e = opts.envelope;
+  if (
+    e.snapshot_manifest &&
+    process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1"
+  )
+    throw new Error("binary agent attachments disabled on recipient bay");
   prunePermits();
   const permit = permits.get(e.permit_id);
   if (
     !permit ||
-    permit.envelope !== JSON.stringify(e) ||
+    permit.envelope !== agentRpcEnvelopeKey(e) ||
     permit.host_id !== opts.host_id ||
     e.account_id !== opts.account_id
   )
@@ -599,7 +704,21 @@ export async function acceptAgentRpc(
     return routed(source.project_id, (api, route) =>
       api.links({ ...route, source, run_id }),
     );
-  const { action, ...attempt } = request;
+  if (
+    request.action === "prepare-attachments" ||
+    request.action === "cancel-attachments"
+  ) {
+    const { action, ...attempt } = request;
+    return routed(request.target.project_id, (api, route) =>
+      action === "prepare-attachments"
+        ? api.prepareAttachments({ ...route, source, run_id, request: attempt })
+        : api.cancelAttachments({ ...route, source, run_id, request: attempt }),
+    );
+  }
+  const { action, ...rest } = request;
+  const { snapshot_payload, ...attempt } = rest as typeof rest & {
+    snapshot_payload?: import("@cocalc/conat/agents/attachments").AgentSnapshot[];
+  };
   return routed(request.target.project_id, (api, route) =>
     action === "send"
       ? api.submit({
@@ -607,6 +726,7 @@ export async function acceptAgentRpc(
           source,
           run_id,
           request: attempt as import("@cocalc/conat/agents/rpc").AgentRpcSend,
+          ...(snapshot_payload ? { snapshot_payload } : {}),
         })
       : api.inspect({ ...route, source, run_id, request: attempt }),
   );

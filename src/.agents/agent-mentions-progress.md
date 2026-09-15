@@ -856,7 +856,9 @@ Attachment design decisions for the next increment, not implemented here:
 Follow-up implementation status, exact reproduction commands, and remaining work
 are tracked in [agent-attachments-login-progress.md](./agent-attachments-login-progress.md).
 Host/project fail-fast admission and same-project file references are implemented
-and tested in the worktree. Snapshot validation, bounded preparation, and sandboxed
-staging have internal adapter tests, but cross-project binary transport and
-external sender login are not connected yet. None of this increment is deployed;
-do not interpret these tests as live cross-host attachment verification.
+and tested in the worktree. Snapshot preparation, binary transport through owner
+routing, and sandboxed destination staging are now connected. A real Conat test
+passes a 32 MiB payload across three test bay services with digest verification;
+the execution adapter remains mocked. External sender login is not implemented.
+None of this increment is deployed; do not interpret these tests as live
+cross-host attachment verification.

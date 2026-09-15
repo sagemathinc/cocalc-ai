@@ -11,7 +11,8 @@ import {
   type AgentSnapshot,
 } from "@cocalc/conat/agents/attachments";
 
-/** Call only after metadata-only destination admission succeeds. */
+/** Create a bounded local snapshot and digest manifest. No bytes may be
+ * transferred to the destination until metadata-only admission succeeds. */
 export async function readAgentAttachmentSnapshots(paths: string[]): Promise<{
   metadata: AgentAttachments;
   files: AgentSnapshot[];
