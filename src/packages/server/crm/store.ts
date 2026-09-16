@@ -3998,12 +3998,10 @@ export async function linkOpportunityCommercialOrder(
     order,
     await orderLinkedToAnotherOpportunity(getPool(), order.id, opportunityId),
   );
-  // A committed retry whose response was lost must reach mutate's replay
-  // check instead of being refused because its own link now exists.  A retry
-  // with a different idempotency key is still refused inside the transaction.
-  const retryOfThisLink =
-    opts.commit === true && opportunity.commercial_order_id === order.id;
-  if (checks.blocking.length && !retryOfThisLink)
+  // Check committed requests after mutate's replay lookup. A lost-response
+  // retry must still replay if a later correction replaced the relationship.
+  // New mutations are validated again under the transaction locks below.
+  if (checks.blocking.length && !opts.commit)
     throw Error(checks.blocking.join("; "));
   return await mutate({
     action: "opportunity.link-order",
@@ -4079,8 +4077,7 @@ export async function linkOpportunityCommercialOrder(
         details: opts.reason,
         actor_account_id: opts.account_id,
         occurred_at: new Date().toISOString(),
-        // Warnings are recomputed under the locks at commit, so this can
-        // include a discrepancy that arose after the preview was reviewed.
+        // Record the warnings recomputed under the commit locks.
         metadata: {
           agreed_total: currentOrder.agreed_total,
           expected_value: current.expected_value,
@@ -4111,9 +4108,7 @@ export async function unlinkOpportunityCommercialOrder(
   const opportunityId = await resolveOpportunityId(getPool(), opts.opportunity);
   const opportunity = await loadOpportunity(getPool(), opportunityId);
   const order = await readOrderLinkFields(getPool(), selector);
-  const retryOfThisUnlink =
-    opts.commit === true && opportunity.commercial_order_id == null;
-  if (opportunity.commercial_order_id !== order.id && !retryOfThisUnlink)
+  if (opportunity.commercial_order_id !== order.id && !opts.commit)
     throw Error("opportunity is not linked to that commercial order");
   return await mutate({
     action: "opportunity.unlink-order",

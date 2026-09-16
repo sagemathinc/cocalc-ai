@@ -1397,6 +1397,22 @@ describePglite("integrated CRM store", () => {
       });
       expect(await linkedOrderOf(otherWon.id)).toBe(paid.id);
       expect(await linkedOrderOf(won.id)).toBeNull();
+
+      // A later correction must not stop an old response-lost request from
+      // replaying, nor let that replay replace the newer relationship.
+      const replacement = await order(customer.id);
+      await commit(store.linkOpportunityCommercialOrder, {
+        ...request,
+        order: replacement.id,
+      });
+      for (const [operation, savedRequest] of [
+        [store.linkOpportunityCommercialOrder, commitRequest],
+        [store.unlinkOpportunityCommercialOrder, unlinkCommit],
+      ] as const) {
+        expect(await operation(savedRequest)).toMatchObject({ replayed: true });
+        expect(await linkedOrderOf(won.id)).toBe(replacement.id);
+        expect(await linkedOrderOf(otherWon.id)).toBe(paid.id);
+      }
     } finally {
       await deleteOrderLinkFixtures(organizationIds);
     }
