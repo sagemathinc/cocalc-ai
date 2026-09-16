@@ -163,7 +163,11 @@ async function prepareAutomaticVmPersonalFallbacks(): Promise<void> {
     WHERE c.id>$2 AND c.state='approved' AND c.terms->>'activation'='fallback' AND v.owning_bay_id=$1
       AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a
         WHERE a.account_id=c.payer_account_id AND a.deleted IS NOT TRUE
-          ${isBillingAuthorityEnabled() ? "" : "AND a.home_bay_id=$1"})
+          ${
+            isBillingAuthorityEnabled()
+              ? ""
+              : "AND (a.home_bay_id IS NULL OR BTRIM(a.home_bay_id)='' OR a.home_bay_id=$1)"
+          })
       AND v.state='stopped' AND v.desired_state='stopped' AND v.metadata#>'{billing,course_funding,stop_intent}' IS NOT NULL
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), fallbackCursor],
@@ -805,7 +809,11 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
     WHERE c.id>$2 AND c.state='preparing' AND v.owning_bay_id=$1 AND v.state='stopped' AND v.desired_state='stopped'
       AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a
         WHERE a.account_id=c.payer_account_id AND a.deleted IS NOT TRUE
-          ${isBillingAuthorityEnabled() ? "" : "AND a.home_bay_id=$1"})
+          ${
+            isBillingAuthorityEnabled()
+              ? ""
+              : "AND (a.home_bay_id IS NULL OR BTRIM(a.home_bay_id)='' OR a.home_bay_id=$1)"
+          })
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), handoffCursor],
   );
@@ -954,7 +962,11 @@ async function closeEndedPersonalConsents(): Promise<void> {
     WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','preparing','active')
       AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a
         WHERE a.account_id=c.payer_account_id AND a.deleted IS NOT TRUE
-          ${isBillingAuthorityEnabled() ? "" : "AND a.home_bay_id=$1"})
+          ${
+            isBillingAuthorityEnabled()
+              ? ""
+              : "AND (a.home_bay_id IS NULL OR BTRIM(a.home_bay_id)='' OR a.home_bay_id=$1)"
+          })
       AND (v.desired_state='deleted' OR v.deleted_at IS NOT NULL OR (c.terms->>'ends_at')::timestamptz<=clock_timestamp())
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), closedConsentCursor],
