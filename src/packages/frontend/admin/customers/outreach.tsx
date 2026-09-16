@@ -90,6 +90,8 @@ type OutreachAction =
   | { kind: "create-batch" }
   | { kind: "create-template" }
   | { kind: "add-recipient"; batch?: CrmOutreachBatch }
+  | { kind: "edit-recipient"; delivery: CrmOutreachDelivery }
+  | { kind: "remove-recipient"; delivery: CrmOutreachDelivery }
   | {
       kind: "batch-transition";
       batch: CrmOutreachBatch;
@@ -207,6 +209,10 @@ function actionTitle(action?: OutreachAction): string {
       return "Create template revision";
     case "add-recipient":
       return "Add reviewed recipient";
+    case "edit-recipient":
+      return "Edit draft recipient";
+    case "remove-recipient":
+      return "Remove draft recipient";
     case "add-suppression":
       return "Add contact suppression";
     case "revoke-suppression":
@@ -369,6 +375,16 @@ function OutreachActionModal({
           ? action.delivery?.normalized_email
           : undefined,
     });
+    if (action.kind === "edit-recipient") {
+      const suffix = `\n\n${action.delivery.footer}`;
+      form.setFieldsValue({
+        subject: action.delivery.subject,
+        body_markdown: action.delivery.body_markdown.endsWith(suffix)
+          ? action.delivery.body_markdown.slice(0, -suffix.length)
+          : action.delivery.body_markdown,
+        override_reason: action.delivery.override_reason,
+      });
+    }
     if (action.kind === "follow-up") {
       setFollowUpLoading(true);
       void api
@@ -432,6 +448,21 @@ function OutreachActionModal({
           subject: values.subject || undefined,
           body_markdown: values.body_markdown || undefined,
           override_reason: values.override_reason || undefined,
+        });
+      case "edit-recipient":
+        return await api.updateOutreachRecipient({
+          ...common,
+          batch: action.delivery.batch_id,
+          delivery: action.delivery.id,
+          subject: values.subject,
+          body_markdown: values.body_markdown,
+          override_reason: values.override_reason || undefined,
+        });
+      case "remove-recipient":
+        return await api.removeOutreachRecipient({
+          ...common,
+          batch: action.delivery.batch_id,
+          delivery: action.delivery.id,
         });
       case "batch-transition":
         return await api.transitionOutreachBatch({
@@ -713,6 +744,37 @@ function OutreachActionModal({
             </Form.Item>
           </>
         );
+      case "edit-recipient":
+        return (
+          <>
+            <Form.Item
+              label="Exact subject"
+              name="subject"
+              rules={[{ required: true }]}
+            >
+              <Input autoFocus maxLength={500} />
+            </Form.Item>
+            <Form.Item
+              label="Markdown body"
+              name="body_markdown"
+              rules={[{ required: true }]}
+              extra="The existing compliance footer and opt-out link are preserved automatically."
+            >
+              <Input.TextArea rows={10} />
+            </Form.Item>
+            <Form.Item label="Preflight override reason" name="override_reason">
+              <Input.TextArea maxLength={2000} rows={2} />
+            </Form.Item>
+          </>
+        );
+      case "remove-recipient":
+        return (
+          <Alert
+            showIcon
+            type="warning"
+            title={`Remove ${action.delivery.recipient_name} from this draft batch?`}
+          />
+        );
       case "add-suppression":
         return (
           <>
@@ -928,6 +990,25 @@ function DeliveryCard({
           <Button onClick={onOpen} size="small" type="primary">
             Review
           </Button>
+          {delivery.state === "draft" ? (
+            <Button
+              disabled={!mutationsEnabled}
+              onClick={() => onAction({ kind: "edit-recipient", delivery })}
+              size="small"
+            >
+              Edit
+            </Button>
+          ) : null}
+          {delivery.state === "draft" ? (
+            <Button
+              danger
+              disabled={!mutationsEnabled}
+              onClick={() => onAction({ kind: "remove-recipient", delivery })}
+              size="small"
+            >
+              Remove
+            </Button>
+          ) : null}
           {delivery.state === "failed" ? (
             <Button
               disabled={!mutationsEnabled}

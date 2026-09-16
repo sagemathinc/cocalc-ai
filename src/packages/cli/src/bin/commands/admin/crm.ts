@@ -2158,6 +2158,32 @@ it stops at the first failed row and may leave the preceding rows committed.
         ),
     ),
   );
+  addMutationOptions(
+    batches
+      .command("edit <batch> <delivery>")
+      .description("preview or edit a draft recipient message")
+      .requiredOption("--subject <subject>", "replacement exact subject")
+      .requiredOption("--body-file <path>", "replacement Markdown body file")
+      .option(
+        "--override-reason <text>",
+        "reviewed preflight warning override",
+      ),
+  ).action(async (batch: string, delivery: string, opts: any, cmd: Command) =>
+    deps.withContext(
+      cmd,
+      "admin crm outreach batch edit",
+      async (ctx) =>
+        await ctx.hub.adminCrm.updateOutreachRecipient(
+          mutationRequest("outreach.recipient.update", opts, {
+            batch,
+            delivery,
+            subject: opts.subject,
+            body_markdown: await readFile(opts.bodyFile, "utf8"),
+            override_reason: opts.overrideReason,
+          }),
+        ),
+    ),
+  );
   for (const action of [
     "approve",
     "queue",
