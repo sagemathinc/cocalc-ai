@@ -391,7 +391,7 @@ const project_hosts_funding_mode_to_val: ToValFunc<ProjectHostsFundingMode> = (
     : "site-funded";
 };
 
-export const DATASTORE_TITLE = "Cloud Storage & Remote Filesystems";
+export const DATASTORE_TITLE = "Cloud Storage & Remote File Systems";
 export const PLATFORM_MODE_SINGLE_NODE = "no";
 export const PLATFORM_MODE_CLOUD = "yes";
 export const PLATFORM_MODE_ON_PREMISES = "onprem";

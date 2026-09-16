@@ -196,6 +196,7 @@ export const transitionOutreachTemplate = mutation(
 export const createOutreachBatch = mutation("createOutreachBatch");
 export const updateOutreachBatch = mutation("updateOutreachBatch");
 export const addOutreachRecipient = mutation("addOutreachRecipient");
+export const updateOutreachRecipient = mutation("updateOutreachRecipient");
 export const removeOutreachRecipient = mutation("removeOutreachRecipient");
 export const transitionOutreachBatch = mutation("transitionOutreachBatch");
 export const mutateOutreachDelivery = mutation("mutateOutreachDelivery");

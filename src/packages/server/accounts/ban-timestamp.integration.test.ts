@@ -57,7 +57,24 @@ describePglite("account ban timestamps", () => {
 
   it("backfills current bans and maintains transition timestamps", async () => {
     const getPool = (await import("@cocalc/database/pool")).default;
+    const { syncAccountBanTimestampSchema } =
+      await import("@cocalc/database/postgres/schema/account-ban-timestamp");
     const { ensureAccountBanTimestampSchema } = await import("./ban-timestamp");
+    await expect(ensureAccountBanTimestampSchema()).rejects.toThrow(
+      "account ban timestamp schema is not installed",
+    );
+    const before = await getPool().query(
+      `SELECT COUNT(*)::INT AS count
+         FROM information_schema.columns
+        WHERE table_name='accounts'
+          AND column_name='banned_at'`,
+    );
+    expect(before.rows).toEqual([{ count: 0 }]);
+
+    await getPool().query(
+      "ALTER TABLE accounts ADD COLUMN banned_at TIMESTAMPTZ",
+    );
+    await syncAccountBanTimestampSchema(getPool());
     await ensureAccountBanTimestampSchema();
 
     const initial = await getPool().query(
