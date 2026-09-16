@@ -19,6 +19,13 @@ earlier checkpoints.
 - The private PR must pin the final documentation head after push. No current
   remediation artifact has been deployed to production.
 
+Dev QA update, September 16: clean build
+`20260916T023414Z-fc9ca3baea3a` from private head `fc9ca3baea3a` is installed on
+`agent-rpc-qa-20260912`. Project-host, router, persist, and ACP worker are aligned
+and healthy. Archive SHA-256 is
+`806c276cdf4a6ae49fd37ffa7d6d0572c91143ad01c876fc1f45bb2341025f2c`.
+This is a dev-only private candidate, not a production default.
+
 | Requirement                   | Evidence                                                                                    | Remaining qualification                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | Default-off experimental UI   | 58 focused frontend tests, frontend typecheck/lint, live switch persistence on September 15 | Broader production usage after explicit opt-in       |
@@ -140,10 +147,15 @@ final-candidate rollback has been exercised.
 
 ## Current prerequisites and next step
 
-Update September 15, 19:21 UTC: native QA approval is resolved. The receiver QA
-host now runs `20260915T191304Z-e43a2ccb10a7` across all four managed components,
-following successful operation `711e8f1b-1a5d-4b30-b0e4-2708ce865940`.
-The earlier rollback paragraph is historical evidence, not its current version.
+Update September 16: the receiver QA host now runs private remediation build
+`20260916T023414Z-fc9ca3baea3a` across all four managed components. The host agent
+promoted it healthy at `2026-09-16T02:38:28.477Z`. The earlier rollback and native
+round-trip paragraphs are historical evidence, not the current artifact version.
+
+Restart operation `4e95ab3b-0b1c-4bcb-9004-732a58f372b7` then passed a live
+running-plus-queued ACP fence probe. Neither pre-restart marker appeared after the
+old 180-second deadline; a new post-restart turn completed. The detailed limits of
+that probe are in `agent-messaging-release-progress.md`.
 
 Post-activation request `8a74dc85-870a-4dab-b411-3a5605a7332c` and reply
 `c07f8d45-b38d-435c-a604-b92c0ef53a2d` were accepted. The reviewer returned the
@@ -151,10 +163,9 @@ matching 28-byte attachment digest, and the source acknowledged locally without
 a reply loop. Both turns finished. Do not request another native approval merely
 because the earlier evidence archive records expired links.
 
-Next: settle the final review/release checkpoint, then qualify the intended
-matched test fleet and final external enrollment/send flow. Independent review
-remains paused; no production rollout is authorized. These are unfinished steps,
-not regressions inferred from the passing native smoke test.
+Next: complete independent re-review of the pinned private head, then qualify the
+remaining membership-change/recovery-child restart cases, matched fleet, and final
+external enrollment/send flow. No production rollout is authorized.
 
 Current status: `agent-messaging-release-progress.md`. Detailed evidence:
 `agent-messaging-release-evidence-20260915.md` and

@@ -120,11 +120,17 @@ release, and an atomic two-process race with exactly one preparation winner.
 ## Evidence and open verification
 
 The full build and focused regressions passed. See
-`agent-messaging-release-progress.md` for counts and exact residual risks. In
-particular, focused restart tests pass, but a final-candidate live detached-worker
-test combining a real session/turn, queued and recovery work, permission downgrade,
-successful stop/start, and proof of no post-restart execution remains unfinished.
-Do not infer that result from mocked project-host tests.
+`agent-messaging-release-progress.md` for counts, artifact hashes, operation IDs,
+and exact residual risks. The exact candidate also passed a live detached-worker
+restart probe with an existing app-server session, a foreground 180-second turn,
+and an accepted queued turn: successful restart disposed the runtime, neither old
+marker appeared immediately or after the old deadline, and a new post-restart turn
+completed normally. This is real dev-host evidence, not inferred from mocks.
+
+That live probe did not combine a separately authenticated second human's actual
+membership downgrade/removal or an explicitly manufactured recovery child. Those
+paths have focused authorization/recovery tests, but report the remaining live
+distinction rather than treating the single probe as every D3 permutation.
 
 Also unfinished: matched-fleet project movement/cross-bay qualification,
 current-version external enrollment/send, and production-like load/RSS measurement.

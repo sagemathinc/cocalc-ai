@@ -77,16 +77,29 @@ and private repository before relying on this packet.
   processes and an isolated PostgreSQL 18 cluster.
 - Identity recovery, maintenance, lease recovery, same-origin HTTP, dangerous RPC,
   and package typechecks passed. Frontend lint passed with zero findings.
+- Dev-only project-host build `20260916T023414Z-fc9ca3baea3a` was produced from
+  clean private head `fc9ca3baea3a3224cf0923e2a73af646e6ba4df2` (83,925,496
+  bytes, SHA-256 `806c276cdf4a6ae49fd37ffa7d6d0572c91143ad01c876fc1f45bb2341025f2c`).
+  QA host `b96028c9-7d3e-4953-a8c9-52f8a5ce52ca` promoted it with project-host,
+  router, persist, and ACP worker aligned and healthy.
+- A live detached-worker restart probe ran in receiver project
+  `66db94af-0745-4088-b922-879c58942201`. Before restart, a running turn had a
+  visible foreground `sleep 180`, a second turn was accepted behind it, and neither
+  old durable marker existed. Restart operation
+  `4e95ab3b-0b1c-4bcb-9004-732a58f372b7` succeeded. The worker logged runtime
+  disposal; immediately after restart and after the original 180-second deadline,
+  both old markers and the old process remained absent. A newly accepted control
+  turn created only `restart-fence-new-fc9ca3ba` with `new-authority-work`.
 
 ## Unresolved risks and unfinished work
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- The restart implementation has strong focused coverage, but the final candidate
-  has not yet completed the requested live detached-worker test that combines a
-  real running turn/session, queued and recovery work, permission downgrade,
-  successful stop/start, and post-restart non-execution. Do not present unit-layer
-  coverage as that boundary test.
+- The exact candidate passed a live detached-worker/session/running/queued restart
+  probe. A real second-human membership downgrade/removal and a deliberately
+  manufactured recovery child were not combined into that live probe. Their
+  authorization/recovery logic has focused regression coverage, but the remaining
+  distinction must stay visible to the reviewer.
 - Final matched-fleet movement/cross-bay qualification, current-version external
   enrollment/send, and production-like load measurement remain unfinished.
 - The 512 MiB bound accounts retained raw binary fragments. Structured decode
