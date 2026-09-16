@@ -137,7 +137,6 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
   },
   active: {
     label: labels.tabs,
-    flyoutTitle: "File Tabs",
     icon: "database",
     iconRotate: "270",
     flyout: ActiveFlyout,
@@ -219,10 +218,6 @@ export const FIXED_PROJECT_TABS: FixedTabs = {
     label: labels.log,
     icon: "history",
     flyout: LogFlyout,
-    flyoutTitle: defineMessage({
-      id: "project.page.flyout.log.title",
-      defaultMessage: "Recent Files",
-    }),
     noAnonymous: false,
   },
   users: {
