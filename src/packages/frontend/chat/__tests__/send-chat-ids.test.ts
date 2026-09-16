@@ -96,6 +96,36 @@ function bindRealDeleteDraft(actions: any): void {
 }
 
 describe("sendChat identity fields", () => {
+  it("reads and updates the model from live ImmerDB thread rows without losing session settings", () => {
+    const threadId = "37333333-3333-4333-8333-333333333333";
+    const config = {
+      model: "gpt-5.4-mini",
+      paymentSource: "subscription",
+      sessionMode: "workspace-write",
+      workingDirectory: "/home/user",
+    };
+    let row = {
+      event: "chat-thread-config",
+      sender_id: "__thread_config__",
+      date: CHAT_THREAD_META_ROW_DATE,
+      thread_id: threadId,
+      acp_config: config,
+    };
+    const actions = makeActions();
+    // Production uses get(), not the get_one-only fallback in older mocks.
+    actions.syncdb.get = jest.fn(() => [row]);
+    actions.syncdb.set.mockImplementation((next) => {
+      row = next;
+    });
+
+    expect(actions.getCodexConfig(threadId)).toEqual(config);
+    actions.setCodexConfig(threadId, { model: "gpt-5.6-luna" });
+    expect(actions.getCodexConfig(threadId)).toMatchObject({
+      ...config,
+      model: "gpt-5.6-luna",
+    });
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
     jest
