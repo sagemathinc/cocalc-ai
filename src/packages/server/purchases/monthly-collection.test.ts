@@ -15,6 +15,7 @@ import { hasUsageSubscription } from "./stripe-usage-based-subscription";
 import createPaymentIntent from "./stripe/create-payment-intent";
 import { getServerSettings } from "@cocalc/database/settings";
 import { freezeAccountFinancialState } from "@cocalc/server/accounts/financial-rehome";
+import { lockAccountSpending } from "./lock-account-spending";
 
 jest.mock("./stripe/create-payment-intent", () => ({
   __esModule: true,
@@ -146,6 +147,39 @@ it("does not let a queued legacy collection race a committed opt-out", async () 
   );
   expect(statement.automatic_payment).toBeNull();
 });
+postgresTest(
+  "serializes a legacy collection claim behind an in-flight opt-out",
+  async () => {
+    const f = await fixture();
+    await getPool().query(
+      "UPDATE accounts SET monthly_collection=NULL,stripe_usage_subscription='legacy' WHERE account_id=$1",
+      [f.account_id],
+    );
+    const optOut = await getPool().connect();
+    try {
+      await optOut.query("BEGIN");
+      await lockAccountSpending(optOut, f.account_id);
+      await optOut.query(
+        "UPDATE accounts SET monthly_collection=$2::jsonb WHERE account_id=$1",
+        [
+          f.account_id,
+          JSON.stringify({ enabled: false, version: 1, terms_version: 1 }),
+        ],
+      );
+      let claimSettled = false;
+      const claim = claimLegacyAutomaticPayment(f).finally(() => {
+        claimSettled = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(claimSettled).toBe(false);
+      await optOut.query("COMMIT");
+      await expect(claim).resolves.toBeUndefined();
+    } finally {
+      await optOut.query("ROLLBACK");
+      optOut.release();
+    }
+  },
+);
 it("does not claim while disabled, below minimum, paid, or covered by a deposit", async () => {
   const off = await fixture(false);
   expect(await claimMonthlyCollection(off.account_id, 5)).toBeUndefined();
