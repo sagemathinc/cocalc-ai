@@ -34,6 +34,7 @@ import type {
   CrmOutreachProviderOperationListResponse,
   CrmOutreachRecipientRemoveRequest,
   CrmOutreachRecipientRequest,
+  CrmOutreachRecipientUpdateRequest,
   CrmOutreachSyncRequest,
   CrmOutreachTemplateCreateRequest,
   CrmOutreachTemplateGetRequest,
@@ -79,6 +80,24 @@ type Json = Record<string, unknown>;
 const MAX_LIST = 500;
 const MAX_BODY = 50_000;
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
+
+export function composeOutreachBody(body: string, footer: string): string {
+  const value = `${bounded(body, "body_markdown", MAX_BODY)}\n\n${footer}`;
+  if (value.length > MAX_BODY)
+    throw Error(
+      `rendered outreach body including its required footer must be at most ${MAX_BODY} characters`,
+    );
+  return value;
+}
+
+export function assertDraftOutreachRecipient(
+  batchState: string,
+  deliveryState: string,
+  action: "edited" | "removed",
+): void {
+  if (batchState !== "draft" || deliveryState !== "draft")
+    throw Error(`only draft recipients can be ${action}`);
+}
 
 export const OUTREACH_HARD_BOUNDS = {
   max_recipients_per_batch: { min: 1, max: 500, fallback: 25 },
@@ -1692,8 +1711,11 @@ export async function removeOutreachRecipient(
         delivery.id,
         db !== getPool(),
       );
-      if (currentBatch.state !== "draft" || currentDelivery.state !== "draft")
-        throw Error("only draft recipients can be removed");
+      assertDraftOutreachRecipient(
+        currentBatch.state,
+        currentDelivery.state,
+        "removed",
+      );
     },
     apply: async (db, eventId) => {
       const { rows } = await db.query(
@@ -1710,6 +1732,108 @@ export async function removeOutreachRecipient(
         opportunity_id: delivery.opportunity_id,
         source_id: eventId,
         summary: `Removed draft outreach recipient ${delivery.recipient_name}`,
+        details: opts.reason,
+        actor_account_id: accountId,
+        metadata: { delivery_id: delivery.id, batch_id: batch.id },
+      });
+      return deliveryRow(rows[0]);
+    },
+  });
+}
+
+export async function updateOutreachRecipient(
+  opts: CrmOutreachRecipientUpdateRequest,
+): Promise<CrmMutationResult<CrmOutreachDelivery>> {
+  assertSeed();
+  reason(opts.reason);
+  const accountId = actor(opts.account_id);
+  const batch = await resolveBatch(getPool(), opts.batch);
+  const delivery = await resolveDelivery(getPool(), opts.delivery);
+  if (delivery.batch_id !== batch.id)
+    throw Error("delivery belongs to a different batch");
+  assertDraftOutreachRecipient(batch.state, delivery.state, "edited");
+  const subject = bounded(opts.subject, "subject", 500);
+  const body = bounded(opts.body_markdown, "body_markdown", MAX_BODY);
+  const bodyMarkdown = composeOutreachBody(body, delivery.footer);
+  const proposed = {
+    delivery_id: delivery.id,
+    subject,
+    body_plain_text: bodyMarkdown,
+    body_markdown: bodyMarkdown,
+    rendered_html: markdown.render(bodyMarkdown),
+    override_reason: optionalBounded(
+      opts.override_reason,
+      "override_reason",
+      2_000,
+    ),
+  };
+  const previewDelivery = { ...delivery, ...proposed };
+  const checks = await deliveryPreflight(previewDelivery);
+  if (checks.warnings.length && !proposed.override_reason)
+    checks.warnings.push(
+      "commit requires override_reason for the listed warnings",
+    );
+  return await mutate({
+    action: "outreach.recipient.update",
+    actor: accountId,
+    reason: opts.reason,
+    commit: opts.commit,
+    expectedVersion: opts.expected_version,
+    idempotencyKey: opts.idempotency_key,
+    organizationId: delivery.organization_id,
+    proposed,
+    warnings: checks.warnings,
+    resultType: "outreach_delivery",
+    currentVersion: async (db) =>
+      (await resolveBatch(db, batch.id, db !== getPool())).version,
+    validate: async (db) => {
+      const currentBatch = await resolveBatch(db, batch.id, db !== getPool());
+      const currentDelivery = await resolveDelivery(
+        db,
+        delivery.id,
+        db !== getPool(),
+      );
+      assertDraftOutreachRecipient(
+        currentBatch.state,
+        currentDelivery.state,
+        "edited",
+      );
+      const currentChecks = await deliveryPreflight({
+        ...currentDelivery,
+        ...proposed,
+      });
+      if (currentChecks.blocking_errors.length)
+        throw Error(currentChecks.blocking_errors.join("; "));
+      if (currentChecks.warnings.length && !proposed.override_reason)
+        throw Error(
+          "override_reason is required to commit a recipient with preflight warnings",
+        );
+    },
+    apply: async (db, eventId) => {
+      const { rows } = await db.query(
+        `UPDATE crm_outreach_deliveries SET subject=$1,body_plain_text=$2,body_markdown=$3,
+          rendered_html=$4,override_reason=$5,updated_by_account_id=$6,updated_at=NOW(),version=version+1
+          WHERE id=$7 RETURNING *`,
+        [
+          proposed.subject,
+          proposed.body_plain_text,
+          proposed.body_markdown,
+          proposed.rendered_html,
+          proposed.override_reason,
+          accountId,
+          delivery.id,
+        ],
+      );
+      await db.query(
+        "UPDATE crm_outreach_batches SET updated_by_account_id=$1,updated_at=NOW(),version=version+1 WHERE id=$2",
+        [accountId, batch.id],
+      );
+      await addActivity(db, {
+        organization_id: delivery.organization_id,
+        person_id: delivery.person_id,
+        opportunity_id: delivery.opportunity_id,
+        source_id: eventId,
+        summary: `Edited draft outreach to ${delivery.recipient_name}`,
         details: opts.reason,
         actor_account_id: accountId,
         metadata: { delivery_id: delivery.id, batch_id: batch.id },

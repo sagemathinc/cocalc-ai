@@ -576,6 +576,14 @@ export interface CrmOutreachRecipientRemoveRequest extends CrmMutationRequest {
   delivery: string;
 }
 
+export interface CrmOutreachRecipientUpdateRequest extends CrmMutationRequest {
+  batch: string;
+  delivery: string;
+  subject: string;
+  body_markdown: string;
+  override_reason?: string;
+}
+
 export interface CrmOutreachBatchTransitionRequest extends CrmMutationRequest {
   batch: string;
   action: "approve" | "queue" | "pause" | "resume" | "cancel";
@@ -851,6 +859,9 @@ export interface AdminCrmApi {
   addOutreachRecipient: (
     opts: CrmOutreachRecipientRequest,
   ) => Promise<CrmMutationResult<CrmOutreachDelivery>>;
+  updateOutreachRecipient: (
+    opts: CrmOutreachRecipientUpdateRequest,
+  ) => Promise<CrmMutationResult<CrmOutreachDelivery>>;
   removeOutreachRecipient: (
     opts: CrmOutreachRecipientRemoveRequest,
   ) => Promise<CrmMutationResult<CrmOutreachDelivery>>;
@@ -928,6 +939,7 @@ export const adminCrm = {
   createOutreachBatch: authFirstRequireAccount,
   updateOutreachBatch: authFirstRequireAccount,
   addOutreachRecipient: authFirstRequireAccount,
+  updateOutreachRecipient: authFirstRequireAccount,
   removeOutreachRecipient: authFirstRequireAccount,
   transitionOutreachBatch: authFirstRequireAccount,
   mutateOutreachDelivery: authFirstRequireAccount,
