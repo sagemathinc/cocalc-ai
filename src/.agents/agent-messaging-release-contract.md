@@ -144,6 +144,9 @@ The same process-termination boundary applies when restarting to enforce a chang
 agent execution mode. Agent execution mode is resolved again at admission; unlike
 the collaborator map, it is not restored from a project-start authority snapshot.
 This is not a requirement to invalidate every unrelated login or installation.
+Retries of one logical restart action may coalesce under a stable idempotency ID.
+A later explicit restart is a new action and must not join an earlier nonterminal
+restart, regardless of whether collaborator membership also changed.
 
 Suggested membership UI copy: "Removing or downgrading a collaborator does not
 automatically stop their running work. Restart the project after making the change

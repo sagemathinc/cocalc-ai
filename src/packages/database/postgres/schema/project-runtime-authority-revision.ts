@@ -47,8 +47,8 @@ export async function ensureProjectRuntimeAuthorityRevisionSchema(
 
   await db.query("BEGIN");
   try {
-    // Block collaborator updates while first installation establishes a
-    // generation boundary. Reads and unrelated normal project starts continue.
+    // Block project-row writers while first installation establishes the
+    // trigger boundary. Reads and ordinary project starts continue.
     await db.query("LOCK TABLE projects IN SHARE ROW EXCLUSIVE MODE");
     await db.query(CREATE_OR_REPLACE_FUNCTION_SQL);
     if (!(await triggerExists(db))) {

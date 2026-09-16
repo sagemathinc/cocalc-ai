@@ -12,10 +12,10 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
-- Latest independently reviewed head: `f15a87e583`.
-- Latest application remediation commit: `cb1b45960f`.
+- Latest independently reviewed head: `7c521dc5cf`.
+- Latest application remediation commit: `439417a928`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `cb1b45960f`.
+  `439417a928`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -25,6 +25,16 @@ and private repository before relying on this packet.
 
 ## Confirmed remediation
 
+- Routine schema synchronization no longer drops the collaborator-authority
+  trigger. It atomically replaces the attached function. First installation briefly
+  blocks project-row writers and creates the function and trigger in one transaction;
+  an error rolls back both, so no committed trigger-free interval is exposed.
+- Every logical restart action now carries a required idempotency UUID. Retries of
+  that action coalesce, preserving protection against duplicate frontend submits.
+  A later explicit restart uses a new UUID and cannot join an earlier restart even
+  when collaborator membership is unchanged, so execution-mode changes receive a
+  new host stop boundary. Missing or malformed IDs fail closed, and all first-party
+  frontend, essential-frontend, CLI, development, and course callers supply them.
 - Project collaborator-map changes now advance a monotonic authority revision in
   PostgreSQL. Explicit restarts coalesce only when that revision is unchanged, so
   a restart requested after a committed removal or downgrade cannot join an active
@@ -111,6 +121,15 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- At `439417a928`, eight expanded server suites passed 99 tests, followed by a
+  six-test restart-only rerun. Three schema suites passed 20 tests plus one skipped
+  PostgreSQL-only concurrency case on PGlite, and all 21 tests on an isolated
+  PostgreSQL 18 server. The real PostgreSQL checks cover a blocked concurrent
+  project-row writer making a collaborator change and rollback after injected
+  trigger-creation failure.
+  Database, Conat, server, frontend, CLI, and essential-frontend package typechecks
+  passed. Frontend lint and the full 39-workspace build passed. The temporary
+  PostgreSQL server was stopped, and no deployment was performed.
 - At `cb1b45960f`, eight expanded server suites passed 97 tests. Three database
   PGlite schema suites passed 19 tests, including monotonic ABA collaborator
   revisions and schema convergence. Conat, database, and server package typechecks
@@ -192,11 +211,12 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must assess `cb1b45960f`, including the restart-generation
-  finding reported against `f15a87e583`. Live qualification must then deliberately
-  overlap a stale restart with a real second-human downgrade or removal and the
-  subsequent successful restart on a matched build. Earlier live evidence predates
-  this correction and is not proof of the repaired race.
+- Independent re-review must assess `439417a928`, including the trigger-installation
+  and execution-mode restart findings reported against `7c521dc5cf`. Live
+  qualification must then deliberately overlap a stale restart with a real
+  second-human downgrade/removal or execution-mode change and the subsequent
+  successful restart on a matched build. Earlier live evidence predates this
+  correction and is not proof of the repaired races.
 - Persistent project-local SSH keys and other owner-retained credentials are an
   explicitly accepted product-policy residual risk, not part of the
   CoCalc-managed-account revocation guarantee. The removal/downgrade flow must keep

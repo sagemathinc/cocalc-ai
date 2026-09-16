@@ -13,9 +13,9 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Previously reviewed deficient heads:
   `d38f3399be308a92721e40fdcb56244de3d1974e` and
   `2a0ff08783cda555e772c18f17481516f6ba53c7`, with the latest rereview
-  performed at `f15a87e583dc7096262aa5db9e245d49e9eeddc0`.
-- Current private handoff head before this documentation update: `cb1b45960f`.
-- Latest application remediation commit: `cb1b45960f`.
+  performed at `7c521dc5cfdc4ff99dc942f738df72bb0407453d`.
+- Current private handoff head before this documentation update: `439417a928`.
+- Latest application remediation commit: `439417a928`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -68,6 +68,7 @@ Review the full base-to-head diff. Important fix commits after the deficient hea
 | `c19bd57f3f` | Atomic authority snapshot and complete authority-mutation fencing    |
 | `af3ea3d06a` | Separate restart dedupe, acknowledged stop, forced replacement start |
 | `cb1b45960f` | Membership-generation restart dedupe and owner-side revision check   |
+| `439417a928` | Atomic trigger install and intent-scoped restart idempotency         |
 
 The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
@@ -83,18 +84,23 @@ synchronization preserve that binding. Ordinary start adds no PostgreSQL query o
 host RPC; it now performs one fewer project-row query. The additional durable write
 occurs only on stop/restart.
 
-Explicit restart uses a distinct deduplication lane and a monotonic collaborator
-authority revision. Duplicate restart submissions at the same revision still share
-one operation, but a restart after a committed collaborator-map change cannot join
-pre-change work. The revision is returned by the owning bay's existing admission
-query, so ordinary project start gains no query or RPC. The owning bay rechecks the
-revision before restart admission; missing or stale revisions fail closed. The
-database trigger increments for every distinct collaborator-map change, including
-ABA changes. A restart also cannot join an older ordinary start or restore. When a
-project has an assigned host, restart requires a successful routed stop response;
-an unavailable host causes restart to fail rather than report an unestablished
-boundary. The replacement start ignores only the pre-fence recent state snapshot
-and remains bound to the newly advanced lifecycle revision.
+Explicit restart uses a distinct deduplication lane, a monotonic collaborator
+authority revision, and a caller-generated idempotency ID for one logical restart
+action. Retries carrying the same ID and revision share one operation. A later
+explicit restart has a new ID and cannot join pre-change work, including an
+execution-mode change that does not alter collaborator membership. Missing or
+malformed IDs fail closed. The revision is returned by the owning bay's existing
+admission query, so ordinary project start gains no query or RPC. The owning bay
+rechecks the revision before restart admission; missing or stale revisions fail
+closed. The database trigger increments for every distinct collaborator-map change,
+including ABA changes. Routine schema synchronization replaces the trigger function
+without detaching the installed trigger. First installation briefly locks project
+row writers and creates the function and trigger in one transaction; failure rolls
+the installation back. A restart also cannot join an older ordinary start or restore.
+When a project has an assigned host, restart requires a successful routed stop
+response; an unavailable host causes restart to fail rather than report an
+unestablished boundary. The replacement start ignores only the pre-fence recent
+state snapshot and remains bound to the newly advanced lifecycle revision.
 
 ACP restart fencing now selects only strict executable matches backed by live
 host-owned worker registrations. New registrations include the kernel PID start
@@ -192,6 +198,16 @@ It launches independent Node processes. It passed cross-process permit reads and
 release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
+
+At application commit `439417a928`, eight expanded server suites passed 99 tests;
+the final restart-only rerun passed six tests. Three schema suites passed 20 tests
+with one PostgreSQL-only concurrency test skipped on PGlite, then all 21 tests on
+an isolated PostgreSQL 18 server. The PostgreSQL test observes a concurrent
+project-row writer blocked during first installation and verifies its collaborator
+change advances the revision after commit; an injected trigger-creation failure
+verifies transactional rollback. Database, Conat, server, frontend, CLI, and essential-frontend package
+typechecks passed. Frontend lint and the complete 39-workspace development build
+passed. No deployment was performed for this application commit.
 
 At application commit `cb1b45960f`, eight expanded server suites passed 97 tests.
 Three database PGlite schema suites passed 19 tests, including monotonic ABA
