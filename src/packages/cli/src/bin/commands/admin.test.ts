@@ -562,11 +562,20 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(output.workflow.join("\n"), /multiline comments/);
   assert.match(output.workflow.join("\n"), /--public-reply-file/);
   const vocabulary = output.vocabulary.join("\n");
+  assert.match(vocabulary, /spelled and capitalized as it renders/);
   assert.match(vocabulary, /left-rail tab for a project's files is Files/);
+  assert.match(vocabulary, /accept that name from a user/);
   assert.match(vocabulary, /Git browser, not Git viewer/);
+  assert.match(vocabulary, /Exams tab of a project host/);
+  assert.match(vocabulary, /tooltip Manage project hosts and virtual machines/);
   assert.match(vocabulary, /accessible name is Compute/);
+  assert.match(vocabulary, /say sign in, not log in or login/);
   assert.match(vocabulary, /configured site name/);
-  assert.match(vocabulary, /Users rail tab opens settings titled People/);
+  assert.match(
+    vocabulary,
+    /Quick Navigation opens as a side panel titled Users/,
+  );
+  assert.match(vocabulary, /no Users tab on the left rail/);
 });
 
 test("admin support image verifies and writes a Zendesk attachment", async () => {

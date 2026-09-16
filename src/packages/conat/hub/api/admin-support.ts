@@ -394,13 +394,14 @@ export const ADMIN_SUPPORT_CONVENTIONS = {
   ],
   vocabulary: [
     "Name what the user can see, spelled and capitalized as it renders, instead of a description or an internal name.",
-    "The left-rail tab for a project's files is Files. Do not call it the file browser or file explorer.",
-    "Use the name Git browser, not Git viewer.",
+    "The left-rail tab for a project's files is Files. Use that name, not file browser. The Tour of the File Explorer and some help text call the same page the file explorer, so accept that name from a user without correcting it.",
+    "Use the name Git browser, not Git viewer. Its capitalization varies: the chat thread menu and the drawer header show Git browser, TimeTravel has a Git Browser button, and chat buttons and tooltips say Open git browser.",
     "Exam controls are on the Exams tab of a project host, not an instructor panel.",
-    "Project hosts and virtual machines open from an icon-only button in the top navigation whose accessible name is Compute; it shows no text label. Its page has the tabs Project Hosts and Virtual Machines. There is no page named Compute hosts.",
-    "Say Sign in, not log in or login.",
+    "Project hosts and virtual machines open from an icon-only button in the top navigation. It shows no text label. Hovering it shows the tooltip Manage project hosts and virtual machines, and its accessible name is Compute. The page it opens has the tabs Project Hosts and Virtual Machines. There is no page named Compute hosts.",
+    "When describing how to sign in to the site, say sign in, not log in or login, matching the Sign in link in the top navigation and the Sign In button on the sign-in form. Some screens still say login, such as the Please login to prompt shown to signed-out visitors and the Start device login button for ChatGPT, so quote those as they appear.",
     "Headings that contain the site name, such as Sign in to CoCalc, show the configured site name and differ on white-labeled deployments.",
-    "Where the interface uses two names for one thing, use the name shown where the user is looking and do not present either as the only correct one. Current cases: the Users rail tab opens settings titled People; the Agents rail tab and the Codex assistant; the Image rail tab and the RootFS Images admin page; the Settings rail tab and its Status and Settings panel.",
+    "Where the interface uses more than one name for one thing, use the name shown where the user is looking and do not present any one of them as the only correct name. Current cases: the Agents rail tab and the Codex assistant; the Image rail tab and the RootFS Images admin page; and project settings, which the Settings rail tab opens as a page titled Project Settings or a side panel titled Status and Settings, and which Quick Navigation opens as a side panel titled Users.",
+    "Collaborators are managed in the People section of project settings. There is no Users tab on the left rail.",
   ],
 } as const;
 
