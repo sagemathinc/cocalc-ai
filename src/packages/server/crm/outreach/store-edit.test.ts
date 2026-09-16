@@ -168,3 +168,46 @@ it.each(["approved", "cancelled"])(
     );
   },
 );
+
+it("writes a revision that restores earlier text instead of replaying it", async () => {
+  const { common, batch, original, edit } = await draft();
+  async function revise(body_markdown: string) {
+    const request = { ...edit, body_markdown };
+    const preview = await updateOutreachRecipient(request);
+    if (!preview.preview) throw Error("expected preview");
+    const committed = await updateOutreachRecipient({
+      ...request,
+      commit: true,
+      expected_version: preview.expected_version,
+      idempotency_key: preview.idempotency_key,
+    });
+    if (committed.preview) throw Error("expected committed edit");
+    expect(committed.replayed).toBe(false);
+  }
+  await revise("Body B");
+  await revise("Body A");
+  await revise("Body B");
+  expect(
+    (await getOutreachBatch({ ...common, batch })).deliveries[0].body_markdown,
+  ).toBe(`Body B\n\n${original.footer}`);
+});
+
+it("does not append a second footer to a body copied with its footer", async () => {
+  const { common, batch, original, edit } = await draft();
+  const copied = original.body_markdown.replace(
+    "Original body",
+    "Corrected body",
+  );
+  const request = { ...edit, body_markdown: `${copied}\n` };
+  const preview = await updateOutreachRecipient(request);
+  if (!preview.preview) throw Error("expected preview");
+  await updateOutreachRecipient({
+    ...request,
+    commit: true,
+    expected_version: preview.expected_version,
+    idempotency_key: preview.idempotency_key,
+  });
+  const stored = (await getOutreachBatch({ ...common, batch })).deliveries[0];
+  expect(stored.body_markdown).toBe(`Corrected body\n\n${original.footer}`);
+  expect(stored.body_markdown.split("/crm/outreach/opt-out/")).toHaveLength(2);
+});

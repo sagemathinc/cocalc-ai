@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -1223,6 +1223,55 @@ test("outreach batch edit previews exact replacement content", async () => {
   assert.equal(payload.subject, "Updated subject");
   assert.equal(payload.body_markdown, "Updated reviewed body\n");
   assert.equal(payload.commit, false);
+  assert.equal(payload.idempotency_key, undefined);
+});
+
+test("outreach edit keys distinguish revisions while preserving retries and explicit keys", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "cocalc-outreach-edit-keys-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const bodyFile = join(directory, "body.md");
+  await writeFile(bodyFile, "Same reviewed content");
+  async function request(extra: string[]) {
+    let payload: any;
+    const { program } = setup({
+      updateOutreachRecipient: async (opts: any) => {
+        payload = opts;
+        return { preview: !opts.commit };
+      },
+    });
+    await program.parseAsync([
+      "node",
+      "test",
+      "admin",
+      "crm",
+      "outreach",
+      "batch",
+      "edit",
+      "batch-1",
+      "delivery-1",
+      "--subject",
+      "Same subject",
+      "--body-file",
+      bodyFile,
+      "--reason",
+      "Same reviewed reason",
+      ...extra,
+    ]);
+    return payload;
+  }
+  const first = await request(["--commit", "--expected-version", "4"]);
+  const retry = await request(["--commit", "--expected-version", "4"]);
+  const later = await request(["--commit", "--expected-version", "6"]);
+  assert.equal(first.idempotency_key, retry.idempotency_key);
+  assert.notEqual(first.idempotency_key, later.idempotency_key);
+  assert.equal(first.expected_version, 4);
+  for (const extra of [[], ["--commit", "--expected-version", "4"]]) {
+    assert.equal(
+      (await request([...extra, "--idempotency-key", "reviewed-key"]))
+        .idempotency_key,
+      "reviewed-key",
+    );
+  }
 });
 
 test("organization-first outreach draft previews only batch creation", async () => {
