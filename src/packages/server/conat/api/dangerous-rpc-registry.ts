@@ -57,6 +57,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "disables a registered identity and all its credentials",
   },
+  "agent.recoverIdentity": {
+    decision: "fresh-auth-required",
+    reason:
+      "replaces a disabled or abandoned thread identity without reviving prior approvals",
+  },
   "agent.issueIdentity": {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,

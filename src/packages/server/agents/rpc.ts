@@ -453,25 +453,40 @@ export const agentRpcControl: AgentRpcControlApi = {
     if (target.disabled_at || target.created_by !== opts.account_id)
       throw new Error("the target registrant must approve this link");
     const db = agentStore();
-    await db.query(
-      `INSERT INTO agent_rpc_links(link_id,source_agent_id,target_agent_id,target_project_id,approved_by,reason,allow_guidance,expires_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8*interval '1 second') ON CONFLICT(link_id) DO NOTHING`,
-      [
-        opts.link_id,
-        opts.source.agent_id,
-        opts.target.agent_id,
-        opts.target.project_id,
-        opts.account_id,
-        opts.reason.trim(),
-        opts.allow_guidance === true,
-        opts.ttl_seconds,
-      ],
-    );
-    const row = (
-      await db.query("SELECT * FROM agent_rpc_links WHERE link_id=$1", [
-        opts.link_id,
-      ])
-    ).rows[0];
+    const row = await db.transaction(async (sql) => {
+      await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `agent-rpc-links:${opts.source.agent_id}`,
+      ]);
+      const prior = (
+        await sql.query("SELECT * FROM agent_rpc_links WHERE link_id=$1", [
+          opts.link_id,
+        ])
+      ).rows[0];
+      if (prior) return prior;
+      const count = (
+        await sql.query(
+          "SELECT count(*) AS count FROM agent_rpc_links WHERE source_agent_id=$1",
+          [opts.source.agent_id],
+        )
+      ).rows[0];
+      if (+count.count >= 1000) throw new Error("agent_rpc_link_capacity");
+      return (
+        await sql.query(
+          `INSERT INTO agent_rpc_links(link_id,source_agent_id,target_agent_id,target_project_id,approved_by,reason,allow_guidance,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,now()+$8*interval '1 second') RETURNING *`,
+          [
+            opts.link_id,
+            opts.source.agent_id,
+            opts.target.agent_id,
+            opts.target.project_id,
+            opts.account_id,
+            opts.reason.trim(),
+            opts.allow_guidance === true,
+            opts.ttl_seconds,
+          ],
+        )
+      ).rows[0];
+    });
     if (
       row.source_agent_id !== opts.source.agent_id ||
       row.target_agent_id !== opts.target.agent_id ||

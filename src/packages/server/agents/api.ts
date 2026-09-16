@@ -64,19 +64,45 @@ export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
     async (_db, thread) => {
       // Loading the live chat may wait on routing or synchronization.
       await assertActor(account_id, opts.project_id);
-      const { rows } = await db.query(
-        `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
-      VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(project_id,path,thread_id) DO NOTHING RETURNING *`,
-        [
-          randomUUID(),
-          opts.project_id,
-          path,
-          opts.thread_id,
-          thread.name || opts.thread_id,
-          account_id,
-        ],
-      );
-      return rows[0] ?? (await db.find(opts.project_id, path, opts.thread_id)!);
+      return db.transaction(async (sql) => {
+        await sql.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+          [`agent-identities:${opts.project_id}`],
+        );
+        const existing = (
+          await sql.query(
+            `SELECT * FROM agent_identities
+             WHERE project_id=$1 AND path=$2 AND thread_id=$3
+               AND disabled_at IS NULL`,
+            [opts.project_id, path, opts.thread_id],
+          )
+        ).rows[0];
+        if (existing) return existing;
+        const count = (
+          await sql.query(
+            "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
+            [opts.project_id],
+          )
+        ).rows[0];
+        if (+count.count >= 10_000)
+          throw new Error("agent_identity_project_capacity");
+        return (
+          await sql.query(
+            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
+             VALUES($1,$2,$3,$4,$5,$6)
+             ON CONFLICT(project_id,path,thread_id) WHERE disabled_at IS NULL
+             DO NOTHING RETURNING *`,
+            [
+              randomUUID(),
+              opts.project_id,
+              path,
+              opts.thread_id,
+              thread.name || opts.thread_id,
+              account_id,
+            ],
+          )
+        ).rows[0];
+      });
     },
   );
 };
@@ -266,6 +292,121 @@ export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
   );
 };
 
+async function assertIdentityRecoveryOwner(
+  account_id: string,
+  project_id: string,
+): Promise<string> {
+  await assertLocalAgentProject(project_id);
+  const owners = (
+    await agentStore().query<{ account_id: string }>(
+      `SELECT owner.key AS account_id FROM projects,
+       jsonb_each(projects.users) AS owner(key,value)
+       WHERE projects.project_id=$1 AND owner.value->>'group'='owner'
+       ORDER BY owner.key`,
+      [project_id],
+    )
+  ).rows.map((row) => row.account_id);
+  if (owners.includes(account_id)) {
+    await assertActor(account_id, project_id);
+    return account_id;
+  }
+  throw new Error("only a project owner may recover an agent identity");
+}
+
+export const recoverIdentity: AgentApi["recoverIdentity"] = async (opts) => {
+  const account_id = await human(opts);
+  const request = {
+    account_id,
+    project_id: opts.project_id,
+    agent_id: opts.agent_id,
+  };
+  const fresh_auth_at = Date.now();
+  return withAgentIdentityOwner({
+    project_id: opts.project_id,
+    local: () => recoverIdentityLocal(request),
+    remote: (api, route) => api.recover({ ...request, route, fresh_auth_at }),
+  });
+};
+
+export const recoverIdentityLocal: AgentApi["recoverIdentity"] = async (
+  opts,
+) => {
+  requireUuid(opts.account_id, "account_id");
+  requireUuid(opts.project_id, "project_id");
+  requireUuid(opts.agent_id, "agent_id");
+  const db = agentStore();
+  const previous = await db.get(opts.agent_id);
+  if (previous.project_id !== opts.project_id)
+    throw new Error("agent identity does not belong to the requested project");
+  const routingAccount = await assertIdentityRecoveryOwner(
+    opts.account_id,
+    opts.project_id,
+  );
+  return withAgentChat(
+    { ...previous, created_by: routingAccount },
+    async (_chat, thread) => {
+      await assertIdentityRecoveryOwner(opts.account_id!, opts.project_id);
+      return db.transaction(async (sql) => {
+        await sql.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended($1,0))",
+          [`agent-identities:${opts.project_id}`],
+        );
+        const active = (
+          await sql.query(
+            `SELECT agent_id FROM agent_identities
+             WHERE project_id=$1 AND path=$2 AND thread_id=$3
+               AND disabled_at IS NULL AND agent_id<>$4 FOR UPDATE`,
+            [
+              previous.project_id,
+              previous.path,
+              previous.thread_id,
+              previous.agent_id,
+            ],
+          )
+        ).rows[0];
+        if (active) throw new Error("thread already has an active identity");
+        const count = (
+          await sql.query(
+            "SELECT count(*) AS count FROM agent_identities WHERE project_id=$1",
+            [opts.project_id],
+          )
+        ).rows[0];
+        if (+count.count >= 10_000)
+          throw new Error("agent_identity_project_capacity");
+        await sql.query(
+          `UPDATE agent_identities SET disabled_at=COALESCE(disabled_at,now()),
+             disabled_by=COALESCE(disabled_by,$2)
+           WHERE agent_id=$1`,
+          [previous.agent_id, opts.account_id],
+        );
+        await sql.query(
+          "UPDATE agent_identity_runs SET ended_at=COALESCE(ended_at,now()) WHERE agent_id=$1",
+          [previous.agent_id],
+        );
+        const replacement = (
+          await sql.query(
+            `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
+             VALUES($1,$2,$3,$4,$5,$6) RETURNING *`,
+            [
+              randomUUID(),
+              previous.project_id,
+              previous.path,
+              previous.thread_id,
+              thread.name || previous.name,
+              opts.account_id,
+            ],
+          )
+        ).rows[0];
+        await sql.query(
+          "UPDATE agent_identities SET replaced_by=$2 WHERE agent_id=$1",
+          [previous.agent_id, replacement.agent_id],
+        );
+        return replacement;
+      });
+    },
+  );
+};
+
 export const issueIdentity: AgentApi["issueIdentity"] = async (opts) => {
   if (!agentMessagingEnabled()) return;
   await assertLocalAgentProject(opts.project_id);
@@ -279,7 +420,14 @@ export const issueIdentity: AgentApi["issueIdentity"] = async (opts) => {
   if (!agent) return;
   await assertAgent(agent);
   requireUuid(opts.run_id, "run_id");
-  return await db.issue(agent, opts.run_id, opts.account_id!);
+  if (opts.recover_expired_run_id)
+    requireUuid(opts.recover_expired_run_id, "recover_expired_run_id");
+  return await db.issue(
+    agent,
+    opts.run_id,
+    opts.account_id!,
+    opts.recover_expired_run_id,
+  );
 };
 
 // Host-scoped read for a human turn: source-host authority does not confer

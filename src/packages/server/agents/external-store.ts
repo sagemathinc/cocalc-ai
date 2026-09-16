@@ -210,6 +210,14 @@ export class ExternalAgentStore {
       );
       if (+rows[0].count >= 1000)
         throw new Error("external_installation_capacity");
+      const retained = (
+        await db.query(
+          "SELECT count(*) AS count FROM agent_external_installations WHERE account_id=$1",
+          [account],
+        )
+      ).rows[0];
+      if (+retained.count >= 10_000)
+        throw new Error("external_installation_history_capacity");
       const agent_id = opts.agent_id ?? randomUUID();
       if (opts.agent_id) {
         const existing = (
@@ -219,11 +227,20 @@ export class ExternalAgentStore {
           )
         ).rows[0];
         if (!existing) throw new Error("external_identity_unavailable");
-      } else
+      } else {
+        const identities = (
+          await db.query(
+            "SELECT count(*) AS count FROM agent_external_identities WHERE account_id=$1",
+            [account],
+          )
+        ).rows[0];
+        if (+identities.count >= 10_000)
+          throw new Error("external_identity_capacity");
         await db.query(
           "INSERT INTO agent_external_identities(agent_id,account_id,label) VALUES($1,$2,$3)",
           [agent_id, account, opts.label.trim()],
         );
+      }
       const destinations = opts.targets.map((target) => ({
         target,
         link_id: randomUUID(),

@@ -177,6 +177,26 @@ describe("agent messaging declarative schema", () => {
     expect(await snapshot()).toEqual(before);
   });
 
+  test("legacy thread uniqueness converges to recoverable active identity uniqueness", async () => {
+    for (const sql of legacy.split(";").filter((s) => s.trim()))
+      await db.query(sql);
+    const seeded = await seed();
+    expect(await schemaNeedsSync(schema)).toBe(true);
+    await syncSchema(schema);
+    expect(await schemaNeedsSync(schema)).toBe(false);
+    await db.query(
+      "UPDATE agent_identities SET disabled_at=now() WHERE agent_id=$1",
+      [seeded.source],
+    );
+    await expect(
+      db.query(
+        `INSERT INTO agent_identities(agent_id,project_id,path,thread_id,name,created_by)
+         VALUES($1,$2,'/home/user/a.chat','source','Replacement',$3)`,
+        [randomUUID(), seeded.project, seeded.account],
+      ),
+    ).resolves.toBeDefined();
+  });
+
   test("all tables are durable and private, without local account foreign keys", () => {
     for (const table of tables) {
       expect(SCHEMA[table].user_query).toBeUndefined();

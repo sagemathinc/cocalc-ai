@@ -64,6 +64,7 @@ export const agent = {
   grantMessaging: authFirstRequireAccountWithBoundSession,
   revokeMessaging: authFirstRequireAccountWithBoundSession,
   disableIdentity: authFirstRequireAccountWithBoundSession,
+  recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
   authorizeDelivery: authFirstRequireHostWithAccountTarget,
@@ -297,12 +298,16 @@ export interface AgentApi {
   ): Promise<AgentGrant>;
   revokeMessaging(opts: AgentHumanAuth & { grant_id: string }): Promise<void>;
   disableIdentity(opts: AgentHumanAuth & { agent_id: string }): Promise<void>;
+  recoverIdentity(
+    opts: AgentHumanAuth & { project_id: string; agent_id: string },
+  ): Promise<AgentIdentity>;
   issueIdentity(
     opts: AgentHostAuth & {
       project_id: string;
       path: string;
       thread_id: string;
       run_id: string;
+      recover_expired_run_id?: string;
     },
   ): Promise<AgentCredential | undefined>;
   endIdentityRun(

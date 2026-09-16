@@ -86,32 +86,126 @@ export class AgentStore {
     threadId: string,
   ): Promise<AgentIdentity | undefined> {
     const { rows } = await this.query<AgentIdentity>(
-      "SELECT * FROM agent_identities WHERE project_id=$1 AND path=$2 AND thread_id=$3",
+      "SELECT * FROM agent_identities WHERE project_id=$1 AND path=$2 AND thread_id=$3 AND disabled_at IS NULL",
       [projectId, normalizeAgentPath(path), threadId],
     );
     return rows[0];
   }
 
-  async issue(agent: AgentIdentity, runId: string, accountId: string) {
+  async issue(
+    agent: AgentIdentity,
+    runId: string,
+    accountId: string,
+    recoverExpiredRunId?: string,
+  ) {
     const token =
       AGENT_IDENTITY_TOKEN_PREFIX + randomBytes(32).toString("base64url");
     const expiresAt = Date.now() + 10 * 60_000;
-    const { rowCount } = await this.query(
-      `
+    const values = [
+      agent.agent_id,
+      runId,
+      accountId,
+      hashIdentityToken(token),
+      new Date(expiresAt),
+    ];
+    let rowCount: number | null;
+    if (recoverExpiredRunId) {
+      if (recoverExpiredRunId === runId)
+        throw new Error("expired identity recovery requires a new run");
+      rowCount = await this.transaction(async (db) => {
+        await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          `agent-runs:${agent.agent_id}`,
+        ]);
+        // A recovery may have committed even if its response was lost. Retrying
+        // the exact old/new run pair renews that replacement instead of
+        // permanently wedging the worker on an unknown outcome.
+        const retried = await db.query(
+          `UPDATE agent_identity_runs replacement
+           SET token_hash=$4,expires_at=$5
+           WHERE replacement.agent_id=$1 AND replacement.run_id=$2
+             AND replacement.account_id=$3 AND replacement.ended_at IS NULL
+             AND EXISTS (
+               SELECT 1 FROM agent_identity_runs expired
+               WHERE expired.agent_id=$1 AND expired.run_id=$6
+                 AND expired.account_id=$3 AND expired.ended_at IS NOT NULL
+             )
+           RETURNING replacement.run_id`,
+          [...values, recoverExpiredRunId],
+        );
+        if (retried.rows[0]) return 1;
+        const count = (
+          await db.query(
+            "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1",
+            [agent.agent_id],
+          )
+        ).rows[0];
+        if (+count.count >= 10_000)
+          throw new Error("agent_identity_run_capacity");
+        const recovered = await db.query(
+          `UPDATE agent_identity_runs SET ended_at=now()
+           WHERE agent_id=$1 AND run_id=$2 AND account_id=$3
+             AND ended_at IS NULL AND expires_at<=now()
+           RETURNING run_id`,
+          [agent.agent_id, recoverExpiredRunId, accountId],
+        );
+        if (!recovered.rowCount)
+          throw new Error("expired identity run is not recoverable");
+        const inserted = await db.query(
+          `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at)
+           SELECT agent_id,$2,$3,$4,$5 FROM agent_identities
+           WHERE agent_id=$1 AND disabled_at IS NULL
+           RETURNING run_id`,
+          values,
+        );
+        if (!inserted.rows[0]) throw new Error("agent identity is disabled");
+        return 1;
+      });
+    } else {
+      rowCount = await this.transaction(async (db) => {
+        await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+          `agent-runs:${agent.agent_id}`,
+        ]);
+        const existing = (
+          await db.query(
+            "SELECT 1 FROM agent_identity_runs WHERE agent_id=$1 AND run_id=$2",
+            [agent.agent_id, runId],
+          )
+        ).rows[0];
+        if (!existing) {
+          const count = (
+            await db.query(
+              "SELECT count(*) AS count FROM agent_identity_runs WHERE agent_id=$1",
+              [agent.agent_id],
+            )
+          ).rows[0];
+          if (+count.count >= 10_000)
+            throw new Error("agent_identity_run_capacity");
+        }
+        return (
+          await db.query(
+            `
       INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at)
       SELECT agent_id,$2,$3,$4,$5 FROM agent_identities WHERE agent_id=$1 AND disabled_at IS NULL
       ON CONFLICT(agent_id,run_id) DO UPDATE SET token_hash=EXCLUDED.token_hash,
         expires_at=EXCLUDED.expires_at
       WHERE agent_identity_runs.ended_at IS NULL AND agent_identity_runs.expires_at>now()
         AND agent_identity_runs.account_id=EXCLUDED.account_id`,
-      [
-        agent.agent_id,
-        runId,
-        accountId,
-        hashIdentityToken(token),
-        new Date(expiresAt),
-      ],
-    );
+            values,
+          )
+        ).rowCount;
+      });
+      if (!rowCount) {
+        const expired = (
+          await this.query(
+            `SELECT 1 FROM agent_identity_runs
+             WHERE agent_id=$1 AND run_id=$2 AND account_id=$3
+               AND ended_at IS NULL AND expires_at<=now()`,
+            [agent.agent_id, runId, accountId],
+          )
+        ).rows[0];
+        if (expired) throw new Error("agent_identity_run_expired");
+      }
+    }
     if (!rowCount) throw new Error("agent or run is disabled");
     return {
       agent_id: agent.agent_id,

@@ -25,14 +25,15 @@ export async function createAgentIdentityLease({
   const path = env?.COCALC_CODEX_CHAT_PATH;
   const thread_id = env?.COCALC_CODEX_THREAD_ID;
   if (!path || !thread_id) return;
-  const run_id = randomUUID();
-  const issue = () =>
+  let run_id = randomUUID();
+  const issue = (recover_expired_run_id?: string) =>
     api.issueIdentity({
       project_id: projectId,
       account_id: accountId,
       path,
       thread_id,
       run_id,
+      ...(recover_expired_run_id ? { recover_expired_run_id } : {}),
     });
   const initial = await issue();
   if (!initial) return;
@@ -64,7 +65,20 @@ export async function createAgentIdentityLease({
     if (closed) return Promise.reject(new Error("identity lease closed"));
     if (refreshing) return refreshing;
     refreshing = (async () => {
-      const next = await issue();
+      let next;
+      try {
+        next = await issue();
+      } catch (error) {
+        if (!`${error}`.includes("agent_identity_run_expired")) throw error;
+        const expiredRunId = run_id;
+        run_id = randomUUID();
+        try {
+          next = await issue(expiredRunId);
+        } catch (recoveryError) {
+          run_id = expiredRunId;
+          throw recoveryError;
+        }
+      }
       if (!next) throw new Error("registered identity unavailable");
       if (!closed) await write(next);
     })().finally(() => {

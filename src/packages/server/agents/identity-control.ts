@@ -12,6 +12,7 @@ import {
   getIdentityLocal,
   listGrantsLocal,
   listMessageReceiptsLocal,
+  recoverIdentityLocal,
 } from "./api";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
@@ -86,6 +87,19 @@ export const agentIdentityControl: InterBayAgentIdentityApi = {
       project_id: opts.project_id,
       path: opts.path,
       thread_id: opts.thread_id,
+    });
+  },
+  recover: async (opts) => {
+    await assertOwner(opts);
+    const age = Date.now() - opts.fresh_auth_at;
+    if (!Number.isFinite(opts.fresh_auth_at) || age < -5000 || age > 30_000)
+      throw new Error(
+        "agent recovery fresh-auth attestation expired or missing",
+      );
+    return recoverIdentityLocal({
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      agent_id: opts.agent_id,
     });
   },
 };

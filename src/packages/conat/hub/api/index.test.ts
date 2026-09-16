@@ -53,6 +53,7 @@ describe("hub API argument transforms", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
       "agent.authorizeDelivery",
       "agent.authorizeRpcAdmission",
+      "agent.authorizeRpcExecution",
       "agent.beginMessageAdmission",
       "agent.endIdentityRun",
       "agent.getMentionIdentity",

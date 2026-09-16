@@ -7,6 +7,7 @@ import {
   externalStore,
 } from "@cocalc/server/agents/external";
 import { AgentStore } from "@cocalc/server/agents/store";
+import assertSameOriginMutation from "@cocalc/http-api/lib/api/assert-same-origin-mutation";
 
 /** Human account-home management only. Revocation narrows authority immediately. */
 export default async function externalAgentInstallations(req, res) {
@@ -20,6 +21,7 @@ export default async function externalAgentInstallations(req, res) {
     const { action = "list", installation_id } = getParams(req);
     if (action !== "list" && action !== "revoke")
       throw new Error("unsupported installation action");
+    if (action === "revoke") assertSameOriginMutation(req);
     // The store still fences account-home ownership and account security.
     // Inspection/revocation must survive disabling new external admissions.
     const store = externalStore(new AgentStore());

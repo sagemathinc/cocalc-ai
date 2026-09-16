@@ -19,6 +19,7 @@ import { agentStore, agentMessagingEnabled } from "./store";
 import { assertAgent, assertRun } from "./access";
 import { ownMessageReceipts } from "./inspection";
 import { personalMessagingEnabled } from "./personal";
+import { startAgentMessagingMaintenance } from "./maintenance";
 
 const logger = getLogger("agents:messaging");
 function receipt(
@@ -104,6 +105,9 @@ export async function startAgentMessaging(
     !external && process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED === "1"
       ? await startAgentMessaging(client, true)
       : undefined;
+  const stopMaintenance = !external
+    ? startAgentMessagingMaintenance()
+    : undefined;
   const subscription = await client.subscribe(
     external ? "agent-external.*.*" : "agent-messaging.*.*",
     {
@@ -196,6 +200,7 @@ export async function startAgentMessaging(
   });
   return async () => {
     closed = true;
+    stopMaintenance?.();
     subscription.close();
     await requests;
     await Promise.allSettled(activeRpc);

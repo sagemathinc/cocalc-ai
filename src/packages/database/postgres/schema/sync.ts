@@ -40,6 +40,10 @@ import {
   syncSchemaConstraints,
 } from "./constraints";
 import { schemaSequencesNeedSync, syncSchemaSequences } from "./sequences";
+import {
+  agentIdentityRecoverySchemaNeedsSync,
+  ensureAgentIdentityRecoverySchema,
+} from "./agent-identity-recovery";
 
 const log = getLogger("db:schema:sync");
 
@@ -455,6 +459,9 @@ export async function syncSchema(
       //dbg("sync existing table", table);
       await syncTableSchema(db, schema);
     }
+    if (dbSchema.agent_identities != null) {
+      await ensureAgentIdentityRecoverySchema(db);
+    }
     // Constraints are synchronized after all tables and columns exist. This
     // supports cross-table references without coupling correctness to import
     // order and keeps application request paths free of schema mutations.
@@ -549,6 +556,13 @@ export async function schemaNeedsSync(
     }
     if (await schemaConstraintsNeedSync(db, dbSchema)) {
       dbg("detected missing or invalid table constraints");
+      return true;
+    }
+    if (
+      dbSchema.agent_identities != null &&
+      (await agentIdentityRecoverySchemaNeedsSync(db))
+    ) {
+      dbg("detected legacy agent identity thread constraint");
       return true;
     }
     if (

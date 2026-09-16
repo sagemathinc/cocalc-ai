@@ -5,6 +5,7 @@ import {
   registerIdentity,
   getIdentity,
   getMentionIdentity,
+  recoverIdentity,
   listGrants,
   listMessageReceipts,
 } from "./api";
@@ -20,10 +21,12 @@ const query = jest.fn(),
   get = jest.fn(),
   receipts = jest.fn(),
   fabric = jest.fn();
+const transaction = jest.fn(async (fn) => fn({ query }));
 const remote = {
   list: jest.fn(),
   resolve: jest.fn(),
   register: jest.fn(),
+  recover: jest.fn(),
   get: jest.fn(),
   listGrants: jest.fn(),
   listMessageReceipts: jest.fn(),
@@ -53,7 +56,7 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
   assertProjectHostAgentTokenAccess: (...a) => sourceHostAccess(...a),
 }));
 jest.mock("./store", () => ({
-  agentStore: () => ({ query, find, get }),
+  agentStore: () => ({ query, find, get, transaction }),
   normalizeAgentPath: (s) => s,
 }));
 jest.mock("./inspection", () => ({
@@ -101,6 +104,9 @@ beforeEach(() => {
   remote.register
     .mockReset()
     .mockResolvedValue({ agent_id: "registered-remote" });
+  remote.recover
+    .mockReset()
+    .mockResolvedValue({ agent_id: "recovered-remote" });
 });
 
 const inspections = [
@@ -305,6 +311,33 @@ test("remote registration verifies fresh auth and replaces caller attestation", 
   expect(query).not.toHaveBeenCalled();
 });
 
+test("remote recovery verifies fresh auth and forwards only the identity locator", async () => {
+  const before = Date.now();
+  await recoverIdentity({
+    account_id,
+    project_id,
+    agent_id: request.thread_id,
+    session_hash: "bound-session",
+    fresh_auth_at: 1,
+  } as any);
+  expect(fresh).toHaveBeenCalledWith(
+    expect.objectContaining({
+      account_id,
+      session_hash: "bound-session",
+      allow_actor_impersonation: false,
+    }),
+  );
+  const forwarded = remote.recover.mock.calls[0][0];
+  expect(forwarded).toEqual({
+    account_id,
+    project_id,
+    agent_id: request.thread_id,
+    route: { bay_id: "owner", epoch: 3 },
+    fresh_auth_at: expect.any(Number),
+  });
+  expect(forwarded.fresh_auth_at).toBeGreaterThanOrEqual(before);
+});
+
 test("failed human auth never routes registration", async () => {
   fresh.mockRejectedValue(new Error("fresh auth required"));
   await expect(registerIdentity(request)).rejects.toThrow(
@@ -369,6 +402,55 @@ test("owner rechecks local access before identity reads and registration", async
   expect(actor).toHaveBeenCalledTimes(4); // registration also checks after chat readiness
   expect(fresh).not.toHaveBeenCalled(); // attested on entry; no remote session copy
   expect(remoteClient).not.toHaveBeenCalled();
+});
+
+test.each([undefined, NaN, 0, Date.now() + 60_000])(
+  "invalid fresh attestation %s cannot recover an identity",
+  async (fresh_auth_at) => {
+    bay = "owner";
+    await expect(
+      agentIdentityControl.recover({
+        account_id,
+        project_id,
+        agent_id: request.thread_id,
+        route: { bay_id: "owner", epoch: 3 },
+        fresh_auth_at,
+      } as any),
+    ).rejects.toThrow("attestation");
+    expect(query).not.toHaveBeenCalled();
+  },
+);
+
+test("recovery rechecks project ownership after chat readiness", async () => {
+  bay = "owner";
+  get.mockResolvedValue({
+    project_id,
+    agent_id: request.thread_id,
+    path: request.path,
+    thread_id: request.thread_id,
+    created_by: account_id,
+  });
+  let ownerChecks = 0;
+  query.mockImplementation(async (sql) => {
+    if (`${sql}`.includes("jsonb_each")) {
+      ownerChecks += 1;
+      return {
+        rows: ownerChecks === 1 ? [{ account_id }] : [],
+      };
+    }
+    return { rows: [] };
+  });
+  await expect(
+    agentIdentityControl.recover({
+      account_id,
+      project_id,
+      agent_id: request.thread_id,
+      route: { bay_id: "owner", epoch: 3 },
+      fresh_auth_at: Date.now(),
+    }),
+  ).rejects.toThrow("only a project owner");
+  expect(chatReady).toHaveBeenCalledTimes(1);
+  expect(transaction).not.toHaveBeenCalled();
 });
 
 test("destination access denial prevents data access", async () => {

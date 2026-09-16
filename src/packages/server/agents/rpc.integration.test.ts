@@ -343,6 +343,44 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
       (await agentStore().query("SELECT * FROM agent_rpc_links")).rows,
     ).toHaveLength(0);
   });
+  test("expired identity runs rotate without reviving explicitly ended runs", async () => {
+    const db = agentStore();
+    const identity = await db.get(source.agent_id);
+    const expiredRun = randomUUID();
+    await db.query(
+      `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at)
+       VALUES($1,$2,$3,$4,now()-interval '1 second')`,
+      [source.agent_id, expiredRun, account, randomUUID()],
+    );
+    await expect(db.issue(identity, expiredRun, account)).rejects.toThrow(
+      "agent_identity_run_expired",
+    );
+    const recoveredRun = randomUUID();
+    expect(
+      await db.issue(identity, recoveredRun, account, expiredRun),
+    ).toMatchObject({ run_id: recoveredRun });
+    expect(
+      await db.issue(identity, recoveredRun, account, expiredRun),
+    ).toMatchObject({ run_id: recoveredRun });
+    expect(
+      (
+        await db.query(
+          "SELECT ended_at FROM agent_identity_runs WHERE agent_id=$1 AND run_id=$2",
+          [source.agent_id, expiredRun],
+        )
+      ).rows[0].ended_at,
+    ).toBeTruthy();
+
+    const explicitlyEnded = randomUUID();
+    await db.query(
+      `INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at,ended_at)
+       VALUES($1,$2,$3,$4,now()-interval '1 second',now())`,
+      [source.agent_id, explicitlyEnded, account, randomUUID()],
+    );
+    await expect(
+      db.issue(identity, randomUUID(), account, explicitlyEnded),
+    ).rejects.toThrow("not recoverable");
+  });
   test("stopped targets route to their host for authorized startup", async () => {
     await approve();
     await agentStore().query(

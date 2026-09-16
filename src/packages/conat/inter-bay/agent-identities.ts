@@ -54,6 +54,11 @@ export interface InterBayAgentIdentityApi {
       fresh_auth_at: number;
     },
   ): Promise<AgentIdentity>;
+  recover(
+    opts: AgentIdentityLookupRequest & {
+      fresh_auth_at: number;
+    },
+  ): Promise<AgentIdentity>;
 }
 
 export function agentIdentityControlSubject(bay_id: string): string {

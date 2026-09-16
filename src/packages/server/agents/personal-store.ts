@@ -170,6 +170,15 @@ export class PersonalAgentStore {
           previous.agent_id !== opts.endpoint.agent_id)
       )
         throw new Error("name_reserved");
+      if (!previous) {
+        const count = (
+          await db.query(
+            "SELECT count(*) AS count FROM agent_personal_names WHERE account_id=$1",
+            [account],
+          )
+        ).rows[0];
+        if (+count.count >= 1000) throw new Error("agent_name_capacity");
+      }
       await db.query(
         "UPDATE agent_personal_names SET retired_at=now(),updated_at=now() WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL AND name<>$4",
         [account, opts.endpoint.project_id, opts.endpoint.agent_id, name],
@@ -361,6 +370,14 @@ export class PersonalAgentStore {
     const directions = [{ source: opts.source, target: opts.target }];
     if (approval.both_directions)
       directions.push({ source: opts.target, target: opts.source });
+    const count = (
+      await db.query(
+        "SELECT count(*) AS count FROM agent_personal_grants WHERE account_id=$1",
+        [account],
+      )
+    ).rows[0];
+    if (+count.count + directions.length > 10_000)
+      throw new Error("agent_connection_capacity");
     const links: PersonalConnection[] = [];
     for (const { source, target } of directions) {
       const row = (
@@ -652,6 +669,14 @@ export class PersonalAgentStore {
       )
         throw new Error("connection_request_conflict");
       if (controls.paused) throw new Error("grant_paused");
+      const total = (
+        await db.query(
+          "SELECT count(*) AS count FROM agent_personal_requests WHERE account_id=$1",
+          [account],
+        )
+      ).rows[0];
+      if (+total.count >= 10_000)
+        throw new Error("connection_request_capacity");
       const restriction = await this.requestRestriction(
         account,
         opts.source,

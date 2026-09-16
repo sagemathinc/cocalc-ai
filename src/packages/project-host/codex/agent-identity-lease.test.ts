@@ -94,6 +94,27 @@ describe("separate runtime identity lease", () => {
       await lease.close();
     }
   });
+  test("an expired lease recovers with a new run after current authority is rechecked", async () => {
+    const lease = (await create())!;
+    const expiredRunId = issueIdentity.mock.calls[0][0].run_id;
+    issueIdentity.mockRejectedValueOnce(
+      new Error("calling remote function: agent_identity_run_expired"),
+    );
+    await lease.refresh();
+    const recovery = issueIdentity.mock.calls[2][0];
+    expect(recovery.run_id).not.toBe(expiredRunId);
+    expect(recovery.recover_expired_run_id).toBe(expiredRunId);
+    await lease.refresh();
+    expect(issueIdentity.mock.calls[3][0]).toMatchObject({
+      run_id: recovery.run_id,
+    });
+    await lease.close();
+    expect(endIdentityRun).toHaveBeenCalledWith({
+      account_id: accountId,
+      agent_id,
+      run_id: recovery.run_id,
+    });
+  });
   test("concurrent refreshes share issuance and close waits for it", async () => {
     const lease = (await create())!;
     let finish!: (value: any) => void;

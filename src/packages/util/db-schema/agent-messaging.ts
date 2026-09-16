@@ -140,10 +140,12 @@ Table({
         columns: ["project_id"],
         references: { table: "projects", columns: ["project_id"] },
       },
+    ],
+    pg_custom_indexes: [
       {
-        name: "agent_identities_project_id_path_thread_id_key",
-        type: "unique",
-        columns: ["project_id", "path", "thread_id"],
+        name: "agent_identities_active_thread",
+        unique: true,
+        query: "(project_id,path,thread_id) WHERE disabled_at IS NULL",
       },
     ],
   },
@@ -157,6 +159,10 @@ Table({
     created_at: created("Registration time."),
     disabled_at: timestamp("When the identity was disabled."),
     disabled_by: { type: "uuid", desc: "Account that disabled the identity." },
+    replaced_by: {
+      type: "uuid",
+      desc: "Replacement identity created by explicit owner recovery.",
+    },
   },
 });
 
