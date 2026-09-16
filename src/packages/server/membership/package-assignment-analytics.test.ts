@@ -159,5 +159,43 @@ describe("membership package assignment analytics", () => {
         },
       ]);
     });
+
+    it("classifies standalone team grants as fixed and license seats as annual", async () => {
+      const standalone = source({ assignment_id: uuid() });
+      const licensed = source({
+        assignment_id: uuid(),
+        package_metadata: { team_license_id: uuid() },
+      });
+      await recordPackageAssignmentMonth({
+        source: standalone,
+        month: "2026-07",
+        client,
+      });
+      await recordPackageAssignmentMonth({
+        source: licensed,
+        month: "2026-07",
+        client,
+      });
+      const { rows } = await client.query(
+        `SELECT fact_key, billing_interval
+           FROM membership_allocation_facts
+          WHERE fact_key = ANY($1::text[])
+          ORDER BY fact_key`,
+        [
+          [
+            `package-assignment:${standalone.assignment_id}:2026-07`,
+            `package-assignment:${licensed.assignment_id}:2026-07`,
+          ],
+        ],
+      );
+      expect(
+        new Map(rows.map((row) => [row.fact_key, row.billing_interval])),
+      ).toEqual(
+        new Map([
+          [`package-assignment:${standalone.assignment_id}:2026-07`, "fixed"],
+          [`package-assignment:${licensed.assignment_id}:2026-07`, "year"],
+        ]),
+      );
+    });
   });
 });

@@ -2469,21 +2469,23 @@ export async function listMembershipPackageAssignments({
 export async function listMembershipPackageDetailsForOwner({
   owner_account_id,
   client,
+  filter,
 }: {
   owner_account_id: string;
   client?: PoolClient;
+  filter?: (pkg: MembershipPackageRecord) => boolean;
 }): Promise<MembershipPackageDetails[]> {
-  const packages = await listMembershipPackagesForOwner({
-    owner_account_id,
+  const packages = (
+    await listMembershipPackagesForOwner({ owner_account_id, client })
+  ).filter((pkg) => filter?.(pkg) ?? true);
+  const assignmentsByPackage = await listMembershipPackageAssignmentsByPackage({
+    package_ids: packages.map(({ id }) => id),
+    include_revoked: true,
     client,
   });
   const details: MembershipPackageDetails[] = [];
   for (const pkg of packages) {
-    const assignments = await listMembershipPackageAssignments({
-      package_id: pkg.id,
-      include_revoked: true,
-      client,
-    });
+    const assignments = assignmentsByPackage.get(pkg.id) ?? [];
     const active_assignment_count = assignments.filter(
       (assignment) => !assignment.revoked_at,
     ).length;

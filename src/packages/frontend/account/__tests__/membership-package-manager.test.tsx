@@ -271,7 +271,10 @@ function makeTeamPackage(patch: Record<string, any> = {}) {
   };
 }
 
-function makeTeamLicenseOverview(packages: any[]) {
+function makeTeamLicenseOverview(
+  packages: any[],
+  standalonePackages: any[] = [],
+) {
   return {
     id: "team-license-1",
     owner_account_id: "owner-1",
@@ -291,6 +294,7 @@ function makeTeamLicenseOverview(packages: any[]) {
       package: membershipPackage,
     })),
     packages,
+    standalone_packages: standalonePackages,
   };
 }
 
@@ -496,28 +500,46 @@ describe("membership package managers", () => {
     expect(purchaseTeamLicenseChange).not.toHaveBeenCalled();
   });
 
-  it("does not duplicate renewing packages or offer expired standalone seats", async () => {
+  it("uses server-filtered standalone packages without another package request", async () => {
     const future = new Date(Date.now() + 90 * 86400000);
     const renewing = makeTeamPackage({ expires_at: future });
-    getTeamLicense.mockResolvedValue(makeTeamLicenseOverview([renewing]));
+    const standalone = makeTeamPackage({
+      id: "standalone",
+      expires_at: future,
+    });
+    getTeamLicense.mockResolvedValue(
+      makeTeamLicenseOverview([renewing], [standalone]),
+    );
+    render(<TeamPackageManager tiers={TIERS} />);
+    expect(
+      await screen.findAllByText("Member - 0 of 5 seats assigned"),
+    ).toHaveLength(2);
+    expect(
+      screen.getByRole("region", { name: "Fixed-term team packages" }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Assign seat" })).toHaveLength(
+      2,
+    );
+    expect(getMembershipPackages).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the package endpoint for an older team-license response", async () => {
+    const future = new Date(Date.now() + 90 * 86400000);
+    const overview = makeTeamLicenseOverview([
+      makeTeamPackage({ expires_at: future }),
+    ]);
+    delete (overview as any).standalone_packages;
+    getTeamLicense.mockResolvedValue(overview);
     getMembershipPackages.mockResolvedValue([
-      renewing,
-      makeTeamPackage({
-        id: "linked",
-        expires_at: future,
-        metadata: { team_license_id: "other-license" },
-      }),
-      makeTeamPackage({ id: "expired", expires_at: new Date(0) }),
-      makeTeamPackage({ id: "course", kind: "course", expires_at: future }),
+      makeTeamPackage({ id: "legacy-standalone", expires_at: future }),
     ]);
     render(<TeamPackageManager tiers={TIERS} />);
-    await screen.findByText("Member - 0 of 5 seats assigned");
     expect(
-      screen.queryByRole("region", { name: "Fixed-term team packages" }),
-    ).toBeNull();
-    expect(screen.getAllByRole("button", { name: "Assign seat" })).toHaveLength(
-      1,
-    );
+      await screen.findByRole("region", {
+        name: "Fixed-term team packages",
+      }),
+    ).toBeVisible();
+    expect(getMembershipPackages).toHaveBeenCalledTimes(1);
   });
 
   it.each([false, true])(

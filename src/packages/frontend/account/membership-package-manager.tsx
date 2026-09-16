@@ -1469,10 +1469,12 @@ export function TeamPackageManager({
       if (user_account_id) {
         throw Error("team-license user lookup is not supported here");
       }
-      const [license, packages] = await Promise.all([
-        getTeamLicense(),
-        getMembershipPackages(),
-      ]);
+      const license = await getTeamLicense();
+      // During a rolling upgrade, an older home bay may not include the
+      // server-filtered field yet. Keep that window functional without making
+      // the duplicate request once the bay has the new response shape.
+      const packages =
+        license?.standalone_packages ?? (await getMembershipPackages());
       setTeamLicense(license);
       const renewingPackageIds = new Set(
         license?.seat_lines.map((line) => line.package_id) ?? [],
