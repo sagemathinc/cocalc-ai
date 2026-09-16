@@ -2268,6 +2268,18 @@ describe("site license seat pools", () => {
       [assignment.id],
     );
     expect(assignmentState.rows[0].revoked_at).toBeTruthy();
+    const grantState = await getPool().query(
+      `SELECT revoked_at FROM membership_grants WHERE id=$1`,
+      [assignment.grant_id],
+    );
+    expect(grantState.rows[0].revoked_at).toBeTruthy();
+    const pendingRevocations = await getPool().query(
+      `SELECT effect_key FROM membership_side_effects_outbox
+       WHERE assignment_id=$1 AND effect_kind='grant-sync'
+         AND desired_revision > applied_revision`,
+      [assignment.id],
+    );
+    expect(pendingRevocations.rows).toEqual([]);
     const requestState = await getPool().query(
       `SELECT state, review_note
          FROM site_license_pool_requests

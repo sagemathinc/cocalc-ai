@@ -69,9 +69,12 @@ import {
   updateMembershipPackage,
 } from "./packages";
 import {
+  completeMembershipGrantRevocationsForAccount,
+  queueMembershipGrantSyncEffect,
   resetMembershipSideEffectsMaintenanceStateForTests,
   runMembershipSideEffectsPass,
 } from "./side-effects";
+import { cleanupSiteLicenseAccessForAccountDeletionOnSeed } from "./site-licenses";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -272,6 +275,127 @@ describe("membership packages", () => {
     } else {
       process.env.COCALC_CLUSTER_SEED_BAY_ID = clusterSeedBayIdEnv;
     }
+  });
+
+  it("retries committed deletion revocations without draining unrelated accounts", async () => {
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const unrelated = uuid();
+    for (const id of [owner_account_id, account_id, unrelated]) {
+      await createTestAccount(id);
+      await setAccountHomeBay(id, "bay-1");
+      await queueMembershipGrantSyncEffect({
+        owner_account_id,
+        package_id: uuid(),
+        assignment_id: uuid(),
+        desired_payload: {
+          desired_state: "revoked",
+          account_id: id,
+          grant_id: uuid(),
+        },
+      });
+    }
+    await getPool().query(`UPDATE membership_side_effects_outbox
+      SET next_attempt_at=NOW()+INTERVAL '1 hour',
+          lease_expires_at=NOW()+INTERVAL '1 minute'`);
+    const revoke = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("home bay unavailable"));
+    let finish!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    revoke.mockImplementationOnce(async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    createInterBayAccountLocalClientMock.mockReturnValue({
+      revokeMembershipGrant: revoke,
+    });
+    await expect(
+      cleanupSiteLicenseAccessForAccountDeletionOnSeed({ account_id }),
+    ).rejects.toThrow("home bay unavailable");
+    let completed = false;
+    const retry = cleanupSiteLicenseAccessForAccountDeletionOnSeed({
+      account_id,
+    }).then(() => {
+      completed = true;
+    });
+    await started;
+    expect(completed).toBe(false);
+    finish();
+    await retry;
+    expect(completed).toBe(true);
+    expect(revoke).toHaveBeenCalledTimes(2);
+    expect(
+      revoke.mock.calls.every(([args]) => args.account_id === account_id),
+    ).toBe(true);
+    const { rows } = await getPool()
+      .query(`SELECT desired_payload_json->>'account_id' AS account_id
+      FROM membership_side_effects_outbox WHERE desired_revision > applied_revision`);
+    expect(rows.map((row) => row.account_id).sort()).toEqual(
+      [owner_account_id, unrelated].sort(),
+    );
+    await completeMembershipGrantRevocationsForAccount(account_id);
+    expect(revoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for an in-flight activation and concurrent worker before completing revocation", async () => {
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(account_id);
+    await setAccountHomeBay(account_id, "bay-1");
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+    });
+    await assignMembershipPackageSeat({
+      package_id,
+      account_id,
+      assigned_by_account_id: owner_account_id,
+    });
+    let finish!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const events: string[] = [];
+    createInterBayAccountLocalClientMock.mockReturnValue({
+      upsertMembershipGrant: async (grant) => {
+        entered();
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        events.push("active");
+        return { grant_id: grant.id };
+      },
+      revokeMembershipGrant: async () => {
+        events.push("revoked");
+      },
+    });
+    const worker = runMembershipSideEffectsPass();
+    await started;
+    await revokeMembershipPackageSeat({ package_id, account_id });
+    const secondWorker = runMembershipSideEffectsPass();
+    let completed = false;
+    const barrier = completeMembershipGrantRevocationsForAccount(
+      account_id,
+    ).then(() => {
+      completed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(completed).toBe(false);
+    finish();
+    await Promise.all([worker, secondWorker, barrier]);
+    expect(events).toEqual(["active", "revoked"]);
+    expect(completed).toBe(true);
+    expect(await listOutboxKinds()).toEqual([]);
   });
 
   it("assigns seats, resolves grant-backed membership, and revokes assignments", async () => {

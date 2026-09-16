@@ -502,6 +502,59 @@ async function applyMembershipSideEffect(
   }
 }
 
+// Serialize delivery across workers and deletion barriers. Use a session lock
+// so local effects can run their own fenced transactions on other connections.
+async function deliverMembershipSideEffect(
+  effect_key: string,
+  client?: PoolClient,
+): Promise<void> {
+  const db = client ?? (await getPool().connect());
+  const lockKey = `membership-side-effect:${effect_key}`;
+  try {
+    await db.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
+    const { rows } = await db.query<MembershipSideEffectRow>(
+      `SELECT * FROM membership_side_effects_outbox
+       WHERE effect_key=$1`,
+      [effect_key],
+    );
+    const row = rows[0];
+    if (row && row.desired_revision > row.applied_revision) {
+      await applyMembershipSideEffect(row);
+      await markMembershipSideEffectApplied({
+        effect_key,
+        applied_revision: row.desired_revision,
+        client: db,
+      });
+    }
+  } finally {
+    try {
+      await db.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
+    } finally {
+      if (!client) db.release();
+    }
+  }
+}
+
+export async function completeMembershipGrantRevocationsForAccount(
+  account_id: string,
+): Promise<void> {
+  // Match the recipient, not owner_account_id (which is the package owner).
+  // Ignore retry backoff and leases: delivery's lock waits for any worker
+  // already sending this effect and prevents stale activation after completion.
+  const { rows } = await getPool().query<{ effect_key: string }>(
+    `SELECT effect_key FROM membership_side_effects_outbox
+     WHERE effect_kind=$1
+       AND desired_payload_json->>'desired_state'='revoked'
+       AND desired_payload_json->>'account_id'=$2
+       AND desired_revision > applied_revision
+     ORDER BY effect_key`,
+    [EFFECT_KIND_GRANT_SYNC, account_id],
+  );
+  for (const { effect_key } of rows) {
+    await deliverMembershipSideEffect(effect_key);
+  }
+}
+
 export async function runMembershipSideEffectsPass({
   limit = BATCH_LIMIT,
   client,
@@ -521,12 +574,7 @@ export async function runMembershipSideEffectsPass({
     result.effect_kinds[row.effect_kind] =
       (result.effect_kinds[row.effect_kind] ?? 0) + 1;
     try {
-      await applyMembershipSideEffect(row);
-      await markMembershipSideEffectApplied({
-        effect_key: row.effect_key,
-        applied_revision: row.desired_revision,
-        client,
-      });
+      await deliverMembershipSideEffect(row.effect_key, client);
       result.applied += 1;
     } catch (err) {
       result.failed += 1;

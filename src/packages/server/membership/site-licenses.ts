@@ -66,6 +66,7 @@ import {
 } from "./packages";
 import { listActiveMembershipGrantsForAccount } from "./grants";
 import {
+  completeMembershipGrantRevocationsForAccount,
   queueMembershipClaimIdentitySyncEffect,
   queueMembershipGrantSyncEffect,
 } from "./side-effects";
@@ -2995,10 +2996,8 @@ export async function releaseSiteLicensePoolSeat({
 
 export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
   account_id,
-  client,
 }: {
   account_id: string;
-  client?: PoolClient;
 }): Promise<{
   revoked_assignment_ids: string[];
   canceled_request_ids: string[];
@@ -3092,10 +3091,11 @@ export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
     return { revoked_assignment_ids, canceled_request_ids };
   };
 
-  if (client != null) {
-    return await cleanupWithClient(client);
-  }
-  return await withLocalSiteLicenseTransaction(cleanupWithClient);
+  const result = await withLocalSiteLicenseTransaction(cleanupWithClient);
+  // Commit seed changes first. The home-bay RPC may need the same database,
+  // and retries must discover revocations committed by a previous attempt.
+  await completeMembershipGrantRevocationsForAccount(accountId);
+  return result;
 }
 
 async function revokeSiteLicenseClaimIdentityForAssignment({

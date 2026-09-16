@@ -140,6 +140,24 @@ describe("delete account", () => {
     });
   });
 
+  it("does not freeze or delete the account until cleanup succeeds on retry", async () => {
+    const { default: deleteAccount } = await import("./delete");
+    cleanupSiteLicenseAccessForAccountDeletionMock.mockRejectedValueOnce(
+      new Error("home bay unavailable"),
+    );
+    await expect(deleteAccount(ACCOUNT_ID)).rejects.toThrow(
+      "home bay unavailable",
+    );
+    expect(setBillingAccountFrozenMock).not.toHaveBeenCalled();
+    expect(withAccountRehomeWriteFenceMock).not.toHaveBeenCalled();
+    expect(deleteClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
+    await deleteAccount(ACCOUNT_ID);
+    expect(
+      cleanupSiteLicenseAccessForAccountDeletionMock,
+    ).toHaveBeenCalledTimes(2);
+    expect(deleteClusterAccountDirectoryEntryMock).toHaveBeenCalledTimes(1);
+  });
+
   it("disposes owned projects before marking the account deleted", async () => {
     const calls: string[] = [];
     disposeOwnedProjectsForAccountDeletionMock.mockImplementation(async () => {
