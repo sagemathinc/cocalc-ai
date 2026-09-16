@@ -1596,16 +1596,26 @@ export async function startMasterRegistration({
         phase_timings_ms: (status as any)?.phase_timings_ms,
       };
     },
-    async updateAuthorizedKeys({ project_id, authorized_keys }) {
+    async updateAuthorizedKeys({
+      project_id,
+      authorized_keys,
+      runtime_lifecycle_revision,
+    }) {
       await updateAuthorizedKeys({
         project_id,
         authorized_keys,
+        runtime_lifecycle_revision,
       });
     },
-    async updateProjectUsers({ project_id, users }) {
+    async updateProjectUsers({
+      project_id,
+      users,
+      runtime_lifecycle_revision,
+    }) {
       await updateProjectUsers({
         project_id,
         users,
+        runtime_lifecycle_revision,
       });
     },
     async updateProjectRunQuota({ project_id, run_quota, run_quota_revision }) {
@@ -2222,7 +2232,12 @@ export async function startMasterRegistration({
   };
 
   const applyUserRows = async (
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>,
+    rows: Array<{
+      project_id: string;
+      users: any;
+      runtime_lifecycle_revision: number;
+      updated_ms: number;
+    }>,
   ): Promise<number> => {
     let applied = 0;
     for (const row of rows) {
@@ -2232,6 +2247,9 @@ export async function startMasterRegistration({
         await updateProjectUsers({
           project_id,
           users: row?.users ?? {},
+          runtime_lifecycle_revision: Number(
+            row?.runtime_lifecycle_revision ?? 0,
+          ),
         });
         applied += 1;
       } catch (err) {

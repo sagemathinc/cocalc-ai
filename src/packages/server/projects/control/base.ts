@@ -35,6 +35,7 @@ import { getProjectSecretToken } from "./secret-token";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import { conat } from "@cocalc/backend/conat";
 import {
+  advanceProjectRuntimeLifecycleRevision,
   startProjectOnHost,
   stopProjectOnHost,
   updateProjectRunQuotaOnHost,
@@ -407,9 +408,11 @@ export class BaseProject extends EventEmitter {
   stop = async ({
     force,
     fence_inflight_start = false,
+    runtime_lifecycle_revision,
   }: {
     force?: boolean;
     fence_inflight_start?: boolean;
+    runtime_lifecycle_revision?: number;
   } = {}): Promise<void> => {
     await this.ensureLocalOwnership();
     if (isWorkspaceProjectRuntime()) {
@@ -446,7 +449,13 @@ export class BaseProject extends EventEmitter {
       );
       return;
     }
-    await stopProjectOnHost(this.project_id);
+    if (runtime_lifecycle_revision == null) {
+      await stopProjectOnHost(this.project_id);
+    } else {
+      await stopProjectOnHost(this.project_id, {
+        runtime_lifecycle_revision,
+      });
+    }
   };
 
   restart = async (opts?: {
@@ -457,18 +466,17 @@ export class BaseProject extends EventEmitter {
     // Restart is the documented immediate authority boundary. Send stop even
     // when the last state snapshot is inactive, since an older start may not
     // have reached the host or reported "starting" yet.
-    await this.stop({ fence_inflight_start: true });
-    const { rows } = await getPool().query<{
-      runtime_lifecycle_revision: string;
-    }>(
-      "SELECT COALESCE(runtime_lifecycle_revision, 0)::text AS runtime_lifecycle_revision FROM projects WHERE project_id=$1",
-      [this.project_id],
-    );
+    // Advance first even when placement has not completed. Every authority
+    // mutation prepared before this point remains on the older revision.
+    const runtime_lifecycle_revision =
+      await advanceProjectRuntimeLifecycleRevision(this.project_id);
+    await this.stop({
+      fence_inflight_start: true,
+      runtime_lifecycle_revision,
+    });
     await this.start({
       ...opts,
-      runtime_lifecycle_revision: Number(
-        rows[0]?.runtime_lifecycle_revision ?? 0,
-      ),
+      runtime_lifecycle_revision,
     });
   };
 

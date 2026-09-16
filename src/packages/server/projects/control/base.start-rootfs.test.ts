@@ -3,6 +3,7 @@ export {};
 let queryMock: jest.Mock;
 let startProjectOnHostMock: jest.Mock;
 let stopProjectOnHostMock: jest.Mock;
+let advanceProjectRuntimeLifecycleRevisionMock: jest.Mock;
 let updateProjectRunQuotaOnHostMock: jest.Mock;
 let getProjectFileServerClientMock: jest.Mock;
 let ensureProjectFileServerClientReadyMock: jest.Mock;
@@ -39,6 +40,8 @@ jest.mock("@cocalc/database/postgres/query", () => ({
 
 jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
+  advanceProjectRuntimeLifecycleRevision: (...args: any[]) =>
+    advanceProjectRuntimeLifecycleRevisionMock(...args),
   startProjectOnHost: (...args: any[]) => startProjectOnHostMock(...args),
   stopProjectOnHost: (...args: any[]) => stopProjectOnHostMock(...args),
   updateProjectRunQuotaOnHost: (...args: any[]) =>
@@ -159,6 +162,7 @@ describe("BaseProject.start RootFS sealing", () => {
     queryTableMock = jest.fn(async () => ({}));
     startProjectOnHostMock = jest.fn(async () => undefined);
     stopProjectOnHostMock = jest.fn(async () => undefined);
+    advanceProjectRuntimeLifecycleRevisionMock = jest.fn(async () => 7);
     updateProjectRunQuotaOnHostMock = jest.fn(async () => undefined);
     ensureProjectFileServerClientReadyMock = jest.fn(async () => undefined);
     issueRootfsReleaseArtifactUploadMock = jest.fn(async () => ({
@@ -241,7 +245,12 @@ describe("BaseProject.start RootFS sealing", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
 
-    expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID);
+    expect(advanceProjectRuntimeLifecycleRevisionMock).toHaveBeenCalledWith(
+      PROJECT_ID,
+    );
+    expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
+      runtime_lifecycle_revision: 7,
+    });
     expect(startProjectOnHostMock).not.toHaveBeenCalled();
 
     resolveStop?.();
@@ -250,6 +259,7 @@ describe("BaseProject.start RootFS sealing", () => {
     expect(startProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
       account_id: ACCOUNT_ID,
       lro_op_id: "op-restart",
+      runtime_lifecycle_revision: 7,
     });
   });
 

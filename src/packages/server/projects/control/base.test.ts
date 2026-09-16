@@ -4,6 +4,7 @@ let assertLocalProjectOwnershipMock: jest.Mock;
 let projectRunnerClientMock: jest.Mock;
 let stopProjectOnHostMock: jest.Mock;
 let startProjectOnHostMock: jest.Mock;
+let advanceProjectRuntimeLifecycleRevisionMock: jest.Mock;
 let getPoolQueryMock: jest.Mock;
 
 jest.mock("@cocalc/server/conat/project-local-access", () => ({
@@ -19,6 +20,8 @@ jest.mock("@cocalc/conat/project/runner/run", () => ({
 
 jest.mock("@cocalc/server/project-host/control", () => ({
   __esModule: true,
+  advanceProjectRuntimeLifecycleRevision: (...args: any[]) =>
+    advanceProjectRuntimeLifecycleRevisionMock(...args),
   startProjectOnHost: (...args: any[]) => startProjectOnHostMock(...args),
   stopProjectOnHost: (...args: any[]) => stopProjectOnHostMock(...args),
 }));
@@ -88,6 +91,7 @@ describe("BaseProject local ownership", () => {
     assertLocalProjectOwnershipMock = jest.fn(async () => undefined);
     startProjectOnHostMock = jest.fn(async () => undefined);
     stopProjectOnHostMock = jest.fn(async () => undefined);
+    advanceProjectRuntimeLifecycleRevisionMock = jest.fn(async () => 7);
     getPoolQueryMock = jest.fn(async () => ({ rows: [] }));
     projectRunnerClientMock = jest.fn(() => ({
       start: jest.fn(async () => ({ state: "running" })),
@@ -141,6 +145,27 @@ describe("BaseProject local ownership", () => {
     const project = getProject(PROJECT_ID);
     await expect(project.stop()).resolves.toBeUndefined();
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+  });
+
+  it("fences a hostless restart before starting at the new revision", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [{ host_id: null, state: "opened" }],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    project.computeQuota = jest.fn(async () => undefined);
+
+    await project.restart({ account_id: "account-1", lro_op_id: "restart-1" });
+
+    expect(advanceProjectRuntimeLifecycleRevisionMock).toHaveBeenCalledWith(
+      PROJECT_ID,
+    );
+    expect(stopProjectOnHostMock).not.toHaveBeenCalled();
+    expect(startProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
+      account_id: "account-1",
+      lro_op_id: "restart-1",
+      runtime_lifecycle_revision: 7,
+    });
   });
 
   it("treats stop for an inactive project as already stopped", async () => {

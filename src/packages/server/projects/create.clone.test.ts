@@ -464,6 +464,7 @@ describe("projects.createProject clone routing", () => {
         users: { [ACCOUNT_ID]: { group: "owner" } },
         image: CATALOG_ROOTFS_IMAGE,
         start: false,
+        runtime_lifecycle_revision: 0,
       },
     });
   });
@@ -1104,6 +1105,7 @@ describe("projects.createProject clone routing", () => {
           image: "cocalc.local/rootfs/base",
           project_id,
           start: false,
+          runtime_lifecycle_revision: 0,
           title: "Remote host placement",
           users: { [ACCOUNT_ID]: { group: "owner" } },
         },

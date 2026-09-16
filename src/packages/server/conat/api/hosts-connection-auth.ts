@@ -315,6 +315,9 @@ async function syncProjectUsersOnHostForBrowserAccess({
     await client.updateProjectUsers({
       project_id,
       users: remote.users ?? {},
+      runtime_lifecycle_revision: Number(
+        remote.runtime_lifecycle_revision ?? 0,
+      ),
     });
     return;
   }

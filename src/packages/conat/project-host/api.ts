@@ -36,6 +36,7 @@ export interface HostCreateProjectRequest extends CreateProjectOptions {
   users?: any;
   authorized_keys?: string;
   run_quota?: any;
+  runtime_lifecycle_revision?: number;
   local_only?: boolean;
   exam_run_id?: string;
   usage_account_id?: string;
@@ -821,10 +822,12 @@ export interface HostControlApi {
   updateAuthorizedKeys: (opts: {
     project_id: string;
     authorized_keys?: string;
+    runtime_lifecycle_revision?: number;
   }) => Promise<void>;
   updateProjectUsers: (opts: {
     project_id: string;
     users?: any;
+    runtime_lifecycle_revision?: number;
   }) => Promise<void>;
   updateProjectRunQuota: (opts: {
     project_id: string;
@@ -1179,7 +1182,12 @@ export interface HostRegistryApi {
     since_ms?: number;
     limit?: number;
   }) => Promise<{
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    rows: Array<{
+      project_id: string;
+      users: any;
+      runtime_lifecycle_revision: number;
+      updated_ms: number;
+    }>;
     next_since_ms: number;
     has_more: boolean;
   }>;
@@ -1188,7 +1196,12 @@ export interface HostRegistryApi {
     limit?: number;
     recent_days?: number;
   }) => Promise<{
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    rows: Array<{
+      project_id: string;
+      users: any;
+      runtime_lifecycle_revision: number;
+      updated_ms: number;
+    }>;
     as_of_ms: number;
     has_more: boolean;
   }>;

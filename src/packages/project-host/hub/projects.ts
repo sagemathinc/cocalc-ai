@@ -3438,7 +3438,16 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }
 
   // Create a project locally and optionally start it.
-  hubApi.projects.createProject = createProject;
+  hubApi.projects.createProject = async (opts: any) => {
+    if (!opts.project_id) {
+      return await createProject(opts);
+    }
+    return await withProjectRuntimeLifecycle({
+      project_id: opts.project_id,
+      revision: opts.runtime_lifecycle_revision,
+      fn: async () => await createProject(opts),
+    });
+  };
   hubApi.projects.start = async (opts: any) =>
     await withProjectRuntimeLifecycle({
       project_id: opts.project_id,
@@ -3509,30 +3518,45 @@ async function refreshAuthorizedKeys(
 export async function updateAuthorizedKeys({
   project_id,
   authorized_keys,
+  runtime_lifecycle_revision,
 }: {
   project_id: string;
   authorized_keys?: string;
+  runtime_lifecycle_revision?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  await refreshAuthorizedKeys(project_id, authorized_keys ?? "");
+  await withProjectRuntimeLifecycle({
+    project_id,
+    revision: runtime_lifecycle_revision,
+    fn: async () =>
+      await refreshAuthorizedKeys(project_id, authorized_keys ?? ""),
+  });
 }
 
 export async function updateProjectUsers({
   project_id,
   users,
+  runtime_lifecycle_revision,
 }: {
   project_id: string;
   users?: any;
+  runtime_lifecycle_revision?: number;
 }) {
   if (!isValidUUID(project_id)) {
     throw Error("invalid project_id");
   }
-  // Store collaborator map in the generic sqlite row mirror used by conat auth.
-  // This is separate from the concrete projects SQL table schema.
-  upsertProject({ project_id, users });
-  clearProjectHostConatAuthCaches();
+  await withProjectRuntimeLifecycle({
+    project_id,
+    revision: runtime_lifecycle_revision,
+    fn: async () => {
+      // Store collaborator map in the generic sqlite row mirror used by conat auth.
+      // This is separate from the concrete projects SQL table schema.
+      upsertProject({ project_id, users });
+      clearProjectHostConatAuthCaches();
+    },
+  });
 }
 
 export async function getSshKeys({

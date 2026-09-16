@@ -97,4 +97,24 @@ describe("project runtime lifecycle", () => {
       }),
     ).rejects.toThrow("runtime lifecycle revision required");
   });
+
+  test.each(["user sync", "authorized-key sync", "project registration"])(
+    "rejects a stale delayed %s after a newer restart fence",
+    async (operation) => {
+      await withProjectRuntimeLifecycle({
+        project_id,
+        revision: 4,
+        require_revision: true,
+        fn: async () => undefined,
+      });
+
+      await expect(
+        withProjectRuntimeLifecycle({
+          project_id,
+          revision: 3,
+          fn: async () => operation,
+        }),
+      ).rejects.toThrow("stale runtime lifecycle");
+    },
+  );
 });

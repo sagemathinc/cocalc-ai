@@ -6460,6 +6460,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
       host_id: HOST_UUID,
       owning_bay_id: "bay-7",
       users: { [ACCOUNT_UUID]: { group: "owner" } },
+      runtime_lifecycle_revision: 12,
     }));
     updateProjectUsersMock = jest.fn(async () => undefined);
     routedHostControlClientMock = jest.fn(async () => ({
@@ -6736,6 +6737,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
     expect(updateProjectUsersMock).toHaveBeenCalledWith({
       project_id: PROJECT_UUID,
       users: { [ACCOUNT_UUID]: { group: "owner" } },
+      runtime_lifecycle_revision: 12,
     });
   });
 

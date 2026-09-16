@@ -756,12 +756,15 @@ export async function handleProjectReferenceGet(
   }
   const { rows } = await getPool().query<{
     users: Record<string, any> | null;
+    runtime_lifecycle_revision: number | string | null;
     usage_account_id: string | null;
     allow_collaborator_destructive_storage_actions: boolean | null;
   }>(
     `
       SELECT
         COALESCE(users, '{}'::jsonb) AS users,
+        COALESCE(runtime_lifecycle_revision, 0)::bigint
+          AS runtime_lifecycle_revision,
         usage_account_id,
         allow_collaborator_destructive_storage_actions
       FROM projects
@@ -778,6 +781,9 @@ export async function handleProjectReferenceGet(
     owning_bay_id: project.owning_bay_id,
     usage_account_id: rows[0]?.usage_account_id ?? null,
     users: rows[0]?.users ?? {},
+    runtime_lifecycle_revision: Number(
+      rows[0]?.runtime_lifecycle_revision ?? 0,
+    ),
     allow_collaborator_destructive_storage_actions:
       rows[0]?.allow_collaborator_destructive_storage_actions ?? null,
   };

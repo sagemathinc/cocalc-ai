@@ -292,6 +292,9 @@ describe("project host start ACP rehydrate ordering", () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    const { resetProjectRuntimeLifecycleForTesting } =
+      await import("../runtime-lifecycle");
+    resetProjectRuntimeLifecycleForTesting();
     const {
       resetCodexModelCatalogCacheForTesting,
       resetPortBindStateForTesting,
@@ -405,6 +408,48 @@ describe("project host start ACP rehydrate ordering", () => {
         ssh_port: 30123,
         http_port: 45123,
       });
+  });
+
+  it("rejects stale authority updates and registration after a restart fence", async () => {
+    const { resetProjectRuntimeLifecycleForTesting } =
+      await import("../runtime-lifecycle");
+    resetProjectRuntimeLifecycleForTesting();
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      runtime_lifecycle_revision: 8,
+    });
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    const { updateAuthorizedKeys, updateProjectUsers, wireProjectsApi } =
+      await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(
+      updateProjectUsers({
+        project_id,
+        users: { stale: { group: "owner" } },
+        runtime_lifecycle_revision: 7,
+      }),
+    ).rejects.toThrow("stale runtime lifecycle");
+    await expect(
+      updateAuthorizedKeys({
+        project_id,
+        authorized_keys: "ssh-ed25519 stale",
+        runtime_lifecycle_revision: 7,
+      }),
+    ).rejects.toThrow("stale runtime lifecycle");
+    await expect(
+      hubApi.projects.createProject({
+        project_id,
+        users: { stale: { group: "owner" } },
+        runtime_lifecycle_revision: 7,
+      }),
+    ).rejects.toThrow("stale runtime lifecycle");
+
+    expect(writeManagedAuthorizedKeys).not.toHaveBeenCalled();
+    expect(upsertProject).not.toHaveBeenCalled();
   });
 
   it("avoids project ports occupied by non-listening TCP sockets", async () => {

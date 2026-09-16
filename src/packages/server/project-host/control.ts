@@ -687,32 +687,33 @@ export async function loadProject(
   project_id: string,
   { include_start_metadata = false }: { include_start_metadata?: boolean } = {},
 ): Promise<ProjectMeta> {
-  const { rows } = await pool().query(
-    "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1",
-    [project_id],
-  );
-  if (!rows[0]) throw Error(`project ${project_id} not found`);
-  let run_quota_revision = 0;
-  let runtime_lifecycle_revision = 0;
+  let rows: any[];
   try {
-    const revision = await pool().query(
-      "SELECT COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision, COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision, env, autostart_enabled FROM projects WHERE project_id=$1",
+    ({ rows } = await pool().query(
+      `SELECT title, users, rootfs_image AS image, host_id, region,
+              owning_bay_id, run_quota,
+              COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
+              env, autostart_enabled
+         FROM projects
+        WHERE project_id=$1`,
       [project_id],
-    );
-    run_quota_revision = Number(revision.rows[0]?.run_quota_revision ?? 0);
-    runtime_lifecycle_revision = Number(
-      revision.rows[0]?.runtime_lifecycle_revision ?? 0,
-    );
-    rows[0].env = revision.rows[0]?.env;
-    rows[0].autostart_enabled = revision.rows[0]?.autostart_enabled;
+    ));
   } catch (err) {
-    // Compatibility with a control plane whose additive schema migration has
-    // not run yet. Revision zero is accepted only until versioned state lands.
-    log.debug("loadProject: quota revision unavailable", {
-      project_id,
-      err: `${err}`,
-    });
+    if ((err as { code?: string })?.code !== "42703") {
+      throw err;
+    }
+    // Mixed-version schema compatibility. Once a host has observed a positive
+    // lifecycle revision it rejects this legacy revision zero.
+    ({ rows } = await pool().query(
+      `SELECT title, users, rootfs_image AS image, host_id, region,
+              owning_bay_id, run_quota, env, autostart_enabled
+         FROM projects
+        WHERE project_id=$1`,
+      [project_id],
+    ));
   }
+  if (!rows[0]) throw Error(`project ${project_id} not found`);
   const keys = await sshKeys(project_id);
   const authorized_keys = Object.values(keys)
     .map((k: any) => k.value)
@@ -725,8 +726,8 @@ export async function loadProject(
     ...rows[0],
     image,
     authorized_keys,
-    run_quota_revision,
-    runtime_lifecycle_revision,
+    run_quota_revision: Number(rows[0].run_quota_revision ?? 0),
+    runtime_lifecycle_revision: Number(rows[0].runtime_lifecycle_revision ?? 0),
     project_secrets_cache: include_start_metadata
       ? await getProjectSecretsRuntimeCache({ project_id })
       : undefined,
@@ -1075,6 +1076,7 @@ async function registerProjectOnHost({
     authorized_keys: meta.authorized_keys,
     run_quota,
     run_quota_revision: Number(meta.run_quota_revision ?? 0),
+    runtime_lifecycle_revision: Number(meta.runtime_lifecycle_revision ?? 0),
   });
 }
 
@@ -1472,10 +1474,9 @@ export function takeStartProjectPhaseTimings(
   return takeStartProjectTimings(op_id);
 }
 
-export async function stopProjectOnHost(
+export async function advanceProjectRuntimeLifecycleRevision(
   project_id: string,
-  opts?: { timeout_ms?: number },
-): Promise<void> {
+): Promise<number> {
   const { rows } = await pool().query<{ runtime_lifecycle_revision: string }>(
     `UPDATE projects
         SET runtime_lifecycle_revision =
@@ -1485,10 +1486,22 @@ export async function stopProjectOnHost(
     [project_id],
   );
   if (!rows[0]) throw new Error(`project ${project_id} not found`);
-  const runtime_lifecycle_revision = Number(rows[0].runtime_lifecycle_revision);
-  // The old task may still finish, but the host revision below prevents it
-  // from crossing this stop boundary. Do not let a later local start await it.
+  const revision = Number(rows[0].runtime_lifecycle_revision);
+  // Do not let a later local start await work prepared under the old revision.
   startProjectInFlight.delete(project_id);
+  return revision;
+}
+
+export async function stopProjectOnHost(
+  project_id: string,
+  opts?: {
+    timeout_ms?: number;
+    runtime_lifecycle_revision?: number;
+  },
+): Promise<void> {
+  const runtime_lifecycle_revision =
+    opts?.runtime_lifecycle_revision ??
+    (await advanceProjectRuntimeLifecycleRevision(project_id));
   const { host_id, client } = await getAssignedProjectHostControlClient({
     project_id,
     timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
@@ -1528,6 +1541,7 @@ export async function updateAuthorizedKeysOnHost(
     await client.updateAuthorizedKeys({
       project_id,
       authorized_keys: meta.authorized_keys,
+      runtime_lifecycle_revision: Number(meta.runtime_lifecycle_revision ?? 0),
     });
   } catch (err) {
     log.warn("updateAuthorizedKeysOnHost failed", { project_id, host_id, err });
@@ -1566,6 +1580,7 @@ export async function syncProjectUsersOnHost({
     await client.updateProjectUsers({
       project_id,
       users: meta.users ?? {},
+      runtime_lifecycle_revision: Number(meta.runtime_lifecycle_revision ?? 0),
     });
   } catch (err) {
     log.warn("syncProjectUsersOnHost failed", {

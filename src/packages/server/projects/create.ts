@@ -791,6 +791,9 @@ async function createProjectImpl(
             users,
             image: projectRootfsImage,
             start: false,
+            // This row was just created at generation zero. A concurrent
+            // restart advances the durable fence and rejects this registration.
+            runtime_lifecycle_revision: 0,
           };
           if (assignedHostBayId !== getConfiguredBayId()) {
             await getInterBayBridge()
