@@ -314,6 +314,7 @@ function parseHubClusterBays(daemonVars) {
         `${daemonVars[`${prefix}SEED_CONAT_SERVER`] ?? ""}`.trim(),
       seedConatPassword:
         `${daemonVars[`${prefix}SEED_CONAT_PASSWORD`] ?? ""}`.trim(),
+      credentialFile: `${daemonVars[`${prefix}CREDENTIAL_FILE`] ?? ""}`.trim(),
     });
   }
   return bays.filter((bay) => bay.id);
@@ -356,9 +357,15 @@ function resolveHubTarget(daemonVars, requestedBay) {
       COCALC_BAY_LABEL: target.label,
       COCALC_BAY_REGION: target.region,
       COCALC_CLUSTER_ROLE: target.role || "standalone",
+      COCALC_CLUSTER_ID: `${daemonVars.COCALC_CLUSTER_ID ?? ""}`.trim(),
       COCALC_CLUSTER_SEED_BAY_ID: target.seedBayId,
       COCALC_CLUSTER_SEED_CONAT_SERVER: target.seedConatServer,
       COCALC_CLUSTER_SEED_CONAT_PASSWORD: target.seedConatPassword,
+      COCALC_BAY_CREDENTIAL_FILE: target.credentialFile,
+      COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE:
+        target.role === "seed"
+          ? `${daemonVars.COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE ?? ""}`.trim()
+          : "",
     },
   };
 }
@@ -899,6 +906,13 @@ function main() {
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_LABEL");
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_REGION");
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_ROLE");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_ID");
+    copyIfPresent(exportsMap, source.selectedEnv, "COCALC_BAY_CREDENTIAL_FILE");
+    copyIfPresent(
+      exportsMap,
+      source.selectedEnv,
+      "COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE",
+    );
     copyIfPresent(exportsMap, source.selectedEnv, "COCALC_CLUSTER_SEED_BAY_ID");
     copyIfPresent(
       exportsMap,

@@ -8,6 +8,7 @@ import type { Options, ServiceCall } from "./service";
 import { until } from "@cocalc/util/async-utils";
 import { randomId } from "@cocalc/conat/names";
 import { DataEncoding, decode, encode } from "../core/codec";
+import type { AuthenticatedCaller } from "../core/client";
 import {
   recordServiceAdmissionDenial,
   recordServiceAdmissionNearLimit,
@@ -34,6 +35,30 @@ const TYPED_SERVICE_ENCODING = DataEncoding.MsgPack;
 // and fall back to legacy request transport whenever either side would exceed
 // this budget.
 const MAX_FAST_RPC_TYPED_SERVICE_BYTES = 4 * 1024 * 1024;
+
+function assertAuthenticatedSourceBayClaims(
+  value: unknown,
+  caller?: AuthenticatedCaller,
+  seen = new Set<unknown>(),
+): void {
+  if (!caller || value == null || typeof value !== "object") return;
+  if (seen.has(value)) return;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      assertAuthenticatedSourceBayClaims(item, caller, seen);
+    }
+    return;
+  }
+  for (const [key, item] of Object.entries(value)) {
+    if (key === "source_bay_id" && item !== caller.bay_id) {
+      throw Error(
+        `source_bay_id must match authenticated bay '${caller.bay_id}'`,
+      );
+    }
+    assertAuthenticatedSourceBayClaims(item, caller, seen);
+  }
+}
 
 function serviceTransport(options: { transport?: ServiceTransport }) {
   return (
@@ -161,7 +186,10 @@ export function createServiceHandler<Api>({
   if (serviceTransport(options) == "request") {
     return createConatService({
       ...options,
-      handler: async (mesg) => await impl[mesg.name](...mesg.args),
+      handler: async (mesg, context) => {
+        assertAuthenticatedSourceBayClaims(mesg.args, context?.caller);
+        return await impl[mesg.name](...mesg.args);
+      },
     });
   }
   const subject = serviceSubject(options);
@@ -171,7 +199,10 @@ export function createServiceHandler<Api>({
   const maxFastRpcHandlers = () =>
     options.maxParallelHandlers ??
     getServiceAdmissionLimit("conat_service_max_parallel_active");
-  const runFastRpcHandler = async ({ raw }: { raw: Uint8Array }) => {
+  const runFastRpcHandler = async (
+    { raw }: { raw: Uint8Array },
+    context?: { caller?: AuthenticatedCaller },
+  ) => {
     const maximum = maxFastRpcHandlers();
     if (activeFastRpcHandlers >= maximum) {
       recordServiceAdmissionDenial({
@@ -217,6 +248,7 @@ export function createServiceHandler<Api>({
       if (typeof name != "string" || typeof impl[name] != "function") {
         throw Error(`unknown service method '${String(name)}'`);
       }
+      assertAuthenticatedSourceBayClaims(args, context?.caller);
       return {
         raw: requireFastRpcSizedRaw(await impl[name](...args)),
       };
@@ -234,7 +266,10 @@ export function createServiceHandler<Api>({
   })();
   const legacyService = createConatService({
     ...options,
-    handler: async (mesg) => await impl[mesg.name](...mesg.args),
+    handler: async (mesg, context) => {
+      assertAuthenticatedSourceBayClaims(mesg.args, context?.caller);
+      return await impl[mesg.name](...mesg.args);
+    },
   });
 
   return {

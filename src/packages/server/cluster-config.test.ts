@@ -13,6 +13,8 @@ describe("cluster-config", () => {
     seed_bay_id: process.env.COCALC_CLUSTER_SEED_BAY_ID,
     seed_server: process.env.COCALC_CLUSTER_SEED_CONAT_SERVER,
     seed_password: process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD,
+    cluster_id: process.env.COCALC_CLUSTER_ID,
+    credential: process.env.COCALC_BAY_CREDENTIAL,
   };
 
   beforeEach(() => {
@@ -23,6 +25,8 @@ describe("cluster-config", () => {
     delete process.env.COCALC_CLUSTER_SEED_BAY_ID;
     delete process.env.COCALC_CLUSTER_SEED_CONAT_SERVER;
     delete process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD;
+    delete process.env.COCALC_CLUSTER_ID;
+    delete process.env.COCALC_BAY_CREDENTIAL;
   });
 
   afterAll(() => {
@@ -32,12 +36,15 @@ describe("cluster-config", () => {
     process.env.COCALC_CLUSTER_SEED_BAY_ID = env.seed_bay_id;
     process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = env.seed_server;
     process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD = env.seed_password;
+    process.env.COCALC_CLUSTER_ID = env.cluster_id;
+    process.env.COCALC_BAY_CREDENTIAL = env.credential;
   });
 
   it("defaults to standalone with the local bay as seed", async () => {
     const { getClusterConfig, isMultiBayCluster } =
       await import("./cluster-config");
     expect(getClusterConfig()).toEqual({
+      cluster_id: "standalone",
       role: "standalone",
       seed_bay_id: "bay-0",
       seed_conat_server: undefined,
@@ -52,6 +59,7 @@ describe("cluster-config", () => {
     const { getClusterConfig, isMultiBayCluster } =
       await import("./cluster-config");
     expect(getClusterConfig()).toEqual({
+      cluster_id: "standalone",
       role: "seed",
       seed_bay_id: "bay-primary",
       seed_conat_server: undefined,
@@ -66,8 +74,11 @@ describe("cluster-config", () => {
     process.env.COCALC_CLUSTER_SEED_BAY_ID = "bay-seed";
     process.env.COCALC_CLUSTER_SEED_CONAT_SERVER = "http://seed-fabric";
     process.env.COCALC_CLUSTER_SEED_CONAT_PASSWORD = "seed-secret";
+    process.env.COCALC_CLUSTER_ID = "cluster-1";
+    process.env.COCALC_BAY_CREDENTIAL = "bay-secret";
     const { getClusterConfig } = await import("./cluster-config");
     expect(getClusterConfig()).toEqual({
+      cluster_id: "cluster-1",
       role: "attached",
       seed_bay_id: "bay-seed",
       seed_conat_server: "http://seed-fabric",
