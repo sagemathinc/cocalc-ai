@@ -4,7 +4,7 @@ import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import { authorizeAgentDeliveryExecution } from "./agent-delivery-authorization";
-import { promises as fs } from "node:fs";
+import { promises as fs, readFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import { setTimeout as sleep } from "node:timers/promises";
 import getLogger from "@cocalc/backend/logger";
@@ -47,6 +47,7 @@ import type {
   AcpInterruptRequest,
   AcpInterruptResponse,
 } from "@cocalc/conat/ai/acp/types";
+
 import {
   normalizeCodexSessionId,
   resolveCodexSessionMode,
@@ -346,6 +347,20 @@ function acpAdmissionContextFromRequest(request: AcpJobRequest) {
     path: request.chat?.path,
     thread_id: request.chat?.thread_id,
   };
+}
+
+function currentProcessStartTimeTicks(): string | undefined {
+  try {
+    const stat = readFileSync(`/proc/${process.pid}/stat`, "utf8");
+    const commandEnd = stat.lastIndexOf(")");
+    if (commandEnd < 0) return;
+    return stat
+      .slice(commandEnd + 2)
+      .trim()
+      .split(/\s+/)[19];
+  } catch {
+    return;
+  }
 }
 
 const logger = getLogger("lite:hub:acp");
@@ -7019,6 +7034,7 @@ export async function runDetachedAcpQueueWorker(
         bundle_version: workerContext.bundle_version,
         bundle_path: workerContext.bundle_path,
         pid: process.pid,
+        pid_start_time_ticks: currentProcessStartTimeTicks(),
         state: workerContext.state,
         started_at: workerContext.started_at ?? Date.now(),
         last_heartbeat_at: workerContext.last_heartbeat_at ?? Date.now(),

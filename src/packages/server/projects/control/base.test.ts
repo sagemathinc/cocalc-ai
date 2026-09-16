@@ -161,6 +161,26 @@ describe("BaseProject local ownership", () => {
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
   });
 
+  it("fences an in-flight start even when the state snapshot is inactive", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_deleted: null,
+          host_found: true,
+          host_id: "host-1",
+          host_status: "running",
+          state: "opened",
+        },
+      ],
+    }));
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+    await expect(
+      project.stop({ fence_inflight_start: true }),
+    ).resolves.toBeUndefined();
+    expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
   it("treats stop on a deprovisioned host as already stopped", async () => {
     getPoolQueryMock = jest.fn(async () => ({
       rows: [

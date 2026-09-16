@@ -7,7 +7,7 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 ## Review target
 
 - Private repository: `sagemathinc/cocalc-ai-ghsa-rff5-g9ff-7qhf`.
-- Private advisory: `GHSA-rff5-g9ff-7qhf`; private PR #1.
+- Private advisory: `GHSA-rff5-g9ff-7qhf`; private PR #2.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Fixed comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
 - Previously reviewed deficient head:

@@ -115,6 +115,31 @@ describe("separate runtime identity lease", () => {
       run_id: recovery.run_id,
     });
   });
+  test("a lost successful recovery reply retries the exact recovery pair", async () => {
+    const lease = (await create())!;
+    const expiredRunId = issueIdentity.mock.calls[0][0].run_id;
+    issueIdentity.mockRejectedValueOnce(
+      new Error("calling remote function: agent_identity_run_expired"),
+    );
+    issueIdentity.mockRejectedValueOnce(new Error("reply lost after commit"));
+
+    await expect(lease.refresh()).rejects.toThrow("reply lost after commit");
+    const ambiguousRecovery = issueIdentity.mock.calls[2][0];
+    await lease.refresh();
+
+    expect(issueIdentity.mock.calls[3][0]).toEqual(ambiguousRecovery);
+    expect(ambiguousRecovery.recover_expired_run_id).toBe(expiredRunId);
+    await lease.refresh();
+    expect(issueIdentity.mock.calls[4][0]).toMatchObject({
+      run_id: ambiguousRecovery.run_id,
+    });
+    await lease.close();
+    expect(endIdentityRun).toHaveBeenCalledWith({
+      account_id: accountId,
+      agent_id,
+      run_id: ambiguousRecovery.run_id,
+    });
+  });
   test("concurrent refreshes share issuance and close waits for it", async () => {
     const lease = (await create())!;
     let finish!: (value: any) => void;

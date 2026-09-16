@@ -1564,12 +1564,17 @@ export async function startMasterRegistration({
     async startProjectIdempotent(opts) {
       return await startProjectRequest(opts, true);
     },
-    async stopProject({ project_id }) {
+    async stopProject({ project_id, runtime_lifecycle_revision }) {
       await awaitRuntimeReadyForControl("stopProject");
       if (!hubApi.projects?.stop) {
         throw Error("stop not available");
       }
-      const status = await hubApi.projects.stop({ account_id, project_id });
+      const status = await hubApi.projects.stop({
+        account_id,
+        project_id,
+        runtime_lifecycle_revision,
+        require_runtime_lifecycle_revision: true,
+      } as any);
       return { project_id, state: (status as any)?.state };
     },
     async getProjectStatus({ project_id }) {

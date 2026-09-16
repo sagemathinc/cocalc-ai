@@ -534,6 +534,11 @@ Table({
       pg_type: "BIGINT",
       desc: "Monotonic owning-bay revision for the persistent desired run quota.",
     },
+    runtime_lifecycle_revision: {
+      type: "integer",
+      pg_type: "BIGINT",
+      desc: "Monotonic owning-bay fence for project runtime stop/start ordering.",
+    },
     rootfs_image: {
       type: "string",
       desc: "The root filesystem image for this project. This can be an arbitrary Docker image.",
@@ -985,6 +990,8 @@ export interface CreateProjectOptions {
   run_quota?: any;
   // Monotonic owning-bay revision for run_quota.
   run_quota_revision?: number;
+  // Monotonic owning-bay fence for runtime stop/start ordering.
+  runtime_lifecycle_revision?: number;
   // (optional) image ID
   image?: string;
   // Optional concatenated SSH public keys (one per line) provided by the master;

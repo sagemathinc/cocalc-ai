@@ -73,6 +73,7 @@ const TERMINAL_START_LRO_STATUSES = new Set([
 type StartProjectInFlight = {
   op_id?: string;
   host_session_id?: string;
+  runtime_lifecycle_revision?: number;
   promise: Promise<void>;
 };
 const startProjectInFlight = new Map<string, StartProjectInFlight>();
@@ -212,6 +213,7 @@ export type ProjectMeta = {
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -691,12 +693,16 @@ export async function loadProject(
   );
   if (!rows[0]) throw Error(`project ${project_id} not found`);
   let run_quota_revision = 0;
+  let runtime_lifecycle_revision = 0;
   try {
     const revision = await pool().query(
-      "SELECT COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision, env, autostart_enabled FROM projects WHERE project_id=$1",
+      "SELECT COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision, COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision, env, autostart_enabled FROM projects WHERE project_id=$1",
       [project_id],
     );
     run_quota_revision = Number(revision.rows[0]?.run_quota_revision ?? 0);
+    runtime_lifecycle_revision = Number(
+      revision.rows[0]?.runtime_lifecycle_revision ?? 0,
+    );
     rows[0].env = revision.rows[0]?.env;
     rows[0].autostart_enabled = revision.rows[0]?.autostart_enabled;
   } catch (err) {
@@ -720,6 +726,7 @@ export async function loadProject(
     image,
     authorized_keys,
     run_quota_revision,
+    runtime_lifecycle_revision,
     project_secrets_cache: include_start_metadata
       ? await getProjectSecretsRuntimeCache({ project_id })
       : undefined,
@@ -1080,6 +1087,7 @@ export async function startProjectOnHost(
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
     ignore_recent_state_snapshot?: boolean;
+    runtime_lifecycle_revision?: number;
   },
 ): Promise<void> {
   const existing = startProjectInFlight.get(project_id);
@@ -1089,6 +1097,13 @@ export async function startProjectOnHost(
     const requestedHostSessionId = `${opts?.host_session_id ?? ""}`.trim();
     const existingHostSessionId = `${existing.host_session_id ?? ""}`.trim();
     let reuseExisting = true;
+    if (
+      opts?.runtime_lifecycle_revision != null &&
+      opts.runtime_lifecycle_revision !== existing.runtime_lifecycle_revision
+    ) {
+      startProjectInFlight.delete(project_id);
+      reuseExisting = false;
+    }
     const immediateReplacement = immediateStartReplacementReason({
       existing_op_id: existingOpId,
       requested_op_id: requestedOpId,
@@ -1284,6 +1299,11 @@ export async function startProjectOnHost(
       authorized_keys: meta.authorized_keys,
       run_quota,
       run_quota_revision: Number(meta.run_quota_revision ?? 0),
+      runtime_lifecycle_revision: Number(
+        meta.runtime_lifecycle_revision ??
+          opts?.runtime_lifecycle_revision ??
+          0,
+      ),
       image: meta.image,
       restore,
       restore_backup_id: explicitRestoreBackupId || undefined,
@@ -1296,6 +1316,11 @@ export async function startProjectOnHost(
         authorized_keys: meta.authorized_keys,
         run_quota,
         run_quota_revision: Number(meta.run_quota_revision ?? 0),
+        runtime_lifecycle_revision: Number(
+          meta.runtime_lifecycle_revision ??
+            opts?.runtime_lifecycle_revision ??
+            0,
+        ),
         env: meta.env,
         autostart_enabled: meta.autostart_enabled,
         project_secrets_cache: meta.project_secrets_cache,
@@ -1407,6 +1432,7 @@ export async function startProjectOnHost(
   const inFlight: StartProjectInFlight = {
     op_id: opts?.lro_op_id,
     host_session_id: opts?.host_session_id,
+    runtime_lifecycle_revision: opts?.runtime_lifecycle_revision,
     promise: task,
   };
   startProjectInFlight.set(project_id, inFlight);
@@ -1450,12 +1476,28 @@ export async function stopProjectOnHost(
   project_id: string,
   opts?: { timeout_ms?: number },
 ): Promise<void> {
+  const { rows } = await pool().query<{ runtime_lifecycle_revision: string }>(
+    `UPDATE projects
+        SET runtime_lifecycle_revision =
+              COALESCE(runtime_lifecycle_revision, 0) + 1
+      WHERE project_id=$1
+      RETURNING runtime_lifecycle_revision::text`,
+    [project_id],
+  );
+  if (!rows[0]) throw new Error(`project ${project_id} not found`);
+  const runtime_lifecycle_revision = Number(rows[0].runtime_lifecycle_revision);
+  // The old task may still finish, but the host revision below prevents it
+  // from crossing this stop boundary. Do not let a later local start await it.
+  startProjectInFlight.delete(project_id);
   const { host_id, client } = await getAssignedProjectHostControlClient({
     project_id,
     timeout: opts?.timeout_ms ?? STOP_PROJECT_TIMEOUT_MS,
   });
   try {
-    const response = await client.stopProject({ project_id });
+    const response = await client.stopProject({
+      project_id,
+      runtime_lifecycle_revision,
+    });
     await saveProjectStateSnapshot(project_id, response.state ?? "opened");
   } catch (err) {
     log.warn("stopProjectOnHost failed", { project_id, host_id, err });

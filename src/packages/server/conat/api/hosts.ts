@@ -2348,6 +2348,7 @@ export async function getProjectStartMetadata({
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2392,6 +2393,7 @@ export async function getProjectStartMetadataLocal({
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2406,7 +2408,8 @@ export async function getProjectStartMetadataLocal({
   try {
     ({ rows } = await pool().query(
       `SELECT title, users, rootfs_image AS image, run_quota,
-              COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision, env,
+              COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision, env,
               autostart_enabled
          FROM projects
         WHERE project_id=$1
@@ -2451,6 +2454,7 @@ export async function getProjectStartMetadataLocal({
     authorized_keys: authorized_keys || undefined,
     run_quota: row.run_quota ?? undefined,
     run_quota_revision: Number(row.run_quota_revision ?? 0),
+    runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
     env: row.env ?? undefined,
     autostart_enabled: row.autostart_enabled,
     project_secrets_cache: await getProjectSecretsRuntimeCache({ project_id }),

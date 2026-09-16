@@ -56,6 +56,7 @@ export interface HostProjectStartMetadata {
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -785,6 +786,7 @@ export interface HostControlApi {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
     image?: string;
     restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
@@ -800,6 +802,7 @@ export interface HostControlApi {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
     image?: string;
     restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
@@ -810,6 +813,7 @@ export interface HostControlApi {
   }) => Promise<HostCreateProjectResponse>;
   stopProject: (opts: {
     project_id: string;
+    runtime_lifecycle_revision?: number;
   }) => Promise<HostCreateProjectResponse>;
   getProjectStatus: (opts: {
     project_id: string;

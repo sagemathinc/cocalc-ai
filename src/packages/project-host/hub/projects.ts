@@ -81,6 +81,7 @@ import {
   reconcileManagedProjectVolumeQuota,
 } from "../file-server";
 import { currentProjectVolumeLifecycleGeneration } from "../project-volume-lifecycle";
+import { withProjectRuntimeLifecycle } from "../runtime-lifecycle";
 import { INTERNAL_SSH_CONFIG } from "@cocalc/conat/project/runner/constants";
 import type { Configuration } from "@cocalc/conat/project/runner/types";
 import { lroStreamName } from "@cocalc/conat/lro/names";
@@ -723,6 +724,7 @@ type StartMetadata = {
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   secrets?: Record<string, string>;
@@ -736,6 +738,7 @@ type LocalProjectOptions = CreateProjectOptions & {
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   local_only?: boolean;
   exam_run_id?: string;
   usage_account_id?: string;
@@ -780,6 +783,7 @@ async function resolveStartMetadata({
   authorized_keys,
   run_quota,
   run_quota_revision,
+  runtime_lifecycle_revision,
   image,
   autostart,
   start_metadata,
@@ -788,6 +792,7 @@ async function resolveStartMetadata({
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   image?: string;
   autostart?: boolean;
   start_metadata?: HostProjectStartMetadata;
@@ -817,6 +822,9 @@ async function resolveStartMetadata({
     run_quota: run_quota ?? (existing as any)?.run_quota,
     run_quota_revision:
       run_quota_revision ?? (existing as any)?.run_quota_revision,
+    runtime_lifecycle_revision:
+      runtime_lifecycle_revision ??
+      (existing as any)?.runtime_lifecycle_revision,
     image: image ?? existing?.image ?? undefined,
     env: (existing as any)?.env,
     autostart_enabled: (existing as any)?.autostart_enabled,
@@ -862,6 +870,9 @@ async function resolveStartMetadata({
           run_quota: resolved.run_quota ?? authoritative.run_quota,
           run_quota_revision:
             resolved.run_quota_revision ?? authoritative.run_quota_revision,
+          runtime_lifecycle_revision:
+            resolved.runtime_lifecycle_revision ??
+            authoritative.runtime_lifecycle_revision,
           env: resolved.env ?? authoritative.env,
           autostart_enabled:
             authoritative.autostart_enabled ?? resolved.autostart_enabled,
@@ -955,6 +966,9 @@ export function ensureProjectRow({
       row.disk = disk;
       row.scratch = disk;
     }
+  }
+  if ((opts as any)?.runtime_lifecycle_revision != null) {
+    row.runtime_lifecycle_revision = (opts as any).runtime_lifecycle_revision;
   }
   const hasExplicitHttpPort = Object.prototype.hasOwnProperty.call(
     arguments[0] ?? {},
@@ -2029,6 +2043,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     authorized_keys,
     run_quota,
     run_quota_revision,
+    runtime_lifecycle_revision,
     image,
     restore,
     restore_backup_id,
@@ -2043,6 +2058,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
     image?: string;
     restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
@@ -2133,6 +2149,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           authorized_keys,
           run_quota,
           run_quota_revision,
+          runtime_lifecycle_revision,
           image,
           autostart,
           start_metadata,
@@ -2295,6 +2312,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
             run_quota_revision: startMetadata.run_quota_revision,
+            runtime_lifecycle_revision:
+              startMetadata.runtime_lifecycle_revision,
             image: startMetadata.image,
           },
           state: "starting",
@@ -2455,6 +2474,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
             users: startMetadata.users,
             authorized_keys: startMetadata.authorized_keys,
             run_quota: startMetadata.run_quota,
+            run_quota_revision: startMetadata.run_quota_revision,
+            runtime_lifecycle_revision:
+              startMetadata.runtime_lifecycle_revision,
             image: getImage(config),
           },
           state: status?.state ?? "running",
@@ -2529,6 +2551,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           users: resolved?.users,
           authorized_keys: resolved?.authorized_keys,
           run_quota: resolved?.run_quota,
+          run_quota_revision: resolved?.run_quota_revision,
+          runtime_lifecycle_revision: resolved?.runtime_lifecycle_revision,
           image: resolved?.image,
         },
         state: "opened",
@@ -3415,8 +3439,20 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
 
   // Create a project locally and optionally start it.
   hubApi.projects.createProject = createProject;
-  hubApi.projects.start = start;
-  hubApi.projects.stop = stop;
+  hubApi.projects.start = async (opts: any) =>
+    await withProjectRuntimeLifecycle({
+      project_id: opts.project_id,
+      revision: opts.runtime_lifecycle_revision,
+      fn: async () => await start(opts),
+    });
+  hubApi.projects.stop = async (opts: any) =>
+    await withProjectRuntimeLifecycle({
+      project_id: opts.project_id,
+      revision: opts.runtime_lifecycle_revision,
+      require_revision: opts.require_runtime_lifecycle_revision === true,
+      allow_unversioned: opts.require_runtime_lifecycle_revision !== true,
+      fn: async () => await stop(opts),
+    });
   hubApi.projects.status = status;
   (hubApi.projects as any).runSyntheticRuntimeProbe = runSyntheticRuntimeProbe;
   hubApi.projects.getSshKeys = getSshKeys;

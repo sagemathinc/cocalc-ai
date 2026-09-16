@@ -254,6 +254,7 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    runtime_lifecycle_revision?: number;
   }): Promise<void> => {
     await this.computeQuota(opts?.account_id);
     await startProjectOnHost(this.project_id, opts);
@@ -354,6 +355,7 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    runtime_lifecycle_revision?: number;
   }): Promise<void> => {
     await this.ensureLocalOwnership();
     if (isWorkspaceProjectRuntime()) {
@@ -402,7 +404,13 @@ export class BaseProject extends EventEmitter {
     // no-op
   };
 
-  stop = async ({ force }: { force?: boolean } = {}): Promise<void> => {
+  stop = async ({
+    force,
+    fence_inflight_start = false,
+  }: {
+    force?: boolean;
+    fence_inflight_start?: boolean;
+  } = {}): Promise<void> => {
     await this.ensureLocalOwnership();
     if (isWorkspaceProjectRuntime()) {
       await this.projectRunner().stop({
@@ -422,7 +430,7 @@ export class BaseProject extends EventEmitter {
       );
       return;
     }
-    if (!isActiveProjectState(state)) {
+    if (!fence_inflight_start && !isActiveProjectState(state)) {
       logger.debug(
         `(project_id=${this.project_id}).stop: state=${state ?? "unknown"}; treating as already stopped`,
       );
@@ -446,8 +454,22 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
   }): Promise<void> => {
     this.dbg("restart")();
-    await this.stop();
-    await this.start(opts);
+    // Restart is the documented immediate authority boundary. Send stop even
+    // when the last state snapshot is inactive, since an older start may not
+    // have reached the host or reported "starting" yet.
+    await this.stop({ fence_inflight_start: true });
+    const { rows } = await getPool().query<{
+      runtime_lifecycle_revision: string;
+    }>(
+      "SELECT COALESCE(runtime_lifecycle_revision, 0)::text AS runtime_lifecycle_revision FROM projects WHERE project_id=$1",
+      [this.project_id],
+    );
+    await this.start({
+      ...opts,
+      runtime_lifecycle_revision: Number(
+        rows[0]?.runtime_lifecycle_revision ?? 0,
+      ),
+    });
   };
 
   wait = async (opts: {

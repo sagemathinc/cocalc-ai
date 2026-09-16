@@ -1849,4 +1849,45 @@ describe("startProjectOnHost placement", () => {
     });
     await retry;
   });
+
+  it("advances the durable runtime fence before sending stop", async () => {
+    const stopProject = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    createHostControlClientMock = jest.fn(() => ({ stopProject }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [] };
+      }
+      if (sql.includes("SET runtime_lifecycle_revision")) {
+        return { rows: [{ runtime_lifecycle_revision: "7" }] };
+      }
+      if (sql.includes("LEFT JOIN project_hosts")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+              ssh_server: null,
+              metadata: {},
+            },
+          ],
+        };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { stopProjectOnHost } = await import("./control");
+    await stopProjectOnHost("proj-1");
+
+    expect(stopProject).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      runtime_lifecycle_revision: 7,
+    });
+  });
 });

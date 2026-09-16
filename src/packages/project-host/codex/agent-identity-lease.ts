@@ -25,21 +25,24 @@ export async function createAgentIdentityLease({
   const path = env?.COCALC_CODEX_CHAT_PATH;
   const thread_id = env?.COCALC_CODEX_THREAD_ID;
   if (!path || !thread_id) return;
-  let run_id = randomUUID();
-  const issue = (recover_expired_run_id?: string) =>
+  let run_id: string = randomUUID();
+  const issue = (requestedRunId: string, recover_expired_run_id?: string) =>
     api.issueIdentity({
       project_id: projectId,
       account_id: accountId,
       path,
       thread_id,
-      run_id,
+      run_id: requestedRunId,
       ...(recover_expired_run_id ? { recover_expired_run_id } : {}),
     });
-  const initial = await issue();
+  const initial = await issue(run_id);
   if (!initial) return;
   const hostPath = join(hostDir, "identity.json");
   let closed = false;
   let refreshing: Promise<void> | undefined;
+  let pendingRecovery:
+    | { expiredRunId: string; replacementRunId: string }
+    | undefined;
   const write = async (credential: typeof initial) => {
     const temp = join(hostDir, `.identity-${randomUUID()}`);
     try {
@@ -67,15 +70,27 @@ export async function createAgentIdentityLease({
     refreshing = (async () => {
       let next;
       try {
-        next = await issue();
+        if (pendingRecovery) {
+          next = await issue(
+            pendingRecovery.replacementRunId,
+            pendingRecovery.expiredRunId,
+          );
+          run_id = pendingRecovery.replacementRunId;
+          pendingRecovery = undefined;
+        } else {
+          next = await issue(run_id);
+        }
       } catch (error) {
+        if (pendingRecovery) throw error;
         if (!`${error}`.includes("agent_identity_run_expired")) throw error;
         const expiredRunId = run_id;
-        run_id = randomUUID();
+        const replacementRunId = randomUUID();
+        pendingRecovery = { expiredRunId, replacementRunId };
         try {
-          next = await issue(expiredRunId);
+          next = await issue(replacementRunId, expiredRunId);
+          run_id = replacementRunId;
+          pendingRecovery = undefined;
         } catch (recoveryError) {
-          run_id = expiredRunId;
           throw recoveryError;
         }
       }
@@ -108,7 +123,7 @@ export async function createAgentIdentityLease({
         await api.endIdentityRun({
           account_id: accountId,
           agent_id: initial.agent_id,
-          run_id,
+          run_id: pendingRecovery?.replacementRunId ?? run_id,
         });
       } catch {
         logger.warn(
