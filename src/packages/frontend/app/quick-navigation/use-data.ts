@@ -196,7 +196,10 @@ export function useNavigationData() {
     // One entry per file. Open tabs, starred files and log entries may spell
     // the same file relative or absolute, so dedupe on the absolute path but
     // keep the open tab's own key for store lookups and navigation.
-    const home = getProjectHomeDirectory(id);
+    // The home helper initializes missing project stores. During render that
+    // dispatches Redux updates and can keep this dialog rendering indefinitely.
+    // Closed projects must use the cached/default home without opening a store.
+    const home = getProjectHomeDirectory(project ? id : undefined);
     const absolute = (path: string) => toAbsoluteProjectPath(path, home);
     const files = new Map<
       string,
