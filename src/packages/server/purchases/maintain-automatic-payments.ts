@@ -72,6 +72,7 @@ WITH latest_statements AS (
     ON a.account_id = s.account_id
   WHERE
     a.stripe_usage_subscription IS NOT NULL
+    AND a.monthly_collection IS NULL
     AND a.banned IS NOT TRUE
     AND a.deleted IS NOT TRUE
     AND NOT EXISTS (

@@ -7,6 +7,9 @@ const mockGetConn = jest.fn();
 const mockGetStripeCustomerId = jest.fn();
 const mockCurrentStripeSite = jest.fn();
 const mockCreateCredit = jest.fn();
+const mockRecordCapturedPayment = jest.fn();
+const mockFulfillCapturedPayment = jest.fn();
+const mockFulfillmentClient = { query: jest.fn() };
 const mockApplyMembershipChange = jest.fn();
 const mockSend = jest.fn();
 const mockSupport = jest.fn();
@@ -20,6 +23,7 @@ const mockVerifyDirectStudentCourseProduct = jest.fn();
 const mockSetStripeCustomerId = jest.fn();
 const mockIsValidAccount = jest.fn();
 const mockGetPoolClient = jest.fn();
+const mockPoolQuery = jest.fn();
 
 jest.mock("@cocalc/server/stripe/connection", () => ({
   __esModule: true,
@@ -37,8 +41,20 @@ jest.mock("@cocalc/server/purchases/create-credit", () => ({
   default: (...args: any[]) => mockCreateCredit(...args),
 }));
 
+jest.mock("../captured-payment", () => ({
+  recordCapturedPayment: (...args: any[]) => mockRecordCapturedPayment(...args),
+  fulfillCapturedPayment: (...args: any[]) =>
+    mockFulfillCapturedPayment(...args),
+}));
+
 jest.mock("../membership-change", () => ({
   applyMembershipChange: (...args: any[]) => mockApplyMembershipChange(...args),
+}));
+
+jest.mock("./billing-readiness", () => ({
+  getBillingReadiness: jest
+    .fn()
+    .mockResolvedValue({ hasBillingDetails: true, hasPaymentMethod: true }),
 }));
 
 jest.mock("@cocalc/server/messages/send", () => ({
@@ -88,13 +104,14 @@ jest.mock("@cocalc/server/accounts/is-valid-account", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({
-    query: jest.fn(),
+    query: (...args: any[]) => mockPoolQuery(...args),
   })),
   getPoolClient: (...args: any[]) => mockGetPoolClient(...args),
 }));
 
 import processPaymentIntents, {
   processAllRecentPaymentIntents,
+  processPaymentIntent,
 } from "./process-payment-intents";
 import {
   MEMBERSHIP_CHANGE,
@@ -121,6 +138,7 @@ describe("processPaymentIntents invoice-payment links", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockPoolQuery.mockResolvedValue({ rows: [] });
     mockGetPoolClient.mockResolvedValue({
       query: jest.fn().mockResolvedValue({ rows: [] }),
       release: jest.fn(),
@@ -129,6 +147,10 @@ describe("processPaymentIntents invoice-payment links", () => {
     mockGetStripeCustomerId.mockResolvedValue("cus_123");
     mockCurrentStripeSite.mockResolvedValue("cocalc.ai");
     mockCreateCredit.mockResolvedValue(101);
+    mockRecordCapturedPayment.mockResolvedValue({ credit_id: 101 });
+    mockFulfillCapturedPayment.mockImplementation(async (_opts, fn) =>
+      fn(mockFulfillmentClient),
+    );
     mockApplyMembershipChange.mockResolvedValue({});
     mockSend.mockResolvedValue(undefined);
     mockSupport.mockResolvedValue("support");
@@ -216,6 +238,8 @@ describe("processPaymentIntents invoice-payment links", () => {
       paymentAmount: expect.anything(),
       storeVisibleOnly: true,
       targetClass: "pro",
+      client: mockFulfillmentClient,
+      billingReadiness: { hasBillingDetails: true, hasPaymentMethod: true },
     });
     expect(stripe.paymentIntents.update).toHaveBeenLastCalledWith("pi_123", {
       metadata: expect.objectContaining({
@@ -224,6 +248,20 @@ describe("processPaymentIntents invoice-payment links", () => {
         processed: "true",
       }),
     });
+  });
+
+  it("returns the remapped local credit for an already processed payment", async () => {
+    stripe.paymentIntents.retrieve.mockResolvedValueOnce({
+      id: "pi_moved",
+      metadata: { account_id: "acct-1", processed: "true", credit_id: "101" },
+    });
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ id: 901 }] });
+    expect(await processPaymentIntent({ id: "pi_moved" })).toBe(901);
+    expect(mockPoolQuery).toHaveBeenCalledWith(
+      expect.stringContaining("invoice_id=$2"),
+      ["acct-1", "pi_moved"],
+    );
+    expect(mockCreateCredit).not.toHaveBeenCalled();
   });
 
   it("does not re-run fulfillment when lock refresh sees processed metadata", async () => {
@@ -334,6 +372,7 @@ describe("processPaymentIntents invoice-payment links", () => {
         },
       },
       amount: expect.anything(),
+      client: mockFulfillmentClient,
     });
     expect(mockAssignMembershipPackageSeat).toHaveBeenCalledWith({
       package_id: "package-1",
@@ -388,10 +427,10 @@ describe("processPaymentIntents invoice-payment links", () => {
     ).resolves.toBe(1);
 
     expect(stripe.invoices.retrieve).not.toHaveBeenCalled();
-    expect(mockCreateCredit).toHaveBeenCalledWith(
+    expect(mockRecordCapturedPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: "acct-1",
-        invoice_id: "pi_direct_course",
+        payment_id: "pi_direct_course",
         description: expect.objectContaining({
           line_items: [],
           purpose: MEMBERSHIP_PACKAGE_PURCHASE,
@@ -467,10 +506,10 @@ describe("processPaymentIntents invoice-payment links", () => {
     ).resolves.toBe(1);
 
     expect(stripe.invoices.retrieve).toHaveBeenCalledWith("in_missing");
-    expect(mockCreateCredit).toHaveBeenCalledWith(
+    expect(mockRecordCapturedPayment).toHaveBeenCalledWith(
       expect.objectContaining({
         account_id: "acct-1",
-        invoice_id: "pi_missing_invoice",
+        payment_id: "pi_missing_invoice",
       }),
     );
     expect(mockPurchaseMembershipPackage).toHaveBeenCalledWith(

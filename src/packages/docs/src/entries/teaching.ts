@@ -14,8 +14,29 @@ import {
   COURSE_WORKFLOW_BODY,
   NBGRADER_BODY,
 } from "../content/teaching";
+import { COURSE_COMPUTE_BODY } from "../content/course-compute";
 
 export const TEACHING_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "instructors", "students"],
+    body: COURSE_COMPUTE_BODY.trim(),
+    category: "Teaching",
+    id: "teaching.course-compute",
+    image: docsIcon(
+      "/public/docs/course-assignment-ede60e1a.webp",
+      "Computational coursework in student projects",
+    ),
+    lastReviewed: "2026-09-12",
+    noActionReason:
+      "Compute budgets are configured in a selected course file and require separate financial authorization.",
+    searchKeywords:
+      "course sponsored compute credit GPU VM allowance instructor budget storage retention personal funding",
+    slug: "teaching/course-compute",
+    status: "draft",
+    summary:
+      "Understand course-funded student VMs, spending limits, and what happens when funding or storage retention ends.",
+    title: "Course-sponsored compute",
+  },
   {
     audiences: ["agents", "instructors"],
     body: COURSE_WORKFLOW_BODY.trim(),

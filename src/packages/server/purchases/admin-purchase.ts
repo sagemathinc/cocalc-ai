@@ -6,7 +6,10 @@
 import dayjs from "dayjs";
 
 import { getTransactionClient } from "@cocalc/database/pool";
-import { recordAccountAdminAuditEvent } from "@cocalc/server/accounts/admin-audit";
+import {
+  ensureAccountAdminAuditLogSchema,
+  recordAccountAdminAuditEventInTransaction,
+} from "@cocalc/server/accounts/admin-audit";
 import isValidAccount from "@cocalc/server/accounts/is-valid-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import {
@@ -16,6 +19,8 @@ import {
 import createCredit from "@cocalc/server/purchases/create-credit";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import { lockAccountSpending } from "./lock-account-spending";
+import { assertDebitPreservesPrepaidHolds } from "./assert-debit-preserves-prepaid-holds";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
 import { MAX_COST } from "@cocalc/util/db-schema/purchases";
@@ -136,17 +141,20 @@ export async function ensureCreditCoversPurchase({
   client,
   cost,
   service,
+  minimumPayment,
 }: {
   account_id: string;
   client;
   cost: number;
   service: "membership";
+  minimumPayment?: number;
 }) {
   const purchase = await isPurchaseAllowed({
     account_id,
     client,
     cost,
     service,
+    minimumPayment,
   });
   const chargeAmount = toDecimal(purchase.chargeAmount ?? 0);
   if (!purchase.allowed || chargeAmount.gt(0)) {
@@ -197,8 +205,10 @@ export default async function adminPurchase({
     source,
   });
 
+  await ensureAccountAdminAuditLogSchema();
   const client = await getTransactionClient();
   try {
+    await lockAccountSpending(client, user_account_id);
     if (product === "balance") {
       const adjustmentAmount = priceValue;
       const absoluteAmount = adjustmentAmount.abs();
@@ -218,6 +228,11 @@ export default async function adminPurchase({
           tag: "admin-purchase",
         });
       } else {
+        await assertDebitPreservesPrepaidHolds({
+          account_id: user_account_id,
+          client,
+          amount: absoluteAmount,
+        });
         purchase_id = await createPurchase({
           account_id: user_account_id,
           client,
@@ -232,7 +247,7 @@ export default async function adminPurchase({
         });
         await getBalance({ account_id: user_account_id, client });
       }
-      await recordAccountAdminAuditEvent({
+      await recordAccountAdminAuditEventInTransaction({
         account_id: user_account_id,
         action: "balance-adjustment",
         actor_account_id: admin_account_id,

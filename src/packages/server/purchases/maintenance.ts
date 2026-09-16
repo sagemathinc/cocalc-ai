@@ -25,6 +25,20 @@ interface MaintenanceDescription {
 
 const FUNCTIONS: MaintenanceDescription[] = [
   {
+    f: authorityMaintenance("monthly-collections"),
+    desc: "collect explicitly authorized monthly statements",
+    requiresStripe: true,
+  },
+  {
+    f: authorityMaintenance("credit-transfers"),
+    desc: "reconcile pending account credit transfers",
+  },
+  {
+    f: authorityMaintenance("provider-refunds"),
+    desc: "reconcile pending provider refunds",
+    requiresStripe: true,
+  },
+  {
     f: authorityMaintenance("subscriptions"),
     desc: "maintain subscriptions",
     requiresStripe: true,

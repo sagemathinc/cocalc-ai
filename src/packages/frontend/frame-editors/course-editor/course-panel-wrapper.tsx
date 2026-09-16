@@ -72,8 +72,9 @@ export interface PanelProps {
 }
 
 function CoursePanelWrapper(props: FrameProps) {
-  const { id, project_id, path, font_size, course_panel, actions, desc } =
-    props;
+  const { id, project_id, font_size, course_panel, actions, desc } = props;
+  // The tab's display path can be an alias; course state uses the editor identity.
+  const path = actions.path;
   const useEditor = useEditorRedux<CourseEditorState>({ project_id, path });
   const modal = useEditor("modal");
   const name = course_redux_name(project_id, path);

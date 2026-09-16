@@ -32,6 +32,9 @@ export type BillingAuthorityHttpOperation =
   | "set-default-payment-method";
 
 export type BillingAuthorityMaintenanceTask =
+  | "monthly-collections"
+  | "credit-transfers"
+  | "provider-refunds"
   | "automatic-payments"
   | "auto-balance"
   | "payment-intents"
@@ -45,6 +48,7 @@ export type BillingAuthorityCommercialMaintenanceTask =
   | "stripe-events";
 
 export type BillingAuthorityAccountLocalOperation =
+  | "apply-funding-approval"
   | "admin-create-membership-package-purchase"
   | "admin-provision-site-license"
   | "legacy-apply-financial-home-bay"
@@ -306,6 +310,8 @@ export function billingAuthorityAccountIds(
       values.push(
         ...stringFields(command.input, [
           "user_account_id",
+          "payer_account_id",
+          "recipient_account_id",
           "customer_account_id",
           "owner_account_id",
           "target_account_id",

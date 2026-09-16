@@ -155,32 +155,49 @@ describe("cloud dns", () => {
     ]);
   });
 
-  it("lists only random managed-VM A records in the configured zone", async () => {
-    dnsRecords = [
-      {
-        id: "vm-record",
-        name: "vm-0123456789abcdef0123456789abcdef.dev.example.com",
-        type: "A",
-        content: "203.0.113.44",
-        proxied: false,
-      },
-      {
-        id: "host-record",
-        name: "host-abc-dev.example.com",
-        type: "A",
-        content: "203.0.113.45",
-        proxied: true,
-      },
-    ];
-    const { listManagedVmDnsRecords } = await import("./dns");
-    await expect(listManagedVmDnsRecords()).resolves.toEqual([
-      {
-        record_id: "vm-record",
-        name: "vm-0123456789abcdef0123456789abcdef.dev.example.com",
-        content: "203.0.113.44",
-        proxied: false,
-      },
-    ]);
+  it("lists only this deployment's random managed-VM A records in the configured zone", async () => {
+    const previous = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+    process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "isolated-dns-test";
+    const { computeVmDnsLabelPrefix } =
+      await import("../compute/resource-names");
+    const ownName = `${computeVmDnsLabelPrefix()}0123456789abcdef0123456789abcdef.dev.example.com`;
+    try {
+      dnsRecords = [
+        {
+          id: "vm-record",
+          name: ownName,
+          type: "A",
+          content: "203.0.113.44",
+          proxied: false,
+        },
+        {
+          id: "legacy-vm-record",
+          name: "vm-0123456789abcdef0123456789abcdef.dev.example.com",
+          type: "A",
+          content: "203.0.113.99",
+          proxied: false,
+        },
+        {
+          id: "host-record",
+          name: "host-abc-dev.example.com",
+          type: "A",
+          content: "203.0.113.45",
+          proxied: true,
+        },
+      ];
+      const { listManagedVmDnsRecords } = await import("./dns");
+      await expect(listManagedVmDnsRecords()).resolves.toEqual([
+        {
+          record_id: "vm-record",
+          name: ownName,
+          content: "203.0.113.44",
+          proxied: false,
+        },
+      ]);
+    } finally {
+      if (previous == null) delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+      else process.env.COCALC_COMPUTE_DEPLOYMENT_ID = previous;
+    }
   });
 
   it("observes the authoritative host route record for read-back verification", async () => {

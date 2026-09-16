@@ -236,7 +236,16 @@ export async function updateComputeVolume(
   const entries = Object.entries(updates).filter(([key]) => allowed.has(key));
   if (!entries.length) return await getComputeVolumeById(id);
   const values = entries.map(([, value]) => value);
-  const assignments = entries.map(([key], index) => `${key}=$${index + 2}`);
+  // Provider observations must not overwrite a concurrently renewed funding
+  // binding or metering checkpoint carried in an older metadata snapshot.
+  const assignments = entries.map(([key], index) =>
+    key === "metadata"
+      ? `metadata=CASE WHEN metadata#>'{billing,course_funding}' IS NOT NULL
+        THEN jsonb_set($${index + 2}::jsonb,'{billing,course_funding}',metadata#>'{billing,course_funding}') ELSE $${index + 2}::jsonb END`
+      : key === "ready_at"
+        ? `ready_at=COALESCE(ready_at,$${index + 2})`
+        : `${key}=$${index + 2}`,
+  );
   const { rows } = await pool().query<ComputeVolumeRow>(
     `UPDATE compute_volumes SET ${assignments.join(", ")}, updated_at=NOW()
      WHERE id=$1 RETURNING *`,

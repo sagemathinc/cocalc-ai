@@ -31,7 +31,6 @@ import { useMemo, useRedux, useState } from "@cocalc/frontend/app-framework";
 import { Icon } from "@cocalc/frontend/components";
 import { revealDocsAction } from "@cocalc/frontend/project/docs-actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
-import { uuid } from "@cocalc/util/misc";
 import type { CourseActions } from "../actions";
 import type { CourseSettingsRecord, StudentsMap } from "../store";
 import { selectableRecipientIds } from "./shared-secrets-selection";
@@ -101,7 +100,7 @@ export function SharedSecrets({ actions, name, project_id, settings }: Props) {
 
   useEffect(() => {
     if (courseId) return;
-    actions.set({ table: "settings", course_id: uuid() });
+    actions.ensure_course_id();
   }, [actions, courseId]);
 
   const refresh = useCallback(async () => {

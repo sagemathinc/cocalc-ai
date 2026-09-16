@@ -427,6 +427,10 @@ Table({
       pg_type: "varchar(256)",
       desc: "Id of this user's stripe metered usage subscription, if they have one.",
     },
+    monthly_collection: {
+      type: "map",
+      desc: "Versioned monthly statement collection consent. Written only by isolated financial approval; not a spending entitlement. An explicit disabled consent overrides legacy automatic collection.",
+    },
     email_daily_statements: {
       type: "boolean",
       desc: "If true, try to send daily statements to user showing all of their purchases.  If false or not set, then do not.  NOTE: we always try to email monthly statements to users.",
@@ -473,6 +477,11 @@ Table({
       "((ssh_keys IS NOT NULL))", // used by ssh-gateway to speed up getting all users
     ],
     pg_custom_indexes: [
+      {
+        name: "accounts_low_credit_notifications_idx",
+        query:
+          "(account_id) WHERE deleted IS NOT TRUE AND other_settings->'low_credit_notifications' = 'true'::jsonb",
+      },
       {
         name: "accounts_banned_account_idx",
         query: "(account_id) WHERE banned IS TRUE",
@@ -580,6 +589,8 @@ Table({
               USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
             hide_navbar_balance: false,
             hide_navbar_membership: false,
+            low_credit_notifications: false,
+            low_credit_threshold_usd: 10,
             cookie_consent: null,
           },
           display_name: "",

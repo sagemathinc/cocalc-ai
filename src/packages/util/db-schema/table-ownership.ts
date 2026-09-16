@@ -19,10 +19,15 @@ export type TableAuthorityKey =
   | "seed"
   | "account_id"
   | "owner_account_id"
+  | "payer_account_id"
+  | "sender_account_id"
+  | "recipient_account_id"
+  | "pool_id"
   | "project_id"
   | "host_id"
   | "connector_id"
   | "bay_id"
+  | "owning_bay_id"
   | "local"
   | "none"
   | "mixed";
@@ -61,6 +66,69 @@ function entries(
 }
 
 export const TABLE_OWNERSHIP = {
+  ...entries(
+    [
+      "account_funding_authorities",
+      "account_funding_holds",
+      "compute_funding_pools",
+      "compute_funding_reservations",
+      "compute_funding_events",
+      "compute_funding_purchase_attributions",
+      "compute_vm_personal_consents",
+    ],
+    {
+      ownership: "account-home",
+      authority: "payer_account_id",
+      portability: "portable",
+      notes:
+        "Authoritative payer-home accounting. Financial rehome freezes writes, copies liabilities and idempotency history, and activates a new authority epoch. Resource ownership and course collaboration do not confer payer authority; retired authority rows remain fencing tombstones.",
+    },
+  ),
+  ...entries(["compute_funding_grants"], {
+    ownership: "account-home",
+    authority: "pool_id",
+    portability: "portable",
+    notes:
+      "Owned through compute_funding_pools.payer_account_id, not the beneficiary's home bay. Moves with its payer pool, preserving account-bound student identity and all reserved liabilities.",
+  }),
+  ...entries(["compute_funding_exposure_policy"], {
+    ownership: "stable-bay",
+    authority: "bay_id",
+    portability: "stable",
+    notes:
+      "Local accepted share of the independently signed cluster exposure manifest. Account moves do not move a bay's exposure budget or authorize a larger site-wide ceiling.",
+  }),
+  ...entries(
+    [
+      "payment_fulfillments",
+      "provider_refund_attempts",
+      "admin_membership_orders",
+      "credit_payment_roots",
+      "credit_transfer_entries",
+      "credit_transfer_ledger_observations",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "portable",
+      notes:
+        "Account-home payment, order and transfer provenance. Financial rehome remaps local ledger references while preserving provider replay identities, refund obligations and transfer fragments.",
+    },
+  ),
+  ...entries(["credit_transfers"], {
+    ownership: "account-home",
+    authority: "sender_account_id",
+    portability: "portable",
+    notes:
+      "Sender-home coordinator and durable debit/compensation decision. Recipient identity and routing are delivery references, never sender spending authority.",
+  }),
+  ...entries(["credit_transfer_deliveries"], {
+    ownership: "account-home",
+    authority: "recipient_account_id",
+    portability: "portable",
+    notes:
+      "Recipient-home acceptance or rejection tombstone. Moves with the recipient; sender-home provenance and delivery identity survive retries and rehome.",
+  }),
   ...entries(
     [
       "billing_authority_account_fences",
@@ -578,22 +646,53 @@ export const TABLE_OWNERSHIP = {
       "compute_vm_project_access",
       "compute_vm_instances",
       "compute_volumes",
-      "compute_egress_meter_intervals",
-      "compute_site_funded_usage",
-      "compute_vm_turn_grants",
     ],
     {
-      ownership: "account-home",
-      authority: "owner_account_id",
+      ownership: "stable-bay",
+      authority: "owning_bay_id",
       portability: "stable",
       secondary_reference_fields: {
+        owner_account_id:
+          "The beneficiary owns the resource; account rehome does not relocate it.",
         project_id:
           "Revocable project access controls discovery and SSH data-plane access, but not authority.",
       },
       notes:
-        "Account-owned managed compute state. Many projects may receive revocable SSH access without receiving lifecycle or billing authority.",
+        "Managed resources remain at their owning bay across account rehome. Instance records inherit authority from their VM. Owner API calls route to this bay; funding is checked separately at the payer home. Revocable project access confers neither lifecycle nor billing authority.",
     },
   ),
+
+  ...entries(["compute_egress_meter_intervals"], {
+    ownership: "account-home",
+    authority: "owner_account_id",
+    portability: "portable",
+    secondary_reference_fields: {
+      project_id:
+        "Usage context only; replay accounting belongs to its account owner.",
+    },
+    notes:
+      "Account-owned metering replay evidence, moved with financial state. Physical resource identities remain unchanged.",
+  }),
+  ...entries(["compute_site_funded_usage"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    notes:
+      "Site-funded provider usage evidence remains with the resource's worker bay, independently of its beneficiary's account home.",
+  }),
+  ...entries(["compute_vm_turn_grants"], {
+    ownership: "account-home",
+    authority: "owner_account_id",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      project_id:
+        "The capability is scoped to this project but approved by its account owner.",
+    },
+    notes:
+      "Short-lived agent approvals are checked at the current account home. Account rehome requires a new approval there; old-bay approvals are not accepted or copied as financial consent.",
+    rebuild:
+      "A verified agent capability creates a fresh, initially read-only or unapproved request at the new home. Billable, destructive, and availability permissions require account approval again.",
+  }),
 
   ...entries(["compute_vm_orphans"], {
     ownership: "stable-bay",
@@ -604,12 +703,11 @@ export const TABLE_OWNERSHIP = {
   }),
 
   ...entries(["compute_resource_work"], {
-    ownership: "ephemeral",
+    ownership: "stable-bay",
     authority: "local",
-    portability: "rebuildable",
+    portability: "stable",
     notes:
-      "Account-home-bay provider work. Desired resource state remains the durable source of truth.",
-    rebuild: "Reconcile desired compute resource state against the provider.",
+      "Resource-owning-bay provider work and pending lifecycle-notice delivery. Desired resource state can reconstruct provider intent, but not historical notification delivery. Retain undelivered funded work across restarts and account moves; it is not disposable queue state.",
   }),
 
   ...entries(["compute_resource_events"], {
@@ -635,6 +733,37 @@ function adHocEntries(
 }
 
 export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
+  ...adHocEntries(["notification_course_credit_states"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "portable",
+    source: "course-credit notification bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Course-credit crossing state moves with account financial authority alongside its notification records, so retries and moves do not repeat threshold alerts.",
+  }),
+  ...adHocEntries(["account_financial_handoffs"], {
+    ownership: "stable-bay",
+    authority: "local",
+    portability: "stable",
+    source: "financial rehome coordinator bootstrap",
+    migrate_to_schema: true,
+    secondary_reference_fields: {
+      account_id:
+        "The account being moved, not authority to migrate the bay-local handoff journal.",
+    },
+    notes:
+      "Bay-local source/destination handoff journal and fencing history. Each side retains its own durable operation state; the account's financial snapshot is transferred through this protocol rather than copying the coordinator journal.",
+  }),
+  ...adHocEntries(["course_funding_approval_intents"], {
+    ownership: "account-home",
+    authority: "payer_account_id",
+    portability: "portable",
+    source: "course funding trusted approval service",
+    migrate_to_schema: true,
+    notes:
+      "Payer-home immutable approval and application receipts. Financial rehome preserves applied operations but expires pending browser approvals and removes their authenticated session binding; no fresh-auth capability migrates.",
+  }),
   ...adHocEntries(["admin_support_mutations"], {
     ownership: "seed-global",
     authority: "seed",

@@ -48,27 +48,44 @@ export async function ensureAccountAdminAuditLogSchema(): Promise<void> {
   );
 }
 
-export async function recordAccountAdminAuditEvent({
-  account_id,
-  action,
-  actor_account_id,
-  reason,
-  metadata,
-  client,
-}: {
+interface AccountAdminAuditEvent {
   account_id: string;
   action: AccountAdminAuditAction;
   actor_account_id?: string | null;
   reason?: string | null;
   metadata?: Record<string, unknown> | null;
   client?: PoolClient;
-}): Promise<void> {
+}
+
+export async function recordAccountAdminAuditEvent(
+  opts: AccountAdminAuditEvent,
+): Promise<void> {
+  await ensureAccountAdminAuditLogSchema();
+  await insertAccountAdminAuditEvent(opts);
+}
+
+/** Prepare the audit schema before opening the financial transaction. This
+ * writer uses only its supplied connection and commits with the adjustment.
+ */
+export async function recordAccountAdminAuditEventInTransaction(
+  opts: AccountAdminAuditEvent & { client: PoolClient },
+): Promise<void> {
+  await insertAccountAdminAuditEvent(opts);
+}
+
+async function insertAccountAdminAuditEvent({
+  account_id,
+  action,
+  actor_account_id,
+  reason,
+  metadata,
+  client,
+}: AccountAdminAuditEvent): Promise<void> {
   if (!isValidUUID(account_id)) {
     throw new Error("account_id must be a valid uuid");
   }
   const actor =
     actor_account_id && isValidUUID(actor_account_id) ? actor_account_id : null;
-  await ensureAccountAdminAuditLogSchema();
   await (client ?? getPool()).query(
     `INSERT INTO ${TABLE}
        (id, account_id, action, actor_account_id, reason, metadata)
