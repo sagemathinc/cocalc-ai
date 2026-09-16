@@ -1,7 +1,8 @@
 # Agent Messaging Release Contract
 
-Date: September 15, 2026. Status: **draft for William's approval**, incorporating
-his explicit restart-boundary decision and agreement on bounded resource policy.
+Date: September 15, 2026. Status: **approved review contract**, incorporating
+William's explicit restart-boundary decision and agreement on bounded resource
+policy. Approval defines the requirements for review; it is not release approval.
 
 This is the proposed product and authorization contract for the first controlled
 release, not a statement that the implementation satisfies it. William decides
@@ -9,8 +10,8 @@ product requirements. Reviewers assess implementation against approved requireme
 and separately identify residual risks or recommend changes. No SOC-2 policy
 change is proposed here.
 
-Once approved, this document takes precedence over earlier messaging prototypes
-and plans where they differ. Section 10 distinguishes declared requirements from
+This document takes precedence over earlier messaging prototypes and plans where
+they differ. Section 10 distinguishes declared requirements from
 implementation choices and verification tasks. Neither an implementation default
 nor a reviewer assumption changes those requirements. A review must identify its
 contract revision, implementation SHA, and comparison base.
@@ -330,8 +331,8 @@ moves, including already-connected clients and outstanding work. Failure is P0,
 not an optional hardening recommendation or permission to wait for a token TTL.
 No such full-platform verification is claimed in this document.
 
-The complete contract still awaits William's approval; the explicit restart rule
-and resource-policy direction above are recorded decisions, not open questions.
-Review may identify implementation gaps now. Release qualification must include
-the exact enforced resource policy and evidence for the declared restart boundary.
-Later requirement changes need an explicit revision, not inference from code.
+William approved this contract for independent review. The restart rule and
+resource-policy direction above are decisions, not open questions. Review may
+identify implementation gaps. Release qualification must include the exact
+enforced resource policy and evidence for the declared restart boundary. Later
+requirement changes need an explicit revision, not inference from code.

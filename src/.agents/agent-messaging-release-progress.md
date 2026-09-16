@@ -1,88 +1,107 @@
-# Agent messaging controlled release
+# Agent messaging controlled release progress
 
-Updated September 15, 2026. Status: **dev candidate verified in part; not yet
-qualified for production**. No production deployment or flag changes performed.
-The next step is maintainer approval of the
-[release contract](agent-messaging-release-contract.md) and reconciliation of an
-exact remotely accessible review target. The full candidate has not passed
-independent review. Private material remains outside this document.
+Updated September 16, 2026. Status: **private remediation candidate; not approved
+for merge or production**. No production deployment or production flag change has
+been performed.
 
-William has declared restart after removal/downgrade the required enforcement
-boundary; violation is P0. That requirement is not yet verified. Conservative
-configurable resource limits are agreed in principle. The contract records the
-remaining lifecycle investigation and qualification work, not three open policy
-questions. Its complete draft still awaits approval.
+## Pinned source
 
-Implementation is on hold while that contract and handoff are settled, not because
-native messaging is known to be unavailable. At the last recorded check, the
-first-party external installation list showed that all three QA installations
-were revoked and expired. A new external enrollment
-must use its normal human approval flow. No credential was revived or replaced.
-
-## Source and artifacts
-
-- Worktree: `/home/user/scratch/agent-mentions`, branch `feature/agent-mentions`.
+- Private advisory repository: `sagemathinc/cocalc-ai-ghsa-rff5-g9ff-7qhf`.
 - Comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
-- Workspace/browser/CLI build: `0b3e34f358601cbf8f0b3826714623fbcb5b1072`.
-- Host archive: `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41`; only progress
-  documentation differs from the workspace build above.
-- Receiver candidate: `20260915T191304Z-e43a2ccb10a7`, installed on QA host
-  `b96028c9-7d3e-4953-a8c9-52f8a5ce52ca` (bay 1).
-- Source host/project/tools/installed CLI were not upgraded in the last step.
-  Do not claim an identically versioned fleet or a final reviewed SHA.
+- Independently reviewed deficient head: `d38f3399be308a92721e40fdcb56244de3d1974e`.
+- Remediation branch: `fix/agent-messaging-review-20260916`.
+- Application and test checkpoint before this documentation update:
+  `4590eac669`.
+- Normative requirements: `agent-messaging-release-contract.md`, approved for
+  review. William's successful-project-restart boundary remains release blocking.
 
-## Verified outcomes
+The final documentation commit cannot contain its own SHA. The private PR must pin
+the exact final branch head after push. A reviewer must confirm that SHA, this base,
+and private repository before relying on this packet.
 
-- Default-off UI: 58 focused tests, frontend typecheck/lint, and live preference
-  persistence. Opting out hides setup but retains management and readable chats.
-- Full dev workspace build, browser bundle and standalone CLI bundle passed;
-  served browser manifest matched local bytes and the pinned source revision.
-- Schema persistence: the same 14 tests pass on PGlite and isolated PostgreSQL
-  18.4, including concurrent index DDL and preservation of legacy records.
-  No application databases were mutated; disposable test databases were removed.
-- Earlier 32 MiB native/external attachment tests and stopped-project startup
-  are recorded evidence, not newly repeated against the latest receiver archive.
-- Receiver upgrade `711e8f1b-1a5d-4b30-b0e4-2708ce865940` succeeded. Project-host,
-  router, persist and ACP worker were all observed running/aligned on candidate.
-- Post-upgrade cross-bay round trip passed: request
-  `8a74dc85-870a-4dab-b411-3a5605a7332c`, reply
-  `c07f8d45-b38d-435c-a604-b92c0ef53a2d`; both accepted, both turns finished.
-  Recipient verified the 28-byte attachment's digest, source acknowledged locally,
-  and no reply loop was observed. The fresh QA approval prerequisite is resolved.
-- An earlier clean canary install and explicit baseline rollback succeeded.
-  Host history now routes to the owning bay; generic UUID-only `op get` does not.
+## Confirmed remediation
 
-## Remaining work and blockers
+- Bounded Conat receivers reject non-binary fragments before accounting or
+  retention. Real loopback transport tests cover forged structured bodies,
+  malformed MsgPack, fragment floods, abandoned fragments, overflow, and recovery.
+- Native execution configuration is reconstructed from the current thread after
+  startup. External expiry and native registration authority are rechecked after
+  awaited operations.
+- Project stop must converge before the project-host fences durable ACP jobs, turn
+  leases, and queued payloads. The detached worker disposes project runtimes; a
+  worker that does not acknowledge the fence is terminated. Recovery children do
+  not resume a restart-fenced job. Current membership, principal, connection,
+  placement, and thread configuration are checked before queued RPC execution.
+- RPC permits and single-use attachment preparations are in PostgreSQL rather than
+  process-local maps. Permits are reusable until explicit release/expiry;
+  preparations are atomically consumed once. A real PostgreSQL test launches
+  separate Node processes and verifies cross-process visibility and one winner.
+- All messaging tables are in the ownership manifest. Account-home, project-owner,
+  and bay-local records are distinguished explicitly.
+- Shared admission limits are enforced under a PostgreSQL advisory lock across hub
+  processes: 1,000 permits and 1,000 preparations per bay; 8/4 per account; 4/2 per
+  destination project. Bounded Conat subscriptions also share a 512 MiB raw-fragment
+  cap per process. This is an interim raw-byte bound, not an exact decoded-RSS claim;
+  the broader structured-decoding work in public PR #590 is separate.
+- Durable creation caps are 10,000 identities/project, 10,000 runs/identity,
+  1,000 names/account, 10,000 personal grants/account, 10,000 personal
+  requests/account, 10,000 retained and 1,000 active external
+  installations/account, 10,000 external identities/account, and 1,000 legacy RPC
+  links/source. Maintenance is serialized per database, runs every six hours in
+  batches of 5,000, removes
+  expired admissions immediately, terminal runs/requests after 30 days, and
+  revoked/expired grants, installations, links, rejected inbox rows, and orphan
+  legacy grants after 180 days. It preserves uncertain inbox work, identity rows,
+  controls, retired names, and external identities.
+- Expired native leases recover only with a fresh run ID and current issuance
+  authority; explicit termination is not revived. Project owners can replace an
+  abandoned/disabled native identity with a new UUID without transferring personal
+  names or grants.
+- Remote transcript messages render an authenticated source-agent badge separately
+  from the target execution principal. This is honest best-effort attribution in
+  collaborator-editable project storage, not a tamper-proof audit record.
+- Cookie-backed external approval and revocation mutations enforce same-origin /
+  Fetch Metadata checks in addition to their existing authentication requirements.
 
-- Contract approval and a remotely accessible complete review candidate remain
-  outstanding. PR #558 is pinned to the earlier foundation, not this worktree.
-  Do not publish private findings or fixes as ordinary release preparation.
-- Final reviewed source/artifact pinning, fleet activation and production-mode
-  qualification remain unfinished. Current dev evidence is not a substitute.
-- Final-version external enrollment/send smoke is unfinished; enrollment needs
-  explicit first-party human approval, not reused/revived credentials.
-- Schema fixtures do not establish behavior under production load or a migration
-  of a complete production database snapshot.
-- UI polish is intentionally deferred. Existing UX is sufficient for the tested
-  workflow but remains awkward; no new visual redesign is required for this pass.
+## Verification completed
 
-Next: William reviews the draft contract; prepare the appropriate remote private
-review PR and have the reviewer acknowledge its exact SHA, base and contract
-revision. No implementation fixes or remote publication were performed in this
-documentation pass. Later, qualify the intended matched test fleet. Recheck
-approvals when testing resumes; do not rebuild artifacts solely for doc changes.
+- Full `pnpm -C src build:dev` passed at application checkpoint `d3acb5df63` plus
+  the subsequently added test-only commit `4590eac669`.
+- Server agent and kill-switch suites: 13 suites, 173 tests passed.
+- Focused restart checks: Lite 34 tests, server PGlite 23 tests, project-host 59
+  tests passed.
+- Conat focused checks: 4 suites, 72 tests passed, including real loopback transport.
+- Database schema/ownership checks: 3 suites, 15 tests passed; messaging fixtures
+  also passed on PostgreSQL.
+- Separate-process PostgreSQL admission: 2 tests passed using independent Node
+  processes and an isolated PostgreSQL 18 cluster.
+- Identity recovery, maintenance, lease recovery, same-origin HTTP, dangerous RPC,
+  and package typechecks passed. Frontend lint passed with zero findings.
 
-## Reproduction and evidence
+## Unresolved risks and unfinished work
 
-- `agent-messaging-operator-handoff.md`: flag names, deployment ordering,
-  database fixture commands, rollback procedure and current checkpoints.
-- `agent-messaging-release-evidence-20260915.md`: preserved detailed build,
-  deployment, receipt, hash and browser evidence, including resolved blockers.
-- `agent-attachments-login-progress.md`: earlier bounded attachment and external
-  sender implementation/test history.
+- Independent re-review of the private remediation head is required. This work is
+  not self-certified secure or releasable.
+- The restart implementation has strong focused coverage, but the final candidate
+  has not yet completed the requested live detached-worker test that combines a
+  real running turn/session, queued and recovery work, permission downgrade,
+  successful stop/start, and post-restart non-execution. Do not present unit-layer
+  coverage as that boundary test.
+- Final matched-fleet movement/cross-bay qualification, current-version external
+  enrollment/send, and production-like load measurement remain unfinished.
+- The 512 MiB bound accounts retained raw binary fragments. Structured decode
+  amplification and exact process RSS remain residual risks tracked separately;
+  no claim of perfect fairness or exact memory accounting is made.
+- UI remains intentionally rough. The experimental account opt-in is default-off,
+  and all site gates are default-off. UI polish is not a release-security claim.
 
-Read-only host check after loading the matching dev hub environment:
+## External blockers
 
-```sh
-"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js" --profile agent-attachments-qa host deploy status b96028c9-7d3e-4953-a8c9-52f8a5ce52ca --json
-```
+- Fresh approval is required for any new external installation or expired native
+  connection used in final live qualification. Existing revoked credentials must
+  not be revived or copied between bays.
+- Production rollout and production flag activation require explicit maintainer
+  approval after independent re-review and final qualification.
+
+See `agent-messaging-review-handoff.md` for the reviewer request and
+`agent-messaging-operator-handoff.md` for controls and deployment ordering.

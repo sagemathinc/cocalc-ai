@@ -1,19 +1,23 @@
 # Agent messaging: controlled rollout handoff
 
-Status: release preparation, not permission to deploy to production. Review of
-the complete candidate remains outstanding. First settle the draft
-[release contract](agent-messaging-release-contract.md) and exact remote review
-target. This document contains historical operational evidence only; private
-review material stays private. Later dated status supersedes earlier checkpoints.
+Status: private remediation and release preparation, not permission to deploy to
+production. The [release contract](agent-messaging-release-contract.md) is approved
+for review. Independent re-review and final matched-candidate qualification remain
+outstanding. Private review material stays private. Later dated status supersedes
+earlier checkpoints.
 
 ## Candidate and evidence
 
-- Workspace/browser/CLI build checkpoint: `0b3e34f358601cbf8f0b3826714623fbcb5b1072`.
-- Host archive checkpoint: `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41`.
-- Only progress documentation differs between those source checkpoints.
+- Current private application/test checkpoint: `4590eac669` on
+  `fix/agent-messaging-review-20260916`.
+- The workspace/browser/CLI build `0b3e34f358601cbf8f0b3826714623fbcb5b1072`
+  and host archive `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41` are historical
+  pre-remediation deployment evidence, not current candidate artifacts.
 - Comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
-- Worktree: `/home/user/scratch/agent-mentions`, branch `feature/agent-mentions`.
-- These are preparation checkpoints, not a final independently reviewed SHA.
+- Worktree: `/home/user/scratch/agent-messaging-security-fixes`.
+- Private repository: `sagemathinc/cocalc-ai-ghsa-rff5-g9ff-7qhf` only.
+- The private PR must pin the final documentation head after push. No current
+  remediation artifact has been deployed to production.
 
 | Requirement                   | Evidence                                                                                    | Remaining qualification                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
@@ -64,6 +68,17 @@ Changing service environment requires a controlled service reload/restart.
 | `COCALC_AGENT_PERSONAL_MESSAGING_ENABLED`    | Human-scoped names/connections            |
 | `COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED` | Binary attachment path and receive limits |
 | `COCALC_AGENT_EXTERNAL_LOGIN_ENABLED`        | External sender enrollment/service        |
+
+Initial aggregate controls in the remediation candidate are deliberately
+conservative:
+
+- Shared PostgreSQL admission: 1,000 active permits and 1,000 preparations per
+  bay, 8/4 per account, and 4/2 per destination project.
+- Bounded Conat subscriptions in one process share 512 MiB of retained raw binary
+  fragments. This is not exact decoded-RSS accounting.
+- Durable creation caps and scheduled retention are documented in
+  `agent-messaging-release-progress.md`. Maintenance is restrictive cleanup only;
+  it never replays or reinterprets pending/uncertain work.
 
 Apply intended controls consistently to account-home and project-owning bays;
 the project-host identity lease also uses the master flag. Do not treat changing
