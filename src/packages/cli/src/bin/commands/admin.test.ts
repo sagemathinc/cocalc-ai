@@ -569,21 +569,21 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(vocabulary, /Exams tab of a project host/);
   assert.match(vocabulary, /tooltip Manage project hosts and virtual machines/);
   assert.match(vocabulary, /accessible name is Compute/);
+  assert.match(vocabulary, /Quick Navigation lists the same page as Compute/);
   assert.match(vocabulary, /say sign in, not log in or login/);
   assert.match(
     vocabulary,
     /Approve CLI Login, Approve Mobile App Login or Approve Elevated CLI Login/,
   );
   assert.match(vocabulary, /configured site name/);
+  assert.match(vocabulary, /tooltips Open as flyout and Open as full page/);
+  assert.match(vocabulary, /which account settings call the Activity Bar/);
+  assert.match(vocabulary, /Quick Navigation opens as a flyout titled Users/);
   assert.match(
     vocabulary,
-    /Quick Navigation opens as a side panel titled Users/,
+    /page and flyout both show the title Help for this project/,
   );
-  assert.match(
-    vocabulary,
-    /page and side panel both show the title Help for this project/,
-  );
-  assert.match(vocabulary, /page and side panel are titled Virtual machines/);
+  assert.match(vocabulary, /page and flyout are titled Virtual machines/);
   assert.match(vocabulary, /Recent Files or Project Activity Log/);
   assert.match(vocabulary, /no Users tab on the left rail/);
 });
