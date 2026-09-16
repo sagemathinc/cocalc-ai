@@ -10,16 +10,21 @@
 // test/ui-vocabulary.test.cjs checks both directions, so a rename in the
 // interface cannot silently leave the documentation or the support agents'
 // vocabulary behind, and a name the interface does not use cannot creep back
-// into the documentation.
+// into the documentation. The test runs from the docs `verify` script, which
+// CI runs on every pull request.
 //
 // Paths are relative to src/packages. Source text is compared after collapsing
 // runs of whitespace, so reformatting does not break an anchor; escapes are not
-// decoded.
+// decoded. Anchors are the smallest fragment that identifies the label. An i18n
+// message is anchored by its id, and its text must appear inside that message's
+// own definition, so reordering or adding fields does not break it.
 
 export interface UiVocabularyAnchor {
   file: string;
   text: string;
   role: "definition" | "renderer";
+  /** When set, `text` must appear inside the definition carrying this id. */
+  messageId?: string;
 }
 
 export interface UiVocabularyUse {
@@ -38,14 +43,15 @@ export interface UiVocabularyEntry {
   aliases?: readonly string[];
 }
 
-export interface UiVocabularyAbsence {
+export interface UiVocabularyFact {
   id: string;
   file: string;
-  /** The checked block starts at `after` and ends at the next `before`. */
-  after: string;
-  before: string;
+  /** Text that must be present, or absent between `after` and `before`. */
   text: string;
-  /** What must be updated if the text appears. */
+  kind: "present" | "absent-between";
+  after?: string;
+  before?: string;
+  /** Why the conventions depend on this fact, and what to update if it breaks. */
   reason: string;
 }
 
@@ -63,12 +69,16 @@ const HOST_DRAWER = "frontend/hosts/components/host-drawer.tsx";
 const EXAM_PANEL = "frontend/hosts/components/host-exam-panel.tsx";
 const VMS = "frontend/project/compute-vms.tsx";
 const JUPYTER_COMMANDS = "frontend/jupyter/commands.ts";
+const JUPYTER_EDITOR = "frontend/frame-editors/jupyter-editor/editor.ts";
 const STUDIO_CONTROLS = "frontend/jupyter/studio/studio-controls.tsx";
+const STUDIO_TOGGLE = "frontend/jupyter/studio/frame-type-toggle.tsx";
 const LOG = "frontend/project/history/log.tsx";
 const AUTH_APP = "frontend/public/auth/app.tsx";
 const CLI_AUTH = "frontend/public/auth/cli-auth-views.tsx";
 const APP_PAGE = "frontend/app/page.tsx";
 const ADMIN_PAGE = "frontend/admin/page.tsx";
+const QUICK_NAV_DATA = "frontend/app/quick-navigation/use-data.ts";
+const SECTIONS = "frontend/project/settings/sections.tsx";
 
 const doc = (name: string): string => `docs/src/content/${name}.ts`;
 const entries = (name: string): string => `docs/src/entries/${name}.ts`;
@@ -82,6 +92,11 @@ const ren = (file: string, text: string): UiVocabularyAnchor => ({
   text,
   role: "renderer",
 });
+const msg = (
+  file: string,
+  messageId: string,
+  text: string,
+): UiVocabularyAnchor => ({ file, messageId, text, role: "definition" });
 const conventions = (text: string): UiVocabularyUse => ({
   file: CONVENTIONS,
   text,
@@ -97,11 +112,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.files",
     label: "Files",
     anchors: [
-      def(
-        COMMON,
-        'explorer: { id: "labels.explorer", defaultMessage: "Files",',
-      ),
-      ren(FILE_TAB, "files: { label: labels.explorer,"),
+      msg(COMMON, "labels.explorer", 'defaultMessage: "Files"'),
+      ren(FILE_TAB, "label: labels.explorer,"),
     ],
     usedIn: [
       conventions("left-rail tab for a project's files is Files"),
@@ -134,9 +146,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.activity-bar-setting",
     label: "Activity Bar",
     anchors: [
-      def(
+      msg(
         "frontend/project/page/activity-bar-consts.ts",
-        'id: "project.page.activity-bar.title", defaultMessage: "Activity Bar",',
+        "project.page.activity-bar.title",
+        'defaultMessage: "Activity Bar"',
       ),
       ren(
         "frontend/account/other-settings.tsx",
@@ -177,9 +190,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.agents",
     label: "Agents",
     anchors: [
-      def(
+      msg(
         FILE_TAB,
-        'id: "project.page.file-tab.agents.label", defaultMessage: "Agents",',
+        "project.page.file-tab.agents.label",
+        'defaultMessage: "Agents"',
       ),
     ],
     usedIn: [conventions("the Agents rail tab")],
@@ -190,14 +204,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     // labels.assistant also says "Codex" but no component renders it, so it
     // cannot anchor anything.
     anchors: [
-      ren(
-        "frontend/chat/agent-message-status.tsx",
-        "<span>Codex activity</span>",
-      ),
-      def(
-        "essential-frontend/src/ui.tsx",
-        '{ icon: "chat", kind: "agents", label: "Codex" },',
-      ),
+      ren("frontend/chat/agent-message-status.tsx", ">Codex activity<"),
+      def("essential-frontend/src/ui.tsx", 'label: "Codex"'),
     ],
     usedIn: [conventions("the Codex assistant")],
   },
@@ -205,8 +213,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.image",
     label: "Image",
     anchors: [
-      def(FILE_TAB, 'id: "project.page.file-tab.rootfs.label",'),
-      def(FILE_TAB, 'defaultMessage: "Image",'),
+      msg(
+        FILE_TAB,
+        "project.page.file-tab.rootfs.label",
+        'defaultMessage: "Image"',
+      ),
     ],
     usedIn: [conventions("the Image rail tab")],
   },
@@ -214,7 +225,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.docs",
     label: "Help for this project",
     anchors: [
-      def(FILE_TAB, 'docs: { label: "Docs", flyoutTitle: "Docs",'),
+      def(FILE_TAB, 'label: "Docs",'),
+      def(FILE_TAB, 'flyoutTitle: "Docs",'),
       ren("frontend/project/page/flyouts/docs.tsx", "Help for this project"),
     ],
     usedIn: [
@@ -227,9 +239,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.vms",
     label: "Virtual machines",
     anchors: [
-      def(FILE_TAB, 'vms: { label: "VMs",'),
+      def(FILE_TAB, 'label: "VMs",'),
       def(FILE_TAB, 'flyoutTitle: "Virtual machines",'),
-      ren(VMS, '<Icon name="server" /> Virtual machines'),
+      ren(VMS, "Virtual machines </Title>"),
     ],
     usedIn: [
       conventions(
@@ -241,9 +253,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.log.page-files",
     label: "Recent Files",
     anchors: [
-      def(
+      msg(
         LOG,
-        'id="project.history.log.recent_files_title" defaultMessage="Recent Files"',
+        "project.history.log.recent_files_title",
+        'defaultMessage="Recent Files"',
       ),
     ],
     usedIn: [conventions("titled Recent Files or Project Activity Log")],
@@ -252,12 +265,13 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.log.page-activity",
     label: "{projectLabel} Activity Log",
     anchors: [
-      def(LOG, 'defaultMessage="{projectLabel} Activity Log"'),
-      ren(LOG, "const projectLabel = intl.formatMessage(labels.project);"),
-      def(
-        COMMON,
-        'project: { id: "labels.workspace", defaultMessage: "Project",',
+      msg(
+        LOG,
+        "project.history.log.title",
+        'defaultMessage="{projectLabel} Activity Log"',
       ),
+      ren(LOG, "intl.formatMessage(labels.project)"),
+      msg(COMMON, "labels.workspace", 'defaultMessage: "Project"'),
     ],
     usedIn: [conventions("Project Activity Log")],
   },
@@ -265,12 +279,12 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "rail.log.flyout",
     label: "Recent",
     anchors: [
-      def(COMMON, 'recent: { id: "labels.recent", defaultMessage: "Recent",'),
+      msg(COMMON, "labels.recent", 'defaultMessage: "Recent"'),
       ren(
         "frontend/project/page/flyouts/log-header.tsx",
         "intl.formatMessage(labels.recent)",
       ),
-      ren(FILE_TAB, "log: { label: labels.log,"),
+      ren(FILE_TAB, "label: labels.log,"),
     ],
     usedIn: [conventions("whose flyout is titled Recent")],
   },
@@ -278,10 +292,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "settings.page-title",
     label: "Project Settings",
     anchors: [
-      def(
-        "frontend/project/settings/page-shell.tsx",
-        '<Icon name="wrench" /> Project Settings',
-      ),
+      def("frontend/project/settings/page-shell.tsx", "Project Settings <"),
     ],
     usedIn: [conventions("a page titled Project Settings")],
   },
@@ -289,9 +300,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "settings.flyout-title",
     label: "Status and Settings",
     anchors: [
-      def(
+      msg(
         FILE_TAB,
-        'id: "project.page.flyout.settings.title", defaultMessage: "Status and Settings",',
+        "project.page.flyout.settings.title",
+        'defaultMessage: "Status and Settings"',
       ),
     ],
     usedIn: [conventions("a flyout titled Status and Settings")],
@@ -300,12 +312,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "settings.users-flyout",
     label: "Users",
     anchors: [
-      def(COMMON, 'users: { id: "labels.users", defaultMessage: "Users",'),
-      ren(FILE_TAB, "users: { label: labels.users,"),
-      ren(
-        "frontend/app/quick-navigation/use-data.ts",
-        "names: Object.keys(FIXED_PROJECT_TABS) as FixedTab[],",
-      ),
+      msg(COMMON, "labels.users", 'defaultMessage: "Users"'),
+      ren(FILE_TAB, "label: labels.users,"),
+      ren(QUICK_NAV_DATA, "Object.keys(FIXED_PROJECT_TABS)"),
     ],
     usedIn: [conventions("Quick Navigation opens as a flyout titled Users")],
     aliases: ["Users tab"],
@@ -314,10 +323,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "settings.people",
     label: "People",
     anchors: [
-      def(
-        "frontend/project/settings/sections.tsx",
-        'id: "people", icon: "users", label: "People", title: "People",',
-      ),
+      def(SECTIONS, 'label: "People",'),
+      def(SECTIONS, 'id: "people",'),
     ],
     usedIn: [conventions("the People section of project settings")],
   },
@@ -325,9 +332,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "quick-navigation",
     label: "Quick Navigation",
     anchors: [
-      def(
+      msg(
         "frontend/app/quick-navigation/dialog.tsx",
-        'defaultMessage: "Quick Navigation",',
+        "quick-nav.title",
+        'defaultMessage: "Quick Navigation"',
       ),
     ],
     usedIn: [conventions("Quick Navigation"), { file: doc("docs") }],
@@ -339,11 +347,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     label: "Compute",
     anchors: [
       def(APP_PAGE, 'label="Compute"'),
-      def(APP_PAGE, 'hide_label ariaLabel="Compute"'),
-      ren(
-        "frontend/app/quick-navigation/use-data.ts",
-        'page: "hosts", title: "Compute",',
-      ),
+      def(APP_PAGE, 'ariaLabel="Compute"'),
+      def(APP_PAGE, "hide_label"),
+      ren(QUICK_NAV_DATA, 'title: "Compute",'),
     ],
     usedIn: [
       conventions("its accessible name is Compute"),
@@ -363,22 +369,14 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   {
     id: "hosts.page-tabs",
     label: "Project Hosts",
-    anchors: [
-      def(
-        "frontend/hosts/hosts-page.tsx",
-        '{ key: "hosts", label: "Project Hosts" },',
-      ),
-    ],
+    anchors: [def("frontend/hosts/hosts-page.tsx", 'label: "Project Hosts"')],
     usedIn: [conventions("the tabs Project Hosts and Virtual Machines")],
   },
   {
     id: "hosts.vms-tab",
     label: "Virtual Machines",
     anchors: [
-      def(
-        "frontend/hosts/hosts-page.tsx",
-        '{ key: "vms", label: "Virtual Machines" },',
-      ),
+      def("frontend/hosts/hosts-page.tsx", 'label: "Virtual Machines"'),
     ],
     usedIn: [
       conventions("the tabs Project Hosts and Virtual Machines"),
@@ -388,7 +386,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   {
     id: "hosts.exams-tab",
     label: "Exams",
-    anchors: [def(HOST_DRAWER, '{ key: "exams", label: "Exams",')],
+    anchors: [def(HOST_DRAWER, 'label: "Exams",')],
     usedIn: [
       conventions("Exams tab of a project host"),
       bold("hosts", "Exams"),
@@ -407,7 +405,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ([key, label]): UiVocabularyEntry => ({
       id: `hosts.drawer-tab.${key}`,
       label,
-      anchors: [def(HOST_DRAWER, `{ key: "${key}", label: "${label}",`)],
+      anchors: [
+        def(HOST_DRAWER, `key: "${key}",`),
+        def(HOST_DRAWER, `label: "${label}",`),
+      ],
       usedIn: [{ file: doc("hosts"), text: label }],
     }),
   ),
@@ -437,16 +438,14 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   {
     id: "auth.sign-in-link",
     label: "Sign in",
-    anchors: [
-      def(APP_PAGE, 'id: "page.sign_in.label", defaultMessage: "Sign in",'),
-    ],
+    anchors: [msg(APP_PAGE, "page.sign_in.label", 'defaultMessage: "Sign in"')],
     usedIn: [conventions("the Sign in link in the top navigation")],
     aliases: ["login page"],
   },
   {
     id: "auth.sign-in-button",
     label: "Sign In",
-    anchors: [def("frontend/public/auth/forms.tsx", ': "Sign In"}')],
+    anchors: [def("frontend/public/auth/forms.tsx", '"Sign In"')],
     usedIn: [conventions("the Sign In button on the sign-in form")],
   },
   {
@@ -489,7 +488,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     anchors: [
       def(
         "frontend/account/codex-credentials-panel.tsx",
-        "Start device login </Button>",
+        "> Start device login <",
       ),
     ],
     usedIn: [conventions("the Start device login button")],
@@ -501,10 +500,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     label: "Git browser",
     anchors: [
       def("frontend/chat/chatroom-thread-menu.tsx", 'label: "Git browser",'),
-      def(
-        "frontend/chat/git-commit/drawer-sections.tsx",
-        "Git browser </Typography.Text>",
-      ),
+      def("frontend/chat/git-commit/drawer-sections.tsx", "> Git browser <"),
     ],
     usedIn: [conventions("Use the name Git browser"), { file: doc("files") }],
     aliases: ["Git viewer"],
@@ -515,7 +511,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     anchors: [
       def(
         "frontend/frame-editors/time-travel-editor/time-travel.tsx",
-        "Git Browser </Button>",
+        "> Git Browser <",
       ),
     ],
     usedIn: [conventions("TimeTravel has a Git Browser button")],
@@ -529,10 +525,7 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
         'aria-label="Open git browser"',
       ),
       def("frontend/chat/message.tsx", 'title="Open git browser"'),
-      def(
-        "frontend/chat/agent-message-status.tsx",
-        "Open git browser </Button>",
-      ),
+      def("frontend/chat/agent-message-status.tsx", "> Open git browser <"),
     ],
     usedIn: [conventions("chat buttons and tooltips say Open git browser")],
   },
@@ -542,11 +535,11 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "new.button",
     label: "New",
     anchors: [
-      def(COMMON, 'new: { id: "labels.new.file", defaultMessage: "New",'),
-      ren(FILE_TAB, "new: { label: labels.new,"),
+      msg(COMMON, "labels.new.file", 'defaultMessage: "New"'),
+      ren(FILE_TAB, "label: labels.new,"),
       ren(
         "frontend/project/explorer/new-button.tsx",
-        '<Icon name="plus-circle" /> {intl.formatMessage(labels.new)}',
+        "intl.formatMessage(labels.new)",
       ),
     ],
     usedIn: [bold("terminal", "New")],
@@ -555,10 +548,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "new.terminal",
     label: "Terminal",
     anchors: [
-      def(
-        "frontend/project/new/launcher-catalog.ts",
-        '{ id: "term", ext: "term", label: "Terminal",',
-      ),
+      def("frontend/project/new/launcher-catalog.ts", 'id: "term",'),
+      def("frontend/project/new/launcher-catalog.ts", 'label: "Terminal",'),
     ],
     usedIn: [bold("terminal", "Terminal")],
   },
@@ -568,10 +559,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.frame-menu",
     label: "Jupyter",
     anchors: [
-      def(
-        "frontend/frame-editors/jupyter-editor/editor.ts",
-        'type: "jupyter", short: "Jupyter", name: "Jupyter Notebook",',
-      ),
+      def(JUPYTER_EDITOR, 'short: "Jupyter",'),
+      def(JUPYTER_EDITOR, 'name: "Jupyter Notebook",'),
     ],
     usedIn: [bold("jupyter", "Jupyter")],
   },
@@ -579,9 +568,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.change-type",
     label: "Change Type",
     anchors: [
-      def(
+      msg(
         "frontend/frame-editors/frame-tree/commands/generic-commands.tsx",
-        'id: "command.generic.frame_type.label", defaultMessage: "Change Type",',
+        "command.generic.frame_type.label",
+        'defaultMessage: "Change Type"',
       ),
     ],
     usedIn: [
@@ -595,10 +585,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.studio-frame-type",
     label: "Jupyter Studio (experimental)",
     anchors: [
-      def(
-        "frontend/frame-editors/jupyter-editor/editor.ts",
-        'short: "Studio", name: "Jupyter Studio (experimental)",',
-      ),
+      def(JUPYTER_EDITOR, 'short: "Studio",'),
+      def(JUPYTER_EDITOR, 'name: "Jupyter Studio (experimental)",'),
     ],
     usedIn: [{ file: doc("jupyter") }],
   },
@@ -606,11 +594,8 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.return-to-classic",
     label: "Return to classic",
     anchors: [
-      def(
-        "frontend/jupyter/studio/frame-type-toggle.tsx",
-        'okText="Return to classic"',
-      ),
-      def("frontend/jupyter/studio/frame-type-toggle.tsx", "Studio </Button>"),
+      def(STUDIO_TOGGLE, 'okText="Return to classic"'),
+      def(STUDIO_TOGGLE, "> Studio <"),
     ],
     usedIn: [bold("jupyter", "Return to classic"), bold("jupyter", "Studio")],
   },
@@ -618,9 +603,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.toggle-studio",
     label: "Toggle Studio Notebook View",
     anchors: [
-      def(
+      msg(
         JUPYTER_COMMANDS,
-        'id: "jupyter.commands.toggle_studio_view.label", defaultMessage: "Toggle Studio Notebook View",',
+        "jupyter.commands.toggle_studio_view.label",
+        'defaultMessage: "Toggle Studio Notebook View"',
       ),
     ],
     usedIn: [bold("jupyter", "Toggle Studio Notebook View")],
@@ -630,36 +616,35 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.commands-dialog",
     label: "All Keyboard Shortcuts and Commands...",
     anchors: [
-      def(
+      msg(
         JUPYTER_COMMANDS,
-        'defaultMessage: "All Keyboard Shortcuts and Commands...",',
+        "jupyter.commands.edit_keyboard_shortcuts.label",
+        'defaultMessage: "All Keyboard Shortcuts and Commands..."',
       ),
-      ren(
-        "frontend/frame-editors/jupyter-editor/editor.ts",
-        'keyboard: ["edit keyboard shortcuts"],',
-      ),
+      ren(JUPYTER_EDITOR, 'keyboard: ["edit keyboard shortcuts"],'),
     ],
     usedIn: [{ file: doc("jupyter") }],
   },
   {
     id: "jupyter.studio.reading",
     label: "Reading",
-    anchors: [def(STUDIO_CONTROLS, 'const READING_MODE_LABEL = "Reading";')],
+    anchors: [def(STUDIO_CONTROLS, 'READING_MODE_LABEL = "Reading"')],
     usedIn: [bold("jupyter", "Reading")],
   },
   {
     id: "jupyter.studio.full-width",
     label: "Full width",
-    anchors: [def(STUDIO_CONTROLS, '<Tooltip title="Full width">')],
+    anchors: [def(STUDIO_CONTROLS, 'title="Full width"')],
     usedIn: [bold("jupyter", "Full width")],
   },
   {
     id: "jupyter.run-all-above",
     label: "Run All Above Selected Cell",
     anchors: [
-      def(
+      msg(
         COMMON,
-        'id: "jupyter.commands.run_all_cells_above.menu", defaultMessage: "Run All Above Selected Cell",',
+        "jupyter.commands.run_all_cells_above.menu",
+        'defaultMessage: "Run All Above Selected Cell"',
       ),
     ],
     usedIn: [bold("jupyter", "Run All Above Selected Cell")],
@@ -668,9 +653,10 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.run-all-below",
     label: "Run Selected Cell and All Below",
     anchors: [
-      def(
+      msg(
         COMMON,
-        'id: "jupyter.commands.run_all_cells_below.menu", defaultMessage: "Run Selected Cell and All Below",',
+        "jupyter.commands.run_all_cells_below.menu",
+        'defaultMessage: "Run Selected Cell and All Below"',
       ),
     ],
     usedIn: [bold("jupyter", "Run Selected Cell and All Below")],
@@ -679,8 +665,9 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "jupyter.agent.target-language",
     label: "Target language",
     anchors: [
-      def(
+      msg(
         "frontend/jupyter/ai/agent-cell-tool.tsx",
+        "jupyter.ai.cell-tool.prompt.translate",
         'defaultMessage: "Target language"',
       ),
     ],
@@ -690,19 +677,15 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   // Virtual machines
   ...(
     [
-      ["connect", "Connect", "Connect </Button>"],
-      [
-        "manage-account-vms",
-        "Manage account VMs",
-        "Manage account VMs </Button>",
-      ],
-      ["stop", "Stop", "> Stop </Button>"],
-      ["start", "Start", "> Start </Button>"],
-      ["manage", "Manage", ">Manage</Button>"],
+      ["connect", "Connect", "> Connect <"],
+      ["manage-account-vms", "Manage account VMs", "> Manage account VMs <"],
+      ["stop", "Stop", "> Stop <"],
+      ["start", "Start", "> Start <"],
+      ["manage", "Manage", ">Manage<"],
       [
         "change-deletion-deadline",
         "Change deletion deadline",
-        '? "Change deletion deadline"',
+        '"Change deletion deadline"',
       ],
     ] as const
   ).map(
@@ -720,21 +703,17 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
   ),
   ...(
     [
-      [
-        "set-deletion-deadline",
-        "Set deletion deadline",
-        ': "Set deletion deadline"',
-      ],
-      ["change-machine-type", "Change machine type", '? "Change machine type"'],
-      ["create-similar", "Create similar", 'label: "Create similar"'],
-      ["change-funding", "Change funding", 'label: "Change funding"'],
-      ["delete-vm", "Delete VM", 'label: "Delete VM"'],
+      ["set-deletion-deadline", "Set deletion deadline"],
+      ["change-machine-type", "Change machine type"],
+      ["create-similar", "Create similar"],
+      ["change-funding", "Change funding"],
+      ["delete-vm", "Delete VM"],
     ] as const
   ).map(
-    ([key, label, text]): UiVocabularyEntry => ({
+    ([key, label]): UiVocabularyEntry => ({
       id: `vms.${key}`,
       label,
-      anchors: [def(VMS, text)],
+      anchors: [def(VMS, `"${label}"`)],
       usedIn: [{ file: doc("projects"), text: `Manage > ${label}` }],
     }),
   ),
@@ -832,24 +811,35 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     id: "course.create-shared-project",
     label: "Create Shared Project",
     anchors: [
-      def(
+      msg(
         COMMON,
-        'create_shared_project: { id: "course.create_shared_project", defaultMessage: "Create Shared Project",',
+        "course.create_shared_project",
+        'defaultMessage: "Create Shared Project"',
       ),
     ],
     usedIn: [bold("teaching", "Create Shared Project")],
   },
 ];
 
-export const UI_VOCABULARY_ABSENCES: readonly UiVocabularyAbsence[] = [
+const USERS_RETIRED =
+  "Commit c2c669576c retired the Users rail entry so that project Settings is the single place to manage collaborators. The support conventions (conat/hub/api/admin-support.ts) say there is no Users tab on the left rail and that Quick Navigation opens Users as a flyout. Reversing the retirement needs the maintainer's agreement; if it happens, update those rules and the collaborator documentation.";
+
+export const UI_VOCABULARY_FACTS: readonly UiVocabularyFact[] = [
   {
-    id: "rail.users-retired",
+    id: "rail.users-retirement-test",
+    file: "frontend/project/page/activity-bar-preferences.test.ts",
+    kind: "present",
+    text: "drops the retired users tab from stored activity bar preferences",
+    reason: USERS_RETIRED,
+  },
+  {
+    id: "rail.users-not-in-default-order",
     file: "frontend/project/page/activity-bar-preferences.ts",
+    kind: "absent-between",
     after: "const DEFAULT_ORDER",
     before: "] as const;",
     text: '"users"',
-    reason:
-      "The support conventions say there is no Users tab on the left rail and that Quick Navigation opens Users as a flyout. If users returns to DEFAULT_ORDER, update those rules in conat/hub/api/admin-support.ts and the documentation for collaborators.",
+    reason: USERS_RETIRED,
   },
 ];
 
