@@ -13,9 +13,9 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Previously reviewed deficient heads:
   `d38f3399be308a92721e40fdcb56244de3d1974e` and
   `2a0ff08783cda555e772c18f17481516f6ba53c7`, with the latest rereview
-  performed at `2986c91d4617148084f13a81b34fd2fc217e2ae1`.
-- Current private handoff head before this documentation update: `af3ea3d06a`.
-- Latest application remediation commit: `af3ea3d06a`.
+  performed at `f15a87e583dc7096262aa5db9e245d49e9eeddc0`.
+- Current private handoff head before this documentation update: `cb1b45960f`.
+- Latest application remediation commit: `cb1b45960f`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -36,7 +36,8 @@ Public PR #558 is an earlier foundation and is not this review target.
   execution and prevent queued/recovered work or old sessions from restoring former
   CoCalc-managed authority. Restart does not sanitize persistent project files or
   revoke unattributed local credentials such as entries the project owner retains in
-  `~/.ssh/authorized_keys`. William classifies failure of the CoCalc-managed
+  `~/.ssh/authorized_keys`. William explicitly approved this persistent-state
+  behavior on September 16, 2026, and classifies failure of the CoCalc-managed
   authority boundary as P0.
 - Messaging is single-attempt RPC with accepted/rejected/unknown outcomes. There is
   no outbox, automatic retry, exactly-once guarantee, federation, or response SLA.
@@ -66,6 +67,7 @@ Review the full base-to-head diff. Important fix commits after the deficient hea
 | `10a059f943` | Runtime lifecycle fence, authenticated worker fencing, lease retry   |
 | `c19bd57f3f` | Atomic authority snapshot and complete authority-mutation fencing    |
 | `af3ea3d06a` | Separate restart dedupe, acknowledged stop, forced replacement start |
+| `cb1b45960f` | Membership-generation restart dedupe and owner-side revision check   |
 
 The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
@@ -81,13 +83,18 @@ synchronization preserve that binding. Ordinary start adds no PostgreSQL query o
 host RPC; it now performs one fewer project-row query. The additional durable write
 occurs only on stop/restart.
 
-Explicit restart now uses a distinct `project-restart` deduplication key. Duplicate
-restart submissions still share one operation, but a restart cannot join an older
-ordinary start or restore. When a project has an assigned host, restart requires a
-successful routed stop response; an unavailable host causes restart to fail rather
-than report an unestablished boundary. The replacement start ignores only the
-pre-fence recent state snapshot and remains bound to the newly advanced lifecycle
-revision. None of these checks are added to ordinary project start.
+Explicit restart uses a distinct deduplication lane and a monotonic collaborator
+authority revision. Duplicate restart submissions at the same revision still share
+one operation, but a restart after a committed collaborator-map change cannot join
+pre-change work. The revision is returned by the owning bay's existing admission
+query, so ordinary project start gains no query or RPC. The owning bay rechecks the
+revision before restart admission; missing or stale revisions fail closed. The
+database trigger increments for every distinct collaborator-map change, including
+ABA changes. A restart also cannot join an older ordinary start or restore. When a
+project has an assigned host, restart requires a successful routed stop response;
+an unavailable host causes restart to fail rather than report an unestablished
+boundary. The replacement start ignores only the pre-fence recent state snapshot
+and remains bound to the newly advanced lifecycle revision.
 
 ACP restart fencing now selects only strict executable matches backed by live
 host-owned worker registrations. New registrations include the kernel PID start
@@ -167,6 +174,13 @@ pnpm -C src lint:frontend
 pnpm -C src build:dev
 ```
 
+Latest authority-generation regression commands:
+
+```sh
+COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS=--experimental-vm-modules pnpm -C src/packages/database jest --runInBand postgres/schema/sync.test.ts postgres/schema/column-invariants.test.ts postgres/schema/project-runtime-authority-revision.test.ts
+pnpm -C src/packages/server test conat/api/projects.restart.test.ts conat/api/projects.start.test.ts inter-bay/project-control.start-policy.test.ts projects/runtime-sponsor-db.test.ts projects/control/base.test.ts projects/control/base.start-rootfs.test.ts project-host/control.test.ts project-host/control.start.test.ts
+```
+
 The opt-in `server/agents/admission-state.multiprocess.test.ts` requires an isolated
 real PostgreSQL database named `smc_ephemeral_testing_database` and:
 
@@ -178,6 +192,17 @@ It launches independent Node processes. It passed cross-process permit reads and
 release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
+
+At application commit `cb1b45960f`, eight expanded server suites passed 97 tests.
+Three database PGlite schema suites passed 19 tests, including monotonic ABA
+revision behavior and schema convergence. Conat, database, and server package
+typechecks passed, and the complete 39-workspace `pnpm -C src build:dev` passed.
+The focused tests cover same-revision duplicate coalescing, a held pre-change
+restart followed by a separate post-change restart, missing-revision failure, and
+an owning-bay stale-revision rejection before slot reservation or restart. A real
+PostgreSQL rerun was attempted but the expected local test socket was unavailable;
+this is an explicit remaining environment qualification, not recorded as a pass.
+No deployment was performed for this application commit.
 
 The full build and focused regressions passed after `af3ea3d06a`. Six focused
 server suites passed 82 tests, and the final restart-only rerun passed 44 tests.

@@ -12,10 +12,10 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
-- Latest rereview remediation commit: `10a059f943`.
-- Latest application remediation commit: `af3ea3d06a`.
+- Latest independently reviewed head: `f15a87e583`.
+- Latest application remediation commit: `cb1b45960f`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `af3ea3d06a`.
+  `cb1b45960f`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -25,6 +25,13 @@ and private repository before relying on this packet.
 
 ## Confirmed remediation
 
+- Project collaborator-map changes now advance a monotonic authority revision in
+  PostgreSQL. Explicit restarts coalesce only when that revision is unchanged, so
+  a restart requested after a committed removal or downgrade cannot join an active
+  pre-change restart. The owning bay rechecks the revision before restart admission,
+  and missing or stale revisions fail closed. The admission response carries the
+  revision in its existing project-row query, so normal project start adds no query
+  or RPC. The trigger covers ABA collaborator changes.
 - Explicit restarts no longer share the ordinary `project-start` deduplication
   lane. Concurrent duplicate restart submissions still coalesce, but a restart
   cannot be swallowed by an active start or restore. Assigned-host restarts now
@@ -36,7 +43,8 @@ and private repository before relying on this packet.
   Persistent project content and unattributed project-local credentials remain
   shared owner-controlled state. Collaborator removal/downgrade UI says that
   restart does not sanitize this state and links directly to
-  `~/.ssh/authorized_keys` for review.
+  `~/.ssh/authorized_keys` for review. William explicitly approved project-local
+  SSH keys surviving restart on September 16, 2026.
 
 - Project users and their lifecycle revision are now read in one PostgreSQL
   statement. Restart advances the durable revision before host lookup, including
@@ -103,6 +111,13 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- At `cb1b45960f`, eight expanded server suites passed 97 tests. Three database
+  PGlite schema suites passed 19 tests, including monotonic ABA collaborator
+  revisions and schema convergence. Conat, database, and server package typechecks
+  passed, and the full 39-workspace `pnpm -C src build:dev` passed. A real
+  PostgreSQL schema rerun could not start because the expected local PostgreSQL
+  test socket was absent; it is not claimed as passed. No deployment was performed
+  for this checkpoint.
 - At `af3ea3d06a`, six focused server suites passed 82 tests; the final four-suite
   restart regression rerun passed 44 tests. Server and frontend package
   typechecks passed, frontend lint reported zero findings, and the complete
@@ -177,11 +192,16 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must assess `af3ea3d06a`, including the two restart findings
-  reported against `2986c91d46`. Live qualification must then deliberately overlap
-  a stale start with a real second-human downgrade or removal and the subsequent
-  successful restart on a matched build. Earlier live evidence predates this
-  correction and is not proof of the repaired race.
+- Independent re-review must assess `cb1b45960f`, including the restart-generation
+  finding reported against `f15a87e583`. Live qualification must then deliberately
+  overlap a stale restart with a real second-human downgrade or removal and the
+  subsequent successful restart on a matched build. Earlier live evidence predates
+  this correction and is not proof of the repaired race.
+- Persistent project-local SSH keys and other owner-retained credentials are an
+  explicitly accepted product-policy residual risk, not part of the
+  CoCalc-managed-account revocation guarantee. The removal/downgrade flow must keep
+  disclosing the need to audit or restore persistent project state when a former
+  collaborator is not trusted.
 - The exact-head direct-control probe exercises serialized ordering and post-fence
   rejection on the real QA host, but it does not pause a prepared start before
   host dispatch or perform the membership mutation through a separately
