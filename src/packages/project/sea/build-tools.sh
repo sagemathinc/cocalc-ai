@@ -42,6 +42,9 @@ if [ ! -f "$CLI_BUNDLE_JS" ]; then
   exit 1
 fi
 
+REFLECT_BUILD="$OUT_DIR/reflect-runtime"
+bash "$(dirname "$0")/build-reflect.sh" "$REFLECT_BUILD"
+
 echo "- Building tool installer"
 pnpm --dir "$BACKEND_PKG_DIR" exec tsc --build
 
@@ -67,6 +70,10 @@ EOF
   fi
 
   install -m 0755 "$X11_LAUNCHER" "$work_dir/bin/cocalc-x11"
+  install -m 0755 "$REFLECT_BUILD/reflect" "$work_dir/bin/reflect"
+  install -m 0644 "$REFLECT_BUILD/reflect.mjs" "$work_dir/bin/reflect.mjs"
+  mkdir -p "$work_dir/share/licenses/reflect"
+  install -m 0644 "$REFLECT_BUILD/LICENSE.txt" "$work_dir/share/licenses/reflect/LICENSE.txt"
 }
 
 for ARCH in "${ARCHES[@]}"; do

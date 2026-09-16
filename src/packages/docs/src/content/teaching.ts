@@ -130,8 +130,12 @@ there is no matching site license, student pay is the default.
 
 ## Choose the required membership
 
-Select the membership tier students need for the course. The course membership
-tier determines:
+Select an enabled membership tier that an admin has marked course-visible.
+Tiers limited to instructor email domains require a matching verified email
+address. If no tier is available, ask an admin to check course visibility and
+any instructor-domain allowlist.
+
+The course membership tier determines:
 
 - the student price
 - how long the course membership lasts
@@ -187,7 +191,8 @@ of the following:
 
 - the instructor email address is not verified
 - the verified email domain does not match the site license
-- the site license has no appropriate membership tier or available seats
+- the site license has no appropriate membership tier, automatically claimable
+  student pool, or available seats
 - there is no site license for this institution
 
 Students can still use student pay or instructor-paid seats when a site license
@@ -220,10 +225,11 @@ outside CoCalc.
 
 ## When the settings take effect
 
-After changing options, save the panel and reconfigure student projects. New
-student projects get the current policy when they are created. Existing student
-projects get the policy when course configuration is pushed to them, for
-example by **Reconfigure all projects** or other course maintenance actions.
+Choose **Save changes** after changing options. Saving also starts
+reconfiguration of student projects; wait for it to complete and check any
+reported errors. New student projects get the current policy when they are
+created. To apply the saved course configuration again, use **Reconfigure all
+projects**.
 
 ## File and upload restrictions
 
@@ -255,12 +261,12 @@ interfaces outside the main CoCalc course UI.
 
 - **Disable command line terminal** disables opening terminal sessions from the
   main project UI and flyouts.
-- **Disable adding or removing collaborators** removes the collaborators UI for
-  student projects. Students should not be able to use the standard project UI
-  to add other people or remove course staff. Reconfiguring the course also
-  removes collaborators who are neither the assigned student nor an instructor
-  or TA from the course project. Project owners are retained as a safety
-  boundary.
+- **Disable adding or removing collaborators** disables collaborator-management
+  controls. The collaborators panel can still show the current collaborators
+  in read-only form. Reconfiguring the course removes collaborators who are
+  neither the assigned student nor a course manager, while retaining project
+  owners. If the student account has not yet been resolved from an invitation,
+  extra collaborators are retained until the student identity is known.
 
 The course still manages student-project collaborators during reconfiguration:
 students, instructors, and TAs are kept in sync based on the course roster and
@@ -342,7 +348,7 @@ resources, or project host placement before class starts.
 export const COURSE_STUDENT_PROJECT_ROOTFS_BODY = String.raw`
 ## What this setting controls
 
-**Course Project RootFS Image** controls the base software image used by student
+**Student and Shared Project RootFS Image** controls the base software image used by student
 projects and the course shared project. The RootFS image is the visible
 ${CODE_TICK}/${CODE_TICK} filesystem and provides system packages, language
 runtimes, command line tools, and other managed software.
@@ -367,9 +373,9 @@ avoid per-student environment drift.
 ## Existing course projects
 
 Existing course projects do not change automatically just because you save a
-new RootFS choice. Use **Apply To Existing Course Projects...** when you are
-ready to roll the image out to already-created student projects and the shared
-project, if one exists.
+new RootFS choice. Use **Apply To Existing Student/Shared Projects...** when
+you are ready to roll the image out to already-created student projects and the
+shared project, if one exists.
 
 Applying to existing projects updates each student project's RootFS image and
 the shared project's image, if it exists. Any affected project that is currently
@@ -410,12 +416,25 @@ manual, or not organized around notebook cells.
 
 ## Use nbgrader in a course
 
-1. Enable nbgrader in the course configuration.
-2. Create an instructor version of the notebook with graded cells and tests.
-3. Assign the notebook to students.
+1. In course configuration, review the nbgrader grading project, timeouts,
+   output limits, and parallel limit.
+2. Create an instructor notebook with graded cells and tests using
+   **View -> nbgrader**.
+3. Choose **Create Student Version...** to generate the student notebook in the
+   assignment's ${CODE_TICK}student/${CODE_TICK} subdirectory. Inspect that version,
+   then assign it through the course.
 4. Let students complete the notebook in their projects.
 5. Collect submissions.
 6. Autograde, inspect results, adjust feedback, and return grades.
+
+Course nbgrader support is detected from notebook metadata; there is no
+course-wide enable switch in the configuration panel. A notebook assignment
+with nbgrader metadata must have a generated student version before you assign
+it.
+
+Before returning notebooks, review **nbgrader hidden tests** in course
+configuration. Enabling **Include the hidden tests** reveals those tests in
+returned work.
 
 Run a small test assignment first. nbgrader depends on notebook metadata, so
 editing cells carelessly or copying content through tools that drop metadata can
@@ -436,7 +455,7 @@ see [Low memory and out-of-memory crashes](/docs/troubleshooting/memory).
 
 If cells are not graded, check that the instructor notebook has the expected
 nbgrader metadata. If autograding hangs, inspect the exact student notebook and
-run the failing cells manually in a fresh kernel. If every submission fails, the
-course environment or runtime image probably differs from the environment used
-to author the assignment.
+run the failing cells manually in a fresh kernel. If every submission fails,
+check the selected grading project and software environment, notebook metadata,
+shared test failures, and the configured grading timeouts and output limits.
 `;

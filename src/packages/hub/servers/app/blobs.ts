@@ -7,6 +7,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { resolveBlobStorageConfig } from "@cocalc/server/blobs/config";
+import { isPublicBlobAvailable } from "@cocalc/server/blobs/public-url";
 import { detectRasterImage } from "@cocalc/server/blobs/media";
 import { readBlobFromDatabase } from "@cocalc/server/blobs/read";
 
@@ -88,7 +89,7 @@ export default function init(router: Router) {
       storageConfig.r2?.publicBaseUrl
         ? `${storageConfig.r2.publicBaseUrl}/${uuid}`
         : undefined;
-    if (publicUrl) {
+    if (publicUrl && (await isPublicBlobAvailable(publicUrl))) {
       res.redirect(302, publicUrl);
       return;
     }

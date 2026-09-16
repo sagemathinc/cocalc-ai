@@ -30,7 +30,7 @@ overrides:
   "json5@<1.0.2": ">=1.0.2"
   "cookie@<0.7.0": ">=0.7.0"
   "min-document@<=2.19.0": ">=2.19.1"
-  "js-yaml@<4.3.1": "^4.3.1"
+  "js-yaml@<4.3.2": "^4.3.2"
   "glob@>=10.2.0 <10.5.0": ">=10.5.0"
   "glob@>=11.0.0 <11.1.0": ">=11.1.0"
   "node-forge@<1.4.0": ">=1.4.0"
@@ -38,7 +38,7 @@ overrides:
   "lodash-es@<4.18.0": ">=4.18.0"
   "handlebars@<4.7.9": ">=4.7.9"
   "dompurify@<3.4.13": "^3.4.13"
-  "nodemailer@<9.0.1": ">=9.0.1"
+  "nodemailer@<9.1.1": ">=9.1.1"
   "protobufjs@>=7.0.0 <7.6.5": "^7.6.5"
   "@protobufjs/utf8@<1.1.1": "^1.1.1"
   "@xmldom/xmldom@<0.8.15": "^0.8.15"
@@ -117,6 +117,8 @@ minimumReleaseAge: 4320
 minimumReleaseAgeExclude:
   # Maintainer-approved exact-version exception; review in .agents/git-review-modernization.md.
   - "@pierre/diffs@1.4.1"
+  # CoCalc-owned upstream package; fresh releases are reviewed here before use.
+  - "@cocalc/gcloud-pricing-calculator"
   - "@cocalc/xterm"
   - patchflow
   - "@nebius/js-sdk"

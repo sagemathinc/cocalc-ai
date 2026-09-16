@@ -269,7 +269,12 @@ Table({
       "valid_until",
       "updated_at",
     ],
-    pg_unique_indexes: ["quote_number", "provider_quote_id", "idempotency_key"],
+    pg_unique_indexes: [
+      "quote_number",
+      "provider_quote_id",
+      "idempotency_key",
+      "download_token_hash",
+    ],
     pg_constraints: [
       {
         name: COMMERCIAL_QUOTE_LIFECYCLE_CONSTRAINT,
@@ -332,6 +337,10 @@ Table({
       pg_check: "CHECK (issued_at IS NULL OR valid_until > issued_at)",
     },
     voided_at: { type: "timestamp" },
+    download_token_hash: { type: "string", pg_type: "VARCHAR(64)" },
+    download_expires_at: { type: "timestamp" },
+    download_window_at: { type: "timestamp" },
+    download_window_count: { type: "integer", pg_default: "0" },
     document_filename: {
       type: "string",
       not_null: false,

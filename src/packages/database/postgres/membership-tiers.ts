@@ -3,6 +3,7 @@ import type {
   MembershipTierUsageCountRow,
   MembershipTierUsageReport,
 } from "@cocalc/conat/hub/api/purchases";
+import { assertValidMembershipTierLabel } from "@cocalc/util/membership-tier-label";
 import { PostgreSQL } from "./types";
 
 function isDelete(options: { delete?: boolean }[]) {
@@ -649,6 +650,7 @@ export async function upsertMembershipTier(
     disabled,
     notes,
   } = query;
+  assertValidMembershipTierLabel(label);
 
   const existing = await callback2(db._query, {
     query: "SELECT * FROM membership_tiers WHERE id = $1",

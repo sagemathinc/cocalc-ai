@@ -186,6 +186,8 @@ export interface LegacyMigrationProjectRemediationStatusResponse {
   applied_at?: string | null;
   dismissed_forever?: boolean;
   safety_snapshot_name?: string | null;
+  // A failed import was prepared for inspection, not for bulk application.
+  preparation_only?: boolean;
 }
 
 export interface LegacyMigrationPrepareProjectRemediationOptions {
@@ -201,6 +203,10 @@ export interface LegacyMigrationAdminPrepareProjectRemediationOptions {
   account_id?: string;
   project_id: string;
   snapshot_name?: string;
+  allow_failed_restore?: boolean;
+  // Required when allow_failed_restore is true.
+  reason?: string;
+  support_reference?: string;
 }
 
 export type LegacyMigrationAdminPrepareProjectRemediationResponse =

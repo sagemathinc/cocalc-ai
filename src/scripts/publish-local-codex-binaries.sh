@@ -3,9 +3,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
-CODEX_VERSION="${CODEX_VERSION:-0.151.0}"
+CODEX_VERSION="${CODEX_VERSION:-0.153.4}"
 RELEASE_REPO="${CODEX_RELEASE_REPO:-sagemathinc/codex}"
-RELEASE_TAG="${CODEX_RELEASE_TAG:-v${CODEX_VERSION}}"
+RELEASE_TAG="${CODEX_RELEASE_TAG:-v${CODEX_VERSION}-cocalc-musl-1}"
 LOCAL_BIN_ROOT="${COCALC_CODEX_LOCAL_BIN_DIR:-${REPO_ROOT}/src/.cache/codex-binaries}"
 MANIFEST_PATH="${LOCAL_BIN_ROOT}/${CODEX_VERSION}/manifest.json"
 X64_SOURCE="${LOCAL_BIN_ROOT}/${CODEX_VERSION}/linux-x64/codex"
@@ -29,6 +29,38 @@ for path in \
     echo "Missing build artifact at ${path}" >&2
     exit 1
   fi
+done
+
+if ! command -v readelf >/dev/null 2>&1; then
+  echo "Publishing Codex binaries requires readelf from binutils" >&2
+  exit 1
+fi
+
+verify_portable_linux_binary() {
+  local binary="$1"
+  local headers dynamic
+  if ! readelf -h "${binary}" >/dev/null ||
+    ! headers="$(readelf -l "${binary}")" ||
+    ! dynamic="$(readelf -d "${binary}")"; then
+    echo "Invalid ELF release binary: ${binary}" >&2
+    exit 1
+  fi
+  if [[ "${headers}" == *"Requesting program interpreter"* ]]; then
+    echo "Refusing dynamically linked release binary with an ELF interpreter: ${binary}" >&2
+    exit 1
+  fi
+  if [[ "${dynamic}" == *"(NEEDED)"* ]]; then
+    echo "Refusing release binary with shared-library dependencies: ${binary}" >&2
+    exit 1
+  fi
+}
+
+for binary in \
+  "${X64_SOURCE}" \
+  "${ARM64_SOURCE}" \
+  "${X64_HOST_SOURCE}" \
+  "${ARM64_HOST_SOURCE}"; do
+  verify_portable_linux_binary "${binary}"
 done
 
 if ! command -v gh >/dev/null 2>&1; then
@@ -70,6 +102,11 @@ fi
 UPSTREAM_HEAD="$(get_manifest_field upstream_head)"
 BUILD_TIMESTAMP="$(get_manifest_field built_at_utc)"
 SOURCE_DESCRIPTION="$(get_manifest_field source_description)"
+LINUX_LIBC="$(get_manifest_field linux_libc)"
+if [[ "${LINUX_LIBC}" != "musl" ]]; then
+  echo "Refusing to publish non-musl Linux release artifacts (linux_libc=${LINUX_LIBC})" >&2
+  exit 1
+fi
 RELEASE_TARGET="${CODEX_RELEASE_TARGET:-main}"
 STAGING_DIR="$(mktemp -d)"
 trap 'rm -rf "${STAGING_DIR}"' EXIT

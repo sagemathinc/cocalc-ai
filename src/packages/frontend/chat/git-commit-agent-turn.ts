@@ -20,6 +20,7 @@ type GitCommitAgentTurnOptions = {
   defaultNewThreadSetup: NewThreadSetup;
   workingDirectory?: string;
   title?: string;
+  preserveThread?: boolean;
 };
 
 type GitCommitAgentTurnResult = {
@@ -113,6 +114,7 @@ export function sendGitCommitAgentTurn({
   defaultNewThreadSetup,
   workingDirectory,
   title,
+  preserveThread = false,
 }: GitCommitAgentTurnOptions): GitCommitAgentTurnResult {
   const trimmed = `${prompt ?? ""}`.trim();
   if (!trimmed) {
@@ -124,16 +126,19 @@ export function sendGitCommitAgentTurn({
     ? actions.getThreadMetadata?.(threadId, { threadId })
     : undefined;
   const requestedDirectory = normalizeWorkingDirectory(workingDirectory);
-  const effectiveConfig = threadId
-    ? (actions.getCodexConfig?.(threadId) ?? field(metadata, "acp_config"))
-    : undefined;
+  const effectiveConfig =
+    threadId && !preserveThread
+      ? (actions.getCodexConfig?.(threadId) ?? field(metadata, "acp_config"))
+      : undefined;
   const threadDirectory = normalizeWorkingDirectory(
     field<string>(effectiveConfig, "workingDirectory"),
   );
-  // An absent effective directory is not evidence that the thread uses this
-  // worktree. A fresh thread is safer than changing an existing session's cwd.
+  // Only conversational feedback may reuse a thread in another checkout.
+  // Setup/commit requests must retain their requested repository routing.
   const directoryMatches =
-    requestedDirectory == null || requestedDirectory === threadDirectory;
+    preserveThread ||
+    requestedDirectory == null ||
+    requestedDirectory === threadDirectory;
   if (threadId && threadSupportsCodex(metadata as any) && directoryMatches) {
     const timestamp = actions.sendChat({
       extraInput: trimmed,

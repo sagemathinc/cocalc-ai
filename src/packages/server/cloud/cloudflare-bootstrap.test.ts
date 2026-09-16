@@ -3,144 +3,638 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-function jsonResponse(result: any) {
+import { bootstrapCloudflareConfiguration } from "./cloudflare-bootstrap";
+import { createHash } from "node:crypto";
+import getLogger from "@cocalc/backend/logger";
+
+jest.mock("@cocalc/backend/logger", () => {
+  const logger = { warn: jest.fn() };
+  return { __esModule: true, default: () => logger };
+});
+
+const accountScope = "com.cloudflare.api.account";
+const zoneScope = "com.cloudflare.api.account.zone";
+const groups = [
+  {
+    id: "s3-objects-write",
+    name: "Workers R2 Storage Bucket Item Write",
+    scopes: ["com.cloudflare.edge.r2.bucket"],
+  },
+  ...[
+    "Cloudflare Tunnel Write",
+    "Workers Scripts Write",
+    "Workers R2 Storage Write",
+    "Account Analytics Read",
+  ].map((name) => ({ id: name, name, scopes: [accountScope] })),
+  ...[
+    "Zone Read",
+    "DNS Write",
+    "Workers Routes Write",
+    "Config Settings Write",
+    "Managed headers Write",
+  ].map((name) => ({ id: name, name, scopes: [zoneScope] })),
+  {
+    id: "forbidden",
+    name: "API Tokens Write",
+    scopes: ["com.cloudflare.api.user"],
+  },
+];
+function response(result: unknown, status = 200): Response {
   return {
-    ok: true,
-    status: 200,
-    statusText: "OK",
-    json: async () => ({ success: true, result }),
+    ok: status === 200,
+    status,
+    json: async () => ({
+      success: status === 200,
+      result,
+      errors: [
+        { message: "echo bootstrap-secret durable-secret discovery-secret" },
+      ],
+    }),
   } as Response;
 }
 
-describe("bootstrapCloudflareConfiguration", () => {
+describe("Cloudflare bootstrap secret lifecycle", () => {
+  let save: jest.Mock;
+  let fetchMock: jest.Mock;
   beforeEach(() => {
-    jest.resetModules();
-    global.fetch = jest.fn();
-  });
-
-  it("discovers Cloudflare config, creates a durable token, enables location headers, and invalidates the bootstrap token", async () => {
-    const fetchMock = global.fetch as jest.Mock;
-    fetchMock
-      .mockResolvedValueOnce(
-        jsonResponse({ id: "bootstrap-id", status: "active" }),
-      )
-      .mockResolvedValueOnce(jsonResponse([]))
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            id: "zone-id",
-            name: "example.edu",
-            account: { id: "account-id", name: "Example Account" },
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse([
-          {
-            id: "tunnel-write",
-            name: "Cloudflare Tunnel Write",
-            scopes: ["com.cloudflare.api.account"],
-          },
-          {
-            id: "zone-read",
-            name: "Zone Read",
-            scopes: ["com.cloudflare.api.account.zone"],
-          },
-          {
-            id: "dns-write",
-            name: "DNS Write",
-            scopes: ["com.cloudflare.api.account.zone"],
-          },
-          {
-            id: "config-rules-write",
-            name: "Config Rules Write",
-            scopes: ["com.cloudflare.api.account.zone"],
-          },
-          {
-            id: "config-settings-write",
-            name: "Config Settings Write",
-            scopes: ["com.cloudflare.api.account.zone"],
-          },
-          {
-            id: "select-configuration-write",
-            name: "Select Configuration Write",
-            scopes: ["com.cloudflare.api.account.zone"],
-          },
-          {
-            id: "managed-headers-write",
-            name: "Managed headers Write",
-            scopes: ["com.cloudflare.api.account.zone"],
-          },
-          {
-            id: "r2-write",
-            name: "Workers R2 Storage Write",
-            scopes: ["com.cloudflare.api.account"],
-          },
-          {
-            id: "account-analytics-read",
-            name: "Account Analytics Read",
-            scopes: ["com.cloudflare.api.account"],
-          },
-        ]),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({ id: "durable-id", value: "durable-token" }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
-          managed_request_headers: [
-            { id: "add_visitor_location_headers", enabled: false },
-          ],
-          managed_response_headers: [],
-        }),
-      )
-      .mockResolvedValueOnce(
-        jsonResponse({
+    jest.clearAllMocks();
+    save = jest.fn().mockResolvedValue(undefined);
+    fetchMock = jest.fn(async (url: string, init: RequestInit) => {
+      const path = url.replace("https://api.cloudflare.com/client/v4/", "");
+      const auth = (init.headers as Record<string, string>).Authorization;
+      if (path === "user/tokens/verify")
+        return response({ id: "bootstrap-id", status: "active" });
+      if (path === "user/tokens/permission_groups") return response(groups);
+      if (path === "user/tokens" && init.method === "POST") {
+        const body = JSON.parse(init.body as string);
+        if (body.expires_on)
+          return response({ id: "discovery-id", value: "discovery-secret" });
+        if (body.name.startsWith("CoCalc R2 objects"))
+          return response({ id: "s3-id", value: "s3-secret" });
+        return response({ id: "durable-id", value: "durable-secret" });
+      }
+      if (path.startsWith("zones?")) {
+        expect(auth).toBe("Bearer discovery-secret");
+        return response([
+          { id: "zone-id", name: "example.edu", account: { id: "account-id" } },
+        ]);
+      }
+      if (path.endsWith("managed_headers")) {
+        expect(auth).toBe("Bearer durable-secret");
+        return response({
           managed_request_headers: [
             { id: "add_visitor_location_headers", enabled: true },
           ],
-          managed_response_headers: [],
-        }),
-      )
-      .mockResolvedValueOnce(jsonResponse({ id: "bootstrap-id" }));
+        });
+      }
+      if (init.method === "DELETE") return response({});
+      throw new Error("unexpected path");
+    });
+    global.fetch = fetchMock;
+  });
 
-    const { bootstrapCloudflareConfiguration } =
-      await import("./cloudflare-bootstrap");
-
-    const result = await bootstrapCloudflareConfiguration({
-      domain: "cocalc.example.edu",
-      token: "bootstrap-token",
-      tunnelPrefix: "cocalc",
-      r2BucketPrefix: "test",
+  const run = (save: jest.Mock) =>
+    bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "site",
+      save,
     });
 
-    expect(result.account_id).toBe("account-id");
-    expect(result.zone_name).toBe("example.edu");
-    expect(result.values.project_hosts_cloudflare_tunnel_api_token).toBe(
-      "durable-token",
-    );
-    expect(result.values.r2_api_token).toBe("durable-token");
-    expect(result.visitor_location_headers.ok).toBe(true);
+  it("saves scoped credentials only on the server, revokes temporary tokens, and uses the durable token for configuration", async () => {
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(true);
     expect(result.bootstrap_token_invalidated).toBe(true);
-    expect(fetchMock).toHaveBeenCalledWith(
-      "https://api.cloudflare.com/client/v4/user/tokens",
+    expect(result.permissions).toContain("Workers Scripts Write");
+    expect(save).toHaveBeenCalledWith(
       expect.objectContaining({
-        method: "POST",
-        body: expect.stringMatching(
-          /account-analytics-read[\s\S]*config-settings-write|config-settings-write[\s\S]*account-analytics-read/,
-        ),
+        r2_api_token: "durable-secret",
+        project_hosts_cloudflare_tunnel_api_token: "durable-secret",
+        r2_access_key_id: "s3-id",
+        r2_secret_access_key: createHash("sha256")
+          .update("s3-secret")
+          .digest("hex"),
       }),
     );
-    const createTokenCall = fetchMock.mock.calls.find(([url, init]) => {
-      return String(url).endsWith("/user/tokens") && init?.method === "POST";
+    for (const secret of [
+      "bootstrap-secret",
+      "discovery-secret",
+      "durable-secret",
+      "s3-secret",
+      createHash("sha256").update("s3-secret").digest("hex"),
+    ]) {
+      expect(JSON.stringify(result)).not.toContain(secret);
+    }
+    expect(JSON.stringify(save.mock.calls)).not.toContain("bootstrap-secret");
+    expect(JSON.stringify(save.mock.calls)).not.toContain("discovery-secret");
+    const policies = fetchMock.mock.calls
+      .filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      )
+      .map(([, init]) => JSON.parse(init.body));
+    expect(policies[0].expires_on).toMatch(
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
+    );
+    expect(policies[0].policies[0].permission_groups).toEqual([
+      { id: "Zone Read" },
+    ]);
+    expect(policies[1].policies.map((p) => p.resources)).toEqual([
+      { "com.cloudflare.api.account.account-id": "*" },
+      { "com.cloudflare.api.account.zone.zone-id": "*" },
+    ]);
+    expect(JSON.stringify(policies[1])).not.toContain("forbidden");
+    expect(policies[2].policies).toEqual([
+      {
+        effect: "allow",
+        permission_groups: [{ id: "s3-objects-write" }],
+        resources: Object.fromEntries(
+          ["wnam", "enam", "weur", "eeur", "apac", "oc", "blobs"].map(
+            (suffix) => [
+              `com.cloudflare.edge.r2.bucket.account-id_default_site-${suffix}`,
+              "*",
+            ],
+          ),
+        ),
+      },
+    ]);
+    expect(policies[2]).not.toHaveProperty("expires_on");
+    expect(result.r2.ok).toBe(true);
+    expect(result.values.r2_access_key_id).toBe("s3-id");
+    expect(
+      fetchMock.mock.calls
+        .filter(([, init]) => init.method === "DELETE")
+        .map(([url]) => url.split("/").pop()),
+    ).toEqual(["discovery-id", "bootstrap-id"]);
+  });
+
+  it.each([
+    ["2026-09-09T04:24:09.788Z", "2026-09-09T04:34:09Z"],
+    ["2026-12-31T23:55:00.000Z", "2027-01-01T00:05:00Z"],
+  ])("sends a whole-second discovery expiry for %s", async (now, expected) => {
+    const clock = jest.spyOn(Date, "now").mockReturnValue(Date.parse(now));
+    try {
+      const result = await run(save);
+      expect(result.tunnel_token.ok).toBe(true);
+      const requests = fetchMock.mock.calls
+        .filter(
+          ([url, init]) =>
+            url.endsWith("/user/tokens") && init.method === "POST",
+        )
+        .map(([, init]) => JSON.parse(init.body));
+      expect(requests[0].expires_on).toBe(expected);
+      const ttl = Date.parse(requests[0].expires_on) - Date.parse(now);
+      expect(ttl).toBeGreaterThan(599_000);
+      expect(ttl).toBeLessThanOrEqual(600_000);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("redacts provider errors and saves nothing if creation fails", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (url.endsWith("/user/tokens") && !JSON.parse(init.body).expires_on)
+        return response({}, 403);
+      return normal(url, init);
     });
-    expect(createTokenCall?.[1]?.body).not.toContain("config-rules-write");
-    expect(createTokenCall?.[1]?.body).not.toContain(
-      "select-configuration-write",
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.failure).toContain("HTTP 403");
+  });
+
+  it.each([
+    [{ status: "expired" }, "has expired"],
+    [{ status: "disabled" }, "is disabled"],
+    [{ status: "active", expires_on: "2000-01-01T00:00:00Z" }, "has expired"],
+    [{ status: "active", not_before: "2999-01-01T00:00:00Z" }, "not valid yet"],
+    [{ status: "echo bootstrap-secret" }, "did not confirm"],
+  ])(
+    "reports token validity without running later steps: %j",
+    async (verification, message) => {
+      fetchMock.mockResolvedValueOnce(response(verification));
+      const result = await run(save);
+      expect(result.failure).toContain(message);
+      expect(result.settings_status).toBe("not_saved");
+      expect(save).not.toHaveBeenCalled();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.stringify(result)).not.toContain("bootstrap-secret");
+      expect(
+        JSON.stringify((getLogger("").warn as jest.Mock).mock.calls),
+      ).not.toContain("bootstrap-secret");
+    },
+  );
+
+  it("exposes numeric provider diagnostics but omits echoed credentials and network errors", async () => {
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      json: async () => ({
+        success: false,
+        errors: [
+          { code: 1000, message: "bootstrap-secret" },
+          { code: "bootstrap-secret", message: "bootstrap-secret" },
+        ],
+      }),
+    });
+    const rejected = await run(save);
+    expect(rejected.failure).toContain("HTTP 401");
+    expect(rejected.failure).toContain("Code 1000");
+    fetchMock.mockRejectedValueOnce(new Error("network bootstrap-secret"));
+    const network = await run(save);
+    expect(network.failure).toContain("could not be reached");
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      JSON.stringify([
+        rejected,
+        network,
+        (getLogger("").warn as jest.Mock).mock.calls,
+      ]),
+    ).not.toContain("bootstrap-secret");
+  });
+
+  it("retains nested validation explanations without irrelevant expiry advice", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (init.method !== "POST") return normal(url, init);
+      return {
+        ok: false,
+        status: 400,
+        json: async () => ({
+          success: false,
+          result: { value: "must-never-return-response-secret" },
+          errors: [
+            {
+              code: 400,
+              message: "Invalid token policy",
+              error_chain: [
+                {
+                  code: 1001,
+                  message:
+                    "expires_on: expected timestamp without fractional seconds",
+                },
+              ],
+            },
+          ],
+        }),
+      };
+    });
+    const result = await run(save);
+    expect(result.failure).toContain("POST user/tokens (HTTP 400)");
+    expect(result.failure).toContain("Code 400: Invalid token policy");
+    expect(result.failure).toContain(
+      "Code 1001: expires_on: expected timestamp without fractional seconds",
     );
-    expect(fetchMock).toHaveBeenLastCalledWith(
-      "https://api.cloudflare.com/client/v4/user/tokens/bootstrap-id",
-      expect.objectContaining({ method: "DELETE" }),
+    expect(result.failure).not.toContain("today is already expired");
+    expect(result.settings_status).toBe("not_saved");
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain(
+      "must-never-return-response-secret",
     );
+    expect(getLogger("").warn).toHaveBeenCalledWith(
+      "bootstrap failed",
+      expect.objectContaining({ diagnostic: result.failure }),
+    );
+  });
+
+  it.each([
+    (token: string) => token,
+    (token: string) => encodeURIComponent(token),
+    (token: string) =>
+      [...Buffer.from(token)]
+        .map((byte) => `%${byte.toString(16).padStart(2, "0")}`)
+        .join(""),
+    (token: string) => Buffer.from(token).toString("base64"),
+    (token: string) => Buffer.from(token).toString("base64url"),
+    (token: string) => Buffer.from(token).toString("hex"),
+    (token: string) =>
+      [...token]
+        .map((char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`)
+        .join(""),
+    (token: string) => token.split("").join("\u200b"),
+  ])("omits messages containing credential encodings %#", async (encode) => {
+    const token = "sample+private/token=keep-out";
+    const encoded = encode(token);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        success: false,
+        errors: [{ code: 400, message: `bad credential: ${encoded}` }],
+      }),
+    });
+    const result = await bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token,
+      r2BucketPrefix: "site",
+      save,
+    });
+    const output = JSON.stringify([
+      result,
+      (getLogger("").warn as jest.Mock).mock.calls,
+    ]);
+    expect(output).not.toContain(token);
+    expect(output).not.toContain(encoded);
+    expect(result.failure).toContain(
+      "credential-bearing provider message omitted",
+    );
+  });
+
+  it("bounds provider errors, strips control characters and redacts unknown token-shaped strings", async () => {
+    const unknownToken = "A".repeat(40);
+    fetchMock.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      json: async () => ({
+        errors: [
+          { message: `invalid\nfield ${unknownToken}` },
+          { message: "X".repeat(5000) },
+          { message: { secret: "never stringify me" } },
+          ...Array.from({ length: 50 }, () => ({
+            code: 1,
+            message: "a ".repeat(500),
+          })),
+        ],
+      }),
+    });
+    const result = await run(save);
+    expect(result.failure).toContain("invalidfield [redacted]");
+    expect(result.failure).toContain("oversized provider message omitted");
+    expect(result.failure).not.toContain(unknownToken);
+    expect(result.failure).not.toContain("never stringify me");
+    expect(result.failure!.length).toBeLessThan(2400);
+  });
+
+  it("reports revocation failure without leaking echoed secrets", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      init.method === "DELETE" ? response({}, 403) : normal(url, init),
+    );
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(true);
+    expect(result.bootstrap_token_invalidated).toBe(false);
+    expect(result.cleanup_required).toBe(true);
+    expect(result.notes.join(" ")).toContain("discovery-id");
+    expect(result.bootstrap_token_invalidation_error).toContain("manually");
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("flags child-token cleanup even if bootstrap revocation succeeds", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) =>
+      init.method === "DELETE" && url.endsWith("/discovery-id")
+        ? response({}, 403)
+        : normal(url, init),
+    );
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(true);
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(result.cleanup_required).toBe(true);
+    expect(result.notes.join(" ")).toContain("discovery-id");
+  });
+
+  it("keeps a possibly saved token usable after ambiguous persistence failure", async () => {
+    save.mockRejectedValue(new Error("database error with durable-secret"));
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(false);
+    expect(result.notes.join(" ")).toContain("durable-id");
+    expect(result.settings_status).toBe("unknown");
+    expect(result.notes.join(" ")).toContain("s3-id");
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          init.method === "DELETE" &&
+          (url.endsWith("/durable-id") || url.endsWith("/s3-id")),
+      ),
+    ).toBe(false);
+  });
+
+  const existingR2 = {
+    accountId: "account-id",
+    accessKey: "existing-id",
+    secretKey: "existing-secret",
+    bucketPrefix: "site",
+  };
+
+  it("refuses an existing blob domain change without saving and revokes bootstrap", async () => {
+    const result = await bootstrapCloudflareConfiguration({
+      domain: "new.example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "test",
+      existingR2: { ...existingR2, blobPublicUrl: "https://blobs.example.edu" },
+      save,
+    });
+    expect(result.tunnel_token.ok).toBe(false);
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(result.notes.join(" ")).toContain("explicit migration");
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init.method === "POST"),
+    ).toBe(false);
+  });
+
+  it("refuses environment overrides and still revokes the temporary token", async () => {
+    const name = "COCALC_BLOB_R2_BUCKET";
+    const previous = process.env[name];
+    process.env[name] = "override-bucket";
+    try {
+      const result = await bootstrapCloudflareConfiguration({
+        domain: "example.edu",
+        token: "bootstrap-secret",
+        r2BucketPrefix: "site",
+        save,
+      });
+      expect(result.tunnel_token.ok).toBe(false);
+      expect(result.settings_status).toBe("not_saved");
+      expect(result.bootstrap_token_invalidated).toBe(true);
+      expect(save).not.toHaveBeenCalled();
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init.method === "POST"),
+      ).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    }
+  });
+
+  it("preserves an existing credential pair on repeat bootstrap", async () => {
+    const result = await bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "site",
+      existingR2: {
+        ...existingR2,
+        blobPublicUrl: "https://blobs.example.edu/",
+      },
+      save,
+    });
+    expect(result.r2.ok).toBe(true);
+    expect(result.r2.message).toContain("preserved");
+    expect(save.mock.calls[0][0].r2_access_key_id).toBe("existing-id");
+    expect(save.mock.calls[0][0]).not.toHaveProperty("r2_secret_access_key");
+    expect(JSON.stringify(result)).not.toContain("existing-secret");
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it.each([
+    { accountId: "another-account" },
+    { bucketPrefix: "another-prefix" },
+    { secretKey: "" },
+    { accessKey: "" },
+  ])(
+    "refuses to replace or retarget existing credentials: %j",
+    async (changes) => {
+      const result = await bootstrapCloudflareConfiguration({
+        domain: "example.edu",
+        token: "bootstrap-secret",
+        r2BucketPrefix: "site",
+        existingR2: { ...existingR2, ...changes },
+        save,
+      });
+      expect(result.tunnel_token.ok).toBe(false);
+      expect(result.notes.join(" ")).toContain("No settings were changed");
+      expect(save).not.toHaveBeenCalled();
+      expect(result.bootstrap_token_invalidated).toBe(true);
+    },
+  );
+
+  it("uses the configured custom blob bucket without granting account-wide S3 access", async () => {
+    await bootstrapCloudflareConfiguration({
+      domain: "example.edu",
+      token: "bootstrap-secret",
+      r2BucketPrefix: "site",
+      existingR2: { blobBucket: "custom-images" },
+      save,
+    });
+    const body = fetchMock.mock.calls
+      .filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      )
+      .map(([, init]) => JSON.parse(init.body))
+      .at(-1);
+    expect(Object.keys(body.policies[0].resources)).toContain(
+      "com.cloudflare.edge.r2.bucket.account-id_default_custom-images",
+    );
+    expect(Object.keys(body.policies[0].resources)).not.toContain(
+      "com.cloudflare.edge.r2.bucket.account-id_default_site-blobs",
+    );
+  });
+
+  it("cleans up the unsaved automation token if S3 creation fails", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (
+        init.method === "POST" &&
+        JSON.parse(init.body).name.startsWith("CoCalc R2 objects")
+      )
+        return response({}, 403);
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(save).not.toHaveBeenCalled();
+    expect(result.r2.ok).toBe(false);
+    expect(JSON.stringify(result)).not.toContain("secret");
+    expect(
+      fetchMock.mock.calls
+        .filter(([, init]) => init.method === "DELETE")
+        .map(([url]) => url.split("/").pop()),
+    ).toEqual(["discovery-id", "durable-id", "bootstrap-id"]);
+  });
+
+  it("fails closed if the bucket-scoped permission is unavailable", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (url.endsWith("/permission_groups"))
+        return response(
+          groups.filter((group) => group.id !== "s3-objects-write"),
+        );
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.failure).toContain("Workers R2 Storage Bucket Item Write");
+    expect(result.r2.ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) => url.endsWith("/user/tokens") && init.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
+  it("distinguishes a missing Zone Read permission from discovery token creation failure", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (url.endsWith("/permission_groups"))
+        return response(groups.filter((group) => group.name !== "Zone Read"));
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.failure).toContain(
+      "Unable to resolve the Zone Read permission",
+    );
+    expect(result.failure).toContain("permission group not found: Zone Read");
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(([, init]) => init.method === "POST"),
+    ).toBe(false);
+  });
+
+  it("reports a rejected discovery token creation without proceeding to settings", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (init.method === "POST") return response({}, 400);
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.failure).toContain(
+      "Unable to create a temporary zone discovery token",
+    );
+    expect(result.failure).toContain("HTTP 400");
+    expect(result.settings_status).toBe("not_saved");
+    expect(result.bootstrap_token_invalidated).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("revokes a malformed S3 token response rather than saving incomplete credentials", async () => {
+    const normal = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url, init) => {
+      if (
+        init.method === "POST" &&
+        JSON.parse(init.body).name.startsWith("CoCalc R2 objects")
+      )
+        return response({ id: "incomplete-s3-id" });
+      return normal(url, init);
+    });
+    const result = await run(save);
+    expect(result.tunnel_token.ok).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls
+        .filter(([, init]) => init.method === "DELETE")
+        .map(([url]) => url.split("/").pop()),
+    ).toContain("incomplete-s3-id");
+  });
+
+  it("does not configure anything if domain validation fails", async () => {
+    await expect(
+      bootstrapCloudflareConfiguration({
+        domain: "bad",
+        token: "bootstrap-secret",
+        save,
+      }),
+    ).rejects.toThrow("valid");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

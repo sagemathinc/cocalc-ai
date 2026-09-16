@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 
 import { Command } from "commander";
 
@@ -49,6 +50,120 @@ function adminDeps(overrides: Record<string, any> = {}) {
       ),
   };
 }
+
+test("support impersonation requires and forwards structured consent evidence without accessing content", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        createImpersonationGrant: async (opts: any) => {
+          captured = opts;
+          return { grant_id: "grant", url: "https://example.test/grant" };
+        },
+      },
+    }) as any,
+  );
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "support",
+    "impersonate",
+    "alice@example.com",
+    "--ticket-id",
+    "123",
+    "--reason",
+    " Inspect notebook build ",
+    "--consent-reference",
+    " Customer comment 456 and operator approval ",
+  ]);
+  assert.deepEqual(captured, {
+    subject_account_id: "22222222-2222-4222-8222-222222222222",
+    reason: "Inspect notebook build",
+    support_ticket_id: 123,
+    consent_reference: "Customer comment 456 and operator approval",
+  });
+});
+
+test("generic impersonation forwards a required audit reason", async () => {
+  let captured: any;
+  const program = new Command();
+  registerAdminCommand(
+    program,
+    adminDeps({
+      system: {
+        createImpersonationGrant: async (opts: any) => {
+          captured = opts;
+          return {};
+        },
+      },
+    }) as any,
+  );
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "user",
+    "issue-impersonation-link",
+    "alice@example.com",
+    "--reason",
+    " Approved operational investigation ",
+  ]);
+  assert.equal(captured.reason, "Approved operational investigation");
+});
+
+test("support impersonation fails closed on missing or invalid audit context", async () => {
+  for (const args of [
+    [],
+    ["--ticket-id", "123", "--reason", "Investigate"],
+    [
+      "--ticket-id",
+      "-1",
+      "--reason",
+      "Investigate",
+      "--consent-reference",
+      "customer reply",
+    ],
+    [
+      "--ticket-id",
+      "123",
+      "--reason",
+      " ",
+      "--consent-reference",
+      "customer reply",
+    ],
+  ]) {
+    let called = false;
+    const program = new Command()
+      .exitOverride()
+      .configureOutput({ writeErr: () => {} });
+    registerAdminCommand(
+      program,
+      adminDeps({
+        system: {
+          createImpersonationGrant: async () => {
+            called = true;
+            return {};
+          },
+        },
+      }) as any,
+    );
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "support",
+        "impersonate",
+        "alice@example.com",
+        ...args,
+      ]),
+    );
+    assert.equal(called, false);
+  }
+});
 
 test("admin user ban resolves the target and forwards the audit reason", async () => {
   let captured: any;
@@ -122,7 +237,7 @@ test("admin membership-package purchase previews before committing", async () =>
     program,
     adminDeps({
       purchases: {
-        getMembershipPackageQuote: async (opts: any) => {
+        adminGetMembershipPackageQuote: async (opts: any) => {
           quoteArgs = opts;
           return {
             total_price: 900,
@@ -166,9 +281,13 @@ test("admin membership-package purchase previews before committing", async () =>
 
   assert.equal(purchaseCalls, 0);
   assert.equal(quoteArgs.account_id, "11111111-1111-4111-8111-111111111111");
-  assert.equal(quoteArgs.seat_count, 100);
   assert.equal(
-    quoteArgs.course_project_id,
+    quoteArgs.user_account_id,
+    "22222222-2222-4222-8222-222222222222",
+  );
+  assert.equal(quoteArgs.product.seat_count, 100);
+  assert.equal(
+    quoteArgs.product.course_project_id,
     "44444444-4444-4444-8444-444444444444",
   );
 });
@@ -180,7 +299,7 @@ test("admin membership-package purchase commits the reviewed custom price", asyn
     program,
     adminDeps({
       purchases: {
-        getMembershipPackageQuote: async () => ({
+        adminGetMembershipPackageQuote: async () => ({
           total_price: 900,
           starts_at: "2026-08-10T00:00:00.000Z",
           expires_at: "2026-08-22T00:00:00.000Z",
@@ -496,6 +615,114 @@ test("admin support image verifies and writes a Zendesk attachment", async () =>
     reason: "inspect screenshot on ticket 20463",
   });
   assert.deepEqual(await readFile(output), image);
+});
+
+test("admin support attachment writes private bytes, omits body output, and never overwrites", async () => {
+  const data = Buffer.from("%PDF-1.6\n%%EOF\n");
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-support-document-"));
+  const outputPath = join(dir, "form.pdf");
+  let output: any;
+  let capturedArgs: any;
+  const response = {
+    ticket_id: 123,
+    attachment_id: 987,
+    filename: "ticket-123-attachment-987.pdf",
+    size: data.length,
+    data_base64: data.toString("base64"),
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
+  const program = new Command();
+  const deps = adminDeps({
+    adminSupport: {
+      getAttachment: async (opts: any) => {
+        capturedArgs = opts;
+        return response;
+      },
+    },
+  });
+  const withContext = deps.withContext;
+  deps.withContext = async (command, label, fn) => {
+    output = await withContext(command, label, fn);
+    return output;
+  };
+  registerAdminCommand(program, deps as any);
+  const args = [
+    "node",
+    "test",
+    "admin",
+    "support",
+    "attachment",
+    "123",
+    "987",
+    "--output",
+    outputPath,
+    "--max-bytes",
+    "4096",
+    "--reason",
+    "review form",
+  ];
+  await program.parseAsync(args);
+  assert.deepEqual(capturedArgs, {
+    ticket_id: 123,
+    attachment_id: 987,
+    max_bytes: 4096,
+    reason: "review form",
+  });
+  assert.deepEqual(await readFile(outputPath), data);
+  assert.equal(output.data_base64, undefined);
+  assert.match(output.warning, /Untrusted/);
+  await assert.rejects(program.parseAsync(args), /EEXIST/);
+  assert.deepEqual(await readFile(outputPath), data);
+});
+
+test("admin support attachment rejects integrity, identity, size and filename errors before writing", async () => {
+  const data = Buffer.from("%PDF-1.6\n%%EOF\n");
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-support-document-errors-"));
+  for (const change of [
+    { sha256: "wrong" },
+    { size: 999 },
+    { ticket_id: 999 },
+    { attachment_id: 999 },
+    { filename: "../private.pdf" },
+    { filename: "ticket-123-attachment-987Xpdf" },
+    { filename: "ticket-123-attachment-987.exe" },
+  ]) {
+    const output = join(dir, "must-not-exist.pdf");
+    const program = new Command();
+    registerAdminCommand(
+      program,
+      adminDeps({
+        adminSupport: {
+          getAttachment: async () => ({
+            ticket_id: 123,
+            attachment_id: 987,
+            filename: "ticket-123-attachment-987.pdf",
+            size: data.length,
+            sha256: createHash("sha256").update(data).digest("hex"),
+            data_base64: data.toString("base64"),
+            ...change,
+          }),
+        },
+      }) as any,
+    );
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "support",
+        "attachment",
+        "123",
+        "987",
+        "--output",
+        output,
+        "--reason",
+        "review form",
+      ]),
+      /integrity|filename/,
+    );
+    await assert.rejects(readFile(output), /ENOENT/);
+  }
 });
 
 test("admin support triage forwards deterministic grouping options", async () => {

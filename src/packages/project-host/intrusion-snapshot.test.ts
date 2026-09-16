@@ -29,6 +29,7 @@ function snapshot(): HostIntrusionSnapshotResponse {
     persistence: { files: [], truncated: false },
     privileged_files: { writable: [], suid_sgid: [], capabilities: [] },
     services: { enabled: [], failed: [] },
+    snap_mount_units: ["snap-core24-2124.mount"],
     network: { listeners: [], established: [] },
     authentication_7d: { accepted: [], failed: 0, invalid_user: 0 },
     kernel_signals_7d: {},
@@ -95,6 +96,11 @@ describe("host intrusion snapshot", () => {
           ...snapshot(),
           network: { listeners: "not-an-array", established: [] },
         }),
+      ),
+    ).toThrow("invalid intrusion snapshot response");
+    expect(() =>
+      parseIntrusionSnapshot(
+        JSON.stringify({ ...snapshot(), snap_mount_units: [123] }),
       ),
     ).toThrow("invalid intrusion snapshot response");
     expect(() => parseIntrusionSnapshot("x".repeat(512 * 1024))).toThrow(

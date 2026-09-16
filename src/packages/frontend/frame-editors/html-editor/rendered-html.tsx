@@ -8,6 +8,7 @@ Component that shows rendered HTML.
 */
 
 import { delay } from "awaiting";
+import $ from "jquery";
 import { throttle } from "lodash";
 import { useRef, useEffect } from "react";
 import { MAX_WIDTH } from "../options";

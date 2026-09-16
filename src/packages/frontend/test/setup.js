@@ -88,10 +88,5 @@ jest.mock(
 );
 
 afterAll(() => {
-  try {
-    const { webapp_client } = require("@cocalc/frontend/webapp-client");
-    webapp_client?.conat_client?.permanentlyDisconnect?.();
-  } catch {
-    // Some tests replace the webapp client module; there is nothing to clean up.
-  }
+  require("./cleanup-webapp-client").disconnectLoadedWebappClients();
 });

@@ -25,9 +25,20 @@ let deleteObjectsMock: jest.Mock;
 let issueSignedObjectDownloadMock: jest.Mock;
 let uploadObjectFromBufferMock: jest.Mock;
 let uploadObjectFromFileMock: jest.Mock;
+let adminAlertMock: jest.Mock;
 let oldFetch: typeof global.fetch | undefined;
 let rusticInitCount: number;
 let rusticMissingConfigFailuresRemaining: number;
+
+// Disposable cloud restores are covered separately; loading the SDK on every
+// module reset is unnecessary for these local archive/restore tests.
+const unexpectedCloudClient = jest.fn(() => {
+  throw new Error("Unexpected cloud restore client in local backup test");
+});
+jest.mock("@google-cloud/compute", () => ({
+  InstancesClient: jest.fn(() => unexpectedCloudClient()),
+  ZoneOperationsClient: jest.fn(() => unexpectedCloudClient()),
+}));
 
 jest.mock("node:child_process", () => {
   const actual = jest.requireActual("node:child_process");
@@ -56,6 +67,13 @@ jest.mock("@cocalc/backend/logger", () => ({
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: (...args: any[]) => getPoolMock(...args),
+}));
+
+// Alert delivery has its own database and messaging dependencies; this suite
+// checks backup health decisions and the request to deliver an alert.
+jest.mock("@cocalc/server/messages/admin-alert", () => ({
+  __esModule: true,
+  default: (...args: any[]) => adminAlertMock(...args),
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -243,6 +261,8 @@ describe("bay-backup runner", () => {
 
   beforeEach(async () => {
     jest.resetModules();
+    unexpectedCloudClient.mockClear();
+    adminAlertMock = jest.fn(async () => undefined);
     oldEnv = { ...process.env };
     backupRoot = await mkdtemp(join(tmpdir(), "cocalc-bay-backup-"));
     process.env.COCALC_BACKUP_ROOT = backupRoot;
@@ -532,6 +552,7 @@ describe("bay-backup runner", () => {
     process.env = oldEnv;
     global.fetch = oldFetch as typeof global.fetch;
     await rm(backupRoot, { recursive: true, force: true });
+    expect(unexpectedCloudClient).not.toHaveBeenCalled();
   });
 
   it("runs a retained local pg_dumpall backup and persists state", async () => {
@@ -2316,5 +2337,18 @@ describe("bay-backup runner", () => {
     await expect(
       runBayBackupHealthCheck({ send_alert: false }),
     ).resolves.toEqual(["pgBackRest: unarchived WAL is growing"]);
+    expect(adminAlertMock).not.toHaveBeenCalled();
+
+    await expect(
+      runBayBackupHealthCheck({ send_alert: true }),
+    ).resolves.toEqual(["pgBackRest: unarchived WAL is growing"]);
+    expect(adminAlertMock).toHaveBeenCalledTimes(1);
+    expect(adminAlertMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subject: "Bay backup health requires attention",
+        body: expect.stringContaining("pgBackRest: unarchived WAL is growing"),
+        dedupBySubject: true,
+      }),
+    );
   });
 });

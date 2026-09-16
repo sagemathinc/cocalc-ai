@@ -173,6 +173,15 @@ Require successful command completion, \`ok:true\`, and \`data.error_count:0\`.
 This command follows execution by default. \`--jsonl\` is a different, streaming
 output format; do not parse it as one JSON result.
 
+For a noisy cell, add \`--limit 40\` to that same run command to limit output
+initially streamed by the backend. The limit must be a positive integer; it is
+not a row count, a calculation limit, or a bound on the saved result file.
+In a followed JSON run, \`data.more_output_count\` counts additional-output
+notifications, not omitted rows. Inspect the retained cell output and independently
+validate complete files as described in
+[Keep complete results when output is limited](/docs/jupyter/use-jupyter).
+A zero error count alone does not establish scientific correctness or completeness.
+
 ## Step 3: Inspect output and save
 
 ~~~bash
@@ -443,6 +452,14 @@ Check both outer \`ok:true\` and \`data.ok:true\`, then confirm
 means the thread has no saved automation.
 
 ## Step 3: Activate when ready
+
+Before enabling the schedule, check the project's
+[browser-idle policy and host lifecycle](/docs/hosts/lifecycle) and the
+[authentication needed by commands in its prompt](/docs/cli/authentication-and-targets).
+An enabled schedule does not reserve compute or renew fresh authentication.
+Project or host availability, model authentication, and admission limits can
+prevent a run from completing. Confirm a result after activation before relying
+on unattended execution; the schedule configuration alone is not that result.
 
 To enable the reviewed daily task:
 

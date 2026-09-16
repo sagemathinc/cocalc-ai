@@ -4,7 +4,7 @@
  */
 
 import { lazy, Suspense } from "react";
-import type { MutableRefObject } from "react";
+import type { MutableRefObject, ReactNode } from "react";
 import type { GitDiffFilesPanelProps } from "./drawer-sections";
 import type { DiffScrollAnchor } from "@cocalc/frontend/components/diff-viewer/review-model";
 import { useWorkingScrollGeneration } from "./working-scroll-generation";
@@ -18,6 +18,7 @@ export interface ReviewDiffNavigation {
 }
 
 export type ReviewDiffPanelProps = GitDiffFilesPanelProps & {
+  findControl?: ReactNode;
   navigationRef: MutableRefObject<ReviewDiffNavigation | null>;
   onActiveFile: (index: number) => void;
   linesTruncated: boolean;

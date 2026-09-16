@@ -12,6 +12,8 @@ const revokeAllAuthSessionsMock = jest.fn();
 const recordAccountRevocationMock = jest.fn();
 const withAccountRehomeWriteFenceMock = jest.fn();
 const cancelEverythingMock = jest.fn();
+const executeBillingAuthorityCommandMock = jest.fn();
+const setBillingAccountFrozenMock = jest.fn();
 const deleteClusterAccountDirectoryEntryMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -66,6 +68,13 @@ jest.mock("@cocalc/server/stripe/client", () => ({
   })),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  executeBillingAuthorityCommand: (...args: any[]) =>
+    executeBillingAuthorityCommandMock(...args),
+  setBillingAccountFrozen: (...args: any[]) =>
+    setBillingAccountFrozenMock(...args),
+}));
+
 jest.mock("./cluster-directory", () => ({
   __esModule: true,
   deleteClusterAccountDirectoryEntry: (...args: any[]) =>
@@ -88,6 +97,20 @@ describe("delete account", () => {
     cancelEverythingMock.mockReset();
     deleteClusterAccountDirectoryEntryMock.mockReset();
     cancelEverythingMock.mockResolvedValue(undefined);
+    executeBillingAuthorityCommandMock
+      .mockReset()
+      .mockImplementation(async (command) => {
+        expect(command).toEqual({
+          kind: "account-stripe-cleanup",
+          account_id: ACCOUNT_ID,
+        });
+        return await cancelEverythingMock();
+      });
+    setBillingAccountFrozenMock.mockReset().mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      generation: 1,
+    });
     deleteClusterAccountDirectoryEntryMock.mockResolvedValue(undefined);
     deleteAllRememberMeMock.mockResolvedValue(undefined);
     revokeAllAuthSessionsMock.mockResolvedValue(undefined);
@@ -131,6 +154,18 @@ describe("delete account", () => {
 
     const { default: deleteAccount } = await import("./delete");
     await deleteAccount(ACCOUNT_ID);
+
+    expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      frozen: true,
+      cause: "deletion",
+      reason: "account deletion",
+    });
+    expect(
+      setBillingAccountFrozenMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(
+      executeBillingAuthorityCommandMock.mock.invocationCallOrder[0],
+    );
 
     expect(disposeOwnedProjectsForAccountDeletionMock).toHaveBeenCalledWith(
       ACCOUNT_ID,

@@ -10,6 +10,7 @@ import {
   toDecimal,
   type MoneyValue,
 } from "@cocalc/util/money";
+import { assertBillingAuthorityAccountRegistered } from "./billing-authority/context";
 
 const logger = getLogger("purchase:create-purchase");
 
@@ -54,6 +55,11 @@ export default async function createPurchase(opts: Options): Promise<number> {
     client,
     cost_so_far,
   } = opts;
+  await assertBillingAuthorityAccountRegistered(account_id, {
+    // Dedicated-host metering is a high-volume data-plane writer. All other
+    // services are authority-owned financial operations when the gate is on.
+    allow_direct_execution: service === "dedicated-host",
+  });
   const postedCost = cost == null ? null : moneyRoundToCents(cost);
   if (cost == null) {
     if (period_start == null) {

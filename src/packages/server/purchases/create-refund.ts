@@ -22,6 +22,7 @@ import {
   updateMembershipPackage,
 } from "@cocalc/server/membership/packages";
 import { recordMembershipAllocationRefund } from "@cocalc/server/membership/allocation-analytics";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchase:create-refund");
 
@@ -50,13 +51,17 @@ export default async function createRefund(opts: {
   }
 
   const { rows } = await getPool().query<{
+    account_id: string;
     description: any;
     service: Service;
-  }>("SELECT description, service FROM purchases WHERE id=$1", [purchase_id]);
-  const { description, service } = rows[0] ?? {};
-  if (!service) {
+  }>("SELECT account_id, description, service FROM purchases WHERE id=$1", [
+    purchase_id,
+  ]);
+  const { account_id: targetAccountId, description, service } = rows[0] ?? {};
+  if (!service || !targetAccountId) {
     throw Error(`No purchase with id ${purchase_id}`);
   }
+  await registerBillingAuthorityAccount(targetAccountId);
   if (service === "credit" || service === "auto-credit") {
     return await refundCredit({
       admin_account_id: account_id,

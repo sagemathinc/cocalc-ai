@@ -31,6 +31,7 @@ import type {
   CommercialOrderCreateRequest,
   CommercialOrderItemInput,
 } from "@cocalc/conat/hub/api/commercial-orders";
+import { commercialTaxPolicy } from "./tax";
 
 const WORKFLOW_TRANSITIONS: Record<
   CommercialWorkflowState,
@@ -261,6 +262,7 @@ export function assertInvoiceTermsSnapshot(
     throw Error("terms_snapshot.invoice must be an object");
   }
   const invoice = value as Record<string, unknown>;
+  commercialTaxPolicy(termsSnapshot);
   if (
     invoice.memo != null &&
     (typeof invoice.memo !== "string" || invoice.memo.trim().length > 1_000)

@@ -5,7 +5,7 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon, projectActionParameters } from "../helpers";
-import { CHAT_BODY, MENTIONS_BODY } from "../content";
+import { CHAT_BODY, MENTIONS_BODY } from "../content/collaboration";
 
 export const COLLABORATION_ENTRIES: DocsEntry[] = [
   {

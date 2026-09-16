@@ -36,6 +36,8 @@ import type {
   CommercialOrderUpdateRequest,
   CommercialProvisionRequest,
   CommercialQuoteDocument,
+  CommercialQuoteLinkRequest,
+  CommercialQuoteLinkResult,
   CommercialQuoteDocumentRequest,
   CommercialQuoteIssueRequest,
   CommercialQuotePreview,
@@ -313,6 +315,24 @@ export async function stripeQuotePreview(
   opts: CommercialStripeQuotePreviewRequest,
 ): Promise<CommercialStripeQuotePreview> {
   return await invoke("stripeQuotePreview", opts);
+}
+
+export async function issueQuoteLink(
+  opts: CommercialQuoteLinkRequest,
+): Promise<CommercialQuoteLinkResult> {
+  return await invoke("issueQuoteLink", opts, {
+    fresh: true,
+    capability: "mutate",
+  });
+}
+
+export async function revokeQuoteLink(
+  opts: CommercialQuoteVoidRequest,
+): Promise<CommercialOrder> {
+  return await invoke("revokeQuoteLink", opts, {
+    fresh: true,
+    capability: "mutate",
+  });
 }
 
 export async function createStripeQuote(

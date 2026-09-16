@@ -36,6 +36,7 @@ import { isCodexPaymentSourceNeedsUserConfiguration } from "./codex-submit-prefl
 import { isCodexModelName } from "@cocalc/util/ai/codex";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useChatVisualViewport } from "./use-chat-viewport";
+import { DictateButton } from "./audio/dictate-button";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -559,6 +560,17 @@ export function ChatRoomComposer({
               </span>
             </button>
           )}
+          <div
+            style={{ flex: "0 0 auto", marginLeft: threadLabel ? 0 : "auto" }}
+          >
+            <DictateButton
+              inputControlRef={chatInputControlRef}
+              path={path}
+              projectId={project_id}
+              session={composerSession}
+              threadId={selectedThread?.key}
+            />
+          </div>
         </div>
         {showCodexPaymentSourceBanner && (
           <Alert

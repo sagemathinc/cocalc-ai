@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Suspense, lazy, useEffect, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 
 import { Button, Typography } from "antd";
 import { getControlPlaneAuthBootstrap } from "@cocalc/frontend/auth/api";
@@ -45,8 +45,14 @@ interface PublicAppProps {
 async function loadCustomize(): Promise<PublicConfig | undefined> {
   try {
     const resp = await fetch(joinUrlPath(appBasePath, "customize"));
+    if (!resp.ok) return undefined;
     const result = await resp.json();
-    return result?.configuration;
+    const configuration = result?.configuration;
+    return configuration != null &&
+      typeof configuration === "object" &&
+      !Array.isArray(configuration)
+      ? configuration
+      : undefined;
   } catch {
     return undefined;
   }
@@ -160,20 +166,28 @@ export default function PublicApp({
   redirectToPath,
 }: PublicAppProps) {
   const [resolvedConfig, setResolvedConfig] = useState(config);
+  const authOverride = useRef<Partial<PublicConfig> | undefined>(undefined);
+  // Auth bootstrap can populate resolvedConfig before customize returns, so it
+  // does not establish the product or complete this configuration request.
+  const [customizeState, setCustomizeState] = useState({
+    sourceConfig: config,
+    pending: config === undefined,
+  });
 
   useEffect(() => {
+    authOverride.current = undefined;
     setResolvedConfig(config);
-  }, [config]);
-
-  useEffect(() => {
     if (config !== undefined) {
+      setCustomizeState({ sourceConfig: config, pending: false });
       return;
     }
     let cancelled = false;
+    setCustomizeState({ sourceConfig: config, pending: true });
     void (async () => {
       const nextConfig = await loadCustomize();
       if (!cancelled) {
-        setResolvedConfig(nextConfig ?? {});
+        setResolvedConfig({ ...nextConfig, ...authOverride.current });
+        setCustomizeState({ sourceConfig: config, pending: false });
       }
     })();
     return () => {
@@ -222,12 +236,16 @@ export default function PublicApp({
         const bootstrap = await getControlPlaneAuthBootstrap();
         if (cancelled || typeof bootstrap?.signed_in !== "boolean") return;
         receiveAppearanceBootstrap(bootstrap);
-        setResolvedConfig((current) => ({
-          ...(current ?? config ?? {}),
+        const auth = {
           account_display_name: bootstrap?.display_name,
           account_email_address: bootstrap?.email_address,
           account_id: bootstrap?.account_id,
           is_authenticated: !!bootstrap?.signed_in,
+        };
+        authOverride.current = auth;
+        setResolvedConfig((current) => ({
+          ...(current ?? config ?? {}),
+          ...auth,
         }));
       } catch {
         // Public pages can render without auth bootstrap; this only corrects
@@ -239,15 +257,41 @@ export default function PublicApp({
     };
   }, [config, initialRoute.section]);
 
+  // A changed prop must not briefly expose the previous product while its
+  // effect is pending. Keep request readiness independent of auth state.
+  const configChanged = customizeState.sourceConfig !== config;
+  const currentConfig = configChanged ? config : resolvedConfig;
+  const productDependentRoute =
+    initialRoute.section === "features" &&
+    initialRoute.route.view === "detail" &&
+    initialRoute.route.slug === "research-compute";
+  const waitingForFeatureConfig =
+    productDependentRoute &&
+    config === undefined &&
+    (configChanged || customizeState.pending);
+  const product = currentConfig?.cocalc_product;
+  const knownProduct =
+    product === "plus" || product === "launchpad" || product === "rocket";
+
   return (
     <>
-      <PublicRouteHeadMetadata config={resolvedConfig} route={initialRoute} />
+      {(!productDependentRoute ||
+        (!waitingForFeatureConfig && knownProduct)) && (
+        <PublicRouteHeadMetadata config={currentConfig} route={initialRoute} />
+      )}
+      {waitingForFeatureConfig && (
+        <p role="status" aria-live="polite" style={{ padding: 24 }}>
+          Loading features…
+        </p>
+      )}
       <Suspense fallback={null}>
-        <PublicRouteBody
-          config={resolvedConfig}
-          initialRoute={initialRoute}
-          redirectToPath={redirectToPath}
-        />
+        {!waitingForFeatureConfig && (
+          <PublicRouteBody
+            config={currentConfig}
+            initialRoute={initialRoute}
+            redirectToPath={redirectToPath}
+          />
+        )}
       </Suspense>
     </>
   );

@@ -140,7 +140,7 @@ describe("create a client first, then the server, and see that write still works
         socket.write(`${data}`.repeat(2), { headers });
       });
       socket.on("request", (mesg) => {
-        mesg.respondSync("bar", { headers: "x" });
+        mesg.respondSync("bar", { headers: { response: "x" } });
       });
     });
   });
@@ -154,7 +154,7 @@ describe("create a client first, then the server, and see that write still works
   it("get back the response from the request we created above", async () => {
     const response = await requestPromise;
     expect(response.data).toBe("bar");
-    expect(response.headers).toBe("x");
+    expect(response.headers).toEqual({ response: "x" });
   });
 
   it("cleans up", async () => {

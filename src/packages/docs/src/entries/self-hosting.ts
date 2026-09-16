@@ -10,7 +10,7 @@ import {
   COCALC_STAR_LOCAL_VM_BODY,
   INSTALL_CHROMIUM_BODY,
   REVERSE_SSH_ACCESS_BODY,
-} from "../content";
+} from "../content/self-hosting";
 
 export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
   {
@@ -22,12 +22,13 @@ export const SELF_HOSTING_ENTRIES: DocsEntry[] = [
       "/public/docs/project-hosts-684faa4c.webp",
       "A CoCalc Star server running projects on a public VM",
     ),
-    lastReviewed: "2026-06-05",
-    searchKeywords: "public VM HTTPS cloud sslip.io Let's Encrypt",
+    lastReviewed: "2026-09-11",
+    searchKeywords:
+      "public VM HTTPS cloud sslip.io Let's Encrypt connections data locations retained state maintenance backup configuration rollback",
     slug: "self-hosting/cocalc-star",
     status: "ready",
     summary:
-      "Install CoCalc Star on a public Ubuntu VM with automatic HTTPS and a guided first-admin setup.",
+      "Install CoCalc Star on a public Ubuntu VM, complete first-admin setup, and identify connections and retained state before maintenance.",
     title: "Install CoCalc Star",
   },
   {

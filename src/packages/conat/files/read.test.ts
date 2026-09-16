@@ -35,13 +35,20 @@ describe("files read explicit routing", () => {
       async *[Symbol.asyncIterator]() {
         yield {
           subject,
-          data: { path: "/tmp/first" },
+          data: { path: "/tmp/first", fileReadProtocol: "ack-v1" },
+          respondMany: async () => ({
+            async *[Symbol.asyncIterator]() {
+              await blocked;
+              yield { data: { cancel: true } };
+            },
+            cancel: jest.fn(),
+          }),
           respond: respond1,
           respondSync: respond1,
         };
         yield {
           subject,
-          data: { path: "/tmp/second" },
+          data: { path: "/tmp/second", fileReadProtocol: "ack-v1" },
           respond: respond2,
           respondSync: respond2,
         };

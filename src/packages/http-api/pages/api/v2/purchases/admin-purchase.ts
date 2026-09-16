@@ -7,7 +7,10 @@ import getAccountId from "@cocalc/http-api/lib/account/get-account";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { getCurrentAuthSession } from "@cocalc/server/auth/auth-sessions";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
-import adminPurchase from "@cocalc/server/purchases/admin-purchase";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 
 export default async function handle(req, res) {
   try {
@@ -35,8 +38,9 @@ export default async function handle(req, res) {
       balance_admin_note,
     } = getParams(req);
     res.json(
-      await adminPurchase({
+      await executeBillingHttpCommand("admin-purchase", {
         admin_account_id: account_id,
+        actor_account_id: account_id,
         comment,
         interval,
         membership_class,
@@ -53,6 +57,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
   }
 }

@@ -2579,6 +2579,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
   //   redux.getActions('page').close_project_tab(project_id),
   // which calls this.
   public set_project_closed(project_id: string): void {
+    // Reconciliation also closes projects directly while a global page is active.
+    redux.getActions("page")?.forget_project_context(project_id);
     const x = store.get("open_projects");
     const index = x.indexOf(project_id);
     if (index !== -1) {

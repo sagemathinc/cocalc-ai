@@ -18,21 +18,26 @@ interface ChatInstanceOptions {
   instanceKey?: string;
 }
 
-export function isChatActions(actions: any): actions is ChatActions {
+function hasChatActionsMethods(actions: any): actions is ChatActions {
   return Boolean(
     actions &&
     typeof actions.sendChat === "function" &&
     typeof actions.getMessagesInThread === "function" &&
     typeof actions.clearAllFilters === "function" &&
-    typeof actions.setSelectedThread === "function" &&
-    actions.messageCache != null,
+    typeof actions.setSelectedThread === "function",
   );
 }
 
+export function isChatActions(actions: any): actions is ChatActions {
+  return hasChatActionsMethods(actions) && actions.messageCache != null;
+}
+
 function isStaleChatActions(actions: any): actions is ChatActions {
-  if (!isChatActions(actions)) return false;
+  // dispose() clears the cache; failed initialization may never have set it.
+  // Both still own redux registrations that must be removed before retrying.
+  if (!hasChatActionsMethods(actions)) return false;
   const syncdb = actions.syncdb;
-  if (syncdb == null) return true;
+  if (actions.messageCache == null || syncdb == null) return true;
   return syncdb.get_state?.() === "closed";
 }
 
@@ -209,16 +214,16 @@ function removeByName(name: string, redux): string {
     state: actions?.debugChatState?.(),
   });
   // Dispose per-chat resources before tearing down redux.
+  const syncdb = actions?.syncdb;
   actions?.dispose?.();
-  actions?.syncdb?.close();
+  syncdb?.close();
   const store = redux.getStore(name);
-  if (store == null) {
-    return name;
+  if (store != null) {
+    delete store.state;
+    // It is *critical* to first unmount the store, then the actions,
+    // or there will be a huge memory leak.
+    redux.removeStore(name);
   }
-  delete store.state;
-  // It is *critical* to first unmount the store, then the actions,
-  // or there will be a huge memory leak.
-  redux.removeStore(name);
   redux.removeActions(name);
   return name;
 }

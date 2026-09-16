@@ -6,6 +6,7 @@
 import { delay } from "awaiting";
 import { Set } from "immutable";
 import $ from "jquery";
+import { findCellElement } from "@cocalc/frontend/jupyter/find-cell-element";
 import { isEqual } from "lodash";
 
 import { JupyterActions } from "@cocalc/frontend/jupyter/browser-actions";
@@ -123,7 +124,8 @@ export class NotebookFrameActions {
     const windowed_list = this.get_windowed_list();
     if (windowed_list == null) {
       // directly use the DOM since not using windowed list
-      return $(this.cell_list_div).find(`#${id}`).offset()?.top;
+      const cell = findCellElement(this.cell_list_div?.[0], id);
+      return cell == null ? undefined : $(cell).offset()?.top;
     }
 
     const cell_list = this.jupyter_actions.store.get("cell_list").toArray();

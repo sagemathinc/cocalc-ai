@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
@@ -38,6 +38,8 @@ import type {
   CommercialOrderTransitionRequest,
   CommercialOrderUpdateRequest,
   CommercialQuoteDocument,
+  CommercialQuoteLinkRequest,
+  CommercialQuoteLinkResult,
   CommercialQuoteDocumentRequest,
   CommercialQuoteIssueRequest,
   CommercialQuotePreview,
@@ -63,7 +65,9 @@ import type {
   CommercialQuote,
   CommercialWorkflowState,
 } from "@cocalc/util/commercial-orders";
+import { getDiagnosticAmounts } from "./diagnostic-amounts";
 import { COMMERCIAL_ORDER_DOCUMENT_MAX_BYTES } from "@cocalc/util/commercial-orders";
+import { registerCommercialOrderBillingAccount } from "./billing-authority";
 import {
   moneyAdd,
   moneyCompare,
@@ -235,7 +239,13 @@ function normalizeContactRow(row: any): CommercialOrderContact {
 }
 
 function normalizeQuoteRow(row: any): CommercialQuote {
-  const { document_data: _documentData, ...metadata } = row;
+  const {
+    document_data: _documentData,
+    download_token_hash: _downloadTokenHash,
+    download_window_at: _downloadWindowAt,
+    download_window_count: _downloadWindowCount,
+    ...metadata
+  } = row;
   return {
     ...metadata,
     subtotal: money(row.subtotal),
@@ -546,6 +556,11 @@ async function loadOrder(
     payments: payments.rows.map(normalizePaymentRow),
   } as CommercialOrder;
   validateIndependentStates(order);
+  // This loader also serves read-only APIs. Authority commands still register
+  // the account, while direct readers remain available after activation.
+  await registerCommercialOrderBillingAccount(order, {
+    allow_direct_execution: true,
+  });
   return order;
 }
 
@@ -1903,6 +1918,79 @@ export async function voidCommercialQuote(
   });
 }
 
+export async function issueCommercialQuoteLink(
+  opts: CommercialQuoteLinkRequest,
+): Promise<CommercialQuoteLinkResult> {
+  assertSeedAuthority();
+  let token: string | undefined;
+  const order = await mutateOrder(
+    "quote-link-issued",
+    opts,
+    async (client, before) => {
+      const quote = before.quotes.find(
+        (q) => q.id === opts.commercial_quote_id,
+      );
+      const expires = new Date(opts.expires_at).getTime();
+      if (
+        !quote ||
+        !["issued", "accepted"].includes(quote.status) ||
+        !quote.document_sha256
+      ) {
+        throw Error(
+          "only retained issued or accepted quote PDFs can be shared",
+        );
+      }
+      if (
+        !Number.isFinite(expires) ||
+        expires <= Date.now() ||
+        expires > Date.now() + 90 * 86_400_000 ||
+        expires > new Date(quote.valid_until).getTime()
+      ) {
+        throw Error(
+          "link expiration must be in the future, within 90 days and no later than quote expiration",
+        );
+      }
+      token = randomBytes(32).toString("hex");
+      await client.query(
+        `UPDATE commercial_quotes SET download_token_hash=$2, download_expires_at=$3,
+       download_window_at=NULL, download_window_count=0 WHERE id=$1`,
+        [
+          quote.id,
+          createHash("sha256").update(token).digest("hex"),
+          new Date(expires),
+        ],
+      );
+      return {
+        metadata: {
+          commercial_quote_id: quote.id,
+          expires_at: new Date(expires).toISOString(),
+        },
+      };
+    },
+  );
+  return { order, path: token ? `/commercial/quotes/download#${token}` : null };
+}
+
+export async function revokeCommercialQuoteLink(
+  opts: CommercialQuoteVoidRequest,
+): Promise<CommercialOrder> {
+  assertSeedAuthority();
+  return await mutateOrder(
+    "quote-link-revoked",
+    opts,
+    async (client, before) => {
+      if (!before.quotes.some((q) => q.id === opts.commercial_quote_id)) {
+        throw Error("commercial quote not found for this order");
+      }
+      await client.query(
+        "UPDATE commercial_quotes SET download_token_hash=NULL, download_expires_at=NULL WHERE id=$1",
+        [opts.commercial_quote_id],
+      );
+      return { metadata: { commercial_quote_id: opts.commercial_quote_id } };
+    },
+  );
+}
+
 export async function getCommercialQuoteDocument(
   opts: CommercialQuoteDocumentRequest,
 ): Promise<CommercialQuoteDocument> {
@@ -3026,7 +3114,9 @@ export async function completeCommercialQuoteAcceptance(
     if (
       moneyCompare(opts.subtotal, quote.subtotal) !== 0 ||
       moneyCompare(opts.total, quote.total) !== 0 ||
-      moneyCompare(opts.tax, 0) !== 0 ||
+      moneyCompare(opts.tax, 0) < 0 ||
+      moneyCompare(opts.tax, moneySubtract(quote.total, quote.subtotal)) !==
+        0 ||
       moneyCompare(opts.amount_due, quote.total) !== 0
     ) {
       throw Error("Stripe's accepted quote invoice does not match local terms");
@@ -3356,14 +3446,7 @@ export async function getCommercialOrderDiagnostics(): Promise<CommercialOrderDi
        FROM commercial_orders GROUP BY workflow_state
       UNION ALL SELECT 'collection:'||collection_state,count(*)::text
        FROM commercial_orders GROUP BY collection_state`),
-    getPool().query<{ key: string; amount: string }>(`
-      SELECT 'open_amount' AS key,COALESCE(sum(agreed_total),0)::text AS amount
-       FROM commercial_orders WHERE workflow_state NOT IN ('complete','cancelled')
-      UNION ALL SELECT 'overdue_amount',COALESCE(sum(agreed_total),0)::text
-       FROM commercial_orders WHERE collection_state='overdue'
-      UNION ALL SELECT 'fulfilled_unpaid_amount',COALESCE(sum(agreed_total),0)::text
-       FROM commercial_orders WHERE fulfillment_state='provisioned'
-        AND collection_state NOT IN ('paid','waived')`),
+    getDiagnosticAmounts(),
     getStaleCommercialInvoiceIds({ limit: 500 }),
     getStaleCommercialQuoteIds({ limit: 500 }),
     getPool().query<{ id: string }>(`
@@ -3480,9 +3563,16 @@ export async function getCommercialOrderDiagnostics(): Promise<CommercialOrderDi
     counts: Object.fromEntries(
       countsResult.rows.map(({ key, count }) => [key, Number(count)]),
     ),
-    amounts: Object.fromEntries(
-      amountsResult.rows.map(({ key, amount }) => [key, money(amount)]),
-    ),
+    amounts: {
+      open_amount: money(amountsResult.usd?.invoice_outstanding ?? 0),
+      overdue_amount: money(amountsResult.usd?.invoice_overdue ?? 0),
+      fulfilled_unpaid_amount: money(
+        amountsResult.usd?.fulfilled_invoice_outstanding ?? 0,
+      ),
+    },
+    amounts_by_currency: amountsResult,
+    amount_scope: "linked_local_invoices",
+    unlinked_invoice_scan: "not_requested",
     reconciliation: {
       provider_local_mismatch_count:
         Number(reconciliation.rows[0]?.provider_local_mismatch_count ?? 0) +

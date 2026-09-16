@@ -4,6 +4,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import $ from "jquery";
 import { register } from "../register";
 import { useFocused, useProcessLinks, useSelected, useSlate } from "../hooks";
 import { useSetElement } from "../set-element";

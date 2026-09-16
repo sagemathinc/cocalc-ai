@@ -1,7 +1,9 @@
 # Self-Hosted Project Hosts
 
 This document describes how CoCalc Launchpad provisions **self-hosted** project
-hosts and how the connector + SSH tunnels fit together. The goal is:
+hosts and how the connector + SSH tunnels fit together in the local/SSH-tunnel
+configuration. These are the assumptions for that configuration, not a claim
+that every SelfHost connection requires an SSH-only topology. The goal is:
 
 - minimal requirements on the remote machine,
 - no public exposure of the hub,
@@ -95,6 +97,6 @@ This works even if the remote host cannot reach the hub directly.
 
 ## Related Files
 
-- SSH tunnel + install logic: [src/packages/server/self-host/ssh-target.ts](./src/packages/server/self-host/ssh-target.ts)
-- Bootstrap script generation: [src/packages/server/cloud/bootstrap-host.ts](./src/packages/server/cloud/bootstrap-host.ts)
-- Connector implementation: [src/packages/cloud/self-host/go/main.go](./src/packages/cloud/self-host/go/main.go)
+- SSH tunnel + install logic: [src/packages/server/self-host/ssh-target.ts](../src/packages/server/self-host/ssh-target.ts)
+- Bootstrap script generation: [src/packages/server/cloud/bootstrap-host.ts](../src/packages/server/cloud/bootstrap-host.ts)
+- Connector implementation: [src/packages/cloud/self-host/go/main.go](../src/packages/cloud/self-host/go/main.go)

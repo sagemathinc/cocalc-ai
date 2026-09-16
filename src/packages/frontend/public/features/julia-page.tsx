@@ -159,16 +159,25 @@ julia --project=. simulate.jl`}
           title="Package environments that stay with the project"
         >
           <Paragraph>
-            A <code>Project.toml</code> in the project directory is all it
-            takes: <code>Pkg.add</code> installs into{" "}
-            <strong>an environment that lives with your files</strong>, so
-            collaborators instantiate the same versions instead of guessing.
+            Keep both <code>Project.toml</code> and <code>Manifest.toml</code>{" "}
+            with an analysis to record its dependencies and resolved package
+            versions. Collaborators can use <code>Pkg.instantiate()</code> in
+            that environment to install the recorded packages. With only{" "}
+            <code>Project.toml</code>, Julia resolves compatible versions rather
+            than recovering a previously resolved set. See the{" "}
+            <a href="https://pkgdocs.julialang.org/v1/environments/">
+              Julia environment guide
+            </a>{" "}
+            for the distinction.
           </Paragraph>
           <Paragraph>
-            The image's own depot is shared and read-only, so common packages
-            are already compiled, and{" "}
-            <strong>what you add on top persists</strong> across restarts and
-            travels with the project.
+            By default, the bundled Julia recipe searches a user depot in{" "}
+            <code>~/.julia</code> before its image depot in{" "}
+            <code>/opt/julia-depot</code>. Record the Julia version and any
+            custom depot paths along with the environment files. Before
+            comparing a notebook with a terminal run, check that both use the
+            intended active package environment; a kernel's display name does
+            not establish that.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -189,8 +198,9 @@ julia --project=. simulate.jl`}
           <Paragraph>
             Longer simulations belong in a{" "}
             <a href={appPath("features/terminal")}>real Linux terminal</a>: the
-            session <strong>keeps running when you close the browser</strong>,
-            and you reconnect to the same output later.
+            session <strong>keeps running when you close the browser</strong>{" "}
+            while the project runtime remains running. Reconnect to inspect its
+            output and save the results you need.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>

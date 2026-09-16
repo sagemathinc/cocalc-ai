@@ -10,6 +10,10 @@ let requireDangerousSessionAuthMock: jest.Mock;
 let manageApiKeysMock: jest.Mock;
 let createRememberMeCookieMock: jest.Mock;
 let recordNewAuthSessionMock: jest.Mock;
+const getBillingAuthorityHealthMock = jest.fn();
+const drainBillingAuthorityMock = jest.fn();
+const resumeBillingAuthorityMock = jest.fn();
+const handoffBillingAuthorityMock = jest.fn();
 const testingAccountMock = jest.fn();
 jest.mock("@cocalc/server/auth/browser-testing-account", () => ({
   assertBrowserTestingAccount: (...args: any[]) => testingAccountMock(...args),
@@ -42,6 +46,16 @@ jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   recordNewAuthSession: (...args: any[]) => recordNewAuthSessionMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/service", () => ({
+  getBillingAuthorityHealth: (...args: any[]) =>
+    getBillingAuthorityHealthMock(...args),
+  drainBillingAuthority: (...args: any[]) => drainBillingAuthorityMock(...args),
+  resumeBillingAuthority: (...args: any[]) =>
+    resumeBillingAuthorityMock(...args),
+  handoffBillingAuthority: (...args: any[]) =>
+    handoffBillingAuthorityMock(...args),
+}));
+
 describe("admin maintenance dangerous-session auth", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
   const SUBJECT_ACCOUNT_ID = "22222222-2222-4222-8222-222222222222";
@@ -61,6 +75,66 @@ describe("admin maintenance dangerous-session auth", () => {
       expire: new Date("2026-05-24T12:00:00.000Z"),
     }));
     recordNewAuthSessionMock = jest.fn(async () => undefined);
+    const health = {
+      ready: true,
+      enabled: true,
+      draining: false,
+      queue_depth: { critical: 0, interactive: 0, maintenance: 0 },
+      completed: 0,
+      failed: 0,
+    };
+    getBillingAuthorityHealthMock.mockReset().mockResolvedValue(health);
+    drainBillingAuthorityMock.mockReset().mockResolvedValue({
+      ...health,
+      ready: false,
+      enabled: false,
+      draining: true,
+    });
+    resumeBillingAuthorityMock.mockReset().mockResolvedValue(health);
+    handoffBillingAuthorityMock.mockReset().mockResolvedValue({
+      ...health,
+      generation: 2,
+    });
+  });
+
+  it("requires fresh auth before changing billing authority lifecycle", async () => {
+    const { drainBillingAuthority } = await import("./system");
+    await expect(
+      drainBillingAuthority({
+        account_id: ACCOUNT_ID,
+        browser_id: "browser-1",
+        timeout_ms: 30_000,
+      }),
+    ).rejects.toThrow("fresh auth is required");
+    expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: undefined,
+      require_second_factor: "if_enabled",
+      allow_actor_impersonation: false,
+    });
+    expect(drainBillingAuthorityMock).not.toHaveBeenCalled();
+
+    requireDangerousSessionAuthMock.mockResolvedValue({
+      session_hash: "fresh-session",
+    });
+    await drainBillingAuthority({
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      timeout_ms: 30_000,
+    });
+    expect(drainBillingAuthorityMock).toHaveBeenCalledWith({
+      timeout_ms: 30_000,
+    });
+  });
+
+  it("allows an admin to inspect authority status without fresh auth", async () => {
+    const { getBillingAuthorityStatus } = await import("./system");
+    await expect(
+      getBillingAuthorityStatus({ account_id: ACCOUNT_ID }),
+    ).resolves.toMatchObject({ ready: true, enabled: true });
+    expect(getBillingAuthorityHealthMock).toHaveBeenCalledTimes(1);
+    expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
   });
 
   it("requires centralized recent 2FA fresh auth before creating impersonation grants", async () => {
@@ -71,6 +145,7 @@ describe("admin maintenance dangerous-session auth", () => {
         account_id: ACCOUNT_ID,
         browser_id: "browser-1",
         subject_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "Support investigation authorized in ticket 123",
       }),
     ).rejects.toThrow("fresh auth is required");
 
@@ -101,6 +176,39 @@ describe("admin maintenance dangerous-session auth", () => {
       require_second_factor: true,
       allow_actor_impersonation: false,
     });
+  });
+
+  it("rejects missing reasons and incomplete consent context even after fresh auth", async () => {
+    requireDangerousSessionAuthMock.mockResolvedValue({
+      session_hash: "actor-session",
+    });
+    const { createImpersonationGrant } = await import("./system");
+    for (const reason of [undefined, "", " ", "x".repeat(513)]) {
+      await expect(
+        createImpersonationGrant({
+          account_id: ACCOUNT_ID,
+          subject_account_id: SUBJECT_ACCOUNT_ID,
+          reason: reason as any,
+        }),
+      ).rejects.toThrow(/reason/i);
+    }
+    await expect(
+      createImpersonationGrant({
+        account_id: ACCOUNT_ID,
+        subject_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "Investigate notebook",
+        support_ticket_id: 123,
+      }),
+    ).rejects.toThrow("consent reference");
+    await expect(
+      createImpersonationGrant({
+        account_id: ACCOUNT_ID,
+        subject_account_id: SUBJECT_ACCOUNT_ID,
+        reason: "Investigate notebook",
+        support_ticket_id: -1,
+        consent_reference: "customer reply",
+      }),
+    ).rejects.toThrow("positive integer");
   });
 
   it("requires centralized recent 2FA fresh auth before banning an account", async () => {

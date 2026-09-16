@@ -20,6 +20,7 @@ import type {
   AcpStreamMessage,
 } from "@cocalc/conat/ai/acp/types";
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
+import { prepareChatSend, submitChatSend } from "./project-chat-send";
 
 type ProjectIdentity = {
   project_id: string;
@@ -45,6 +46,7 @@ type ThreadConfigPatch = Partial<
 type ProjectChatAutomationAction = AcpAutomationRequest["action"] | "status";
 
 type ProjectChatOpsDeps<Ctx, Project extends ProjectIdentity> = {
+  readAccountSettings: (ctx: Ctx) => Promise<Record<string, unknown>>;
   resolveProjectConatClient: (
     ctx: Ctx,
     projectIdentifier?: string,
@@ -216,6 +218,58 @@ async function withProjectChatFile<Ctx, Project extends ProjectIdentity, T>({
 export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
   deps: ProjectChatOpsDeps<Ctx, Project>,
 ) {
+  async function projectChatSendData({
+    ctx,
+    projectIdentifier,
+    path,
+    threadId,
+    prompt,
+    guidance,
+    cwd,
+  }: {
+    ctx: Ctx;
+    projectIdentifier?: string;
+    path: string;
+    threadId: string;
+    prompt: string;
+    guidance?: boolean;
+    cwd?: string;
+  }) {
+    return await withProjectChatFile({
+      deps,
+      ctx,
+      projectIdentifier,
+      chatPath: path,
+      cwd,
+      fn: async ({ project, client, rows, syncdb }) => {
+        const thread = getThreadConfigRecord(rows, threadId);
+        if (!thread) throw new Error(`thread '${threadId}' not found`);
+        const context = ctx as {
+          accountId: string;
+          apiBaseUrl?: string;
+          timeoutMs?: number;
+        };
+        const prepared = prepareChatSend({
+          projectId: project.project_id,
+          accountId: context.accountId,
+          apiUrl: context.apiBaseUrl,
+          path,
+          thread,
+          rows,
+          prompt,
+          guidance,
+          otherSettings: await deps.readAccountSettings(ctx),
+        });
+        return await submitChatSend({
+          prepared,
+          syncdb,
+          client,
+          timeoutMs: context.timeoutMs,
+        });
+      },
+    });
+  }
+
   async function projectChatThreadCreateData({
     ctx,
     projectIdentifier,
@@ -459,6 +513,7 @@ export function createProjectChatOps<Ctx, Project extends ProjectIdentity>(
   }
 
   return {
+    projectChatSendData,
     projectChatThreadCreateData,
     projectChatThreadStatusData,
     projectChatAutomationData,

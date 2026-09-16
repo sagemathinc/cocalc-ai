@@ -47,7 +47,7 @@ export class AdminClient {
 
   public async create_impersonation_grant(opts: {
     subject_account_id: string;
-    reason?: string | null;
+    reason: string;
     lang_temp?: string | null;
   }): Promise<{
     grant_id: string;

@@ -7,6 +7,7 @@
 declare let window, document;
 
 import { callback } from "awaiting";
+import $ from "jquery";
 import { List, Map, fromJS } from "immutable";
 import { throttle } from "lodash";
 import { join } from "path";

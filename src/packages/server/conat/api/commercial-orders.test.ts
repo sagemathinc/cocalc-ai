@@ -63,7 +63,10 @@ import {
   create,
   createPreview,
   createInvoiceDraft,
+  diagnostics,
   issueManualInvoice,
+  issueQuoteLink,
+  revokeQuoteLink,
   list,
   listAssignees,
   provision,
@@ -105,6 +108,34 @@ describe("commercial orders public Conat API", () => {
     expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
     expect(mockGetInterBayBridge).not.toHaveBeenCalled();
   });
+
+  it.each([issueQuoteLink, revokeQuoteLink])(
+    "requires fresh non-impersonated admin auth for link mutations",
+    async (method) => {
+      const opts = {
+        ...BASE,
+        id: "order",
+        commercial_quote_id: "quote",
+        expires_at: "2026-10-01",
+      };
+      mockIsAdmin.mockResolvedValue(false);
+      await expect(method(opts as any)).rejects.toThrow("admin privileges");
+      expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
+      mockIsAdmin.mockResolvedValue(true);
+      mockRequireDangerousSessionAuth.mockRejectedValueOnce(
+        Error("fresh auth required"),
+      );
+      await expect(method(opts as any)).rejects.toThrow("fresh auth");
+      expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
+      await method(opts as any);
+      expect(mockRequireDangerousSessionAuth).toHaveBeenCalledWith(
+        expect.objectContaining({ allow_actor_impersonation: false }),
+      );
+      expect(mockAssertCommercialReceivablesCapability).toHaveBeenCalledWith(
+        "mutate",
+      );
+    },
+  );
 
   it("dispatches admin reads locally to the seed without session credentials", async () => {
     await list({
@@ -333,5 +364,37 @@ describe("commercial orders public Conat API", () => {
     expect(mockAssertCommercialReceivablesCapability).toHaveBeenCalledWith(
       "visible",
     );
+  });
+
+  it("routes audited read-only legacy discovery to the seed without dropping pagination", async () => {
+    const commercialOrders = jest
+      .fn()
+      .mockResolvedValue({
+        legacy_invoice_scan: { has_more: false, invoices: [] },
+      });
+    const bayOps = jest.fn(() => ({ commercialOrders }));
+    mockGetConfiguredBayId.mockReturnValue("worker-bay");
+    mockGetInterBayBridge.mockReturnValue({ bayOps });
+    await diagnostics({
+      ...BASE,
+      include_legacy_invoices: true,
+      legacy_invoice_cursor: "in_previous",
+      legacy_invoice_limit: 10,
+    });
+    expect(bayOps).toHaveBeenCalledWith("seed-bay", { timeout_ms: 120_000 });
+    expect(commercialOrders).toHaveBeenCalledWith(
+      expect.objectContaining({
+        action: "diagnostics",
+        actor_account_id: "admin-1",
+        payload: expect.objectContaining({
+          reason: BASE.reason,
+          include_legacy_invoices: true,
+          legacy_invoice_cursor: "in_previous",
+          legacy_invoice_limit: 10,
+        }),
+      }),
+    );
+    expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
+    expect(mockDispatchCommercialSeedRequest).not.toHaveBeenCalled();
   });
 });

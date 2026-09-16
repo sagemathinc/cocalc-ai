@@ -5,6 +5,7 @@
 
 import { Alert, Button, Checkbox } from "antd";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { REVIEW_VIEWPORT_HEIGHT } from "@cocalc/frontend/components/diff-viewer/review-viewport";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewHandle } from "@pierre/diffs/react";
 import type {
@@ -321,6 +322,8 @@ function ReviewContent(props: ReviewDiffPanelProps) {
   return (
     <div style={{ minWidth: 0 }}>
       <div
+        role="group"
+        aria-label="Diff controls"
         style={{
           display: "flex",
           flexWrap: "wrap",
@@ -396,6 +399,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         >
           Copy loaded patch
         </Button>
+        {props.findControl}
       </div>
       <div role="status">{message}</div>
       <CodeView<string>
@@ -406,7 +410,7 @@ function ReviewContent(props: ReviewDiffPanelProps) {
         onSelectedLinesChange={setSelection}
         options={options}
         style={{
-          height: "calc(100dvh - 100px)",
+          height: REVIEW_VIEWPORT_HEIGHT,
           minHeight: 200,
           overflow: "auto",
           width: "100%",

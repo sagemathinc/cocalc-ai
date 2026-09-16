@@ -35,7 +35,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { clearLocalAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
-import { account_id } from "@cocalc/backend/data";
+import { account_id, data } from "@cocalc/backend/data";
 import { resolveProjectHostPreferredMasterConatServer } from "./master-conat-server";
 import { setMasterStatusClient } from "./master-status";
 import { setSshpiperdPublicKey } from "./ssh/host-keys";
@@ -116,6 +116,8 @@ import { inspectStaticAppRequest } from "./static-apps";
 import { startHostMetricsCollector } from "./host-metrics";
 import { applyPendingCopies } from "./pending-copies";
 import { getManagedComponentStatus } from "./managed-components";
+import { getProjectHostAcpWorkerHealth } from "./hub/acp/worker-health";
+import { oldestQueuedAcpJobTimestamp } from "@cocalc/lite/hub/sqlite/acp-jobs";
 import { rolloutManagedComponents } from "./managed-component-rollout";
 import { readHostAgentState } from "./host-agent-state";
 import { recordProjectHostRpcTraffic } from "./rpc-traffic-audit";
@@ -2044,6 +2046,18 @@ export async function startMasterRegistration({
     const versions = getSoftwareVersions();
     const softwareInventory = getInstalledRuntimeArtifacts();
     const observedComponents = getManagedComponentStatus();
+    let oldestQueuedAt: number | undefined;
+    try {
+      oldestQueuedAt = oldestQueuedAcpJobTimestamp();
+    } catch (err) {
+      logger.warn("failed reading oldest queued ACP job for host health", {
+        err,
+      });
+    }
+    const acpWorkerHealth = getProjectHostAcpWorkerHealth({
+      dataDir: data,
+      oldestQueuedAt,
+    });
     const rootfsScanner = getRootfsTrivyScannerProvisioningStatus();
     const hostAgentState = readHostAgentState();
     const currentMetrics = hostMetrics.getCurrentSnapshot();
@@ -2076,6 +2090,7 @@ export async function startMasterRegistration({
           : {}),
         host_agent: hostAgentState,
         runtime_health: runtimeHealth.getSnapshot(),
+        acp_worker_health: acpWorkerHealth,
         bees: fileServerStatus?.bees,
         observed_components: observedComponents,
         rootfs_scanner: rootfsScanner,

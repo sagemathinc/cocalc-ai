@@ -1,8 +1,15 @@
-# Notes about package.js
+# Package configuration notes
 
-## Overrides
+## Current overrides
 
-Since we have workspaces, they must be in the root `package.json`
+Workspace overrides are configured in [pnpm-workspace.yaml](./pnpm-workspace.yaml),
+under `overrides`. Read the current constraints and lockfile before changing
+a dependency; the old notes below do not identify the active override set.
+
+## Historical override notes
+
+The following records earlier Mistral and LangChain work. The referenced
+Mistral fork is not an instruction to remove a current workspace override.
 
 - `@mistralai/mistralai`
   - Overrides the global `fetch` command and we fix this essentially by merging in https://github.com/mistralai/client-js/pull/42

@@ -931,8 +931,8 @@ export const privacyPolicy: PublicPolicy = {
           You may also have a right, under certain conditions, to invoke binding
           arbitration for complaints regarding DPF compliance not resolved by
           any of the other DPF mechanisms; for additional information, see{" "}
-          <A href="https://www.dataprivacyframework.gov/s/article/ANNEX-I-introduction-dpf?tabset-35584=2">
-            www.dataprivacyframework.gov/s/article/ANNEX-I-introduction-dpf?tabset-35584=2
+          <A href="https://www.dataprivacyframework.gov/framework-article/ANNEX-I-introduction">
+            www.dataprivacyframework.gov/framework-article/ANNEX-I-introduction
           </A>
           . The Federal Trade Commission has jurisdiction over Sagemath’s
           compliance with the EU-U.S. DPF, the UK Extension to the EU-U.S. DPF,

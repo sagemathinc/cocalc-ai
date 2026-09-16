@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-export {};
+import { checkCloudflareBlobEnvironment } from "@cocalc/server/cloud/cloudflare-blob-preflight";
 
 let isAdminMock: jest.Mock;
 let requireDangerousSessionAuthMock: jest.Mock;
@@ -18,6 +18,22 @@ let listClusterBayRegistryMock: jest.Mock;
 let getConfiguredBayIdMock: jest.Mock;
 let getConfiguredClusterSeedBayIdMock: jest.Mock;
 let bayOpsMock: jest.Mock;
+const bootstrapMock = jest.fn();
+const reconcileMock = jest.fn();
+const blobConfigMock = jest.fn();
+const lockQueryMock = jest.fn();
+const releaseMock = jest.fn();
+const connectMock = jest.fn();
+
+jest.mock("@cocalc/server/cloud/cloudflare-bootstrap", () => ({
+  bootstrapCloudflareConfiguration: (...args: any[]) => bootstrapMock(...args),
+}));
+jest.mock("@cocalc/server/cloud/cloudflare-blob-reconcile", () => ({
+  reconcileCloudflareBlobs: (...args: any[]) => reconcileMock(...args),
+}));
+jest.mock("@cocalc/server/blobs/config", () => ({
+  resolveBlobStorageConfig: (...args: any[]) => blobConfigMock(...args),
+}));
 
 jest.mock("@cocalc/database", () => ({
   db: () => dbMock,
@@ -25,7 +41,7 @@ jest.mock("@cocalc/database", () => ({
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
-  default: () => ({ query: getPoolQueryMock }),
+  default: () => ({ query: getPoolQueryMock, connect: connectMock }),
 }));
 
 jest.mock("@cocalc/database/settings/server-settings", () => ({
@@ -73,6 +89,16 @@ describe("site settings dangerous-session auth", () => {
   const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 
   beforeEach(() => {
+    bootstrapMock
+      .mockReset()
+      .mockResolvedValue({ tunnel_token: { ok: true }, notes: [] });
+    reconcileMock.mockReset().mockResolvedValue({ ok: true });
+    blobConfigMock.mockReset().mockResolvedValue({ activeBackend: "postgres" });
+    lockQueryMock.mockReset().mockResolvedValue({ rows: [{ locked: true }] });
+    releaseMock.mockReset();
+    connectMock
+      .mockReset()
+      .mockResolvedValue({ query: lockQueryMock, release: releaseMock });
     const settings = new Map<string, string | undefined>([
       ["signup_email_domain_policy_mode", "deny_list"],
       ["signup_email_domain_allow_list", ""],
@@ -106,6 +132,7 @@ describe("site settings dangerous-session auth", () => {
     getConfiguredBayIdMock = jest.fn(() => "seed");
     getConfiguredClusterSeedBayIdMock = jest.fn(() => "seed");
     bayOpsMock = jest.fn(() => ({
+      checkCloudflareBlobEnvironment: jest.fn().mockResolvedValue({ ok: true }),
       setServerSetting: jest.fn(),
       setSiteSettings: jest.fn(),
       getSiteSettings: jest.fn(),
@@ -117,6 +144,448 @@ describe("site settings dangerous-session auth", () => {
       throw Object.assign(new Error("fresh auth is required"), {
         code: "fresh_auth_required",
       });
+    });
+  });
+
+  describe.each([
+    "bootstrapCloudflareConfiguration",
+    "reconcileCloudflareBlobs",
+  ] as const)("%s seed routing", (method) => {
+    const opts = {
+      account_id: ACCOUNT_ID,
+      browser_id: "browser-1",
+      session_hash: "session-1",
+      domain: "example.com",
+      token: "secret-bootstrap-token",
+    };
+
+    it.each(["seed", "attached-a"])(
+      "requires fresh auth before any work on %s",
+      async (bay) => {
+        getConfiguredBayIdMock.mockReturnValue(bay);
+        const system = await import("./system");
+        await expect(system[method](opts)).rejects.toMatchObject({
+          code: "fresh_auth_required",
+        });
+        expect(requireDangerousSessionAuthMock).toHaveBeenCalledWith({
+          account_id: ACCOUNT_ID,
+          browser_id: "browser-1",
+          session_hash: "session-1",
+          require_second_factor: true,
+        });
+        expect(bayOpsMock).not.toHaveBeenCalled();
+        expect(connectMock).not.toHaveBeenCalled();
+        expect(bootstrapMock).not.toHaveBeenCalled();
+        expect(reconcileMock).not.toHaveBeenCalled();
+      },
+    );
+
+    it("rejects non-admins before dispatch", async () => {
+      isAdminMock.mockResolvedValue(false);
+      const system = await import("./system");
+      await expect(system[method](opts)).rejects.toThrow();
+      expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+      expect(bayOpsMock).not.toHaveBeenCalled();
+    });
+
+    it("forwards authorized work without entry-bay session credentials", async () => {
+      requireDangerousSessionAuthMock.mockResolvedValue(undefined);
+      getConfiguredBayIdMock.mockReturnValue("attached-a");
+      const remote = jest.fn(async () => ({ ok: true }));
+      bayOpsMock.mockReturnValue({ [method]: remote });
+      const system = await import("./system");
+      await system[method](opts);
+      expect(bayOpsMock).toHaveBeenCalledWith("seed", { timeout_ms: 600_000 });
+      expect(remote).toHaveBeenCalledWith({
+        account_id: ACCOUNT_ID,
+        source_bay_id: "attached-a",
+        ...(method === "bootstrapCloudflareConfiguration"
+          ? {
+              domain: opts.domain,
+              token: opts.token,
+              tunnelPrefix: undefined,
+              hostSuffix: undefined,
+              r2BucketPrefix: undefined,
+            }
+          : {}),
+      });
+      expect(
+        requireDangerousSessionAuthMock.mock.invocationCallOrder[0],
+      ).toBeLessThan(remote.mock.invocationCallOrder[0]);
+      expect(connectMock).not.toHaveBeenCalled();
+      expect(getServerSettingsMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects private dispatch on a non-seed bay", async () => {
+      getConfiguredBayIdMock.mockReturnValue("attached-a");
+      const system = await import("./system");
+      await expect(system[`${method}OnSeed`](opts)).rejects.toThrow("seed bay");
+      expect(connectMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects contention on the shared provisioning lock before reading settings", async () => {
+      lockQueryMock.mockResolvedValue({ rows: [{ locked: false }] });
+      const system = await import("./system");
+      await expect(system[`${method}OnSeed`](opts)).rejects.toThrow(
+        "already running",
+      );
+      expect(lockQueryMock).toHaveBeenCalledWith(
+        "SELECT pg_try_advisory_lock(hashtext($1)) AS locked",
+        ["cocalc:cloudflare-provisioning"],
+      );
+      expect(getServerSettingsMock).not.toHaveBeenCalled();
+      expect(blobConfigMock).not.toHaveBeenCalled();
+      expect(bootstrapMock).not.toHaveBeenCalled();
+      expect(reconcileMock).not.toHaveBeenCalled();
+      expect(releaseMock).toHaveBeenCalledWith(true);
+    });
+
+    it("releases the lock after a provisioning failure", async () => {
+      bootstrapMock.mockRejectedValue(Error("provision failed"));
+      reconcileMock.mockRejectedValue(Error("provision failed"));
+      const system = await import("./system");
+      await expect(system[`${method}OnSeed`](opts)).rejects.toThrow(
+        "provision failed",
+      );
+      expect(lockQueryMock).toHaveBeenLastCalledWith(
+        "SELECT pg_advisory_unlock(hashtext($1))",
+        ["cocalc:cloudflare-provisioning"],
+      );
+      expect(releaseMock).toHaveBeenCalledWith(true);
+      expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+    });
+
+    it("saves and propagates on seed without rechecking the entry session", async () => {
+      listClusterBayRegistryMock.mockResolvedValue([
+        { bay_id: "attached-a", status: "active" },
+      ]);
+      const remoteSave = jest.fn();
+      bayOpsMock.mockReturnValue({
+        setServerSetting: remoteSave,
+        checkCloudflareBlobEnvironment: jest
+          .fn()
+          .mockResolvedValue({ ok: true }),
+      });
+      const values = {
+        project_hosts_cloudflare_tunnel_api_token: "scoped-secret",
+      };
+      bootstrapMock.mockImplementation(async ({ save }) => {
+        await save(values);
+        return { tunnel_token: { ok: true }, notes: [] };
+      });
+      reconcileMock.mockImplementation(async (settings, save) => {
+        expect(settings).toEqual({ seed: true });
+        await save(values);
+        return { ok: true };
+      });
+      getServerSettingsMock.mockResolvedValue({ seed: true });
+      const system = await import("./system");
+      await system[`${method}OnSeed`]({ ...opts, source_bay_id: "attached-a" });
+      expect(dbMock.set_server_setting).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: "project_hosts_cloudflare_tunnel_api_token",
+          value: "scoped-secret",
+        }),
+      );
+      expect(remoteSave).toHaveBeenCalledWith({
+        name: "project_hosts_cloudflare_tunnel_api_token",
+        value: "scoped-secret",
+      });
+      if (method === "bootstrapCloudflareConfiguration") {
+        expect(dbMock.set_server_setting).toHaveBeenCalledWith(
+          expect.objectContaining({
+            name: "blob_storage_backend",
+            value: "postgres",
+          }),
+        );
+      }
+      expect(requireDangerousSessionAuthMock).not.toHaveBeenCalled();
+      expect(JSON.stringify(centralLogMock.mock.calls)).not.toContain(
+        "scoped-secret",
+      );
+      expect(releaseMock).toHaveBeenCalledWith(true);
+    });
+  });
+
+  it.each([
+    ["same target", {}, false],
+    ["different account", { r2_account_id: "new-account" }, true],
+    ["different domain", { dns: "new.example.com" }, true],
+    ["different bucket", { blob_r2_bucket: "new-blobs" }, true],
+  ])("handles active R2 bootstrap with %s", async (_label, changes, pin) => {
+    getServerSettingsMock.mockResolvedValue({
+      r2_account_id: "old-account",
+      dns: "example.com",
+      blob_r2_bucket: "old-blobs",
+      cloudflare_automation_token_id: "old-token-id",
+    });
+    blobConfigMock.mockResolvedValue({
+      activeBackend: "r2",
+      r2: {
+        auth: {
+          endpoint: "https://old-account.r2.cloudflarestorage.com",
+          bucket: "old-blobs",
+        },
+      },
+    });
+    bootstrapMock.mockImplementation(async ({ save }) => {
+      await save({
+        ...changes,
+        cloudflare_automation_token_id: "new-token-id",
+      });
+      return {
+        tunnel_token: { ok: true },
+        durable_token_id: "new-token-id",
+        notes: [],
+      };
+    });
+    const { bootstrapCloudflareConfigurationOnSeed } = await import("./system");
+    const result = await bootstrapCloudflareConfigurationOnSeed({
+      domain: "example.com",
+      token: "bootstrap-token",
+    });
+    const backendWrites = dbMock.set_server_setting.mock.calls.filter(
+      ([opts]) => opts.name === "blob_storage_backend",
+    );
+    expect(backendWrites).toHaveLength(pin ? 1 : 0);
+    if (pin) expect(backendWrites[0][0].value).toBe("postgres");
+    expect(result.notes).toContainEqual(
+      expect.stringContaining(
+        "Previous automation token old-token-id remains active",
+      ),
+    );
+    expect(
+      result.notes.some((note) => note.includes("pinned to Postgres")),
+    ).toBe(pin);
+  });
+
+  it("loads S3 preservation state from the seed and saves derived credentials through secret settings", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      r2_account_id: "seed-account",
+      r2_access_key_id: "seed-access",
+      r2_secret_access_key: "seed-secret",
+      r2_bucket_prefix: "seed-prefix",
+      blob_r2_bucket: "seed-images",
+    });
+    bootstrapMock.mockImplementation(async ({ existingR2, save }) => {
+      expect(existingR2).toEqual({
+        accountId: "seed-account",
+        accessKey: "seed-access",
+        secretKey: "seed-secret",
+        bucketPrefix: "seed-prefix",
+        blobBucket: "seed-images",
+        blobPublicUrl: "",
+      });
+      await save({
+        r2_access_key_id: "created-id",
+        r2_secret_access_key: "derived-secret",
+      });
+      return { tunnel_token: { ok: true }, r2: { ok: true }, notes: [] };
+    });
+    const { bootstrapCloudflareConfigurationOnSeed } = await import("./system");
+    const result = await bootstrapCloudflareConfigurationOnSeed({
+      domain: "example.com",
+      token: "bootstrap-token",
+    });
+    expect(dbMock.set_server_setting).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "r2_secret_access_key",
+        value: "derived-secret",
+      }),
+    );
+    expect(JSON.stringify(centralLogMock.mock.calls)).not.toContain(
+      "derived-secret",
+    );
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it.each(["bootstrap", "reconcile"])(
+    "does not report %s success after remote propagation fails",
+    async (operation) => {
+      listClusterBayRegistryMock.mockResolvedValue([
+        { bay_id: "seed" },
+        { bay_id: "remote" },
+      ]);
+      const remoteSave = jest
+        .fn()
+        .mockRejectedValue(new Error("private upstream detail"));
+      bayOpsMock.mockReturnValue({
+        setServerSetting: remoteSave,
+        checkCloudflareBlobEnvironment: jest
+          .fn()
+          .mockResolvedValue({ ok: true }),
+      });
+      bootstrapMock.mockImplementation(async ({ save }) => {
+        try {
+          await save({ r2_api_token: "new-secret" });
+        } catch {
+          return {
+            tunnel_token: {
+              ok: false,
+              message: "Retry with a new bootstrap token.",
+            },
+            notes: [],
+            settings_status: "unknown",
+          };
+        }
+        return { tunnel_token: { ok: true }, notes: [] };
+      });
+      reconcileMock.mockImplementation(async (_settings, save) => {
+        try {
+          await save({ blob_storage_backend: "auto" });
+        } catch {
+          return { ok: false };
+        }
+        return { ok: true };
+      });
+      const system = await import("./system");
+      const run = () =>
+        operation === "bootstrap"
+          ? system.bootstrapCloudflareConfigurationOnSeed({
+              domain: "example.com",
+              token: "bootstrap-token",
+            })
+          : system.reconcileCloudflareBlobsOnSeed({});
+      const result: any = await run();
+      expect(
+        operation === "bootstrap" ? result.tunnel_token.ok : result.ok,
+      ).toBe(false);
+      expect(result.failure ?? result.message).toContain(
+        "propagation to other bays failed",
+      );
+      if (operation === "bootstrap")
+        expect(result.settings_status).toBe("saved");
+      if (operation === "bootstrap") {
+        expect(result.tunnel_token.message).toBe(result.failure);
+        expect(JSON.stringify(result)).not.toContain(
+          "Retry with a new bootstrap token",
+        );
+      }
+      expect(JSON.stringify(result)).not.toMatch(
+        /new-secret|private upstream detail/,
+      );
+      remoteSave.mockResolvedValue(undefined);
+      if (operation === "reconcile") expect(await run()).toEqual({ ok: true });
+      expect(releaseMock).toHaveBeenCalledWith(true);
+    },
+  );
+
+  describe.each(["bootstrap", "reconcile"])(
+    "%s all-bay preflight",
+    (operation) => {
+      it.each(["override", "unreachable", "old bay", "clean"])(
+        "checks a remote bay with %s before any mutations",
+        async (state) => {
+          listClusterBayRegistryMock.mockResolvedValue([
+            { bay_id: "seed" },
+            { bay_id: "remote" },
+            { bay_id: "remote" },
+          ]);
+          const check = jest.fn().mockResolvedValue({ ok: state === "clean" });
+          if (state === "override") {
+            check.mockImplementation(async () => {
+              // Simulate the remote process environment only inside its handler.
+              const key = "COCALC_BLOB_R2_BUCKET";
+              const previous = process.env[key];
+              process.env[key] = "remote-only-private-bucket";
+              try {
+                return checkCloudflareBlobEnvironment();
+              } finally {
+                if (previous === undefined) delete process.env[key];
+                else process.env[key] = previous;
+              }
+            });
+          }
+          if (state === "unreachable")
+            check.mockRejectedValue(new Error("private transport detail"));
+          bayOpsMock.mockReturnValue(
+            state === "old bay"
+              ? {}
+              : { checkCloudflareBlobEnvironment: check },
+          );
+          const system = await import("./system");
+          const run =
+            operation === "bootstrap"
+              ? system.bootstrapCloudflareConfigurationOnSeed({
+                  domain: "example.com",
+                  token: "secret",
+                })
+              : system.reconcileCloudflareBlobsOnSeed({});
+          if (state === "clean") {
+            await run;
+            expect(
+              operation === "bootstrap" ? bootstrapMock : reconcileMock,
+            ).toHaveBeenCalledTimes(1);
+            expect(check).toHaveBeenCalledTimes(1);
+          } else {
+            await expect(run).rejects.toThrow(
+              "Cloudflare preflight failed for bay 'remote'",
+            );
+            expect(bootstrapMock).not.toHaveBeenCalled();
+            expect(reconcileMock).not.toHaveBeenCalled();
+          }
+          expect(dbMock.set_server_setting).not.toHaveBeenCalled();
+          expect(releaseMock).toHaveBeenCalledWith(true);
+        },
+      );
+    },
+  );
+
+  it("does not suggest old-token cleanup when bootstrap fails", async () => {
+    getServerSettingsMock.mockResolvedValue({
+      cloudflare_automation_token_id: "old-token-id",
+    });
+    bootstrapMock.mockResolvedValue({
+      tunnel_token: { ok: false },
+      durable_token_id: "new-token-id",
+      notes: [],
+    });
+    const { bootstrapCloudflareConfigurationOnSeed } = await import("./system");
+    const result = await bootstrapCloudflareConfigurationOnSeed({
+      domain: "example.com",
+      token: "bootstrap-token",
+    });
+    expect(result.notes).toEqual([]);
+  });
+
+  it("keeps reconciliation excluded until bootstrap finishes", async () => {
+    let locked = false;
+    lockQueryMock.mockImplementation(async (sql) => {
+      if (sql.includes("pg_try_advisory_lock")) {
+        if (locked) return { rows: [{ locked: false }] };
+        locked = true;
+      } else {
+        locked = false;
+      }
+      return { rows: [{ locked: true }] };
+    });
+    let finish!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    bootstrapMock.mockImplementation(async () => {
+      entered();
+      await pending;
+      return { tunnel_token: { ok: true }, notes: [] };
+    });
+    const system = await import("./system");
+    const running = system.bootstrapCloudflareConfigurationOnSeed({
+      domain: "example.com",
+      token: "bootstrap-token",
+    });
+    await started;
+    await expect(system.reconcileCloudflareBlobsOnSeed({})).rejects.toThrow(
+      "already running",
+    );
+    expect(reconcileMock).not.toHaveBeenCalled();
+    finish();
+    await running;
+    await expect(system.reconcileCloudflareBlobsOnSeed({})).resolves.toEqual({
+      ok: true,
     });
   });
 

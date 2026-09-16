@@ -21,5 +21,9 @@ export function comparisonFeedbackPrompt(
 
 export type RequestComparisonAgentTurn = (
   prompt: string,
-  options?: { title?: string; workingDirectory?: string },
+  options?: {
+    title?: string;
+    workingDirectory?: string;
+    preserveThread?: boolean;
+  },
 ) => void | Promise<void>;

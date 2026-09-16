@@ -31,7 +31,107 @@ jest.mock("@cocalc/server/messages/send", () => ({
   url: jest.fn(async () => "https://cocalc.example"),
 }));
 
-import { getStripeCustomerId } from "./util";
+import {
+  assertInteractivePaymentPurpose,
+  assertValidStripePaymentInput,
+  assertValidUserMetadata,
+  getStripeCustomerId,
+  normalizeStripeLineItems,
+} from "./util";
+
+describe("Stripe user input validation", () => {
+  const validInput = {
+    purpose: "membership-change",
+    description: "Change membership",
+    lineItems: [{ description: "Annual membership", amount: 72 }],
+    metadata: { membership_class: "basic" },
+  };
+
+  it("accepts bounded payment input and known interactive purposes", () => {
+    expect(() => assertValidStripePaymentInput(validInput)).not.toThrow();
+    expect(() =>
+      assertInteractivePaymentPurpose("membership-change"),
+    ).not.toThrow();
+  });
+
+  it("rejects arbitrary interactive purposes", () => {
+    expect(() =>
+      assertInteractivePaymentPurpose("subscription-renewal"),
+    ).toThrow("invalid interactive payment purpose");
+  });
+
+  it("rejects line-item resource amplification and invalid amounts", () => {
+    expect(() =>
+      assertValidStripePaymentInput({
+        ...validInput,
+        lineItems: Array.from({ length: 33 }, (_, index) => ({
+          description: `item ${index}`,
+          amount: 1,
+        })),
+      }),
+    ).toThrow("between 1 and 32 line items");
+    for (const amount of [Number.NaN, Number.POSITIVE_INFINITY, 100_000]) {
+      expect(() =>
+        assertValidStripePaymentInput({
+          ...validInput,
+          lineItems: [{ description: "invalid", amount }],
+        }),
+      ).toThrow("finite and at most");
+    }
+  });
+
+  it("allows zero-priced items in a positive mixed-price order", () => {
+    expect(() =>
+      assertValidStripePaymentInput({
+        ...validInput,
+        lineItems: [
+          { description: "Included seat", amount: 0 },
+          { description: "Paid seat", amount: 120 },
+        ],
+      }),
+    ).not.toThrow();
+  });
+
+  it("bounds legacy server-generated line item descriptions", () => {
+    const normalized = normalizeStripeLineItems([
+      { description: "x".repeat(500), amount: 72 },
+    ]);
+    expect(normalized).toEqual([
+      { description: `${"x".repeat(177)}...`, amount: 72 },
+    ]);
+    expect(() =>
+      assertValidStripePaymentInput({
+        ...validInput,
+        lineItems: normalized,
+      }),
+    ).not.toThrow();
+  });
+
+  it("rejects oversized or non-string user metadata", () => {
+    expect(() => assertValidUserMetadata({ note: "x".repeat(501) })).toThrow(
+      "at most 500 characters",
+    );
+    expect(() => assertValidUserMetadata({ note: { nested: true } })).toThrow(
+      "metadata values must be strings",
+    );
+    expect(() => assertValidUserMetadata({ purpose: "add-credit" })).toThrow(
+      "metadata key 'purpose' is reserved",
+    );
+  });
+
+  it.each([
+    "actor_account_id",
+    "admin_account_id",
+    "customer_account_id",
+    "owner_account_id",
+    "target_account_id",
+    "user_account_id",
+  ])("reserves authority-owned metadata identity %s", (key) => {
+    expect(() => assertValidUserMetadata({ [key]: "forged" })).toThrow(
+      `metadata key '${key}' is reserved`,
+    );
+  });
+});
 
 describe("getStripeCustomerId", () => {
   const client = {

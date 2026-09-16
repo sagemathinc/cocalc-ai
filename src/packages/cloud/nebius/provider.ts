@@ -560,7 +560,7 @@ export class NebiusProvider implements CloudProvider {
     spec: { id?: string; name: string },
     creds: NebiusProviderCreds,
   ): Promise<{ id: string; ip: string }> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) throw new Error("nebius parentId is required");
     if (!creds.subnetId) throw new Error("nebius subnetId is required");
@@ -629,7 +629,8 @@ export class NebiusProvider implements CloudProvider {
   ): Promise<void> {
     if (!id) return;
     try {
-      const operation = await new NebiusClient(creds).allocations.delete(
+      await using client = new NebiusClient(creds);
+      const operation = await client.allocations.delete(
         DeleteAllocationRequest.create({ id }),
       );
       await operation.wait();
@@ -641,7 +642,7 @@ export class NebiusProvider implements CloudProvider {
   async ensureManagedComputeSecurityGroup(
     creds: NebiusProviderCreds,
   ): Promise<string> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) throw new Error("nebius parentId is required");
     if (!creds.subnetId) throw new Error("nebius subnetId is required");
@@ -818,7 +819,7 @@ export class NebiusProvider implements CloudProvider {
     spec: { name: string; size_gb: number; disk_type?: string },
     creds: NebiusProviderCreds,
   ): Promise<{ id: string; name: string; size_gb: number; users: string[] }> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) throw new Error("nebius parentId is required");
     const normalized = normalizeDiskSizeGib(spec.size_gb);
@@ -854,7 +855,7 @@ export class NebiusProvider implements CloudProvider {
   ): Promise<
     { id: string; name: string; size_gb: number; users: string[] } | undefined
   > {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) throw new Error("nebius parentId is required");
     const id = await findDiskIdByName(
@@ -886,8 +887,9 @@ export class NebiusProvider implements CloudProvider {
   ): Promise<void> {
     const observed = await this.inspectPersistentDisk(spec, creds);
     if (!observed) throw new Error(`nebius disk '${spec.name}' not found`);
+    await using client = new NebiusClient(creds);
     await updateDiskSize({
-      client: new NebiusClient(creds),
+      client,
       diskId: observed.id,
       diskType: DiskSpec_DiskType.NETWORK_SSD_NON_REPLICATED,
       sizeGib: normalizeDiskSizeGib(spec.size_gb).sizeGib,
@@ -901,18 +903,15 @@ export class NebiusProvider implements CloudProvider {
   ): Promise<void> {
     const observed = await this.inspectPersistentDisk(spec, creds);
     if (!observed) return;
-    await deleteDiskWithRetry(
-      new NebiusClient(creds),
-      observed.id,
-      "managed-compute-volume",
-    );
+    await using client = new NebiusClient(creds);
+    await deleteDiskWithRetry(client, observed.id, "managed-compute-volume");
   }
 
   async listPersistentDisks(
     creds: NebiusProviderCreds,
     opts?: { namePrefix?: string },
   ): Promise<Array<{ id: string; name: string; size_gb: number }>> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) return [];
     const response = await client.disks.list(
@@ -938,7 +937,7 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
     opts?: { namePrefix?: string },
   ): Promise<Array<{ id: string; name: string; ip?: string }>> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) return [];
     const response = await client.allocations.list(
@@ -981,7 +980,7 @@ export class NebiusProvider implements CloudProvider {
     spec: HostSpec,
     creds: NebiusProviderCreds,
   ): Promise<HostRuntime> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = creds.parentId;
     if (!parentId) {
       throw new Error("nebius parentId is required");
@@ -1409,7 +1408,7 @@ export class NebiusProvider implements CloudProvider {
   }
 
   async startHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const op = await client.instances.start(
       StartInstanceRequest.create({ id: runtime.instance_id }),
     );
@@ -1418,7 +1417,7 @@ export class NebiusProvider implements CloudProvider {
 
   async stopHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
     if (hasProvisionalInstanceId(runtime)) return;
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     try {
       const op = await client.instances.stop(
         StopInstanceRequest.create({ id: runtime.instance_id }),
@@ -1449,7 +1448,7 @@ export class NebiusProvider implements CloudProvider {
   async listCapacityAdvice(
     creds: NebiusProviderCreds,
   ): Promise<NebiusCapacityAdvice[]> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const project = await client.projects.get(
       GetProjectRequest.create({ id: creds.parentId }),
     );
@@ -1500,7 +1499,7 @@ export class NebiusProvider implements CloudProvider {
   }
 
   async restartHost(runtime: HostRuntime, creds: NebiusProviderCreds) {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const stopOp = await client.instances.stop(
       StopInstanceRequest.create({ id: runtime.instance_id }),
     );
@@ -1517,7 +1516,7 @@ export class NebiusProvider implements CloudProvider {
     opts?: { preserveDataDisk?: boolean },
   ) {
     if (hasProvisionalInstanceId(runtime)) return;
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     try {
       const op = await client.instances.delete(
         DeleteInstanceRequest.create({ id: runtime.instance_id }),
@@ -1546,7 +1545,7 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
   ): Promise<void> {
     if (hasProvisionalInstanceId(runtime)) return;
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     try {
       const op = await client.instances.delete(
         DeleteInstanceRequest.create({ id: runtime.instance_id }),
@@ -1562,7 +1561,7 @@ export class NebiusProvider implements CloudProvider {
     newSizeGb: number,
     creds: NebiusProviderCreds,
   ) {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const diskIds = (runtime.metadata as NebiusRuntimeMeta | undefined)
       ?.diskIds;
     if (!diskIds?.data) {
@@ -1583,7 +1582,7 @@ export class NebiusProvider implements CloudProvider {
     newSizeGb: number,
     creds: NebiusProviderCreds,
   ) {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const meta = runtime.metadata as NebiusRuntimeMeta | undefined;
     const diskId =
       meta?.diskIds?.scratch ?? (runtime.metadata as any)?.shared_disk_id;
@@ -1614,7 +1613,7 @@ export class NebiusProvider implements CloudProvider {
     if (!parentId) {
       throw new Error("nebius parentId is required");
     }
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const meta = runtime.metadata as NebiusRuntimeMeta | undefined;
     const scratchDiskType = sharedScratchDiskTypeFor(spec);
     const normalized = normalizeDiskSizeGib(sharedDiskGb);
@@ -1701,7 +1700,7 @@ export class NebiusProvider implements CloudProvider {
     runtime: HostRuntime,
     creds: NebiusProviderCreds,
   ) {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const diskId =
       (runtime.metadata as NebiusRuntimeMeta | undefined)?.diskIds?.scratch ??
       (runtime.metadata as any)?.shared_disk_id;
@@ -1714,7 +1713,7 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
   ): Promise<RemoteInstance | undefined> {
     if (hasProvisionalInstanceId(runtime)) return undefined;
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     let instance;
     try {
       instance = await client.instances.get(
@@ -1784,7 +1783,7 @@ export class NebiusProvider implements CloudProvider {
     creds: NebiusProviderCreds,
     opts?: { namePrefix?: string },
   ): Promise<RemoteInstance[]> {
-    const client = new NebiusClient(creds);
+    await using client = new NebiusClient(creds);
     const parentId = client.parentId();
     if (!parentId) return [];
     const res = await client.instances.list(

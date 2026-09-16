@@ -39,6 +39,9 @@ export async function ensureExactAIUsageSchema(): Promise<void> {
         "ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS reasoning_output_tokens BIGINT",
         "ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS request_sequence INTEGER",
         "ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS long_context BOOLEAN",
+        "ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS media_operation TEXT",
+        "ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS audio_duration_ms BIGINT",
+        "ALTER TABLE ai_usage_log ADD COLUMN IF NOT EXISTS input_characters BIGINT",
       ]) {
         await pool.query(statement);
       }
@@ -85,6 +88,9 @@ export async function saveAIResponse({
   reasoning_output_tokens,
   request_sequence,
   long_context,
+  media_operation,
+  audio_duration_ms,
+  input_characters,
   system,
   tag,
   total_time_s,
@@ -108,9 +114,10 @@ export async function saveAIResponse({
          usage_units,cost_microusd,funded_turn_id,funded_event_id,
          cached_input_tokens,cache_write_input_tokens,output_tokens,
          price_version,provider_request_id,provider_tool_fees_microusd,
-         reasoning_output_tokens,request_sequence,long_context
+         reasoning_output_tokens,request_sequence,long_context,
+         media_operation,audio_duration_ms,input_characters
        ) VALUES(
-         COALESCE($28::timestamptz, NOW()),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27
+         COALESCE($31::timestamptz, NOW()),$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30
        ) ON CONFLICT (funded_event_id) WHERE funded_event_id IS NOT NULL DO NOTHING`,
       [
         input,
@@ -148,6 +155,9 @@ export async function saveAIResponse({
         reasoning_output_tokens ?? null,
         request_sequence ?? null,
         long_context ?? null,
+        media_operation ?? null,
+        audio_duration_ms ?? null,
+        input_characters ?? null,
         occurred_at ?? null,
       ],
     );

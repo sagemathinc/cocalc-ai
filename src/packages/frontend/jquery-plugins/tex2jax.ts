@@ -34,6 +34,8 @@
  *  limitations under the License.
  */
 
+import $ from "jquery";
+
 export const tex2jax: any = {
   config: {
     inlineMath: [

@@ -20,8 +20,9 @@ test("historical opening and working-copy editing are distinct intents", async (
     />,
   );
   const path = screen.getByRole("button", {
-    name: "Copy repository-relative path: new.ts",
+    name: "Copy repository-relative path: new.ts (renamed from old.ts)",
   });
+  expect(path.textContent).toContain("old.ts");
   path.focus();
   await user.keyboard("{Enter}");
   expect(copy).toHaveBeenCalledTimes(1);
@@ -58,6 +59,12 @@ test("selecting path text suppresses copy activation and long paths remain conta
   expect(button.parentElement!.style.height).toBe(
     `${reviewFileHeaderHeight(20)}px`,
   );
+  expect(reviewFileHeaderHeight(14)).toBe(37);
+  expect(button.parentElement).toHaveStyle({
+    display: "flex",
+    alignItems: "center",
+  });
+  expect(button.style.flex).toBe("1 1 0%");
 });
 
 test("unavailable historical opening never falls back to working-copy opening", () => {

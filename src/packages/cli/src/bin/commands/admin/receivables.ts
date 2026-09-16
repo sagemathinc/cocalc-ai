@@ -1466,6 +1466,98 @@ function registerQuoteCommands(
 
   mutationOptions(
     quote
+      .command("share <order>")
+      .description(
+        "issue an expiring bearer link to a retained PDF (replaces the previous link)",
+      )
+      .requiredOption("--quote-id <uuid>", "internal commercial quote id")
+      .requiredOption(
+        "--expires-at <iso>",
+        "link expiration, no later than quote expiration",
+      ),
+    "issue a private quote download link",
+  ).action(async (orderRef: string, opts: any, command: Command) => {
+    await deps.withContext(
+      command,
+      "admin receivables quote share",
+      async (ctx) => {
+        const order = await ctx.hub.commercialOrders.get({
+          id: normalizeOrderReference(orderRef),
+          reason: requireReason(opts.reason),
+        });
+        const request = {
+          id: order.id,
+          ...commonMutationRequest("quote-share", order, opts, {
+            commercial_quote_id: `${opts.quoteId}`.trim(),
+            expires_at: normalizeIso(opts.expiresAt, "--expires-at"),
+          }),
+        };
+        if (!opts.commit)
+          return preview(
+            "quote-share",
+            order,
+            request as unknown as JsonObject,
+          );
+        // Resolve the public origin before mutation so failures cannot lose a new token.
+        const { url: publicUrl } = await ctx.hub.system.getPublicSiteUrl({});
+        const base = new URL(publicUrl);
+        if (
+          !["http:", "https:"].includes(base.protocol) ||
+          base.username ||
+          base.password
+        )
+          throw Error("invalid public site URL");
+        const result = await ctx.hub.commercialOrders.issueQuoteLink(request);
+        return {
+          order_number: result.order.order_number,
+          version: result.order.version,
+          url: result.path
+            ? `${publicUrl.replace(/\/+$/, "")}${result.path}`
+            : null,
+          notice: result.path
+            ? "Anyone with this link can download the PDF until expiration or revocation. Store it privately; it is returned only once."
+            : "Idempotent replay: no new link was issued. The original token cannot be recovered. To replace it, issue a new request with a new idempotency key and current version.",
+        };
+      },
+    );
+  });
+
+  mutationOptions(
+    quote
+      .command("revoke-link <order>")
+      .description(
+        "revoke the quote PDF download link without voiding the quote",
+      )
+      .requiredOption("--quote-id <uuid>", "internal commercial quote id"),
+    "revoke the quote download link",
+  ).action(async (orderRef: string, opts: any, command: Command) => {
+    await deps.withContext(
+      command,
+      "admin receivables quote revoke-link",
+      async (ctx) => {
+        const order = await ctx.hub.commercialOrders.get({
+          id: normalizeOrderReference(orderRef),
+          reason: requireReason(opts.reason),
+        });
+        const request = {
+          id: order.id,
+          ...commonMutationRequest("quote-revoke-link", order, opts, {
+            commercial_quote_id: `${opts.quoteId}`.trim(),
+          }),
+        };
+        if (!opts.commit)
+          return preview(
+            "quote-revoke-link",
+            order,
+            request as unknown as JsonObject,
+          );
+        return await ctx.hub.commercialOrders.revokeQuoteLink(request);
+      },
+    );
+  });
+
+  mutationOptions(
+    quote
       .command("void <order>")
       .description("preview or void a previously issued quote")
       .requiredOption("--quote-id <uuid>", "internal commercial quote id"),
@@ -1921,16 +2013,53 @@ function registerMaintenanceCommands(
       "inspect commercial receivables consistency and reconciliation health",
     )
     .option("--reconcile", "request reconciliation-aware diagnostics", false)
+    .option(
+      "--include-legacy-invoices",
+      "read-only scan of unlinked open send-invoice candidates across the entire Stripe account",
+      false,
+    )
+    .option(
+      "--legacy-invoice-limit <number>",
+      "provider invoices to examine, including linked invoices (1-500; default 100)",
+    )
+    .option(
+      "--legacy-invoice-cursor <id>",
+      "continue a legacy scan from its next_cursor",
+    )
     .option("--reason <text>", "audit reason for this admin read")
     .action(async (opts: any, command: Command) => {
       await deps.withContext(
         command,
         "admin receivables diagnostics",
-        async (ctx) =>
-          await ctx.hub.commercialOrders.diagnostics({
+        async (ctx) => {
+          if (
+            !opts.includeLegacyInvoices &&
+            (opts.legacyInvoiceLimit != null ||
+              opts.legacyInvoiceCursor != null)
+          ) {
+            throw new Error(
+              "legacy invoice options require --include-legacy-invoices",
+            );
+          }
+          const limit = parsePositiveInteger(
+            opts.legacyInvoiceLimit,
+            "--legacy-invoice-limit",
+            { maximum: 500 },
+          );
+          return await ctx.hub.commercialOrders.diagnostics({
             reason: readReason(opts.reason, READ_REASONS.diagnostics),
             reconcile: opts.reconcile || undefined,
-          }),
+            ...(opts.includeLegacyInvoices
+              ? { include_legacy_invoices: true }
+              : {}),
+            ...(opts.legacyInvoiceLimit != null
+              ? { legacy_invoice_limit: limit }
+              : {}),
+            ...(opts.legacyInvoiceCursor != null
+              ? { legacy_invoice_cursor: opts.legacyInvoiceCursor }
+              : {}),
+          });
+        },
       );
     });
 

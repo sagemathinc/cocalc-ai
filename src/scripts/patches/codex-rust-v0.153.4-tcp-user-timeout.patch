@@ -1,0 +1,111 @@
+diff --git a/codex-rs/http-client/src/client_builder.rs b/codex-rs/http-client/src/client_builder.rs
+index 7cd0b4db2d..65b5794867 100644
+--- a/codex-rs/http-client/src/client_builder.rs
++++ b/codex-rs/http-client/src/client_builder.rs
+@@ -30,6 +30,7 @@ pub struct HttpClientBuilder {
+     default_headers: Option<HeaderMap>,
+     follow_redirects: bool,
+     connect_timeout: Option<Duration>,
++    tcp_user_timeout: Option<Duration>,
+     chatgpt_cloudflare_cookie_store: bool,
+     chatgpt_cookie_store: Option<Arc<ChatGptCookieStore>>,
+     request_logging: RequestLogging,
+@@ -91,6 +92,11 @@ impl HttpClientBuilder {
+         self
+     }
+ 
++    pub fn tcp_user_timeout(mut self, timeout: Duration) -> Self {
++        self.tcp_user_timeout = Some(timeout);
++        self
++    }
++
+     pub fn with_chatgpt_cloudflare_cookie_store(mut self) -> Self {
+         self.chatgpt_cloudflare_cookie_store = true;
+         self
+@@ -269,6 +275,10 @@ impl HttpClientBuilder {
+         if let Some(connect_timeout) = self.connect_timeout {
+             builder = builder.connect_timeout(connect_timeout);
+         }
++        #[cfg(any(target_os = "linux", target_os = "android", target_os = "fuchsia"))]
++        if let Some(tcp_user_timeout) = self.tcp_user_timeout {
++            builder = builder.tcp_user_timeout(tcp_user_timeout);
++        }
+         if self.chatgpt_cloudflare_cookie_store {
+             builder = match self.chatgpt_cookie_store {
+                 Some(store) => builder.cookie_provider(store),
+@@ -285,6 +295,7 @@ impl Default for HttpClientBuilder {
+             default_headers: None,
+             follow_redirects: true,
+             connect_timeout: None,
++            tcp_user_timeout: None,
+             chatgpt_cloudflare_cookie_store: false,
+             chatgpt_cookie_store: None,
+             request_logging: RequestLogging::Enabled,
+diff --git a/codex-rs/login/src/auth/default_client.rs b/codex-rs/login/src/auth/default_client.rs
+index 985cdb0b43..9a90950eb2 100644
+--- a/codex-rs/login/src/auth/default_client.rs
++++ b/codex-rs/login/src/auth/default_client.rs
+@@ -18,6 +18,7 @@ use http::header::USER_AGENT;
+ use std::sync::LazyLock;
+ use std::sync::Mutex;
+ use std::sync::RwLock;
++use std::time::Duration;
+ 
+ use crate::outbound_proxy::AuthRouteConfig;
+ 
+@@ -39,7 +40,9 @@ use crate::outbound_proxy::AuthRouteConfig;
+ pub static USER_AGENT_SUFFIX: LazyLock<Mutex<Option<String>>> = LazyLock::new(|| Mutex::new(None));
+ pub const DEFAULT_ORIGINATOR: &str = "codex_cli_rs";
+ pub const CODEX_INTERNAL_ORIGINATOR_OVERRIDE_ENV_VAR: &str = "CODEX_INTERNAL_ORIGINATOR_OVERRIDE";
++pub const CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR: &str = "CODEX_TCP_USER_TIMEOUT_MS";
+ pub const RESIDENCY_HEADER_NAME: &str = "x-openai-internal-codex-residency";
++const DEFAULT_TCP_USER_TIMEOUT_MS: u64 = 300_000;
+ 
+ pub use codex_config::ResidencyRequirement;
+ 
+@@ -289,9 +292,43 @@ pub async fn create_client_for_route_async(
+ }
+ 
+ fn default_http_client_builder() -> HttpClientBuilder {
+-    HttpClientBuilder::new()
++    let mut builder = HttpClientBuilder::new()
+         .default_headers(default_headers())
+-        .with_chatgpt_cloudflare_cookie_store()
++        .with_chatgpt_cloudflare_cookie_store();
++    if let Some(timeout) = tcp_user_timeout() {
++        builder = builder.tcp_user_timeout(timeout);
++    }
++    builder
++}
++
++fn tcp_user_timeout() -> Option<Duration> {
++    #[cfg(any(target_os = "linux", target_os = "android", target_os = "fuchsia"))]
++    {
++        let timeout_ms = std::env::var(CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR)
++            .ok()
++            .and_then(|value| {
++                let trimmed = value.trim();
++                match trimmed.parse::<u64>() {
++                    Ok(ms) if ms > 0 => Some(ms),
++                    Ok(_) => None,
++                    Err(err) => {
++                        tracing::warn!(
++                            env_var = CODEX_TCP_USER_TIMEOUT_MS_ENV_VAR,
++                            value = trimmed,
++                            error = %err,
++                            "ignoring invalid tcp_user_timeout override"
++                        );
++                        None
++                    }
++                }
++            })
++            .unwrap_or(DEFAULT_TCP_USER_TIMEOUT_MS);
++        Some(Duration::from_millis(timeout_ms))
++    }
++    #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "fuchsia")))]
++    {
++        None
++    }
+ }
+ 
+ // These legacy constructors intentionally preserve the infallible behavior of `create_client`.

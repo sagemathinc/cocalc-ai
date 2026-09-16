@@ -578,7 +578,12 @@ async function createManagedAppForward(
     reused = true;
   } else {
     if (existing) {
-      await runReflectSyncCli(["forward", "terminate", String(existing.id)]);
+      await runReflectSyncCli([
+        "forward",
+        "remove",
+        String(existing.id),
+        "--stop",
+      ]);
     }
     const created = await runReflectSyncCli([
       "forward",

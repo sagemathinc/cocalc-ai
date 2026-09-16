@@ -77,13 +77,15 @@ that docs match the product.
 
 ## Use the browser session
 
-1. Load the matching dev environment before using \`cocalc browser\`.
-2. List browser files or docs actions when you need context.
+1. Follow [Test browser workflows with the CLI](/docs/cli/browser-workflows)
+   to authenticate for the intended site and resolve the browser and project.
+2. Read that session's API declaration and inspect its page before acting.
 3. Use high-level actions such as docs actions before falling back to generic
    browser exec scripts.
 4. Use assertions such as waiting for text or a URL when verifying behavior.
 
-For local hub development, refresh the environment with
+For local source development only, load the matching development environment.
+For a local hub, refresh it with
 \`cd src && eval "$(pnpm -s dev:hub:env)"\` before live browser commands.
 
 ## Keep automation scoped

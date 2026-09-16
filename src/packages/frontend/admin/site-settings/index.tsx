@@ -48,6 +48,10 @@ import type {
 import GcpServiceAccountWizard from "./gcp-service-account-wizard";
 import NebiusCliWizard from "./nebius-cli-wizard";
 import CloudflareConfigWizard from "./cloudflare-config-wizard";
+import CloudflareSettingsEntry, {
+  hasVisibleSettings,
+  showSettingsSubgroup,
+} from "./cloudflare-settings-entry";
 import LauncherDefaultsWizard from "./launcher-defaults-wizard";
 import RuntimeRetentionPolicyWizard from "./runtime-retention-policy-wizard";
 import ShowError from "@cocalc/frontend/components/error";
@@ -1239,16 +1243,24 @@ export default function SiteSettings({
       "System / Advanced",
       "Other",
     ];
-    const groupEntries = [...groupMap.entries()].sort((a, b) => {
-      const ai = GROUP_ORDER.indexOf(a[0]);
-      const bi = GROUP_ORDER.indexOf(b[0]);
-      if (ai !== -1 || bi !== -1) {
-        if (ai === -1) return 1;
-        if (bi === -1) return -1;
-        return ai - bi;
-      }
-      return a[0].localeCompare(b[0]);
-    });
+    const groupEntries = [...groupMap.entries()]
+      .filter(
+        ([group, subgroups]) =>
+          group === "Cloudflare" ||
+          [...subgroups].some(([subgroup, items]) =>
+            showSettingsSubgroup(group, subgroup, items, showHidden),
+          ),
+      )
+      .sort((a, b) => {
+        const ai = GROUP_ORDER.indexOf(a[0]);
+        const bi = GROUP_ORDER.indexOf(b[0]);
+        if (ai !== -1 || bi !== -1) {
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return ai - bi;
+        }
+        return a[0].localeCompare(b[0]);
+      });
 
     return (
       <>
@@ -1293,100 +1305,125 @@ export default function SiteSettings({
               )}
             </div>
             {groupName === "Messaging & Email" && <EmailTest />}
+            {groupName === "Cloudflare" && (
+              <CloudflareSettingsEntry
+                onConfigure={() => openWizard("cloudflare-config")}
+              />
+            )}
             {[...subgroups.entries()]
+              .filter(([subgroupName, items]) =>
+                showSettingsSubgroup(
+                  groupName,
+                  subgroupName,
+                  items,
+                  showHidden,
+                ),
+              )
               .sort((a, b) => a[0].localeCompare(b[0]))
-              .map(([subgroupName, items]) => (
-                <details
-                  data-admin-subgroup
-                  key={`${groupName}-${subgroupName}`}
-                >
-                  <summary
-                    style={{
-                      margin: "10px 0 4px 0",
-                      color: UI_COLORS.secondary,
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "8px",
-                    }}
+              .map(([subgroupName, items]) =>
+                groupName === "Backups & Storage" &&
+                subgroupName === "Cloudflare R2" &&
+                !hasVisibleSettings(items) ? (
+                  <CloudflareSettingsEntry
+                    key={subgroupName}
+                    storageOnly
+                    onConfigure={() => openWizard("cloudflare-config")}
+                  />
+                ) : (
+                  <details
+                    data-admin-subgroup
+                    key={`${groupName}-${subgroupName}`}
                   >
-                    {subgroupName}
-                    {subgroupMissingCounts.get(groupName)?.get(subgroupName) ? (
-                      <span
-                        style={{
-                          fontSize: "12px",
-                          fontWeight: 600,
-                          color: UI_COLORS.danger,
-                          background: UI_COLORS.dangerBg,
-                          border: `1px solid ${UI_COLORS.danger}`,
-                          borderRadius: "10px",
-                          padding: "1px 8px",
-                        }}
-                      >
-                        {subgroupMissingCounts
-                          .get(groupName)
-                          ?.get(subgroupName)}{" "}
-                        missing
-                      </span>
-                    ) : null}
-                  </summary>
-                  {groupName === "System / Advanced" &&
-                    subgroupName === "Launch Emergency Controls" && (
-                      <Alert
-                        showIcon
-                        type="info"
-                        style={{ margin: "8px 0 12px 0" }}
-                        title="Signup incident runbook"
-                        description={
-                          <span>
-                            These switches limit post-signup capabilities. If
-                            the incident is new-account creation, use the{" "}
-                            <DocsLink
-                              href="/app-docs/admin/signup-emergency-controls"
-                              slug="admin/signup-emergency-controls"
-                            >
-                              signup emergency controls runbook
-                            </DocsLink>{" "}
-                            for registration-token, email-signup, domain, and
-                            SSO account-creation controls.
-                          </span>
-                        }
-                      />
-                    )}
-                  {items
-                    .sort((a, b) => {
-                      const orderA = a.conf.order ?? 1000;
-                      const orderB = b.conf.order ?? 1000;
-                      if (orderA !== orderB) return orderA - orderB;
-                      return a.conf.name.localeCompare(b.conf.name);
-                    })
-                    .map(({ name, conf }) => {
-                      return (
-                        <RenderRow
-                          filterStr={filterStr}
-                          filterTag={filterTag}
-                          key={name}
-                          name={name}
-                          conf={conf}
-                          data={data}
-                          isSet={isSet}
-                          isClearing={clearSecretsRef.current}
-                          isReadonly={isReadonly}
-                          onChangeEntry={onChangeEntry}
-                          onDraftEntry={onDraftEntry}
-                          onJsonEntryChange={onJsonEntryChange}
-                          isModified={isModified}
-                          isHeader={isHeader(name)}
-                          saveSingleSetting={saveSingleSetting}
-                          onClearSecret={onClearSecret}
-                          showHidden={showHidden}
-                          showAdvanced={showAdvanced}
-                          onOpenWizard={openWizard}
+                    <summary
+                      style={{
+                        margin: "10px 0 4px 0",
+                        color: UI_COLORS.secondary,
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                      }}
+                    >
+                      {subgroupName}
+                      {subgroupMissingCounts
+                        .get(groupName)
+                        ?.get(subgroupName) ? (
+                        <span
+                          style={{
+                            fontSize: "12px",
+                            fontWeight: 600,
+                            color: UI_COLORS.danger,
+                            background: UI_COLORS.dangerBg,
+                            border: `1px solid ${UI_COLORS.danger}`,
+                            borderRadius: "10px",
+                            padding: "1px 8px",
+                          }}
+                        >
+                          {subgroupMissingCounts
+                            .get(groupName)
+                            ?.get(subgroupName)}{" "}
+                          missing
+                        </span>
+                      ) : null}
+                    </summary>
+                    {groupName === "System / Advanced" &&
+                      subgroupName === "Launch Emergency Controls" && (
+                        <Alert
+                          showIcon
+                          type="info"
+                          style={{ margin: "8px 0 12px 0" }}
+                          title="Signup incident runbook"
+                          description={
+                            <span>
+                              These switches limit post-signup capabilities. If
+                              the incident is new-account creation, use the{" "}
+                              <DocsLink
+                                href="/app-docs/admin/signup-emergency-controls"
+                                slug="admin/signup-emergency-controls"
+                              >
+                                signup emergency controls runbook
+                              </DocsLink>{" "}
+                              for registration-token, email-signup, domain, and
+                              SSO account-creation controls.
+                            </span>
+                          }
                         />
-                      );
-                    })}
-                </details>
-              ))}
+                      )}
+                    {items
+                      .sort((a, b) => {
+                        const orderA = a.conf.order ?? 1000;
+                        const orderB = b.conf.order ?? 1000;
+                        if (orderA !== orderB) return orderA - orderB;
+                        return a.conf.name.localeCompare(b.conf.name);
+                      })
+                      .map(({ name, conf }) => {
+                        return (
+                          <RenderRow
+                            filterStr={filterStr}
+                            filterTag={filterTag}
+                            key={name}
+                            name={name}
+                            conf={conf}
+                            data={data}
+                            isSet={isSet}
+                            isClearing={clearSecretsRef.current}
+                            isReadonly={isReadonly}
+                            onChangeEntry={onChangeEntry}
+                            onDraftEntry={onDraftEntry}
+                            onJsonEntryChange={onJsonEntryChange}
+                            isModified={isModified}
+                            isHeader={isHeader(name)}
+                            saveSingleSetting={saveSingleSetting}
+                            onClearSecret={onClearSecret}
+                            showHidden={showHidden}
+                            showAdvanced={showAdvanced}
+                            onOpenWizard={openWizard}
+                          />
+                        );
+                      })}
+                  </details>
+                ),
+              )}
           </div>
         ))}
       </>

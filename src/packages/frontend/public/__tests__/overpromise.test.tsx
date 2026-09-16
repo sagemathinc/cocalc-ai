@@ -76,7 +76,11 @@ afterEach(async () => {
 });
 
 async function renderPublicPath(path: string) {
-  const config = { help_email: "help@example.com", site_name: "CoCalc" };
+  const config = {
+    cocalc_product: "launchpad",
+    help_email: "help@example.com",
+    site_name: "CoCalc",
+  };
   const result = render(
     path === "" ? (
       <PublicHomeApp config={config} />
@@ -95,6 +99,7 @@ async function renderPublicPath(path: string) {
 
 function routeMetadata(path: string) {
   return getPublicRouteMetadata(getPublicMetadataRouteFromPath(path), {
+    cocalc_product: "launchpad",
     site_name: "CoCalc",
   });
 }
@@ -103,6 +108,12 @@ describe("rendered public marketing overpromise canary", () => {
   it.each(MARKETING_PATHS)("keeps unsupported claims off %s", async (path) => {
     const { container } = await renderPublicPath(path);
     const text = container.textContent ?? "";
+    if (path === "features/research-compute") {
+      // Keep this canary on the article, not its unavailable/not-found state.
+      expect(
+        container.querySelector('a[href="/docs/hosts/project-hosts"]'),
+      ).not.toBeNull();
+    }
 
     expect(text).not.toMatch(OVERPROMISE_TERMS);
     if (path !== "pricing") {

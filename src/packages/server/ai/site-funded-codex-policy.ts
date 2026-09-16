@@ -114,3 +114,11 @@ export async function getSiteFundedCodexConfiguration(): Promise<SiteFundedCodex
     (await getServerSettings()) as Settings,
   );
 }
+
+export async function getSiteFundedAIGlobalPoolLimitMicrousd(): Promise<number> {
+  const settings = (await getServerSettings()) as Settings;
+  return positiveUsdMicrousd(
+    settings.site_funded_codex_global_pool_weekly_usd,
+    100 * 1_000_000,
+  );
+}

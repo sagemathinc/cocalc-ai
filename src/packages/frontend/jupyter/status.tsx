@@ -195,6 +195,8 @@ export function Kernel({
     name,
     "kernel_info",
   ]);
+  const isRemoteKernel =
+    kernel_info?.getIn(["metadata", "reflect", "remote"]) === true;
   const show_kernel_selector: undefined | boolean = useRedux([
     name,
     "show_kernel_selector",
@@ -818,14 +820,14 @@ export function Kernel({
         {kernel_tip}
         <Divider style={{ margin: "8px 0" }} />
         {render_usage_text()}
-        {actions.path != null ? (
+        {!isRemoteKernel && actions.path != null ? (
           <div style={{ marginBottom: "8px" }}>
             <Button size="small" onClick={openProcessInfo}>
               Open in Processes
             </Button>
           </div>
         ) : undefined}
-        {usage_help}
+        {!isRemoteKernel && usage_help}
       </span>
     );
     return <div style={{ maxWidth: "100%", paddingTop: "4px" }}>{tip}</div>;
@@ -838,6 +840,7 @@ export function Kernel({
 
   function renderUsage() {
     if (kernel == null) return;
+    if (isRemoteKernel) return;
     // Checked before the startup estimate below, which has no usage of its own
     // and would otherwise keep taking 300px in a frame with no room for it.
     if (usageDisplay === "hidden") return;
@@ -1049,6 +1052,13 @@ export function Kernel({
 
   // this ends up in the popover tip. it contains the actual values and the same color coded usage levels
   function render_usage_text() {
+    if (isRemoteKernel) {
+      return (
+        <Typography.Text type="secondary">
+          Remote kernel CPU and memory usage are unavailable.
+        </Typography.Text>
+      );
+    }
     if (usage == null) return;
 
     const cpu_style = usage_text_style_level(usage.cpu_alert);

@@ -360,7 +360,7 @@ export class GitReadService {
     {
       skip = 0,
       count = 100,
-      firstParent = true,
+      firstParent = false,
       showMerges = true,
     }: {
       skip?: number;

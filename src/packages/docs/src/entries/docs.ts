@@ -10,7 +10,7 @@ import {
   DOCS_ACTIONS_BODY,
   DOCS_BROWSER_BODY,
   QUICK_NAVIGATION_BODY,
-} from "../content";
+} from "../content/docs";
 
 export const DOCUMENTATION_ENTRIES: DocsEntry[] = [
   {

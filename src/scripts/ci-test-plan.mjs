@@ -105,10 +105,28 @@ export function createPlan({
     })
     .sort();
   const lanes = [];
-  for (const lane of ["server", "frontend"]) {
-    if (selectedSet.delete(lane)) {
-      lanes.push({ lane, packages: lane });
+  if (selectedSet.delete("server")) {
+    for (let index = 1; index <= 2; index++) {
+      lanes.push({
+        lane: `server-${index}`,
+        packages: "server",
+        shard: `${index}/2`,
+      });
     }
+  }
+  if (selectedSet.delete("frontend")) {
+    lanes.push({ lane: "frontend", packages: "frontend" });
+  }
+  // These packages accounted for 183s of the 399s remaining-package lane in
+  // the September 9 measurement. Run their complete suites on another runner.
+  const backendDatabase = ["backend", "database"].filter((name) =>
+    selectedSet.delete(name),
+  );
+  if (backendDatabase.length) {
+    lanes.push({
+      lane: "backend-database",
+      packages: backendDatabase.join(","),
+    });
   }
   const rest = [...selectedSet].sort();
   if (rest.length) {

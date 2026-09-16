@@ -49,10 +49,11 @@ export default function PythonFeaturePage({
               <Paragraph
                 style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: 720 }}
               >
-                Every CoCalc project is a Linux machine with the scientific
-                Python stack ready to use: Jupyter notebooks, scripts, and
-                terminals in your browser. Install any package you need, and it
-                stays with the project.
+                Hosted CoCalc projects run Linux with the software supplied by
+                their selected image. Choose a Python image for scientific
+                packages, notebooks, scripts, and terminals in your browser.
+                Local CoCalc Plus uses your computer's operating system and
+                installed software.
               </Paragraph>
               <Flex wrap gap={12}>
                 <Button type="primary" href={primaryCtaHref}>
@@ -87,9 +88,10 @@ export default function PythonFeaturePage({
           anchor="a-overview"
           description={
             <>
-              Scripts, notebooks, terminals, and web apps all use the same
-              Python installation in the same project, so the environment stays
-              the same while the work changes.
+              Keep scripts, notebooks, terminal sessions, and web apps beside
+              the same project files. Select and check the Python environment
+              used by each tool so package versions match the work you intend to
+              run.
             </>
           }
         >
@@ -115,10 +117,11 @@ export default function PythonFeaturePage({
           </Paragraph>
           <Paragraph>
             Longer work belongs in a{" "}
-            <a href={appPath("features/terminal")}>real Linux terminal</a>:{" "}
+            <a href={appPath("features/terminal")}>project terminal</a>:{" "}
             <code>python train.py</code> runs in a session that{" "}
-            <strong>keeps going when you close the browser</strong>, and you
-            reconnect to the same output later.
+            <strong>keeps going when you close the browser</strong> while the
+            project runtime remains running. Reconnect to inspect its output and
+            save the results you need.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -130,34 +133,39 @@ export default function PythonFeaturePage({
           icon="download"
           imageComponent={
             <CodeBlock
-              ariaLabel="Installing Python packages with uv, pip, and apt in a CoCalc project"
+              ariaLabel="Installing and checking Python packages in one virtual environment"
               code={`uv venv .venv
-source .venv/bin/activate
-uv pip install polars scikit-image
-
-pip install --user tqdm
-sudo apt-get update
-sudo apt-get install -y libgdal-dev
-
-python -c "import polars; print(polars.__version__)"`}
+uv pip install --python .venv/bin/python polars scikit-image tqdm
+.venv/bin/python -c "import polars; print(polars.__version__)"`}
             />
           }
           title="Install the packages you want, at any layer"
         >
           <Paragraph>
-            You are not limited to what the image ships.{" "}
-            <strong>Passwordless sudo works in every project</strong>, so{" "}
-            <code>apt-get</code> installs system libraries, while{" "}
-            <code>uv</code>, <code>pip</code>, and <code>conda</code> install
-            Python packages right where the code runs, in a virtual environment
-            or in your home directory.
+            In a Linux project with <code>uv</code> available, the example
+            installs packages and checks them using the same virtual
+            environment. Use an unused <code>.venv</code> directory. Register
+            that environment as a{" "}
+            <a href={appPath("docs/jupyter/custom-kernels")}>
+              custom Jupyter kernel
+            </a>{" "}
+            when a notebook should use it; installing packages does not select
+            the notebook's interpreter. Native Windows Plus needs commands and
+            paths for Windows.
           </Paragraph>
           <Paragraph>
-            Everything you install <strong>persists with the project</strong>:
-            it survives restarts, is captured in snapshots and backups, and
-            moves with the project. A per-repository setup, such as a uv
-            environment defined in a Git repo, works exactly as it does on your
-            own machine.
+            System package commands depend on the image and your permissions. On
+            Linux images with <code>apt-get</code> and permitted sudo access,
+            use them for system libraries; use your chosen environment's package
+            manager for Python dependencies.
+          </Paragraph>
+          <Paragraph>
+            In hosted Linux projects, environments under HOME are project files;
+            system packages belong to the runtime filesystem. Temporary paths
+            have different retention. Record the image and dependency versions,
+            and check the configured HOME and RootFS backup coverage before
+            relying on a restore, move, or image change. Local Plus uses local
+            storage and your computer's backup arrangements.
           </Paragraph>
           <Paragraph>
             <LinkButton href={appPath("features/software-environment")}>
@@ -203,14 +211,23 @@ python -c "import polars; print(polars.__version__)"`}
           title="JupyterLab and VS Code in the browser"
         >
           <Paragraph>
-            Prefer a full IDE? The project's Apps panel launches{" "}
-            <strong>JupyterLab and VS Code with one click</strong>, running
-            inside the project on the same files, packages, and Python
-            installation as everything else.
+            Prefer a full IDE? With the required software installed, the
+            project's Apps panel launches{" "}
+            <strong>JupyterLab and VS Code</strong> inside the project. They
+            work with the project's files, while each notebook kernel or IDE can
+            select its own Python environment.
           </Paragraph>
           <Paragraph>
             They run <strong>behind your login</strong>, so there is nothing to
             install locally and no second copy of the code to keep in sync.
+          </Paragraph>
+          <Paragraph>
+            Check <code>sys.executable</code> inside the running Python code
+            before comparing packages or results across interfaces. See{" "}
+            <a href={appPath("docs/jupyter/custom-kernels")}>
+              custom Jupyter kernels
+            </a>{" "}
+            for selecting a separate environment.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -223,16 +240,15 @@ python -c "import polars; print(polars.__version__)"`}
           title="Heavy computations and GPUs"
         >
           <Paragraph>
-            When a computation outgrows the machine it runs on,{" "}
-            <strong>move the project to a bigger one</strong> and keep your
-            files, packages, and history. Live memory and CPU monitoring shows
-            what the run actually uses.
+            When a hosted computation outgrows its resources, use memory and CPU
+            monitoring to size the next run. Where your deployment offers
+            suitable capacity, move the project to an available host. Check the
+            destination image, architecture, and dependencies before rerunning.
           </Paragraph>
           <Paragraph>
-            GPU machines are available with{" "}
-            <strong>CUDA-ready PyTorch and TensorFlow images</strong>, so model
-            training happens in the same project as the notebook that prepared
-            the data.
+            Deployments with compatible GPU hosts can use prepared PyTorch or
+            TensorFlow images. Check the available hardware and verify device
+            access from the selected notebook kernel before starting training.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -253,10 +269,10 @@ python -c "import polars; print(polars.__version__)"`}
           </Paragraph>
           <Paragraph>
             An app can also be <strong>defined up front</strong>, with its
-            command and port, so CoCalc starts it for you and wakes it when
-            someone opens the URL. When the app needs more than the Python
-            process itself, the web development image adds Node, PostgreSQL, and
-            Redis next to Python.
+            command and port, so CoCalc can start it for you. Enable its wake
+            policy when requests should start a stopped app. When the app needs
+            more than the Python process itself, the web development image adds
+            Node, PostgreSQL, and Redis next to Python.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -293,9 +309,9 @@ python -c "import polars; print(polars.__version__)"`}
           <BulletList
             items={[
               "Explore in a notebook, then move stable code into modules and scripts in the same project.",
-              "Install the exact packages your code needs, at the layer that fits, and keep them with the project.",
-              "Switch to a larger machine or a GPU when a computation gets heavy, without moving your files.",
-              "Share the project so collaborators re-run the same code in the same environment.",
+              "Record package versions and install locations so you can recreate the environment your code needs.",
+              "Choose available hosted compute for the workload and check its software and hardware before rerunning.",
+              "Share code and environment records so collaborators can verify the setup used for each run.",
             ]}
           />
         </FeatureFinalBand>

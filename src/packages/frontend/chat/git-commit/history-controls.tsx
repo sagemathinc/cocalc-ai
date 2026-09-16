@@ -4,6 +4,7 @@ import type { RepositoryDiscovery } from "@cocalc/frontend/git/read-service";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import { resolveHistorySelection } from "@cocalc/frontend/git/history-selection";
 import type { GitHistorySelection } from "@cocalc/frontend/git/history-selection";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 
 export function GitHistoryControls({
   origin,
@@ -137,15 +138,20 @@ export function GitHistoryControls({
         </div>
         <details className="git-review-disclosure">
           <summary>History options</summary>
-          <Checkbox
-            checked={draft.firstParent}
-            disabled={disabled || busy}
-            onChange={(event) =>
-              setDraft({ ...draft, firstParent: event.target.checked })
-            }
+          <Tooltip
+            trigger={["hover", "focus"]}
+            title="At each merge, follow only the first parent: the branch's main line of history. Commits brought in from merged branches are omitted. If merge commits are also hidden, neither those merges nor the commits they introduced appear. Leave unchecked to include commits from merged PRs."
           >
-            First-parent history
-          </Checkbox>
+            <Checkbox
+              checked={draft.firstParent}
+              disabled={disabled || busy}
+              onChange={(event) =>
+                setDraft({ ...draft, firstParent: event.target.checked })
+              }
+            >
+              First-parent history
+            </Checkbox>
+          </Tooltip>
           <p>
             Browsing never checks out a branch. Ref tips stay pinned until you
             refresh.

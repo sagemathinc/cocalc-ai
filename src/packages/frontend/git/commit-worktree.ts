@@ -30,7 +30,7 @@ export async function locateCommitWorktree(
   const selection = {
     worktree: tree.path,
     ref: tree.branch || tree.head!,
-    firstParent: true,
+    firstParent: false,
   };
   const selected = await resolveHistorySelection(reader, fresh, selection);
   const currentTree = selected.discovery.worktrees.find(

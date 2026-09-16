@@ -1,8 +1,14 @@
-# @cocalc/sync\-client
+# @cocalc/sync-client
 
-Currently, this is a lightweight node.js client so that **a node.js process**
-**can participate in realtime sync via** https://cocalc.ai just like a web browser, i.e., via a websocket connection.
+This is the Node.js client for the legacy project WebSocket synchronization
+path. [lib/connect-to-project.ts](./lib/connect-to-project.ts) uses Primus,
+`API_SERVER`, and an API key to connect to `<project_id>/raw/.smc/ws`. That
+transport is distinct from the current Conat client; the presence of this
+package does not establish that a hosted deployment exposes the legacy route.
 
-In particular, this lets a node.js process connect directly to a cocalc project as if it were like a web browser.
-
-This is meant just to enable connecting to a realtime sync session. It doesn't actually know anything about the cocalc file types \(e.g., jupyter notebooks, etc.\), so you can't just plug into one of those sessions without additional work. See the @cocalc/compute package for such additional work.
+The client supplies synchronization plumbing rather than a complete notebook
+or editor API. The former pointer to `@cocalc/compute` refers to a removed
+package. For current integrations, start with the typed
+[CoCalc CLI workflows](../docs/src/content/cli-workflows.ts) and the
+[Jupyter package](../jupyter/README.md), using the source appropriate to the
+running deployment.

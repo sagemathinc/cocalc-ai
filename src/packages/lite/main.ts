@@ -189,7 +189,7 @@ export async function main(opts?: {
   setConatClient({ conat, getLogger });
 
   logger.debug("init app");
-  initApp({ app, conatClient, AUTH_TOKEN, isHttps });
+  initApp({ app, conatClient, AUTH_TOKEN, isHttps, hostname });
 
   logger.debug("create persist server");
   persistServer = createPersistServer({ client: conatClient });

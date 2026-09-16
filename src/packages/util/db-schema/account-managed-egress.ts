@@ -82,6 +82,11 @@ Table({
         query: "(account_id, bucket_start DESC)",
       },
       {
+        name: "account_managed_egress_rollups_account_recent_idx",
+        // Recent-event LIMIT queries must not sort an account's entire history.
+        query: "(account_id, last_occurred_at DESC, bucket_start DESC)",
+      },
+      {
         name: "account_managed_egress_rollups_project_time_idx",
         query: "(project_id, bucket_start DESC)",
       },

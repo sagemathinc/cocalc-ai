@@ -214,9 +214,39 @@ export function createDomMinimapAdapter({
       el.addEventListener("scroll", onChange, { passive: true });
       const observer = new ResizeObserver(onChange);
       observer.observe(el);
+      // The viewport can stay fixed while images, fonts, or virtualized
+      // notebook output resize its content. Observe blocks and content wrappers
+      // as well, without measuring on every idle animation frame.
+      let content = new Set<Element>();
+      const observeContent = () => {
+        const next = new Set<Element>([
+          ...Array.from(el.children),
+          ...Array.from(el.querySelectorAll(`[${blockAttribute}]`)),
+        ]);
+        for (const node of content) {
+          if (!next.has(node)) observer.unobserve(node);
+        }
+        for (const node of next) {
+          if (!content.has(node)) observer.observe(node);
+        }
+        content = next;
+      };
+      observeContent();
+      const mutations = new MutationObserver(() => {
+        observeContent();
+        onChange();
+      });
+      mutations.observe(el, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: [blockAttribute],
+      });
       return () => {
         el.removeEventListener("scroll", onChange);
+        mutations.disconnect();
         observer.disconnect();
+        content.clear();
       };
     },
   };
@@ -277,7 +307,17 @@ export const BlockMinimap: React.FC<BlockMinimapProps> = React.memo(
         setScrollRatio(scrollTop / maxScroll);
         setViewportRatio(Math.min(1, clientHeight / scrollHeight));
       }
-      setVisibleRange(adapter.visibleRange());
+      const nextRange = adapter.visibleRange();
+      // DOM adapters allocate a fresh object for every measurement. Preserve
+      // state identity when the actual viewport has not changed.
+      setVisibleRange((previous) =>
+        previous?.firstId === nextRange?.firstId &&
+        previous?.firstFrac === nextRange?.firstFrac &&
+        previous?.lastId === nextRange?.lastId &&
+        previous?.lastFrac === nextRange?.lastFrac
+          ? previous
+          : nextRange,
+      );
     }, [adapter]);
 
     const scheduleUpdate = useCallback(() => {
@@ -298,12 +338,11 @@ export const BlockMinimap: React.FC<BlockMinimapProps> = React.memo(
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [adapter, scheduleUpdate, update, resubscribeKey]);
 
-    // Blocks can change on any render (cells added, heights remeasured); a
-    // coalesced update keeps the viewport rectangle in sync without paying for
-    // a measurement pass per render.
+    // Remeasure for document/layout changes, not for our own viewport-state
+    // renders: doing so creates a perpetual animation-frame feedback loop.
     useEffect(() => {
       scheduleUpdate();
-    });
+    }, [blocks, height, width, scheduleUpdate]);
 
     useEffect(() => {
       return () => {

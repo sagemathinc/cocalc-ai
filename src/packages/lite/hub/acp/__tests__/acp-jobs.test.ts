@@ -38,6 +38,7 @@ import {
   getAcpJob,
   getAcpJobByOpId,
   hasNewerNonRecoveryAcpJob,
+  latestAcpJobUpdateForWorker,
   listAcpJobsByRecoveryParent,
   listAcpJobsWithRecoveryIntent,
   listQueuedAcpJobs,
@@ -101,6 +102,35 @@ afterAll(() => {
 });
 
 describe("acp job queue ordering", () => {
+  it("reports a worker's latest job transition as queue progress", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-worker-progress",
+        assistantMessageId: "assistant-worker-progress",
+        assistantDate: "2026-09-14T21:09:00.000Z",
+      }) as any,
+    );
+    const running = claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-progress",
+      worker_bundle_version: "bundle-progress",
+    });
+    expect(running).toBeDefined();
+
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "completed",
+      worker_id: "worker-progress",
+    });
+
+    expect(latestAcpJobUpdateForWorker("worker-progress")).toBe(
+      getAcpJobByOpId(queued.op_id)?.updated_at,
+    );
+    expect(latestAcpJobUpdateForWorker("another-worker")).toBeUndefined();
+  });
+
   it("does not claim a delayed recovery until its availability time", () => {
     const request = {
       ...makeRequest({

@@ -128,8 +128,7 @@ export default function MultiMarkdownInput({
   const editBar2 = useRef<React.JSX.Element | undefined>(undefined);
 
   const isAutoGrow = autoGrow ?? height === "auto";
-  const internalControlRef = useRef<any>(null);
-  const slateControlRef = controlRef ?? internalControlRef;
+  const richTextControlRef = useRef<any>(null);
   const showToolbarModeSwitch =
     modeSwitchPlacement === "toolbar" && !fixedMode && !hideModeSwitch;
   const toolbarInset = showToolbarModeSwitch ? 28 : 0;
@@ -209,6 +208,8 @@ export default function MultiMarkdownInput({
     captureModeSwitchSelection,
     rememberSelectionForModeSwitch,
     getMarkdownPositionForSelection,
+    setSelectionFromMarkdownPosition,
+    focusActiveEditor,
     notifyMarkdownSelectionReady,
     notifyRichTextSelectionReady,
   } = useMultimodeSelection({
@@ -216,8 +217,30 @@ export default function MultiMarkdownInput({
     mode,
     getCachedSelection,
     saveCachedSelection,
-    richTextControlRef: slateControlRef,
+    richTextControlRef,
   });
+
+  useEffect(() => {
+    if (controlRef == null) return;
+    const publicControl = {
+      focus: focusActiveEditor,
+      getMarkdownPositionForSelection,
+      setSelectionFromMarkdownPosition,
+      allowNextValueUpdateWhileFocused: () =>
+        richTextControlRef.current?.allowNextValueUpdateWhileFocused?.(),
+      cancelPendingUploads: () =>
+        richTextControlRef.current?.cancelPendingUploads?.(),
+    };
+    controlRef.current = publicControl;
+    return () => {
+      if (controlRef.current === publicControl) controlRef.current = null;
+    };
+  }, [
+    controlRef,
+    focusActiveEditor,
+    getMarkdownPositionForSelection,
+    setSelectionFromMarkdownPosition,
+  ]);
 
   return (
     <div
@@ -483,7 +506,7 @@ export default function MultiMarkdownInput({
             submitMentionsRef={submitMentionsRef}
             editBar2={editBar2}
             dirtyRef={dirtyRef}
-            controlRef={slateControlRef}
+            controlRef={richTextControlRef}
             preserveBlankLines={preserveBlankLines}
             externalMultilinePasteAsCodeBlock={
               slateExternalMultilinePasteAsCodeBlock

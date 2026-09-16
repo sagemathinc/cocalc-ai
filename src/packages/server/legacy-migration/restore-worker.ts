@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { envToInt } from "@cocalc/backend/misc/env-to-number";
 import getPool from "@cocalc/database/pool";
+import { preservePreparationAuditSql } from "./preparation-audit";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   ensureProjectFileServerClientReady,
@@ -698,7 +699,7 @@ async function markRestored({
            restore_finished=NOW(),
            restore_lro_op_id=$4,
            restore_progress=$5::JSONB,
-           restore_result=$3::JSONB,
+           restore_result=${preservePreparationAuditSql("restore_result", "$3::jsonb")},
            updated=NOW()
      WHERE legacy_project_id=$1
     `,

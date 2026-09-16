@@ -799,7 +799,7 @@ export class CoreStream<T = any> extends EventEmitter {
             );
           }
           stats.syncFromPersistRetries += 1;
-          if (err.code == 403 || err.code == 429) {
+          if (err.code == 400 || err.code == 403 || err.code == 429) {
             throw err;
           }
           return false;

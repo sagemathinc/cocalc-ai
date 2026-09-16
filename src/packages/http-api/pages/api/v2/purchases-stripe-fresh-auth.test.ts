@@ -24,6 +24,7 @@ const mockDeletePaymentMethod = jest.fn();
 const mockSetDefaultPaymentMethod = jest.fn();
 const mockThrottle = jest.fn();
 const mockUserIsInGroup = jest.fn();
+const mockExecuteBillingHttpCommand = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -57,6 +58,12 @@ jest.mock("@cocalc/server/accounts/is-in-group", () => ({
 
 jest.mock("@cocalc/server/launch/kill-switches", () => ({
   assertPaymentCheckoutAllowed: jest.fn(async () => undefined),
+}));
+
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
+  executeBillingHttpCommand: (...args: any[]) =>
+    mockExecuteBillingHttpCommand(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/stripe/create-payment-intent", () => ({
@@ -132,6 +139,34 @@ describe("purchases Stripe fresh-auth routes", () => {
     mockSetDefaultPaymentMethod.mockReset().mockResolvedValue(undefined);
     mockThrottle.mockReset();
     mockUserIsInGroup.mockReset().mockResolvedValue(true);
+    mockExecuteBillingHttpCommand
+      .mockReset()
+      .mockImplementation(async (operation: string, input: any) => {
+        switch (operation) {
+          case "cancel-payment-intent":
+            return await mockCancelPaymentIntent(input);
+          case "create-payment-intent":
+            return await mockCreatePaymentIntent(input);
+          case "create-setup-intent":
+            return await mockCreateSetupIntent(input);
+          case "create-subscription-payment":
+            return await mockCreateSubscriptionPayment(input);
+          case "delete-payment-method":
+            return await mockDeletePaymentMethod(input);
+          case "get-checkout-session":
+            return await mockGetCheckoutSession(input);
+          case "get-customer-session":
+            return await mockGetCustomerSession(input.account_id);
+          case "get-payment-intent-account-id":
+            return await mockGetPaymentIntentAccountId(input.id);
+          case "set-customer":
+            return await mockSetCustomer(input.account_id, input.changes);
+          case "set-default-payment-method":
+            return await mockSetDefaultPaymentMethod(input);
+          default:
+            throw Error(`unexpected billing operation '${operation}'`);
+        }
+      });
   });
 
   it("requires fresh auth before creating a subscription-renewal payment", async () => {
@@ -245,13 +280,11 @@ describe("purchases Stripe fresh-auth routes", () => {
     });
     expect(mockCreatePaymentIntent).toHaveBeenCalledWith({
       account_id: "user-1",
+      actor_account_id: "acct-1",
       purpose: "admin-payment",
       description: "Manual charge",
       lineItems: [{ description: "Credit", amount: 10 }],
-      metadata: {
-        support_case: "case-1",
-        admin_account_id: "acct-1",
-      },
+      metadata: { support_case: "case-1" },
     });
   });
 
@@ -302,14 +335,17 @@ describe("purchases Stripe fresh-auth routes", () => {
     expect(res._getJSONData()).toEqual({ success: true });
     expect(mockRequireDangerousSessionAuth).not.toHaveBeenCalled();
     expect(mockCancelPaymentIntent).toHaveBeenCalledWith({
+      actor_account_id: "acct-1",
       id: "pi_123",
       reason: "requested_by_customer",
+      expected_account_id: "acct-1",
+      target_account_id: "acct-1",
     });
   });
 
   it("requires fresh auth before creating a checkout session", async () => {
     mockGetParams.mockReturnValue({
-      purpose: "membership",
+      purpose: "membership-change",
       description: "Membership",
       lineItems: [{ description: "Membership", amount: 10 }],
       metadata: { membership_id: "membership-1" },
@@ -339,7 +375,7 @@ describe("purchases Stripe fresh-auth routes", () => {
 
   it("creates a checkout session after fresh auth", async () => {
     mockGetParams.mockReturnValue({
-      purpose: "membership",
+      purpose: "membership-change",
       description: "Membership",
       lineItems: [{ description: "Membership", amount: 10 }],
       return_url: "https://example.com/return",
@@ -359,12 +395,29 @@ describe("purchases Stripe fresh-auth routes", () => {
     });
     expect(mockGetCheckoutSession).toHaveBeenCalledWith({
       account_id: "acct-1",
-      purpose: "membership",
+      purpose: "membership-change",
       description: "Membership",
       lineItems: [{ description: "Membership", amount: 10 }],
-      return_url: "https://example.com/return",
       metadata: { membership_id: "membership-1" },
     });
+  });
+
+  it("rejects arbitrary self-service payment purposes", async () => {
+    mockGetParams.mockReturnValue({
+      purpose: "subscription-renewal",
+      description: "Untrusted payment",
+      lineItems: [{ description: "Credit", amount: 10 }],
+    });
+    const { req, res } = createMocks({ method: "POST" });
+
+    const { default: handler } =
+      await import("./purchases/stripe/create-payment-intent");
+    await handler(req, res);
+
+    expect(res._getJSONData()).toEqual({
+      error: "invalid interactive payment purpose",
+    });
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
   });
 
   const billingMutationRoutes = [

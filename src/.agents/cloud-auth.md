@@ -83,20 +83,18 @@ gcloud iam service-accounts create "$SA_NAME" \
 SA_EMAIL="${SA_NAME}@${PROJECT_ID}.iam.gserviceaccount.com"
 
 # 3) Grant required roles
-# Compute Admin
+# Manage project-host instances and disks
  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/compute.admin"
+  --role="roles/compute.instanceAdmin.v1"
 
-# Service Account User (attach SA to VMs)
+# Manage the project-host firewall rules
  gcloud projects add-iam-policy-binding "$PROJECT_ID" \
   --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/iam.serviceAccountUser"
+  --role="roles/compute.securityAdmin"
 
-# Monitoring Viewer (optional)
- gcloud projects add-iam-policy-binding "$PROJECT_ID" \
-  --member="serviceAccount:${SA_EMAIL}" \
-  --role="roles/monitoring.viewer"
+# Project-host VMs are created without an attached service account. Do not
+# grant this controller project-wide roles/iam.serviceAccountUser.
 
 # 4) Allow YOUR USER to impersonate the SA
 USER_EMAIL="you@example.com"

@@ -6,6 +6,7 @@
 import {
   Alert,
   Button,
+  Checkbox,
   DatePicker,
   Drawer,
   Radio,
@@ -55,8 +56,14 @@ const { Paragraph, Text } = Typography;
 dayjs.extend(utc);
 const REFRESH_MS = 60_000;
 const DRAWER_WIDTH_STORAGE_KEY = "cocalc:admin:activeUsersMapDrawerWidth";
+const HIDE_GMAIL_STORAGE_KEY = "cocalc:admin:activeUsersMapHideGmail";
 const DEFAULT_DRAWER_WIDTH = "70%";
 const MIN_DRAWER_WIDTH = 560;
+
+// If other providers become problematic, replace this single-domain checkbox
+// with a locally persisted multi-select or "Hide common email providers"
+// popover without changing the server-side aggregation model.
+const GMAIL_DOMAIN = "gmail.com";
 
 function clampDrawerWidth(width: number): number {
   if (typeof window === "undefined") return Math.max(MIN_DRAWER_WIDTH, width);
@@ -83,6 +90,20 @@ function persistDrawerWidth(width: number): void {
     DRAWER_WIDTH_STORAGE_KEY,
     `${clampDrawerWidth(width)}`,
   );
+}
+
+function readHideGmail(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(HIDE_GMAIL_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function persistHideGmail(hide: boolean): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(HIDE_GMAIL_STORAGE_KEY, `${hide}`);
 }
 
 const WINDOW_OPTIONS: Array<{
@@ -283,8 +304,10 @@ export function ActiveUsersMapAdmin() {
   const [drawerWidth, setDrawerWidth] = useState<number | undefined>(
     readDrawerWidth,
   );
+  const [hideGmail, setHideGmail] = useState(readHideGmail);
   const liveRequest = useRef(0);
   const detailsRequest = useRef(0);
+  const detailsHideGmail = useRef<boolean | undefined>(undefined);
   const userRequest = useRef(0);
   const userTriggerRef = useRef<HTMLElement | null>(null);
   const snapshotRequest = useRef(0);
@@ -338,14 +361,31 @@ export function ActiveUsersMapAdmin() {
             selectedGroup === "unknown" || selectedGroup === "all"
               ? undefined
               : selectedGroup,
+          ...(hideGmail
+            ? { excluded_email_domains: [GMAIL_DOMAIN] }
+            : undefined),
         });
-      if (request === detailsRequest.current) setDetails(next);
+      if (request === detailsRequest.current) {
+        setDetails(next);
+        detailsHideGmail.current = hideGmail;
+      }
     } catch (err) {
-      if (request === detailsRequest.current) setDetailsError(`${err}`);
+      if (request === detailsRequest.current) {
+        setDetailsError(`${err}`);
+        const appliedHideGmail = detailsHideGmail.current;
+        if (appliedHideGmail != null && appliedHideGmail !== hideGmail) {
+          setHideGmail(appliedHideGmail);
+          try {
+            persistHideGmail(appliedHideGmail);
+          } catch {
+            // The displayed chart and in-memory preference still agree.
+          }
+        }
+      }
     } finally {
       if (request === detailsRequest.current) setDetailsLoading(false);
     }
-  }, [liveActiveMinutes, liveGrouping, selectedGroup, view]);
+  }, [hideGmail, liveActiveMinutes, liveGrouping, selectedGroup, view]);
 
   useEffect(() => {
     if (view !== "live") return;
@@ -359,7 +399,6 @@ export function ActiveUsersMapAdmin() {
   }, [load, view]);
 
   useEffect(() => {
-    setDetails(undefined);
     if (view === "live" && selectedGroup != null) {
       void loadDetails();
     }
@@ -506,6 +545,7 @@ export function ActiveUsersMapAdmin() {
   function selectLiveGroup(group?: string) {
     detailsRequest.current += 1;
     setDetails(undefined);
+    detailsHideGmail.current = undefined;
     setDetailsLoading(false);
     setDetailsError(undefined);
     setSelectedGroup(group);
@@ -872,16 +912,35 @@ export function ActiveUsersMapAdmin() {
           />
         ) : null}
         {details ? (
-          <>
-            <ActiveUsersMapDomainChart
-              counts={details.domain_counts}
-              total={details.total}
-            />
+          <Space vertical style={{ width: "100%" }}>
+            <Checkbox
+              checked={hideGmail}
+              disabled={detailsLoading}
+              onChange={({ target: { checked } }) => {
+                setHideGmail(checked);
+                try {
+                  persistHideGmail(checked);
+                } catch {
+                  // The preference still applies until this page is reloaded.
+                }
+              }}
+            >
+              Hide gmail.com from chart
+            </Checkbox>
+            <Spin spinning={detailsLoading}>
+              <ActiveUsersMapDomainChart
+                counts={details.domain_counts}
+                total={details.domain_counts.reduce(
+                  (total, { count }) => total + count,
+                  0,
+                )}
+              />
+            </Spin>
             <UserList
               users={details.users}
               onSelect={(user, trigger) => void openUser(user, trigger)}
             />
-          </>
+          </Space>
         ) : detailsLoading ? (
           <div style={{ padding: 48, textAlign: "center" }}>
             <Spin description="Loading active users" />

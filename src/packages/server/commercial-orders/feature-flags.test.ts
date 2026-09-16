@@ -43,6 +43,8 @@ describe("commercial receivables action capabilities", () => {
         "get",
         "invoicePreview",
         "issueQuote",
+        "issueQuoteLink",
+        "revokeQuoteLink",
         "issueManualInvoice",
         "linkExistingInvoice",
         "list",

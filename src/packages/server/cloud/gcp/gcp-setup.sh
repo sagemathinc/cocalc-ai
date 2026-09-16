@@ -64,12 +64,18 @@ wait_for_service_account() {
   return 1
 }
 
+PROJECT_ROLES=(
+  "roles/compute.instanceAdmin.v1"
+  "roles/compute.securityAdmin"
+)
+
 add_project_binding() {
+  local role="$1"
   local err
   err=$(mktemp)
   if gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:${SA_EMAIL}" \
-    --role="roles/editor" \
+    --role="$role" \
     --condition=None 2>"$err"; then
     rm -f "$err"
     return 0
@@ -79,6 +85,13 @@ add_project_binding() {
   return 1
 }
 
+has_legacy_editor_binding() {
+  gcloud projects get-iam-policy "$PROJECT_ID" \
+    --flatten="bindings[].members" \
+    --filter="bindings.role=roles/editor AND bindings.members=serviceAccount:${SA_EMAIL}" \
+    --format="value(bindings.role)" | grep -qx "roles/editor"
+}
+
 # 1) Set the active project and ensure Compute Engine API is enabled.
 log "Setting gcloud project to $PROJECT_ID"
 gcloud config set project "$PROJECT_ID"
@@ -86,7 +99,8 @@ gcloud config set project "$PROJECT_ID"
 log "Enabling Compute Engine API"
 gcloud services enable compute.googleapis.com
 
-# 2) Create or reuse the service account and grant editor role.
+# 2) Create or reuse the service account and grant only the Compute permissions
+# needed to manage project hosts, disks, and their firewall rules.
 log "Ensuring service account $SA_EMAIL exists"
 gcloud iam service-accounts create "$SA_NAME" \
   --display-name="CoCalc Project Hosts" || true
@@ -95,12 +109,26 @@ if ! wait_for_service_account; then
   warn "Service account not visible yet; continuing to retry role binding."
 fi
 
-if ! add_project_binding; then
-  warn "Failed to grant roles/editor on project."
-  warn "If the error mentions invalid conditions, run:"
-  warn "  gcloud alpha iam policies lint-condition --policy-file <your-policy.json>"
-  warn "Then fix or remove the invalid conditional binding and retry."
-  exit 1
+for role in "${PROJECT_ROLES[@]}"; do
+  log "Granting $role to $SA_EMAIL"
+  if ! add_project_binding "$role"; then
+    warn "Failed to grant $role on project."
+    warn "If the error mentions invalid conditions, run:"
+    warn "  gcloud alpha iam policies lint-condition --policy-file <your-policy.json>"
+    warn "Then fix or remove the invalid conditional binding and retry."
+    exit 1
+  fi
+done
+
+# Existing installations used project-wide Editor. Remove it only after every
+# replacement role has been granted, so rerunning setup cannot interrupt CoCalc.
+if has_legacy_editor_binding; then
+  log "Removing legacy roles/editor grant from $SA_EMAIL"
+  gcloud projects remove-iam-policy-binding "$PROJECT_ID" \
+    --member="serviceAccount:${SA_EMAIL}" \
+    --role="roles/editor" \
+    --condition=None \
+    --quiet
 fi
 
 # 3) Generate a new service account key JSON and output it or upload it.

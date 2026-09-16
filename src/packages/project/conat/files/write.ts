@@ -24,6 +24,8 @@ import {
   createServer,
   close as closeWriteServer,
 } from "@cocalc/conat/files/write";
+import type { FileWriteStream } from "@cocalc/conat/files/write-stream";
+import { finished } from "node:stream/promises";
 import { randomId } from "@cocalc/conat/names";
 import { rimraf } from "rimraf";
 import { getIdentity } from "../connection";
@@ -34,16 +36,14 @@ async function createWriteStream(path: string) {
   path = projectFilePath(path);
   await ensureContainingDirectoryExists(path);
   const partial = path + `.partialupload-${randomId()}`;
-  const stream = fs_createWriteStream(partial);
-  stream.on("remove", async () => {
+  const stream: FileWriteStream = fs_createWriteStream(partial);
+  stream.remove = async () => {
+    await finished(stream, { cleanup: true }).catch(() => undefined);
     await rimraf(partial);
-  });
-  stream.on("rename", async () => {
+  };
+  stream.commit = async () => {
     await rename(partial, path);
-  });
-
-  // TODO: path should be a temporary path to indicate that it is a partial
-  // upload, then get moved to path when done or deleted on error.
+  };
   return stream;
 }
 

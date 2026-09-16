@@ -17,8 +17,8 @@ the Conat storage path (e.g., `projects/<project_id>/...`).
   - `COCALC_SYNC_ACCOUNTS` for `accounts/<account_id>/...`
   - `COCALC_SYNC_HOSTS` for `hosts/<host_id>/...`
   - `COCALC_SYNC_HUB` for `hub/...`
-- Placeholders \- what we use in project hosts:
-  - `COCALC_SYNC_PROJECTS=/btrfs/project-[project_id]/.local/share/cocalc/persist`
+- Example placeholder overrides; the standard project-host bootstrap sets the project path as shown:
+  - `COCALC_SYNC_PROJECTS=/mnt/cocalc/project-[project_id]/.local/share/cocalc/persist`
   - `COCALC_SYNC_ACCOUNTS=/data/accounts/[account_id]/persist`
   - `COCALC_SYNC_HOSTS=/data/hosts/[host_id]/persist`
 - Archive/backup \(if configured; not used in project hosts\) mirror the same `storage.path` under
@@ -44,30 +44,21 @@ flowchart TD
   L --> M
 ```
 
-## Bootlog streams (projects + hosts)
+## Lifecycle progress streams
 
-- Bootlogs are short-lived DStreams for lifecycle progress. Names:
-  - Project: `bootlog.project.<project_id>`
-  - Host: `bootlog.host.<host_id>`
-- API (`@cocalc/conat/project/runner/bootlog`):
-  - `bootlog({ project_id?, host_id?, ...event })` to publish.
-  - `get({ project_id?, host_id? })` to subscribe to the stream; messages expire via TTL (default 1h).
-- Frontend client: `webapp_client.conat_client.projectBootlog({ project_id?, host_id? })` wraps `get`.
+Project and host lifecycle progress uses long-running operations (LROs). Read
+summaries through the authorized hub LRO API and open the operation's stream
+with `@cocalc/conat/lro/client`, providing an explicit Conat client and the
+operation's scope. Stream names are `lro.<op_id>`; the helper configures ephemeral
+progress storage. Durable summaries and short-lived progress events have
+different retention and recovery behavior.
 
-### Auth for bootlogs
+See [Long-running operations](./long-running-operations.md),
+[src/packages/conat/lro/client.ts](../src/packages/conat/lro/client.ts), and the
+[frontend LRO helpers](../src/packages/frontend/lro/README.md).
 
-- Socket.io auth checks subjects:
-  - Project access: collaborators can pub/sub on `project.<id>.>` and `*.project-<id>.>`.
-  - Host access: owners or collaborators (from `project_hosts.metadata.owner` / `metadata.collaborators`) can sub/pub on `bootlog.host.<host_id>.>`.
-  - Inbox/public rules still apply (`_INBOX.*`, `public.*`).
-- See `server/conat/socketio/auth.ts`:
-  - `extractProjectSubject` parses project subjects.
-  - `extractHostSubject` parses `bootlog.host.<uuid>.>` subjects.
-  - `isHostOwnerOrCollaborator` queries `project_hosts` metadata to authorize.
-
-### Usage patterns
-
-- Project start/stop/move: publish events with `project_id`.
-- Host start/stop: publish events with `host_id` for live feedback.
-- UI: use bootlog for detailed lifecycle (start/stop) while keeping list views updated via polling or changefeeds.
-
+Earlier versions used `bootlog.project.*`, `bootlog.host.*`, and a
+`project/runner/bootlog` module. That module and the old frontend
+`projectBootlog` wrapper are no longer the current integration surface. Do not
+copy the former bootlog subject permissions into new LRO code: use the shared
+authorization rules for the operation's scope.

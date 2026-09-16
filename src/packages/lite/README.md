@@ -2,7 +2,7 @@
 
 ## Overview
 
-`@cocalc/lite` is a **standalone, single-machine CoCalc instance** that can run completely offline. This package essentially provides a "CoCalc in a box" that mirrors the full architecture but in a simplified, single-machine format.
+`@cocalc/lite` is a **standalone, single-machine CoCalc instance** whose local editing and execution can run offline once required software is installed. Remote model providers, package downloads, and other network services still require connectivity. This package essentially provides a "CoCalc in a box" that mirrors the full architecture but in a simplified, single-machine format.
 
 ## Role and Boundaries
 
@@ -46,7 +46,7 @@ packages/lite/
 │   └── start.js              # CLI entry point (executable binary)
 ├── hub/                       # Hub-like functionality for lite mode
 │   ├── api.ts                # Lightweight hub API implementation
-│   ├── acp.ts                # Agent/AI prompt execution service
+│   ├── acp/                  # Agent/AI prompt execution service
 │   ├── changefeeds.ts        # Real-time data change notifications
 │   ├── llm.ts                # LLM (Language Model) integration
 │   ├── settings.ts           # Configuration/customization payload
@@ -57,15 +57,10 @@ packages/lite/
 │       ├── database.ts       # Database abstraction
 │       ├── user-query.ts     # Query interface for changefeeds
 │       └── changefeeds.ts    # Change feed implementation
-├── sea/                       # Single Executable Application builder
-│   ├── build-bundle.sh       # Bundle creation script
-│   ├── build-sea.sh          # SEA compilation script
-│   └── README.md             # SEA documentation
 ├── auth-token.ts            # Cookie/token authentication
 ├── http.ts                   # Express HTTP server setup
 ├── jupyter-benchmark.ts      # Jupyter latency/output benchmark harness
 ├── main.ts                   # Application entry point & initialization
-├── index.js                  # Electron wrapper for desktop app
 └── package.json              # Dependencies and build scripts
 ```
 
@@ -74,7 +69,7 @@ packages/lite/
 ### Entry Points
 
 - **`bin/start.js`**: CLI executable - Sets up DATA directory, PORT, and PATH for special binaries, then calls main()
-- **`index.js`**: Electron wrapper - Creates Electron app window, spins up CoCalc Lite backend, manages menus and app lifecycle
+- **`../plus/electron.js`**: Electron wrapper for the Plus distribution; Electron packaging is no longer owned by a Lite `index.js` entry point.
 - **`main.ts`**: Core initialization orchestrator
   - Initializes HTTP server (HTTP/HTTPS)
   - Creates Conat server for internal communication
@@ -92,7 +87,7 @@ packages/lite/
 
 - **`auth-token.ts`**: Authentication system
   - Cookie-based authentication with `cocalc-lite-auth` cookie
-  - Supports one-time query parameter tokens
+  - Accepts the configured token through an `auth_token` query parameter, sets an auth cookie, and redirects to remove the query parameter
   - Uses timing-safe password verification
   - Sets 90-day cookie expiration
 
@@ -121,8 +116,8 @@ packages/lite/
   - Attaches auth cookie headers for the proxied connection
 
 - **`hub/acp/`**: Agent Client Protocol (AI prompt execution)
-  - Manages CodexAcpAgent for code execution
-  - Falls back to EchoAgent if CodexAcpAgent unavailable
+  - Uses CodexAppServerAgent for Codex execution
+  - Supports explicit echo/mock modes and an EchoAgent fallback when Codex agent creation fails
   - Materializes blobs for prompts
   - Supports streaming responses
 
@@ -163,14 +158,14 @@ packages/lite/
 
 ## Use Cases
 
-1. **Offline Development**: Run CoCalc completely offline on your laptop
+1. **Offline Development**: Use local editing and installed computation tools without a hosted CoCalc connection
 2. **Edge Computing**: Deploy as a binary on edge devices
 3. **Desktop App**: Package as Electron app for Mac/Windows/Linux
 
 ## Packaging & Builds
 
 - Distribution-focused workflows (bundle, tarball, SEA, Electron) now live in [../plus](../plus/README.md) to keep Lite lean. Use the Plus package for shipping artifacts.
-- For local development, run Lite directly with `pnpm app` (requires Node.js 22+).
+- For local development, run Lite directly with `pnpm app` (requires Node.js 22.15.0 or newer).
 - For Jupyter latency/output measurements in lite mode, use:
   - `pnpm -C src/packages/lite jupyter:bench -- --profile quick`
   - `pnpm -C src/packages/lite jupyter:bench -- --profile full --json`
@@ -179,7 +174,7 @@ packages/lite/
 
 ## Key Technologies
 
-- **Runtime**: Node.js >= 22
+- **Runtime**: Node.js >= 22.15.0
 - **Web Server**: Express.js
 - **Database**: SQLite with WAL mode
 - **Messaging**: Conat (NATS-like pub/sub)
@@ -199,5 +194,5 @@ The lite package is designed as a **simplified, standalone architecture** that m
 - **Monolithic vs Microservice**: Unlike the full CoCalc which uses PostgreSQL and multiple services, lite uses SQLite and co-located services
 - **Conat Integration**: Uses the same Conat messaging system as full CoCalc for internal communication
 - **Project Services**: Runs project services (computation) directly
-- **Standalone**: Works completely offline with local SQLite
+- **Standalone**: Local SQLite and installed project tools can work offline; network-dependent integrations remain online services
 - **Frontend Agnostic**: Uses the same frontend from `packages/static` as full CoCalc

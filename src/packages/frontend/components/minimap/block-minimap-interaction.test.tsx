@@ -14,7 +14,7 @@ import {
 import React from "react";
 
 import { COLORS } from "@cocalc/util/theme";
-import { BlockMinimap } from "./block-minimap";
+import { BlockMinimap, createDomMinimapAdapter } from "./block-minimap";
 import type { MinimapBlock, MinimapDocAdapter } from "./block-minimap";
 
 // jsdom does not expose PointerEvent. React's pointer handlers still work
@@ -79,6 +79,150 @@ function mockMinimapBounds(minimap: HTMLElement): void {
 }
 
 describe("block minimap rendered interactions", () => {
+  it("updates after content-only resizing and observes replacement blocks", async () => {
+    const originalResizeObserver = globalThis.ResizeObserver;
+    const observed = new Set<Element>();
+    let notifyResize!: () => void;
+    const disconnect = jest.fn(() => observed.clear());
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) {
+        notifyResize = () => callback([], this);
+      }
+      observe(node: Element) {
+        observed.add(node);
+      }
+      unobserve(node: Element) {
+        observed.delete(node);
+      }
+      disconnect = disconnect;
+    };
+    const scroller = document.createElement("div");
+    const wrapper = document.createElement("div");
+    const block = document.createElement("div");
+    block.setAttribute("data-block", "a");
+    wrapper.append(block);
+    scroller.append(wrapper);
+    let contentHeight = 200;
+    Object.defineProperties(scroller, {
+      clientHeight: { value: 200 },
+      scrollHeight: { get: () => contentHeight },
+    });
+    const adapter = createDomMinimapAdapter({
+      getScroller: () => scroller,
+      blockAttribute: "data-block",
+    });
+    const view = render(
+      <BlockMinimap
+        blocks={BLOCKS}
+        height={516}
+        adapter={adapter}
+        label="Content minimap"
+      />,
+    );
+    try {
+      expect(observed.has(scroller)).toBe(true);
+      expect(observed.has(wrapper)).toBe(true);
+      expect(observed.has(block)).toBe(true);
+      expect(
+        screen.queryByRole("scrollbar", { name: "Content minimap" }),
+      ).toBeNull();
+      // Simulate a delayed image load, without scrolling or rerendering props.
+      contentHeight = 1000;
+      act(() => notifyResize());
+      await waitFor(() =>
+        expect(
+          screen.getByRole("scrollbar", { name: "Content minimap" }),
+        ).toBeTruthy(),
+      );
+      const replacement = document.createElement("div");
+      replacement.setAttribute("data-block", "b");
+      wrapper.replaceChildren(replacement);
+      await waitFor(() => expect(observed.has(replacement)).toBe(true));
+      expect(observed.has(block)).toBe(false);
+      view.unmount();
+      expect(disconnect).toHaveBeenCalled();
+      expect(observed.size).toBe(0);
+      wrapper.append(block);
+      await Promise.resolve();
+      expect(observed.size).toBe(0);
+    } finally {
+      view.unmount();
+      globalThis.ResizeObserver = originalResizeObserver;
+    }
+  });
+
+  it("settles at idle with freshly allocated visible ranges and still responds to updates", () => {
+    const frames = new Map<number, FrameRequestCallback>();
+    let id = 0;
+    const raf = jest
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb) => {
+        frames.set(++id, cb);
+        return id;
+      });
+    const cancel = jest
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((key) => {
+        frames.delete(key);
+      });
+    const flush = () => {
+      const pending = [...frames.values()];
+      frames.clear();
+      act(() => pending.forEach((cb) => cb(0)));
+    };
+    const { adapter } = makeAdapter();
+    adapter.visibleRange = jest.fn(() => ({
+      firstId: "a",
+      firstFrac: 0,
+      lastId: "a",
+      lastFrac: 0.5,
+    }));
+    const view = render(
+      <BlockMinimap
+        blocks={BLOCKS}
+        height={516}
+        adapter={adapter}
+        label="Idle minimap"
+      />,
+    );
+    try {
+      for (let i = 0; i < 8; i++) flush();
+      expect(frames.size).toBe(0);
+      const calls = jest.mocked(adapter.visibleRange).mock.calls.length;
+      flush();
+      expect(adapter.visibleRange).toHaveBeenCalledTimes(calls);
+      act(() => adapter.scrollToPosition(400));
+      expect(frames.size).toBe(1);
+      flush();
+      expect(
+        screen.getByRole("scrollbar", { name: "Idle minimap" }),
+      ).toHaveAttribute("aria-valuenow", "50");
+      for (let i = 0; i < 3; i++) flush();
+      expect(frames.size).toBe(0);
+      const beforeContentChange = jest.mocked(adapter.visibleRange).mock.calls
+        .length;
+      view.rerender(
+        <BlockMinimap
+          blocks={[...BLOCKS]}
+          height={616}
+          adapter={adapter}
+          label="Idle minimap"
+        />,
+      );
+      flush();
+      expect(
+        jest.mocked(adapter.visibleRange).mock.calls.length,
+      ).toBeGreaterThan(beforeContentChange);
+      act(() => adapter.scrollToPosition(0));
+      view.unmount();
+      expect(frames.size).toBe(0);
+    } finally {
+      view.unmount();
+      raf.mockRestore();
+      cancel.mockRestore();
+    }
+  });
+
   it("moves the viewport to the top, middle, and bottom while dragging", async () => {
     const { adapter } = makeAdapter();
     render(

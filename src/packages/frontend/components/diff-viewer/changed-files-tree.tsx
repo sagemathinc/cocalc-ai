@@ -5,6 +5,8 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
 import { changedFileLabel, prepareChangedFiles } from "./changed-files-model";
 import type { ChangedFileEntry } from "./changed-files-model";
+import { REVIEW_VIEWPORT_HEIGHT } from "./review-viewport";
+import { watchTreeOverflow } from "./tree-overflow";
 import {
   readTreeExpansion,
   watchTreeExpansion,
@@ -32,6 +34,7 @@ function Tree({
 }: ChangedFilesTreeProps) {
   const { resolved } = useAppearance();
   const [query, setQuery] = useState("");
+  const [overflow, setOverflow] = useState({ above: false, below: false });
   const updating = useRef(false);
   const saveExpansion = useRef<() => void>(() => {});
   const latest = useRef({
@@ -78,6 +81,19 @@ function Tree({
     renderRowDecoration: (context) => decorate(context),
   });
   const signature = JSON.stringify(files.map((file) => file.path));
+  useEffect(
+    () =>
+      watchTreeOverflow(
+        () => model.getFileTreeContainer(),
+        (next) =>
+          setOverflow((previous) =>
+            previous.above === next.above && previous.below === next.below
+              ? previous
+              : next,
+          ),
+      ),
+    [model],
+  );
   useEffect(() => {
     updating.current = true;
     try {
@@ -126,7 +142,18 @@ function Tree({
     }
   }, [model, files, activeId]);
   return (
-    <div style={{ minWidth: 0 }}>
+    <div
+      style={{
+        minWidth: 0,
+        height: REVIEW_VIEWPORT_HEIGHT,
+        minHeight: 200,
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <strong style={{ display: "block", padding: "8px 8px 0" }}>
+        {files.length} changed {files.length === 1 ? "file" : "files"}
+      </strong>
       <label style={{ display: "block", padding: 8 }}>
         Filter changed files
         <input
@@ -141,13 +168,32 @@ function Tree({
         aria-label="Changed files"
         style={{
           display: "block",
-          height: "45vh",
-          minHeight: 160,
+          flex: 1,
+          minHeight: 0,
           overflow: "auto",
           colorScheme: resolved,
           border: `1px solid ${UI_COLORS.border}`,
         }}
       />
+      <div
+        role="status"
+        aria-label="File tree scrolling"
+        style={{
+          height: 26,
+          flexShrink: 0,
+          fontSize: 12,
+          textAlign: "center",
+          color: UI_COLORS.secondary,
+        }}
+      >
+        {overflow.above && overflow.below
+          ? "More files before and after this section"
+          : overflow.below
+            ? "More files after this section"
+            : overflow.above
+              ? "More files before this section"
+              : ""}
+      </div>
     </div>
   );
 }

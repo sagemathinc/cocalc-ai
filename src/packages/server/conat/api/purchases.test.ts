@@ -40,6 +40,7 @@ const resolveClaimableMembershipPackageOwnerBayMock = jest.fn();
 const claimMembershipPackageSeatMock = jest.fn();
 const adminProvisionSiteLicenseMock = jest.fn();
 const adminCreateMembershipPackagePurchaseMock = jest.fn();
+const adminGetMembershipPackageQuoteMock = jest.fn();
 const getVerifiedEmailAddressesForAccountMock = jest.fn();
 const getSiteLicenseOverviewMock = jest.fn();
 const listSiteLicenseOverviewsMock = jest.fn();
@@ -76,6 +77,7 @@ const interBayGetClaimableMembershipPackagesForAccountMock = jest.fn();
 const interBayClaimMembershipPackageSeatForAccountMock = jest.fn();
 const interBayAdminProvisionSiteLicenseMock = jest.fn();
 const interBayAdminCreateMembershipPackagePurchaseMock = jest.fn();
+const interBayAdminGetMembershipPackageQuoteMock = jest.fn();
 const interBayGetSiteLicenseOverviewMock = jest.fn();
 const interBayListSiteLicenseOverviewsMock = jest.fn();
 const interBayAddSiteLicensePoolMock = jest.fn();
@@ -123,6 +125,8 @@ jest.mock("@cocalc/server/purchases/admin-membership-package", () => ({
   __esModule: true,
   default: (...args: any[]) =>
     adminCreateMembershipPackagePurchaseMock(...args),
+  adminGetMembershipPackageQuote: (...args: any[]) =>
+    adminGetMembershipPackageQuoteMock(...args),
 }));
 
 jest.mock("@cocalc/database", () => ({
@@ -397,6 +401,8 @@ jest.mock("@cocalc/conat/inter-bay/api", () => ({
       interBayAdminProvisionSiteLicenseMock(...args),
     adminCreateMembershipPackagePurchase: (...args: any[]) =>
       interBayAdminCreateMembershipPackagePurchaseMock(...args),
+    adminGetMembershipPackageQuote: (...args: any[]) =>
+      interBayAdminGetMembershipPackageQuoteMock(...args),
     getSiteLicenseOverview: (...args: any[]) =>
       interBayGetSiteLicenseOverviewMock(...args),
     listSiteLicenseOverviews: (...args: any[]) =>
@@ -451,6 +457,8 @@ beforeEach(() => {
   purchaseTeamLicenseChangeMock.mockReset();
   adminCreateMembershipPackagePurchaseMock.mockReset();
   interBayAdminCreateMembershipPackagePurchaseMock.mockReset();
+  adminGetMembershipPackageQuoteMock.mockReset();
+  interBayAdminGetMembershipPackageQuoteMock.mockReset();
   setAutoBalanceLocalMock.mockReset();
   getTeamLicenseOverviewForOwnerMock.mockReset();
   resolveTeamLicenseQuoteMock.mockReset();
@@ -570,6 +578,10 @@ const AUTO_BALANCE_CONFIG = {
   period: "week" as const,
   enabled: true,
 };
+
+const ADMIN_PACKAGE_ADMIN_ID = "11111111-1111-4111-8111-111111111111";
+const ADMIN_PACKAGE_ACCOUNT_1 = "22222222-2222-4222-8222-222222222222";
+const ADMIN_PACKAGE_ACCOUNT_2 = "33333333-3333-4333-8333-333333333333";
 
 describe("purchases automatic deposits", () => {
   it("requires fresh auth before changing any automatic-deposit setting", async () => {
@@ -1167,6 +1179,105 @@ describe("purchases membership packages", () => {
     expect(adminProvisionSiteLicenseMock).not.toHaveBeenCalled();
   });
 
+  it("quotes an admin custom-period package on the target home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: "standard",
+      seat_count: 100,
+      interval: "month" as const,
+      starts_at: new Date("2026-08-10T00:00:00Z"),
+      expires_at: new Date("2026-08-22T00:00:00Z"),
+    };
+    adminGetMembershipPackageQuoteMock.mockResolvedValue({
+      ...product,
+      seat_price: 1,
+      total_price: 100,
+    });
+
+    const { adminGetMembershipPackageQuote } = await import("./purchases");
+    await adminGetMembershipPackageQuote({
+      account_id: ADMIN_PACKAGE_ADMIN_ID,
+      session_hash: "session-1",
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_1,
+      product,
+    });
+
+    expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
+      account_id: ADMIN_PACKAGE_ADMIN_ID,
+      session_hash: "session-1",
+      allow_actor_impersonation: false,
+    });
+    expect(adminGetMembershipPackageQuoteMock).toHaveBeenCalledWith({
+      admin_account_id: ADMIN_PACKAGE_ADMIN_ID,
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_1,
+      product,
+    });
+  });
+
+  it("routes an admin custom-period quote to the target home bay", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveAccountHomeBayMock.mockResolvedValue({
+      account_id: ADMIN_PACKAGE_ACCOUNT_2,
+      home_bay_id: "bay-2",
+      source: "cluster-directory",
+    });
+    const product = {
+      type: "membership-package" as const,
+      kind: "team" as const,
+      membership_class: "standard",
+      seat_count: 100,
+      interval: "month" as const,
+      starts_at: new Date("2026-08-10T00:00:00Z"),
+      expires_at: new Date("2026-08-22T00:00:00Z"),
+    };
+    interBayAdminGetMembershipPackageQuoteMock.mockResolvedValue({
+      ...product,
+      seat_price: 1,
+      total_price: 100,
+    });
+
+    const { adminGetMembershipPackageQuote } = await import("./purchases");
+    await adminGetMembershipPackageQuote({
+      account_id: ADMIN_PACKAGE_ADMIN_ID,
+      session_hash: "session-1",
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_2,
+      product,
+    });
+
+    expect(interBayAdminGetMembershipPackageQuoteMock).toHaveBeenCalledWith({
+      actor_account_id: ADMIN_PACKAGE_ADMIN_ID,
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_2,
+      product,
+    });
+    expect(adminGetMembershipPackageQuoteMock).not.toHaveBeenCalled();
+  });
+
+  it("requires fresh auth before an admin custom-period quote", async () => {
+    isAdminMock.mockResolvedValue(true);
+
+    const { adminGetMembershipPackageQuote } = await import("./purchases");
+    await expect(
+      adminGetMembershipPackageQuote({
+        account_id: ADMIN_PACKAGE_ADMIN_ID,
+        user_account_id: ADMIN_PACKAGE_ACCOUNT_1,
+        product: {
+          type: "membership-package",
+          kind: "team",
+          membership_class: "standard",
+          seat_count: 100,
+          interval: "month",
+          starts_at: new Date("2026-08-10T00:00:00Z"),
+          expires_at: new Date("2026-08-22T00:00:00Z"),
+        },
+      }),
+    ).rejects.toMatchObject({ code: "fresh_auth_required" });
+
+    expect(adminGetMembershipPackageQuoteMock).not.toHaveBeenCalled();
+    expect(interBayAdminGetMembershipPackageQuoteMock).not.toHaveBeenCalled();
+  });
+
   it("creates an admin membership package purchase on the owner home bay", async () => {
     isAdminMock.mockResolvedValue(true);
     adminCreateMembershipPackagePurchaseMock.mockResolvedValue({
@@ -1184,9 +1295,9 @@ describe("purchases membership packages", () => {
     const { adminCreateMembershipPackagePurchase } =
       await import("./purchases");
     await adminCreateMembershipPackagePurchase({
-      account_id: "admin-1",
+      account_id: ADMIN_PACKAGE_ADMIN_ID,
       session_hash: "session-1",
-      user_account_id: "account-1",
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_1.toUpperCase(),
       product,
       price: 150,
       source: "credit",
@@ -1195,13 +1306,13 @@ describe("purchases membership packages", () => {
     });
 
     expect(requireFreshAuthForSessionHashMock).toHaveBeenCalledWith({
-      account_id: "admin-1",
+      account_id: ADMIN_PACKAGE_ADMIN_ID,
       session_hash: "session-1",
       allow_actor_impersonation: false,
     });
     expect(adminCreateMembershipPackagePurchaseMock).toHaveBeenCalledWith({
-      admin_account_id: "admin-1",
-      user_account_id: "account-1",
+      admin_account_id: ADMIN_PACKAGE_ADMIN_ID,
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_1,
       product,
       price: 150,
       source: "credit",
@@ -1214,7 +1325,7 @@ describe("purchases membership packages", () => {
   it("routes an admin membership package purchase to the owner home bay", async () => {
     isAdminMock.mockResolvedValue(true);
     resolveAccountHomeBayMock.mockResolvedValue({
-      account_id: "account-2",
+      account_id: ADMIN_PACKAGE_ACCOUNT_2,
       home_bay_id: "bay-2",
       source: "cluster-directory",
     });
@@ -1233,9 +1344,9 @@ describe("purchases membership packages", () => {
     const { adminCreateMembershipPackagePurchase } =
       await import("./purchases");
     await adminCreateMembershipPackagePurchase({
-      account_id: "admin-1",
+      account_id: ADMIN_PACKAGE_ADMIN_ID,
       session_hash: "session-1",
-      user_account_id: "account-2",
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_2,
       product,
       price: 150,
       source: "free",
@@ -1246,8 +1357,8 @@ describe("purchases membership packages", () => {
     expect(
       interBayAdminCreateMembershipPackagePurchaseMock,
     ).toHaveBeenCalledWith({
-      actor_account_id: "admin-1",
-      user_account_id: "account-2",
+      actor_account_id: ADMIN_PACKAGE_ADMIN_ID,
+      user_account_id: ADMIN_PACKAGE_ACCOUNT_2,
       product,
       price: 150,
       source: "free",
@@ -1266,8 +1377,8 @@ describe("purchases membership packages", () => {
       await import("./purchases");
     await expect(
       adminCreateMembershipPackagePurchase({
-        account_id: "admin-1",
-        user_account_id: "account-1",
+        account_id: ADMIN_PACKAGE_ADMIN_ID,
+        user_account_id: ADMIN_PACKAGE_ACCOUNT_1,
         product: {
           type: "membership-package",
           kind: "team",

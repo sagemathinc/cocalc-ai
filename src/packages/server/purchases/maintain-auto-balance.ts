@@ -16,10 +16,13 @@ import {
   type AutoBalance,
   ensureAutoBalanceValid,
 } from "@cocalc/util/db-schema/accounts";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchase:maintain-auto-balance");
 
-export default async function maintainAutoBalance() {
+export default async function maintainAutoBalance({
+  max_accounts = Number.POSITIVE_INFINITY,
+}: { max_accounts?: number } = {}) {
   logger.debug("maintainAutoBalance");
   const pool = getPool();
 
@@ -30,6 +33,11 @@ export default async function maintainAutoBalance() {
            AND auto_balance->>'enabled' = 'true'
            AND balance IS NOT NULL
            AND banned IS NOT TRUE
+           AND deleted IS NOT TRUE
+           AND NOT EXISTS (
+             SELECT 1 FROM billing_authority_account_fences AS fence
+              WHERE fence.account_id=accounts.account_id AND fence.frozen
+           )
            AND (auto_balance#>'{trigger}')::numeric >= balance
        `);
   const accounts = new Set(rows1.map((x) => x.account_id));
@@ -47,6 +55,12 @@ export default async function maintainAutoBalance() {
            AND (purchases.cost_per_hour IS NOT NULL OR purchases.cost_so_far IS NOT NULL)
            AND accounts.auto_balance IS NOT NULL
            AND auto_balance->>'enabled' = 'true'
+           AND accounts.banned IS NOT TRUE
+           AND accounts.deleted IS NOT TRUE
+           AND NOT EXISTS (
+             SELECT 1 FROM billing_authority_account_fences AS fence
+              WHERE fence.account_id=accounts.account_id AND fence.frozen
+           )
        `);
   const n = accounts.size;
   for (const { account_id } of rows2) {
@@ -68,8 +82,12 @@ export default async function maintainAutoBalance() {
   // Initially, likely there will be very few such users, but eventually
   // we'll need tricks to make this more efficient.   In particular,
   // we should make getBalance more efficient.
-  for (const account_id of accounts) {
+  const limit = Number.isFinite(max_accounts)
+    ? Math.max(0, Math.floor(max_accounts))
+    : Number.POSITIVE_INFINITY;
+  for (const account_id of [...accounts].sort().slice(0, limit)) {
     try {
+      await registerBillingAuthorityAccount(account_id);
       const { reason, status } = await update({
         account_id,
         auto_balance: auto_balances[account_id],

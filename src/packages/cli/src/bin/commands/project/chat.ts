@@ -37,11 +37,92 @@ export function registerProjectChatCommands(
     projectChatThreadStatusData,
     projectChatAutomationData,
     projectChatActivityData,
+    projectChatSendData,
+    readAllStdin,
   } = deps;
 
   const chat = project.command("chat").description("project chat operations");
 
   const thread = chat.command("thread").description("project chat threads");
+
+  chat
+    .command("send")
+    .description(
+      "send to an existing Codex thread; start a turn or queue behind active work",
+    )
+    .argument(
+      "[message...]",
+      "message text (use --stdin for multiline text or JSON)",
+    )
+    .requiredOption("--path <path>", "chat document path inside the project")
+    .requiredOption(
+      "--thread-id <id>",
+      "thread id from 'project chat thread list' or Codex settings",
+    )
+    .option("-w, --project <project>", "project id or name")
+    .option("--stdin", "read the message from standard input")
+    .option(
+      "--guidance",
+      "guide the running turn if possible; otherwise start a normal turn",
+    )
+    .action(
+      async (
+        message: string[],
+        opts: {
+          path: string;
+          threadId: string;
+          project?: string;
+          stdin?: boolean;
+          guidance?: boolean;
+        },
+        command: Command,
+      ) => {
+        if (opts.stdin && message.length)
+          throw new Error("use either message arguments or --stdin, not both");
+        const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
+        if (!prompt.trim()) throw new Error("message must not be empty");
+        await withContext(command, "project chat send", async (ctx) => {
+          return await projectChatSendData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+            threadId: normalizeThreadId(opts.threadId),
+            prompt,
+            guidance: opts.guidance,
+          });
+        });
+      },
+    );
+
+  thread
+    .command("list")
+    .description("list thread IDs, names, and agent kinds in a .chat document")
+    .requiredOption("--path <path>", "chat document path inside the project")
+    .option("-w, --project <project>", "project id or name")
+    .action(
+      async (opts: { path: string; project?: string }, command: Command) => {
+        await withContext(command, "project chat thread list", async (ctx) => {
+          const result = await projectChatThreadStatusData({
+            ctx,
+            projectIdentifier: opts.project,
+            path: normalizePath(opts.path),
+          });
+          return result.threads.map(
+            ({
+              thread_id,
+              name,
+              agent_kind,
+              archived,
+            }: {
+              thread_id: string;
+              name: string | null;
+              agent_kind: string | null;
+              archived: boolean;
+            }) => ({ thread_id, name, agent_kind, archived }),
+          );
+        });
+      },
+    );
 
   thread
     .command("create")

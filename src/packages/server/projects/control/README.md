@@ -1,19 +1,15 @@
-# Supported modes to run CoCalc
+# Project control
 
-- **SingleUser:** All projects run as a single user (who does NOT have to be root)
-  - This is used for developing cocalc itself from within a cocalc project.
-  - All projects run as the SAME Linux user. Obviously there is no enforced isolation between projects.
+`index.ts` installs `getProject` as the database's project-control function.
+`base.ts` implements `BaseProject`, including ownership checks, quota
+resolution, project state, and start/stop coordination.
 
-- **MultiUser**: Creates and deletes users on a single Linux server
-  - This is used mainly for cocalc-docker, but there's nothing Docker-specific about it.
-  - Each project runs as a different Linux user.
+Project-host start and stop operations are delegated to
+`../../project-host/control.ts`. Runtime quotas use membership and runtime
+sponsorship, with storage sponsorship handled separately. Workspace-local
+runtime handling is selected by `../../launchpad/project-runtime.ts`.
 
-- **KuCalc**: on a Kubernetes cluster
-  - This is used for https://cocalc.ai, and relies on some other services that react to changes in the database to scheduled projects. (The services are not currently open source.)
-  - Each project runs as a different pod (collection of Docker containers) in a Kubernetes cluster.
-
-- **Kubernetes**: on a Kubernetes cluster where the hub itself can run kubectl and create pods.
-  - This is used for cocalc-kubernetes, and relies on:
-    - the kubectl command being installed,
-    - the pod running the hub having full permissions to delete and create pods on the cluster
-    - the existence of an NFS export for the home directory of projects.
+The former `SingleUser`, `MultiUser`, `KuCalc`, and direct `Kubernetes`
+controller descriptions do not describe this directory's current
+implementation. This module is not evidence of the deployment topology of a
+particular live site.

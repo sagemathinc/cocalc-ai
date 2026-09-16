@@ -84,6 +84,59 @@ it("never mutates the runtime if the durable applying marker fails", async () =>
   await sync.finish();
 });
 
+it.each([
+  ["usageLimited", "usage_limited"],
+  ["budgetLimited", "budget_limited"],
+])("accepts a set-goal response in %s state", async (wireStatus, status) => {
+  const { sync, request, events } = setup({
+    id: "edit",
+    action: "set",
+    objective: "New goal",
+  });
+  const updatedGoal = { ...goal, objective: "New goal", status: wireStatus };
+  request.mockResolvedValue({ goal: updatedGoal });
+  await sync.start();
+  expect(events.filter((event) => event.ack).map((event) => event.ack)).toEqual(
+    [
+      { id: "edit", state: "applying" },
+      { id: "edit", state: "applied" },
+    ],
+  );
+  expect(events.at(-1)?.snapshot?.goal).toEqual({ ...updatedGoal, status });
+  expect(await sync.isActive()).toBe(false);
+  await sync.finish();
+});
+
+it.each(["usageLimited", "budgetLimited"])(
+  "does not disable goal controls after reading an existing %s goal",
+  async (status) => {
+    const { sync, request, readPending, events } = setup();
+    request.mockResolvedValue({ goal: { ...goal, status } });
+    await sync.start();
+    expect(await sync.isActive()).toBe(false);
+
+    readPending.mockReturnValue({
+      id: "resume",
+      action: "set",
+      status: "active",
+    });
+    request.mockResolvedValue({ goal });
+    await jest.advanceTimersByTimeAsync(1000);
+    expect(request.mock.calls).toContainEqual([
+      "thread/goal/set",
+      { threadId: "session", status: "active" },
+      5000,
+    ]);
+    expect(events).toContainEqual({
+      type: "goal",
+      phase: "command",
+      ack: { id: "resume", state: "applied" },
+    });
+    expect(await sync.isActive()).toBe(true);
+    await sync.finish();
+  },
+);
+
 it("rejects edits bound to another session", async () => {
   const { sync, request, events } = setup({
     id: "edit",

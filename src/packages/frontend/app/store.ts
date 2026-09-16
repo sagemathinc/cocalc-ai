@@ -9,6 +9,7 @@ import target from "@cocalc/frontend/client/handle-target";
 import type { AuthView } from "@cocalc/frontend/auth/types";
 import type { ConatConnectionStatus } from "@cocalc/frontend/conat/client";
 import type { Options as SupportOpenOptions } from "@cocalc/frontend/support/url";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 import {
   type PageTopTab,
   getPageTopTab,
@@ -24,6 +25,7 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 
 export interface PageState {
   active_top_tab: TopTab; // key of the active tab
+  last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
   docs_print?: boolean;
@@ -69,8 +71,13 @@ export class PageStore extends Store<PageState> {}
 
 export function init_store() {
   const parsed = parsePageTarget(target);
+  const initialProjectId =
+    parsed.page === "project" ? parsed.target.split("/")[0] : undefined;
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
+    last_project_tab: is_valid_uuid_string(initialProjectId)
+      ? initialProjectId
+      : undefined,
     admin_route: parsed.page === "admin" ? parsed.route : undefined,
     auth_view: parsed.page === "auth" ? parsed.view : undefined,
     docs_print: parsed.page === "docs" ? parsed.print : undefined,

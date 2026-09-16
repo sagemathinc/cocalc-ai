@@ -31,6 +31,7 @@ import { envForSpawn } from "@cocalc/backend/misc";
 import { projectRuntimePathForProcess } from "@cocalc/util/project-runtime";
 import { getLogger } from "@cocalc/backend/logger";
 import { getPorts } from "@cocalc/backend/get-port";
+import { stopReflectLauncher } from "./remote-launcher";
 
 const logger = getLogger("launch-kernel");
 
@@ -175,9 +176,7 @@ async function launchKernelSpec(
   // This deliberately uses process.env rather than full_spawn_options.env:
   // envForSpawn() strips every COCALC_* variable, so the spawn env no longer
   // carries COCALC_RUNTIME_HOME.  Outside workspace mode this is a no-op.
-  full_spawn_options.cwd = projectRuntimePathForProcess(
-    full_spawn_options.cwd,
-  );
+  full_spawn_options.cwd = projectRuntimePathForProcess(full_spawn_options.cwd);
 
   if (full_spawn_options.cwd != null) {
     await ensureDirectoryExists(full_spawn_options.cwd);
@@ -199,7 +198,7 @@ async function launchKernelSpec(
     running_kernel = spawn(argv[0], argv.slice(1), full_spawn_options);
   }
   running_kernel.unref?.();
-  rememberChild(running_kernel);
+  rememberChild(running_kernel, kernel_spec.metadata?.reflect?.remote === true);
 
   running_kernel.on("error", (code, signal) => {
     logger.debug("launchKernelSpec: ERROR -- ", { argv, code, signal });
@@ -244,10 +243,16 @@ async function ensureDirectoryExists(path: string) {
 
 // Clean up after any children created here
 const spawned = new Set<any>();
+const remoteChildren = new Set<any>();
+const remoteStops = new Map<any, Promise<void>>();
 
-function rememberChild(child) {
+function rememberChild(child, remote = false) {
   spawned.add(child);
-  const forget = () => spawned.delete(child);
+  if (remote) remoteChildren.add(child);
+  const forget = () => {
+    spawned.delete(child);
+    remoteChildren.delete(child);
+  };
   child.once?.("exit", forget);
   child.once?.("close", forget);
 }
@@ -315,13 +320,27 @@ function closeChild(child) {
 
 export function closeAll() {
   for (const child of [...spawned]) {
-    closeChild(child);
+    if (!remoteChildren.has(child)) {
+      closeChild(child);
+    } else if (!remoteStops.has(child)) {
+      // Even synchronous shutdown callers must give the proxy a chance to
+      // terminate remotely. Process death still has the remote lease backstop.
+      const stopping = stopReflectLauncher(child).finally(() => {
+        closeChild(child);
+        remoteStops.delete(child);
+      });
+      remoteStops.set(child, stopping);
+      void stopping.catch(() => {});
+    }
   }
 }
 
 export async function closeAllAndWait(timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
   closeAll();
+  // Remote cleanup has its own bounded signal/lease grace period; the local
+  // five-second reap timeout must not cut it short and orphan remote work.
+  await Promise.allSettled([...remoteStops.values()]);
+  const deadline = Date.now() + timeoutMs;
   while (spawned.size > 0) {
     for (const child of [...spawned]) {
       closeChild(child);

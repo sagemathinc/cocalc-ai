@@ -228,3 +228,36 @@ describe("public sitemap", () => {
     expect(response.headers.get("location")).toBeNull();
   });
 });
+
+jest.mock("@cocalc/server/launchpad/mode", () => ({
+  ...jest.requireActual("@cocalc/server/launchpad/mode"),
+  getCocalcProduct: jest.fn(() => "launchpad"),
+}));
+import { getCocalcProduct } from "@cocalc/server/launchpad/mode";
+const mockedProduct = jest.mocked(getCocalcProduct);
+beforeEach(() => mockedProduct.mockReturnValue("launchpad"));
+
+describe("research compute sitemap availability", () => {
+  it("omits only the new feature on Plus", async () => {
+    const request = requestFor("cocalc.ai");
+    const full = await publicSitemapPaths(request);
+    expect(full).toContain("/features/research-compute");
+    mockedProduct.mockReturnValue("plus");
+    const plus = await publicSitemapPaths(request);
+    expect(plus).toEqual(
+      full.filter((path) => path !== "/features/research-compute"),
+    );
+    const { renderSitemapXml } = await import("./sitemap");
+    const xml = await renderSitemapXml(request);
+    expect(xml).not.toContain("/features/research-compute");
+    expect(xml).toContain("/features/jupyter-notebook");
+    expect(PUBLIC_SITEMAP_PATHS).toContain("/features/research-compute");
+  });
+
+  it("includes research compute for Rocket", async () => {
+    mockedProduct.mockReturnValue("rocket");
+    expect(await publicSitemapPaths(requestFor("cocalc.ai"))).toContain(
+      "/features/research-compute",
+    );
+  });
+});

@@ -13,6 +13,7 @@
 //    - [x] math is properly typeset
 
 import { delay } from "awaiting";
+import $ from "jquery";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import StaticMarkdown from "@cocalc/frontend/editors/slate/static-markdown";
 import { useEffectiveEditorThemeForPath } from "@cocalc/frontend/project/workspaces/use-effective-editor-theme";

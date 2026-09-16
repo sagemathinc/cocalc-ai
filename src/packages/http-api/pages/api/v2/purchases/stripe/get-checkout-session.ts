@@ -1,8 +1,12 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import getCheckoutSession from "@cocalc/server/purchases/stripe/get-checkout-session";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import throttle from "@cocalc/util/api/throttle";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
+import { assertInteractivePaymentPurpose } from "@cocalc/server/purchases/stripe/util";
 
 export default async function handle(req, res) {
   try {
@@ -11,6 +15,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -27,15 +32,14 @@ async function get(req) {
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   throttle({ account_id, endpoint: "purchases/stripe/get-checkout-session" });
 
-  const { purpose, description, lineItems, return_url, metadata } =
-    getParams(req);
+  const { purpose, description, lineItems, metadata } = getParams(req);
+  assertInteractivePaymentPurpose(purpose);
 
-  return await getCheckoutSession({
+  return await executeBillingHttpCommand("get-checkout-session", {
     account_id,
     purpose,
     description,
     lineItems,
-    return_url,
     metadata,
   });
 }

@@ -1,19 +1,17 @@
-Blobs implementation for CoCalc Lite.
+# CoCalc Lite blobs
 
-This provides POST upload to /blobs and download from /blobs so the
-user of a cocalc lite server can paste images into documents, and
-have them be referenced by their sha1 hash.
+[upload.ts](./upload.ts) accepts multipart `POST /blobs` uploads. The response
+contains a `uuid` derived from the file's SHA-1 hash, not the raw hash string.
+[download.ts](./download.ts) serves `/blobs/<filename>?uuid=<uuid>` and reads
+from the Conat AKV store named `blobs`, keyed by that UUID.
 
-In hosted CoCalc they images are stored in the postgresql database.
-For CoCalc lite there is no postgresql database, and instead
-we store the images in a Conat AKV (async key:value store) with
-key the sha1 hash of the file being stored.
+The filename controls the response name and whether a supported raster image
+is displayed inline; `download` requests an attachment. A missing or invalid
+UUID returns an error rather than selecting a blob by filename.
 
-TODO: When we implement sync we'll have a separate background tasks to send
-such blobs to the relevant main server... or maybe we'll switch to the main
-site using conat AKV as well. We'll see.
+This implementation is separate from the hosted hub's blob backend. Hosted
+storage is selected by [server/blobs/config.ts](../../../server/blobs/config.ts)
+and can use Postgres or R2; it is not always stored entirely in Postgres.
 
-This code is a rewrite of:
-
-- @cocalc/hub/servers/app/blobs.ts
-- @cocalc/hub/servers/app/blob-upload.ts
+The former suggestion to add a background synchronization task was a design
+idea, not a promise that Lite uploads are automatically copied to a hosted site.

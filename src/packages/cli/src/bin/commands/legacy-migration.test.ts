@@ -5,6 +5,79 @@ import { Command } from "commander";
 
 import { registerLegacyMigrationCommand } from "./legacy-migration";
 
+test("ordinary preparation never opts into failed-restore handling", async () => {
+  let options: any;
+  const program = new Command();
+  registerLegacyMigrationCommand(program, {
+    isValidUUID: () => true,
+    hubCallByName: async (_ctx, name, args) => {
+      assert.equal(name, "legacyMigration.adminPrepareProjectRemediation");
+      options = args[0];
+    },
+    withContext: async (_command, _label, fn) => fn({ timeoutMs: 30_000 }),
+  });
+  await program.parseAsync([
+    "node",
+    "test",
+    "legacy-migration",
+    "remediation",
+    "prepare",
+    "project",
+  ]);
+  assert.equal(options.project_id, "project");
+  assert.equal(options.allow_failed_restore, undefined);
+  assert.equal(options.reason, undefined);
+});
+
+test("failed restore preparation is explicit, audited, and preparation-only", async () => {
+  const calls: any[] = [];
+  const program = new Command();
+  registerLegacyMigrationCommand(program, {
+    isValidUUID: () => true,
+    hubCallByName: async (_ctx, name, args) => {
+      calls.push({ name, args });
+    },
+    withContext: async (_command, _label, fn) => fn({ timeoutMs: 30_000 }),
+  });
+  const args = [
+    "node",
+    "test",
+    "legacy-migration",
+    "remediation",
+    "prepare",
+    "project",
+  ];
+  await assert.rejects(
+    program.parseAsync([...args, "--allow-failed-restore"]),
+    /--reason is required/,
+  );
+  assert.equal(calls.length, 0);
+  await program.parseAsync([
+    ...args,
+    "--allow-failed-restore",
+    "--reason",
+    " Inspect without overwriting newer files ",
+    "--support-reference",
+    " support case ",
+    "--snapshot-name",
+    " archive-inspection ",
+  ]);
+  assert.deepEqual(calls, [
+    {
+      name: "legacyMigration.adminPrepareProjectRemediation",
+      args: [
+        {
+          project_id: "project",
+          allow_failed_restore: true,
+          reason: "Inspect without overwriting newer files",
+          support_reference: "support case",
+          snapshot_name: "archive-inspection",
+        },
+      ],
+    },
+  ]);
+});
+
 test("legacy restore retry validates and forwards the project id", async () => {
   const calls: any[] = [];
   const program = new Command();

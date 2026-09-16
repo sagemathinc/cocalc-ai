@@ -1,10 +1,12 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
   waitFor,
   within,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 import type {
   CommercialOrder,
@@ -13,6 +15,7 @@ import type {
 import { CommercialQuotesCard } from "./quotes";
 
 const quotePreview = jest.fn();
+const getSiteSettings = jest.fn();
 const issueQuote = jest.fn();
 const quoteDocument = jest.fn();
 const voidQuote = jest.fn();
@@ -50,6 +53,9 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
     browser_id: "browser-test-1",
     conat_client: {
       hub: {
+        system: {
+          getSiteSettings: (...args: unknown[]) => getSiteSettings(...args),
+        },
         commercialOrders: {
           quotePreview: (...args: unknown[]) => quotePreview(...args),
           issueQuote: (...args: unknown[]) => issueQuote(...args),
@@ -185,6 +191,7 @@ function stripeQuote(changes: Partial<CommercialQuote> = {}): CommercialQuote {
 describe("commercial quote card", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    getSiteSettings.mockResolvedValue({ settings: [] });
     quotePreview.mockResolvedValue(localPreview);
     stripeQuotePreview.mockResolvedValue(stripePreview);
     issueQuote.mockResolvedValue({ ...order, version: 8 });
@@ -195,7 +202,7 @@ describe("commercial quote card", () => {
     reconcileStripeQuote.mockResolvedValue({ ...order, version: 8 });
   });
 
-  it("preserves local PDF issuance as the default provider", async () => {
+  it("preserves local PDF issuance when Stripe quotes are disabled", async () => {
     const onOrderChanged = jest.fn();
     render(
       <CommercialQuotesCard order={order} onOrderChanged={onOrderChanged} />,
@@ -218,6 +225,52 @@ describe("commercial quote card", () => {
     await waitFor(() => expect(issueQuote).toHaveBeenCalledTimes(1));
     expect(stripeQuotePreview).not.toHaveBeenCalled();
     expect(onOrderChanged).toHaveBeenCalled();
+  });
+
+  it("defaults to Stripe when quote drafts are enabled", async () => {
+    const user = userEvent.setup();
+    getSiteSettings.mockResolvedValue({
+      settings: [
+        { name: "commercial_receivables_stripe_quotes_enabled", value: true },
+      ],
+    });
+    render(<CommercialQuotesCard order={order} onOrderChanged={jest.fn()} />);
+    await waitFor(() =>
+      expect(screen.getByRole("radio", { name: "Stripe" })).toBeChecked(),
+    );
+    screen.getByRole("radio", { name: "Stripe" }).focus();
+    await user.keyboard("{ArrowLeft}");
+    expect(screen.getByRole("radio", { name: "Local PDF" })).toBeChecked();
+    await user.keyboard("{ArrowRight}");
+    expect(screen.getByRole("radio", { name: "Stripe" })).toHaveFocus();
+    expect(screen.getByRole("radio", { name: "Stripe" })).toBeChecked();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Create Stripe quote" }),
+    );
+    await screen.findByRole("dialog", { name: "Review Stripe quote draft" });
+    expect(stripeQuotePreview).toHaveBeenCalledTimes(1);
+    expect(quotePreview).not.toHaveBeenCalled();
+  });
+
+  it("does not overwrite a manual Local PDF selection when settings arrive late", async () => {
+    let resolve!: (value: any) => void;
+    getSiteSettings.mockReturnValue(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    render(<CommercialQuotesCard order={order} onOrderChanged={jest.fn()} />);
+    fireEvent.click(screen.getByRole("radio", { name: "Stripe" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Local PDF" }));
+    await act(async () =>
+      resolve({
+        settings: [
+          { name: "commercial_receivables_stripe_quotes_enabled", value: true },
+        ],
+      }),
+    );
+    await waitFor(() => expect(getSiteSettings).toHaveBeenCalled());
+    expect(screen.getByRole("radio", { name: "Local PDF" })).toBeChecked();
   });
 
   it("previews and creates a Stripe draft without finalizing it", async () => {

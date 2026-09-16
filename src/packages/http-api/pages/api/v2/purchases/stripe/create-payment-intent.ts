@@ -1,5 +1,8 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import createPaymentIntent from "@cocalc/server/purchases/stripe/create-payment-intent";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import {
@@ -9,6 +12,7 @@ import {
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import throttle from "@cocalc/util/api/throttle";
 import { assertPaymentCheckoutAllowed } from "@cocalc/server/launch/kill-switches";
+import { assertInteractivePaymentPurpose } from "@cocalc/server/purchases/stripe/util";
 
 export default async function handle(req, res) {
   try {
@@ -17,6 +21,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -53,12 +58,13 @@ async function get(req) {
       require_second_factor: true,
       allow_actor_impersonation: false,
     });
-    result = await createPaymentIntent({
+    result = await executeBillingHttpCommand("create-payment-intent", {
       account_id: user_account_id,
+      actor_account_id: admin_account_id,
       lineItems,
       description,
       purpose,
-      metadata: { ...metadata, admin_account_id },
+      metadata,
     });
   } else {
     const account_id = await getAccountId(req);
@@ -74,7 +80,8 @@ async function get(req) {
       account_id,
       allow_actor_impersonation: true,
     });
-    result = await createPaymentIntent({
+    assertInteractivePaymentPurpose(purpose);
+    result = await executeBillingHttpCommand("create-payment-intent", {
       account_id,
       description,
       lineItems,

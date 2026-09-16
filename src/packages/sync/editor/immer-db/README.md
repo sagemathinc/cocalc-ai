@@ -10,7 +10,8 @@ objects instead of Immutable.js records.
 - Use `ImmerDB` when you want a plain-object view for easier integration with
   immer/POJO state and reduced memory overhead.
 - Types live in `sync/editor/immer-db` and mirror `sync/editor/db` (opts,
-  `ImmerDBDocument`, `from_str`).
+  `ImmerDBDocument`). The package index exports the parser as `immer_from_str`;
+  `from_str` is the internal name in `doc.ts`.
 
 Migration tip: existing consumers of `SyncDB` can swap to `ImmerDB` without
 changing the underlying data; only in-memory representation differs.

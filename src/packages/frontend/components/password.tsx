@@ -18,7 +18,7 @@ e.g., a service account json blob.
 */
 
 import { useState } from "react";
-import { Input, Space } from "antd";
+import { Button, Input, Space } from "antd";
 import { EyeOutlined, EyeInvisibleOutlined } from "@ant-design/icons";
 
 export default function Password(props0) {
@@ -65,18 +65,18 @@ function VisibilityToggle({
     setVisible(!visible);
   };
   return (
-    <span onClick={handleClick} style={{ cursor: "pointer" }}>
-      {visible ? (
-        <EyeOutlined style={{ color: "rgba(0,0,0,.45)" }} />
-      ) : (
-        <EyeInvisibleOutlined style={{ color: "rgba(0,0,0,.45)" }} />
-      )}
+    <Button
+      type="text"
+      size="small"
+      onClick={handleClick}
+      aria-label={visible ? "Hide secret" : "Show secret"}
+      aria-pressed={visible}
+    >
+      {visible ? <EyeOutlined /> : <EyeInvisibleOutlined />}
       {label && (
-        <span style={{ color: "rgba(0,0,0,.45)", marginLeft: "5px" }}>
-          {visible ? "Hide" : "Show"}
-        </span>
+        <span style={{ marginLeft: "5px" }}>{visible ? "Hide" : "Show"}</span>
       )}
-    </span>
+    </Button>
   );
 }
 

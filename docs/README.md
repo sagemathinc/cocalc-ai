@@ -1,14 +1,22 @@
-# Guidelines
+# Repository documentation
 
-This collection of files provides general knowledge for working with the CoCalc.
+This directory contains architecture, development, and operator references for
+the CoCalc-AI source tree. User-facing guides are maintained in the existing
+[documentation registry](../src/packages/docs/src/entries/index.ts) and published
+in the [CoCalc documentation browser](https://cocalc.ai/docs).
 
-Last Updated: September 2024.
+Start with the reference for your task:
 
-## Documents
+- Product and package layout: [repository README](../README.md).
+- Build and local development: [source guide](../src/README.md) and
+  [development helpers](../src/scripts/dev/README.md).
+- Architecture and operations: [reference index](overview.md).
+- Browser debugging: [browser-debugging.md](browser-debugging.md).
+- Public CLI guide validation: [cli-guide-validation.md](cli-guide-validation.md).
+- Contributor style: [STYLE.md](STYLE.md).
 
-- Buckets & backups: [buckets.md](./buckets.md)
-- Frame tree menus and command/action context: [frame-tree-menus.md](./frame-tree-menus.md)
-- Browser runtime debugging + API wishlist: [browser-debugging.md](./browser-debugging.md)
-- Explicit Conat routing and authority: [conat-routing.md](./conat-routing.md)
-- Site master key production runbook: [security/site-master-key-production-runbook.md](./security/site-master-key-production-runbook.md)
-- Private managed app trust model: [security/private-app-trust-model.md](./security/private-app-trust-model.md)
+Documents marked as drafts or plans describe design intent and open work. The
+working notes in `src/.agents/` also include historical and proposed behavior;
+check the owning implementation and tests before using a note as an operating
+procedure. A source reference, successful component check, and tested deployment
+are different kinds of evidence.

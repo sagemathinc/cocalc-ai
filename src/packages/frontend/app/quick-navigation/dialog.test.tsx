@@ -126,7 +126,7 @@ it("uses Tab for preview, Shift-Tab for search, and immediate digits in preview"
   await userEvent.type(input, "paper");
   await userEvent.tab();
   expect(document.activeElement).toBe(
-    screen.getByRole("group", { name: "Frames in paper.tex" }),
+    screen.getByRole("group", { name: /^Frames in paper\.tex/ }),
   );
   expect(closed).not.toHaveBeenCalled();
   expect(screen.getByRole("combobox")).toBe(input);
@@ -211,7 +211,9 @@ it("keeps a fixed-height list and a natural-height preview column", async () => 
   expect(left.style.height).not.toBe("");
   expect(right.style.height).toBe("");
   expect(
-    right.contains(screen.getByRole("group", { name: "Frames in paper.tex" })),
+    right.contains(
+      screen.getByRole("group", { name: /^Frames in paper\.tex/ }),
+    ),
   ).toBe(true);
   expect(screen.getByTestId("frame-preview").style.aspectRatio).toBe("1 / 1");
   await userEvent.type(input, "preferences");
@@ -221,14 +223,17 @@ it("keeps a fixed-height list and a natural-height preview column", async () => 
   expect(screen.getByRole("listbox")).toBe(list);
 });
 
-it("cycles Tab only through search, preview, configure and help", async () => {
+it("cycles Tab through every dialog control, including Close", async () => {
   const { input } = setup();
   await waitFor(() => expect(document.activeElement).toBe(input));
-  const preview = screen.getByRole("group", { name: "Frames in paper.tex" });
+  const preview = screen.getByRole("group", {
+    name: /^Frames in paper\.tex/,
+  });
   const gear = screen.getByRole("button", {
     name: "Configure Quick Navigation",
   });
   const help = screen.getByRole("link", { name: "Help" });
+  const close = screen.getByRole("button", { name: "Close" });
   await userEvent.tab();
   expect(document.activeElement).toBe(preview);
   await userEvent.tab();
@@ -236,15 +241,56 @@ it("cycles Tab only through search, preview, configure and help", async () => {
   await userEvent.tab();
   expect(document.activeElement).toBe(help);
   await userEvent.tab();
+  expect(document.activeElement).toBe(close);
+  await userEvent.tab();
   expect(document.activeElement).toBe(input);
   await userEvent.tab({ shift: true });
-  expect(document.activeElement).toBe(help);
+  expect(document.activeElement).toBe(close);
   // Preview buttons are not tab stops, but Tab from one continues the cycle.
   const button = screen.getByRole("button", { name: "2 · PDF" });
   expect(button.tabIndex).toBe(-1);
   button.focus();
   await userEvent.tab();
   expect(document.activeElement).toBe(gear);
+});
+
+it("uses arrow keys and Enter to open frames beyond the digit shortcuts", async () => {
+  const closed = jest.fn();
+  const manyFrames = Array.from({ length: 10 }, (_, index) => ({
+    id: `frame-${index + 1}`,
+    type: "cm",
+    label: `Frame ${index + 1}`,
+  }));
+  const manyFrameEditor: Editor = {
+    ...editor,
+    frames: manyFrames,
+    layout: { children: manyFrames.map((frame) => ({ frame })) },
+    activeId: "frame-1",
+  };
+  render(
+    <IntlProvider locale="en">
+      <NavigationDialog
+        items={[{ ...item, editor: manyFrameEditor }]}
+        currentEditor={manyFrameEditor}
+        projectId="p"
+        onClosed={closed}
+      />
+    </IntlProvider>,
+  );
+  const input = screen.getByRole("combobox");
+  await waitFor(() => expect(document.activeElement).toBe(input));
+  await userEvent.tab();
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(screen.getByRole("button", { name: "Frame 10" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await userEvent.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(closed).toHaveBeenCalledWith(
+      expect.objectContaining({ frameId: "frame-10" }),
+    ),
+  );
 });
 
 it("Escape closes even when focus is not inside the dialog", async () => {
@@ -312,9 +358,9 @@ it("changes the hint with keyboard focus and with what the selection offers", as
   expect(hint()).toContain("Enter opens “Source”");
   expect(hint()).toContain("Shift+Tab back to search");
   expect(screen.getByText("Frames of paper.tex")).toBeTruthy();
-  expect(screen.getByText("1–9 or Enter")).toBeTruthy();
+  expect(screen.getByText("Arrow keys, 1–9, or Enter")).toBeTruthy();
   await userEvent.tab({ shift: true });
-  expect(screen.getByText("Tab, then 1–9")).toBeTruthy();
+  expect(screen.getByText("Tab, then arrow keys or 1–9")).toBeTruthy();
   await userEvent.type(input, "paper");
   expect(hint()).not.toContain("Space first");
   expect(hint()).toContain("Tab: frame selector");

@@ -2,8 +2,8 @@
 
 ## Isolated Remote Chrome
 
-When the user explicitly supplies a dedicated, signed-in Chrome profile through
-a loopback-only SSH DevTools tunnel, run:
+When the user explicitly supplies a dedicated Chrome profile with a signed-in
+`https://lite2b.cocalc.ai/` tab through a loopback-only SSH DevTools tunnel, run:
 
 ```sh
 node src/scripts/appearance/audit-cdp.mjs --cdp http://127.0.0.1:9222
@@ -96,7 +96,12 @@ or browser state files that may contain private data.
 
 For a repeatable signed-in screenshot matrix, first create a dedicated browser
 session and authenticate it through the local hub. Then pass its explicit
-profile, API, browser, and disposable audit project to the typed-action runner:
+profile, API, browser, and disposable audit project to the typed-action runner.
+This helper currently invokes `/opt/cocalc/bin/node` and
+`/opt/cocalc/bin2/cocalc-cli.js`; run it only where those executables are installed.
+Its page origin defaults to `https://lite2b.cocalc.ai`; use `--base-url` to target
+a different frontend. The anonymous runtime helper below requires Chromium at
+`/usr/bin/chromium`.
 
 ```sh
 node scripts/appearance/audit-signed-in.mjs \
@@ -109,8 +114,11 @@ node scripts/appearance/audit-signed-in.mjs \
 
 The runner covers account, notification, admin, project settings/files, and
 Essential routes at desktop and mobile widths in Light and Dark. It writes a
-JSON capture report after every route and restores the account-wide appearance
-preference on exit. Every row intentionally remains `unreviewed` until a human
+JSON capture report after every route. On exit it attempts to set the account-wide
+appearance to `--restore-mode` (`light` by default); it does not read the prior
+preference. Before starting, record that preference and pass `--restore-mode`
+with `system`, `light`, or `dark` as appropriate. If cleanup fails, restore it
+manually in the dedicated session. Every row intentionally remains `unreviewed` until a human
 inspects its screenshot; a capture failure makes the command fail. Keep this
 authenticated evidence under `.local` and never commit it.
 
@@ -128,8 +136,9 @@ node scripts/appearance/audit-runtime.mjs
 node --test scripts/appearance/route-check.test.mjs
 ```
 
-Runtime checks measure native input-to-following-frame latency, keyboard focus,
-System changes, and prepaint with external scripts blocked, including blocked
-storage. Only unthrottled samples use the provisional 100 ms desktop p95 gate;
+Runtime checks time a scripted theme `change` event through two animation-frame
+callbacks, check that focus remains on the selector, exercise System changes,
+and check prepaint with external scripts blocked, including blocked storage.
+These timing samples do not measure physical keyboard or pointer input latency. Only unthrottled samples use the provisional 100 ms desktop p95 gate;
 4x throttled samples are separate diagnostics. They do not establish notebook,
 terminal, or streaming-chat state preservation or performance.

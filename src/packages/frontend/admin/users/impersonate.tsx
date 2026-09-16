@@ -3,7 +3,9 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button, Card } from "antd";
+import { Alert, Button, Card, Input, Typography } from "antd";
+import { useEffect, useId, useRef } from "react";
+import { impersonationReason } from "@cocalc/util/impersonation-audit";
 import { join } from "path";
 
 import { Rendered, useState } from "@cocalc/frontend/app-framework";
@@ -28,17 +30,30 @@ export function Impersonate({ display_name, account_id, embedded }: Props) {
   const [err, set_err] = useState<string | null>(null);
   const [extraWarning, setExtraWarning] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
+  const [reason, setReason] = useState("");
+  const reasonId = useId();
+  const linkRef = useRef<HTMLAnchorElement>(null);
+  useEffect(() => {
+    if (impersonationUrl && !loading) linkRef.current?.focus();
+  }, [impersonationUrl, loading]);
   const { locale } = useLocalizationCtx();
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
   async function generate_link(): Promise<void> {
+    let auditReason: string;
+    try {
+      auditReason = impersonationReason(reason);
+    } catch (error) {
+      set_err(`${error}`);
+      return;
+    }
     setLoading(true);
     try {
       await runFreshAuthAction(async () => {
         const result =
           await webapp_client.admin_client.create_impersonation_grant({
             subject_account_id: account_id,
-            reason: "admin-ui",
+            reason: auditReason,
             lang_temp: locale,
           });
         setImpersonationUrl(result.url);
@@ -59,12 +74,36 @@ export function Impersonate({ display_name, account_id, embedded }: Props) {
     if (impersonationUrl == null) {
       return (
         <div style={{ textAlign: "center" }}>
-          <Button type="primary" onClick={() => void generate_link()}>
+          <div style={{ textAlign: "left", marginBottom: 16 }}>
+            <label htmlFor={reasonId}>
+              Reason and authorization for impersonation (required)
+            </label>
+            <Input.TextArea
+              id={reasonId}
+              aria-describedby={`${reasonId}-help`}
+              required
+              maxLength={512}
+              autoSize={{ minRows: 3, maxRows: 8 }}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Describe the investigation, ticket link, and where the user's consent was recorded, or another authorized operational reason."
+            />
+            <Typography.Paragraph id={`${reasonId}-help`} type="secondary">
+              This explanation is retained with the impersonation audit record.
+              Only inspect content within the authorized scope. A reason or
+              ticket link alone is not user consent.
+            </Typography.Paragraph>
+          </div>
+          <Button
+            disabled={!reason.trim()}
+            type="primary"
+            onClick={() => void generate_link()}
+          >
             Generate impersonation link
           </Button>
-          <div style={{ marginTop: "15px", color: "#666" }}>
+          <Typography.Paragraph type="secondary" style={{ marginTop: "15px" }}>
             This requires recent admin password verification and 2FA.
-          </div>
+          </Typography.Paragraph>
         </div>
       );
     }
@@ -82,6 +121,7 @@ export function Impersonate({ display_name, account_id, embedded }: Props) {
       <div>
         <div style={{ fontSize: "13pt", textAlign: "center" }}>
           <a
+            ref={linkRef}
             href={link}
             onClick={handleClick}
             target="_blank"
@@ -117,7 +157,7 @@ export function Impersonate({ display_name, account_id, embedded }: Props) {
   function render_err(): Rendered {
     if (err != null) {
       return (
-        <div>
+        <div role="alert">
           <b>ERROR</b> {err}
         </div>
       );

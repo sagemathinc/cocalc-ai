@@ -1,135 +1,88 @@
-# CoCalc's Static Frontend Webapp, built using Webpack 5
+# CoCalc's static frontend assets
 
-Using webpack we build the static assets that run in the client's browser
-when they are using the CoCalc app, i.e., the single page application with
-projects, files, editors, etc.
+This package builds the browser entry points and assets with Rspack. The full
+frontend source lives in `@cocalc/frontend`; Essential source lives in
+`@cocalc/essential-frontend`. The hub serves the compiled static files.
 
 ## Development
 
-When doing development, use `pnpm run tsc` to watch for typescript errors \(or just use VS Code or some other editor with LSP support\).
+Complete the repository dependency setup described in [src/README.md](../../README.md).
+From `src/`, watch the workspace TypeScript projects:
 
 ```sh
-pnpm run tsc
+pnpm tsc:watch
 ```
 
-### Essential browser integration tests
-
-With the local hub running, the Essential Jupyter tests create a hidden
-notebook fixture in the development project and execute it through Chromium
-and the real project kernel:
+In another terminal, from `src/packages/static/`, build development assets and
+then watch them:
 
 ```sh
-pnpm essential:test:e2e
+pnpm build:dev
+pnpm watch
 ```
 
-The test command discovers the local hub environment, creates an authenticated
-browser state, and retains a Playwright trace plus sanitized Essential
-diagnostics when a test fails. Set `COCALC_ESSENTIAL_E2E_BASE_URL` or
-`COCALC_ESSENTIAL_E2E_PROJECT_ID` to override the discovered targets.
+`build:dev` runs `build0` first: it compiles translations and TypeScript and
+copies required CSS, SVG, and HTML assets. `watch` runs Rspack in watch mode;
+it does not replace the workspace TypeScript watch. The package's `tsc` script
+is a one-shot compilation, not a watcher.
 
-ALSO, run `pnpm run tsc` in the `packages/frontend` directory, if you are editing that code, which is likely if you're reading this file.
+Start the appropriate local hub or Lite environment separately as described in
+[src/README.md](../../README.md). Reload the browser after rebuilding when it
+still has an older bundle. The current hub serves static assets from disk; the
+old Webpack/Next.js middleware instructions do not describe this setup.
 
-Use `pnpm webpack-prod` to build and test the production version:
-
-```sh
-pnpm webpack-prod
-```
-
-If your machine is memory constrained, there is now a lower-memory watch mode:
+For a machine with limited memory, use the alternative watcher:
 
 ```sh
 pnpm watch:low-mem
 ```
 
-This does **not** keep TypeScript or rspack resident. Instead it polls the
-`packages/` tree for changes, runs a one-shot
-`pnpm tsc --build --pretty tsconfig.solution.json`, and only if that succeeds
-runs one-shot `pnpm rspack build`. It is slower than `pnpm watch`, but
-steady-state RAM usage is much lower and you do not get fresh bundles for
-obviously type-broken code.
+It polls the packages tree and runs a one-shot workspace TypeScript build
+before each Rspack build. Neither compiler stays resident between builds. If
+TypeScript fails, it does not produce a fresh Rspack bundle. This mode trades
+rebuild latency for lower steady-state memory use; measure your own workload.
 
-This is the same as `pnpm run webpack`, but with more aggressive chunking, caching, minification, etc. It's interesting to test this before making a release, in case something surprising changes or to make sure the size of the bundle hasn't got too big. Also, check in the Network tab of Chrome dev tools that loading cocalc doesn't transfer too much data \(e.g., due to installing a huge package\).
+## Production and bundle analysis
 
-If you get really weird errors that make no sense, the on-disk cashing may be broken. In that case, delete it and restart webpack:
+From this package:
 
 ```sh
-rm -rf /tmp/webpack-`whoami`
+pnpm build
+pnpm analyze
 ```
 
-## Measuring size
+`build` runs `build0`, then `production-build.py`, which invokes Rspack and
+creates the versioned app HTML file. `analyze` writes the production treemap to
+`dist-prod-measure/bundle-report.html` and accompanying `stats.json`.
 
-Run `pnpm webpack-measure` and when it finishes, look at `dist-measure/measure.html` for an interactive graphic that shows how much space each part of CoCalc is using. Use `pnpm webpack-measure-prod` to see what the situation is for the production build.
+For development bundle analysis, use `pnpm analyze:dev` and inspect
+`dist-measure/bundle-report.html`. The historical `webpack-measure` and
+`webpack-measure-prod` names remain aliases for these Rspack analysis scripts.
+Use the current `build` and `watch` commands rather than the legacy
+`webpack-prod` script.
 
-## Disabling the webpack dev server
+Bundle graph checks are available through `pnpm check-bundle-guards`; the
+Essential-specific check is `pnpm check-ultralite-budgets`. These build and
+inspect assets. They do not validate a live site's behavior or measured user
+latency.
 
-Set the env variable `NO_WEBPACK_DEV_SERVER:`
+## Essential browser integration tests
+
+With the local hub running and a designated development project, run:
 
 ```sh
-~/cocalc/src$ NO_WEBPACK_DEV_SERVER=true pnpm hub
+pnpm essential:test:e2e
 ```
 
-You will need to manually build the webpack assets, e.g., via
+This is a live integration test: it creates a hidden notebook fixture, obtains
+authenticated browser state, and executes through Chromium and a real project
+kernel. It retains a Playwright trace and diagnostics on failure. Check the
+selected environment first; `COCALC_ESSENTIAL_E2E_BASE_URL` and
+`COCALC_ESSENTIAL_E2E_PROJECT_ID` override the discovered targets.
 
-```sh
-~/cocalc/src/packages/static$ pnpm webpack
-```
+## Changes in other packages
 
-## More about development
-
-First we assume you have installed all dev dependencies everywhere for all modules \(`pnpm install; pnpm build:dev`\). To do interactive development of CoCalc, you optionally start typescript in watch mode as explained below. If you're using
-VS Code its LSP server handles this checking so you can skip this.
-
-To watch for typescript errors, in one terminal session (in this package/static directory!) start webpack running
-
-```sh
-# Do this is packages/static:
-pnpm tsc
-```
-
-In a second terminal (in the packages/frontend directory!), start watching for errors via typescript:
-
-```sh
-# Do this is packages/frontend:
-pnpm tsc
-```
-
-When running the hub in dev mode it uses the webpack dev server middleware
-automatically with hot module loading support. This serves the compiled
-webapp from memory and also automatically updates it when there are changes.
-If there are errors, you'll see them displayed in the webapp via an overlay,
-and also in the console where you launched the hub.
-
-**WARNING:** There's a bunch of subtle situations where the hot module reloading
-won't properly update the frontend, and there is no easy way to tell. If in
-doubt, you may have to refresh your browser. Basically modern-style code using
-only react hooks automatically refreshes properly, but older code with Redux
-actions, etc., might not.
-
-Note that the hub is ALSO running another copy of webpack at the same time
-as part of nextjs, to compile serve the code in packages/next, with server side
-rendering. That also supports hot module loading, so there's a lot going on
-in the hub all at once!
-
-## :bomb: Landmines to watch out for
-
-### 1. tsconfig.json and code splitting
-
-Code splitting [can't work](https://davidea.st/articles/webpack-typescript-code-split-wont-work) without this tsconfig.json option:
-
-```js
-{
-  "compilerOptions": {
-    "module": "esnext"
-  }
-}
-```
-
-### 2. \[DEPRECATED!\] [npmjs.com](http://npmjs.com) `@cocalc/*` packages
-
-We used to use [npmjs.com](http://npmjs.com) extensively for packaging under the @cocalc org.
-**We now do not use that in any way**, so just don't get confused by that.
-
-### 3. Changing code in other packages such as `packages/util`
-
-1. Change something in `packages/util`.
-2. You **must** do `pnpm build` in `packages/util` to make the changes visible! This is because anything outside of `packages/util` actually only sees `packages/util/dist` which is the compiled versions of everything. This is a significant change from before. You can also do `pnpm tsc` in `packages/util` to compile and update `dist`.
+Workspace imports often read compiled `dist` output. Rebuild a changed package
+or keep the workspace TypeScript watch running before expecting its changes in
+the browser. For example, run `pnpm build` in `src/packages/util/` after editing
+that package.

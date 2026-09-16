@@ -1,4 +1,5 @@
 import { handleFileDownload, DOWNLOAD_ERROR_HEADER } from "./file-download";
+import { EventEmitter } from "node:events";
 
 const mockReadFile = jest.fn();
 const mockFsStat = jest.fn();
@@ -25,6 +26,48 @@ describe("handleFileDownload", () => {
     mockFsRm.mockReset();
     mockFsClient.mockClear();
     mockFsSubject.mockClear();
+  });
+
+  it("refreshes idle timeout during a progressing long download and forwards only caller-authenticated identity", async () => {
+    jest.useFakeTimers();
+    const res = Object.assign(new EventEmitter(), {
+      setHeader: jest.fn(),
+      write: jest.fn(() => true),
+      end: jest.fn(),
+      destroy: jest.fn(),
+      destroyed: false,
+      writableEnded: false,
+      headersSent: true,
+    });
+    let signal!: AbortSignal;
+    mockReadFile.mockImplementation(async function* (opts) {
+      signal = opts.signal;
+      for (let i = 0; i < 20; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        signal.throwIfAborted();
+        yield Buffer.alloc(1);
+      }
+    });
+    try {
+      const download = handleFileDownload({
+        req: { method: "GET", url: "/project-test/files/a" },
+        res,
+        maxWait: 80,
+        account_id: "authenticated-account",
+        client: {} as any,
+      });
+      await jest.advanceTimersByTimeAsync(1000);
+      await download;
+      expect(res.write).toHaveBeenCalledTimes(20);
+      expect(res.destroy).not.toHaveBeenCalled();
+      expect(res.end).toHaveBeenCalledWith();
+      expect(mockReadFile).toHaveBeenCalledWith(
+        expect.objectContaining({ account_id: "authenticated-account" }),
+      );
+      expect(jest.getTimerCount()).toBe(0);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("uses stat instead of streaming for allowed HEAD downloads", async () => {
@@ -155,6 +198,7 @@ describe("handleFileDownload", () => {
       project_id: "project-123",
       path: "/home/user/a.txt",
       maxWait: 1000 * 60 * 60,
+      signal: expect.any(AbortSignal),
     });
     expect(res.write).toHaveBeenCalledWith(Buffer.from("hello"));
     expect(res.write).toHaveBeenCalledWith(Buffer.from(" world"));
@@ -235,6 +279,7 @@ describe("handleFileDownload", () => {
       path: "/home/user/a.pdf",
       name: ":workspace",
       maxWait: 1000 * 60 * 60,
+      signal: expect.any(AbortSignal),
       start: 10,
       end: 19,
     });
@@ -343,6 +388,7 @@ describe("handleFileDownload", () => {
       project_id: "project-123",
       path: "/tmp/.cocalc-download-archive-token-selection.zip",
       maxWait: 1000 * 60 * 60,
+      signal: expect.any(AbortSignal),
     });
     expect(mockFsRm).not.toHaveBeenCalled();
     expect(onFinish).toBeDefined();

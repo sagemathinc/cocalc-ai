@@ -7,6 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import {
   CODEX_MODEL_CATALOG_TTL_MS,
   writeCachedCodexModelCatalog,
@@ -66,9 +67,10 @@ jest.mock("antd", () => {
                 <button
                   key={item.key}
                   disabled={item.disabled}
-                  onClick={(event) =>
-                    menu?.onClick?.({ domEvent: event, key: item.key })
-                  }
+                  onClick={(event) => {
+                    menu?.onClick?.({ domEvent: event, key: item.key });
+                    setOpen(false);
+                  }}
                 >
                   {item.label}
                 </button>
@@ -79,7 +81,7 @@ jest.mock("antd", () => {
       );
     },
     Input: () => <input />,
-    Modal: ({ open, children }: any) => (open ? <div>{children}</div> : null),
+    Modal: jest.requireActual("antd").Modal,
     Popover: ({ children }: any) => <>{children}</>,
     Progress: ({ "aria-label": ariaLabel }: any) => (
       <div aria-label={ariaLabel} />
@@ -172,35 +174,24 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
 jest.mock("../use-codex-payment-source", () => ({
   getCodexPaymentSourceShortLabel: (source: string) =>
     source === "site-api-key" ? "Membership" : "ChatGPT",
-  getCodexPaymentSourceOptions: (source: any) => [
-    {
-      value: "auto",
-      label: "Automatic",
-      description: "Choose automatically",
-    },
-    ...(source?.hasSubscription
-      ? [
-          {
-            value: "subscription",
-            label: "ChatGPT Plan",
-            description: "Use ChatGPT",
-          },
-        ]
-      : []),
-    ...(source?.hasSiteApiKey
-      ? [
-          {
-            value: "site-api-key",
-            label: "CoCalc Membership",
-            description: "Use membership allowance",
-          },
-        ]
-      : []),
-  ],
+  getCodexPaymentSourceOptions: (...args: any[]) =>
+    jest
+      .requireActual("../use-codex-payment-source")
+      .getCodexPaymentSourceOptions(...args),
   getCodexPaymentSourceTooltip: () => "ChatGPT",
 }));
 
 describe("CodexConfigButton", () => {
+  const getComputedStyle = window.getComputedStyle;
+  beforeAll(() => {
+    // JSDOM cannot measure the scrollbar pseudo-element used by real Modals.
+    jest
+      .spyOn(window, "getComputedStyle")
+      .mockImplementation((element) => getComputedStyle(element));
+  });
+  afterAll(() => {
+    jest.mocked(window.getComputedStyle).mockRestore();
+  });
   beforeEach(() => {
     stableForm.resetFields.mockClear();
     stableForm.setFieldsValue.mockClear();
@@ -1194,7 +1185,8 @@ describe("CodexConfigButton", () => {
     });
   });
 
-  it("does not let an established personal session enter Membership mode", async () => {
+  it("explains the new-thread requirement without changing an established session", async () => {
+    const user = userEvent.setup();
     const actions = {
       getCodexConfig: jest.fn(() => undefined),
       setCodexConfig: jest.fn(),
@@ -1217,7 +1209,14 @@ describe("CodexConfigButton", () => {
           hasAccountApiKey: false,
           hasSiteApiKey: true,
           siteAiUsageLimitPositive: true,
-          siteFundedCodex: { enabled: true },
+          siteFundedCodex: {
+            enabled: true,
+            policy: {
+              model: "gpt-5.4-mini",
+              reasoning: "medium",
+              serviceTier: "standard",
+            },
+          },
           sharedHomeMode: "disabled",
         }}
       />,
@@ -1227,9 +1226,38 @@ describe("CodexConfigButton", () => {
       expect(screen.getByText("gpt-5.4")).toBeTruthy();
     });
     fireEvent.click(screen.getByTitle("Change Codex payment source"));
-    expect(
-      (screen.getByText("CoCalc Membership") as HTMLButtonElement).disabled,
-    ).toBe(true);
+    const membership = screen.getByRole("button", {
+      name: "CoCalc Membership",
+    });
+    membership.focus();
+    expect(document.activeElement).toBe(membership);
+    await user.keyboard("{Enter}");
+    const help = await screen.findByRole("dialog", {
+      name: "Start a new thread to use CoCalc Membership",
+    });
+    expect(help.textContent).toContain("context size");
+    expect(help.textContent).toContain("before sending your first message");
+    expect(help.textContent).toContain("gpt-5.4-mini with medium reasoning");
+    expect(actions.setCodexConfig).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(help.contains(document.activeElement)).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("dialog", {
+          name: "Start a new thread to use CoCalc Membership",
+        }),
+      ).toBeNull(),
+    );
+    const paymentButton = screen.getByRole("button", {
+      name: "Change Codex payment source",
+    });
+    await waitFor(() => expect(document.activeElement).toBe(paymentButton));
+
+    await user.click(paymentButton);
+    await user.click(screen.getByRole("button", { name: "CoCalc Membership" }));
+    await user.click(await screen.findByRole("button", { name: "Got it" }));
 
     fireEvent.click(screen.getByText("Codex"));
     expect(document.body.textContent).toContain(
@@ -1242,6 +1270,92 @@ describe("CodexConfigButton", () => {
     });
     expect(actions.setCodexConfig).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["a new personal thread", "subscription", undefined],
+    ["an existing membership thread", "site-api-key", "thr-membership"],
+  ] as const)(
+    "allows Membership selection in %s",
+    async (_, source, sessionId) => {
+      const actions = {
+        getCodexConfig: jest.fn(() => undefined),
+        setCodexConfig: jest.fn(),
+      } as any;
+      render(
+        <CodexConfigButton
+          threadKey="thread-1"
+          chatPath="foo.chat"
+          actions={actions}
+          threadConfig={{ model: "gpt-5.4", paymentSource: source, sessionId }}
+          paymentSource={{
+            source,
+            hasSubscription: true,
+            hasProjectApiKey: false,
+            hasAccountApiKey: false,
+            hasSiteApiKey: true,
+            siteAiUsageLimitPositive: true,
+            siteFundedCodex: { enabled: true },
+            sharedHomeMode: "disabled",
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByTitle("Change Codex payment source"));
+      fireEvent.click(
+        screen.getByRole("button", { name: "CoCalc Membership" }),
+      );
+      expect(actions.setCodexConfig).toHaveBeenCalledWith(
+        "thread-1",
+        expect.objectContaining({ paymentSource: "site-api-key" }),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+    },
+  );
+
+  it.each([
+    { hasSiteApiKey: false },
+    { siteAiUsageLimitPositive: false },
+    { siteFundedCodex: { enabled: false } },
+  ])(
+    "does not offer unavailable Membership as new-thread guidance (%j)",
+    async (unavailable) => {
+      const user = userEvent.setup();
+      const actions = {
+        getCodexConfig: jest.fn(),
+        setCodexConfig: jest.fn(),
+      } as any;
+      render(
+        <CodexConfigButton
+          threadKey="thread-1"
+          chatPath="foo.chat"
+          actions={actions}
+          threadConfig={{
+            model: "gpt-5.4",
+            paymentSource: "subscription",
+            sessionId: "existing",
+          }}
+          paymentSource={{
+            source: "subscription",
+            hasSubscription: true,
+            hasProjectApiKey: false,
+            hasAccountApiKey: false,
+            hasSiteApiKey: true,
+            siteAiUsageLimitPositive: true,
+            siteFundedCodex: { enabled: true },
+            sharedHomeMode: "disabled",
+            ...unavailable,
+          }}
+        />,
+      );
+      fireEvent.click(screen.getByTitle("Change Codex payment source"));
+      const membership = screen.getByRole("button", {
+        name: "CoCalc Membership",
+      });
+      expect(membership).toBeDisabled();
+      await user.click(membership);
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(actions.setCodexConfig).not.toHaveBeenCalled();
+    },
+  );
 
   it("loads and exposes the connected ChatGPT email when Plan is hovered", async () => {
     getCodexUsageStatus.mockResolvedValue({

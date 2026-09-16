@@ -105,7 +105,7 @@ sequenceDiagram
 
 These are the practical rules and constraints that make the system reliable in production: userId bucketing, snapshot heuristics, delete handling, and caching/locking choices. Think of this as the operator’s checklist.
 
-- User IDs are bucketed (<1024) to guarantee unique logical times; fileserver uses user_id=0.
+- Filesystem patches reserve `user_id=0`. SyncDoc assigns other users a document metadata index; patch identity and ordering use Patchflow `PatchId` strings. Do not treat a less-than-1024 user bucket as the current collision-avoidance mechanism.
 - Snapshotting: Patchflow uses `snapshot_interval` and size heuristics; SyncDoc can request snapshots based on history/size.
 - Deleted handling: when fs reports delete, backend emits a delete patch; SyncDoc sets `isDeleted` and emits `deleted`, but content is also cleared so editors close cleanly.
 - Caching/performance: Patchflow caches applied values; sync-fs-service caches stream heads/versions/seq to avoid full scans; SQLite uses WAL+busy_timeout to reduce lock errors.

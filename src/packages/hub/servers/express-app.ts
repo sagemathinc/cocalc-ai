@@ -35,6 +35,7 @@ import initProjectHostSoftware from "./app/project-host-software";
 import initSelfHostConnector from "./app/self-host-connector";
 import initStripeWebhook from "./app/stripe-webhook";
 import initCrmOutreach from "./app/crm-outreach";
+import initCommercialQuotes from "./app/commercial-quotes";
 import { renderEssentialShell } from "./app/essential-shell";
 import initRootfsManifest from "./app/rootfs-manifest";
 import { getDatabase } from "./database";
@@ -294,6 +295,7 @@ export default async function init(opts: Options): Promise<{
   initSelfHostConnector(router);
   initStripeWebhook(router);
   initCrmOutreach(router);
+  initCommercialQuotes(router);
   router.use("/api/conat", createConatRouter());
   logger.info("enabling api/v2 express router");
   router.use("/api/v2", createApiV2Router());

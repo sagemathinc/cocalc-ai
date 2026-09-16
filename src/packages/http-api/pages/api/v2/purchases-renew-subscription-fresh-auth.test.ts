@@ -11,6 +11,7 @@ const mockGetAccountId = jest.fn();
 const mockGetParams = jest.fn();
 const mockRequireFreshAuth = jest.fn();
 const mockRenewSubscription = jest.fn();
+const mockExecuteBillingHttpCommand = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -31,6 +32,12 @@ jest.mock("@cocalc/server/purchases/renew-subscription", () => ({
   default: (...args: any[]) => mockRenewSubscription(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
+  executeBillingHttpCommand: (...args: any[]) =>
+    mockExecuteBillingHttpCommand(...args),
+}));
+
 describe("purchase subscription renewal fresh auth", () => {
   beforeEach(() => {
     jest.resetModules();
@@ -38,6 +45,14 @@ describe("purchase subscription renewal fresh auth", () => {
     mockGetParams.mockReset().mockReturnValue({ subscription_id: 123 });
     mockRequireFreshAuth.mockReset().mockResolvedValue(undefined);
     mockRenewSubscription.mockReset().mockResolvedValue(456);
+    mockExecuteBillingHttpCommand
+      .mockReset()
+      .mockImplementation(async (operation: string, input: any) => {
+        if (operation !== "renew-subscription") {
+          throw Error(`unexpected billing operation '${operation}'`);
+        }
+        return await mockRenewSubscription(input);
+      });
   });
 
   it("requires fresh auth before renewing a subscription from balance", async () => {

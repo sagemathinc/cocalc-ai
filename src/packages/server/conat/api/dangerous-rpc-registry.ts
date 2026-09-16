@@ -263,6 +263,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "admin-only bounded and audited read-only host integrity snapshot without file contents, key material, argv, or process environments",
   },
+  "adminSupport.getAttachment": {
+    decision: "fresh-auth-required",
+    reason: "downloads unredacted customer support documents to an operator",
+  },
   "adminSupport.update": {
     decision: "fresh-auth-required",
     reason: "posts comments or changes customer-visible Zendesk ticket state",
@@ -343,6 +347,15 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "commercialOrders.issueQuote": {
     decision: "fresh-auth-required",
     reason: "issues and stores an immutable customer-facing commercial quote",
+  },
+  "commercialOrders.issueQuoteLink": {
+    decision: "fresh-auth-required",
+    reason:
+      "issues or replaces a bearer download link for a retained commercial quote",
+  },
+  "commercialOrders.revokeQuoteLink": {
+    decision: "fresh-auth-required",
+    reason: "revokes bearer download access to a retained commercial quote",
   },
   "commercialOrders.issueManualInvoice": {
     decision: "fresh-auth-required",
@@ -1186,6 +1199,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "admin custom-price membership package and billing mutation",
   },
+  "purchases.adminGetMembershipPackageQuote": {
+    decision: "fresh-auth-required",
+    reason: "admin custom-period membership package pricing preview",
+  },
   "purchases.adminResetMembershipUsageWindows": {
     decision: "fresh-auth-required",
     reason: "admin operation resets user-visible membership usage windows",
@@ -1395,6 +1412,25 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "Cloudflare tunnel/R2 configuration bootstrap with cloud token",
   },
+  "system.reconcileCloudflareBlobs": {
+    decision: "fresh-auth-required",
+    reason:
+      "admin provisions Cloudflare blob bucket, Worker and hostname using saved credentials",
+  },
+  "system.bootstrapCloudflareConfigurationOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
+  },
+  "system.reconcileCloudflareBlobsOnSeed": {
+    decision: "internal-auth-only",
+    reason:
+      "seed implementation reached through authenticated inter-bay dispatch after entry-bay fresh auth",
+  },
+  "system.cancelChatSpeech": {
+    decision: "fresh-auth-not-required",
+    reason: "cancels only the signed-in account's active speech request",
+  },
   "system.clearAccountEntitlementOverride": {
     decision: "fresh-auth-required",
     reason: "admin entitlement mutation",
@@ -1435,6 +1471,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-required",
     reason: "account SSO/passport login method unlink",
   },
+  "system.drainBillingAuthority": {
+    decision: "fresh-auth-required",
+    reason: "global billing authority lifecycle control",
+  },
   "system.drainAccountCollaboratorIndexProjection": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
@@ -1456,6 +1496,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "returns a raw remember-me cookie to the caller for browser session handoff",
   },
+  "system.getBillingAuthorityStatus": {
+    decision: "fresh-auth-not-required",
+    reason: ORDINARY_AUTHZ,
+  },
+  "system.handoffBillingAuthority": {
+    decision: "fresh-auth-required",
+    reason: "global billing authority lifecycle control",
+  },
   "system.publishProjectRootfsImage": {
     decision: "fresh-auth-required",
     reason: "RootFS catalog/release mutation",
@@ -1473,6 +1521,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "fresh-auth-not-required",
     reason:
       "project- or host-scoped accounting with canonical project attribution and server-side abuse enforcement",
+  },
+  "system.resumeBillingAuthority": {
+    decision: "fresh-auth-required",
+    reason: "global billing authority lifecycle control",
   },
   "system.recordServiceAdmissionDenial": {
     decision: "fresh-auth-not-required",

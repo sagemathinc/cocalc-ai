@@ -341,6 +341,62 @@ describe("MultiMarkdownInput wrapper contract", () => {
     });
   });
 
+  it("exposes mode-independent selection controls to chat", () => {
+    const richFocus = jest.fn(() => true);
+    const richSetSelection = jest.fn(() => true);
+    editableControlApi = {
+      focus: richFocus,
+      getMarkdownPositionForSelection: jest.fn(() => ({ line: 1, ch: 2 })),
+      setSelectionFromMarkdownPosition: richSetSelection,
+    };
+    const markdownFocus = jest.fn(() => true);
+    const markdownSetSelection = jest.fn();
+    markdownSelectionApi = {
+      focus: markdownFocus,
+      getSelection: jest.fn(() => [
+        {
+          anchor: { line: 3, ch: 4 },
+          head: { line: 3, ch: 4 },
+        },
+      ]),
+      setSelection: markdownSetSelection,
+    };
+    const controlRef = { current: null as any };
+
+    render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        defaultMode="editor"
+        controlRef={controlRef}
+      />,
+    );
+
+    expect(controlRef.current.getMarkdownPositionForSelection()).toEqual({
+      line: 1,
+      ch: 2,
+    });
+    expect(controlRef.current.focus()).toBe(true);
+    expect(richFocus).toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "markdown" }));
+
+    expect(controlRef.current.getMarkdownPositionForSelection()).toEqual({
+      line: 3,
+      ch: 4,
+    });
+    expect(
+      controlRef.current.setSelectionFromMarkdownPosition({ line: 5, ch: 6 }),
+    ).toBe(true);
+    expect(markdownFocus).toHaveBeenCalled();
+    expect(markdownSetSelection).toHaveBeenCalledWith([
+      {
+        anchor: { line: 5, ch: 6 },
+        head: { line: 5, ch: 6 },
+      },
+    ]);
+  });
+
   it("keeps the captured markdown cursor through mouseup before the mode switch click", () => {
     const setSelectionFromMarkdownPosition = jest.fn(() => true);
     let editorReady = false;

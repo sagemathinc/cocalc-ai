@@ -17,6 +17,8 @@ import {
 } from "@cocalc/frontend/conat/project-dstream";
 import type { RegisteredReconnectResource } from "@cocalc/frontend/conat/reconnect-coordinator";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { LiveLogReplay } from "./live-log-replay";
+import type { LiveLogRanges } from "./live-log-replay";
 
 // Backend batches live ACP log pubsub at 100ms and AKV persistence at 250ms in
 // lite/hub/acp.ts. We delay the initial AKV fetch to let the first persisted
@@ -32,8 +34,8 @@ const RECENT_PREVIEW_LOG_CACHE_SIZE = 20;
 
 type RecentLogCacheEntry = {
   events: any[];
-  // This is the DStream transport sequence, not AcpStreamMessage.seq.
-  liveStreamSeq?: number;
+  // Exact consumed DStream transport ranges, not AcpStreamMessage.seq.
+  liveStreamRanges?: LiveLogRanges;
   liveStreamName?: string;
 };
 
@@ -54,29 +56,13 @@ function getRecentLogCacheEntry(
   );
 }
 
-function cachedLiveStreamSeq(
+function cachedLiveStreamRanges(
   cached: RecentLogCacheEntry | undefined,
   liveLogStream: string | null | undefined,
-): number | undefined {
+): LiveLogRanges | undefined {
   return cached != null && cached.liveStreamName === liveLogStream
-    ? cached.liveStreamSeq
+    ? cached.liveStreamRanges
     : undefined;
-}
-
-function latestDStreamSeq(stream: DStream<any>): number | undefined {
-  const seqs = stream.seqs?.();
-  if (!Array.isArray(seqs) || seqs.length === 0) return undefined;
-  const seq = seqs[seqs.length - 1];
-  return typeof seq === "number" && Number.isFinite(seq) ? seq : undefined;
-}
-
-function maxStreamSeq(
-  previous: number | undefined,
-  next: number | undefined,
-): number | undefined {
-  if (next == null) return previous;
-  if (previous == null) return next;
-  return Math.max(previous, next);
 }
 
 export interface CodexLogOptions {
@@ -347,11 +333,28 @@ export function useCodexLog({
       : "idle",
   );
   const [loadError, setLoadError] = useState<string | undefined>();
-  const [liveLog, setLiveLog] = useState<any[]>(() => {
-    return (
-      getRecentLogCacheEntry(cacheKey, liveStreamIsProjection)?.events ?? []
-    );
-  });
+  const [{ events: liveLog, ranges: appliedLiveRanges }, setLiveLogState] =
+    useState<{
+      events: any[];
+      ranges?: LiveLogRanges;
+    }>(() => {
+      const cached = getRecentLogCacheEntry(cacheKey, liveStreamIsProjection);
+      return {
+        events: cached?.events ?? [],
+        ranges: cachedLiveStreamRanges(cached, liveLogStream),
+      };
+    });
+  // Keep consumed ranges paired with the exact log version they describe.
+  // A buffered receipt must not be cached as applied before its text is flushed.
+  const setLiveLog = useCallback(
+    (events: any[] | ((previous: any[]) => any[]), ranges?: LiveLogRanges) => {
+      setLiveLogState((previous) => ({
+        events: typeof events === "function" ? events(previous.events) : events,
+        ranges,
+      }));
+    },
+    [],
+  );
   const [liveStatus, setLiveStatus] = useState<CodexLiveLogStatus>("idle");
   const [liveReconnectToken, setLiveReconnectToken] = useState(0);
   const liveBufferRef = useRef<any[]>([]);
@@ -360,13 +363,7 @@ export function useCodexLog({
   const liveStreamRef = useRef<DStream<
     AcpStreamMessage | AcpStreamMessage[]
   > | null>(null);
-  const appliedLiveStreamSeqRef = useRef<number | undefined>(
-    cachedLiveStreamSeq(
-      getRecentLogCacheEntry(cacheKey, liveStreamIsProjection),
-      liveLogStream,
-    ),
-  );
-  const pendingLiveStreamSeqRef = useRef<number | undefined>(undefined);
+  const liveReplayRef = useRef(new LiveLogReplay(appliedLiveRanges));
   const reconnectResourceRef = useRef<RegisteredReconnectResource | null>(null);
   const lastLiveReceiptAtRef = useRef(Date.now());
   const mountedRef = useRef<boolean>(true);
@@ -447,30 +444,24 @@ export function useCodexLog({
     const pending = liveBufferRef.current;
     if (!pending.length) return;
     liveBufferRef.current = [];
-    const pendingStreamSeq = pendingLiveStreamSeqRef.current;
-    pendingLiveStreamSeqRef.current = undefined;
-    appliedLiveStreamSeqRef.current = maxStreamSeq(
-      appliedLiveStreamSeqRef.current,
-      pendingStreamSeq,
-    );
     if (mountedRef.current) {
-      setLiveLog((prev) => mergeLogs(prev ?? [], pending));
+      setLiveLog(
+        (prev) => mergeLogs(prev ?? [], pending),
+        liveReplayRef.current.snapshot(),
+      );
     }
-  }, [mergeLogs]);
+  }, [mergeLogs, setLiveLog]);
 
   // Reset when log ref changes.
   useEffect(() => {
     if (cacheKey) {
       const cached = getRecentLogCacheEntry(cacheKey, liveStreamIsProjection);
       setFetchedLog(cached?.events ?? null);
-      setLiveLog(cached?.events ?? []);
+      const ranges = cachedLiveStreamRanges(cached, liveLogStream);
+      setLiveLog(cached?.events ?? [], ranges);
+      liveReplayRef.current = new LiveLogReplay(ranges);
       setLoadState(cached?.events.length ? "loaded" : "idle");
       setLoadError(undefined);
-      appliedLiveStreamSeqRef.current = cachedLiveStreamSeq(
-        cached,
-        liveLogStream,
-      );
-      pendingLiveStreamSeqRef.current = undefined;
       liveBufferRef.current = [];
       if (liveFlushTimerRef.current != null) {
         clearTimeout(liveFlushTimerRef.current);
@@ -484,8 +475,7 @@ export function useCodexLog({
       setLiveLog([]);
       setLoadState("idle");
       setLoadError(undefined);
-      appliedLiveStreamSeqRef.current = undefined;
-      pendingLiveStreamSeqRef.current = undefined;
+      liveReplayRef.current = new LiveLogReplay();
       liveBufferRef.current = [];
       if (liveFlushTimerRef.current != null) {
         clearTimeout(liveFlushTimerRef.current);
@@ -493,7 +483,7 @@ export function useCodexLog({
       }
       setAkvLoaded(false);
     }
-  }, [cacheKey, liveLogStream, liveStreamIsProjection, logSubject]);
+  }, [cacheKey, liveLogStream, liveStreamIsProjection, logSubject, setLiveLog]);
 
   const fetchPersistedLog = useCallback(
     async ({
@@ -641,6 +631,7 @@ export function useCodexLog({
             return;
           }
           const liveStream = liveStreamRef.current;
+          const replayTracker = liveReplayRef.current;
           if (liveStream != null) {
             try {
               await liveStream.recoverNow({
@@ -648,18 +639,22 @@ export function useCodexLog({
                 priority: "foreground",
                 reason: "codex_log_reconnect",
               });
-              if (!mountedRef.current) return;
-              const replay = liveStream
-                .getAll()
-                .flatMap((payload) =>
-                  normalizeLiveStreamPayload(payload as any),
-                );
+              if (
+                !mountedRef.current ||
+                liveReplayRef.current !== replayTracker ||
+                liveStreamRef.current !== liveStream
+              )
+                return;
+              flushBufferedLiveLog();
+              const unseen = replayTracker.read(liveStream);
+              const replay = unseen.payloads.flatMap((payload) =>
+                normalizeLiveStreamPayload(payload as any),
+              );
               if (replay.length > 0) {
-                appliedLiveStreamSeqRef.current = maxStreamSeq(
-                  appliedLiveStreamSeqRef.current,
-                  latestDStreamSeq(liveStream),
+                setLiveLog(
+                  (prev) => mergeLogs(prev ?? [], replay),
+                  replayTracker.snapshot(),
                 );
-                setLiveLog((prev) => mergeLogs(prev ?? [], replay));
               }
               if (isDStreamLiveConnected(liveStream)) {
                 setLiveConnectionState(true, "connected");
@@ -683,10 +678,12 @@ export function useCodexLog({
   }, [
     canReconnectLive,
     fetchPersistedLog,
+    flushBufferedLiveLog,
     hasLiveSource,
     liveStreamIsProjection,
     mergeLogs,
     setLiveConnectionState,
+    setLiveLog,
     waitForLiveReconnect,
   ]);
 
@@ -741,11 +738,11 @@ export function useCodexLog({
             liveStreamIsProjection && cacheKey
               ? getRecentLogCacheEntry(cacheKey, true)
               : undefined;
-          const cachedSeq = cachedLiveStreamSeq(cached, liveLogStream);
-          const startSeq =
-            cached?.events.length && cachedSeq != null
-              ? cachedSeq + 1
-              : undefined;
+          const startSeq = cached?.events.length
+            ? new LiveLogReplay(
+                cachedLiveStreamRanges(cached, liveLogStream),
+              ).startSeq()
+            : undefined;
           const lease = await acquireSharedProjectDStream<AcpStreamMessage>({
             project_id: projectId,
             name: liveLogStream,
@@ -795,12 +792,9 @@ export function useCodexLog({
           ) => {
             if (stopped) return;
             lastLiveReceiptAtRef.current = Date.now();
+            if (!liveReplayRef.current.accept(seq)) return;
             const events = normalizeLiveStreamPayload(payload);
             if (events.length === 0) return;
-            pendingLiveStreamSeqRef.current = maxStreamSeq(
-              pendingLiveStreamSeqRef.current,
-              seq,
-            );
             let immediate = false;
             for (const evt of events) {
               liveBufferRef.current.push(evt);
@@ -819,18 +813,19 @@ export function useCodexLog({
             scheduleBufferedFlush(immediate);
           };
           // DStream already bridges the backlog/live-update race internally.
-          // Register the listener before reading getAll() so local hook state
+          // Register the listener before reading the snapshot so local hook state
           // can't miss a late event that arrives between these two steps.
           liveStream.on("change", liveStreamListener);
-          const initial = liveStream
-            .getAll()
-            .flatMap((payload) => normalizeLiveStreamPayload(payload as any));
+          flushBufferedLiveLog();
+          const unseen = liveReplayRef.current.read(liveStream);
+          const initial = unseen.payloads.flatMap((payload) =>
+            normalizeLiveStreamPayload(payload as any),
+          );
           if (!stopped && initial.length > 0) {
-            appliedLiveStreamSeqRef.current = maxStreamSeq(
-              appliedLiveStreamSeqRef.current,
-              latestDStreamSeq(liveStream),
+            setLiveLog(
+              (prev) => mergeLogs(prev ?? [], initial),
+              liveReplayRef.current.snapshot(),
             );
-            setLiveLog((prev) => mergeLogs(prev ?? [], initial));
           }
           return;
         }
@@ -925,6 +920,7 @@ export function useCodexLog({
     flushBufferedLiveLog,
     mergeLogs,
     setLiveConnectionState,
+    setLiveLog,
   ]);
 
   const events = useMemo(() => {
@@ -950,14 +946,18 @@ export function useCodexLog({
       : recentActivityLogCache;
     cache.set(cacheKey, {
       events,
-      liveStreamSeq: liveStreamIsProjection
-        ? appliedLiveStreamSeqRef.current
-        : undefined,
+      liveStreamRanges: liveStreamIsProjection ? appliedLiveRanges : undefined,
       liveStreamName: liveStreamIsProjection
         ? (liveLogStream ?? undefined)
         : undefined,
     });
-  }, [cacheKey, events, liveLogStream, liveStreamIsProjection]);
+  }, [
+    cacheKey,
+    events,
+    appliedLiveRanges,
+    liveLogStream,
+    liveStreamIsProjection,
+  ]);
 
   const deleteLog = async () => {
     if (!hasLogRef || !projectId || !logStore || !logKey) return;

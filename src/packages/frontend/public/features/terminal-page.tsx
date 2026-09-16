@@ -43,9 +43,9 @@ export default function TerminalFeaturePage({
               <Paragraph
                 style={{ fontSize: PUBLIC_TYPE.lead, margin: 0, maxWidth: 720 }}
               >
-                A real Linux shell in your browser that reconnects with project
-                files, outputs, and history. Nothing it runs can mess up your
-                own computer.
+                Work in a hosted project's Linux shell from your browser, next
+                to its files and collaborators. Reconnect to a live session
+                while the project runtime remains running.
               </Paragraph>
             </Flex>
           </Col>
@@ -55,7 +55,7 @@ export default function TerminalFeaturePage({
               items={[
                 { icon: "file", label: ".term files reopen in their folder" },
                 { icon: "users", label: "Same stream for all collaborators" },
-                { icon: "layout", label: "Sessions survive disconnects" },
+                { icon: "layout", label: "Reconnect while the runtime runs" },
                 { icon: "robot", label: "Codex can inspect project context" },
               ]}
               title="Highlights"
@@ -104,11 +104,12 @@ export default function TerminalFeaturePage({
             repositories, and start long-running jobs from any browser.
           </Paragraph>
           <Paragraph>
-            Because it runs in your CoCalc project and not on your laptop,
-            experiments can't break your own machine, and{" "}
-            <strong>closing the browser does not end the session</strong>:
-            reconnect later and your shell, working directory, and scrollback
-            are still there.
+            A browser disconnect does not itself terminate the backend shell.
+            You can reconnect while the{" "}
+            <strong>project runtime is still running</strong>. Project stops,
+            restarts, failures, or a configured browser-idle timeout end running
+            processes, even during a computation. Save logs and checkpoints so
+            important jobs can resume.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -158,11 +159,11 @@ export default function TerminalFeaturePage({
             to the code, and keep a log view or a REPL in another pane.
           </Paragraph>
           <Paragraph>
-            The terminal starts in the file's folder, so{" "}
-            <code>python3 script.py</code> or <code>bash script.sh</code> just
-            works, with no path juggling. Scrollback is preserved: a teammate
-            opening the same project sees the script, the run, and the output
-            together.
+            The terminal starts in the file's folder. Run{" "}
+            <code>python3 script.py</code> or <code>bash script.sh</code> with
+            the required interpreter and packages installed. A collaborator
+            opening the same terminal can follow the live session; use output
+            files when the results need to outlast it.
           </Paragraph>
         </FeatureInfo>
       </PublicSection>
@@ -182,11 +183,12 @@ export default function TerminalFeaturePage({
             the image at any time in the project settings.
           </Paragraph>
           <Paragraph>
-            Need more? <code>apt-get install</code>, <code>pip</code>, and{" "}
-            <code>npm</code> work right in the terminal, and{" "}
-            <strong>your installs persist</strong> on top of the shared base
-            image. Command-line AI agents such as Codex run there too, as
-            ordinary Linux tools next to the files they work on.
+            Need more? Use the package manager supported by the image, such as{" "}
+            <code>sudo apt-get install</code> for Ubuntu system packages. Use a
+            virtual environment or the selected interpreter for Python packages.
+            Installs in persistent project storage survive normal restarts;
+            temporary directories have a different lifetime. Command-line agents
+            such as Codex can run beside the same files.
           </Paragraph>
           <Flex wrap gap={12}>
             <LinkButton href={appPath("features/software-environment")}>

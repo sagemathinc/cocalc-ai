@@ -124,6 +124,9 @@ test("history disclosure keeps first-parent controls keyboard operable", async (
     name: "First-parent history",
   });
   checkbox.focus();
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Commits brought in from merged branches are omitted.",
+  );
   await user.keyboard(" ");
   expect(checkbox).toHaveFocus();
   expect(checkbox).not.toBeChecked();

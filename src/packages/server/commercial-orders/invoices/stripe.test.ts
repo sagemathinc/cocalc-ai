@@ -73,10 +73,12 @@ import type {
   CommercialInvoice,
   CommercialOrder,
 } from "@cocalc/util/commercial-orders";
+import { runInBillingAuthorityContext } from "@cocalc/server/purchases/billing-authority/context";
 import {
   acceptCommercialStripeWebhookEvent,
   createStripeCommercialInvoiceDraft,
   findUnlinkedCommercialStripeInvoices,
+  findLegacyStripeInvoices,
   linkExistingStripeCommercialInvoice,
   reconcileStripeCommercialInvoice,
   recordStripeAwareCommercialManualPayment,
@@ -235,6 +237,8 @@ function stripeInvoiceFixture(changes: Record<string, unknown> = {}) {
 describe("commercial Stripe invoices", () => {
   const stripe = {
     publishable_key: "pk_test_123",
+    prices: { retrieve: jest.fn() },
+    products: { retrieve: jest.fn() },
     customers: {
       create: jest.fn(),
       retrieve: jest.fn(),
@@ -247,6 +251,7 @@ describe("commercial Stripe invoices", () => {
       create: jest.fn(),
       finalizeInvoice: jest.fn(),
       listLineItems: jest.fn(),
+      list: jest.fn(),
       pay: jest.fn(),
       retrieve: jest.fn(),
       search: jest.fn(),
@@ -406,6 +411,360 @@ describe("commercial Stripe invoices", () => {
     );
   });
 
+  function enableReviewedTax(total = 468000) {
+    const terms = {
+      automatic_tax: true,
+      tax_code: "txcd_10103000",
+      billing_address: { country: "GB" },
+    };
+    const invoice = invoiceFixture({
+      status: "draft",
+      total: `${total / 100}`,
+    });
+    const order = orderFixture({
+      terms_snapshot: { invoice: terms },
+      agreed_total: `${total / 100}`,
+      invoices: [invoice],
+    });
+    const provider = stripeInvoiceFixture({
+      automatic_tax: { enabled: true, status: "complete" },
+      total,
+      amount_due: total,
+      amount_remaining: total,
+      total_taxes: [{ amount: total - 390000 }],
+    });
+    mockGetCommercialOrder.mockResolvedValue(order);
+    mockGetCommercialInvoice.mockResolvedValue(invoice);
+    mockCreateCommercialInvoiceIntent.mockResolvedValue({ order, invoice });
+    stripe.customers.retrieve.mockResolvedValue(
+      customerFixture({ address: { country: "GB" } }),
+    );
+    stripe.invoices.create.mockResolvedValue(provider);
+    stripe.invoices.retrieve.mockResolvedValue(provider);
+    stripe.invoices.listLineItems.mockResolvedValue({
+      data: [
+        {
+          id: "il_1",
+          amount: 390000,
+          currency: "usd",
+          description: "Campus adoption pilot",
+          metadata: { commercial_order_item_id: "item_1" },
+          pricing: {
+            type: "price_details",
+            price_details: { price: "price_1", product: "prod_1" },
+            unit_amount_decimal: "390000",
+          },
+        },
+      ],
+      has_more: false,
+    });
+    stripe.prices.retrieve.mockResolvedValue({
+      id: "price_1",
+      tax_behavior: "exclusive",
+      product: { id: "prod_1", tax_code: terms.tax_code },
+    });
+    return { order, invoice, provider };
+  }
+
+  describe.each([390000, 468000])(
+    "line tax validation with total %s",
+    (total) => {
+      it.each(["recover", "draft send", "finalized retry"])(
+        "verifies matching tax configuration during %s",
+        async (path) => {
+          const { order, invoice, provider } = enableReviewedTax(total);
+          if (path === "recover") {
+            const creating = {
+              ...invoice,
+              status: "creating" as const,
+              idempotency_key: "invoice-draft:key",
+            };
+            mockGetCommercialOrder.mockResolvedValue({
+              ...order,
+              invoices: [creating],
+            });
+            stripe.invoices.search.mockResolvedValue({ data: [provider] });
+            await createStripeCommercialInvoiceDraft({
+              id: "co_1",
+              account_id: "admin-1",
+              expected_version: 4,
+              reason: "Recover reviewed invoice",
+            });
+            expect(stripe.invoices.create).not.toHaveBeenCalled();
+            expect(stripe.invoiceItems.create).not.toHaveBeenCalled();
+          } else {
+            stripe.invoices.retrieve.mockResolvedValue({
+              ...provider,
+              status: path === "finalized retry" ? "open" : "draft",
+            });
+            stripe.invoices.finalizeInvoice.mockResolvedValue({
+              ...provider,
+              status: "open",
+            });
+            stripe.invoices.sendInvoice.mockResolvedValue({
+              ...provider,
+              status: "open",
+            });
+            await sendStripeCommercialInvoice({
+              id: "co_1",
+              account_id: "admin-1",
+              expected_version: 4,
+              reason: "Send reviewed invoice",
+            });
+            expect(stripe.invoices.sendInvoice).toHaveBeenCalledTimes(1);
+          }
+          expect(stripe.prices.retrieve).toHaveBeenCalledWith("price_1", {
+            expand: ["product"],
+          });
+        },
+      );
+
+      describe.each(["recover", "draft send", "finalized retry"])(
+        "%s",
+        (path) => {
+          it.each([
+            ["changed tax code", "exclusive", "txcd_10000000"],
+            ["missing tax code", "exclusive", null],
+            ["inclusive price", "inclusive", "txcd_10103000"],
+            ["unspecified behavior", "unspecified", "txcd_10103000"],
+          ])(
+            "blocks %s even when totals are unchanged",
+            async (_label, behavior, code) => {
+              const { order, invoice, provider } = enableReviewedTax(total);
+              stripe.prices.retrieve.mockResolvedValue({
+                id: "price_1",
+                tax_behavior: behavior,
+                product: { id: "prod_1", tax_code: code },
+              });
+              let action: Promise<unknown>;
+              if (path === "recover") {
+                mockGetCommercialOrder.mockResolvedValue({
+                  ...order,
+                  invoices: [
+                    {
+                      ...invoice,
+                      status: "creating",
+                      idempotency_key: "invoice-draft:key",
+                    },
+                  ],
+                });
+                stripe.invoices.search.mockResolvedValue({ data: [provider] });
+                action = createStripeCommercialInvoiceDraft({
+                  id: "co_1",
+                  account_id: "admin-1",
+                  expected_version: 4,
+                  reason: "Recover reviewed invoice",
+                });
+              } else {
+                stripe.invoices.retrieve.mockResolvedValue({
+                  ...provider,
+                  status: path === "finalized retry" ? "open" : "draft",
+                });
+                action = sendStripeCommercialInvoice({
+                  id: "co_1",
+                  account_id: "admin-1",
+                  expected_version: 4,
+                  reason: "Send reviewed invoice",
+                });
+              }
+              await expect(action).rejects.toThrow("line tax settings");
+              expect(stripe.invoiceItems.create).not.toHaveBeenCalled();
+              expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+              expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+              expect(
+                mockUpdateCommercialInvoiceProvider,
+              ).not.toHaveBeenCalled();
+            },
+          );
+        },
+      );
+    },
+  );
+
+  it.each(["txcd_10103000", "txcd_10000000"])(
+    "checks quote-derived finalized invoices against reviewed tax code %s",
+    async (taxCode) => {
+      const { provider } = enableReviewedTax(390000);
+      const accepted = {
+        ...provider,
+        status: "open",
+        metadata: {
+          ...provider.metadata,
+          accepted_commercial_quote_id: "cq_1",
+        },
+      };
+      stripe.invoices.retrieve.mockResolvedValue(accepted);
+      stripe.invoices.sendInvoice.mockResolvedValue(accepted);
+      stripe.prices.retrieve.mockResolvedValue({
+        id: "price_1",
+        tax_behavior: "exclusive",
+        product: { id: "prod_1", tax_code: taxCode },
+      });
+      const send = sendStripeCommercialInvoice({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Send accepted quote invoice",
+      });
+      if (taxCode === "txcd_10103000") {
+        await send;
+        expect(stripe.invoices.sendInvoice).toHaveBeenCalledTimes(1);
+      } else {
+        await expect(send).rejects.toThrow("line tax settings");
+        expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+      }
+      expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rechecks line tax configuration after finalization without a total change", async () => {
+    const { provider } = enableReviewedTax(390000);
+    stripe.prices.retrieve.mockResolvedValueOnce({
+      id: "price_1",
+      tax_behavior: "exclusive",
+      product: { id: "prod_1", tax_code: "txcd_10103000" },
+    });
+    stripe.prices.retrieve.mockResolvedValue({
+      id: "price_1",
+      tax_behavior: "exclusive",
+      product: { id: "prod_1", tax_code: null },
+    });
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      ...provider,
+      status: "open",
+    });
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Send reviewed invoice",
+      }),
+    ).rejects.toThrow("line tax settings");
+    expect(stripe.invoices.finalizeInvoice).toHaveBeenCalledTimes(1);
+    expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+  });
+
+  it("creates automatic-tax invoices with explicit exclusive line tax settings", async () => {
+    const { order, invoice } = enableReviewedTax();
+    mockGetCommercialOrder.mockResolvedValue({ ...order, invoices: [] });
+    mockCreateCommercialInvoiceIntent.mockResolvedValue({
+      order: { ...order, invoices: [] },
+      invoice: { ...invoice, status: "creating" },
+    });
+    stripe.invoices.listLineItems.mockResolvedValueOnce({ data: [] });
+    await createStripeCommercialInvoiceDraft({
+      id: "co_1",
+      account_id: "admin-1",
+      expected_version: 4,
+      reason: "Reviewed automatic tax",
+    });
+    expect(stripe.invoices.create).toHaveBeenCalledWith(
+      expect.objectContaining({ automatic_tax: { enabled: true } }),
+      expect.anything(),
+    );
+    expect(stripe.invoiceItems.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tax_behavior: "exclusive",
+        tax_code: "txcd_10103000",
+        amount: 390000,
+      }),
+      expect.anything(),
+    );
+    expect(mockUpdateCommercialInvoiceProvider).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tax: "780.0000000000",
+        total: "4680.0000000000",
+        provider_snapshot: expect.objectContaining({
+          automatic_tax: { enabled: true, status: "complete" },
+        }),
+      }),
+    );
+  });
+
+  it.each([390000, 468000])(
+    "sends a reviewed complete calculation totaling %s cents",
+    async (total) => {
+      const { provider } = enableReviewedTax(total);
+      stripe.invoices.finalizeInvoice.mockResolvedValue({
+        ...provider,
+        status: "open",
+      });
+      stripe.invoices.sendInvoice.mockResolvedValue({
+        ...provider,
+        status: "open",
+      });
+      await sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Reviewed automatic tax",
+      });
+      expect(stripe.invoices.sendInvoice).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["requires_location_inputs", "failed", null])(
+    "does not finalize or send incomplete tax: %s",
+    async (status) => {
+      const { provider } = enableReviewedTax();
+      stripe.invoices.retrieve.mockResolvedValue({
+        ...provider,
+        automatic_tax: { enabled: true, status },
+      });
+      await expect(
+        sendStripeCommercialInvoice({
+          id: "co_1",
+          commercial_invoice_id: "ci_1",
+          account_id: "admin-1",
+          expected_version: 4,
+          reason: "Reviewed automatic tax",
+        }),
+      ).rejects.toThrow("not complete");
+      expect(stripe.invoices.finalizeInvoice).not.toHaveBeenCalled();
+      expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not send when tax changes during finalization", async () => {
+    const { provider } = enableReviewedTax();
+    stripe.invoices.finalizeInvoice.mockResolvedValue({
+      ...provider,
+      status: "open",
+      total: 470000,
+    });
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Reviewed automatic tax",
+      }),
+    ).rejects.toThrow();
+    expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+  });
+
+  it("rechecks line subtotals on a finalized invoice retry", async () => {
+    const { provider } = enableReviewedTax();
+    stripe.invoices.retrieve.mockResolvedValue({
+      ...provider,
+      status: "open",
+      subtotal: 389999,
+    });
+    await expect(
+      sendStripeCommercialInvoice({
+        id: "co_1",
+        commercial_invoice_id: "ci_1",
+        account_id: "admin-1",
+        expected_version: 4,
+        reason: "Retry reviewed invoice",
+      }),
+    ).rejects.toThrow("total");
+    expect(stripe.invoices.sendInvoice).not.toHaveBeenCalled();
+  });
+
   it("reports only unlinked invoices from the exact commercial Stripe flow", async () => {
     stripe.invoices.search.mockResolvedValue({
       data: [
@@ -438,6 +797,152 @@ describe("commercial Stripe invoices", () => {
         limit: 100,
       }),
     );
+  });
+
+  it("reports remaining rather than original amounts for partially paid invoices", async () => {
+    stripe.invoices.search.mockResolvedValue({
+      data: [
+        stripeInvoiceFixture({ amount_due: 390000, amount_remaining: 10000 }),
+      ],
+      has_more: false,
+    });
+    const result = await findUnlinkedCommercialStripeInvoices();
+    expect(result.invoices[0].amount_due).toBe("100.0000000000");
+  });
+
+  it("discovers legacy invoices without metadata, keeping currency minor units and site scope explicit", async () => {
+    stripe.invoices.list.mockResolvedValue({
+      data: [
+        stripeInvoiceFixture({ id: "in_linked" }),
+        stripeInvoiceFixture({
+          id: "in_legacy",
+          metadata: {},
+          currency: "jpy",
+          amount_remaining: 1234,
+          number: "EXAMPLE-1",
+          customer_name: "Example",
+        }),
+        stripeInvoiceFixture({
+          id: "in_other",
+          metadata: { cocalc_site: "other.example" },
+        }),
+      ],
+      has_more: false,
+    });
+    mockDbQuery.mockResolvedValue({
+      rows: [{ provider_invoice_id: "in_linked" }],
+    });
+    const result = await findLegacyStripeInvoices();
+    expect(result).toEqual(
+      expect.objectContaining({
+        scope: "stripe_account_open_send_invoice",
+        scanned: 3,
+        has_more: false,
+        invoices: [
+          expect.objectContaining({
+            provider_invoice_id: "in_legacy",
+            currency: "jpy",
+            amount_remaining_minor: "1234",
+            invoice_number: "EXAMPLE-1",
+            site_match: "unknown",
+          }),
+          expect.objectContaining({
+            provider_invoice_id: "in_other",
+            site_match: "other",
+          }),
+        ],
+      }),
+    );
+    expect(stripe.invoices.list).toHaveBeenCalledWith({
+      status: "open",
+      collection_method: "send_invoice",
+      limit: 100,
+    });
+    expect(stripe.invoices.search).not.toHaveBeenCalled();
+    expect(stripe.invoices.update).not.toHaveBeenCalled();
+    expect(mockDbQuery.mock.calls.every(([sql]) => /^SELECT/.test(sql))).toBe(
+      true,
+    );
+  });
+
+  it("returns a continuation even when the entire scanned page is already linked", async () => {
+    stripe.invoices.list
+      .mockResolvedValueOnce({
+        data: [stripeInvoiceFixture({ id: "in_first" })],
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [stripeInvoiceFixture({ id: "in_second" })],
+        has_more: false,
+      });
+    mockDbQuery.mockResolvedValue({
+      rows: [{ provider_invoice_id: "in_first" }],
+    });
+    expect(await findLegacyStripeInvoices({ limit: 1 })).toEqual({
+      scope: "stripe_account_open_send_invoice",
+      scanned: 1,
+      invoices: [],
+      has_more: true,
+      next_cursor: "in_first",
+    });
+    const next = await findLegacyStripeInvoices({
+      limit: 1,
+      cursor: "in_first",
+    });
+    expect(next.has_more).toBe(false);
+    expect(next.invoices[0].provider_invoice_id).toBe("in_second");
+    expect(stripe.invoices.list).toHaveBeenLastCalledWith({
+      status: "open",
+      collection_method: "send_invoice",
+      limit: 1,
+      starting_after: "in_first",
+    });
+  });
+
+  it("paginates within the bounded scan and rejects broken pagination", async () => {
+    stripe.invoices.list
+      .mockResolvedValueOnce({
+        data: Array.from({ length: 100 }, (_, n) =>
+          stripeInvoiceFixture({ id: `in_${n}` }),
+        ),
+        has_more: true,
+      })
+      .mockResolvedValueOnce({
+        data: [stripeInvoiceFixture({ id: "in_last" })],
+        has_more: false,
+      });
+    expect((await findLegacyStripeInvoices({ limit: 101 })).scanned).toBe(101);
+    expect(stripe.invoices.list).toHaveBeenLastCalledWith({
+      status: "open",
+      collection_method: "send_invoice",
+      starting_after: "in_99",
+      limit: 1,
+    });
+    stripe.invoices.list.mockResolvedValue({ data: [], has_more: true });
+    await expect(findLegacyStripeInvoices()).rejects.toThrow(
+      "invalid legacy invoice page",
+    );
+  });
+
+  it.each([0, 501, 1.5, NaN])(
+    "rejects invalid legacy scan limit %s",
+    async (limit) => {
+      await expect(findLegacyStripeInvoices({ limit })).rejects.toThrow(
+        "legacy invoice limit",
+      );
+      expect(stripe.invoices.list).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects invalid legacy cursors and live/test mode mismatches", async () => {
+    await expect(findLegacyStripeInvoices({ cursor: "bad" })).rejects.toThrow(
+      "cursor",
+    );
+    stripe.invoices.list.mockResolvedValue({
+      data: [stripeInvoiceFixture({ livemode: true })],
+      has_more: false,
+    });
+    await expect(findLegacyStripeInvoices()).rejects.toThrow();
   });
 
   it("fails closed when Stripe draft metadata does not identify the internal invoice", async () => {
@@ -1044,6 +1549,38 @@ describe("commercial Stripe invoices", () => {
     ).rejects.toThrow("mode does not match");
 
     expect(mockUpdateCommercialInvoiceProvider).not.toHaveBeenCalled();
+  });
+
+  it("stops webhook reconciliation when its resolved customer is frozen", async () => {
+    const customerAccountId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    mockGetCommercialOrder.mockResolvedValue(
+      orderFixture({ customer_account_id: customerAccountId }),
+    );
+    const registerAccount = jest.fn(async () => {
+      throw Object.assign(new Error("billing is frozen for this account"), {
+        status: 423,
+      });
+    });
+
+    await expect(
+      runInBillingAuthorityContext({
+        operation: "commercial-maintenance",
+        request_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        register_account: registerAccount,
+        fn: async () =>
+          await reconcileStripeCommercialInvoice({
+            id: "co_1",
+            commercial_invoice_id: "ci_1",
+            reason: "Reconcile Stripe webhook",
+            event_source: "stripe-webhook",
+            event_idempotency_key: "evt_frozen_invoice",
+          }),
+      }),
+    ).rejects.toMatchObject({ status: 423 });
+
+    expect(registerAccount).toHaveBeenCalledWith(customerAccountId);
+    expect(mockGetCommercialInvoice).not.toHaveBeenCalled();
+    expect(stripe.invoices.retrieve).not.toHaveBeenCalled();
   });
 
   it("fails closed when the provider amount differs from the approved order", async () => {

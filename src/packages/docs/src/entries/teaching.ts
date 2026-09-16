@@ -13,7 +13,7 @@ import {
   COURSE_STUDENT_PAY_BODY,
   COURSE_WORKFLOW_BODY,
   NBGRADER_BODY,
-} from "../content";
+} from "../content/teaching";
 
 export const TEACHING_ENTRIES: DocsEntry[] = [
   {

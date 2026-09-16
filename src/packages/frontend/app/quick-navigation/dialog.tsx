@@ -64,6 +64,9 @@ export function NavigationDialog({
   const [open, setOpen] = useState(true);
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string>();
+  const [selectedFrameId, setSelectedFrameId] = useState(
+    currentEditor?.activeId,
+  );
   const [previewFocused, setPreviewFocused] = useState(false);
   const [configure, setConfigure] = useState(false);
   const destination = useRef<Destination | undefined>(undefined);
@@ -85,7 +88,12 @@ export function NavigationDialog({
   }, [hasFrames, previewFocused]);
   // The list has one entry per file; frames are chosen in the preview. The
   // highlighted frame is the one Enter would land on.
-  const frameId = editor?.activeId;
+  const frameId = editor?.frames.some(({ id }) => id === selectedFrameId)
+    ? selectedFrameId
+    : editor?.activeId;
+  useEffect(() => {
+    setSelectedFrameId(editor?.activeId);
+  }, [editor?.projectId, editor?.path, editor?.activeId]);
   useEffect(() => {
     document
       .getElementById(`${id}-result-${selectedIndex}`)
@@ -103,7 +111,7 @@ export function NavigationDialog({
           {
             id: "quick-nav.hint.preview",
             defaultMessage:
-              "1–9 open a frame · 0 chat · Enter opens “{frame}” · Shift+Tab back to search",
+              "←→ select any frame · 1–9 open a frame · 0 chat · Enter opens “{frame}” · Shift+Tab back to search",
           },
           { file: fileName, frame: frameLabel },
         )
@@ -172,7 +180,7 @@ export function NavigationDialog({
   }
 
   // Escape closes from anywhere, and Tab cycles only through the dialog's own
-  // controls: search, frame preview, configure, help. The modal's focus lock
+  // controls: search, frame preview, configure, help, close. The modal's focus lock
   // only reacts to focusin, so a Tab that leaves the last element for the
   // browser chrome would otherwise escape the dialog.
   useEffect(() => {
@@ -198,6 +206,7 @@ export function NavigationDialog({
         preview.current,
         gear.current,
         help.current,
+        dialog?.querySelector<HTMLElement>(".ant-modal-close"),
       ];
       const targets = candidates.filter((el): el is HTMLElement => el != null);
       if (!targets.length) return;
@@ -260,6 +269,22 @@ export function NavigationDialog({
       if (event.repeat) return;
       const target = digitTarget(event.key);
       if (target) close(target);
+    } else if (
+      ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)
+    ) {
+      event.preventDefault();
+      if (!editor?.frames.length) return;
+      const index = Math.max(
+        0,
+        editor.frames.findIndex(({ id }) => id === frameId),
+      );
+      const delta =
+        event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : -1;
+      setSelectedFrameId(
+        editor.frames[
+          (index + delta + editor.frames.length) % editor.frames.length
+        ].id,
+      );
     } else if (
       event.key === "Enter" &&
       event.target === preview.current &&
@@ -501,7 +526,7 @@ export function NavigationDialog({
                   ref={preview}
                   role="group"
                   tabIndex={0}
-                  aria-label={`Frames in ${editor.path}`}
+                  aria-label={`Frames in ${editor.path}${frameLabel ? `; selected ${frameLabel}` : ""}`}
                   onKeyDown={previewKey}
                   onFocus={() => setPreviewFocused(true)}
                   onBlur={(event) => {
@@ -537,12 +562,12 @@ export function NavigationDialog({
                     {previewFocused ? (
                       <FormattedMessage
                         id="quick-nav.preview-caption-focused"
-                        defaultMessage="1–9 or Enter"
+                        defaultMessage="Arrow keys, 1–9, or Enter"
                       />
                     ) : (
                       <FormattedMessage
                         id="quick-nav.preview-caption"
-                        defaultMessage="Tab, then 1–9"
+                        defaultMessage="Tab, then arrow keys or 1–9"
                       />
                     )}
                   </Typography.Text>
@@ -561,7 +586,7 @@ export function NavigationDialog({
           >
             <FormattedMessage
               id="quick-nav.footer"
-              defaultMessage="Esc closes · Tab switches between search and frame selector"
+              defaultMessage="Esc closes · Tab moves between dialog controls"
             />
           </Typography.Text>
         </KeyboardBoundary>

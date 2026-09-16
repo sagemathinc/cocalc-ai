@@ -27,6 +27,7 @@ const mockGetSeedMembershipTierMap = jest.fn();
 const mockGetBillingReadiness = jest.fn();
 const mockCostToResumeSubscription = jest.fn();
 const mockThrottle = jest.fn();
+const mockExecuteBillingHttpCommand = jest.fn();
 
 jest.mock("@cocalc/http-api/lib/account/get-account", () => ({
   __esModule: true,
@@ -124,6 +125,12 @@ jest.mock(
   { virtual: true },
 );
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  billingAuthorityErrorAttrs: () => ({}),
+  executeBillingHttpCommand: (...args: any[]) =>
+    mockExecuteBillingHttpCommand(...args),
+}));
+
 jest.mock("@cocalc/server/purchases/resume-subscription", () => ({
   costToResumeSubscription: (...args) => mockCostToResumeSubscription(...args),
 }));
@@ -167,6 +174,17 @@ describe("billing account read routes API-key scope", () => {
       periodicCost: 12,
     });
     mockThrottle.mockReset();
+    mockExecuteBillingHttpCommand
+      .mockReset()
+      .mockImplementation(async (operation: string, input: any) => {
+        if (operation === "get-billing-readiness") {
+          return await mockGetBillingReadiness(input.account_id);
+        }
+        if (operation === "get-unpaid-invoices") {
+          return await mockGetUnpaidInvoices(input.account_id);
+        }
+        throw Error(`unexpected billing operation '${operation}'`);
+      });
   });
 
   it.each([
@@ -214,7 +232,10 @@ describe("billing account read routes API-key scope", () => {
     await handler(req, res);
 
     expect(res._getJSONData()).toEqual({ balance: 12 });
-    expect(mockGetBalance).toHaveBeenCalledWith({ account_id: "acct-1" });
+    expect(mockGetBalance).toHaveBeenCalledWith({
+      account_id: "acct-1",
+      noSave: true,
+    });
   });
 
   it("keeps browser-session statement email requests", async () => {

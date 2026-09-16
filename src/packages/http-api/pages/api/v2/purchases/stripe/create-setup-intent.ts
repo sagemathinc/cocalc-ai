@@ -1,5 +1,8 @@
 import getAccountId from "@cocalc/http-api/lib/account/get-account";
-import createSetupIntent from "@cocalc/server/purchases/stripe/create-setup-intent";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
 import getParams from "@cocalc/http-api/lib/api/get-params";
 import { requireFreshAuth } from "@cocalc/server/auth/auth-sessions";
 import throttle from "@cocalc/util/api/throttle";
@@ -11,6 +14,7 @@ export default async function handle(req, res) {
     res.json({
       error: `${err.message}`,
       ...(err?.code != null ? { code: err.code } : {}),
+      ...billingAuthorityErrorAttrs(err),
     });
     return;
   }
@@ -27,7 +31,7 @@ async function get(req) {
   throttle({ account_id, endpoint: "purchases/stripe/create-setup-intent" });
   await requireFreshAuth({ req, account_id, allow_actor_impersonation: true });
   const { description, billing_details } = getParams(req);
-  return await createSetupIntent({
+  return await executeBillingHttpCommand("create-setup-intent", {
     account_id,
     description,
     billing_details,

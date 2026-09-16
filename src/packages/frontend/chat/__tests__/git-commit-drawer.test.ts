@@ -678,6 +678,17 @@ describe("git commit drawer merge commit formatting", () => {
         open: true,
         showOnlyUnreviewedCommits: true,
         isHeadSelected: false,
+        commit: "a".repeat(40),
+        incomingCommit: "AAAAAAA",
+        commitIndex: -1,
+        visibleCommitCount: 5,
+      }),
+    ).toBe(false);
+    expect(
+      shouldFallbackToFirstVisibleGitCommit({
+        open: true,
+        showOnlyUnreviewedCommits: true,
+        isHeadSelected: false,
         commit: "abc1234",
         incomingCommit: "abc1234",
         commitIndex: -1,

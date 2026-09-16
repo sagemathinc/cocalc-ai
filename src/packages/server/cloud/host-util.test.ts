@@ -365,5 +365,42 @@ describe("buildHostSpec", () => {
       family: "ubuntu-accelerator-2404-amd64-with-nvidia-595",
       project: "ubuntu-os-accelerator-images",
     });
+
+    const spec = await buildHostSpec({
+      id: "832da43c-d18e-406d-8e1d-c28973378b24",
+      region: "us-central1",
+      metadata: {
+        gpu: true,
+        machine: {
+          cloud: "gcp",
+          zone: "us-central1-a",
+          machine_type: "g2-standard-4",
+          gpu_type: "nvidia-l4",
+        },
+      },
+    });
+    expect(spec.metadata?.source_image_family).toBe(
+      "ubuntu-accelerator-2404-amd64-with-nvidia-595",
+    );
+  });
+
+  it("rejects unsupported OS images rather than provisioning a broken runtime", async () => {
+    loadGcpImagesMock.mockResolvedValue([
+      {
+        family: "ubuntu-accelerator-2604-amd64-with-nvidia-595",
+        architecture: "X86_64",
+        gpuReady: true,
+      },
+    ]);
+    await expect(
+      buildHostSpec({
+        id: "832da43c-d18e-406d-8e1d-c28973378b24",
+        region: "us-central1",
+        metadata: {
+          gpu: true,
+          machine: { cloud: "gcp", machine_type: "g2-standard-4" },
+        },
+      }),
+    ).rejects.toThrow("no GCP accelerator Ubuntu 24.04 images available");
   });
 });

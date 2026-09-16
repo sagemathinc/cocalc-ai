@@ -5,7 +5,7 @@
 
 import type { DocsEntry } from "../types";
 import { docsIcon } from "../helpers";
-import { COCALC_CLI_BODY, HTTP_API_BODY } from "../content";
+import { COCALC_CLI_BODY, HTTP_API_BODY } from "../content/automation";
 
 import {
   CLI_GETTING_STARTED_BODY,

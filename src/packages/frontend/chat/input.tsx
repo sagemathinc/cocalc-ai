@@ -22,6 +22,7 @@ import { shouldIgnoreSentEcho, type SentEchoGuard } from "./send-echo-guard";
 import { SubmitMentionsRef } from "./types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useNarrowChatViewport } from "./use-chat-viewport";
+import type { MarkdownPosition } from "@cocalc/frontend/editors/markdown-input/types";
 
 interface Props {
   on_send: (value: string) => void;
@@ -61,6 +62,8 @@ interface Props {
 
 export interface ChatInputControl {
   focus: () => boolean;
+  captureSelection: () => MarkdownPosition | null;
+  insertText: (text: string, selection?: MarkdownPosition | null) => boolean;
 }
 
 const CHAT_INPUT_SAVE_DEBOUNCE_MS = 120;
@@ -70,6 +73,66 @@ function markdownEndPosition(value: string): { line: number; ch: number } {
   const line = Math.max(0, lines.length - 1);
   const ch = lines[line]?.length ?? 0;
   return { line, ch };
+}
+
+function markdownPositionToOffset(
+  value: string,
+  position: MarkdownPosition,
+): number {
+  const lines = value.split("\n");
+  const line = Math.max(0, Math.min(lines.length - 1, position.line));
+  let offset = 0;
+  for (let i = 0; i < line; i += 1) offset += lines[i].length + 1;
+  return offset + Math.max(0, Math.min(lines[line].length, position.ch));
+}
+
+function isMarkdownPositionValid(
+  value: string,
+  position: MarkdownPosition | null | undefined,
+): position is MarkdownPosition {
+  if (position == null) return false;
+  const lines = value.split("\n");
+  return (
+    Number.isInteger(position.line) &&
+    Number.isInteger(position.ch) &&
+    position.line >= 0 &&
+    position.line < lines.length &&
+    position.ch >= 0 &&
+    position.ch <= lines[position.line].length
+  );
+}
+
+function offsetToMarkdownPosition(
+  value: string,
+  offset: number,
+): MarkdownPosition {
+  const prefix = value.slice(0, Math.max(0, Math.min(value.length, offset)));
+  const lines = prefix.split("\n");
+  return { line: lines.length - 1, ch: lines[lines.length - 1].length };
+}
+
+export function insertTranscriptAtMarkdownPosition({
+  value,
+  transcript,
+  position,
+}: {
+  value: string;
+  transcript: string;
+  position: MarkdownPosition;
+}): { value: string; position: MarkdownPosition } {
+  const clean = transcript.trim();
+  if (!clean) return { value, position };
+  const offset = markdownPositionToOffset(value, position);
+  const before = value.slice(0, offset);
+  const after = value.slice(offset);
+  const leading = before.length > 0 && !/\s$/.test(before) ? " " : "";
+  const trailing = after.length > 0 && !/^\s|^[,.;:!?)]/.test(after) ? " " : "";
+  const inserted = `${leading}${clean}${trailing}`;
+  const next = `${before}${inserted}${after}`;
+  return {
+    value: next,
+    position: offsetToMarkdownPosition(next, offset + inserted.length),
+  };
 }
 
 export default function ChatInput({
@@ -242,6 +305,42 @@ export default function ChatInput({
     );
   }, []);
 
+  const captureSelection = useCallback((): MarkdownPosition | null => {
+    return controlRef.current?.getMarkdownPositionForSelection?.() ?? null;
+  }, []);
+
+  const insertText = useCallback(
+    (text: string, selection?: MarkdownPosition | null): boolean => {
+      if (!mountedRef.current || isStaleSessionCallback(sessionToken)) {
+        return false;
+      }
+      const current = currentInputRef.current ?? "";
+      const liveSelection =
+        controlRef.current?.getMarkdownPositionForSelection?.() ?? null;
+      const at = isMarkdownPositionValid(current, selection)
+        ? selection
+        : isMarkdownPositionValid(current, liveSelection)
+          ? liveSelection
+          : markdownEndPosition(current);
+      const next = insertTranscriptAtMarkdownPosition({
+        value: current,
+        transcript: text,
+        position: at,
+      });
+      if (next.value === current) return false;
+      currentInputRef.current = next.value;
+      setInput(next.value);
+      sentEchoGuardRef.current = null;
+      onChange(next.value, sessionToken);
+      savePresence(next.value);
+      window.setTimeout(() => {
+        controlRef.current?.setSelectionFromMarkdownPosition?.(next.position);
+      }, 0);
+      return true;
+    },
+    [isStaleSessionCallback, onChange, savePresence, sessionToken],
+  );
+
   const markdownHelp = (
     <div
       style={{
@@ -280,6 +379,8 @@ export default function ChatInput({
   useEffect(() => {
     const control: ChatInputControl = {
       focus: focusInput,
+      captureSelection,
+      insertText,
     };
     if (inputControlRef != null) {
       inputControlRef.current = control;
@@ -291,7 +392,13 @@ export default function ChatInput({
       }
       onControlReady?.(null);
     };
-  }, [focusInput, inputControlRef, onControlReady]);
+  }, [
+    captureSelection,
+    focusInput,
+    inputControlRef,
+    insertText,
+    onControlReady,
+  ]);
 
   return (
     <MarkdownInput

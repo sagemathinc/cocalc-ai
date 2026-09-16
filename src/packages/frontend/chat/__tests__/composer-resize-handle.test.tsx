@@ -150,6 +150,17 @@ describe("ChatRoomComposer resize handle", () => {
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
   });
 
+  it("keeps dictation above the composer instead of adjacent to Send", () => {
+    renderComposer({ hasInput: true, input: "draft" });
+
+    const dictate = screen.getByRole("button", { name: "Dictate message" });
+    const actions = screen.getByTestId("chat-composer-actions");
+    expect(actions.contains(dictate)).toBe(false);
+    expect(actions.contains(screen.getByRole("button", { name: "Send" }))).toBe(
+      true,
+    );
+  });
+
   it("shows goal controls for legacy Codex thread metadata", () => {
     renderComposer({
       selectedThread: {

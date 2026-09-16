@@ -199,6 +199,74 @@ cocalc admin receivables quote stripe reconcile "$ORDER" \
   --expected-version 6 --commit --json
 ```
 
+## Reviewed Stripe Automatic Tax
+
+Stripe invoices and Stripe quotes can opt into Stripe Tax using the approved
+order's `terms_snapshot.invoice`. Existing orders remain untaxed unless this
+option is explicitly enabled; changing Stripe's Dashboard default does not
+retroactively change an approved CoCalc order.
+
+```json
+{
+  "invoice": {
+    "automatic_tax": true,
+    "tax_code": "txcd_10103000",
+    "billing_address": {
+      "line1": "Reviewed customer address",
+      "city": "London",
+      "postal_code": "SW1A 1AA",
+      "country": "GB"
+    }
+  }
+}
+```
+
+The tax code above is an example, not a classification recommendation. Choose
+the correct code for the service. Automatic tax requires an explicit Stripe
+product tax code and a two-letter billing country. Supply the full address:
+Stripe may also require a postal code or state/province.
+
+Before approving the order:
+
+1. In Stripe's live-mode Tax settings, verify the business origin, relevant
+   active tax registrations, and product classification.
+2. Check the customer's legal name, billing/shipping location, tax IDs and
+   exemption/reverse-charge status. CoCalc does not infer or change tax
+   exemptions or register the business for tax.
+3. Preview the same customer, line items, and currency in Stripe with automatic
+   tax enabled and **exclusive** pricing. Do not send an extra Dashboard invoice.
+   Set CoCalc's `agreed_subtotal` to the pre-tax price and `agreed_total` to the
+   reviewed total including tax, then approve through the normal workflow.
+4. Create/review the AR draft, then explicitly finalize/send it. The normal
+   reason, version, fresh-auth, and idempotency checks still apply. An accepted
+   Stripe quote preserves automatic tax on its draft invoice.
+
+Tax is added to the approved line prices, never silently absorbed into them.
+A complete calculation may be zero (including when Stripe has no applicable
+registration); zero is not proof that the customer is legally tax-exempt.
+
+CoCalc blocks delivery if Stripe's automatic-tax setting differs, calculation
+is incomplete, or subtotal/total no longer match the approved amounts. Stripe
+can recalculate at finalization, so totals are checked again before email and
+on delivery retries. If a finalization changes the tax, the invoice may already
+be finalized but remains unsent by CoCalc; inspect that invoice and resolve it
+through the normal void/revision workflow rather than repeatedly creating
+invoices or bypassing the amount checks. Automatic advancement remains off.
+
+For automatic-tax orders, recovery and delivery also verify each invoice
+line's exclusive tax behavior and reviewed product tax code, even when the
+calculated tax is zero or a changed classification produces the same total.
+With the pinned Stripe API, these checks resolve the line's
+`pricing.price_details` references by retrieving its Price and Product; they
+do not assume invoice-item creation parameters are invoice-line response
+fields. Missing or unverifiable tax settings block the operation. The same
+checks apply when adopting an accepted quote's invoice and on finalized send
+retries. Local quote acceptance requires nonnegative tax exactly equal to the
+retained quote's total minus subtotal, including during recovery.
+
+See [Stripe Tax for invoices](https://docs.stripe.com/tax/invoicing) and
+[zero-tax calculations](https://docs.stripe.com/tax/zero-tax) for setup details.
+
 ## Local PDF Quote Fallback
 
 Use the local PDF provider for sites without Invoicing Plus or when procurement
@@ -225,8 +293,10 @@ Use the dedicated billing correction action when procurement supplies a new
 invoice recipient or address after approval or fulfillment. It preserves the
 approved agreement and fulfillment state, replaces only billing/procurement
 contacts and future invoice address/memo fields, and records an immutable
-event. It fails closed once any non-void invoice exists; void the incorrect
-invoice before correcting and reissuing it.
+event. It rejects the correction while any invoice has a status other than
+`void` or `failed`; resolve an active incorrect invoice before correcting and
+reissuing it. Unresolved provider operations and active Stripe quotes also
+block the correction.
 
 ```sh
 cocalc admin receivables billing update AR-2026-000123 \
@@ -255,6 +325,48 @@ cocalc admin receivables collection mode AR-2026-000123 \
   --mode stripe_invoice --reason "use Stripe hosted invoicing" \
   --expected-version 8 --commit --json
 ```
+
+## Customer PDF Links
+
+After finalizing a Stripe quote (or issuing a local PDF quote), an admin with
+fresh authentication can issue a private download link:
+
+```sh
+cocalc admin receivables quote share AR-2026-000123 --quote-id <uuid> \
+  --expires-at 2026-10-01T00:00:00Z --reason "Send reviewed quote to customer"
+# Review, then repeat with --expected-version <version> --commit.
+cocalc admin receivables quote revoke-link AR-2026-000123 --quote-id <uuid> \
+  --reason "Revoke previously shared link"
+# Review, then repeat with --expected-version <version> --commit.
+```
+
+Send the returned URL through Zendesk. Anyone holding it can download this one
+PDF without a CoCalc account. Expiration must be within 90 days and no later
+than quote expiration. Issuing another link replaces the previous link;
+revocation does not void the quote. Voiding/cancelling the quote also blocks
+downloads. Revocation cannot recall copies already downloaded or a response
+already in flight.
+
+The token is returned once and only its SHA-256 hash is retained. An idempotent
+retry returns no URL and does not rotate the link. If the response was lost,
+issue a replacement using the current version and a new idempotency key.
+Do not paste these bearer URLs into public issues or audit reasons.
+
+The URL fragment keeps the token out of HTTP access logs. The public landing
+page removes the fragment from browser history and submits the token in a POST
+body when the recipient clicks Download. Do not enable request-body logging
+for this endpoint. Responses use no-store, no-referrer, nosniff and a restrictive
+CSP. JavaScript is required. The page loads no third-party assets.
+
+These small, retained billing documents are seed-owned, not project files;
+serving them through the hub is an intentional control-plane exception. Any
+receiving bay routes downloads to the seed over a narrow internal method that
+returns only the PDF and filename. The seed checks expiry/revocation and the
+2 MiB bound and verifies the retained digest; it never contacts Stripe.
+Each hub limits ingress to 30 requests/IP/minute and 200 requests/minute total.
+The seed atomically limits each link to 20 PDF downloads/minute across hubs.
+Invalid, expired, revoked and per-link-throttled requests get the same generic
+unavailable response. Disabling receivables visibility stops public downloads.
 
 ## Recovery And Idempotency
 
@@ -299,6 +411,79 @@ approved. Ending fulfillment never rewrites collection history and overdue
 payment never automatically suspends a university license.
 
 ## Diagnostics And Follow-Up
+
+### Invoice Balances Versus Order Value
+
+`admin receivables diagnostics --json` returns `amounts_by_currency` from the
+seed-owned local records. Amount strings are decimal major units, grouped by
+currency; no exchange conversion or cross-currency total is performed.
+
+- `invoice_outstanding`: remaining balances on open invoices, including partial
+  payments. Paid, void, draft, creating, and uncollectible invoices are excluded.
+- `invoice_overdue`: the portion whose invoice due date is before now. Missing
+  due dates are not assumed overdue; order collection-state lag does not affect
+  the calculation.
+- `fulfilled_invoice_outstanding`: open invoice balances for provisioned orders.
+- `uninvoiced_pipeline`: active not-invoiced orders without a creating, draft,
+  open, paid, or uncollectible invoice.
+  Alternative proposals remain separate proposals, not collectible debt.
+- `paid_unfulfilled_order_value`: active paid orders awaiting provisioning.
+- `open_order_value`: agreed totals of active orders, **not accounts receivable**.
+
+Invoice balances remain included even if the order workflow is cancelled or
+complete: closing an order does not void its provider invoice. These totals
+cover **linked local invoices only** (`amount_scope=linked_local_invoices`), and
+can lag Stripe until webhook processing or invoice reconciliation runs.
+
+For older clients, `amounts.open_amount`, `amounts.overdue_amount`, and
+`amounts.fulfilled_unpaid_amount` now contain the corresponding **USD-only
+invoice balances**, rather than sums of order totals. They do not represent
+foreign-currency invoices. Use `amounts_by_currency` for new integrations.
+
+### Legacy Stripe Discovery (Read Only)
+
+Ordinary diagnostics do not scan Stripe (`unlinked_invoice_scan=not_requested`).
+`--reconcile` requests the existing bounded **current-site commercial metadata**
+scan (`site_commercial`); it cannot establish that legacy invoices are absent.
+
+Use an explicit account-wide discovery request to find legacy open invoices:
+
+```sh
+cocalc admin receivables diagnostics --include-legacy-invoices \
+  --legacy-invoice-limit 100 --reason "Review legacy invoice coverage" --json
+```
+
+`legacy_invoice_scan` lists unlinked candidates across the Stripe account,
+including invoices without commercial metadata. It uses Stripe's
+[invoice list API](https://docs.stripe.com/api/invoices/list), restricted to
+`status=open` and `collection_method=send_invoice`; automatic-charge attempts
+are intentionally excluded. No date filter is imposed.
+
+`scanned` counts provider invoices examined, including ones already linked and
+therefore omitted from the candidate list. The limit is 1-500, default 100. If
+`has_more` is true, continue with the returned `next_cursor`:
+
+```sh
+cocalc admin receivables diagnostics --include-legacy-invoices \
+  --legacy-invoice-cursor in_last_scanned --legacy-invoice-limit 100 \
+  --reason "Continue legacy invoice review" --json
+```
+
+An empty candidate list with `has_more=true` is **not** a completed scan. The
+cursor tracks the last examined invoice, not the last unlinked candidate.
+Pages are live provider reads, not a frozen accounting snapshot.
+
+Each candidate includes invoice/customer references, currency, due date, and
+`amount_remaining_minor` as an integer string in **Stripe minor units** (not
+universally cents; see [Stripe currency rules](https://docs.stripe.com/currencies)).
+`site_match` is `current`, `other`, or `unknown` based only on site metadata.
+Unknown or other-site candidates are not evidence of current-site ownership.
+
+Discovery performs no invoice creation, metadata update, import, send, payment,
+or void. Review identity, terms, tax, fulfillment, and currency before using the
+existing backfill/link workflow. Order creation/linking is still USD-only;
+foreign-currency discovery does not bypass that restriction. All requests retain
+the existing audited admin authorization and seed routing.
 
 The seed worker runs under a database lease so only one hub processes each
 maintenance interval. It:

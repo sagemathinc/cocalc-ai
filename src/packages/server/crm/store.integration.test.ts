@@ -1392,6 +1392,92 @@ describePglite("integrated CRM store", () => {
     }
   });
 
+  it.each(["name", "email"] as const)(
+    "searches people by %s across statuses with complete cursor pagination",
+    async (searchBy) => {
+      const prefix = `status-search-${randomUUID()}`;
+      const statuses = ["active", "merged", "archived"] as const;
+      const ids = statuses.map(() => randomUUID());
+      const unrelatedId = randomUUID();
+      // Equal timestamps exercise the UUID tie-breaker on every page.
+      const updatedAt = "2026-08-01T12:00:00.000Z";
+      for (const [index, status] of statuses.entries()) {
+        await pool.query(
+          `INSERT INTO crm_people
+             (id,display_name,status,merged_into_person_id,
+              created_by_account_id,updated_by_account_id,updated_at)
+           VALUES ($1,$2,$3,$4,$5,$5,$6)`,
+          [
+            ids[index],
+            searchBy === "name"
+              ? `${prefix} ${status}`
+              : `Synthetic ${status} contact`,
+            status,
+            status === "merged" ? ids[0] : null,
+            actor,
+            updatedAt,
+          ],
+        );
+        if (searchBy === "email") {
+          const email = `${prefix}-${status}@example.com`;
+          await pool.query(
+            `INSERT INTO crm_person_emails
+               (id,person_id,email_address,normalized_email)
+             VALUES ($1,$2,$3,$3)`,
+            [randomUUID(), ids[index], email],
+          );
+        }
+      }
+      await pool.query(
+        `INSERT INTO crm_people
+           (id,display_name,created_by_account_id,updated_by_account_id,updated_at)
+         VALUES ($1,'Unrelated synthetic contact',$2,$2,$3)`,
+        [unrelatedId, actor, updatedAt],
+      );
+      const request = {
+        search: prefix,
+        reason: "verify synthetic contact status search",
+        max_bytes: 100_000,
+      };
+      const expectedIds = [...ids].sort().reverse();
+      const all = await store.listPeople(request);
+      expect(all.people.map(({ id }) => id)).toEqual(expectedIds);
+      expect(all.truncated).toBe(false);
+      expect(all.next_cursor).toBeUndefined();
+
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let index = 0; index < ids.length; index++) {
+        const page = await store.listPeople({ ...request, limit: 1, cursor });
+        expect(page.people.map(({ id }) => id)).toEqual([expectedIds[index]]);
+        expect(page.truncated).toBe(index < ids.length - 1);
+        if (index < ids.length - 1) {
+          expect(page.next_cursor).toEqual(expect.any(String));
+          expect(page.next_cursor).not.toBe(cursor);
+        } else {
+          expect(page.next_cursor).toBeUndefined();
+        }
+        seen.push(...page.people.map(({ id }) => id));
+        cursor = page.next_cursor;
+      }
+      expect(seen).toEqual(expectedIds);
+      expect(new Set(seen).size).toBe(ids.length);
+      expect(seen).not.toContain(unrelatedId);
+
+      for (const [index, status] of statuses.entries()) {
+        const filtered = await store.listPeople({
+          ...request,
+          status,
+          limit: 1,
+        });
+        expect(filtered.people.map(({ id }) => id)).toEqual([ids[index]]);
+        expect(filtered.people[0].status).toBe(status);
+        expect(filtered.truncated).toBe(false);
+        expect(filtered.next_cursor).toBeUndefined();
+      }
+    },
+  );
+
   it("binds, discovers, and paginates reviewed person source references", async () => {
     const organizationId = randomUUID();
     const otherOrganizationId = randomUUID();
@@ -1828,6 +1914,114 @@ describePglite("integrated CRM store", () => {
         idempotency_key: unlinkPreview.idempotency_key,
       }),
     );
+  });
+
+  it.each([
+    "2026-08-24",
+    "2026-08-24T12:00:00",
+    "2026-08-24 12:00:00Z",
+    "not-a-timestamp",
+    "2026-02-30T12:00:00Z",
+    "2026-02-29T12:00:00Z",
+    "2026-08-24T24:00:00Z",
+    "2026-08-24T12:60:00Z",
+    "2026-08-24T12:00:60Z",
+    "2026-08-24T12:00:00+24:00",
+    "2026-08-24T12:00:00+01:60",
+    "",
+    "   ",
+    null,
+    0,
+  ])("rejects an invalid explicit daily digest cutoff: %p", async (as_of) => {
+    await expect(
+      store.getDailyDigest({
+        reason: "validate synthetic digest cutoff",
+        // Exercise malformed callers as well as the typed request contract.
+        as_of: as_of as string,
+      }),
+    ).rejects.toThrow(/as_of must be .*RFC3339 timestamp/);
+  });
+
+  it.each([
+    ["2026-08-24T12:00:00Z", "2026-08-24T12:00:00.000Z"],
+    ["2026-08-24T05:00:00-07:00", "2026-08-24T12:00:00.000Z"],
+    ["2026-08-24T17:30:00+05:30", "2026-08-24T12:00:00.000Z"],
+    ["2028-02-29T23:30:00-01:00", "2028-03-01T00:30:00.000Z"],
+    ["2026-08-24T12:00:00.123Z", "2026-08-24T12:00:00.123Z"],
+    [" 2026-08-24T12:00:00Z ", "2026-08-24T12:00:00.000Z"],
+  ])(
+    "normalizes an explicit daily digest cutoff: %s",
+    async (as_of, expected) => {
+      const digest = await store.getDailyDigest({
+        reason: "normalize synthetic digest cutoff",
+        as_of,
+        due_within_days: 1,
+        renewal_within_days: 2,
+        assignee_account_id: randomUUID(),
+      });
+      expect(digest.as_of).toBe(expected);
+      expect(digest.due_before).toBe(
+        new Date(Date.parse(expected) + 24 * 60 * 60 * 1000).toISOString(),
+      );
+      expect(digest.renewal_before).toBe(
+        new Date(Date.parse(expected) + 2 * 24 * 60 * 60 * 1000).toISOString(),
+      );
+    },
+  );
+
+  it.each([{}, { as_of: undefined }])(
+    "defaults an omitted daily digest cutoff to now: %p",
+    async (cutoff) => {
+      const before = Date.now();
+      const digest = await store.getDailyDigest({
+        reason: "default synthetic digest cutoff",
+        ...cutoff,
+        assignee_account_id: randomUUID(),
+      });
+      expect(Date.parse(digest.as_of)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(digest.as_of)).toBeLessThanOrEqual(Date.now());
+    },
+  );
+
+  it("uses the normalized daily digest cutoff at task window boundaries", async () => {
+    const organizationId = randomUUID();
+    const assignee = randomUUID();
+    const taskIds = Array.from({ length: 4 }, () => randomUUID());
+    await pool.query(
+      `INSERT INTO crm_organizations
+         (id,customer_number,display_name,organization_type,lifecycle_stage,
+          created_by_account_id,updated_by_account_id)
+       VALUES($1,$2,'Synthetic Cutoff Organization','company','prospect',$3,$3)`,
+      [organizationId, `CRM-CUTOFF-${randomUUID().slice(0, 20)}`, actor],
+    );
+    await pool.query(
+      "UPDATE crm_organizations SET relationship_owner_account_id=$2 WHERE id=$1",
+      [organizationId, assignee],
+    );
+    await pool.query(
+      `INSERT INTO crm_tasks
+         (id,organization_id,type,assignee_account_id,due_at,priority,subject,
+          created_by_account_id,updated_by_account_id)
+       VALUES
+         ($1,$5,'renewal',$6,'2026-08-24T11:59:59.999Z','normal','Before cutoff',$7,$7),
+         ($2,$5,'renewal',$6,'2026-08-24T12:00:00Z','normal','At cutoff',$7,$7),
+         ($3,$5,'renewal',$6,'2026-08-25T12:00:00Z','normal','At window end',$7,$7),
+         ($4,$5,'renewal',$6,'2026-08-25T12:00:00.001Z','normal','After window end',$7,$7)`,
+      [...taskIds, organizationId, assignee, actor],
+    );
+    const digest = await store.getDailyDigest({
+      reason: "preserve synthetic task window boundaries",
+      as_of: "2026-08-24T05:00:00-07:00",
+      due_within_days: 1,
+      assignee_account_id: assignee,
+    });
+    expect(digest.overdue_tasks.map(({ task }) => task.id)).toEqual([
+      taskIds[0],
+    ]);
+    expect(digest.due_soon_tasks.map(({ task }) => task.id)).toEqual([
+      taskIds[1],
+      taskIds[2],
+    ]);
   });
 
   it("builds a deterministic bounded daily work digest", async () => {

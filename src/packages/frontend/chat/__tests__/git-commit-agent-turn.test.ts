@@ -21,6 +21,27 @@ function createActions({
 }
 
 describe("sendGitCommitAgentTurn", () => {
+  it("does not send a commit request to a thread in another repository", () => {
+    const actions = createActions({
+      metadata: {
+        agent_kind: "acp",
+        acp_config: { workingDirectory: "/other" },
+      },
+    });
+    const result = sendGitCommitAgentTurn({
+      actions,
+      prompt: "Commit all tracked changes",
+      targetThreadKey: "thread-1",
+      defaultNewThreadSetup: getDefaultNewThreadSetup(),
+      workingDirectory: "/intended",
+    });
+    expect(result.mode).toBe("created");
+    expect(
+      actions.sendChat.mock.calls[0][0].threadAgent.codexConfig
+        .workingDirectory,
+    ).toBe("/intended");
+    expect(actions.sendChat.mock.calls[0][0].reply_thread_id).toBeUndefined();
+  });
   it("sends into an existing Codex thread", () => {
     const actions = createActions({
       metadata: {
@@ -62,21 +83,20 @@ describe("sendGitCommitAgentTurn", () => {
       const result = sendGitCommitAgentTurn({
         actions,
         prompt: "Fix review feedback",
+        preserveThread: true,
         targetThreadKey: "busy-thread",
         defaultNewThreadSetup: getDefaultNewThreadSetup(),
         workingDirectory: "/home/user/project",
       });
-      expect(result.mode).toBe("created");
+      expect(result.mode).toBe("existing");
       const sent = actions.sendChat.mock.calls[0][0];
-      expect(sent.reply_thread_id).toBeUndefined();
-      expect(sent.threadAgent.codexConfig.workingDirectory).toBe(
-        "/home/user/project",
-      );
-      expect(actions.getMessagesInThread).not.toHaveBeenCalled();
+      expect(sent.reply_thread_id).toBe("busy-thread");
+      expect(sent.threadAgent).toBeUndefined();
+      expect(actions.getMessagesInThread).toHaveBeenCalledWith("busy-thread");
     },
   );
 
-  it("uses effective immutable configuration rather than stale thread metadata", () => {
+  it("preserves an existing thread with immutable metadata", () => {
     const actions = createActions({
       metadata: fromJS({
         agent_kind: "acp",
@@ -89,12 +109,13 @@ describe("sendGitCommitAgentTurn", () => {
     const result = sendGitCommitAgentTurn({
       actions,
       prompt: "Review",
+      preserveThread: true,
       targetThreadKey: "thread-1",
       defaultNewThreadSetup: getDefaultNewThreadSetup(),
       workingDirectory: "/matching ",
     });
     expect(result.mode).toBe("existing");
-    expect(actions.getCodexConfig).toHaveBeenCalledWith("thread-1");
+    expect(actions.getCodexConfig).not.toHaveBeenCalled();
   });
 
   it("preserves literal requested directories when creating a new thread", () => {

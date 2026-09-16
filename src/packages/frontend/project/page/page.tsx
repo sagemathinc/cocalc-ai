@@ -28,6 +28,7 @@ import {
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import { ProjectErrorActionsProvider } from "@cocalc/frontend/components/project-error-actions";
 import { lazyWithRetry } from "@cocalc/frontend/app/lazy-with-retry";
 import usePostSurfaceWork from "@cocalc/frontend/app/use-post-surface-work";
 import useSignedInSurfaceReady from "@cocalc/frontend/app/use-signed-in-surface-ready";
@@ -1203,63 +1204,70 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   }
 
   return (
-    <ProjectContext.Provider value={projectCtx}>
-      <div
-        ref={projectPageRef}
-        className="container-content"
-        {...{ [PROJECT_PAGE_ATTRIBUTE]: project_id }}
-        style={{
-          ...PAGE_STYLE,
-          position: "relative",
-          borderLeft: project_color
-            ? `2.5px solid ${project_color}`
-            : undefined,
-        }}
-      >
-        {workspaceChrome != null ? (
-          <div
-            style={{
-              position: "absolute",
-              inset: 0,
-              pointerEvents: "none",
-              zIndex: 1,
-              boxSizing: "border-box",
-              borderTop: workspaceChrome.frameTopBorder,
-              borderRight: workspaceChrome.frameRightBorder,
-              borderBottom: workspaceChrome.frameBottomBorder,
-            }}
-          />
-        ) : null}
-        {!hardDeleteBlocked && !isViewer && showPostSurfaceBanners ? (
-          <React.Suspense fallback={null}>
-            <ProjectWarningBanner />
-          </React.Suspense>
-        ) : null}
-        {props.publicDirectoryShare ? (
-          <PublicDirectoryShareBanner share={props.publicDirectoryShare} />
-        ) : null}
-        {renderHostUnavailableBanner()}
-        {renderRuntimeRecoveryBanner()}
-        {!hardDeleteBlocked && browserRuntimePresenceEnabled ? (
-          <BrowserRuntimeLimitBanner timeoutSeconds={browserIdleTimeout} />
-        ) : null}
-        {renderTopRow()}
+    <ProjectErrorActionsProvider
+      projectId={project_id}
+      restartProject={() =>
+        redux.getActions("projects").restart_project(project_id)
+      }
+    >
+      <ProjectContext.Provider value={projectCtx}>
         <div
+          ref={projectPageRef}
+          className="container-content"
+          {...{ [PROJECT_PAGE_ATTRIBUTE]: project_id }}
           style={{
-            display: "flex",
-            flex: 1,
-            overflow: "hidden",
+            ...PAGE_STYLE,
             position: "relative",
+            borderLeft: project_color
+              ? `2.5px solid ${project_color}`
+              : undefined,
           }}
         >
-          {!workspaceBlocked &&
-            !hardDeleteBlocked &&
-            renderActivityBarButtons()}
-          {!workspaceBlocked && !hardDeleteBlocked && renderFlyout()}
-          {renderMainContent()}
+          {workspaceChrome != null ? (
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                pointerEvents: "none",
+                zIndex: 1,
+                boxSizing: "border-box",
+                borderTop: workspaceChrome.frameTopBorder,
+                borderRight: workspaceChrome.frameRightBorder,
+                borderBottom: workspaceChrome.frameBottomBorder,
+              }}
+            />
+          ) : null}
+          {!hardDeleteBlocked && !isViewer && showPostSurfaceBanners ? (
+            <React.Suspense fallback={null}>
+              <ProjectWarningBanner />
+            </React.Suspense>
+          ) : null}
+          {props.publicDirectoryShare ? (
+            <PublicDirectoryShareBanner share={props.publicDirectoryShare} />
+          ) : null}
+          {renderHostUnavailableBanner()}
+          {renderRuntimeRecoveryBanner()}
+          {!hardDeleteBlocked && browserRuntimePresenceEnabled ? (
+            <BrowserRuntimeLimitBanner timeoutSeconds={browserIdleTimeout} />
+          ) : null}
+          {renderTopRow()}
+          <div
+            style={{
+              display: "flex",
+              flex: 1,
+              overflow: "hidden",
+              position: "relative",
+            }}
+          >
+            {!workspaceBlocked &&
+              !hardDeleteBlocked &&
+              renderActivityBarButtons()}
+            {!workspaceBlocked && !hardDeleteBlocked && renderFlyout()}
+            {renderMainContent()}
+          </div>
         </div>
-      </div>
-    </ProjectContext.Provider>
+      </ProjectContext.Provider>
+    </ProjectErrorActionsProvider>
   );
 };
 

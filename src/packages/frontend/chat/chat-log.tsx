@@ -59,6 +59,7 @@ import {
 } from "./chat-scroll-anchor";
 import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
+import { useActivityVisibility } from "./activity-visibility";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -511,6 +512,15 @@ export function ChatLog({
   readOnly = false,
 }: Props) {
   const singleThreadView = selectedThread != null;
+  // Threads have independent row indexes and reading positions even when
+  // they share one chat editor and its caller-provided cache namespace.
+  const threadScrollCacheId =
+    selectedThread == null
+      ? scrollCacheId
+      : JSON.stringify([
+          scrollCacheId ?? `${project_id}${path}`,
+          selectedThread,
+        ]);
   const messages = messagesProp ?? new Map();
   const visibleKeys = useMemo<Set<string> | undefined>(() => {
     if (!selectedThread || !threadIndex) return undefined;
@@ -643,12 +653,13 @@ export function ChatLog({
 
   useEffect(() => {
     return () => {
+      bottomScrollTokenRef.current += 1;
       for (const timer of bottomScrollTimersRef.current) {
         clearTimeout(timer);
       }
       bottomScrollTimersRef.current = [];
     };
-  }, []);
+  }, [threadScrollCacheId]);
 
   useEffect(() => {
     if (scrollToBottomRef == null) return;
@@ -710,7 +721,7 @@ export function ChatLog({
             selectedDate,
             numChildren,
             singleThreadView,
-            scrollCacheId,
+            scrollCacheId: threadScrollCacheId,
             isVisible,
             scrollToDate,
             scrollToBottomRef,
@@ -947,14 +958,12 @@ export function MessageList({
   const blockScrollInput = anyOverlayOpen === true;
   const showNewestMessagesButton =
     sortedDates.length > 0 && (!atBottom || manualScroll);
-  const [
-    expandedCodexActivityByMessageId,
-    setExpandedCodexActivityByMessageId,
-  ] = useState<Record<string, boolean>>({});
-  const [
-    explicitCodexActivityByMessageId,
-    setExplicitCodexActivityByMessageId,
-  ] = useState<Record<string, boolean>>({});
+  const {
+    expanded: expandedCodexActivityByMessageId,
+    explicit: explicitCodexActivityByMessageId,
+    setExpanded: setExpandedCodexActivityByMessageId,
+    setExplicit: setExplicitCodexActivityByMessageId,
+  } = useActivityVisibility(actions?.store ?? actions);
   const codexActivityBlocksStoreRef = useRef<
     CodexActivityBlocksStore | undefined
   >(undefined);
@@ -1062,8 +1071,12 @@ export function MessageList({
         clearTimeout(timer);
       }
       visibilityRestoreTimersRef.current = [];
+      anchorCaptureFrameRef.current = undefined;
+      userScrollIntentRef.current = false;
+      suppressAnchorCaptureUntilRef.current = 0;
+      suppressAnchorRestoreUntilRef.current = 0;
     };
-  }, []);
+  }, [cacheId]);
 
   useEffect(() => {
     const latestLiveCodexTurnIdsByThread = new Map<string, string>();
@@ -1093,13 +1106,13 @@ export function MessageList({
       let changed = false;
       const next = { ...prev };
       for (const messageId of liveCodexTurnIds) {
-        if (next[messageId] === true) continue;
+        if (next[messageId] != null) continue;
         next[messageId] = true;
         changed = true;
       }
       return changed ? next : prev;
     });
-  }, [sortedDates, messages, acpState]);
+  }, [sortedDates, messages, acpState, setExpandedCodexActivityByMessageId]);
 
   const maybeBlockScrollEvent = (event: {
     preventDefault: () => void;
@@ -1354,12 +1367,14 @@ export function MessageList({
     const expandedCodexActivity = messageId
       ? expandedCodexActivityByMessageId[messageId] === true
       : false;
-    const allowAsyncCompletedCodexActivityLoad = messageId
-      ? explicitCodexActivityByMessageId[messageId] === true
-      : false;
     const cachedCodexActivityBlocks = messageId
       ? codexActivityBlocksStore.getSnapshot(messageId)
       : undefined;
+    const allowAsyncCompletedCodexActivityLoad =
+      expandedCodexActivity &&
+      field<boolean>(message, "generating") !== true &&
+      (explicitCodexActivityByMessageId[messageId] === true ||
+        cachedCodexActivityBlocks == null);
 
     const is_thread = numChildren != null && isThread(message, numChildren);
     const h = virtuosoHeightsRef.current?.[index];
@@ -1441,15 +1456,10 @@ export function MessageList({
                       return { ...prev, [messageId]: true };
                     });
                     setExpandedCodexActivityByMessageId((prev) => {
-                      if ((prev[messageId] === true) === visible) {
+                      if (prev[messageId] === visible) {
                         return prev;
                       }
-                      if (!visible) {
-                        const next = { ...prev };
-                        delete next[messageId];
-                        return next;
-                      }
-                      return { ...prev, [messageId]: true };
+                      return { ...prev, [messageId]: visible };
                     });
                   }
                 : undefined

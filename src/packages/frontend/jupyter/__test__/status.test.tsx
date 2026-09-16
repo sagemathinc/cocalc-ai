@@ -366,7 +366,7 @@ describe("Kernel", () => {
     }
   });
   describe("usage meters", () => {
-    function renderUsage(extra: any) {
+    function renderUsage(extra: any, remote = false) {
       const actions = {
         name: "jupyter-test",
         project_id: "project-1",
@@ -392,7 +392,10 @@ describe("Kernel", () => {
           case "project_id":
             return "project-1";
           case "kernel_info":
-            return immutable.fromJS({ display_name: "Python 3 (ipykernel)" });
+            return immutable.fromJS({
+              display_name: "Python 3 (ipykernel)",
+              metadata: { reflect: { remote } },
+            });
           case "show_kernel_selector":
             return false;
           case "backend_state":
@@ -433,6 +436,13 @@ describe("Kernel", () => {
       expect(screen.getByText("Code")).toBeTruthy();
       expect(screen.getByText("CPU")).toBeTruthy();
       expect(screen.getByText("RAM")).toBeTruthy();
+    });
+
+    it("does not attribute local CPU and RAM readings to remote kernels", () => {
+      const { container } = renderUsage({}, true);
+      expect(screen.queryByText("CPU")).toBeNull();
+      expect(screen.queryByText("RAM")).toBeNull();
+      expect(container.querySelector('[aria-label="RAM"]')).toBeNull();
     });
 
     it("plumbs the actual readings into the compact bars", () => {

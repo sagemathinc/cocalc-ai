@@ -4,8 +4,35 @@
  */
 
 import { NotebookFrameActions } from "./actions";
+import $ from "jquery";
 
 describe("NotebookFrameActions lifecycle", () => {
+  it.each(["2ff452\\", "9903f2-heading?", "cell:with.dots", 'cell["quoted"]'])(
+    "locates the literal cell id %s without parsing it as a selector",
+    (id) => {
+      const container = document.createElement("div");
+      const cell = document.createElement("div");
+      cell.id = id;
+      container.appendChild(cell);
+      const target = {
+        get_windowed_list: () => undefined,
+        cell_list_div: $(container),
+      };
+      expect(() =>
+        NotebookFrameActions.prototype["compute_cell_position"].call(
+          target,
+          id,
+        ),
+      ).not.toThrow();
+      expect(
+        NotebookFrameActions.prototype["compute_cell_position"].call(
+          target,
+          id,
+        ),
+      ).toBe(0);
+    },
+  );
+
   afterEach(() => {
     jest.useRealTimers();
   });

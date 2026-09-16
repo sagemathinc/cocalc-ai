@@ -177,6 +177,24 @@ if (invalid.length > 0) {
 NODE
 }
 
+validate_dynamic_node_imports() {
+  local bundle="$1"
+  node - "$bundle" <<'NODE'
+const fs = require("node:fs");
+
+const filename = process.argv[2];
+const source = fs.readFileSync(filename, "utf8");
+const dynamicNodeImports = [
+  ...source.matchAll(/\b__require\(["'](node:[^"']+)["']\)/gu),
+].map((match) => match[1]);
+
+if (dynamicNodeImports.length > 0) {
+  console.error([...new Set(dynamicNodeImports)].join("\n"));
+  process.exit(1);
+}
+NODE
+}
+
 copy_webapp_assets() {
   local dest="$1"
   echo "- Copy webapp assets"
@@ -418,6 +436,7 @@ NCC_ARGS=(
   "$GENERATED_CONTROL_PLANE_ENTRY"
   -o "$OUT"/bundle
   --external bufferutil
+  --external mediabunny
   --external utf-8-validate
 )
 if [[ "$INCLUDE_PGLITE" -eq 1 ]]; then
@@ -440,11 +459,15 @@ cp "$ANALYTICS_SCRIPT" "$OUT/bundle/analytics-script.js"
 if ! validate_workspace_imports "$OUT/bundle/index.js"; then
   die "control-plane bundle contains unresolved @cocalc workspace imports"
 fi
+if ! validate_dynamic_node_imports "$OUT/bundle/index.js"; then
+  die "control-plane bundle contains dynamic Node.js built-in imports"
+fi
 
 copy_openat2_binary "$OUT"
 
 copy_native_pkg "bufferutil" "$OUT"
 copy_native_pkg "utf-8-validate" "$OUT"
+copy_js_pkg "mediabunny" "$OUT"
 
 echo "- Prune native prebuilds to target"
 for pkg in bufferutil utf-8-validate; do

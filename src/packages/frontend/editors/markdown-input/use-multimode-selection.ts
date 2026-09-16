@@ -177,7 +177,22 @@ export function useMultimodeSelection({
       }
     },
     getMarkdownPositionForSelection: () => {
-      return richTextControlRef.current?.getMarkdownPositionForSelection?.();
+      return getMarkdownPositionForActiveSelection();
+    },
+    setSelectionFromMarkdownPosition: (pos: MarkdownPosition) => {
+      if (mode === "editor") {
+        return (
+          richTextControlRef.current?.setSelectionFromMarkdownPosition?.(pos) ??
+          false
+        );
+      }
+      return applyMarkdownSelection(pos);
+    },
+    focusActiveEditor: () => {
+      if (mode === "editor") {
+        return richTextControlRef.current?.focus?.() ?? false;
+      }
+      return selectionRef.current?.focus?.() ?? false;
     },
     notifyMarkdownSelectionReady: () => {
       emitReady(markdownReadyListenersRef.current);

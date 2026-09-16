@@ -10,6 +10,7 @@ import {
   requireAccount,
 } from "./util";
 import type { Customize } from "@cocalc/util/db-schema/server-settings";
+import type { ChatSpeechAccent } from "@cocalc/util/ai/speech";
 import type {
   ApiKey,
   Action as ApiKeyAction,
@@ -69,6 +70,10 @@ export const system = {
   recordUxLatencyEvent: authFirstRequireAccount,
   getUxLatencySummary: authFirstRequireAccount,
   getLaunchHealth: authFirstRequireAccount,
+  getBillingAuthorityStatus: authFirstRequireAccount,
+  drainBillingAuthority: authFirstRequireAccount,
+  resumeBillingAuthority: authFirstRequireAccount,
+  handoffBillingAuthority: authFirstRequireAccount,
   recordLaunchSmokeResult: authFirstRequireAccount,
   getBayBackups: authFirstRequireAccount,
   getAcpAdmissionDenialReport: authFirstRequireAccount,
@@ -137,6 +142,10 @@ export const system = {
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
   getOpenAiApiKeyStatus: authFirstRequireAccount,
+  getChatSpeechCapabilities: authFirstRequireAccount,
+  transcribeChatAudio: authFirstRequireAccount,
+  synthesizeChatSpeech: authFirstRequireAccount,
+  cancelChatSpeech: authFirstRequireAccount,
   getCodexPaymentSource: authFirstRequireAccount,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
@@ -162,6 +171,7 @@ export const system = {
   testCloudflareVisitorLocationHeaders: authFirstRequireAccount,
   applyCloudflareTunnelSettings: authFirstRequireAccount,
   bootstrapCloudflareConfiguration: authFirstRequireAccount,
+  reconcileCloudflareBlobs: authFirstRequireAccount,
   createCloudflareTeardownPlan: authFirstRequireAccount,
   getCloudflareTeardownPlan: authFirstRequireAccount,
   startCloudflareTeardownApply: authFirstRequireAccount,
@@ -225,7 +235,48 @@ export interface ExternalCredentialInfo {
   last_used?: Date | null;
 }
 
+export type ChatSpeechFundingSource = "project" | "account" | "site";
+
+export interface ChatSpeechCapabilities {
+  input: {
+    enabled: boolean;
+    reason?: string;
+    max_bytes: number;
+    max_duration_ms: number;
+    supported_content_types: string[];
+    model?: string;
+  };
+  output: {
+    enabled: boolean;
+    reason?: string;
+    max_characters: number;
+    voices: string[];
+    default_voice: string;
+    speeds: number[];
+    model?: string;
+  };
+  funding_source?: ChatSpeechFundingSource;
+}
+
+export interface ChatSpeechTranscriptionResult {
+  text: string;
+  model: string;
+  request_id: string;
+  detected_language?: string;
+}
+
+export interface ChatSpeechSynthesisResult {
+  audio: Uint8Array;
+  content_type: string;
+  model: string;
+  request_id: string;
+}
+
 export interface CloudflareBootstrapResult {
+  cleanup_required?: boolean;
+  failure?: string;
+  settings_status?: "not_saved" | "saved" | "unknown";
+  permissions: string[];
   account_id?: string;
   account_name?: string;
   zone_id?: string;
@@ -345,6 +396,7 @@ export type ActiveUserMapDetailScope = "all" | "group" | "unknown";
 export interface ActiveUserMapDetailsQuery extends ActiveUserMapQuery {
   scope: ActiveUserMapDetailScope;
   group_id?: string;
+  excluded_email_domains?: string[];
 }
 
 export interface ActiveUserMapEmailDomainCount {
@@ -2065,6 +2117,23 @@ export interface AccountNotificationIndexProjectionStatus {
   maintenance: AccountNotificationIndexProjectionMaintenanceStatus;
 }
 
+export interface BillingAuthorityStatus {
+  instance_id?: string;
+  generation?: number;
+  lease_until?: string;
+  ready: boolean;
+  enabled: boolean;
+  draining: boolean;
+  active_command_id?: string;
+  queue_depth: {
+    critical: number;
+    interactive: number;
+    maintenance: number;
+  };
+  completed: number;
+  failed: number;
+}
+
 export interface PrivateAppHostnameTrace {
   matched: boolean;
   hostname: string;
@@ -2145,6 +2214,30 @@ export interface System {
     alert_window_hours?: number;
     window_minutes?: number;
   }) => Promise<LaunchHealthStatus>;
+
+  getBillingAuthorityStatus: (opts?: {
+    account_id?: string;
+  }) => Promise<BillingAuthorityStatus>;
+
+  drainBillingAuthority: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    timeout_ms?: number;
+  }) => Promise<BillingAuthorityStatus>;
+
+  resumeBillingAuthority: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  }) => Promise<BillingAuthorityStatus>;
+
+  handoffBillingAuthority: (opts?: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+    timeout_ms?: number;
+  }) => Promise<BillingAuthorityStatus>;
 
   recordLaunchSmokeResult: (opts: {
     account_id?: string;
@@ -2324,7 +2417,9 @@ export interface System {
     browser_id?: string;
     session_hash?: string;
     subject_account_id: string;
-    reason?: string | null;
+    reason: string;
+    support_ticket_id?: number;
+    consent_reference?: string;
     lang_temp?: string | null;
   }) => Promise<{
     grant_id: string;
@@ -2618,6 +2713,7 @@ export interface System {
     account_id?: string;
     browser_id?: string | null;
     session_hash?: string | null;
+    fresh_auth_token?: string | null;
     settings: { name: string; value: string }[];
   }) => Promise<SiteSettingsSyncResult>;
 
@@ -2751,6 +2847,44 @@ export interface System {
     account_id?: string;
     project_id?: string;
   }) => Promise<OpenAiApiKeyStatus>;
+
+  getChatSpeechCapabilities: (opts?: {
+    account_id?: string;
+    project_id?: string;
+  }) => Promise<ChatSpeechCapabilities>;
+
+  transcribeChatAudio: (opts: {
+    account_id?: string;
+    request_id: string;
+    project_id?: string;
+    path?: string;
+    thread_id?: string;
+    content_type: string;
+    filename: string;
+    audio: Uint8Array;
+    duration_ms?: number;
+    language_hints?: string[];
+    timeout?: number;
+  }) => Promise<ChatSpeechTranscriptionResult>;
+
+  synthesizeChatSpeech: (opts: {
+    account_id?: string;
+    request_id: string;
+    project_id?: string;
+    path?: string;
+    thread_id?: string;
+    message_id: string;
+    text: string;
+    voice?: string;
+    accent?: ChatSpeechAccent;
+    speed?: number;
+    timeout?: number;
+  }) => Promise<ChatSpeechSynthesisResult>;
+
+  cancelChatSpeech: (opts: {
+    account_id?: string;
+    request_id: string;
+  }) => Promise<{ canceled: boolean }>;
 
   getCodexPaymentSource: (opts: {
     account_id?: string;
@@ -2934,8 +3068,19 @@ export interface System {
     tunnelPrefix?: string;
     hostSuffix?: string;
     r2BucketPrefix?: string;
-    invalidateBootstrapToken?: boolean;
   }) => Promise<CloudflareBootstrapResult>;
+
+  reconcileCloudflareBlobs: (opts: {
+    account_id?: string;
+    browser_id?: string | null;
+    session_hash?: string | null;
+  }) => Promise<{
+    ok: boolean;
+    bucket?: string;
+    worker?: string;
+    public_url?: string;
+    message?: string;
+  }>;
 
   createCloudflareTeardownPlan: (opts: {
     account_id?: string;

@@ -8,7 +8,11 @@ import {
   getSeedMembershipTierMap,
 } from "@cocalc/server/membership/tiers";
 import { isPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import { getBillingReadiness } from "@cocalc/server/purchases/stripe/billing-readiness";
+import {
+  billingAuthorityErrorAttrs,
+  executeBillingHttpCommand,
+} from "@cocalc/server/purchases/billing-authority/client";
+import type { BillingReadiness } from "@cocalc/server/purchases/stripe/billing-readiness";
 
 function trialSetupReason({
   requiresBillingDetails,
@@ -30,7 +34,10 @@ export default async function handle(req, res) {
   try {
     res.json(await get(req));
   } catch (err) {
-    res.json({ error: `${err.message}` });
+    res.json({
+      error: `${err.message}`,
+      ...billingAuthorityErrorAttrs(err),
+    });
     return;
   }
 }
@@ -62,7 +69,10 @@ async function get(req) {
   });
 
   if (pricing.trial_available && pricing.trial_days) {
-    const readiness = await getBillingReadiness(account_id);
+    const readiness = await executeBillingHttpCommand<BillingReadiness>(
+      "get-billing-readiness",
+      { account_id },
+    );
     const trial_requires_billing_details = !readiness.hasBillingDetails;
     const trial_requires_payment_method = !readiness.hasPaymentMethod;
     if (trial_requires_billing_details || trial_requires_payment_method) {

@@ -28,6 +28,8 @@ cd packages/server
 */
 
 import type { ConnectionStats, ServerInfo } from "./types";
+import { stampFileReadPrincipal } from "../files/read-principal";
+import { validateMessageHeaders } from "./message-headers";
 import {
   isValidSubject,
   isValidSubjectWithoutWildcards,
@@ -1479,6 +1481,15 @@ export class ConatServer extends EventEmitter {
         code: 403,
       });
     }
+    // Includes CN-Reply validation; malformed input must be rejected here,
+    // not delivered to a service that would fail trying to answer it.
+    validateMessageHeaders(data[5]);
+    stampFileReadPrincipal({
+      subject,
+      data,
+      user: from,
+      trusted: isHubUser(from),
+    });
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();
 
@@ -1833,12 +1844,18 @@ export class ConatServer extends EventEmitter {
       }
       const [subject, ...data] = payload;
       const handlerStart = Date.now();
-      if (data?.[2]) {
+      const stats = this.stats[socket.id];
+      // The per-socket publish queue can outlive a disconnected socket. The
+      // publish must still run (the same logical client may have reconnected),
+      // but its deleted connection statistics can no longer be updated.
+      if (stats != null && data?.[2]) {
         // done
-        this.stats[socket.id].send.messages += 1;
+        stats.send.messages += 1;
       }
-      this.stats[socket.id].send.bytes += data[4]?.length ?? 0;
-      this.stats[socket.id].active = Date.now();
+      if (stats != null) {
+        stats.send.bytes += data[4]?.length ?? 0;
+        stats.active = Date.now();
+      }
       // this.log(JSON.stringify(this.stats));
 
       try {

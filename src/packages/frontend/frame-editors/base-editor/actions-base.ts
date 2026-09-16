@@ -125,6 +125,7 @@ export async function saveToDiskWithFileServerRetry({
 }
 
 import type { ReactNode } from "react";
+import $ from "jquery";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   Actions as BaseActions,

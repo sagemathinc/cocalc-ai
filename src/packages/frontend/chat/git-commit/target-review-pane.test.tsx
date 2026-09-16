@@ -149,7 +149,7 @@ function savedFeedback() {
   return revision;
 }
 
-test("saved comparison feedback requires keyboard opt-in and carries pinned endpoints", async () => {
+test("saved comparison feedback sends by keyboard without worktree consent and carries pinned endpoints", async () => {
   savedFeedback();
   const send = jest.fn();
   const user = userEvent.setup();
@@ -157,22 +157,23 @@ test("saved comparison feedback requires keyboard opt-in and carries pinned endp
   const button = await screen.findByRole("button", {
     name: "Send saved review to agent",
   });
-  expect(button).toBeDisabled();
   await waitFor(() =>
     expect(
       screen.getByRole("textbox", { name: "Comparison review note" }),
     ).toHaveValue("Please address this"),
   );
-  screen.getByRole("checkbox", { name: /Send agent feedback in/ }).focus();
-  await user.keyboard(" ");
+  expect(
+    screen.queryByRole("checkbox", { name: /Send agent feedback in/ }),
+  ).toBeNull();
   expect(button).toBeEnabled();
-  await user.click(button);
+  button.focus();
+  await user.keyboard("{Enter}");
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
   expect(send.mock.calls[0][0]).toContain(target.head);
   expect(send.mock.calls[0][0]).toContain(target.base);
   expect(send.mock.calls[0][1]).toEqual({
     title: "Address comparison review",
-    workingDirectory: "/repo",
+    preserveThread: true,
   });
   await waitFor(() => expect(saveTargetReview).toHaveBeenCalled());
   expect(
@@ -189,9 +190,6 @@ test("changed saved heads prevent comparison dispatch", async () => {
     expect(
       screen.getByRole("textbox", { name: "Comparison review note" }),
     ).toBeEnabled(),
-  );
-  await user.click(
-    screen.getByRole("checkbox", { name: /Send agent feedback in/ }),
   );
   jest.mocked(loadTargetReview).mockResolvedValue({ heads: [], revisions: [] });
   await user.click(
@@ -211,9 +209,6 @@ test("a failed receipt save retains a draft and warns against resending", async 
     expect(
       screen.getByRole("textbox", { name: "Comparison review note" }),
     ).toBeEnabled(),
-  );
-  await user.click(
-    screen.getByRole("checkbox", { name: /Send agent feedback in/ }),
   );
   await user.click(
     screen.getByRole("button", { name: "Send saved review to agent" }),

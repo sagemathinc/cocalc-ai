@@ -67,7 +67,9 @@ GCP:
   --image-project <project>     default: ubuntu-os-cloud
   --network <network>           optional gcloud --network value
   --subnet <subnet>             optional gcloud --subnet value
-  --service-account <email>     optional gcloud --service-account value
+  --service-account <email>     optional identity to attach to the VM; requires
+                                target-specific iam.serviceAccounts.actAs;
+                                default: no attached service account
   --tags <tags>                 comma-separated instance tags, default: cocalc-bay
   --reuse-existing-vm           do not fail if the VM already exists
 
@@ -326,6 +328,9 @@ create_vm() {
   fi
   if [[ -n "$SERVICE_ACCOUNT" ]]; then
     args+=(--service-account "$SERVICE_ACCOUNT")
+  else
+    # Never let gcloud silently attach the project's default Compute identity.
+    args+=(--no-service-account)
   fi
 
   run gcloud "${args[@]}"

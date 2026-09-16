@@ -14,14 +14,23 @@ import multiInsert from "@cocalc/database/pool/multi-insert";
 import getLogger from "@cocalc/backend/logger";
 import LRU from "lru-cache";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
+import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 const logger = getLogger("purchases:create-statements");
 
-export async function createDayStatements() {
-  await createStatements({ time: mostRecentMidnight(), interval: "day" });
+export async function createDayStatements({
+  max_statements,
+}: { max_statements?: number } = {}) {
+  await createStatements({
+    time: mostRecentMidnight(),
+    interval: "day",
+    max_statements,
+  });
 }
 
-export async function createMonthStatements() {
+export async function createMonthStatements({
+  max_statements,
+}: { max_statements?: number } = {}) {
   const time = mostRecentMidnight();
   if (time.getUTCDate() !== 1) {
     logger.debug(
@@ -31,7 +40,7 @@ export async function createMonthStatements() {
     );
     return;
   }
-  await createStatements({ time, interval: "month" });
+  await createStatements({ time, interval: "month", max_statements });
 }
 
 function mostRecentMidnight(): Date {
@@ -67,14 +76,23 @@ export const _TEST_ = { lastCalled };
 export async function createStatements({
   time, // must be in the past
   interval,
+  max_statements = Number.POSITIVE_INFINITY,
 }: {
   time: Date;
   interval: Interval;
+  max_statements?: number;
 }) {
   logger.debug("createStatements", { time, interval });
   if (time >= new Date()) {
     // because we are basically assuming no new purchases happen <= time.
     throw Error("time must be in the past");
+  }
+  if (Number.isFinite(max_statements)) {
+    const limit = Math.max(0, Math.floor(max_statements));
+    for (let i = 0; i < limit; i += 1) {
+      if (!(await createNextStatement({ time, interval }))) break;
+    }
+    return;
   }
   const key = `${time.toISOString()}-${interval}`;
   if (lastCalled.has(key)) {
@@ -215,6 +233,100 @@ export async function createStatements({
     await client.query("COMMIT");
   } catch (err) {
     await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function createNextStatement({
+  time,
+  interval,
+}: {
+  time: Date;
+  interval: Interval;
+}): Promise<boolean> {
+  const statementColumn = `${interval}_statement_id`;
+  const client = await getTransactionClient();
+  try {
+    // The authority has one executor, but this lock also makes manual calls
+    // safe and keeps selection plus statement assignment indivisible.
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      `billing-statements:${interval}:${time.toISOString()}`,
+    ]);
+    const { rows: accounts } = await client.query<{ account_id: string }>(
+      `SELECT account_id
+         FROM purchases
+        WHERE ${statementColumn} IS NULL
+          AND cost IS NOT NULL AND time <= $1
+          AND NOT EXISTS (
+            SELECT 1 FROM statements
+             WHERE statements.account_id=purchases.account_id
+               AND statements.interval=$2 AND statements.time=$1)
+        GROUP BY account_id
+        ORDER BY MIN(time), account_id
+        LIMIT 1`,
+      [time, interval],
+    );
+    const account_id = accounts[0]?.account_id;
+    if (!account_id) {
+      await client.query("COMMIT");
+      return false;
+    }
+    await registerBillingAuthorityAccount(account_id);
+    const { rows } = await client.query<{
+      total_charges: string;
+      num_charges: number;
+      total_credits: string;
+      num_credits: number;
+    }>(
+      `SELECT ROUND(COALESCE(SUM(cost) FILTER (WHERE cost > 0), 0), 2)
+                AS total_charges,
+              COUNT(*) FILTER (WHERE cost > 0)::INT AS num_charges,
+              ROUND(COALESCE(SUM(cost) FILTER (WHERE cost < 0), 0), 2)
+                AS total_credits,
+              COUNT(*) FILTER (WHERE cost < 0)::INT AS num_credits
+         FROM purchases
+        WHERE account_id=$1 AND ${statementColumn} IS NULL
+          AND cost IS NOT NULL AND time <= $2`,
+      [account_id, time],
+    );
+    const totals = rows[0];
+    const previousBalance = await getPreviousStatementBalance(
+      account_id,
+      client,
+      interval,
+    );
+    const balance = previousBalance.sub(
+      toDecimal(totals.total_charges).add(totals.total_credits),
+    );
+    const { rows: statements } = await client.query<{ id: number }>(
+      `INSERT INTO statements
+         (interval, time, account_id, balance, total_charges, num_charges,
+          total_credits, num_credits)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       RETURNING id`,
+      [
+        interval,
+        time,
+        account_id,
+        moneyToDbString(balance),
+        moneyToDbString(totals.total_charges),
+        totals.num_charges,
+        moneyToDbString(totals.total_credits),
+        totals.num_credits,
+      ],
+    );
+    await client.query(
+      `UPDATE purchases SET ${statementColumn}=$1
+        WHERE account_id=$2 AND ${statementColumn} IS NULL
+          AND cost IS NOT NULL AND time <= $3`,
+      [statements[0].id, account_id, time],
+    );
+    await client.query("COMMIT");
+    return true;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => undefined);
     throw err;
   } finally {
     client.release();

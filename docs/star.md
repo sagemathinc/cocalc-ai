@@ -34,9 +34,11 @@ The installer detects the public IPv4 address, uses sslip.io for DNS, configures
 Caddy with Let's Encrypt HTTPS, starts a web onboarding page, and then completes
 the Star install after the user confirms the page is reachable.
 
-If the onboarding URL does not open, the VM almost certainly has not exposed
-port 443 publicly. Fix the cloud firewall, VM firewall, or network security
-group before continuing.
+If the onboarding URL does not open, check the resolved hostname, public VM
+address, inbound ports 80 and 443, and installer/Caddy status. Cloud or VM
+firewalls are possible causes; DNS, certificate setup, or an incomplete
+installer can also prevent access. Confirm the reported failure before changing
+network rules.
 
 ## What Star Installs
 

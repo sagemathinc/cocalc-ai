@@ -3,5 +3,9 @@ This directory contains the lite-side implementation of Codex ACP (Agent Control
 Key pieces:
 
 - `index.ts` boots the ACP server for lite mode and streams results into chat via `ChatStreamWriter`.
-- Events are published over conat pub/sub for live viewing and also persisted into AKV for replay; interrupts are handled through the same channel.
-- The code is designed so we can later add unit tests and split out multiuser-specific wiring while keeping the shared ACP logic together.
+- `ChatStreamWriter` uses bounded ephemeral AStreams for live log updates and
+  project-scoped AKV storage for replay. SQLite records track turns, queues,
+  sessions, workers, and interrupts; those are distinct from live event delivery.
+- Tests already exist in [**tests**](./__tests__), including chat writers,
+  interrupts, and worker recovery. The project-host also reuses this directory;
+  the `lite` package location does not mean every caller is single-user.

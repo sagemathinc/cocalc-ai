@@ -1,5 +1,10 @@
 # Translation Workflow
 
+Run these package commands from `src/packages/frontend/`. Upload and delete
+change SimpleLocalize; download and compile write local translation files. See
+[the detailed workflow](../src/packages/frontend/i18n/README.md) for prerequisites
+and failure handling.
+
 **For new translation keys:**
 
 1. Add the translation to source code (e.g., `packages/frontend/i18n/common.ts`)

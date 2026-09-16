@@ -328,6 +328,7 @@ export function ProjectsNav(props: ProjectsNavProps) {
   const actions = useActions("page");
   const projectActions = useActions("projects");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
+  const lastProjectTab = useTypedRedux("page", "last_project_tab");
   const openProjects = useTypedRedux("projects", "open_projects");
   const projectMap = useTypedRedux("projects", "project_map");
   const publicProjectTitles = useTypedRedux(
@@ -400,8 +401,11 @@ export function ProjectsNav(props: ProjectsNavProps) {
 
   const activeProjectId = useMemo(() => {
     if (openProjectIds.includes(activeTopTab)) return activeTopTab;
+    if (lastProjectTab != null && openProjectIds.includes(lastProjectTab)) {
+      return lastProjectTab;
+    }
     return openProjectIds[0];
-  }, [activeTopTab, openProjectIds]);
+  }, [activeTopTab, lastProjectTab, openProjectIds]);
 
   const recentProjectIds = useMemo(() => {
     if (!projectMap) return [];

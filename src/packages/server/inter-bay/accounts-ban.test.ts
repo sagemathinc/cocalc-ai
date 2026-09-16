@@ -18,6 +18,51 @@ const recordAccountBanAuditEventMock = jest.fn();
 const remoteSetBanMock = jest.fn();
 const assertSignupEmailDomainAllowedMock = jest.fn();
 const disablePublicDirectorySharesForBannedAccountAcrossClusterMock = jest.fn();
+const setBillingAccountFrozenMock = jest.fn();
+const unexpectedDependencyCall = jest.fn((name: string) => {
+  throw Error(`unexpected dependency in account ban routing test: ${name}`);
+});
+const queryMock = jest.fn();
+
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: () => ({ query: (...args: any[]) => queryMock(...args) }),
+}));
+
+// These routing tests reject creation before provisioning and never delete
+// accounts or authenticate users. Keep those service graphs out of each reset.
+jest.mock("@cocalc/server/accounts/create-account", () => ({
+  __esModule: true,
+  default: () => unexpectedDependencyCall("create-account"),
+}));
+jest.mock("@cocalc/server/accounts/delete", () => ({
+  __esModule: true,
+  default: () => unexpectedDependencyCall("delete-account"),
+}));
+jest.mock("@cocalc/server/accounts/admin-verify-email-address", () => ({
+  __esModule: true,
+  default: () => unexpectedDependencyCall("verify-email"),
+}));
+jest.mock("@cocalc/server/accounts/send-email-verification", () => ({
+  __esModule: true,
+  default: () => unexpectedDependencyCall("send-email"),
+}));
+jest.mock("@cocalc/server/accounts/set-password-from-reset", () => ({
+  __esModule: true,
+  default: () => unexpectedDependencyCall("reset-password"),
+}));
+jest.mock("@cocalc/server/auth/two-factor", () => ({
+  adminDisableTwoFactor: () => unexpectedDependencyCall("disable-two-factor"),
+}));
+jest.mock("@cocalc/server/auth/auth-sessions", () => ({
+  recordNewAuthSession: () => unexpectedDependencyCall("create-auth-session"),
+}));
+jest.mock("@cocalc/server/auth/remember-me", () => ({
+  createRememberMeCookie: () => unexpectedDependencyCall("create-cookie"),
+}));
+jest.mock("@cocalc/server/auth/verify-sign-in-password", () => ({
+  verifyLocalSignInPassword: () => unexpectedDependencyCall("verify-password"),
+}));
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-1"),
@@ -88,9 +133,24 @@ jest.mock("@cocalc/server/public-directory-shares/ban-containment", () => ({
     disablePublicDirectorySharesForBannedAccountAcrossClusterMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/billing-authority/client", () => ({
+  setBillingAccountFrozen: (...args: any[]) =>
+    setBillingAccountFrozenMock(...args),
+}));
+
 describe("inter-bay account ban routing", () => {
   beforeEach(() => {
     jest.resetModules();
+    unexpectedDependencyCall.mockClear();
+    queryMock.mockReset().mockImplementation(async (query: string) => {
+      if (
+        query ===
+        "SELECT to_regclass('public.legacy_migration_accounts') IS NOT NULL AS exists"
+      ) {
+        return { rows: [{ exists: false }] };
+      }
+      return unexpectedDependencyCall(`SQL: ${query}`);
+    });
     getClusterAccountByIdDirectMock.mockReset();
     getClusterAccountByEmailDirectMock.mockReset().mockResolvedValue(null);
     getClusterBanEquivalentEmailAccountsDirectMock
@@ -120,6 +180,15 @@ describe("inter-bay account ban routing", () => {
     disablePublicDirectorySharesForBannedAccountAcrossClusterMock
       .mockReset()
       .mockResolvedValue({ disabled_count: 0, share_ids: [] });
+    setBillingAccountFrozenMock.mockReset().mockResolvedValue({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      frozen: false,
+      generation: 2,
+    });
+  });
+
+  afterEach(() => {
+    expect(unexpectedDependencyCall).not.toHaveBeenCalled();
   });
 
   it("applies local bans on the account home bay and syncs the directory", async () => {
@@ -146,6 +215,7 @@ describe("inter-bay account ban routing", () => {
     expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       actor_account_id: undefined,
+      fence_cause: "ban",
       reason: "account ban",
       home_bay_id: "bay-1",
     });
@@ -211,6 +281,7 @@ describe("inter-bay account ban routing", () => {
     expect(quarantineAccountBillingResourcesLocalMock).toHaveBeenCalledWith({
       account_id: "00000000-0000-4000-8000-000000000001",
       actor_account_id: "00000000-0000-4000-8000-000000000099",
+      fence_cause: "ban",
       reason: "spam campaign",
       home_bay_id: "bay-1",
     });
@@ -242,6 +313,13 @@ describe("inter-bay account ban routing", () => {
     expect(
       disablePublicDirectorySharesForBannedAccountAcrossClusterMock,
     ).not.toHaveBeenCalled();
+    expect(setBillingAccountFrozenMock).toHaveBeenCalledWith({
+      account_id: "00000000-0000-4000-8000-000000000001",
+      frozen: false,
+      cause: "ban",
+      reason: "appeal accepted",
+      actor_account_id: undefined,
+    });
   });
 
   it("blocks new or changed Gmail-equivalent identities when an equivalent account is banned", async () => {
@@ -310,6 +388,7 @@ describe("inter-bay account ban routing", () => {
       } as any),
     ).rejects.toThrow(/approved email address/);
 
+    expect(queryMock).toHaveBeenCalledTimes(1);
     expect(assertSignupEmailDomainAllowedMock).toHaveBeenCalledWith({
       email_address: "codex@other.edu",
     });
