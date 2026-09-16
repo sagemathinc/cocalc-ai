@@ -86,6 +86,19 @@ describe("inter-bay fabric config", () => {
     });
   });
 
+  it("accepts an explicit attached-bay fabric address without the seed alias", async () => {
+    process.env.COCALC_CLUSTER_ROLE = "attached";
+    process.env.COCALC_INTER_BAY_CONAT_SERVER = "https://explicit-fabric";
+    process.env.COCALC_BAY_CREDENTIAL = "bay-secret";
+    const { getInterBayFabricConfig } = await import("./fabric");
+    expect(getInterBayFabricConfig()).toEqual({
+      address: "https://explicit-fabric",
+      cookieName: "bay",
+      credential: "bay-secret",
+      bayId: "bay-0",
+    });
+  });
+
   it("uses the local fabric and distinct credential in seed mode", async () => {
     process.env.COCALC_CLUSTER_ROLE = "seed";
     process.env.COCALC_BAY_CREDENTIAL = "seed-bay-secret";

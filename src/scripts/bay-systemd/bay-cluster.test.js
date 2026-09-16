@@ -129,13 +129,13 @@ test("rendered attached topology requires a protected fabric URL", () => {
 
   const secure = spawnSync(
     "bash",
-    [...base, "--seed-conat-server", "https://seed.example/conat"],
+    [...base, "--seed-conat-server", "https://seed.example"],
     { encoding: "utf8" },
   );
   assert.equal(secure.status, 0, secure.stderr);
   assert.match(
     secure.stdout,
-    /COCALC_CLUSTER_SEED_CONAT_SERVER='https:\/\/seed\.example\/conat'/,
+    /COCALC_CLUSTER_SEED_CONAT_SERVER='https:\/\/seed\.example'/,
   );
 });
 

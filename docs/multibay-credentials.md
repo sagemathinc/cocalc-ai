@@ -24,7 +24,8 @@ pnpm --dir packages/server bay-credential issue \
 Install the resulting file as that bay's `COCALC_BAY_CREDENTIAL_FILE`, restart
 only that bay's hub workers (for local development, use
 `./src/scripts/dev/hub-daemon.sh restart-bay bay-1`), and verify its registry
-connection and cross-bay RPCs. Then revoke the old credential:
+connection and cross-bay RPCs. Delete the temporary output file after the
+installed credential has been verified. Then revoke the old credential:
 
 ```sh
 pnpm --dir packages/server bay-credential revoke \
@@ -47,7 +48,11 @@ the enrollment path, so adding a bay does not require a restart; the first
 installation must use `--restart-hub-workers` if workers do not yet watch that
 path. A revoked credential or conflicting ID is never restored by replay.
 
-Attached bays require an explicit HTTPS seed fabric URL. The generic seed Conat
+Attached bays require the explicit HTTPS seed CoCalc base URL; do not append
+`/conat`, since the client adds that socket path. The generic seed Conat
 password is not copied to them. Local development uses loopback HTTP and creates
 the same one-shot manifest in its per-bay state directories. Single-bay
 installations continue to use their existing local Conat authentication.
+`COCALC_CONAT_SHARED_SECRET` is a separate per-bay secret used only for links
+between Conat nodes inside that bay; it must not be shared between bays or
+reused as a generic hub password.

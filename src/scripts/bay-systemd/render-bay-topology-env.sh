@@ -32,7 +32,7 @@ Options:
   --peer-local-health-timeout <s>
                              local bay-health timeout used inside peer-health
                              responses, default: 3
-  --seed-conat-server <url>  HTTPS seed Conat URL required for attached bays
+  --seed-conat-server <url>  HTTPS seed base URL (do not append /conat)
   --topology-epoch <value>   default: current unix timestamp
   -h, --help                 show this help
 
@@ -41,7 +41,7 @@ Example:
     --cluster bella \
     --seed-bay bay-0 \
     --local-bay bay-1 \
-    --seed-conat-server https://seed.internal.example/conat \
+    --seed-conat-server https://seed.internal.example \
     --bay bay-0=10.206.0.21 \
     --bay bay-1=10.206.0.22
 EOF

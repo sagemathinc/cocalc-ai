@@ -52,7 +52,7 @@ Options:
   --peer-health-path <path>    default: /peer-health
   --peer-local-health-timeout <s>
                               default: 3
-  --seed-conat-server <url>   HTTPS seed Conat URL used by attached bays
+  --seed-conat-server <url>   HTTPS seed base URL (do not append /conat)
   --secret-file <path>         shared cluster secret file to install; otherwise
                               a new secret is generated for install-topology
   --no-rotate-secret           install topology only, preserving existing
@@ -66,7 +66,7 @@ Examples:
   ./src/scripts/bay-systemd/bay-cluster.sh install-topology \
     --cluster bella \
     --seed-bay bay-0 \
-    --seed-conat-server https://seed.internal.example/conat \
+    --seed-conat-server https://seed.internal.example \
     --restart-hub-workers \
     --bay bay-0=ubuntu@34.0.157.185=10.206.0.21 \
     --bay bay-1=ubuntu@34.0.146.0=10.206.0.22

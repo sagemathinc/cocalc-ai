@@ -62,7 +62,11 @@ export function getInterBayFabricConfig(): InterBayFabricConfig {
     };
   }
   if (cluster.role !== "standalone") {
-    if (cluster.role === "attached" && !cluster.seed_conat_server) {
+    if (
+      cluster.role === "attached" &&
+      !cluster.seed_conat_server &&
+      !explicitAddress
+    ) {
       throw new Error(
         "attached bay requires COCALC_CLUSTER_SEED_CONAT_SERVER or COCALC_INTER_BAY_CONAT_SERVER",
       );

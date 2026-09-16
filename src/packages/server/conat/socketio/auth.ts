@@ -25,7 +25,11 @@ import {
   isBayCredentialUserActive,
 } from "@cocalc/server/inter-bay/bay-credentials";
 import { getLogger } from "@cocalc/backend/logger";
-import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
+import {
+  getConfiguredClusterId,
+  getConfiguredClusterRole,
+} from "@cocalc/server/cluster-config";
+import type { AuthenticatedCaller } from "@cocalc/conat/core/client";
 import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
@@ -459,13 +463,30 @@ function shouldCacheIsAllowedDecision(subject: string): boolean {
   );
 }
 
+const INTER_BAY_SERVICE_ROOTS = [
+  "bay",
+  "global.directory.rpc",
+  "global.account-directory.rpc",
+  "global.bay-registry.rpc",
+  "global.auth-token.rpc",
+] as const;
+
+function subjectPatternIntersectsRoot(pattern: string, root: string): boolean {
+  const parts = pattern.split(".");
+  const rootParts = root.split(".");
+  const many = parts.indexOf(">");
+  const fixedLength = many === -1 ? parts.length : many;
+  for (let i = 0; i < Math.min(fixedLength, rootParts.length); i++) {
+    if (parts[i] !== "*" && parts[i] !== rootParts[i]) return false;
+  }
+  // Protected service subjects always contain at least one segment after the
+  // namespace root. A terminal '>' can supply all remaining segments.
+  return many !== -1 || parts.length >= rootParts.length + 1;
+}
+
 function isInterBayServiceSubject(subject: string): boolean {
-  return (
-    subject.startsWith("bay.") ||
-    subject.startsWith("global.directory.rpc.") ||
-    subject.startsWith("global.account-directory.rpc.") ||
-    subject.startsWith("global.bay-registry.rpc.") ||
-    subject.startsWith("global.auth-token.rpc.")
+  return INTER_BAY_SERVICE_ROOTS.some((root) =>
+    subjectPatternIntersectsRoot(subject, root),
   );
 }
 
@@ -473,10 +494,12 @@ export async function isAllowed({
   user,
   subject,
   type,
+  forwardedCaller,
 }: {
   user?: CoCalcUser | null;
   subject: string;
   type: "sub" | "pub";
+  forwardedCaller?: AuthenticatedCaller;
 }): Promise<boolean> {
   if (user == null || user?.error) {
     // non-authenticated user -- allow NOTHING
@@ -495,6 +518,32 @@ export async function isAllowed({
     }
   }
   if (userType == "hub") {
+    if (user.hub_id === "cluster-link") {
+      if (type === "sub") {
+        return subject.startsWith("_INBOX.");
+      }
+      if (!isInterBayServiceSubject(subject)) {
+        return true;
+      }
+      if (
+        !forwardedCaller ||
+        forwardedCaller.cluster_id !== getConfiguredClusterId()
+      ) {
+        return false;
+      }
+      try {
+        return await isBayCredentialUserActive({
+          hub_id: `bay:${forwardedCaller.bay_id}`,
+          ...forwardedCaller,
+        });
+      } catch (err) {
+        logger.error(
+          "failed closed while checking forwarded bay credential",
+          err,
+        );
+        return false;
+      }
+    }
     const hasBayCredential =
       "bay_credential_id" in user && !!user.bay_credential_id;
     if (hasBayCredential) {

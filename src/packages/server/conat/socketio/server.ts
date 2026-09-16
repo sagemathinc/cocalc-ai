@@ -195,6 +195,9 @@ export async function init(
     await ensureLocalSeedBayCredential();
   }
   const { kucalc, ...options } = options0;
+  const configuredClusterLinkPassword =
+    `${process.env.COCALC_CONAT_SHARED_SECRET ?? ""}`.trim() || undefined;
+  const clusterRole = getConfiguredClusterRole();
 
   if (kucalc) {
   }
@@ -204,6 +207,10 @@ export async function init(
     isAllowed,
     systemAccountPassword:
       options.systemAccountPassword ?? (await secureRandomString(64)),
+    clusterLinkPassword:
+      options.clusterLinkPassword ??
+      configuredClusterLinkPassword ??
+      (await secureRandomString(64)),
     path: join(basePath, "conat"),
     port,
     clusterName,
@@ -216,6 +223,29 @@ export async function init(
     //   - we use dns to periodically lookup the other servers and join to them.
     // we might switch to something else, but for now this should be fine
     opts.systemAccountPassword = conatPassword;
+    if (
+      clusterRole !== "standalone" &&
+      !options.clusterLinkPassword &&
+      !configuredClusterLinkPassword
+    ) {
+      throw Error(
+        "multibay clustered Conat requires COCALC_CONAT_SHARED_SECRET",
+      );
+    }
+    // Existing single-bay Kubernetes deployments use the hub password for
+    // their internal links. Multibay requires the dedicated per-bay secret.
+    opts.clusterLinkPassword =
+      options.clusterLinkPassword ??
+      configuredClusterLinkPassword ??
+      conatPassword;
+    if (
+      clusterRole !== "standalone" &&
+      opts.clusterLinkPassword === opts.systemAccountPassword
+    ) {
+      throw Error(
+        "multibay Conat cluster-link and generic system credentials must differ",
+      );
+    }
     opts.clusterIpAddress = await localAddress();
     if (!opts.clusterName) {
       opts.clusterName = "default";
@@ -238,6 +268,15 @@ export async function init(
     dnsScan(server); // we don't await it, it runs forever
     await startVitalsServer(server);
     return server;
+  }
+
+  if (
+    clusterRole !== "standalone" &&
+    opts.clusterLinkPassword === opts.systemAccountPassword
+  ) {
+    throw Error(
+      "multibay Conat cluster-link and generic system credentials must differ",
+    );
   }
 
   if ((conatSocketioCount ?? 1) <= 1) {

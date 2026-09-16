@@ -201,20 +201,38 @@ describe("test isAllowed for hub", () => {
     const previous = process.env.COCALC_CLUSTER_ROLE;
     process.env.COCALC_CLUSTER_ROLE = "seed";
     try {
-      expect(
-        await isAllowed({
-          user: { hub_id: "hub" },
-          type: "pub",
-          subject: "bay.bay-1.rpc.project-control.start",
-        }),
-      ).toBe(false);
+      for (const hub_id of ["hub", "system"]) {
+        expect(
+          await isAllowed({
+            user: { hub_id },
+            type: "pub",
+            subject: "bay.bay-1.rpc.project-control.start",
+          }),
+        ).toBe(false);
+        expect(
+          await isAllowed({
+            user: { hub_id },
+            type: "sub",
+            subject: "global.directory.rpc.resolve-project-bay",
+          }),
+        ).toBe(false);
+        for (const subject of [">", "global.>", "*.directory.rpc.>", "bay.>"]) {
+          expect(
+            await isAllowed({
+              user: { hub_id },
+              type: "sub",
+              subject,
+            }),
+          ).toBe(false);
+        }
+      }
       expect(
         await isAllowed({
           user: { hub_id: "hub" },
           type: "sub",
-          subject: "global.directory.rpc.resolve-project-bay",
+          subject: "global.*",
         }),
-      ).toBe(false);
+      ).toBe(true);
       expect(
         await isAllowed({
           user: { hub_id: "hub" },
@@ -225,6 +243,65 @@ describe("test isAllowed for hub", () => {
     } finally {
       if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
       else process.env.COCALC_CLUSTER_ROLE = previous;
+    }
+  });
+
+  it("only accepts protected cluster forwarding with a live stamped bay", async () => {
+    const previousRole = process.env.COCALC_CLUSTER_ROLE;
+    const previousCluster = process.env.COCALC_CLUSTER_ID;
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    process.env.COCALC_CLUSTER_ID = "test-cluster";
+    const user = { hub_id: "cluster-link" };
+    const forwardedCaller = {
+      cluster_id: "test-cluster",
+      bay_id: "bay-1",
+      bay_credential_id: "credential-1",
+    };
+    try {
+      expect(
+        await isAllowed({
+          user,
+          type: "pub",
+          subject: "global.directory.rpc.resolve-project-bay",
+          forwardedCaller,
+        }),
+      ).toBe(true);
+      expect(isBayCredentialUserActiveMock).toHaveBeenLastCalledWith({
+        hub_id: "bay:bay-1",
+        ...forwardedCaller,
+      });
+      expect(
+        await isAllowed({
+          user,
+          type: "pub",
+          subject: "global.directory.rpc.resolve-project-bay",
+        }),
+      ).toBe(false);
+      expect(
+        await isAllowed({
+          user,
+          type: "pub",
+          subject: "global.directory.rpc.resolve-project-bay",
+          forwardedCaller: {
+            ...forwardedCaller,
+            cluster_id: "wrong-cluster",
+          },
+        }),
+      ).toBe(false);
+      expect(await isAllowed({ user, type: "sub", subject: "global.>" })).toBe(
+        false,
+      );
+      expect(
+        await isAllowed({ user, type: "sub", subject: "_INBOX.link" }),
+      ).toBe(true);
+      expect(
+        await isAllowed({ user, type: "pub", subject: "ordinary.subject" }),
+      ).toBe(true);
+    } finally {
+      if (previousRole == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previousRole;
+      if (previousCluster == null) delete process.env.COCALC_CLUSTER_ID;
+      else process.env.COCALC_CLUSTER_ID = previousCluster;
     }
   });
 });
