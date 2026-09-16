@@ -65,7 +65,8 @@ async function draft() {
     expected_version: 0,
     idempotency_key: randomUUID(),
   });
-  const batch = created.result!.id;
+  if (created.preview) throw Error("expected committed batch");
+  const batch = created.result.id;
   const added = await addOutreachRecipient({
     ...common,
     batch,
@@ -77,7 +78,8 @@ async function draft() {
     expected_version: 1,
     idempotency_key: randomUUID(),
   });
-  const original = added.result!;
+  if (added.preview) throw Error("expected committed recipient");
+  const original = added.result;
   const edit = {
     ...common,
     batch,
@@ -92,6 +94,7 @@ it("previews without writes, preserves identity/footer, and invalidates stale ap
   const { common, batch, original, edit } = await draft();
   const preview = await updateOutreachRecipient(edit);
   expect(preview).toMatchObject({ preview: true, expected_version: 2 });
+  if (!preview.preview) throw Error("expected preview");
   expect((await getOutreachBatch({ ...common, batch })).deliveries[0]).toEqual(
     original,
   );
@@ -101,6 +104,7 @@ it("previews without writes, preserves identity/footer, and invalidates stale ap
     expected_version: preview.expected_version,
     idempotency_key: preview.idempotency_key,
   });
+  if (committed.preview) throw Error("expected committed edit");
   expect(committed.result).toMatchObject({
     id: original.id,
     subject: edit.subject,
@@ -136,6 +140,7 @@ it.each(["approved", "cancelled"])(
       idempotency_key: randomUUID(),
     };
     const committed = await updateOutreachRecipient(request);
+    if (committed.preview) throw Error("expected committed edit");
     await getPool().query(
       "UPDATE crm_outreach_batches SET state=$1,version=version+1 WHERE id=$2",
       [state, batch],
