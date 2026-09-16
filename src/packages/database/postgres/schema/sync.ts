@@ -40,6 +40,10 @@ import {
   syncSchemaConstraints,
 } from "./constraints";
 import { schemaSequencesNeedSync, syncSchemaSequences } from "./sequences";
+import {
+  accountBanTimestampSchemaReady,
+  syncAccountBanTimestampSchema,
+} from "./account-ban-timestamp";
 
 const log = getLogger("db:schema:sync");
 
@@ -465,6 +469,12 @@ export async function syncSchema(
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
     }
+    if (
+      dbSchema.accounts != null &&
+      !(await accountBanTimestampSchemaReady(db))
+    ) {
+      await syncAccountBanTimestampSchema(db);
+    }
     if (dbSchema.commercial_orders != null) {
       await ensureCommercialNextActionSchema(db);
     }
@@ -563,6 +573,13 @@ export async function schemaNeedsSync(
       (await purchaseCostCentsSchemaNeedsSync(db))
     ) {
       dbg("detected missing purchase whole-cent guard");
+      return true;
+    }
+    if (
+      dbSchema.accounts != null &&
+      !(await accountBanTimestampSchemaReady(db))
+    ) {
+      dbg("detected missing account ban timestamp guard");
       return true;
     }
     if (
