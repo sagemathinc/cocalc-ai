@@ -4039,10 +4039,12 @@ export async function linkOpportunityCommercialOrder(
     // new total the reviewer never saw a warning for.  Both versions only
     // increase, so their sum changes whenever either record does.
     currentVersion: async (db) => {
-      const locked = db !== getPool();
+      // A preview's token must describe the rows used for its proposed values,
+      // not newer rows read after those values were assembled.
+      if (db === getPool()) return opportunity.version + order.version;
       return (
-        (await loadOpportunity(db, opportunityId, locked)).version +
-        (await readOrderLinkFields(db, order.id, locked)).version
+        (await loadOpportunity(db, opportunityId, true)).version +
+        (await readOrderLinkFields(db, order.id, true)).version
       );
     },
     apply: async (client, eventId) => {
@@ -4136,7 +4138,9 @@ export async function unlinkOpportunityCommercialOrder(
     warnings: unlinkOrderWarnings(opportunity.stage),
     resultType: "opportunity",
     currentVersion: async (db) =>
-      (await loadOpportunity(db, opportunityId, db !== getPool())).version,
+      db === getPool()
+        ? opportunity.version
+        : (await loadOpportunity(db, opportunityId, true)).version,
     apply: async (client, eventId) => {
       await lockOrderLinks(client, order.id);
       const current = await loadOpportunity(client, opportunityId, true);

@@ -979,6 +979,49 @@ test("order unlink previews removing a link without --commit", async () => {
   assert.equal(captured.commit, false);
 });
 
+for (const action of ["link", "unlink"] as const) {
+  test(`order ${action} keys distinguish later revisions from retries`, async () => {
+    async function request(extra: string[]) {
+      let captured: any;
+      const { program } = setup({
+        [action === "link"
+          ? "linkOpportunityCommercialOrder"
+          : "unlinkOpportunityCommercialOrder"]: async (opts: any) => {
+          captured = opts;
+          return { preview: !opts.commit };
+        },
+      });
+      await program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "crm",
+        "order",
+        action,
+        "opportunity-id",
+        "order-id",
+        "--reason",
+        "Reviewed correction",
+        ...extra,
+      ]);
+      return captured;
+    }
+    assert.equal((await request([])).idempotency_key, undefined);
+    const first = await request(["--commit", "--expected-version", "4"]);
+    const retry = await request(["--commit", "--expected-version", "4"]);
+    const later = await request(["--commit", "--expected-version", "6"]);
+    assert.equal(first.idempotency_key, retry.idempotency_key);
+    assert.notEqual(first.idempotency_key, later.idempotency_key);
+    for (const extra of [[], ["--commit", "--expected-version", "4"]]) {
+      assert.equal(
+        (await request([...extra, "--idempotency-key", "reviewed-key"]))
+          .idempotency_key,
+        "reviewed-key",
+      );
+    }
+  });
+}
+
 test("daily digest resolves assignees and forwards deterministic windows", async () => {
   let captured: any;
   const { program } = setup({

@@ -1376,7 +1376,7 @@ function registerOrder(crm: Command, deps: CrmCommandDeps): void {
         "admin crm order link",
         async (ctx) =>
           await ctx.hub.adminCrm.linkOpportunityCommercialOrder(
-            mutationRequest("opportunity.link-order", opts, {
+            versionedMutationRequest("opportunity.link-order", opts, {
               opportunity,
               order: orderId,
             }),
@@ -1396,7 +1396,7 @@ function registerOrder(crm: Command, deps: CrmCommandDeps): void {
         "admin crm order unlink",
         async (ctx) =>
           await ctx.hub.adminCrm.unlinkOpportunityCommercialOrder(
-            mutationRequest("opportunity.unlink-order", opts, {
+            versionedMutationRequest("opportunity.unlink-order", opts, {
               opportunity,
               order: orderId,
             }),

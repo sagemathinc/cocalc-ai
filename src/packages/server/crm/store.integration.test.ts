@@ -1504,6 +1504,46 @@ describePglite("integrated CRM store", () => {
           )
         ).rows[0];
 
+      // Simulate a concurrent edit after the preview reads the order but before
+      // it returns. The token must still describe the displayed, older total.
+      const beforeRace = await current();
+      const query = pool.query.bind(pool);
+      let changedDuringPreview = false;
+      const querySpy = jest.spyOn(pool, "query").mockImplementation((async (
+        ...args: any[]
+      ) => {
+        const result = await (query as any)(...args);
+        if (
+          !changedDuringPreview &&
+          `${args[0]}`.includes("SELECT id,order_number,crm_organization_id")
+        ) {
+          changedDuringPreview = true;
+          await query(
+            "UPDATE commercial_orders SET agreed_total=925, version=version+1 WHERE id=$1",
+            [orderId],
+          );
+        }
+        return result;
+      }) as any);
+      let racingPreview: Awaited<ReturnType<typeof link>>;
+      try {
+        racingPreview = await link(linkRequest);
+      } finally {
+        querySpy.mockRestore();
+      }
+      if (!racingPreview.preview) throw Error("expected preview");
+      expect(changedDuringPreview).toBe(true);
+      expect(racingPreview.proposed.agreed_total).toBe("900");
+      expect(racingPreview.expected_version).toBe(beforeRace.link_version);
+      await expect(
+        link({
+          ...linkRequest,
+          commit: true,
+          expected_version: racingPreview.expected_version,
+          idempotency_key: racingPreview.idempotency_key,
+        }),
+      ).rejects.toThrow("CRM record changed");
+
       // Identical link, unlink, link: the second link is written, not
       // replayed from the first.
       await previewThenCommit(link, linkRequest);
