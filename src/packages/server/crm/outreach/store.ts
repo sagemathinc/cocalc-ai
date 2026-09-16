@@ -81,7 +81,8 @@ const MAX_LIST = 500;
 const MAX_BODY = 50_000;
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
-const OUTREACH_OPT_OUT_PATH = /\/crm\/outreach\/opt-out\/[A-Za-z0-9_-]+/;
+// Matches an opt-out path even when its token was deleted from a copied footer.
+const OUTREACH_OPT_OUT_PATH = /\/crm\/outreach\/opt-out\//;
 
 // `outreach show` returns the stored body with its footer attached, so a
 // reviewer who edits that text naturally submits the footer back.  Remove an
@@ -89,16 +90,15 @@ const OUTREACH_OPT_OUT_PATH = /\/crm\/outreach\/opt-out\/[A-Za-z0-9_-]+/;
 // preserved footer would otherwise send the recipient two opt-out links, one
 // of which may have been altered.
 export function composeOutreachBody(body: string, footer: string): string {
-  // A body file saved with Windows line endings must still match the stored
-  // footer, which always uses LF.
-  let message = bounded(
-    `${body ?? ""}`.replace(/\r\n?/g, "\n"),
-    "body_markdown",
-    MAX_BODY,
-  );
-  if (footer && message.endsWith(footer)) {
+  // Compare with line endings normalized on both sides: a body file saved with
+  // CRLF, or a footer configured with CRLF, must still match.  The stored
+  // footer itself is appended unchanged.
+  const lf = (value: string) => value.replace(/\r\n?/g, "\n");
+  const reviewedFooter = lf(footer ?? "");
+  let message = bounded(lf(`${body ?? ""}`), "body_markdown", MAX_BODY);
+  if (reviewedFooter && message.endsWith(reviewedFooter)) {
     message = bounded(
-      message.slice(0, -footer.length),
+      message.slice(0, -reviewedFooter.length),
       "body_markdown",
       MAX_BODY,
     );

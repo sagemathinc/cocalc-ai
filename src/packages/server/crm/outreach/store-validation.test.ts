@@ -142,6 +142,26 @@ describe("CRM outreach reviewed-content validation", () => {
     ).toThrow("body_markdown must not contain an opt-out link");
   });
 
+  it("refuses a copied footer whose opt-out token was deleted", () => {
+    const footer =
+      "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    expect(() =>
+      composeOutreachBody(
+        "Updated body\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/",
+        footer,
+      ),
+    ).toThrow("body_markdown must not contain an opt-out link");
+  });
+
+  it("matches a footer configured with Windows line endings and keeps it verbatim", () => {
+    const footer =
+      "Postal address\r\n\r\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    const copied = `Updated body\n\n${footer.replace(/\r\n/g, "\n")}`;
+    expect(composeOutreachBody(copied, footer)).toBe(
+      `Updated body\n\n${footer}`,
+    );
+  });
+
   it("refuses a body that is only the preserved footer", () => {
     const footer =
       "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
