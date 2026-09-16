@@ -5,10 +5,12 @@
 
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { DEFAULT_SEED_BAY_ID } from "@cocalc/util/bay";
+import { readFileSync } from "node:fs";
 
 export type ClusterRole = "standalone" | "seed" | "attached";
 
 export interface ClusterConfig {
+  cluster_id: string;
   role: ClusterRole;
   seed_bay_id: string;
   seed_conat_server?: string;
@@ -18,6 +20,16 @@ export interface ClusterConfig {
 function configuredEnv(name: string): string | undefined {
   const value = `${process.env[name] ?? ""}`.trim();
   return value || undefined;
+}
+
+export function getConfiguredBayCredential(): string | undefined {
+  const filename = configuredEnv("COCALC_BAY_CREDENTIAL_FILE");
+  if (filename) {
+    const value = readFileSync(filename, "utf8").trim();
+    if (!value) throw Error(`empty bay credential file '${filename}'`);
+    return value;
+  }
+  return configuredEnv("COCALC_BAY_CREDENTIAL");
 }
 
 export function getConfiguredClusterRole(): ClusterRole {
@@ -43,8 +55,13 @@ export function getConfiguredClusterSeedBayId(): string {
   );
 }
 
+export function getConfiguredClusterId(): string {
+  return configuredEnv("COCALC_CLUSTER_ID") ?? "standalone";
+}
+
 export function getClusterConfig(): ClusterConfig {
   return {
+    cluster_id: getConfiguredClusterId(),
     role: getConfiguredClusterRole(),
     seed_bay_id: getConfiguredClusterSeedBayId(),
     seed_conat_server: configuredEnv("COCALC_CLUSTER_SEED_CONAT_SERVER"),

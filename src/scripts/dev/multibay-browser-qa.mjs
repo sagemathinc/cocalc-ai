@@ -492,7 +492,27 @@ function getTargetFromHref(href, options) {
   }
 }
 
+function isClusterAccountOrigin(url, options) {
+  if (url.origin === options.baseOrigin) return true;
+  const base = new URL(options.baseUrl);
+  return (
+    url.protocol === base.protocol && url.hostname.endsWith(`-${base.hostname}`)
+  );
+}
+
+async function acknowledgeCookieBanner(page) {
+  const necessaryOnly = page.getByRole("button", { name: "Necessary only" });
+  const visible = await necessaryOnly
+    .waitFor({ state: "visible", timeout: 10_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (visible) {
+    await necessaryOnly.click();
+  }
+}
+
 async function fillAndSubmitSignIn(page, credentials) {
+  await acknowledgeCookieBanner(page);
   await page.getByPlaceholder("you@example.com").fill(credentials.email);
   await page.getByPlaceholder("Password").fill(credentials.password);
   await page.getByRole("button", { name: /^Sign In$/i }).click();
@@ -509,6 +529,7 @@ async function signInToProject(
     timeout: options.timeoutMs,
   });
   await assertNoStaleBuild(page);
+  await acknowledgeCookieBanner(page);
 
   const signInLink = page.getByRole("link", { name: /sign in/i }).first();
   await signInLink.waitFor({ state: "visible", timeout: options.timeoutMs });
@@ -562,7 +583,7 @@ async function signInToRoot(page, options, credentials) {
   await fillAndSubmitSignIn(page, credentials);
   await page.waitForURL(
     (url) =>
-      url.origin === options.baseOrigin && !url.pathname.startsWith("/auth"),
+      isClusterAccountOrigin(url, options) && !url.pathname.startsWith("/auth"),
     { timeout: options.timeoutMs },
   );
   await assertNoStaleBuild(page);
@@ -2130,6 +2151,7 @@ async function signUpThroughStableUrl(page, options) {
     timeout: options.timeoutMs,
   });
   await assertNoStaleBuild(page);
+  await acknowledgeCookieBanner(page);
 
   const registrationTokenInput = page.getByPlaceholder(
     "Enter your registration token",
@@ -2138,14 +2160,27 @@ async function signUpThroughStableUrl(page, options) {
     await registrationTokenInput.fill(options.registrationToken);
   }
   await page.getByPlaceholder("you@example.com").fill(options.email);
-  await page.locator('input[type="password"]').fill(options.password);
-  await page.getByPlaceholder("First name").fill(options.firstName);
-  await page.getByPlaceholder("Last name").fill(options.lastName);
+  await page.getByPlaceholder("At least 8 characters").fill(options.password);
+  await page
+    .getByPlaceholder("Enter the same password again")
+    .fill(options.password);
+  const firstNameInput = page.getByPlaceholder("First name");
+  if ((await firstNameInput.count()) > 0) {
+    await firstNameInput.fill(options.firstName);
+  }
+  const lastNameInput = page.getByPlaceholder("Last name");
+  if ((await lastNameInput.count()) > 0) {
+    await lastNameInput.fill(options.lastName);
+  }
+  const fullNameInput = page.getByPlaceholder("Your name");
+  if ((await fullNameInput.count()) > 0) {
+    await fullNameInput.fill(`${options.firstName} ${options.lastName}`.trim());
+  }
   await page.getByRole("button", { name: /^Create account$/i }).click();
 
   await page.waitForURL(
     (url) =>
-      url.origin === options.baseOrigin && !url.pathname.startsWith("/auth"),
+      isClusterAccountOrigin(url, options) && !url.pathname.startsWith("/auth"),
     { timeout: options.timeoutMs },
   );
   await assertNoStaleBuild(page);

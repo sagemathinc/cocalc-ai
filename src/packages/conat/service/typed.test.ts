@@ -143,6 +143,85 @@ describe("typed service client", () => {
     );
   });
 
+  it("binds fast-rpc source bay claims to the authenticated caller", async () => {
+    let handler: any;
+    const fastRpcService = jest.fn(async (_subject, h) => {
+      handler = h;
+      return { close: jest.fn(), stop: jest.fn() };
+    });
+    const subscribe = jest.fn(async () => ({
+      stop: jest.fn(),
+      [Symbol.asyncIterator]: async function* () {},
+    }));
+    const impl = jest.fn(async () => "ok");
+    createServiceHandler<any>({
+      service: "test",
+      subject: "test.subject",
+      client: { fastRpcService, subscribe } as any,
+      impl: { write: impl },
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    const raw = encode({
+      encoding: DataEncoding.MsgPack,
+      mesg: {
+        name: "write",
+        args: [{ source_bay_id: "bay-spoofed" }],
+      },
+    });
+    await expect(
+      handler(
+        { raw },
+        {
+          caller: {
+            cluster_id: "cluster",
+            bay_id: "bay-authenticated",
+            bay_credential_id: "credential",
+          },
+        },
+      ),
+    ).rejects.toThrow("must match authenticated bay 'bay-authenticated'");
+    expect(impl).not.toHaveBeenCalled();
+  });
+
+  it("binds request-transport source bay claims to the authenticated caller", async () => {
+    let respond!: (value: any) => void;
+    const response = new Promise<any>((resolve) => {
+      respond = resolve;
+    });
+    const subscribe = jest.fn(async () => ({
+      stop: jest.fn(),
+      [Symbol.asyncIterator]: async function* () {
+        yield {
+          data: {
+            name: "write",
+            args: [{ source_bay_id: "bay-spoofed" }],
+          },
+          caller: {
+            cluster_id: "cluster",
+            bay_id: "bay-authenticated",
+            bay_credential_id: "credential",
+          },
+          subject: "test.subject",
+          respond,
+        };
+      },
+    }));
+    const impl = jest.fn(async () => "ok");
+    createServiceHandler<any>({
+      service: "test",
+      subject: "test.subject",
+      transport: "request",
+      client: { subscribe } as any,
+      impl: { write: impl },
+    });
+    await expect(response).resolves.toEqual({
+      error: expect.stringContaining(
+        "must match authenticated bay 'bay-authenticated'",
+      ),
+    });
+    expect(impl).not.toHaveBeenCalled();
+  });
+
   it("throws a 413 error from the typed fast-rpc service handler when the response is too large", async () => {
     let handler: ((mesg: { name: string; args?: any[] }) => any) | undefined;
     const fastRpcService = jest.fn(async (_subject, h) => {

@@ -39,6 +39,7 @@ async function main() {
         systemAccountPassword: "•".repeat(
           opts.systemAccountPassword?.length ?? 0,
         ),
+        clusterLinkPassword: "•".repeat(opts.clusterLinkPassword?.length ?? 0),
       },
     ];
     console.log(...msg);

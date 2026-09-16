@@ -70,6 +70,11 @@ function getSharedSecret(): Buffer {
   if (explicit) {
     return Buffer.from(explicit, "utf8");
   }
+  const clusterShared =
+    `${process.env.COCALC_CLUSTER_SHARED_SECRET ?? ""}`.trim();
+  if (clusterShared) {
+    return Buffer.from(clusterShared, "utf8");
+  }
   const cluster = getClusterConfig();
   const shared = `${cluster.seed_conat_password ?? conatPassword ?? ""}`.trim();
   if (!shared) {
