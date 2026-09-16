@@ -45,7 +45,7 @@ describe("create a cluster enabled socketio server and test direct interest link
   it("get access to the same interest state via a cluster link", async () => {
     link = await clusterLink(
       server.address(),
-      server.options.systemAccountPassword,
+      server.options.clusterLinkPassword,
     );
     await wait({
       until: () => {
@@ -110,7 +110,7 @@ describe("create a cluster enabled socketio server and test direct interest link
   it("a new link has correct state, despite the activity", async () => {
     const link2 = await clusterLink(
       server.address(),
-      server.options.systemAccountPassword,
+      server.options.clusterLinkPassword,
     );
     await wait({
       until: () => {

@@ -1488,6 +1488,14 @@ export class ConatServer extends EventEmitter {
     return undefined;
   };
 
+  private isLocalClusterControlSubject = (subject: string): boolean => {
+    const clusterSubject = sysApiSubject({ clusterName: this.clusterName });
+    return (
+      subject === clusterSubject ||
+      subject === sysApiSubject({ clusterName: this.clusterName, id: this.id })
+    );
+  };
+
   private publish = async ({
     subject,
     data,
@@ -1507,7 +1515,11 @@ export class ConatServer extends EventEmitter {
 
     const authStart = Date.now();
     const clusterForward = this.isClusterLinkUser(from);
-    if (clusterForward && data[6] == null) {
+    if (
+      clusterForward &&
+      data[6] == null &&
+      !this.isLocalClusterControlSubject(subject)
+    ) {
       throw new ConatError("cluster-link publish is missing delivery targets", {
         code: 403,
       });
