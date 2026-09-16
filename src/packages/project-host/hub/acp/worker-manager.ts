@@ -24,13 +24,19 @@ import {
   type AcpWorkerRow,
 } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
+  ACP_PROJECT_RESTART_FENCE_REASON,
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   hasQueuedOrRunningAcpJobs,
   listRunningAcpJobsByWorker,
   oldestQueuedAcpJobTimestamp,
+  fenceAcpJobsForProject,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
-import { countRunningAcpTurnLeasesForWorker } from "@cocalc/lite/hub/sqlite/acp-turns";
+import {
+  countRunningAcpTurnLeasesForWorker,
+  fenceAcpTurnLeasesForProject,
+} from "@cocalc/lite/hub/sqlite/acp-turns";
+import { clearAcpPayloadsForProject } from "@cocalc/lite/hub/sqlite/acp-queue";
 import { getSoftwareVersions } from "../../software";
 import { getProjectHostConatClient } from "../../runtime-client";
 import { getProjectHostProcessTitle } from "../../process-role";
@@ -540,6 +546,43 @@ async function requestWorkerDrain(
       err: `${err}`,
     });
     return;
+  }
+}
+
+export async function fenceProjectHostAcpWork({
+  project_id,
+  reason = ACP_PROJECT_RESTART_FENCE_REASON,
+}: {
+  project_id: string;
+  reason?: string;
+}): Promise<void> {
+  // Persist the terminal fence before asking workers to release live runtimes.
+  // This also covers a host with no currently running ACP worker.
+  fenceAcpJobsForProject({ project_id, reason });
+  fenceAcpTurnLeasesForProject({ project_id, reason });
+  clearAcpPayloadsForProject(project_id);
+  for (const worker of listProjectHostAcpWorkers()) {
+    const worker_id = workerIdOf(worker);
+    const host_id = `${worker.env.PROJECT_HOST_ID ?? ""}`.trim();
+    try {
+      if (!worker_id || !host_id)
+        throw new Error("worker identity unavailable");
+      await acpDaemonControlClient({
+        client: getProjectHostConatClient(),
+        host_id,
+        worker_id,
+        timeout: Math.max(ACP_WORKER_CONTROL_TIMEOUT_MS, 10_000),
+        waitForInterest: true,
+      }).fenceProject({ project_id, reason });
+    } catch (err) {
+      logger.warn("ACP worker did not acknowledge project restart fence", {
+        project_id,
+        worker_id,
+        pid: worker.pid,
+        err,
+      });
+      await terminateWorker(worker, "project_restart_fence_unacknowledged");
+    }
   }
 }
 

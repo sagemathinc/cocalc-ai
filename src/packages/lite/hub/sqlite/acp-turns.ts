@@ -222,6 +222,27 @@ export function finalizeAcpTurnLease({
   );
 }
 
+export function fenceAcpTurnLeasesForProject({
+  project_id,
+  reason,
+}: {
+  project_id: string;
+  reason: string;
+}): number {
+  ensureInit();
+  const now = Date.now();
+  return getAcpDatabase()
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'aborted',
+           reason = ?,
+           heartbeat_at = ?,
+           ended_at = ?
+       WHERE project_id = ? AND state = 'running'`,
+    )
+    .run(reason, now, now, project_id).changes;
+}
+
 function selectLeaseByWhere(where: string): string {
   return `SELECT
       project_id,

@@ -25,9 +25,22 @@ export interface AcpDaemonStatus {
   stop_reason?: string | null;
 }
 
+export interface AcpProjectFenceResult {
+  project_id: string;
+  queued_jobs: number;
+  running_jobs: number;
+  running_turns: number;
+  queued_payloads: number;
+  disposed_agents: number;
+}
+
 interface AcpDaemonControlApi {
   health: () => Promise<AcpDaemonStatus>;
   requestDrain: (opts?: { reason?: string | null }) => Promise<AcpDaemonStatus>;
+  fenceProject: (opts: {
+    project_id: string;
+    reason: string;
+  }) => Promise<AcpProjectFenceResult>;
 }
 
 export function acpDaemonControlSubject({
@@ -72,6 +85,7 @@ export async function initAcpDaemonControlService({
   worker_id,
   getStatus,
   requestDrain,
+  fenceProject,
 }: {
   client: ConatClient;
   host_id: string;
@@ -80,6 +94,10 @@ export async function initAcpDaemonControlService({
   requestDrain: (opts?: {
     reason?: string | null;
   }) => Promise<AcpDaemonStatus> | AcpDaemonStatus;
+  fenceProject: (opts: {
+    project_id: string;
+    reason: string;
+  }) => Promise<AcpProjectFenceResult> | AcpProjectFenceResult;
 }) {
   return await client.service<AcpDaemonControlApi>(
     acpDaemonControlSubject({ host_id, worker_id }),
@@ -89,6 +107,9 @@ export async function initAcpDaemonControlService({
       },
       async requestDrain(opts?: { reason?: string | null }) {
         return await requestDrain(opts);
+      },
+      async fenceProject(opts: { project_id: string; reason: string }) {
+        return await fenceProject(opts);
       },
     },
   );

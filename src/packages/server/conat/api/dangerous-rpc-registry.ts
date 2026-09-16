@@ -35,6 +35,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "agent.authorizeRpcExecution": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "agent.registerIdentity": {
     decision: "fresh-auth-required",
     reason:

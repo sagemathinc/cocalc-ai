@@ -22,7 +22,10 @@ test.each([true, false])(
   async (generation) => {
     const value = request();
     if (!generation) delete value.chat!.agent_delivery_generation;
-    const api = { authorizeDelivery: jest.fn(async () => {}) };
+    const api = {
+      authorizeDelivery: jest.fn(async () => {}),
+      authorizeRpcExecution: jest.fn(async () => {}),
+    };
     await expect(authorizeAgentDeliveryExecution(value, api)).rejects.toThrow(
       "Legacy agent delivery is retired",
     );
@@ -32,7 +35,41 @@ test.each([true, false])(
 test("ordinary human and RPC requests do not acquire legacy semantics", async () => {
   const value = request();
   delete value.chat!.agent_delivery_id;
-  const api = { authorizeDelivery: jest.fn(async () => {}) };
+  const api = {
+    authorizeDelivery: jest.fn(async () => {}),
+    authorizeRpcExecution: jest.fn(async () => {}),
+  };
   await authorizeAgentDeliveryExecution(value, api);
   expect(api.authorizeDelivery).not.toHaveBeenCalled();
+});
+
+test("RPC queued work is reauthorized at execution", async () => {
+  const value = request();
+  delete value.chat!.agent_delivery_id;
+  value.chat!.agent_rpc_execution = {
+    version: 2,
+    source: {
+      agent_id: "00000000-0000-4000-8000-000000000001",
+      project_id: "00000000-0000-4000-8000-000000000002",
+    },
+    source_run_id: "00000000-0000-4000-8000-000000000003",
+    target: {
+      agent_id: "00000000-0000-4000-8000-000000000004",
+      project_id: "00000000-0000-4000-8000-000000000005",
+    },
+    target_path: "/home/user/recv.chat",
+    target_thread_id: "thread",
+    link_id: "00000000-0000-4000-8000-000000000006",
+    principal_account_id: "00000000-0000-4000-8000-000000000007",
+    guidance: false,
+  };
+  const api = {
+    authorizeDelivery: jest.fn(async () => {}),
+    authorizeRpcExecution: jest.fn(async () => {}),
+  };
+  await authorizeAgentDeliveryExecution(value, api);
+  expect(api.authorizeRpcExecution).toHaveBeenCalledWith({
+    account_id: value.chat!.agent_rpc_execution.principal_account_id,
+    authorization: value.chat!.agent_rpc_execution,
+  });
 });

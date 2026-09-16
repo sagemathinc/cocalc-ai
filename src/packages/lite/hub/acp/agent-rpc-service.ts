@@ -271,6 +271,17 @@ export function createAgentRpcService(
               guidance: e.guidance,
             });
             prepared.request.chat.agent_message = true;
+            prepared.request.chat.agent_rpc_execution = {
+              version: 2,
+              source: { ...e.source },
+              ...(e.run_id ? { source_run_id: e.run_id } : {}),
+              target: { ...e.target },
+              target_path: e.path,
+              target_thread_id: e.thread_id,
+              link_id: e.link_id,
+              principal_account_id: e.account_id,
+              guidance: e.guidance === true,
+            };
             chatEffect = "unknown";
             db.set({
               ...prepared.message,

@@ -71,6 +71,7 @@ const invalidateProjectVolumeQuota = jest.fn();
 const listStoppedScratchVolumePreparationBatch = jest.fn();
 const currentProjectVolumeLifecycleGeneration = jest.fn(() => 0);
 const getRecordedProjectVolumeIdentity = jest.fn();
+const fenceProjectHostAcpWork = jest.fn(async () => undefined);
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -119,6 +120,9 @@ jest.mock("../sqlite/stop-policy", () => ({
 jest.mock("../browser-runtime", () => ({
   browserIdleTimeoutSeconds: (run_quota: any) =>
     Number(run_quota?.browser_idle_timeout) || 0,
+}));
+jest.mock("./acp/worker-manager", () => ({
+  fenceProjectHostAcpWork: (...args: any[]) => fenceProjectHostAcpWork(...args),
 }));
 jest.mock("../master-status", () => ({
   getMasterConatClient: (...args: any[]) => getMasterConatClient(...args),
@@ -814,6 +818,7 @@ describe("project host start ACP rehydrate ordering", () => {
 
     await expect(hubApi.projects.stop({ project_id })).resolves.toBeUndefined();
     expect(runnerApi.status).toHaveBeenCalledTimes(2);
+    expect(fenceProjectHostAcpWork).toHaveBeenCalledWith({ project_id });
     expect(upsertProject).toHaveBeenLastCalledWith(
       expect.objectContaining({
         project_id,
@@ -1129,6 +1134,7 @@ describe("project host start ACP rehydrate ordering", () => {
       "project stop did not converge",
     );
     expect(runnerApi.status).toHaveBeenCalledTimes(5);
+    expect(fenceProjectHostAcpWork).not.toHaveBeenCalled();
     expect(upsertProject).toHaveBeenLastCalledWith(
       expect.objectContaining({
         project_id,

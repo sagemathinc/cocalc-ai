@@ -11,6 +11,7 @@ import {
   acceptAgentRpc,
   acceptExternalAgentRpc,
   authorizeRpcAdmission,
+  authorizeRpcExecution,
 } from "./rpc";
 import { agentMessagingSubject } from "@cocalc/conat/agents/protocol";
 import { rpcOutcome } from "@cocalc/conat/agents/rpc";
@@ -724,6 +725,34 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
       outcome: "rejected",
       reason: "grant_paused",
     });
+  });
+
+  test("personal authorization is rechecked when an accepted RPC begins execution", async () => {
+    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
+    const [grant] = await personalApproval();
+    const identity = await agentStore().get(target.agent_id);
+    const authorization = {
+      version: 2 as const,
+      source,
+      source_run_id: run,
+      target,
+      target_path: identity.path,
+      target_thread_id: identity.thread_id,
+      link_id: grant.link_id,
+      principal_account_id: account,
+      guidance: false,
+    };
+    const authorize = () =>
+      context.run("target-bay", () =>
+        authorizeRpcExecution({
+          account_id: account,
+          host_id: hostId,
+          authorization,
+        }),
+      );
+    await authorize();
+    await setPersonalMessagingState({ account_id: account, action: "pause" });
+    await expect(authorize()).rejects.toThrow("grant_paused");
   });
 
   test("a pause does not claim to retract an already authorized in-flight admission", async () => {

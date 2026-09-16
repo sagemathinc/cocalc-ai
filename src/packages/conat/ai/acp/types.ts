@@ -1,6 +1,7 @@
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
+import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
 
 export interface AcpAutomationConfig {
   enabled?: boolean;
@@ -79,6 +80,18 @@ export interface AcpChatContext {
   // Revalidate the directional grant before executing a queued agent message.
   agent_delivery_id?: string;
   agent_delivery_generation?: string;
+  // Immutable provenance for reauthorizing an RPC message at queue execution.
+  agent_rpc_execution?: {
+    version: 2;
+    source: AgentRpcSource;
+    source_run_id?: string;
+    target: AgentEndpoint;
+    target_path: string;
+    target_thread_id: string;
+    link_id: string;
+    principal_account_id: string;
+    guidance: boolean;
+  };
   project_id: string;
   path: string;
   message_date: string;

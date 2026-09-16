@@ -53,6 +53,7 @@ export const agent = {
   revokeRpcLink: authFirstRequireAccountWithBoundSession,
   listRpcLinks: authFirstRequireAccount,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
+  authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccountWithBoundSession,
   listIdentities: authFirstRequireAccount,
@@ -249,6 +250,13 @@ export interface AgentApi {
   }): Promise<AgentRpcLink[]>;
   authorizeRpcAdmission(
     opts: AgentHostAuth & { envelope: AgentRpcEnvelope },
+  ): Promise<void>;
+  authorizeRpcExecution(
+    opts: AgentHostAuth & {
+      authorization: NonNullable<
+        import("@cocalc/conat/ai/acp/types").AcpChatContext["agent_rpc_execution"]
+      >;
+    },
   ): Promise<void>;
   resolveIdentity(opts: {
     account_id?: string;

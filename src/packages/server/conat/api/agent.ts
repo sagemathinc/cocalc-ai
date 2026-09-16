@@ -20,6 +20,7 @@ export const grantRpcLink = rpc.grantRpcLink;
 export const revokeRpcLink = rpc.revokeRpcLink;
 export const listRpcLinks = rpc.listRpcLinks;
 export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
+export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const registerIdentity = identities.registerIdentity;
 export const listIdentities = identities.listIdentities;
 export const getIdentity = identities.getIdentity;

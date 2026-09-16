@@ -723,6 +723,49 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
     throw new Error("RPC link authorization changed or expired");
 };
 
+export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
+  opts,
+) => {
+  enabled();
+  const host_id = `${opts.host_id ?? ""}`.trim();
+  const account_id = `${opts.account_id ?? ""}`.trim();
+  const authorization = opts.authorization;
+  if (!host_id || !account_id || authorization?.version !== 2)
+    throw new Error("invalid RPC execution authorization");
+  if (authorization.principal_account_id !== account_id)
+    throw new PersonalAgentAuthorizationError("principal_mismatch");
+  validateAgentRpcSource(authorization.source, authorization.source_run_id);
+  validateAgentEndpoint(authorization.target);
+  await assertProjectHostAgentTokenAccess({
+    account_id,
+    host_id,
+    project_id: authorization.target.project_id,
+  });
+  const target = await sourceIdentity(authorization.target);
+  if (
+    target.path !== authorization.target_path ||
+    target.thread_id !== authorization.target_thread_id
+  )
+    throw new Error("target identity changed");
+  const proof = await submissionProof(
+    authorization.source,
+    authorization.source_run_id,
+    authorization.target,
+    authorization.guidance,
+  );
+  if ("denied" in proof)
+    throw new PersonalAgentAuthorizationError(proof.denied);
+  if (
+    proof.link.link_id !== authorization.link_id ||
+    proof.link.approved_by !== account_id ||
+    personalMessagingEnabled() !==
+      (proof.link.principal_account_id !== undefined) ||
+    (personalMessagingEnabled() &&
+      proof.link.principal_account_id !== account_id)
+  )
+    throw new Error("RPC execution authorization changed or expired");
+};
+
 export async function acceptAgentRpc(
   subject: string,
   request: AgentRpcRequest,

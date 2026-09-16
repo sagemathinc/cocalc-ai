@@ -157,6 +157,7 @@ import {
   isProjectDiskQuotaStartBlocked,
 } from "../project-start-quota";
 import { normalizeRunQuota, runnerConfigFromQuota } from "../run-quota";
+import { fenceProjectHostAcpWork } from "./acp/worker-manager";
 import { browserIdleTimeoutSeconds } from "../browser-runtime";
 import {
   prepareProjectNetworkPolicy,
@@ -2601,6 +2602,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           `project stop did not converge; runner still reports state='${finalState}'`,
         );
       }
+      await fenceProjectHostAcpWork({ project_id });
       if (!syntheticRuntimeProbeProjects.has(project_id)) {
         try {
           const base = getMountPoint();
