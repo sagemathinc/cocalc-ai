@@ -88,8 +88,8 @@ jest.mock("@cocalc/frontend/project/runtime-capabilities", () => ({
   useProjectRuntimeCapabilities: () => ({ mode: "workspace", rootfs: false }),
 }));
 jest.mock("@cocalc/frontend/lite", () => ({ lite: false }));
-jest.mock("@cocalc/frontend/project/home-directory", () => ({
-  getProjectHomeDirectory: () => "/home/user",
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: { project_client: { configuration: jest.fn() } },
 }));
 jest.mock("@cocalc/frontend/frame-editors/frame-tree/register", () => ({
   get_file_editor: () => undefined,
