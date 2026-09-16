@@ -61,15 +61,17 @@ function unrefDelay(ms: number): Promise<void> {
 
 export async function clusterLink(
   address: string,
-  clusterLinkPassword: string,
+  clusterLinkPassword?: string,
   timeout = CREATE_LINK_TIMEOUT,
   localId?: string,
 ) {
   const client = connect({
     address,
-    extraHeaders: {
-      Cookie: `${CLUSTER_LINK_COOKIE_NAME}=${clusterLinkPassword}`,
-    },
+    extraHeaders: clusterLinkPassword
+      ? {
+          Cookie: `${CLUSTER_LINK_COOKIE_NAME}=${clusterLinkPassword}`,
+        }
+      : undefined,
   });
   if (client.info == null) {
     try {

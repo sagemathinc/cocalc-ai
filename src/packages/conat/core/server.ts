@@ -261,6 +261,9 @@ export interface InterestUpdate {
 }
 
 export function init(opts: Options) {
+  if (opts.clusterName && opts.getUser && !opts.clusterLinkPassword) {
+    throw Error("authenticated cluster must have clusterLinkPassword set");
+  }
   return new ConatServer(opts);
 }
 
@@ -2518,8 +2521,8 @@ export class ConatServer extends EventEmitter {
     if (!this.clusterName) {
       throw Error("if cluster is enabled, then the clusterName must be set");
     }
-    if (!this.options.clusterLinkPassword) {
-      throw Error("cluster must have clusterLinkPassword set");
+    if (!this.noAuth && !this.options.clusterLinkPassword) {
+      throw Error("authenticated cluster must have clusterLinkPassword set");
     }
 
     this.log("enabling cluster support", {
@@ -2643,8 +2646,8 @@ export class ConatServer extends EventEmitter {
       address: string,
       { timeout }: { timeout?: number } = {},
     ): Promise<ClusterLink> => {
-      if (!this.options.clusterLinkPassword) {
-        throw Error("clusterLinkPassword must be set");
+      if (!this.noAuth && !this.options.clusterLinkPassword) {
+        throw Error("authenticated cluster must have clusterLinkPassword set");
       }
       logger.debug("join: connecting to ", address);
       const link0 = this.clusterLinksByAddress[address];

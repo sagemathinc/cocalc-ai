@@ -34,6 +34,17 @@ describe("authenticated Conat caller metadata", () => {
     await ConatServer.closeAllForTests();
   });
 
+  it("requires a distinct link credential for authenticated clusters", () => {
+    expect(() =>
+      init({
+        id: "authenticated",
+        port: 0,
+        clusterName: "credential-boundary",
+        getUser: async () => ({ hub_id: "test" }),
+      }),
+    ).toThrow("authenticated cluster must have clusterLinkPassword set");
+  });
+
   it.each(["fast-rpc", "request"] as const)(
     "binds source bay claims over %s",
     async (transport) => {
