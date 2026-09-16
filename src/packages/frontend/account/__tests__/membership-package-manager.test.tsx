@@ -7,6 +7,7 @@ import {
   within,
 } from "@testing-library/react";
 import { useState } from "react";
+import userEvent from "@testing-library/user-event";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 import {
@@ -25,6 +26,7 @@ const getSiteLicenseOverview = jest.fn();
 const listSiteLicenseOverviews = jest.fn();
 const reviewSiteLicensePoolRequest = jest.fn();
 const getTeamLicense = jest.fn();
+const getMembershipPackages = jest.fn();
 const getTeamLicenseQuote = jest.fn();
 const purchaseTeamLicenseChange = jest.fn();
 const processPaymentIntents = jest.fn();
@@ -167,6 +169,7 @@ jest.mock("@cocalc/frontend/purchases/api", () => ({
   reviewSiteLicensePoolRequest: (...args: any[]) =>
     reviewSiteLicensePoolRequest(...args),
   getTeamLicense: (...args: any[]) => getTeamLicense(...args),
+  getMembershipPackages: (...args: any[]) => getMembershipPackages(...args),
   getTeamLicenseQuote: (...args: any[]) => getTeamLicenseQuote(...args),
   purchaseTeamLicenseChange: (...args: any[]) =>
     purchaseTeamLicenseChange(...args),
@@ -268,7 +271,10 @@ function makeTeamPackage(patch: Record<string, any> = {}) {
   };
 }
 
-function makeTeamLicenseOverview(packages: any[]) {
+function makeTeamLicenseOverview(
+  packages: any[],
+  standalonePackages: any[] = [],
+) {
   return {
     id: "team-license-1",
     owner_account_id: "owner-1",
@@ -288,6 +294,7 @@ function makeTeamLicenseOverview(packages: any[]) {
       package: membershipPackage,
     })),
     packages,
+    standalone_packages: standalonePackages,
   };
 }
 
@@ -380,6 +387,7 @@ describe("membership package managers", () => {
     sendVerificationEmail.mockResolvedValue(undefined);
     listSiteLicenseOverviews.mockResolvedValue([]);
     getTeamLicense.mockResolvedValue(null);
+    getMembershipPackages.mockResolvedValue([]);
     getTeamLicenseQuote.mockResolvedValue({
       current_period_start: new Date("2026-06-01T00:00:00Z"),
       current_period_end: new Date("2027-06-01T00:00:00Z"),
@@ -448,10 +456,98 @@ describe("membership package managers", () => {
     expect(listSiteLicenseOverviews).not.toHaveBeenCalled();
   });
 
-  it("confirms before revoking a team seat", async () => {
+  it("shows standalone Student seats and opens the assignment dialog with the keyboard", async () => {
+    const user = userEvent.setup();
+    const expires_at = new Date(Date.now() + 90 * 86400000);
+    getMembershipPackages.mockResolvedValue([
+      makeTeamPackage({
+        membership_class: "student",
+        seat_count: 10,
+        available_seat_count: 10,
+        expires_at,
+      }),
+    ]);
+    render(
+      <TeamPackageManager
+        tiers={[
+          ...TIERS,
+          { id: "student", label: "Student", team_visible: false },
+        ]}
+      />,
+    );
+    const section = await screen.findByRole("region", {
+      name: "Fixed-term team packages",
+    });
+    expect(
+      within(section).getByText("Student - 0 of 10 seats assigned"),
+    ).toBeVisible();
+    expect(within(section).getByText(/No automatic renewal/)).toBeVisible();
+    expect(
+      within(section).queryByRole("button", { name: /Add seats|Buy|Renew/ }),
+    ).toBeNull();
+    const assign = within(section).getByRole("button", { name: "Assign seat" });
+    assign.focus();
+    await user.keyboard("{Enter}");
+    const dialog = await screen.findByRole("dialog", {
+      name: "Assign Student seat",
+    });
+    await waitFor(() =>
+      expect(dialog.contains(document.activeElement)).toBe(true),
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(assign).toHaveFocus());
+    expect(purchaseTeamLicenseChange).not.toHaveBeenCalled();
+  });
+
+  it("uses server-filtered standalone packages without another package request", async () => {
+    const future = new Date(Date.now() + 90 * 86400000);
+    const renewing = makeTeamPackage({ expires_at: future });
+    const standalone = makeTeamPackage({
+      id: "standalone",
+      expires_at: future,
+    });
     getTeamLicense.mockResolvedValue(
-      makeTeamLicenseOverview([
+      makeTeamLicenseOverview([renewing], [standalone]),
+    );
+    render(<TeamPackageManager tiers={TIERS} />);
+    expect(
+      await screen.findAllByText("Member - 0 of 5 seats assigned"),
+    ).toHaveLength(2);
+    expect(
+      screen.getByRole("region", { name: "Fixed-term team packages" }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "Assign seat" })).toHaveLength(
+      2,
+    );
+    expect(getMembershipPackages).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the package endpoint for an older team-license response", async () => {
+    const future = new Date(Date.now() + 90 * 86400000);
+    const overview = makeTeamLicenseOverview([
+      makeTeamPackage({ expires_at: future }),
+    ]);
+    delete (overview as any).standalone_packages;
+    getTeamLicense.mockResolvedValue(overview);
+    getMembershipPackages.mockResolvedValue([
+      makeTeamPackage({ id: "legacy-standalone", expires_at: future }),
+    ]);
+    render(<TeamPackageManager tiers={TIERS} />);
+    expect(
+      await screen.findByRole("region", {
+        name: "Fixed-term team packages",
+      }),
+    ).toBeVisible();
+    expect(getMembershipPackages).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([false, true])(
+    "confirms before revoking a team seat (fixed-term=%s)",
+    async (fixedTerm) => {
+      const packages = [
         makeTeamPackage({
+          expires_at: new Date(Date.now() + 90 * 86400000),
           active_assignment_count: 1,
           available_seat_count: 4,
           assignments: [
@@ -463,27 +559,31 @@ describe("membership package managers", () => {
             },
           ],
         }),
-      ]),
-    );
-    revokeMembershipPackageSeat.mockResolvedValue({ revoked: true });
+      ];
+      getTeamLicense.mockResolvedValue(
+        fixedTerm ? null : makeTeamLicenseOverview(packages),
+      );
+      getMembershipPackages.mockResolvedValue(fixedTerm ? packages : []);
+      revokeMembershipPackageSeat.mockResolvedValue({ revoked: true });
 
-    render(<TeamPackageManager tiers={TIERS} />);
+      render(<TeamPackageManager tiers={TIERS} />);
 
-    await screen.findByText("Grace Hopper");
-    fireEvent.click(screen.getByText("Revoke"));
+      await screen.findByText("Grace Hopper");
+      fireEvent.click(screen.getByText("Revoke"));
 
-    await screen.findByText(
-      "Revoke the Member seat for Grace Hopper (grace@example.edu)?",
-    );
-    fireEvent.click(screen.getByText("Revoke seat"));
+      await screen.findByText(
+        "Revoke the Member seat for Grace Hopper (grace@example.edu)?",
+      );
+      fireEvent.click(screen.getByText("Revoke seat"));
 
-    await waitFor(() => {
-      expect(revokeMembershipPackageSeat).toHaveBeenCalledWith({
-        package_id: "team-1",
-        target_account_id: "user-1",
+      await waitFor(() => {
+        expect(revokeMembershipPackageSeat).toHaveBeenCalledWith({
+          package_id: "team-1",
+          target_account_id: "user-1",
+        });
       });
-    });
-  });
+    },
+  );
 
   it("purchases a new team package", async () => {
     getTeamLicenseQuote.mockResolvedValue({
@@ -676,65 +776,73 @@ describe("membership package managers", () => {
     expect(within(memberRow).getByRole("spinbutton")).toHaveValue("5");
   });
 
-  it("assigns a seat from an existing package", async () => {
-    getTeamLicense.mockResolvedValue(
-      makeTeamLicenseOverview([
+  it.each([false, true])(
+    "assigns a seat from an existing package (fixed-term=%s)",
+    async (fixedTerm) => {
+      const packages = [
         makeTeamPackage({
+          expires_at: new Date(Date.now() + 90 * 86400000),
           seat_count: 5,
           active_assignment_count: 0,
           available_seat_count: 5,
           assignments: [],
         }),
-      ]),
-    );
-    userSearch.mockResolvedValue([
-      {
-        account_id: "user-2",
-        first_name: "Ada",
-        last_name: "Lovelace",
-        email_address: "ada@example.com",
-      },
-    ]);
-    assignMembershipPackageSeat.mockResolvedValue({
-      id: "assignment-1",
-      package_id: "team-1",
-      account_id: "user-2",
-      assigned_at: new Date(),
-    });
-
-    render(<TeamPackageManager tiers={TIERS} />);
-
-    await waitFor(() => {
-      expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
-    });
-
-    fireEvent.click(screen.getAllByText("Assign seat")[0]);
-
-    await waitFor(() => {
-      expect(
-        screen.getByPlaceholderText("Search by name or enter an email address"),
-      ).toBeTruthy();
-    });
-
-    fireEvent.change(
-      screen.getByPlaceholderText("Search by name or enter an email address"),
-      { target: { value: "ada@example.com" } },
-    );
-    fireEvent.click(screen.getByText("Search"));
-
-    await waitFor(() => {
-      expect(screen.getByText("Ada Lovelace")).toBeTruthy();
-    });
-
-    fireEvent.click(screen.getAllByText("Assign seat")[1]);
-
-    await waitFor(() => {
-      expect(assignMembershipPackageSeat).toHaveBeenCalledWith({
+      ];
+      getTeamLicense.mockResolvedValue(
+        fixedTerm ? null : makeTeamLicenseOverview(packages),
+      );
+      getMembershipPackages.mockResolvedValue(fixedTerm ? packages : []);
+      userSearch.mockResolvedValue([
+        {
+          account_id: "user-2",
+          first_name: "Ada",
+          last_name: "Lovelace",
+          email_address: "ada@example.com",
+        },
+      ]);
+      assignMembershipPackageSeat.mockResolvedValue({
+        id: "assignment-1",
         package_id: "team-1",
-        target_account_id: "user-2",
+        account_id: "user-2",
+        assigned_at: new Date(),
       });
-    });
-  });
+
+      render(<TeamPackageManager tiers={TIERS} />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText("Assign seat").length).toBeGreaterThan(0);
+      });
+
+      fireEvent.click(screen.getAllByText("Assign seat")[0]);
+
+      await waitFor(() => {
+        expect(
+          screen.getByPlaceholderText(
+            "Search by name or enter an email address",
+          ),
+        ).toBeTruthy();
+      });
+
+      fireEvent.change(
+        screen.getByPlaceholderText("Search by name or enter an email address"),
+        { target: { value: "ada@example.com" } },
+      );
+      fireEvent.click(screen.getByText("Search"));
+
+      await waitFor(() => {
+        expect(screen.getByText("Ada Lovelace")).toBeTruthy();
+      });
+
+      fireEvent.click(screen.getAllByText("Assign seat")[1]);
+
+      await waitFor(() => {
+        expect(assignMembershipPackageSeat).toHaveBeenCalledWith({
+          package_id: "team-1",
+          target_account_id: "user-2",
+        });
+      });
+    },
+  );
 
   it("reserves a seat by email when no account exists yet", async () => {
     getTeamLicense.mockResolvedValue(

@@ -104,6 +104,39 @@ Memberships are purchased directly:
 
 Upgrades (e.g., member → pro) cancel the existing subscription and apply prorated credit in the first charge.
 
+### Admin-Assisted Student Team Packages
+
+Admins can create fixed-term team packages for enabled course-visible tiers
+(including Student tiers with `team_visible=false`). This exception belongs to
+the admin quote/purchase APIs; ordinary team purchases and seat expansion still
+require `team_visible=true`. Disabled tiers and site-package creation remain
+unavailable. Do not change global tier visibility to provision a hardship grant.
+
+Using a current CLI, preview a complimentary package for its intended owner:
+
+```sh
+cocalc --profile prod --api https://cocalc.ai admin purchase membership-package <owner-account-id> \
+  --kind team --membership-class student --seat-count 10 \
+  --interval month --price 0 --source free \
+  --starts-at 2026-09-15T00:00:00Z --expires-at 2026-12-12T08:00:00Z \
+  --reason "Approved Fall student hardship seats" \
+  --idempotency-key <stable-support-request-key>
+```
+
+Review the owner, tier, seat count, dates, and zero custom price, then repeat the
+same command with `--commit` using a fresh-auth admin session. `--interval`
+selects the reference price for the quote; it does **not** create a subscription
+or automatic renewal. Use explicit dates for the approved term, and keep the
+idempotency key unchanged on retries.
+
+The owner assigns or revokes these seats under **Settings -> Team License ->
+Fixed-term team packages** (`/settings/team-licenses`). They can select an
+existing account or reserve a seat by email. Email reservations must be claimed
+after the recipient verifies that address. Each grant is bounded by the package
+expiry, and expired packages cannot accept new assignments. No `team_licenses`
+billing record is created; recurring team-license renewal does not include these
+packages. The owner does not need to switch a student-pay course to institute-pay.
+
 ## API Surface
 
 HTTP API endpoints (implemented in `@cocalc/http-api`; the legacy LLM endpoint name is retained):

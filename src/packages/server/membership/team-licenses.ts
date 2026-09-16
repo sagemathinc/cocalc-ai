@@ -228,13 +228,27 @@ export async function getTeamLicenseOverviewForOwner({
     client,
   });
   if (!license) return null;
-  const [seatLines, ownerPackages] = await Promise.all([
-    listTeamLicenseSeatLines({ team_license_id: license.id, client }),
-    listMembershipPackageDetailsForOwner({ owner_account_id, client }),
-  ]);
+  const seatLines = await listTeamLicenseSeatLines({
+    team_license_id: license.id,
+    client,
+  });
   const packageIds = new Set(
     seatLines.map((line) => line.package_id).filter(Boolean),
   );
+  const now = Date.now();
+  const ownerPackages = await listMembershipPackageDetailsForOwner({
+    owner_account_id,
+    client,
+    filter: (pkg) => {
+      if (packageIds.has(pkg.id)) return true;
+      return (
+        pkg.kind === "team" &&
+        !`${pkg.metadata?.team_license_id ?? ""}`.trim() &&
+        pkg.expires_at != null &&
+        new Date(pkg.expires_at).valueOf() > now
+      );
+    },
+  });
   const packageById = new Map(
     ownerPackages
       .filter((pkg) => packageIds.has(pkg.id))
@@ -250,6 +264,7 @@ export async function getTeamLicenseOverviewForOwner({
     packages: lines
       .map((line) => line.package)
       .filter((pkg): pkg is MembershipPackageDetails => pkg != null),
+    standalone_packages: ownerPackages.filter((pkg) => !packageIds.has(pkg.id)),
   };
 }
 

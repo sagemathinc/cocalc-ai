@@ -21,6 +21,7 @@ export interface PackageAssignmentAllocationSource {
   revoked_at?: Date | string | null;
   assignment_metadata?: Record<string, unknown> | null;
   package_kind: PackageAssignmentKind;
+  package_metadata?: Record<string, unknown> | null;
   membership_class: string;
   package_starts_at?: Date | string | null;
   package_expires_at?: Date | string | null;
@@ -121,6 +122,7 @@ export function packageAssignmentAllocationSource({
         : { grant_expires_at: assignment.grant_expires_at }),
     },
     package_kind: pkg.kind,
+    package_metadata: pkg.metadata,
     membership_class: pkg.membership_class,
     package_starts_at: pkg.starts_at,
     package_expires_at: pkg.expires_at,
@@ -144,9 +146,12 @@ export async function recordMembershipPackageAssignmentMonth({
 }
 
 function packageAssignmentBillingInterval(
-  kind: PackageAssignmentKind,
+  source: PackageAssignmentAllocationSource,
 ): MembershipAllocationBillingInterval {
-  return kind === "team" ? "year" : "fixed";
+  return source.package_kind === "team" &&
+    `${source.package_metadata?.team_license_id ?? ""}`.trim()
+    ? "year"
+    : "fixed";
 }
 
 function activationDate(source: PackageAssignmentAllocationSource): string {
@@ -252,7 +257,7 @@ export async function recordPackageAssignmentMonth({
     account_id: source.account_id,
     channel: packageAssignmentChannel(source.package_kind),
     membership_class: effectiveMembershipClass(source),
-    billing_interval: packageAssignmentBillingInterval(source.package_kind),
+    billing_interval: packageAssignmentBillingInterval(source),
     lifecycle: "first_paid" as const,
     allocation_end: interval.allocation_end,
     client,

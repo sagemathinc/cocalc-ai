@@ -224,9 +224,11 @@ function isMembershipTierVisibleForPackageKind({
 async function getPurchasableMembershipTierForPackageKind({
   kind,
   membership_class,
+  allow_course_tier_for_team = false,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
+  allow_course_tier_for_team?: boolean;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
     throw Error(
@@ -239,7 +241,12 @@ async function getPurchasableMembershipTierForPackageKind({
   if (
     !tier ||
     tier.disabled ||
-    !isMembershipTierVisibleForPackageKind({ kind, tier })
+    (!isMembershipTierVisibleForPackageKind({ kind, tier }) &&
+      !(
+        allow_course_tier_for_team &&
+        kind === "team" &&
+        tier.course_store_visible === true
+      ))
   ) {
     throw Error(
       `membership tier "${membership_class}" is not available for ${kind} packages`,
@@ -1678,17 +1685,20 @@ async function getTierSeatQuote({
   interval,
   starts_at,
   expires_at,
+  allow_course_tier_for_team = false,
 }: {
   product: MembershipPackageProduct;
   membership_class: MembershipClass;
   interval: "month" | "year";
   starts_at?: Date;
   expires_at?: Date;
+  allow_course_tier_for_team?: boolean;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
     kind,
     membership_class,
+    allow_course_tier_for_team,
   });
   const seat_price = getMembershipPrice(tier, interval);
   const start = starts_at ?? new Date();
@@ -1828,6 +1838,9 @@ async function resolveMembershipPackageQuoteInternal(
     interval,
     starts_at: asDate(product.starts_at),
     expires_at: asDate(product.expires_at),
+    // Only the authenticated admin quote/purchase path permits custom periods.
+    // Do not accept this exception from product metadata or public expansion.
+    allow_course_tier_for_team: allow_custom_period,
   });
 }
 
@@ -2456,21 +2469,23 @@ export async function listMembershipPackageAssignments({
 export async function listMembershipPackageDetailsForOwner({
   owner_account_id,
   client,
+  filter,
 }: {
   owner_account_id: string;
   client?: PoolClient;
+  filter?: (pkg: MembershipPackageRecord) => boolean;
 }): Promise<MembershipPackageDetails[]> {
-  const packages = await listMembershipPackagesForOwner({
-    owner_account_id,
+  const packages = (
+    await listMembershipPackagesForOwner({ owner_account_id, client })
+  ).filter((pkg) => filter?.(pkg) ?? true);
+  const assignmentsByPackage = await listMembershipPackageAssignmentsByPackage({
+    package_ids: packages.map(({ id }) => id),
+    include_revoked: true,
     client,
   });
   const details: MembershipPackageDetails[] = [];
   for (const pkg of packages) {
-    const assignments = await listMembershipPackageAssignments({
-      package_id: pkg.id,
-      include_revoked: true,
-      client,
-    });
+    const assignments = assignmentsByPackage.get(pkg.id) ?? [];
     const active_assignment_count = assignments.filter(
       (assignment) => !assignment.revoked_at,
     ).length;
