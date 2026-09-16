@@ -744,14 +744,6 @@ start_cluster_bay() {
     return 0
   fi
 
-  if [ "$role" = "attached" ]; then
-    seed_password="$(primary_seed_conat_password_value || true)"
-    if [ -z "$seed_password" ]; then
-      echo "unable to resolve seed hub conat password for $bay_id" >&2
-      return 1
-    fi
-  fi
-
   mkdir -p "$state_dir"
   mkdir -p "$(dirname "$stdout_log")"
   if [ -n "$data_dir" ]; then

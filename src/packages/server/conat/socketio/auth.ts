@@ -20,7 +20,12 @@ import {
   PROJECT_ID_COOKIE_NAME,
   REMEMBER_ME_COOKIE_NAME,
 } from "@cocalc/backend/auth/cookie-names";
-import { authenticateBayCredential } from "@cocalc/server/inter-bay/bay-credentials";
+import {
+  authenticateBayCredential,
+  isBayCredentialUserActive,
+} from "@cocalc/server/inter-bay/bay-credentials";
+import { getLogger } from "@cocalc/backend/logger";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import { getAccountWithApiKey } from "@cocalc/server/api/manage";
 import { getProjectSecretToken } from "@cocalc/server/projects/control/secret-token";
 import { getAdmins } from "@cocalc/server/accounts/is-admin";
@@ -70,6 +75,7 @@ import {
 
 startAccountSecurityStateSyncLoop();
 
+const logger = getLogger("conat-auth");
 const COOKIES = `'${BAY_CREDENTIAL_COOKIE_NAME}', '${HUB_PASSWORD_COOKIE_NAME}', '${REMEMBER_ME_COOKIE_NAME}', ${API_COOKIE_NAME}, '${PROJECT_SECRET_COOKIE_NAME}' or '${PROJECT_ID_COOKIE_NAME}'`;
 const DEFAULT_AGENT_SCOPES = ["browser_session", "project_session"] as const;
 
@@ -453,6 +459,16 @@ function shouldCacheIsAllowedDecision(subject: string): boolean {
   );
 }
 
+function isInterBayServiceSubject(subject: string): boolean {
+  return (
+    subject.startsWith("bay.") ||
+    subject.startsWith("global.directory.rpc.") ||
+    subject.startsWith("global.account-directory.rpc.") ||
+    subject.startsWith("global.bay-registry.rpc.") ||
+    subject.startsWith("global.auth-token.rpc.")
+  );
+}
+
 export async function isAllowed({
   user,
   subject,
@@ -479,6 +495,21 @@ export async function isAllowed({
     }
   }
   if (userType == "hub") {
+    const hasBayCredential =
+      "bay_credential_id" in user && !!user.bay_credential_id;
+    if (hasBayCredential) {
+      try {
+        if (!(await isBayCredentialUserActive(user))) return false;
+      } catch (err) {
+        logger.error("failed closed while checking bay credential", err);
+        return false;
+      }
+    } else if (
+      getConfiguredClusterRole() !== "standalone" &&
+      isInterBayServiceSubject(subject)
+    ) {
+      return false;
+    }
     // File-server management RPC is intentionally hub-only. Other hub subjects
     // retain the existing full-permission behavior.
     return true;

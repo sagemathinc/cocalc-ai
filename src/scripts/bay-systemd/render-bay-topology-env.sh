@@ -8,7 +8,7 @@ BIND_HOST=""
 PEER_HEALTH_PORT="9402"
 PEER_HEALTH_PATH="/peer-health"
 PEER_LOCAL_HEALTH_TIMEOUT="3"
-SEED_CONAT_PORT="10300"
+SEED_CONAT_SERVER=""
 TOPOLOGY_EPOCH=""
 BAYS=()
 
@@ -32,7 +32,7 @@ Options:
   --peer-local-health-timeout <s>
                              local bay-health timeout used inside peer-health
                              responses, default: 3
-  --seed-conat-port <n>      seed hub-worker Conat fabric port, default: 10300
+  --seed-conat-server <url>  HTTPS seed Conat URL required for attached bays
   --topology-epoch <value>   default: current unix timestamp
   -h, --help                 show this help
 
@@ -41,6 +41,7 @@ Example:
     --cluster bella \
     --seed-bay bay-0 \
     --local-bay bay-1 \
+    --seed-conat-server https://seed.internal.example/conat \
     --bay bay-0=10.206.0.21 \
     --bay bay-1=10.206.0.22
 EOF
@@ -87,8 +88,8 @@ while [[ $# -gt 0 ]]; do
       PEER_LOCAL_HEALTH_TIMEOUT="$2"
       shift 2
       ;;
-    --seed-conat-port)
-      SEED_CONAT_PORT="$2"
+    --seed-conat-server)
+      SEED_CONAT_SERVER="$2"
       shift 2
       ;;
     --topology-epoch)
@@ -115,7 +116,6 @@ done
 [[ "${#BAYS[@]}" -ge 1 ]] || die "at least one --bay is required"
 [[ "$PEER_HEALTH_PORT" =~ ^[0-9]+$ ]] || die "--peer-health-port must be an integer"
 [[ "$PEER_LOCAL_HEALTH_TIMEOUT" =~ ^[0-9]+$ ]] || die "--peer-local-health-timeout must be an integer"
-[[ "$SEED_CONAT_PORT" =~ ^[0-9]+$ ]] || die "--seed-conat-port must be an integer"
 [[ "$PEER_HEALTH_PATH" == /* ]] || die "--peer-health-path must start with /"
 
 if [[ -z "$TOPOLOGY_EPOCH" ]]; then
@@ -154,6 +154,17 @@ role="attached"
 if [[ "$LOCAL_BAY_ID" == "$SEED_BAY_ID" ]]; then
   role="seed"
 fi
+fabric_server="$SEED_CONAT_SERVER"
+if [[ "$role" == "attached" ]]; then
+  [[ -n "$SEED_CONAT_SERVER" ]] || die "--seed-conat-server is required for attached bays"
+  case "$SEED_CONAT_SERVER" in
+    https://*) ;;
+    http://localhost:*|http://127.0.0.1:*|http://\[::1\]:*) ;;
+    *) die "--seed-conat-server must use HTTPS outside loopback" ;;
+  esac
+else
+  fabric_server=""
+fi
 
 bay_ids_csv="$(IFS=,; echo "${bay_ids[*]}")"
 peer_urls="$(IFS=' '; echo "${urls[*]}")"
@@ -167,8 +178,8 @@ COCALC_CLUSTER_ROLE=$(shell_quote "$role")
 COCALC_CLUSTER_SEED_BAY_ID=$(shell_quote "$SEED_BAY_ID")
 COCALC_CLUSTER_BAY_IDS=$(shell_quote "$bay_ids_csv")
 COCALC_CLUSTER_TOPOLOGY_EPOCH=$(shell_quote "$TOPOLOGY_EPOCH")
-COCALC_CLUSTER_SEED_CONAT_SERVER=$(shell_quote "http://${seed_internal_ip}:${SEED_CONAT_PORT}")
-COCALC_INTER_BAY_CONAT_SERVER=$(shell_quote "http://${seed_internal_ip}:${SEED_CONAT_PORT}")
+COCALC_CLUSTER_SEED_CONAT_SERVER=$(shell_quote "$fabric_server")
+COCALC_INTER_BAY_CONAT_SERVER=$(shell_quote "$fabric_server")
 
 COCALC_BAY_PEER_HEALTH_HOST=$(shell_quote "$BIND_HOST")
 COCALC_BAY_PEER_HEALTH_PORT=$(shell_quote "$PEER_HEALTH_PORT")

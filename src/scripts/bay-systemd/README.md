@@ -525,6 +525,8 @@ The repeatable wrapper for a small cluster is `bay-cluster.sh`:
 ./src/scripts/bay-systemd/bay-cluster.sh install-topology \
   --cluster bella \
   --seed-bay bay-0 \
+  --seed-conat-server https://seed.internal.example/conat \
+  --restart-hub-workers \
   --bay bay-0=ubuntu@34.0.157.185=10.206.0.21 \
   --bay bay-1=ubuntu@34.0.146.0=10.206.0.22
 
@@ -549,6 +551,12 @@ bootstrap manifest. To rotate one bay after installation, use the seed-side
 `pnpm --dir packages/server bay-credential` command documented in
 `docs/multibay-credentials.md`, install the replacement file on that bay, and
 restart only that bay's hub workers before revoking the old credential.
+
+The seed fabric URL must use HTTPS outside loopback. Attached bays never receive
+the seed's generic Conat password. Credential files are transferred through
+remotely created mode-0700 temporary directories, and the seed consumes the
+digest manifest as a one-shot enrollment file. On the first installation use
+`--restart-hub-workers`; later enrollment is imported live by the seed watcher.
 
 ## Important Constraints
 

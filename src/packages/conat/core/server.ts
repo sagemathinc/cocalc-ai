@@ -1452,6 +1452,21 @@ export class ConatServer extends EventEmitter {
     return targets.length;
   };
 
+  private authenticatedCaller = (user: any) => {
+    if (
+      typeof user?.cluster_id === "string" &&
+      typeof user?.bay_id === "string" &&
+      typeof user?.bay_credential_id === "string"
+    ) {
+      return {
+        cluster_id: user.cluster_id,
+        bay_id: user.bay_id,
+        bay_credential_id: user.bay_credential_id,
+      };
+    }
+    return undefined;
+  };
+
   private publish = async ({
     subject,
     data,
@@ -1490,6 +1505,12 @@ export class ConatServer extends EventEmitter {
       user: from,
       trusted: isHubUser(from),
     });
+    // This slot is server-owned authenticated caller metadata. Direct clients
+    // can never choose it; trusted cluster links preserve the value stamped by
+    // the first server while forwarding the message.
+    if (!this.isSystemUser(from) || data[7] == null) {
+      data[7] = this.authenticatedCaller(from);
+    }
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();
 
@@ -2049,6 +2070,7 @@ export class ConatServer extends EventEmitter {
             encoding,
             raw,
             headers,
+            caller: this.authenticatedCaller(user),
           },
           Math.min(timeout, MAX_INTEREST_TIMEOUT),
         );
@@ -2141,6 +2163,7 @@ export class ConatServer extends EventEmitter {
             subject,
             pattern: target.pattern,
             payload,
+            caller: this.authenticatedCaller(user),
           },
           Math.min(timeout, MAX_INTEREST_TIMEOUT),
         );
@@ -2269,6 +2292,7 @@ export class ConatServer extends EventEmitter {
         encoding,
         raw,
         headers,
+        caller: this.authenticatedCaller(user),
       });
     });
 

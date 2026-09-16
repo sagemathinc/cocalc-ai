@@ -72,18 +72,27 @@ const BAY_CREDENTIAL_SWEEP_MS = 5_000;
 
 function startBayCredentialRevocationSweep(server: ConatServer): void {
   if (getConfiguredClusterRole() !== "seed") return;
+  let running = false;
   const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    const bayConnections = Object.entries(server.getStatsSnapshot()).filter(
+      ([, stats]) => (stats.user as any)?.bay_credential_id,
+    );
+    if (!bayConnections.length) {
+      running = false;
+      return;
+    }
     try {
-      const revoked: string[] = [];
-      for (const [id, stats] of Object.entries(server.getStatsSnapshot())) {
-        const user = stats.user as any;
-        if (
-          user?.bay_credential_id &&
-          !(await isBayCredentialUserActive(user))
-        ) {
-          revoked.push(id);
-        }
-      }
+      const checks = await Promise.all(
+        bayConnections.map(async ([id, stats]) => ({
+          id,
+          active: await isBayCredentialUserActive(stats.user as any),
+        })),
+      );
+      const revoked = checks
+        .filter(({ active }) => !active)
+        .map(({ id }) => id);
       if (revoked.length) {
         logger.info("disconnecting revoked bay credential connections", {
           count: revoked.length,
@@ -91,7 +100,16 @@ function startBayCredentialRevocationSweep(server: ConatServer): void {
         server.disconnectSockets(revoked);
       }
     } catch (err) {
-      logger.error("failed to check bay credential revocations", err);
+      // Registry availability is part of bay authentication. If it cannot be
+      // checked, disconnect every bay principal rather than extending access.
+      const ids = bayConnections.map(([id]) => id);
+      logger.error(
+        "failed to check bay credential revocations; disconnecting bay connections",
+        { count: ids.length, err },
+      );
+      server.disconnectSockets(ids);
+    } finally {
+      running = false;
     }
   }, BAY_CREDENTIAL_SWEEP_MS);
   timer.unref?.();

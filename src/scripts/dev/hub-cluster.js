@@ -56,7 +56,20 @@ function writeCredentialBootstrap(clusterId, seedStateDir, bays) {
       secret_digest: crypto.createHash("sha256").update(secret).digest("hex"),
     };
   });
-  fs.writeFileSync(filename, `${JSON.stringify(entries, null, 2)}\n`, {
+  const text = `${JSON.stringify(entries, null, 2)}\n`;
+  const digest = crypto.createHash("sha256").update(text).digest("hex");
+  // A consumed manifest leaves its digest. Do not recreate an identical
+  // manifest from raw files on every restart, but do enroll an intentionally
+  // changed bay set or credential.
+  const complete = `${filename}.complete`;
+  if (
+    fs.existsSync(complete) &&
+    fs.readFileSync(complete, "utf8").trim() === digest
+  ) {
+    return filename;
+  }
+  if (fs.existsSync(filename)) return filename;
+  fs.writeFileSync(filename, text, {
     mode: 0o600,
   });
   fs.chmodSync(filename, 0o600);
@@ -256,9 +269,7 @@ function normalizeBay(rawBay, idx, context) {
     seedConatServer:
       role === "attached" ? "" : trim(globalDefaults.primarySeedConatServer),
     seedConatPassword:
-      role === "attached"
-        ? trim(rawBay.seed_conat_password || rawBay.seedConatPassword)
-        : trim(globalDefaults.primarySeedConatPassword),
+      role === "attached" ? "" : trim(globalDefaults.primarySeedConatPassword),
     softwareBaseUrlForce:
       trim(rawBay.software_base_url_force || rawBay.softwareBaseUrlForce) ||
       (isPrimary

@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -146,6 +147,40 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
         line.startsWith("COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE="),
       ),
     );
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("consumed credential bootstrap is not recreated on dev restart", async () => {
+  const root = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "cocalc-hub-bootstrap-"),
+  );
+  const env = {
+    STATE_DIR: path.join(root, "seed-state"),
+    COCALC_BAY_ID: "bay-0",
+    HUB_PORT: "13004",
+    HUB_BIND_HOST: "localhost",
+    HUB_ENABLE_SECOND_BAY: "1",
+    HUB_SECOND_BAY_ID: "bay-1",
+    HUB_SECOND_BAY_PORT: "13114",
+  };
+  try {
+    const first = normalizeHubCluster(env, { root });
+    assert.ok(fs.existsSync(first.credentialBootstrapFile));
+    const digest = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(first.credentialBootstrapFile))
+      .digest("hex");
+    fs.writeFileSync(
+      `${first.credentialBootstrapFile}.complete`,
+      `${digest}\n`,
+      { mode: 0o600 },
+    );
+    fs.unlinkSync(first.credentialBootstrapFile);
+    const second = normalizeHubCluster(env, { root });
+    assert.equal(second.credentialBootstrapFile, first.credentialBootstrapFile);
+    assert.equal(fs.existsSync(second.credentialBootstrapFile), false);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

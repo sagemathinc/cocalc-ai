@@ -33,12 +33,21 @@ pnpm --dir packages/server bay-credential revoke \
 
 Issuing a replacement does not revoke the previous credential, so an
 interrupted rotation can be resumed. Revocation prevents reconnect immediately.
-The seed Conat server sweeps authenticated bay sockets every five seconds and
-disconnects a revoked live connection; authorization checks also reject it on
-its next publish or subscription.
+Every publish and subscription rechecks registry status with a bounded timeout.
+The seed also checks live bay sockets in parallel every five seconds and
+disconnects revoked connections. A registry error fails closed: the operation
+is denied and the sweep disconnects all bay-credential connections.
 
 `bay-cluster.sh install-topology` creates distinct credentials, installs only
 the owning bay's raw file on each machine, and installs a digest-only bootstrap
-manifest on the seed. The local development hub cluster does the equivalent in
-its per-bay state directories. Single-bay installations continue to use their
-existing local Conat authentication.
+manifest on the seed through a mode-0700 remotely created temporary directory.
+The seed validates existing ID/bay/digest bindings transactionally, imports the
+manifest once, records completion, and deletes it. Running seed workers watch
+the enrollment path, so adding a bay does not require a restart; the first
+installation must use `--restart-hub-workers` if workers do not yet watch that
+path. A revoked credential or conflicting ID is never restored by replay.
+
+Attached bays require an explicit HTTPS seed fabric URL. The generic seed Conat
+password is not copied to them. Local development uses loopback HTTP and creates
+the same one-shot manifest in its per-bay state directories. Single-bay
+installations continue to use their existing local Conat authentication.

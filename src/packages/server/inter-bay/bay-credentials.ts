@@ -9,10 +9,11 @@ import {
   randomUUID,
   timingSafeEqual,
 } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink, writeFile } from "node:fs/promises";
 
 import type { CoCalcUser } from "@cocalc/conat/auth/subject-policy";
 import getPool from "@cocalc/database/pool";
+import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getConfiguredBayCredential,
@@ -22,6 +23,9 @@ import {
 
 const TABLE = "cluster_bay_credentials";
 const PREFIX = "cocalc-bay-v1";
+const BOOTSTRAP_POLL_MS = 1_000;
+const ACTIVE_CHECK_TIMEOUT_MS = 2_000;
+const logger = getLogger("inter-bay:bay-credentials");
 
 export interface BayCredentialMetadata {
   cluster_id: string;
@@ -37,6 +41,7 @@ export interface IssuedBayCredential extends BayCredentialMetadata {
 }
 
 let ensurePromise: Promise<void> | undefined;
+let bootstrapTimer: NodeJS.Timeout | undefined;
 
 function assertSeedCredentialAuthority(): void {
   if (getConfiguredClusterRole() !== "seed") {
@@ -207,6 +212,7 @@ export async function authenticateBayCredential(
   const bay_id = `${rows[0].bay_id}`;
   return {
     hub_id: `bay:${bay_id}`,
+    cluster_id: getConfiguredClusterId(),
     bay_id,
     bay_credential_id: credential_id,
   };
@@ -219,43 +225,53 @@ export async function isBayCredentialUserActive(
     return true;
   }
   await ensureTable();
-  const { rows } = await getPool().query(
-    `SELECT 1 FROM ${TABLE}
-      WHERE cluster_id=$1 AND bay_id=$2 AND credential_id=$3
-        AND revoked_at IS NULL
-      LIMIT 1`,
-    [getConfiguredClusterId(), user.bay_id, user.bay_credential_id],
-  );
-  return rows.length === 1;
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const { rows } = await Promise.race([
+      getPool().query(
+        `SELECT 1 FROM ${TABLE}
+          WHERE cluster_id=$1 AND bay_id=$2 AND credential_id=$3
+            AND revoked_at IS NULL
+          LIMIT 1`,
+        [getConfiguredClusterId(), user.bay_id, user.bay_credential_id],
+      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(Error("bay credential registry check timed out")),
+          ACTIVE_CHECK_TIMEOUT_MS,
+        );
+        timer.unref?.();
+      }),
+    ]);
+    return rows.length === 1;
+  } finally {
+    if (timer != null) clearTimeout(timer);
+  }
 }
 
-// The seed's own fabric client uses the same credential path as attached bays.
-// Bootstrap only that local secret; attached credentials are issued explicitly.
-export async function ensureLocalSeedBayCredential(): Promise<void> {
-  const credential = getConfiguredBayCredential();
-  if (!credential) return;
-  const parsed = parse(credential);
-  await ensureTable();
-  await getPool().query(
-    `INSERT INTO ${TABLE}
-       (credential_id, cluster_id, bay_id, secret_digest)
-     VALUES ($1,$2,$3,$4)
-     ON CONFLICT (credential_id) DO NOTHING`,
-    [
-      parsed.credential_id,
-      getConfiguredClusterId(),
-      getConfiguredBayId(),
-      digest(parsed.secret),
-    ],
+interface BootstrapEntry {
+  credential_id: string;
+  cluster_id: string;
+  bay_id: string;
+  secret_digest: Buffer;
+}
+
+function bootstrapFile(): string | undefined {
+  return (
+    `${process.env.COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE ?? ""}`.trim() ||
+    undefined
   );
-  const bootstrapFile = `${
-    process.env.COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE ?? ""
-  }`.trim();
-  if (!bootstrapFile) return;
-  const entries = JSON.parse(await readFile(bootstrapFile, "utf8"));
-  if (!Array.isArray(entries)) throw Error("invalid bay credential bootstrap");
-  for (const entry of entries) {
+}
+
+function parseBootstrap(value: unknown): BootstrapEntry[] {
+  if (!Array.isArray(value)) throw Error("invalid bay credential bootstrap");
+  const seen = new Set<string>();
+  return value.map((entry) => {
     const credential_id = required(entry?.credential_id, "credential_id");
+    if (seen.has(credential_id)) {
+      throw Error(`duplicate bootstrap credential '${credential_id}'`);
+    }
+    seen.add(credential_id);
     const cluster_id = required(entry?.cluster_id, "cluster_id");
     const bay_id = required(entry?.bay_id, "bay_id");
     const digestHex = required(entry?.secret_digest, "secret_digest");
@@ -265,16 +281,123 @@ export async function ensureLocalSeedBayCredential(): Promise<void> {
     if (cluster_id !== getConfiguredClusterId()) {
       throw Error("bay credential bootstrap cluster does not match");
     }
-    await getPool().query(
-      `INSERT INTO ${TABLE}
-         (credential_id, cluster_id, bay_id, secret_digest)
-       VALUES ($1,$2,$3,$4)
-       ON CONFLICT (credential_id) DO NOTHING`,
-      [credential_id, cluster_id, bay_id, Buffer.from(digestHex, "hex")],
+    return {
+      credential_id,
+      cluster_id,
+      bay_id,
+      secret_digest: Buffer.from(digestHex, "hex"),
+    };
+  });
+}
+
+async function insertOrVerifyBootstrapEntry(
+  db: { query: (sql: string, params?: unknown[]) => Promise<any> },
+  entry: BootstrapEntry,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO ${TABLE}
+       (credential_id, cluster_id, bay_id, secret_digest)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (credential_id) DO NOTHING`,
+    [entry.credential_id, entry.cluster_id, entry.bay_id, entry.secret_digest],
+  );
+  const { rows } = await db.query(
+    `SELECT cluster_id, bay_id, secret_digest, revoked_at
+       FROM ${TABLE}
+      WHERE credential_id=$1
+      FOR UPDATE`,
+    [entry.credential_id],
+  );
+  const existing = rows[0];
+  const stored = existing?.secret_digest;
+  if (
+    !existing ||
+    existing.cluster_id !== entry.cluster_id ||
+    existing.bay_id !== entry.bay_id ||
+    existing.revoked_at != null ||
+    !Buffer.isBuffer(stored) ||
+    stored.length !== entry.secret_digest.length ||
+    !timingSafeEqual(stored, entry.secret_digest)
+  ) {
+    throw Error(
+      `bay credential bootstrap conflicts with registry for '${entry.credential_id}'`,
     );
   }
 }
 
+async function importBootstrapFile(filename: string): Promise<boolean> {
+  let text: string;
+  try {
+    text = await readFile(filename, "utf8");
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return false;
+    throw err;
+  }
+  const entries = parseBootstrap(JSON.parse(text));
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    for (const entry of entries) {
+      await insertOrVerifyBootstrapEntry(client, entry);
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+  await writeFile(
+    `${filename}.complete`,
+    `${createHash("sha256").update(text, "utf8").digest("hex")}\n`,
+    { mode: 0o600 },
+  );
+  try {
+    await unlink(filename);
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") throw err;
+  }
+  logger.info("imported one-shot bay credential bootstrap", {
+    count: entries.length,
+  });
+  return true;
+}
+
+function startBootstrapWatcher(filename: string): void {
+  if (bootstrapTimer != null) return;
+  let running = false;
+  bootstrapTimer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    try {
+      await importBootstrapFile(filename);
+    } catch (err) {
+      logger.error("failed to import bay credential bootstrap", err);
+    } finally {
+      running = false;
+    }
+  }, BOOTSTRAP_POLL_MS);
+  bootstrapTimer.unref?.();
+}
+
+// The raw local file proves possession but never enrolls itself. Enrollment is
+// an explicit, one-shot registry import, so deleting or revoking registry state
+// cannot silently resurrect a credential on restart.
+export async function ensureLocalSeedBayCredential(): Promise<void> {
+  const credential = getConfiguredBayCredential();
+  if (!credential) return;
+  const filename = bootstrapFile();
+  await ensureTable();
+  if (filename) await importBootstrapFile(filename);
+  const principal = await authenticateBayCredential(credential);
+  if (!("bay_id" in principal) || principal.bay_id !== getConfiguredBayId()) {
+    throw Error("configured seed bay credential has the wrong bay identity");
+  }
+  if (filename) startBootstrapWatcher(filename);
+}
+
 export function resetBayCredentialTableForTests(): void {
   ensurePromise = undefined;
+  if (bootstrapTimer != null) clearInterval(bootstrapTimer);
+  bootstrapTimer = undefined;
 }

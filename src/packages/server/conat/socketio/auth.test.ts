@@ -13,6 +13,8 @@ const verifyProjectHostAuthTokenMock = jest.fn();
 const ensureAccountSecurityStateReadyMock = jest.fn();
 const isAccountBannedCachedMock = jest.fn();
 const getAccountRevokedBeforeCachedMock = jest.fn();
+const authenticateBayCredentialMock = jest.fn();
+const isBayCredentialUserActiveMock = jest.fn();
 
 jest.mock("@cocalc/backend/data", () => ({
   ...jest.requireActual("@cocalc/backend/data"),
@@ -29,6 +31,14 @@ jest.mock("@cocalc/server/project-host/bootstrap-token", () => ({
   __esModule: true,
   verifyProjectHostToken: (...args: any[]) =>
     verifyProjectHostTokenMock(...args),
+}));
+
+jest.mock("@cocalc/server/inter-bay/bay-credentials", () => ({
+  __esModule: true,
+  authenticateBayCredential: (...args: any[]) =>
+    authenticateBayCredentialMock(...args),
+  isBayCredentialUserActive: (...args: any[]) =>
+    isBayCredentialUserActiveMock(...args),
 }));
 
 jest.mock("@cocalc/conat/auth/project-host-token", () => ({
@@ -128,6 +138,8 @@ beforeEach(() => {
   ensureAccountSecurityStateReadyMock.mockReset().mockResolvedValue(undefined);
   isAccountBannedCachedMock.mockReset().mockReturnValue(false);
   getAccountRevokedBeforeCachedMock.mockReset().mockReturnValue(undefined);
+  authenticateBayCredentialMock.mockReset();
+  isBayCredentialUserActiveMock.mockReset().mockResolvedValue(true);
   (hasProjectCollaboratorAccessAllowRemote as jest.Mock).mockReset();
   (resolveProjectAccessAllowRemote as jest.Mock).mockReset();
 });
@@ -159,6 +171,60 @@ describe("test isAllowed for hub", () => {
           await isAllowed({ user: { hub_id: "hub" }, type, subject }),
         ).toBe(true);
       }
+    }
+  });
+
+  it("rechecks bay credentials on every authorization decision", async () => {
+    const user = {
+      hub_id: "bay:bay-1",
+      cluster_id: "test-cluster",
+      bay_id: "bay-1",
+      bay_credential_id: "credential-1",
+    };
+    expect(await isAllowed({ user, type: "pub", subject: "global.test" })).toBe(
+      true,
+    );
+    isBayCredentialUserActiveMock.mockResolvedValueOnce(false);
+    expect(await isAllowed({ user, type: "pub", subject: "global.test" })).toBe(
+      false,
+    );
+    isBayCredentialUserActiveMock.mockRejectedValueOnce(
+      new Error("registry unavailable"),
+    );
+    expect(await isAllowed({ user, type: "sub", subject: "global.test" })).toBe(
+      false,
+    );
+    expect(isBayCredentialUserActiveMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not accept the generic hub password as multibay fabric identity", async () => {
+    const previous = process.env.COCALC_CLUSTER_ROLE;
+    process.env.COCALC_CLUSTER_ROLE = "seed";
+    try {
+      expect(
+        await isAllowed({
+          user: { hub_id: "hub" },
+          type: "pub",
+          subject: "bay.bay-1.rpc.project-control.start",
+        }),
+      ).toBe(false);
+      expect(
+        await isAllowed({
+          user: { hub_id: "hub" },
+          type: "sub",
+          subject: "global.directory.rpc.resolve-project-bay",
+        }),
+      ).toBe(false);
+      expect(
+        await isAllowed({
+          user: { hub_id: "hub" },
+          type: "pub",
+          subject: "ordinary.hub.subject",
+        }),
+      ).toBe(true);
+    } finally {
+      if (previous == null) delete process.env.COCALC_CLUSTER_ROLE;
+      else process.env.COCALC_CLUSTER_ROLE = previous;
     }
   });
 });

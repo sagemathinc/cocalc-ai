@@ -21,14 +21,16 @@ SCRIPT_PATH="$1"
 TEST_TEMP="$2"
 source "$SCRIPT_PATH"
 trap - EXIT
+ssh_remote() { return 44; }
 TEMP_DIR="$TEST_TEMP"
 CLUSTER_ID=test-cluster
+SEED_BAY_ID=bay-0
 BAYS=(
   'bay-0=seed.example=10.0.0.1'
   'bay-1=attached.example=10.0.0.2'
 )
 prepare_bay_credentials
-remote_install_command /tmp/topology /tmp/shared /tmp/conat /tmp/credential /tmp/bootstrap > "$TEST_TEMP/install-command"
+remote_install_command /tmp/secure bay-0 1 1 > "$TEST_TEMP/install-command"
 `,
         "test",
         script,
@@ -78,6 +80,93 @@ remote_install_command /tmp/topology /tmp/shared /tmp/conat /tmp/credential /tmp
     );
     assert.match(install, /COCALC_BAY_CREDENTIAL_FILE/);
     assert.match(install, /COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE/);
+    assert.doesNotMatch(
+      install,
+      /set_env\("COCALC_CLUSTER_SEED_CONAT_PASSWORD"/,
+    );
+    assert.match(
+      install,
+      /not line\.startswith\("COCALC_CLUSTER_SEED_CONAT_PASSWORD="\)/,
+    );
+    assert.match(
+      install,
+      /\/mnt\/cocalc\/bays\/bay-0\/state\/bay-credential-bootstrap\.json/,
+    );
+    const source = fs.readFileSync(script, "utf8");
+    assert.match(source, /mktemp -d \/tmp\/cocalc-bay\.XXXXXXXX/);
+    assert.doesNotMatch(source, /\/tmp\/cocalc-\$\{bay_id\}[^\n]*\$\$/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test("rendered attached topology requires a protected fabric URL", () => {
+  const render = path.join(__dirname, "render-bay-topology-env.sh");
+  const base = [
+    render,
+    "--cluster",
+    "test-cluster",
+    "--seed-bay",
+    "bay-0",
+    "--local-bay",
+    "bay-1",
+    "--bay",
+    "bay-0=10.0.0.1",
+    "--bay",
+    "bay-1=10.0.0.2",
+  ];
+  const missing = spawnSync("bash", base, { encoding: "utf8" });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /seed-conat-server is required/);
+
+  const insecure = spawnSync(
+    "bash",
+    [...base, "--seed-conat-server", "http://10.0.0.1:10300"],
+    { encoding: "utf8" },
+  );
+  assert.notEqual(insecure.status, 0);
+  assert.match(insecure.stderr, /must use HTTPS/);
+
+  const secure = spawnSync(
+    "bash",
+    [...base, "--seed-conat-server", "https://seed.example/conat"],
+    { encoding: "utf8" },
+  );
+  assert.equal(secure.status, 0, secure.stderr);
+  assert.match(
+    secure.stdout,
+    /COCALC_CLUSTER_SEED_CONAT_SERVER='https:\/\/seed\.example\/conat'/,
+  );
+});
+
+test("credential probing distinguishes absence from SSH failure", () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), "cocalc-bay-probe-"));
+  try {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+set -euo pipefail
+SCRIPT_PATH="$1"
+TEST_TEMP="$2"
+source "$SCRIPT_PATH"
+trap - EXIT
+ssh_remote() { return 255; }
+TEMP_DIR="$TEST_TEMP"
+CLUSTER_ID=test-cluster
+BAYS=('bay-0=missing.example=10.0.0.1')
+prepare_bay_credentials
+`,
+        "test",
+        script,
+        temp,
+      ],
+      { encoding: "utf8" },
+    );
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /failed to inspect existing credential/);
+    assert.doesNotMatch(result.stderr, /Generate initial credential/);
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
