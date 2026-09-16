@@ -558,9 +558,15 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(output.statuses.open, /actively investigating/);
   assert.match(output.statuses.pending, /waiting for the requester/);
   assert.match(output.statuses.solved, /complete and verified/);
-  assert.equal(output.version, 2);
+  assert.equal(output.version, 3);
   assert.match(output.workflow.join("\n"), /multiline comments/);
   assert.match(output.workflow.join("\n"), /--public-reply-file/);
+  const vocabulary = output.vocabulary.join("\n");
+  assert.match(vocabulary, /left-rail tab for a project's files is Files/);
+  assert.match(vocabulary, /Git browser, not Git viewer/);
+  assert.match(vocabulary, /accessible name is Compute/);
+  assert.match(vocabulary, /configured site name/);
+  assert.match(vocabulary, /Users rail tab opens settings titled People/);
 });
 
 test("admin support image verifies and writes a Zendesk attachment", async () => {

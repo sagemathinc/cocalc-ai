@@ -363,7 +363,7 @@ export interface AdminSupportSpamResponse {
 }
 
 export const ADMIN_SUPPORT_CONVENTIONS = {
-  version: 2,
+  version: 3,
   statuses: {
     new: "We have not reviewed or acted on the ticket.",
     open: "CoCalc is actively investigating or still owes work, including after an interim reply.",
@@ -391,6 +391,16 @@ export const ADMIN_SUPPORT_CONVENTIONS = {
     "Merge duplicates only after explicit approval, keeping the more complete or canonical ticket as the target.",
     "Mark spam only for clear unsolicited junk. Zendesk spam handling deletes the ticket and suspends the requester; if Zendesk definitively rejects that action, CoCalc instead solves and tags the ticket without replying and reports that the requester was not suspended.",
     "Limit account and project inspection to data relevant to the support request, use a ticket-specific audit reason, and never expose secrets or unnecessary personal data in replies.",
+  ],
+  vocabulary: [
+    "Name what the user can see, spelled and capitalized as it renders, instead of a description or an internal name.",
+    "The left-rail tab for a project's files is Files. Do not call it the file browser or file explorer.",
+    "Use the name Git browser, not Git viewer.",
+    "Exam controls are on the Exams tab of a project host, not an instructor panel.",
+    "Project hosts and virtual machines open from an icon-only button in the top navigation whose accessible name is Compute; it shows no text label. Its page has the tabs Project Hosts and Virtual Machines. There is no page named Compute hosts.",
+    "Say Sign in, not log in or login.",
+    "Headings that contain the site name, such as Sign in to CoCalc, show the configured site name and differ on white-labeled deployments.",
+    "Where the interface uses two names for one thing, use the name shown where the user is looking and do not present either as the only correct one. Current cases: the Users rail tab opens settings titled People; the Agents rail tab and the Codex assistant; the Image rail tab and the RootFS Images admin page; the Settings rail tab and its Status and Settings panel.",
   ],
 } as const;
 
