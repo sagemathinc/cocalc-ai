@@ -76,12 +76,8 @@ import {
 } from "./activity-bar-storage";
 import { throttle } from "lodash";
 import { StartButton } from "@cocalc/frontend/project/start-button";
+import { useProjectPageHostState } from "./use-project-page-host-state";
 import {
-  useHostInfo,
-  useProjectHostConnectionState,
-} from "@cocalc/frontend/projects/host-info";
-import {
-  evaluateHostOperational,
   expectsProjectHostConnection,
   getHostRecoveryDisplay,
   getProjectLifecycleView,
@@ -297,17 +293,10 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
     };
   }, [browserRuntimePresenceEnabled, project_id]);
   const host_id = useProjectMapField<string>(project_id, "host_id");
-  const hostInfo = useHostInfo(host_id, {
-    enabled: !props.publicDirectoryShare,
-  });
-  const hostOperational = useMemo(
-    () => evaluateHostOperational(hostInfo),
-    [hostInfo],
-  );
-  const projectHostConnection = useProjectHostConnectionState(
-    host_id,
-    hostOperational.status,
-  );
+  const { hostInfo, hostOperational, projectHostConnection } =
+    useProjectPageHostState(host_id, {
+      enabled: !props.publicDirectoryShare,
+    });
   const projectHostConnected = projectHostConnection.connected;
   const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
     | MoveLroState
