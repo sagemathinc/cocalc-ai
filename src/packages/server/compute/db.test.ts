@@ -673,6 +673,7 @@ describe("compute VM durable state", () => {
     await heartbeatComputeWork({
       id: claimed.id,
       worker_id: "worker-heartbeat",
+      attempt: claimed.attempt,
     });
 
     const { rows } = await getPool().query(
@@ -716,7 +717,12 @@ describe("compute VM durable state", () => {
     const claimedFirstVm = firstClaim.find(
       ({ resource_id }) => resource_id === firstVm.id,
     )!;
-    await finishComputeWork({ id: claimedFirstVm.id, state: "done" });
+    await finishComputeWork({
+      id: claimedFirstVm.id,
+      worker_id: "worker-a",
+      attempt: claimedFirstVm.attempt,
+      state: "done",
+    });
     const nextClaim = await claimComputeWork({
       worker_id: "worker-b",
       limit: 3,
@@ -725,6 +731,45 @@ describe("compute VM durable state", () => {
     expect(nextClaim[0]).toMatchObject({
       resource_id: firstVm.id,
       action: "stop",
+    });
+  });
+
+  it("rejects completion from a worker whose lease was reclaimed", async () => {
+    const vm = await insertComputeVm(vmInput());
+    await enqueueComputeWork({
+      resource_id: vm.id,
+      action: "provision",
+      idempotency_key: "provision-reclaimed",
+    });
+    const [stale] = await claimComputeWork({
+      worker_id: "worker-stale",
+      limit: 1,
+    });
+    await getPool().query(
+      "UPDATE compute_resource_work SET locked_at=NOW() - interval '20 minutes' WHERE id=$1",
+      [stale.id],
+    );
+    const [current] = await claimComputeWork({
+      worker_id: "worker-current",
+      limit: 1,
+    });
+
+    expect(
+      await finishComputeWork({
+        id: stale.id,
+        worker_id: "worker-stale",
+        attempt: stale.attempt,
+        state: "done",
+      }),
+    ).toBe(false);
+    const { rows } = await getPool().query(
+      "SELECT state,locked_by,attempt FROM compute_resource_work WHERE id=$1",
+      [stale.id],
+    );
+    expect(rows[0]).toEqual({
+      state: "in_progress",
+      locked_by: "worker-current",
+      attempt: current.attempt,
     });
   });
 

@@ -59,6 +59,7 @@ export function validateFundingExposureAllocation(
 /** External attestations are collected before taking financial locks. */
 export async function loadFundingExposureBudget(
   owningBay?: string,
+  { require_sponsorship_admission = false } = {},
 ): Promise<FundingExposureBudget> {
   const ceiling = fundingAmount(
     process.env.COCALC_COURSE_VM_SITE_EXPOSURE_USD ?? "100.00",
@@ -71,7 +72,10 @@ export async function loadFundingExposureBudget(
   if (!multi && !process.env.COCALC_FUNDING_ROLLOUT_MANIFEST) {
     if (owningBay && owningBay !== local)
       unavailable("The resource owning bay is not in this deployment.");
-    return { limit_usd: ceiling };
+    const proof = require_sponsorship_admission
+      ? await (await import("./rollout")).assertSponsorshipAdmission()
+      : undefined;
+    return { limit_usd: ceiling, proof };
   }
   const { loadProductionFundingRollout } =
     await import("./production-rollout-manifest");
@@ -81,7 +85,10 @@ export async function loadFundingExposureBudget(
       unavailable(
         "Multi-bay admission requires a signed static exposure allocation.",
       );
-    return { limit_usd: ceiling };
+    const proof = require_sponsorship_admission
+      ? await (await import("./rollout")).assertSponsorshipAdmission()
+      : undefined;
+    return { limit_usd: ceiling, proof };
   }
   const allocation = validateFundingExposureAllocation(
     manifest.exposure_allocation,

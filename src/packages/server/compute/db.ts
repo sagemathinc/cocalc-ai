@@ -847,26 +847,36 @@ export async function claimComputeWork(opts: {
 
 export async function finishComputeWork(opts: {
   id: string;
+  worker_id: string;
+  attempt: number;
   state: "done" | "failed";
   error?: string;
 }) {
-  await pool().query(
+  const result = await pool().query(
     `UPDATE compute_resource_work
      SET state=$2, error=$3, locked_by=NULL, locked_at=NULL, updated_at=NOW()
-     WHERE id=$1`,
-    [opts.id, opts.state, opts.error?.slice(0, 4000) ?? null],
+     WHERE id=$1 AND state='in_progress' AND locked_by=$4 AND attempt=$5`,
+    [
+      opts.id,
+      opts.state,
+      opts.error?.slice(0, 4000) ?? null,
+      opts.worker_id,
+      opts.attempt,
+    ],
   );
+  return result.rowCount === 1;
 }
 
 export async function heartbeatComputeWork(opts: {
   id: string;
   worker_id: string;
+  attempt: number;
 }) {
   await pool().query(
     `UPDATE compute_resource_work
      SET locked_at=NOW(), updated_at=NOW()
-     WHERE id=$1 AND state='in_progress' AND locked_by=$2`,
-    [opts.id, opts.worker_id],
+     WHERE id=$1 AND state='in_progress' AND locked_by=$2 AND attempt=$3`,
+    [opts.id, opts.worker_id, opts.attempt],
   );
 }
 

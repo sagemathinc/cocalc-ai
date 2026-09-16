@@ -19,6 +19,8 @@ import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/eff
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import { getAccountFundingHolds } from "@cocalc/server/purchases/get-spendable-balance";
 import { hasUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
@@ -280,6 +282,60 @@ export type DedicatedHostPolicyInputs = Awaited<
   ReturnType<typeof prepareDedicatedHostPolicyInputsLocal>
 >;
 
+interface DedicatedHostFinancialSnapshot {
+  has_payment_method: boolean;
+  has_usage_subscription: boolean;
+  balance: string;
+  prepaid_spendable_balance: string;
+  postpaid_committed_usd: string;
+  postpaid_unbilled_exposure_usd: string;
+  dedicated_host_window_usage: AccountLocalDedicatedHostPolicySnapshot["dedicated_host_window_usage"];
+}
+
+export async function getDedicatedHostFinancialSnapshotLocal(
+  account_id: string,
+  {
+    needs_postpaid_snapshot,
+    client,
+    has_payment_method_override,
+  }: {
+    needs_postpaid_snapshot: boolean;
+    client?: PoolClient;
+    has_payment_method_override?: boolean;
+  },
+): Promise<DedicatedHostFinancialSnapshot> {
+  const [
+    balance,
+    dedicated_host_window_usage,
+    postpaid_unbilled_exposure_usd,
+    holds,
+  ] = await Promise.all([
+    getBalance({ account_id, client, noSave: true }),
+    getDedicatedHostWindowUsageLocal(account_id, { client }),
+    getDedicatedHostPostpaidUnbilledExposureLocal(account_id, { client }),
+    getAccountFundingHolds({ account_id, client }),
+  ]);
+  const [has_payment_method, has_usage_subscription] = needs_postpaid_snapshot
+    ? await Promise.all([
+        has_payment_method_override ?? hasPaymentMethod(account_id),
+        hasUsageSubscription(account_id, client),
+      ])
+    : [false, false];
+  return {
+    has_payment_method,
+    has_usage_subscription,
+    balance: moneyToDbString(balance),
+    prepaid_spendable_balance: moneyToDbString(
+      toDecimal(balance).minus(holds.prepaid_held_usd),
+    ),
+    postpaid_committed_usd: holds.postpaid_committed_usd,
+    postpaid_unbilled_exposure_usd: moneyToDbString(
+      postpaid_unbilled_exposure_usd,
+    ),
+    dedicated_host_window_usage,
+  };
+}
+
 export async function getDedicatedHostPolicySnapshotLocal(
   account_id: string,
   {
@@ -337,26 +393,25 @@ export async function getDedicatedHostPolicySnapshotLocal(
     };
   }
 
-  const [
-    balance,
-    dedicated_host_window_usage,
-    postpaid_unbilled_exposure_usd,
-    holds,
-  ] = await Promise.all([
-    getBalance({ account_id, client, noSave: true }),
-    getDedicatedHostWindowUsageLocal(account_id, { client }),
-    getDedicatedHostPostpaidUnbilledExposureLocal(account_id, { client }),
-    getAccountFundingHolds({ account_id, client }),
-  ]);
   const needs_postpaid_snapshot =
     funding_mode === "account-postpaid" ||
     funding_mode_override === "account-postpaid";
-  const [has_payment_method, has_usage_subscription] = needs_postpaid_snapshot
-    ? await Promise.all([
-        policy_inputs?.has_payment_method ?? hasPaymentMethod(account_id),
-        hasUsageSubscription(account_id, client),
-      ])
-    : [false, false];
+  const financial =
+    isBillingAuthorityEnabled() && !client
+      ? await executeBillingAuthorityCommand<DedicatedHostFinancialSnapshot>(
+          {
+            kind: "account-local",
+            operation: "get-dedicated-host-financial-snapshot",
+            input: { account_id, needs_postpaid_snapshot },
+            actor_account_id: account_id,
+          },
+          { read: true },
+        )
+      : await getDedicatedHostFinancialSnapshotLocal(account_id, {
+          needs_postpaid_snapshot,
+          client,
+          has_payment_method_override: policy_inputs?.has_payment_method,
+        });
 
   return {
     account_id,
@@ -365,15 +420,7 @@ export async function getDedicatedHostPolicySnapshotLocal(
     funding_mode,
     effective_limits,
     has_active_second_factor,
-    has_payment_method,
-    has_usage_subscription,
-    balance,
-    prepaid_spendable_balance: moneyToDbString(
-      toDecimal(balance).minus(holds.prepaid_held_usd),
-    ),
-    postpaid_committed_usd: holds.postpaid_committed_usd,
-    postpaid_unbilled_exposure_usd,
-    dedicated_host_window_usage,
+    ...financial,
     admin_override,
   };
 }

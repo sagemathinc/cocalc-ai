@@ -185,6 +185,12 @@ async function dispatchAccountLocal(
       return await (
         await import("@cocalc/server/compute/funding/vm-settlement")
       ).settleComputeVmFundingLocal(input as any);
+    case "get-dedicated-host-financial-snapshot":
+      return await (
+        await import("@cocalc/server/project-host/admission")
+      ).getDedicatedHostFinancialSnapshotLocal(`${input.account_id ?? ""}`, {
+        needs_postpaid_snapshot: input.needs_postpaid_snapshot === true,
+      });
     case "update-billing-account-home":
       await (
         await import("@cocalc/server/purchases/billing-account")

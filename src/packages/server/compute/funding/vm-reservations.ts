@@ -255,7 +255,10 @@ export async function reserveComputeVmFundingLocal(
   const requestHash = createHash("sha256")
     .update(JSON.stringify(request))
     .digest("hex");
-  const exposureBudget = await loadFundingExposureBudget(request.owning_bay_id);
+  const exposureBudget = await loadFundingExposureBudget(
+    request.owning_bay_id,
+    { require_sponsorship_admission: true },
+  );
   return withFundingAccountTransaction(payer, async (client) => {
     const { pool, grant } = await lockVmFundingSource(
       client,
@@ -489,7 +492,9 @@ export async function checkComputeVmFundingLocal(
       opts,
     );
   const exposureBudget = opts.renew_until
-    ? await loadFundingExposureBudget(opts.binding.owning_bay_id)
+    ? await loadFundingExposureBudget(opts.binding.owning_bay_id, {
+        require_sponsorship_admission: true,
+      })
     : undefined;
   return withFundingAccountTransaction(opts.account_id, async (client) => {
     const { pool, grant, reservation, binding } =
@@ -540,6 +545,7 @@ export async function checkComputeVmFundingLocal(
       already_reserved: true,
     });
     if (opts.renew_until) {
+      await assertFundingExposureAvailable(client, exposureBudget!, "0");
       const original = reservation.pricing_snapshot.request;
       const until = new Date(
         Math.min(

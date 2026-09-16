@@ -59,6 +59,7 @@ export type BillingAuthorityAccountLocalOperation =
   | "compute-funding-lookup"
   | "compute-funding-reserve"
   | "compute-funding-settle"
+  | "get-dedicated-host-financial-snapshot"
   | "update-billing-account-home"
   | "purchase-team-license-change";
 

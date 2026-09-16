@@ -11,6 +11,7 @@ import {
   stopFundingRolloutVerifiers,
 } from "./rollout-startup";
 import { getLocalFundingRolloutCapabilities } from "./rollout";
+import * as rollout from "./rollout";
 import {
   FUNDING_ACCOUNT_WRITER_ROLES,
   FUNDING_RESOURCE_WRITER_ROLES,
@@ -252,6 +253,24 @@ it("connects signed three-bay startup evidence to actual exposure admission and 
   await expect(
     assertFundingExposureAvailable({ query: mockQuery } as any, budget, "1.01"),
   ).rejects.toThrow("exposure quota");
+});
+it("requires rollout admission for sponsored reservations in isolated one-bay mode", async () => {
+  delete process.env.COCALC_FUNDING_ROLLOUT_MANIFEST;
+  const proof = { expires_at: Date.now() + 30_000, bay_ids: ["home"] };
+  const admission = jest
+    .spyOn(rollout, "assertSponsorshipAdmission")
+    .mockResolvedValue(proof);
+
+  await expect(loadFundingExposureBudget("home")).resolves.toEqual({
+    limit_usd: "100.0000000000",
+    proof: undefined,
+  });
+  await expect(
+    loadFundingExposureBudget("home", {
+      require_sponsorship_admission: true,
+    }),
+  ).resolves.toEqual({ limit_usd: "100.0000000000", proof });
+  expect(admission).toHaveBeenCalledTimes(1);
 });
 it.each([
   "over quota",

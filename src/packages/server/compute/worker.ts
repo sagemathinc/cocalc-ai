@@ -3080,19 +3080,35 @@ export function startComputeVmWorker(
   const processWork = async (row: ComputeWorkRow) => {
     const startedAt = Date.now();
     const heartbeat = setInterval(() => {
-      void heartbeatComputeWork({ id: row.id, worker_id: workerId }).catch(
-        (err) =>
-          logger.warn("managed compute work heartbeat failed", {
-            id: row.id,
-            resource_id: row.resource_id,
-            err,
-          }),
+      void heartbeatComputeWork({
+        id: row.id,
+        worker_id: workerId,
+        attempt: row.attempt,
+      }).catch((err) =>
+        logger.warn("managed compute work heartbeat failed", {
+          id: row.id,
+          resource_id: row.resource_id,
+          err,
+        }),
       );
     }, 60_000);
     heartbeat.unref();
     try {
       await handleComputeWork(row);
-      await finishComputeWork({ id: row.id, state: "done" });
+      const finished = await finishComputeWork({
+        id: row.id,
+        worker_id: workerId,
+        attempt: row.attempt,
+        state: "done",
+      });
+      if (!finished) {
+        logger.warn("managed compute work completion lost its lease", {
+          id: row.id,
+          resource_id: row.resource_id,
+          action: row.action,
+        });
+        return;
+      }
       logger.info("managed compute work completed", {
         id: row.id,
         resource_kind: row.resource_kind,
@@ -3112,6 +3128,16 @@ export function startComputeVmWorker(
         err,
       });
       if (err instanceof RetryableComputeWorkError) {
+        // Claim completion before applying terminal worker state. A worker
+        // whose lease was reclaimed must not overwrite its successor.
+        const finished = await finishComputeWork({
+          id: row.id,
+          worker_id: workerId,
+          attempt: row.attempt,
+          state: "failed",
+          error,
+        });
+        if (!finished) return;
         const vm =
           row.resource_kind === "vm"
             ? await getComputeVmById(row.resource_id)
@@ -3135,9 +3161,6 @@ export function startComputeVmWorker(
             },
           });
         }
-        // Close this work item before enqueueing its replacement so the
-        // per-resource work deduplication does not suppress the retry.
-        await finishComputeWork({ id: row.id, state: "failed", error });
         await enqueueComputeWork({
           resource_kind: row.resource_kind,
           resource_id: row.resource_id,
@@ -3148,6 +3171,14 @@ export function startComputeVmWorker(
         });
         return;
       }
+      const finished = await finishComputeWork({
+        id: row.id,
+        worker_id: workerId,
+        attempt: row.attempt,
+        state: "failed",
+        error,
+      });
+      if (!finished) return;
       const vm =
         row.resource_kind === "vm"
           ? await getComputeVmById(row.resource_id)
@@ -3181,7 +3212,6 @@ export function startComputeVmWorker(
           });
         }
       }
-      await finishComputeWork({ id: row.id, state: "failed", error });
     } finally {
       clearInterval(heartbeat);
     }

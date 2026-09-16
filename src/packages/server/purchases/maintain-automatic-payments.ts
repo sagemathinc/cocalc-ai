@@ -43,6 +43,7 @@ import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import { billingAccountsTable } from "./billing-account";
+import { withFundingAccountTransaction } from "@cocalc/server/compute/funding/backing";
 
 const logger = getLogger("purchase:maintain-automatic-payments");
 
@@ -99,6 +100,57 @@ WHERE
 `;
 }
 
+/** Serialize legacy eligibility with the consent update. If opt-out commits
+ * first this returns undefined; if this claim commits first, the already-started
+ * payment retains the existing documented semantics and is not canceled.
+ */
+export async function claimLegacyAutomaticPayment({
+  account_id,
+  statement_id,
+}: {
+  account_id: string;
+  statement_id: number;
+}) {
+  return await withFundingAccountTransaction(account_id, async (db) => {
+    const table = billingAccountsTable();
+    const {
+      rows: [statement],
+    } = await db.query<{
+      time: Date;
+      account_id: string;
+      balance: string;
+      statement_id: number;
+    }>(
+      `SELECT s.time,a.account_id,s.balance::text,s.id AS statement_id
+       FROM ${table} a JOIN statements s ON s.account_id=a.account_id
+       WHERE a.account_id=$1 AND s.id=$2
+         AND a.stripe_usage_subscription IS NOT NULL
+         AND a.monthly_collection IS NULL
+         AND a.banned IS NOT TRUE AND a.deleted IS NOT TRUE
+         AND NOT EXISTS (
+           SELECT 1 FROM billing_authority_account_fences fence
+           WHERE fence.account_id=a.account_id AND fence.frozen
+         )
+         AND s.interval='month' AND s.automatic_payment IS NULL
+         AND s.automatic_payment_intent_id IS NULL
+         AND s.paid_purchase_id IS NULL AND s.balance<0
+         AND NOT EXISTS (
+           SELECT 1 FROM statements newer
+           WHERE newer.account_id=s.account_id AND newer.interval='month'
+             AND (newer.time,newer.id)>(s.time,s.id)
+         )
+       FOR UPDATE OF s`,
+      [account_id, statement_id],
+    );
+    if (!statement) return;
+    await db.query(
+      "UPDATE statements SET automatic_payment=NOW() WHERE id=$1",
+      [statement_id],
+    );
+    return statement;
+  });
+}
+
 export default async function maintainAutomaticPayments({
   max_statements = Number.POSITIVE_INFINITY,
 }: { max_statements?: number } = {}) {
@@ -111,19 +163,26 @@ export default async function maintainAutomaticPayments({
     bounded ? [Math.max(0, Math.floor(max_statements))] : [],
   );
   logger.debug("Got ", rows.length, " statements to automatically pay");
-  for (const { time, account_id, balance, statement_id } of rows) {
+  for (const candidate of rows) {
+    let claim: Awaited<ReturnType<typeof claimLegacyAutomaticPayment>>;
+    try {
+      await registerBillingAuthorityAccount(candidate.account_id);
+      claim = await claimLegacyAutomaticPayment(candidate);
+    } catch (err) {
+      logger.warn("legacy monthly collection claim failed", {
+        account_id: candidate.account_id,
+        statement_id: candidate.statement_id,
+        err,
+      });
+      continue;
+    }
+    if (!claim) continue;
+    const { time, account_id, balance, statement_id } = claim;
     const balanceValue = toDecimal(balance);
     const description = `Pay statement ${statement_id} with balance ${moneyToCurrency(balanceValue)} from ${time}`;
     logger.debug(description);
     const amount = balanceValue.neg();
     try {
-      await registerBillingAuthorityAccount(account_id);
-      // Set that automatic_payment has been *processed* for this statement.
-      // This only means there was an actual payment attempt if the balance was negative.
-      await pool.query(
-        "UPDATE statements SET automatic_payment=NOW() WHERE id=$1",
-        [statement_id],
-      );
       if (balanceValue.gte(0)) {
         // should never happen
         continue;

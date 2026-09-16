@@ -10,6 +10,7 @@ import {
   claimMonthlyCollection,
   maintainMonthlyCollections,
 } from "./monthly-collection-worker";
+import { claimLegacyAutomaticPayment } from "./maintain-automatic-payments";
 import { hasUsageSubscription } from "./stripe-usage-based-subscription";
 import createPaymentIntent from "./stripe/create-payment-intent";
 import { getServerSettings } from "@cocalc/database/settings";
@@ -115,6 +116,35 @@ it("opt-out overrides legacy eligibility and an old enable review cannot reactiv
     enabled: false,
     version: 2,
   });
+});
+it("does not let a queued legacy collection race a committed opt-out", async () => {
+  const f = await fixture();
+  await getPool().query(
+    "UPDATE accounts SET monthly_collection=NULL,stripe_usage_subscription='legacy' WHERE account_id=$1",
+    [f.account_id],
+  );
+  await withFundingAccountTransaction(f.account_id, (db) =>
+    applyMonthlyCollection(
+      db,
+      f.account_id,
+      {
+        kind: "monthlyCollection",
+        enabled: false,
+        expected_version: 0,
+        terms_version: 1,
+      },
+      randomUUID(),
+    ),
+  );
+
+  await expect(claimLegacyAutomaticPayment(f)).resolves.toBeUndefined();
+  const {
+    rows: [statement],
+  } = await getPool().query(
+    "SELECT automatic_payment FROM statements WHERE id=$1",
+    [f.statement_id],
+  );
+  expect(statement.automatic_payment).toBeNull();
 });
 it("does not claim while disabled, below minimum, paid, or covered by a deposit", async () => {
   const off = await fixture(false);
