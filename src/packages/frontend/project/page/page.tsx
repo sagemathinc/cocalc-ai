@@ -300,12 +300,15 @@ const SignedInProjectPage: React.FC<Props> = (props) => {
   const hostInfo = useHostInfo(host_id, {
     enabled: !props.publicDirectoryShare,
   });
-  const projectHostConnection = useProjectHostConnectionState(host_id);
-  const projectHostConnected = projectHostConnection.connected;
   const hostOperational = useMemo(
     () => evaluateHostOperational(hostInfo),
     [hostInfo],
   );
+  const projectHostConnection = useProjectHostConnectionState(
+    host_id,
+    hostOperational.status,
+  );
+  const projectHostConnected = projectHostConnection.connected;
   const moveLro = useTypedRedux({ project_id }, "move_lro")?.toJS() as
     | MoveLroState
     | undefined;
