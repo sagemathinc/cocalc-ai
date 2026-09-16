@@ -255,6 +255,7 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    ignore_recent_state_snapshot?: boolean;
     runtime_lifecycle_revision?: number;
   }): Promise<void> => {
     await this.computeQuota(opts?.account_id);
@@ -356,6 +357,7 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    ignore_recent_state_snapshot?: boolean;
     runtime_lifecycle_revision?: number;
   }): Promise<void> => {
     await this.ensureLocalOwnership();
@@ -408,10 +410,12 @@ export class BaseProject extends EventEmitter {
   stop = async ({
     force,
     fence_inflight_start = false,
+    require_host_fence = false,
     runtime_lifecycle_revision,
   }: {
     force?: boolean;
     fence_inflight_start?: boolean;
+    require_host_fence?: boolean;
     runtime_lifecycle_revision?: number;
   } = {}): Promise<void> => {
     await this.ensureLocalOwnership();
@@ -431,6 +435,12 @@ export class BaseProject extends EventEmitter {
       logger.debug(
         `(project_id=${this.project_id}).stop: no assigned host; treating as already stopped`,
       );
+      return;
+    }
+    if (require_host_fence) {
+      await stopProjectOnHost(this.project_id, {
+        runtime_lifecycle_revision,
+      });
       return;
     }
     if (!fence_inflight_start && !isActiveProjectState(state)) {
@@ -472,10 +482,14 @@ export class BaseProject extends EventEmitter {
       await advanceProjectRuntimeLifecycleRevision(this.project_id);
     await this.stop({
       fence_inflight_start: true,
+      require_host_fence: true,
       runtime_lifecycle_revision,
     });
     await this.start({
       ...opts,
+      // The snapshot describes pre-fence execution and cannot prove that the
+      // replacement start already happened.
+      ignore_recent_state_snapshot: true,
       runtime_lifecycle_revision,
     });
   };

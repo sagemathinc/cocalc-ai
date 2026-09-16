@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Button, Card, Modal, Popconfirm, Tag } from "antd";
+import { Alert, Button, Card, Modal, Popconfirm, Tag } from "antd";
 import React from "react";
 import { FormattedMessage, useIntl } from "react-intl";
 import { CSS, redux, useRedux } from "@cocalc/frontend/app-framework";
@@ -63,6 +63,12 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
     }
   }
 
+  function open_project_authorized_keys() {
+    void redux
+      .getProjectActions(project.get("project_id"))
+      .open_file({ path: ".ssh/authorized_keys", foreground: true });
+  }
+
   function user_remove_confirm_text(account_id: string) {
     const style: CSS = { maxWidth: "300px" };
     if (account_id === current_account_id) {
@@ -80,12 +86,28 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
         <div style={style}>
           <FormattedMessage
             id="collaborators.current-collabs.remove_other"
-            defaultMessage={`Are you sure you want to remove {user} from this project?
-              They will no longer have access to this project.`}
+            defaultMessage={`Remove {user} from this project? New CoCalc access will be blocked, but existing work is not stopped automatically.`}
             values={{
               user: <User account_id={account_id} user_map={user_map} />,
             }}
           />
+          <p style={{ marginBlock: 8 }}>
+            Restart the project afterward to terminate old execution. Restart
+            does not undo files they changed or remove project-local
+            credentials.
+          </p>
+          <Button
+            size="small"
+            type="link"
+            style={{ height: "auto", padding: 0 }}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              open_project_authorized_keys();
+            }}
+          >
+            Review ~/.ssh/authorized_keys
+          </Button>
         </div>
       );
     }
@@ -230,6 +252,30 @@ export const CurrentCollaboratorsPanel: React.FC<Props> = (props: Props) => {
           Viewers can read allowed files, but cannot edit files, run code, use
           terminals, use SSH, or manage this project.
         </p>
+        <Alert
+          showIcon
+          type="warning"
+          style={{ marginBottom: 16 }}
+          message="Restart after changing access"
+          description={
+            <>
+              <p>
+                Changing this role does not stop existing work. Restart the
+                project afterward to terminate old execution and CoCalc-managed
+                access. Restart does not undo persistent project changes or
+                remove project-local credentials.
+              </p>
+              <Button
+                size="small"
+                type="link"
+                style={{ height: "auto", padding: 0 }}
+                onClick={open_project_authorized_keys}
+              >
+                Review ~/.ssh/authorized_keys
+              </Button>
+            </>
+          }
+        />
         <ViewerReadPolicyEditor
           value={viewerRoleDialog.read_policy}
           onChange={(read_policy) =>

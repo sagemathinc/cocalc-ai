@@ -222,6 +222,7 @@ describe("projects.restart", () => {
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        dedupe_key: "project-restart",
         kind: "project-start",
         input: { project_id: "proj-1", action: "restart" },
       }),
@@ -230,5 +231,32 @@ describe("projects.restart", () => {
       project_id: "proj-1",
       keep_op_id: "op-2",
     });
+  });
+
+  it("coalesces duplicate restart submissions without starting twice", async () => {
+    createLroDetailedMock = jest.fn(async () => ({
+      lro: {
+        op_id: "existing-restart",
+        kind: "project-start",
+        scope_type: "project",
+        scope_id: "proj-1",
+        status: "running",
+      },
+      created: false,
+    }));
+    const { restart } = await import("./projects");
+
+    const response = await restart({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+
+    expect(response.op_id).toBe("existing-restart");
+    expect(createLroDetailedMock).toHaveBeenCalledWith(
+      expect.objectContaining({ dedupe_key: "project-restart" }),
+    );
+    expect(interBayRestartMock).not.toHaveBeenCalled();
   });
 });

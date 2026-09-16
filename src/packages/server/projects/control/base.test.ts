@@ -163,9 +163,38 @@ describe("BaseProject local ownership", () => {
     expect(stopProjectOnHostMock).not.toHaveBeenCalled();
     expect(startProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
       account_id: "account-1",
+      ignore_recent_state_snapshot: true,
       lro_op_id: "restart-1",
       runtime_lifecycle_revision: 7,
     });
+  });
+
+  it("fails restart when its assigned host cannot confirm the stop fence", async () => {
+    getPoolQueryMock = jest.fn(async () => ({
+      rows: [
+        {
+          host_deleted: null,
+          host_found: false,
+          host_id: "host-1",
+          host_status: null,
+          state: "running",
+        },
+      ],
+    }));
+    stopProjectOnHostMock.mockRejectedValueOnce(
+      new Error("assigned host unavailable"),
+    );
+    const { getProject } = await import("./base");
+    const project = getProject(PROJECT_ID);
+
+    await expect(
+      project.restart({ account_id: "account-1", lro_op_id: "restart-1" }),
+    ).rejects.toThrow("assigned host unavailable");
+
+    expect(stopProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
+      runtime_lifecycle_revision: 7,
+    });
+    expect(startProjectOnHostMock).not.toHaveBeenCalled();
   });
 
   it("treats stop for an inactive project as already stopped", async () => {

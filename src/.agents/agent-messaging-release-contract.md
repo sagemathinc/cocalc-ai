@@ -135,16 +135,19 @@ the old authority can no longer be exercised. Once that restart successfully
 completes, the removed user has no project access and a read-only user cannot
 write or execute with their former collaborator privileges. Pre-restart agent
 and other project-local processes must be stopped. Old sessions, cached grants,
-credentials, scheduled jobs, or queued/recovered work must not restore those
-former privileges. Work may resume only under currently valid permissions and
-execution policy. A still-valid credential is not permission to keep old rights.
+CoCalc-managed credentials, scheduled jobs, or queued/recovered work must not
+restore those former privileges. Work may resume only under currently valid
+permissions and execution policy. A still-valid CoCalc credential is not
+permission to keep old rights.
 The same boundary applies when restarting to enforce a changed agent execution
 mode. This is not a requirement to invalidate every unrelated login or installation.
 
 Suggested membership UI copy: "Removing or downgrading a collaborator does not
-automatically stop their running work. If you need to ensure they have no access
-or only read-only access now, you MUST restart the project after making the change.
-When the restart completes, their previous access must no longer work."
+automatically stop their running work. Restart the project after making the change
+to terminate old execution and CoCalc-managed access. Restart does not undo files
+they changed or remove project-local credentials such as
+`~/.ssh/authorized_keys`; audit or restore persistent project contents when the
+former collaborator is not trusted."
 
 Failure of this boundary is **P0 and release-blocking**, as specified by William.
 It is a declared requirement, not a verified implementation claim. Review/test
@@ -155,6 +158,17 @@ reported as having established the boundary.
 
 Restart does not undo prior writes, revoke copies of data already taken, undo
 external effects, or promise to terminate work on another computer/project.
+Persistent project contents are shared user-controlled state, not an account
+authorization database. Restart therefore does not remove or attribute
+project-local bearer credentials such as keys in `~/.ssh/authorized_keys`, nor
+does it detect scripts, binaries, scheduled tasks, or other persistent changes a
+former collaborator may have created. Those credentials continue to mean what
+the project owner configured them to mean; they are not treated as the removed
+account's CoCalc-managed authority. If a former collaborator may have left
+untrusted persistent state, the owner must audit or restore project contents,
+remove or rotate project-local credentials, and then restart. This limitation is
+part of the trusted-collaborator model rather than a claim that restart sanitizes
+the filesystem.
 A message already admitted at another project follows that project's execution
 lifecycle. These limits do not permit continued old authority in the restarted
 project. See verification task D3.
@@ -324,8 +338,10 @@ substantial product tradeoffs rather than silently expanding the architecture.
 ### D3. Restart Boundary: Requirement Settled, Verification Outstanding
 
 Implementations must satisfy C8. Restart after removal/downgrade must stop old
-project-local execution and prevent the old permissions returning through files,
+project-local execution and prevent CoCalc-managed permissions returning through
 terminals, agents, existing sessions, credentials, automation or queue recovery.
+Persistent project content and unattributed project-local credentials remain
+subject to the explicit limitation in C8; restart is not filesystem sanitization.
 Test ordinary restarts and the equivalent stop/start boundary during project
 moves, including already-connected clients and outstanding work. Failure is P0,
 not an optional hardening recommendation or permission to wait for a token TTL.

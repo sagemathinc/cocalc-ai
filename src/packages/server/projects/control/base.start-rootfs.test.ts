@@ -258,6 +258,7 @@ describe("BaseProject.start RootFS sealing", () => {
 
     expect(startProjectOnHostMock).toHaveBeenCalledWith(PROJECT_ID, {
       account_id: ACCOUNT_ID,
+      ignore_recent_state_snapshot: true,
       lro_op_id: "op-restart",
       runtime_lifecycle_revision: 7,
     });

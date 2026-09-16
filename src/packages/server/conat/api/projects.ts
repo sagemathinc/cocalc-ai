@@ -5191,9 +5191,10 @@ async function runProjectStartLikeAction({
         : {}),
       ...(autostart ? { autostart } : {}),
     },
-    // A project can have only one active start lifecycle. In particular, an
-    // ordinary autostart must join rather than supersede an in-flight restore.
-    dedupe_key: "project-start",
+    // Duplicate submissions of the same action share one lifecycle, but an
+    // explicit restart must never join an older start/restore: restart is the
+    // user-visible authority fence.
+    dedupe_key: kind === "restart" ? "project-restart" : "project-start",
     status: "queued",
   });
   const response = {
