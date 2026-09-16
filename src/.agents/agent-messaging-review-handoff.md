@@ -12,9 +12,10 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Fixed comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
 - Previously reviewed deficient heads:
   `d38f3399be308a92721e40fdcb56244de3d1974e` and
-  `2a0ff08783cda555e772c18f17481516f6ba53c7`.
-- Current private handoff head before this documentation update: `c19bd57f3f`.
-- Latest application remediation commit: `c19bd57f3f`.
+  `2a0ff08783cda555e772c18f17481516f6ba53c7`, with the latest rereview
+  performed at `2986c91d4617148084f13a81b34fd2fc217e2ae1`.
+- Current private handoff head before this documentation update: `af3ea3d06a`.
+- Latest application remediation commit: `af3ea3d06a`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -33,7 +34,10 @@ Public PR #558 is an earlier foundation and is not this review target.
 - If immediate enforcement is required, the human must explicitly restart the
   project after the change. A successful restart must terminate old project-local
   execution and prevent queued/recovered work or old sessions from restoring former
-  authority. William classifies failure of this boundary as P0.
+  CoCalc-managed authority. Restart does not sanitize persistent project files or
+  revoke unattributed local credentials such as entries the project owner retains in
+  `~/.ssh/authorized_keys`. William classifies failure of the CoCalc-managed
+  authority boundary as P0.
 - Messaging is single-attempt RPC with accepted/rejected/unknown outcomes. There is
   no outbox, automatic retry, exactly-once guarantee, federation, or response SLA.
 - Transcript source rendering is honest best effort in collaborator-editable project
@@ -49,18 +53,19 @@ proposed requirement change. Do not silently substitute stricter product policy.
 
 Review the full base-to-head diff. Important fix commits after the deficient head:
 
-| Commit       | Area                                                               |
-| ------------ | ------------------------------------------------------------------ |
-| `e3ed056286` | Reject non-binary fragments at bounded Conat receivers             |
-| `e6e131fa84` | Recheck external credential expiry after asynchronous guards       |
-| `ec8c6d5b4a` | Rebuild agent execution configuration after startup                |
-| `d58f268066` | Recheck native registration authority after chat lookup            |
-| `b833453029` | Fence durable ACP work and project runtimes on successful stop     |
-| `664cab8839` | Shared PostgreSQL admission, aggregate raw receive cap, ownership  |
-| `d3acb5df63` | Lifecycle recovery, retention/cardinality, attribution, and CSRF   |
-| `4590eac669` | Separate-process PostgreSQL admission regression                   |
-| `10a059f943` | Runtime lifecycle fence, authenticated worker fencing, lease retry |
-| `c19bd57f3f` | Atomic authority snapshot and complete authority-mutation fencing  |
+| Commit       | Area                                                                 |
+| ------------ | -------------------------------------------------------------------- |
+| `e3ed056286` | Reject non-binary fragments at bounded Conat receivers               |
+| `e6e131fa84` | Recheck external credential expiry after asynchronous guards         |
+| `ec8c6d5b4a` | Rebuild agent execution configuration after startup                  |
+| `d58f268066` | Recheck native registration authority after chat lookup              |
+| `b833453029` | Fence durable ACP work and project runtimes on successful stop       |
+| `664cab8839` | Shared PostgreSQL admission, aggregate raw receive cap, ownership    |
+| `d3acb5df63` | Lifecycle recovery, retention/cardinality, attribution, and CSRF     |
+| `4590eac669` | Separate-process PostgreSQL admission regression                     |
+| `10a059f943` | Runtime lifecycle fence, authenticated worker fencing, lease retry   |
+| `c19bd57f3f` | Atomic authority snapshot and complete authority-mutation fencing    |
+| `af3ea3d06a` | Separate restart dedupe, acknowledged stop, forced replacement start |
 
 The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
@@ -75,6 +80,14 @@ revision and run through the same host serializer. Periodic and cross-bay user
 synchronization preserve that binding. Ordinary start adds no PostgreSQL query or
 host RPC; it now performs one fewer project-row query. The additional durable write
 occurs only on stop/restart.
+
+Explicit restart now uses a distinct `project-restart` deduplication key. Duplicate
+restart submissions still share one operation, but a restart cannot join an older
+ordinary start or restore. When a project has an assigned host, restart requires a
+successful routed stop response; an unavailable host causes restart to fail rather
+than report an unestablished boundary. The replacement start ignores only the
+pre-fence recent state snapshot and remains bound to the newly advanced lifecycle
+revision. None of these checks are added to ordinary project start.
 
 ACP restart fencing now selects only strict executable matches backed by live
 host-owned worker registrations. New registrations include the kernel PID start
@@ -146,6 +159,14 @@ pnpm -C src/packages/project-host test hub/projects.test.ts runtime-lifecycle.te
 pnpm -C src/packages/server test project-host/control.start.test.ts projects/control/base.test.ts projects/control/base.start-rootfs.test.ts conat/api/hosts.test.ts projects/create.start-lro.test.ts projects/create.clone.test.ts
 ```
 
+Latest explicit-restart regression commands:
+
+```sh
+pnpm -C src/packages/server test conat/api/projects.restart.test.ts conat/api/projects.start.test.ts projects/control/base.test.ts projects/control/base.start-rootfs.test.ts project-host/control.test.ts project-host/control.start.test.ts
+pnpm -C src lint:frontend
+pnpm -C src build:dev
+```
+
 The opt-in `server/agents/admission-state.multiprocess.test.ts` requires an isolated
 real PostgreSQL database named `smc_ephemeral_testing_database` and:
 
@@ -158,25 +179,27 @@ release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
 
-The full build and focused regressions passed after `c19bd57f3f`. The latest two
-focused commands passed 62 project-host tests and 186 server tests. The added tests
-cover both lifecycle race orderings, durable revision propagation, inactive state
-snapshots, atomic user/revision loading, hostless restart, stale user/key/
-registration rejection, unregistered/fake worker exclusion, PID-incarnation
-mismatch, and a lost reply after committed lease recovery. See
+The full build and focused regressions passed after `af3ea3d06a`. Six focused
+server suites passed 82 tests, and the final restart-only rerun passed 44 tests.
+The tests cover separate restart deduplication, duplicate restart coalescing,
+assigned-host failure, replacement-start snapshot bypass, both lifecycle race
+orderings, durable revision propagation, atomic user/revision loading, hostless
+restart, stale user/key/registration rejection, unregistered/fake worker
+exclusion, PID-incarnation mismatch, and lost-reply lease recovery. See
 `agent-messaging-release-progress.md` for counts, artifact hashes, operation IDs,
-and exact residual risks. The exact candidate also passed a live detached-worker
+and exact residual risks. An earlier candidate also passed a live detached-worker
 restart probe with an existing app-server session, a foreground 180-second turn,
 and an accepted queued turn: successful restart disposed the runtime, neither old
 marker appeared immediately or after the old deadline, and a new post-restart turn
-completed normally. This is real dev-host evidence, not inferred from mocks.
+completed normally. This is real dev-host evidence, not inferred from mocks, but it
+is not exact-head evidence for `af3ea3d06a`.
 
-The live probes predate `c19bd57f3f` and did not combine a separately
-authenticated second human's actual
-membership downgrade/removal or an explicitly manufactured recovery child. Those
-paths have focused authorization/recovery tests, but report the remaining live
-distinction rather than treating the single probe as every D3 permutation. No dev
-or production deployment of `c19bd57f3f` was performed as part of this correction.
+The live probes predate `af3ea3d06a` and did not combine a separately authenticated
+second human's actual membership downgrade/removal or an explicitly manufactured
+recovery child. Those paths have focused authorization/recovery tests, but report
+the remaining live distinction rather than treating the single probe as every D3
+permutation. No dev or production deployment of `af3ea3d06a` was performed as
+part of this correction.
 
 The exact handoff head produced and deployed dev-only host build
 `20260916T061335Z-c855b662e444`, SHA-256

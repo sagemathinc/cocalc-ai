@@ -13,9 +13,9 @@ been performed.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
 - Latest rereview remediation commit: `10a059f943`.
-- Latest application remediation commit: `c19bd57f3f`.
+- Latest application remediation commit: `af3ea3d06a`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `c19bd57f3f`.
+  `af3ea3d06a`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -24,6 +24,19 @@ the exact final branch head after push. A reviewer must confirm that SHA, this b
 and private repository before relying on this packet.
 
 ## Confirmed remediation
+
+- Explicit restarts no longer share the ordinary `project-start` deduplication
+  lane. Concurrent duplicate restart submissions still coalesce, but a restart
+  cannot be swallowed by an active start or restore. Assigned-host restarts now
+  require the host to acknowledge the stop fence and fail honestly if routing or
+  host contact fails. The replacement start ignores a stale pre-fence running or
+  starting snapshot and uses the new lifecycle revision. Ordinary start behavior
+  and cost are unchanged.
+- The contract now limits the restart guarantee to CoCalc-managed authority.
+  Persistent project content and unattributed project-local credentials remain
+  shared owner-controlled state. Collaborator removal/downgrade UI says that
+  restart does not sanitize this state and links directly to
+  `~/.ssh/authorized_keys` for review.
 
 - Project users and their lifecycle revision are now read in one PostgreSQL
   statement. Restart advances the durable revision before host lookup, including
@@ -89,6 +102,14 @@ and private repository before relying on this packet.
   Fetch Metadata checks in addition to their existing authentication requirements.
 
 ## Verification completed
+
+- At `af3ea3d06a`, six focused server suites passed 82 tests; the final four-suite
+  restart regression rerun passed 44 tests. Server and frontend package
+  typechecks passed, frontend lint reported zero findings, and the complete
+  39-workspace `pnpm -C src build:dev` passed. Coverage includes separate restart
+  deduplication, duplicate restart coalescing, unavailable assigned-host failure,
+  hostless restart, and replacement-start snapshot bypass. No deployment was
+  performed for this checkpoint.
 
 - At `c19bd57f3f`, the full 39-workspace `pnpm -C src build:dev` passed. Focused
   authority-fence checks passed 62 project-host tests and 186 server tests. They
@@ -156,11 +177,11 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must first assess the `c19bd57f3f` corrections for the two
-  stale-authority findings reported against `2a0ff08783`. Live qualification must
-  then deliberately overlap a stale start with a real second-human downgrade or
-  removal and the subsequent successful restart on a matched build. Earlier live
-  evidence predates this correction and is not proof of the repaired race.
+- Independent re-review must assess `af3ea3d06a`, including the two restart findings
+  reported against `2986c91d46`. Live qualification must then deliberately overlap
+  a stale start with a real second-human downgrade or removal and the subsequent
+  successful restart on a matched build. Earlier live evidence predates this
+  correction and is not proof of the repaired race.
 - The exact-head direct-control probe exercises serialized ordering and post-fence
   rejection on the real QA host, but it does not pause a prepared start before
   host dispatch or perform the membership mutation through a separately
