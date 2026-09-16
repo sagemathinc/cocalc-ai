@@ -487,7 +487,10 @@ async function executeClaimedCommand({
   }
 }
 
-async function processingLoop(lease: ActiveLease): Promise<void> {
+async function processingLoop(
+  lease: ActiveLease,
+  claimClient: ReturnType<typeof getClient>,
+): Promise<void> {
   while (authorityLocallyActive(lease)) {
     if (runtime.draining) {
       await delay(IDLE_POLL_MS);
@@ -495,7 +498,14 @@ async function processingLoop(lease: ActiveLease): Promise<void> {
     }
     let claimed;
     try {
-      claimed = await claimNextBillingAuthorityCommand(lease);
+      // Claiming must not wait behind ordinary hub traffic in the shared pool.
+      // Otherwise the lease heartbeat can remain healthy while the singleton
+      // silently stops executing commands.
+      claimed = await boundedDedicatedQuery({
+        client: claimClient,
+        promise: claimNextBillingAuthorityCommand(lease, claimClient),
+        timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+      });
     } catch (err) {
       failStopBillingAuthorityWorker({ err });
     }
@@ -551,7 +561,10 @@ async function heartbeatLoop(lease: ActiveLease): Promise<void> {
   }
 }
 
-async function runLease(lease: ActiveLease): Promise<void> {
+async function runLease(
+  lease: ActiveLease,
+  claimClient: ReturnType<typeof getClient>,
+): Promise<void> {
   runtime.lease = lease;
   runtime.draining = false;
   runtime.local_deadline_ms =
@@ -570,7 +583,10 @@ async function runLease(lease: ActiveLease): Promise<void> {
   }, 250);
   watchdog.unref?.();
   try {
-    await Promise.all([processingLoop(lease), heartbeatLoop(lease)]);
+    await Promise.all([
+      processingLoop(lease, claimClient),
+      heartbeatLoop(lease),
+    ]);
   } finally {
     clearInterval(watchdog);
   }
@@ -580,6 +596,7 @@ async function electionLoop(): Promise<void> {
   assertAuthorityBay();
   while (!runtime.stopping) {
     const leaseClient = getClient();
+    const claimClient = getClient();
     try {
       await boundedDedicatedQuery({
         client: leaseClient,
@@ -628,6 +645,11 @@ async function electionLoop(): Promise<void> {
         });
         break;
       }
+      await boundedDedicatedQuery({
+        client: claimClient,
+        promise: claimClient.connect(),
+        timeoutMs: LEASE_QUERY_TIMEOUT_MS,
+      });
       runtime.lease_client = leaseClient;
       await boundedDedicatedQuery({
         client: leaseClient,
@@ -645,12 +667,13 @@ async function electionLoop(): Promise<void> {
         });
         break;
       }
-      await runLease(lease);
+      await runLease(lease, claimClient);
     } catch (err) {
       if (runtime.lease) failStopBillingAuthorityWorker({ err });
       logger.warn("billing authority election attempt failed", { err });
     } finally {
       await leaseClient.end().catch(() => undefined);
+      await claimClient.end().catch(() => undefined);
       runtime.lease = undefined;
       runtime.lease_client = undefined;
       runtime.local_deadline_ms = 0;

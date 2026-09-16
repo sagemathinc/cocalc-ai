@@ -8,6 +8,7 @@ Markdown editor
 */
 
 import * as CodeMirror from "codemirror";
+import $ from "jquery";
 import { debounce, isEqual } from "lodash";
 import {
   CSSProperties,

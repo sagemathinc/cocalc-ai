@@ -25,6 +25,11 @@ import {
   withFundingAccountTransaction,
   reserveAccountFundingBacking,
 } from "../compute/funding/backing";
+import {
+  assignMembershipPackageSeat,
+  revokeMembershipPackageSeat,
+} from "@cocalc/server/membership/packages";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
 const mockCreatePaymentIntent = jest.fn();
 const mockGetStripe = jest.fn();
@@ -80,6 +85,85 @@ describe("admin membership package purchase", () => {
   beforeEach(() => {
     mockCreatePaymentIntent.mockReset();
     mockGetStripe.mockReset();
+  });
+
+  it("creates a free fixed-term Student team package the owner can assign without renewal", async () => {
+    const admin_account_id = uuid();
+    const user_account_id = uuid();
+    const student_account_id = uuid();
+    for (const account_id of [
+      admin_account_id,
+      user_account_id,
+      student_account_id,
+    ]) {
+      await createTestAccount(account_id);
+    }
+    await getPool().query(
+      "UPDATE accounts SET groups=ARRAY['admin'] WHERE account_id=$1",
+      [admin_account_id],
+    );
+    const studentTier = `student-${uuid()}`;
+    await createTestMembershipTier({
+      id: studentTier,
+      priority: 12,
+      team_visible: false,
+      course_store_visible: true,
+      price_monthly: 8,
+    });
+    const expires_at = new Date(Date.now() + 90 * 86400000);
+    const options = {
+      admin_account_id,
+      user_account_id,
+      product: {
+        type: "membership-package" as const,
+        kind: "team" as const,
+        membership_class: studentTier,
+        seat_count: 10,
+        interval: "month" as const,
+        expires_at,
+      },
+      price: 0,
+      source: "free" as const,
+      reason: "approved hardship seats",
+      idempotency_key: `hardship-${uuid()}`,
+    };
+    await expect(
+      adminCreateMembershipPackagePurchase({
+        ...options,
+        admin_account_id: user_account_id,
+      }),
+    ).rejects.toThrow("must be an admin");
+    const result = await adminCreateMembershipPackagePurchase(options);
+    expect(result.price).toBe(0);
+    expect(result.expires_at).toEqual(expires_at);
+    expect(
+      (await adminCreateMembershipPackagePurchase(options)).package_id,
+    ).toBe(result.package_id);
+    expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
+    const assignment = await assignMembershipPackageSeat({
+      assigned_by_account_id: user_account_id,
+      package_id: result.package_id,
+      account_id: student_account_id,
+    });
+    expect(assignment.account_id).toBe(student_account_id);
+    const membership = await resolveMembershipForAccount(student_account_id);
+    expect(membership.class).toBe(studentTier);
+    expect(new Date(membership.expires!).valueOf()).toBe(expires_at.valueOf());
+    expect(
+      (
+        await getPool().query(
+          "SELECT id FROM team_licenses WHERE owner_account_id=$1",
+          [user_account_id],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    await revokeMembershipPackageSeat({
+      package_id: result.package_id,
+      account_id: student_account_id,
+    });
+    expect(
+      (await resolveMembershipForAccount(student_account_id)).class,
+    ).not.toBe(studentTier);
   });
 
   it("canonicalizes and validates course project identity", () => {
@@ -409,15 +493,41 @@ describe("admin membership package purchase", () => {
 
   it("does not dispatch a new card identity for an unresolved pre-upgrade intent", async () => {
     const opts = await cardOptions();
-    const invoice = adminMembershipPackageInvoiceId(opts.admin_account_id, opts.idempotency_key);
+    const invoice = adminMembershipPackageInvoiceId(
+      opts.admin_account_id,
+      opts.idempotency_key,
+    );
     await getPool().query(
       "INSERT INTO admin_membership_package_intents(invoice_id,account_id,admin_account_id,request_hash,snapshot) VALUES($1,$2,$3,$4,'{}')",
-      [invoice, opts.user_account_id, opts.admin_account_id, adminMembershipPackageBusinessIdentityHash(normalizeAdminMembershipPackageBusinessIdentity(opts))],
+      [
+        invoice,
+        opts.user_account_id,
+        opts.admin_account_id,
+        adminMembershipPackageBusinessIdentityHash(
+          normalizeAdminMembershipPackageBusinessIdentity(opts),
+        ),
+      ],
     );
-    await expect(adminCreateMembershipPackagePurchase(opts)).rejects.toThrow("needs reconciliation");
+    await expect(adminCreateMembershipPackagePurchase(opts)).rejects.toThrow(
+      "needs reconciliation",
+    );
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
-    expect((await getPool().query("SELECT 1 FROM admin_membership_orders WHERE account_id=$1", [opts.user_account_id])).rows).toHaveLength(0);
-    expect((await getPool().query("SELECT 1 FROM admin_membership_package_intents WHERE invoice_id=$1", [invoice])).rows).toHaveLength(1);
+    expect(
+      (
+        await getPool().query(
+          "SELECT 1 FROM admin_membership_orders WHERE account_id=$1",
+          [opts.user_account_id],
+        )
+      ).rows,
+    ).toHaveLength(0);
+    expect(
+      (
+        await getPool().query(
+          "SELECT 1 FROM admin_membership_package_intents WHERE invoice_id=$1",
+          [invoice],
+        )
+      ).rows,
+    ).toHaveLength(1);
   });
 
   it("atomically creates a custom-price package and reuses its idempotency key", async () => {

@@ -12,6 +12,7 @@ editor height, and the Codemirror API not providing a simple way to deal with th
 */
 
 import { delay } from "awaiting";
+import $ from "jquery";
 
 import * as CodeMirror from "codemirror";
 

@@ -125,6 +125,7 @@ export async function saveToDiskWithFileServerRetry({
 }
 
 import type { ReactNode } from "react";
+import $ from "jquery";
 import { alert_message } from "@cocalc/frontend/alerts";
 import {
   Actions as BaseActions,
@@ -2585,6 +2586,7 @@ export class BaseEditorActions<
       // restore saved selections (cursor position, selected ranges)
       cm.getDoc().setSelections(sel);
     }
+    this.store.emit("cm-mounted", id);
   }
 
   // 1. if id given, returns cm with given id if id

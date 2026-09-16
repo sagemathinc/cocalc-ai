@@ -4,7 +4,7 @@
  */
 
 import { Button } from "antd";
-import { useIntl } from "react-intl";
+import { defineMessage, useIntl } from "react-intl";
 
 import { Panel } from "@cocalc/frontend/antd-bootstrap";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -33,6 +33,11 @@ declare global {
   }
 }
 
+export const TERMINAL_COLOR_SCHEME_LABEL = defineMessage({
+  id: "account.terminal-settings.label-row.label",
+  defaultMessage: "Terminal color scheme",
+});
+
 export function TerminalSettings() {
   const intl = useIntl();
 
@@ -50,10 +55,7 @@ export function TerminalSettings() {
     set_account_table({ terminal: { color_scheme } });
   }
 
-  const label = intl.formatMessage({
-    id: "account.terminal-settings.label-row.label",
-    defaultMessage: "Terminal color scheme",
-  });
+  const label = intl.formatMessage(TERMINAL_COLOR_SCHEME_LABEL);
 
   return (
     <Panel

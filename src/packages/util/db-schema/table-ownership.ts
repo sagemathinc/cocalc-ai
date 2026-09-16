@@ -784,6 +784,7 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
       "admin_support_mutations",
       "cluster_account_api_key_directory",
       "cluster_account_directory",
+      "cluster_bay_credentials",
       "cluster_bay_registry",
       "project_app_public_subdomains",
       "project_collab_invite_directory",

@@ -6,7 +6,10 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { useEffect, useRef } from "react";
-import { GitCommitDrawer } from "../git-commit-drawer";
+import {
+  GitCommitDrawer,
+  persistGitReviewOnlyUnreviewedPreference,
+} from "../git-commit-drawer";
 import { projectGitReader } from "@cocalc/frontend/git/project-read-service";
 import { locateCommitWorktree } from "@cocalc/frontend/git/commit-worktree";
 import { readTargetDiff } from "@cocalc/frontend/git/read-target-diff";
@@ -307,25 +310,34 @@ test.each([commit, commit.slice(0, 8)])(
   },
 );
 
-test("history arriving after a short-hash diff does not replace it", async () => {
-  const history =
-    deferred<Awaited<ReturnType<typeof projectGitReader.history>>>();
-  jest.mocked(projectGitReader.history).mockReturnValue(history.promise);
-  render(<GitCommitDrawer {...props} commitHash={commit.slice(0, 8)} />);
-  const viewport = await screen.findByRole("region", { name: "Git diff" });
-  viewport.scrollTop = 456;
-  viewport.focus();
-  await act(async () =>
-    history.resolve([
-      { commit, parents: [], subject: "Example commit", timestamp: 0 },
-    ]),
-  );
-  expect(screen.getByRole("region", { name: "Git diff" })).toBe(viewport);
-  expect(document.activeElement).toBe(viewport);
-  expect(viewport.scrollTop).toBe(456);
-  expect(readTargetDiff).toHaveBeenCalledTimes(1);
-  expect(mockDiffMount).toHaveBeenCalledTimes(1);
-});
+test.each([true, false])(
+  "history arriving after a short-hash diff does not replace it (includes selected: %s)",
+  async (includesSelected) => {
+    persistGitReviewOnlyUnreviewedPreference(true);
+    const history =
+      deferred<Awaited<ReturnType<typeof projectGitReader.history>>>();
+    jest.mocked(projectGitReader.history).mockReturnValue(history.promise);
+    render(<GitCommitDrawer {...props} commitHash={commit.slice(0, 8)} />);
+    const viewport = await screen.findByRole("region", { name: "Git diff" });
+    viewport.scrollTop = 456;
+    viewport.focus();
+    await act(async () =>
+      history.resolve([
+        {
+          commit: includesSelected ? commit : nextCommit,
+          parents: [],
+          subject: "Example commit",
+          timestamp: 0,
+        },
+      ]),
+    );
+    expect(screen.getByRole("region", { name: "Git diff" })).toBe(viewport);
+    expect(document.activeElement).toBe(viewport);
+    expect(viewport.scrollTop).toBe(456);
+    expect(readTargetDiff).toHaveBeenCalledTimes(1);
+    expect(mockDiffMount).toHaveBeenCalledTimes(1);
+  },
+);
 
 test("worktree discovery does not cancel an immutable diff still in flight", async () => {
   const lookup = deferred<Awaited<ReturnType<typeof locateCommitWorktree>>>();

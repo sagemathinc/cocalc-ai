@@ -31,6 +31,7 @@ import {
   getGcpAcceleratorImage,
 } from "@cocalc/server/cloud/host-util";
 import { getHostOwnerBaySshIdentity } from "@cocalc/server/cloud/ssh-key";
+import { managedVmSshHostIdentityScript } from "./ssh-host-identity";
 import {
   gcpCpuCountForMachineType,
   gcpMemoryGiBForMachineType,
@@ -712,6 +713,17 @@ chmod 0600 /home/user/.ssh/authorized_keys
       ? `/dev/disk/by-id/google-${volume.provider_disk_id}`
       : "/dev/disk/by-id/virtio-home"
     : undefined;
+  const preserveSshHostIdentity =
+    vm.provider === "nebius"
+      ? `${managedVmSshHostIdentityScript()}
+/usr/sbin/sshd -t
+if systemctl is-active --quiet ssh.service; then
+  systemctl reload ssh.service
+elif systemctl is-active --quiet sshd.service; then
+  systemctl reload sshd.service
+fi
+`
+      : "";
   const volumeSetup = volume
     ? `device=${volumeDevice}
 for _ in $(seq 1 60); do
@@ -812,6 +824,7 @@ fi
 ${volumeSetup}
 install -d -m 0700 -o user -g user /home/user/.ssh
 ${nebiusKeyRestore}
+${preserveSshHostIdentity}
 install -d -m 0755 /var/lib/cocalc-managed-vm /run/cocalc-managed-vm
 printf '%s\n' '${vm.bootstrap_revision}' >/var/lib/cocalc-managed-vm/bootstrap-ready
 cp /var/lib/cocalc-managed-vm/bootstrap-ready /run/cocalc-managed-vm/bootstrap-ready

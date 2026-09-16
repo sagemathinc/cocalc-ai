@@ -17,18 +17,19 @@ import {
   acpDaemonControlClient,
   type AcpDaemonStatus,
 } from "@cocalc/conat/ai/acp/daemon-control";
-import { getAcpWorker } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
+  getAcpWorker,
   listAcpWorkers,
   stopAcpWorker,
   type AcpWorkerRow,
+  type AcpWorkerState,
 } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
-  hasQueuedOrRunningAcpJobs,
+  latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
-  oldestQueuedAcpJobTimestamp,
+  oldestClaimableQueuedAcpJobTimestamp,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
 import { countRunningAcpTurnLeasesForWorker } from "@cocalc/lite/hub/sqlite/acp-turns";
 import { getSoftwareVersions } from "../../software";
@@ -38,6 +39,7 @@ import {
   readProjectHostAcpWorkerTarget,
   writeProjectHostAcpWorkerTarget,
 } from "./worker-target";
+import { recordUnexpectedAcpWorkerTermination } from "./worker-health";
 
 const logger = getLogger("project-host:hub:acp:worker-manager");
 const ACP_WORKER_PID_FILE = path.join(data, "acp-worker.pid");
@@ -71,6 +73,18 @@ const ACP_WORKER_DRAIN_TERMINATE_MS = Math.max(
 const ACP_WORKER_QUEUE_STALL_MS = Math.max(
   60_000,
   Number(process.env.COCALC_ACP_WORKER_QUEUE_STALL_MS ?? 120_000),
+);
+const ACP_WORKER_QUEUE_STALL_CONFIRM_MS = Math.max(
+  250,
+  Number(process.env.COCALC_ACP_WORKER_QUEUE_STALL_CONFIRM_MS ?? 1_000),
+);
+const ACP_WORKER_AFFINITY_STALE_MS = Math.max(
+  5_000,
+  Number(process.env.COCALC_ACP_WORKER_STALE_MS ?? 15_000),
+);
+const ACP_WORKER_AFFINITY_PID_GRACE_MS = Math.max(
+  ACP_WORKER_AFFINITY_STALE_MS,
+  Number(process.env.COCALC_ACP_ORPHAN_TURN_PID_ALIVE_GRACE_MS ?? 2 * 60_000),
 );
 
 let supervisorStarted = false;
@@ -347,14 +361,10 @@ function workerDatabaseStateProtectsUnresponsiveWorker(
   if (heartbeatIsFresh && Number(row.background_terminal_processes ?? 0) > 0) {
     return true;
   }
-  if (hasAcpBacklog()) {
+  if (acpBacklogStaleSince(worker_id, row.state) != null) {
     return !shouldTerminateQueueStalledWorker({ worker, row, now });
   }
   return heartbeatIsFresh;
-}
-
-function hasAcpBacklog(): boolean {
-  return hasQueuedOrRunningAcpJobs();
 }
 
 function acpJobReferenceTimestamp(row: {
@@ -367,14 +377,61 @@ function acpJobReferenceTimestamp(row: {
   return Number.isFinite(createdAt) && createdAt > 0 ? createdAt : undefined;
 }
 
-function acpBacklogStaleSince(worker_id: string): number | undefined {
-  let oldest = oldestQueuedAcpJobTimestamp();
+function acpBacklogStaleSince(
+  worker_id: string,
+  state: AcpWorkerState = "active",
+  now = Date.now(),
+): number | undefined {
+  const affinity =
+    state === "active" ? queuedJobAffinityContext(now) : undefined;
+  let oldest = oldestClaimableQueuedAcpJobTimestamp({
+    worker_id,
+    include_unassigned: state === "active",
+    known_worker_ids: affinity?.knownWorkerIds,
+    reclaimable_worker_ids: affinity?.reclaimableWorkerIds,
+  });
   for (const row of listRunningAcpJobsByWorker(worker_id)) {
     const timestamp = acpJobReferenceTimestamp(row);
     if (timestamp == null) continue;
     oldest = oldest == null ? timestamp : Math.min(oldest, timestamp);
   }
   return oldest;
+}
+
+function workerRetainsQueuedJobAffinity(
+  row: AcpWorkerRow,
+  now: number,
+): boolean {
+  if (row.state === "stopped") return false;
+  const heartbeatAt = Number(row.last_heartbeat_at ?? 0);
+  const startedAt = Number(row.started_at ?? 0);
+  const referenceAt =
+    Number.isFinite(heartbeatAt) && heartbeatAt > 0
+      ? heartbeatAt
+      : Number.isFinite(startedAt) && startedAt > 0
+        ? startedAt
+        : 0;
+  if (referenceAt > 0 && now - referenceAt < ACP_WORKER_AFFINITY_STALE_MS) {
+    return true;
+  }
+  return (
+    isPidAlive(row.pid ?? undefined) &&
+    referenceAt > 0 &&
+    now - referenceAt < ACP_WORKER_AFFINITY_PID_GRACE_MS
+  );
+}
+
+function queuedJobAffinityContext(now: number): {
+  knownWorkerIds: string[];
+  reclaimableWorkerIds: string[];
+} {
+  const workers = listAcpWorkers();
+  return {
+    knownWorkerIds: workers.map(({ worker_id }) => worker_id),
+    reclaimableWorkerIds: workers
+      .filter((row) => !workerRetainsQueuedJobAffinity(row, now))
+      .map(({ worker_id }) => worker_id),
+  };
 }
 
 function countRunningJobsForWorker(worker_id: string): number {
@@ -431,7 +488,9 @@ export function shouldTerminateQueueStalledWorker({
   );
   if (backgroundTerminalProcesses > 0) return false;
   if (workerHasRunningCommandJob(worker_id)) return false;
-  const backlogSince = acpBacklogStaleSince(worker_id);
+  const workerState = status?.state ?? row?.state ?? "active";
+  if (workerState === "stopped") return false;
+  const backlogSince = acpBacklogStaleSince(worker_id, workerState, now);
   if (backlogSince == null || now - backlogSince < stallMs) return false;
   const startedAt = Math.max(
     workerStartedAtMs(worker),
@@ -441,9 +500,41 @@ export function shouldTerminateQueueStalledWorker({
   const queueProgressAt = Math.max(
     numberOrUndefined(status?.last_queue_progress_at) ?? 0,
     numberOrUndefined(row?.last_queue_progress_at) ?? 0,
+    latestAcpJobUpdateForWorker(worker_id) ?? 0,
     startedAt,
   );
   return queueProgressAt <= 0 || now - queueProgressAt >= stallMs;
+}
+
+async function confirmQueueStalledWorkerTermination({
+  worker,
+  delayMs = ACP_WORKER_QUEUE_STALL_CONFIRM_MS,
+  sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms)),
+  readStatus = getWorkerStatus,
+  isAlive = isPidAlive,
+}: {
+  worker: WorkerProcessInfo;
+  delayMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+  readStatus?: (
+    worker: WorkerProcessInfo,
+  ) => Promise<AcpDaemonStatus | undefined>;
+  isAlive?: (pid: number) => boolean;
+}): Promise<{
+  confirmed: boolean;
+  status?: AcpDaemonStatus;
+  row?: ReturnType<typeof getAcpWorker>;
+}> {
+  await sleep(delayMs);
+  if (!isAlive(worker.pid)) return { confirmed: false };
+  const status = await readStatus(worker);
+  const row = getAcpWorker(workerIdOf(worker));
+  return {
+    confirmed: shouldTerminateQueueStalledWorker({ worker, status, row }),
+    status,
+    row,
+  };
 }
 
 export function shouldTerminateOverdueDrainingWorker({
@@ -768,6 +859,29 @@ async function terminateWorker(
 ): Promise<void> {
   await terminateWorkerPid(worker.pid);
   const worker_id = workerIdOf(worker);
+  try {
+    if (
+      recordUnexpectedAcpWorkerTermination({
+        dataDir: data,
+        reason,
+        pid: worker.pid,
+        worker_id: worker_id || undefined,
+      })
+    ) {
+      logger.error("recorded unexpected ACP worker termination", {
+        pid: worker.pid,
+        worker_id: worker_id || null,
+        reason,
+      });
+    }
+  } catch (err) {
+    logger.error("failed recording unexpected ACP worker termination", {
+      pid: worker.pid,
+      worker_id: worker_id || null,
+      reason,
+      err,
+    });
+  }
   if (!worker_id) return;
   try {
     stopAcpWorker({ worker_id, reason });
@@ -893,18 +1007,46 @@ async function reconcileProjectHostAcpWorkers({
       isExpectedWorkerProcess(worker, launch) &&
       shouldTerminateQueueStalledWorker({ worker, status, row })
     ) {
+      const confirmation = await confirmQueueStalledWorkerTermination({
+        worker,
+      });
+      // An exited candidate must not displace a live worker in the rollout plan.
+      if (!isPidAlive(worker.pid)) continue;
+      const finalRow = getAcpWorker(workerIdOf(worker));
+      if (
+        !confirmation.confirmed ||
+        !shouldTerminateQueueStalledWorker({
+          worker,
+          status: confirmation.status,
+          row: finalRow,
+        })
+      ) {
+        logger.info("deferred queue-stalled ACP worker termination", {
+          pid: worker.pid,
+          worker_id: workerIdOf(worker) || null,
+          reason: "worker state changed during stall confirmation",
+          confirm_ms: ACP_WORKER_QUEUE_STALL_CONFIRM_MS,
+        });
+        workers.push({ ...worker, status: confirmation.status ?? status });
+        continue;
+      }
       logger.warn("terminating queue-stalled project-host ACP worker", {
         pid: worker.pid,
         worker_id: workerIdOf(worker) || null,
         bundle_version: workerBundleVersionOf(worker, launch),
         bundle_path: workerBundlePathOf(worker, launch),
-        state: status?.state ?? row?.state ?? null,
+        state: confirmation.status?.state ?? finalRow?.state ?? null,
         last_seen_running_jobs:
-          status?.last_seen_running_jobs ?? row?.last_seen_running_jobs ?? null,
-        running_turn_leases: status?.running_turn_leases ?? null,
+          confirmation.status?.last_seen_running_jobs ??
+          finalRow?.last_seen_running_jobs ??
+          null,
+        running_turn_leases: confirmation.status?.running_turn_leases ?? null,
         last_queue_progress_at:
-          status?.last_queue_progress_at ?? row?.last_queue_progress_at ?? null,
+          confirmation.status?.last_queue_progress_at ??
+          finalRow?.last_queue_progress_at ??
+          null,
         queue_stall_ms: ACP_WORKER_QUEUE_STALL_MS,
+        confirm_ms: ACP_WORKER_QUEUE_STALL_CONFIRM_MS,
       });
       await terminateWorker(worker, "queue_stalled_worker");
       continue;
@@ -1258,4 +1400,6 @@ export const __test__ = {
   workerControlStartupGraceExpired,
   staleAcpWorkerRowsToStop,
   shouldTerminateQueueStalledWorker,
+  confirmQueueStalledWorkerTermination,
+  reconcileProjectHostAcpWorkers,
 };

@@ -6,6 +6,7 @@
 // Component that allows WYSIWYG editing of markdown.
 
 import { delay } from "awaiting";
+import $ from "jquery";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Map } from "immutable";
 import { debounce, isEqual, throttle } from "lodash";

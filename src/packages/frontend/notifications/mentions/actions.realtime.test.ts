@@ -874,117 +874,264 @@ describe("MentionsActions realtime feed", () => {
     }
   });
 
-  it("marks a project read through the loaded snapshot without sending ids", async () => {
-    const project_id = "project-1";
-    const initialRow = {
-      notification_id: "n-1",
-      kind: "mention",
-      project_id,
-      summary: { description: "Initial notification" },
-      read_state: { read: false, saved: false },
-      created_at: new Date("2026-04-05T00:00:00.000Z"),
-      updated_at: new Date("2026-04-05T00:00:00.000Z"),
-    };
-    mockedWebappClient.conat_client.hub.notifications.listSnapshot.mockResolvedValueOnce(
-      {
-        rows: [initialRow],
+  it.each([false, true])(
+    "keeps bulk-read recovery retries in the background (write failure: %s)",
+    async (writeFailure) => {
+      jest.useFakeTimers();
+      const warnSpy = jest.spyOn(console, "warn").mockImplementation(() => {});
+      const notifications = mockedWebappClient.conat_client.hub.notifications;
+      const row = {
+        notification_id: "n-1",
+        kind: "mention",
+        project_id: null,
+        summary: { title: "Notice" },
+        read_state: { read: false, saved: false },
+      };
+      notifications.listSnapshot.mockResolvedValueOnce({
+        rows: [row],
         read_through_revision: "37",
-      },
-    );
-    mockedWebappClient.conat_client.hub.notifications.list.mockResolvedValue(
-      [],
-    );
-    mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue({
-      total: 1,
-      unread: 1,
-      saved: 0,
-      archived: 0,
-      by_kind: {
-        mention: {
+      });
+      notifications.counts.mockResolvedValue({ unread: 1 });
+      let mentionsStore = ImmutableMap({ mentions: ImmutableMap() });
+      const redux = {
+        getStore: (name: string) =>
+          name === "account"
+            ? ImmutableMap({ account_id: "acct-1" })
+            : mentionsStore,
+        _set_state: jest.fn((patch) => {
+          mentionsStore = mentionsStore.merge(patch.mentions);
+        }),
+        removeActions: jest.fn(),
+      } as any;
+      const actions = new MentionsActions("mentions", redux);
+      try {
+        await actions.refresh();
+        redux._set_state.mockClear();
+        notifications.listSnapshot
+          .mockRejectedValueOnce(new Error("timeout"))
+          .mockResolvedValueOnce({
+            rows: [
+              { ...row, read_state: { read: !writeFailure, saved: false } },
+            ],
+            read_through_revision: "38",
+          });
+        if (writeFailure) {
+          notifications.markAllRead.mockRejectedValueOnce(new Error("timeout"));
+        }
+        notifications.counts.mockResolvedValue({
+          unread: writeFailure ? 1 : 0,
+        });
+        await actions.markAll(undefined, "read");
+        expect(notifications.listSnapshot).toHaveBeenCalledTimes(2);
+        await jest.advanceTimersByTimeAsync(5_000);
+        expect(notifications.listSnapshot).toHaveBeenCalledTimes(3);
+        expect(mentionsStore.get("unread_count")).toBe(writeFailure ? 1 : 0);
+        expect(
+          mentionsStore.getIn(["mentions", "n-1", "users", "acct-1", "read"]),
+        ).toBe(!writeFailure);
+        expect(
+          redux._set_state.mock.calls.some(
+            ([patch]) => patch.mentions?.loading === true,
+          ),
+        ).toBe(false);
+      } finally {
+        actions.destroy();
+        warnSpy.mockRestore();
+        jest.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    { scope: "project", inFlight: false, concurrent: false },
+    { scope: "everything", inFlight: false, concurrent: false },
+    { scope: "everything", inFlight: true, concurrent: false },
+    { scope: "everything", inFlight: true, concurrent: true },
+  ])(
+    "marks $scope read without blanking the inbox (older refresh: $inFlight, overlapping mark: $concurrent)",
+    async ({ scope, inFlight, concurrent }) => {
+      const project_id = "project-1";
+      const initialRow = {
+        notification_id: "n-1",
+        kind: "mention",
+        project_id,
+        summary: { description: "Initial notification" },
+        read_state: { read: false, saved: false },
+        created_at: new Date("2026-04-05T00:00:00.000Z"),
+        updated_at: new Date("2026-04-05T00:00:00.000Z"),
+      };
+      mockedWebappClient.conat_client.hub.notifications.listSnapshot.mockResolvedValueOnce(
+        {
+          rows: [
+            initialRow,
+            {
+              ...initialRow,
+              notification_id: "n-other",
+              project_id: "project-2",
+            },
+            { ...initialRow, notification_id: "n-general", project_id: null },
+          ],
+          read_through_revision: "37",
+        },
+      );
+      mockedWebappClient.conat_client.hub.notifications.list.mockResolvedValue(
+        [],
+      );
+      mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue(
+        {
           total: 1,
           unread: 1,
           saved: 0,
           archived: 0,
-        },
-      },
-    });
-    mockedWebappClient.conat_client.hub.notifications.markAllRead.mockImplementation(
-      async () => {
-        mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue(
-          {
-            total: 1,
-            unread: 0,
-            saved: 0,
-            archived: 0,
-            by_kind: {
-              mention: {
-                total: 1,
-                unread: 0,
-                saved: 0,
-                archived: 0,
-              },
+          by_kind: {
+            mention: {
+              total: 1,
+              unread: 1,
+              saved: 0,
+              archived: 0,
             },
           },
-        );
-        return { updated_count: 1 };
-      },
-    );
-
-    let mentionsStore = ImmutableMap({
-      mentions: ImmutableMap(),
-      loading: true,
-    });
-    const redux = {
-      getStore: jest.fn((name: string) => {
-        if (name === "account") {
-          return ImmutableMap({ account_id: "acct-1", is_ready: true });
-        }
-        if (name === "mentions") {
-          return mentionsStore;
-        }
-        return ImmutableMap();
-      }),
-      _set_state: jest.fn((patch) => {
-        if (patch.mentions != null) {
-          mentionsStore = mentionsStore.merge(patch.mentions);
-        }
-      }),
-      removeActions: jest.fn(),
-    } as any;
-    const actions = new MentionsActions("mentions", redux);
-
-    try {
-      actions._init();
-      await flush();
-
-      const feed = await getSharedAccountDStreamMock.mock.results[0].value;
-      feed.emit("change", {
-        type: "notification.upsert",
-        account_id: "acct-1",
-        reason: "projected_upsert",
-        ts: Date.now(),
-        notification: {
-          ...initialRow,
-          notification_id: "n-after-snapshot",
-          created_at: "2026-04-05T00:01:00.000Z",
-          updated_at: "2026-04-05T00:01:00.000Z",
         },
-      });
-      await flushMicrotasks();
+      );
+      mockedWebappClient.conat_client.hub.notifications.markAllRead.mockImplementation(
+        async () => {
+          const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+          feed.emit("change", {
+            type: "notification.counts",
+            account_id: "acct-1",
+            ts: Date.now(),
+            counts: { unread: 2 },
+          });
+          // A reconnect can also request a snapshot between project writes.
+          feed.emit("history-gap", {});
+          mockedWebappClient.conat_client.hub.notifications.counts.mockResolvedValue(
+            {
+              total: 1,
+              unread: 0,
+              saved: 0,
+              archived: 0,
+              by_kind: {
+                mention: {
+                  total: 1,
+                  unread: 0,
+                  saved: 0,
+                  archived: 0,
+                },
+              },
+            },
+          );
+          return { updated_count: 1 };
+        },
+      );
 
-      await actions.markAll(project_id, "read");
-
-      expect(
-        mockedWebappClient.conat_client.hub.notifications.markAllRead,
-      ).toHaveBeenCalledWith({
-        project_id,
-        read_through_revision: "37",
+      let mentionsStore = ImmutableMap({
+        mentions: ImmutableMap(),
+        loading: true,
       });
-      expect(
-        mockedWebappClient.conat_client.hub.notifications.markRead,
-      ).not.toHaveBeenCalled();
-    } finally {
-      actions.destroy();
-    }
-  });
+      const redux = {
+        getStore: jest.fn((name: string) => {
+          if (name === "account") {
+            return ImmutableMap({ account_id: "acct-1", is_ready: true });
+          }
+          if (name === "mentions") {
+            return mentionsStore;
+          }
+          return ImmutableMap();
+        }),
+        _set_state: jest.fn((patch) => {
+          if (patch.mentions != null) {
+            mentionsStore = mentionsStore.merge(patch.mentions);
+          }
+        }),
+        removeActions: jest.fn(),
+      } as any;
+      const actions = new MentionsActions("mentions", redux);
+
+      try {
+        actions._init();
+        await flush();
+
+        const feed = await getSharedAccountDStreamMock.mock.results[0].value;
+        feed.emit("change", {
+          type: "notification.upsert",
+          account_id: "acct-1",
+          reason: "projected_upsert",
+          ts: Date.now(),
+          notification: {
+            ...initialRow,
+            notification_id: "n-after-snapshot",
+            created_at: "2026-04-05T00:01:00.000Z",
+            updated_at: "2026-04-05T00:01:00.000Z",
+          },
+        });
+        await flushMicrotasks();
+
+        let releaseOldSnapshot: ((snapshot: any) => void) | undefined;
+        let olderRefresh: Promise<void> | undefined;
+        if (inFlight) {
+          mockedWebappClient.conat_client.hub.notifications.listSnapshot.mockImplementationOnce(
+            () =>
+              new Promise((resolve) => {
+                releaseOldSnapshot = resolve;
+              }),
+          );
+          olderRefresh = actions.refresh(true);
+          await flushMicrotasks();
+        }
+        redux._set_state.mockClear();
+        const marking = actions.markAll(
+          scope === "everything" ? undefined : project_id,
+          "read",
+        );
+        const overlappingMark = concurrent
+          ? actions.markAll("project-2", "read")
+          : undefined;
+        await flushMicrotasks();
+        releaseOldSnapshot?.({
+          rows: [initialRow],
+          read_through_revision: "37",
+        });
+        await olderRefresh;
+        await overlappingMark;
+        await marking;
+
+        expect(
+          redux._set_state.mock.calls.some(
+            ([patch]) => patch.mentions?.loading === true,
+          ),
+        ).toBe(false);
+        expect(
+          mockedWebappClient.conat_client.hub.notifications.listSnapshot,
+        ).toHaveBeenCalledTimes(inFlight ? 3 : 2);
+        expect(mentionsStore.get("unread_count")).toBe(0);
+        expect(
+          (mentionsStore.get("mentions") as ImmutableMap<any, any>).size,
+        ).toBe(0);
+
+        expect(
+          mockedWebappClient.conat_client.hub.notifications.markAllRead,
+        ).toHaveBeenCalledWith({
+          project_id,
+          read_through_revision: "37",
+        });
+        expect(
+          mockedWebappClient.conat_client.hub.notifications.markAllRead,
+        ).toHaveBeenCalledTimes(
+          (scope === "everything" ? 3 : 1) + (concurrent ? 1 : 0),
+        );
+        if (scope === "everything") {
+          for (const project_id of ["project-2", null]) {
+            expect(
+              mockedWebappClient.conat_client.hub.notifications.markAllRead,
+            ).toHaveBeenCalledWith({ project_id, read_through_revision: "37" });
+          }
+        }
+        expect(
+          mockedWebappClient.conat_client.hub.notifications.markRead,
+        ).not.toHaveBeenCalled();
+      } finally {
+        actions.destroy();
+      }
+    },
+  );
 });

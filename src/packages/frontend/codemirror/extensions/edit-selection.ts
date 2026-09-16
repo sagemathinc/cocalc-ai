@@ -4,6 +4,7 @@
  */
 
 import * as CodeMirror from "codemirror";
+import $ from "jquery";
 
 import {
   commands as EDIT_COMMANDS,

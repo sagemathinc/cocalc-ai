@@ -4,7 +4,9 @@
  */
 
 import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
+import { PROJECT_HOST_SESSION_UNAUTHORIZED } from "@cocalc/conat/hub/api/ai-sessions";
 import {
+  ensureAiSessionsSchema,
   interruptAiSessionForAdmin,
   interruptAiSessionForAccount,
   listAiSessionsForAdmin,
@@ -106,6 +108,98 @@ describe("AI ACP session registry interrupts", () => {
 
   afterAll(async () => {
     await getPool().end();
+  });
+
+  it("classifies publication from a non-owning host as permanent", async () => {
+    await ensureAiSessionsSchema();
+    await expect(
+      upsertProjectHostAiSession({
+        authenticated_host_id: HOST_ID,
+        record: {
+          session_key: "unauthorized-host-session",
+          project_id: PROJECT_ID,
+          state: "completed",
+          terminal: true,
+          updated_at: "2026-09-15T00:00:00.000Z",
+        },
+      }),
+    ).rejects.toMatchObject({ code: PROJECT_HOST_SESSION_UNAUTHORIZED });
+  });
+
+  it("rejects delayed session publications from older source revisions", async () => {
+    await getPool().query(
+      `INSERT INTO projects (project_id, host_id, deleted)
+       VALUES ($1, $2, NULL)
+       ON CONFLICT (project_id) DO UPDATE
+       SET host_id=EXCLUDED.host_id, deleted=NULL`,
+      [PROJECT_ID, HOST_ID],
+    );
+    const ownership = await getPool().query(
+      "SELECT host_id, deleted FROM projects WHERE project_id=$1",
+      [PROJECT_ID],
+    );
+    expect(ownership.rows).toEqual([
+      expect.objectContaining({ host_id: HOST_ID, deleted: null }),
+    ]);
+    const publish = async ({
+      state,
+      terminal,
+      source_revision,
+      updated_at,
+    }: {
+      state: "running" | "completed";
+      terminal: boolean;
+      source_revision?: number;
+      updated_at: string;
+    }) =>
+      await upsertProjectHostAiSession({
+        authenticated_host_id: HOST_ID,
+        record: {
+          session_key: "revision-ordered-session",
+          project_id: PROJECT_ID,
+          state,
+          terminal,
+          source_revision,
+          updated_at,
+        },
+      });
+
+    await publish({
+      state: "completed",
+      terminal: true,
+      source_revision: 2,
+      updated_at: "2026-09-15T13:24:27.000Z",
+    });
+    await publish({
+      state: "running",
+      terminal: false,
+      source_revision: 1,
+      updated_at: "2026-09-15T13:00:00.000Z",
+    });
+    // Terminal state is irreversible even if a buggy sender advances revision.
+    await publish({
+      state: "running",
+      terminal: false,
+      source_revision: 3,
+      updated_at: "2026-09-15T13:25:00.000Z",
+    });
+    // A retained legacy worker without revisions must not bypass the fence.
+    await publish({
+      state: "running",
+      terminal: false,
+      updated_at: "2026-09-15T13:30:00.000Z",
+    });
+
+    const { rows } = await getPool().query(
+      `SELECT state, terminal, source_revision
+       FROM ai_sessions WHERE session_key=$1`,
+      ["revision-ordered-session"],
+    );
+    expect(rows[0]).toMatchObject({
+      state: "completed",
+      terminal: true,
+      source_revision: "2",
+    });
   });
 
   it("keeps older active sessions ahead of terminal history when limiting results", async () => {

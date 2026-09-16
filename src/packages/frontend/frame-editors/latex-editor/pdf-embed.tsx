@@ -8,6 +8,7 @@ This is a renderer using the embed tag, so works with browsers that have a PDF v
 */
 
 import { React } from "@cocalc/frontend/app-framework";
+import $ from "jquery";
 import { raw_url } from "@cocalc/frontend/frame-editors/frame-tree/util";
 import { Loading } from "@cocalc/frontend/components";
 import { useProjectHostAuthedUrl } from "@cocalc/frontend/project/use-project-host-authed-url";

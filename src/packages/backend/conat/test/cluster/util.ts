@@ -12,8 +12,15 @@ export async function createClusterNode(
     // disable autoscan so we can precisely control connections when building clusters for unit testing.
     autoscanInterval: 0,
     systemAccountPassword: "foo",
-    getUser: async () => {
-      return { hub_id: "system" };
+    clusterLinkPassword: "cluster-link-secret",
+    getUser: async (socket, systemAccounts = {}) => {
+      const cookie = `${socket.handshake.headers.cookie ?? ""}`;
+      for (const [name, account] of Object.entries(systemAccounts)) {
+        if (cookie.includes(`${name}=${account.password}`)) {
+          return account.user;
+        }
+      }
+      return undefined;
     },
     ...opts,
   });

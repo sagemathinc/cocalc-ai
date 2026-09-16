@@ -361,6 +361,10 @@ const agentProjectIds = new WeakMap<AcpAgent, string>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
+const queuedAcpJobThreadRetryTimers = new Map<
+  string,
+  ReturnType<typeof setTimeout>
+>();
 let ensureDetachedWorkerRunning = ensureAcpWorkerRunning;
 let acpExecutionOwnedByCurrentProcess = false;
 let acpInterruptPollerStarted = false;
@@ -481,6 +485,10 @@ const ACP_BLOB_MATERIALIZE_SLOW_MS = envNumber(
   250,
 );
 const ACP_WORKER_POLL_MS = envNumber("COCALC_ACP_WORKER_POLL_MS", 1000);
+const ACP_QUEUE_ADMISSION_RETRY_MS = Math.max(
+  250,
+  envNumber("COCALC_ACP_QUEUE_ADMISSION_RETRY_MS", 5000),
+);
 const ACP_WORKER_IDLE_EXIT_MS = envNumber(
   "COCALC_ACP_WORKER_IDLE_EXIT_MS",
   5000,
@@ -774,6 +782,18 @@ function noteDetachedWorkerQueueProgress(): void {
     last_seen_running_jobs: countRunningAcpJobsForWorker(context.worker_id),
     last_queue_progress_at: now,
   });
+}
+
+function noteDetachedWorkerExecutionSettled(op_id: string): void {
+  try {
+    noteDetachedWorkerQueueProgress();
+  } catch (err) {
+    // Queue bookkeeping must not change the result of a completed ACP turn.
+    logger.warn("failed recording settled ACP execution queue progress", {
+      op_id,
+      err,
+    });
+  }
 }
 
 function noteDetachedWorkerQueuePoll({
@@ -4526,6 +4546,10 @@ export class ChatStreamWriter {
         return undefined;
     }
   }
+
+  public getTerminalErrorText(): string | undefined {
+    return this.lastErrorText ?? undefined;
+  }
 }
 
 function normalizeSummaryText(text: string | null | undefined): string {
@@ -7484,6 +7508,7 @@ function agentsForProject(projectId: string): AcpAgent[] {
 
 type AcpExecutionResult = {
   terminalState: "completed" | "error" | "interrupted";
+  error?: string;
   recoveryCode?: CodexAcpRecoveryErrorCode;
   recoveryDetail?: string;
 };
@@ -7673,6 +7698,7 @@ async function executeAcpRequest({
   }
 
   let terminalState: AcpExecutionResult["terminalState"] = "completed";
+  let terminalError: string | undefined;
   try {
     logger.debug("evaluate: running", {
       reqId,
@@ -7728,6 +7754,10 @@ async function executeAcpRequest({
     }
   } finally {
     terminalState = chatWriter?.getTerminalState() ?? terminalState;
+    terminalError =
+      terminalState === "error"
+        ? chatWriter?.getTerminalErrorText()
+        : undefined;
     const elapsedMs = Date.now() - startedAt;
     logger.debug("evaluate: end", { reqId, elapsedMs });
     // TODO: we might not want to immediately close, since there is
@@ -7746,7 +7776,12 @@ async function executeAcpRequest({
     }
     await cleanup();
   }
-  return { terminalState, recoveryCode, recoveryDetail };
+  return {
+    terminalState,
+    error: terminalError,
+    recoveryCode,
+    recoveryDetail,
+  };
 }
 
 async function waitForChatWriterDisposal(
@@ -9759,15 +9794,20 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       ...refreshedRequest,
       stream: async () => {},
     });
+    // The live-turn lease is released before automation finalization. Record
+    // progress now so the host watchdog cannot mistake that gap for a stall.
+    noteDetachedWorkerExecutionSettled(job.op_id);
     await finalizeAutomationRun({
       automation_id: refreshedRequest.chat?.automation_id,
       terminalState: result.terminalState,
       last_job_op_id: job.op_id,
       last_message_id: refreshedRequest.chat?.message_id,
+      error: result.error,
     });
     setAcpJobState({
       op_id: job.op_id,
       state: result.terminalState,
+      error: result.terminalState === "error" ? result.error : undefined,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       recovery_code:
         result.terminalState === "error" ? result.recoveryCode : undefined,
@@ -9792,6 +9832,7 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       }
     }
   } catch (err) {
+    noteDetachedWorkerExecutionSettled(job.op_id);
     const message = `ACP queued job failed: ${(err as Error)?.message ?? err}`;
     logger.warn("queued acp job execution failed", {
       op_id: job.op_id,
@@ -9883,13 +9924,14 @@ function kickQueuedAcpJobsForThread({
   path: string;
   thread_id: string;
 }): void {
+  const key = acpJobThreadKey({ project_id, path, thread_id });
+  if (queuedAcpJobThreadRetryTimers.has(key)) return;
   const nextQueued = nextQueuedAcpJobForThread({
     project_id,
     path,
     thread_id,
   });
   if (!nextQueued || !detachedWorkerCanClaimQueuedJob(nextQueued)) return;
-  const key = acpJobThreadKey({ project_id, path, thread_id });
   if (pumpingAcpJobThreads.has(key)) {
     return;
   }
@@ -9909,21 +9951,40 @@ function kickQueuedAcpJobsForThread({
     })
     .finally(() => {
       pumpingAcpJobThreads.delete(key);
-      if (
-        countQueuedAcpJobsForThread({
-          project_id,
-          path,
-          thread_id,
-        }) > 0 &&
-        !acpThreadHasRunningJob({
-          project_id,
-          path,
-          thread_id,
-        })
-      ) {
-        kickQueuedAcpJobsForThread({ project_id, path, thread_id });
-      }
+      scheduleQueuedAcpJobThreadRetry({ project_id, path, thread_id });
     });
+}
+
+function scheduleQueuedAcpJobThreadRetry({
+  project_id,
+  path,
+  thread_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+}): void {
+  if (
+    countQueuedAcpJobsForThread({ project_id, path, thread_id }) === 0 ||
+    acpThreadHasRunningJob({ project_id, path, thread_id })
+  ) {
+    return;
+  }
+  const key = acpJobThreadKey({ project_id, path, thread_id });
+  if (queuedAcpJobThreadRetryTimers.has(key)) return;
+  const timer = setTimeout(() => {
+    queuedAcpJobThreadRetryTimers.delete(key);
+    kickQueuedAcpJobsForThread({ project_id, path, thread_id });
+  }, ACP_QUEUE_ADMISSION_RETRY_MS);
+  timer.unref?.();
+  queuedAcpJobThreadRetryTimers.set(key, timer);
+}
+
+function cancelQueuedAcpJobThreadRetries(): void {
+  for (const timer of queuedAcpJobThreadRetryTimers.values()) {
+    clearTimeout(timer);
+  }
+  queuedAcpJobThreadRetryTimers.clear();
 }
 
 let delayedAcpQueueWakeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -11403,7 +11464,10 @@ async function handleAcpControlRequest(
       throw err;
     }
   }
-  if (request.action === "resend") {
+  if (request.action === "resend" || request.action === "resend_with_model") {
+    if (request.action === "resend_with_model" && !request.model_recovery) {
+      throw new Error("Model recovery requires a replacement model");
+    }
     const current = getAcpJob({ project_id, path, user_message_id });
     if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
@@ -11422,6 +11486,13 @@ async function handleAcpControlRequest(
       project_id,
       path,
       user_message_id,
+      modelRecovery: request.model_recovery
+        ? {
+            ...request.model_recovery,
+            account_id: request.account_id,
+            thread_id,
+          }
+        : undefined,
     });
     if (!row || row.state !== "queued") {
       return { ok: false, state: row?.state ?? "missing" };
@@ -11925,6 +11996,7 @@ async function interruptCodexSession(
 }
 
 export async function disposeAcpAgents(): Promise<void> {
+  cancelQueuedAcpJobThreadRetries();
   const pending: Promise<void>[] = [];
   for (const [key, agent] of agents.entries()) {
     if (typeof agent.dispose !== "function") continue;
@@ -11976,6 +12048,10 @@ export const acpTestInternals = {
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,
+  kickQueuedAcpJobsForThread,
+  scheduleQueuedAcpJobThreadRetry,
+  queuedAcpJobThreadRetryCount: () => queuedAcpJobThreadRetryTimers.size,
+  cancelQueuedAcpJobThreadRetries,
   scheduleNextDelayedAcpQueueWake,
   delayedAcpQueueWakeAt: () => delayedAcpQueueWakeAt,
   persistAcpGuidanceDeliveryProjection,

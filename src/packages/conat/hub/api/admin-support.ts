@@ -96,8 +96,17 @@ export interface AdminSupportTicketComment {
   created_at: string;
   body: string;
   images: AdminSupportImageReference[];
+  /** Downloadable Zendesk attachments; names are generated, URLs omitted. */
+  attachments?: AdminSupportAttachmentReference[];
   attachment_count: number;
   attachment_bytes: number;
+}
+
+export interface AdminSupportAttachmentReference {
+  attachment_id: number;
+  filename: string;
+  content_type: string;
+  size: number;
 }
 
 export interface AdminSupportListRequest {
@@ -159,6 +168,9 @@ export interface AdminSupportGetImageResponse {
   sha256: string;
   data_base64: string;
 }
+
+export type AdminSupportGetAttachmentRequest = AdminSupportGetImageRequest;
+export type AdminSupportGetAttachmentResponse = AdminSupportGetImageResponse;
 
 export interface AdminSupportTriageRequest extends AdminSupportListRequest {}
 
@@ -388,6 +400,7 @@ export const adminSupport = {
   triage: authFirstRequireAccount,
   search: authFirstRequireAccount,
   getImage: authFirstRequireAccount,
+  getAttachment: authFirstRequireAccount,
   planUpdate: authFirstRequireAccount,
   update: authFirstRequireAccount,
   planMerge: authFirstRequireAccount,
@@ -408,6 +421,9 @@ export interface AdminSupportApi {
   getImage: (
     opts: AdminSupportGetImageRequest,
   ) => Promise<AdminSupportGetImageResponse>;
+  getAttachment: (
+    opts: AdminSupportGetAttachmentRequest,
+  ) => Promise<AdminSupportGetAttachmentResponse>;
   planUpdate: (
     opts: AdminSupportUpdatePlanRequest,
   ) => Promise<AdminSupportUpdatePlanResponse>;

@@ -31,6 +31,9 @@ import {
 } from "./speech-preferences";
 import { SpeechPaneContext } from "./speech-pane-context";
 import { ChatReadAloudButton } from "../codex-final-response-copy";
+import * as liteConfig from "@cocalc/frontend/lite";
+
+jest.mock("@cocalc/frontend/lite", () => ({ __esModule: true, lite: false }));
 
 jest.mock("./api", () => ({
   cancelChatSpeech: jest.fn(async () => undefined),
@@ -100,6 +103,7 @@ const capabilities = {
 
 describe("ChatSpeechPlayer", () => {
   beforeEach(() => {
+    (liteConfig as { lite: boolean }).lite = false;
     FakeAudio.rejectPlay = false;
     FakeAudio.latest = undefined;
     Object.defineProperty(globalThis, "Audio", {
@@ -129,6 +133,19 @@ describe("ChatSpeechPlayer", () => {
   afterEach(() => {
     stopChatSpeech();
     jest.clearAllMocks();
+  });
+
+  it("does not start playback or show a player on Lite", async () => {
+    (liteConfig as { lite: boolean }).lite = true;
+    render(<ChatSpeechPlayer />);
+    await act(async () => {
+      await startChatSpeech({ markdown: "An answer", messageId: "answer" });
+    });
+    expect(getChatSpeechCapabilities).not.toHaveBeenCalled();
+    expect(synthesizeChatSpeech).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("region", { name: "Read aloud player" }),
+    ).toBeNull();
   });
 
   it.each([false, true])(

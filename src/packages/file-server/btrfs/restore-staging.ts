@@ -1,5 +1,6 @@
-// Staged restore makes project restore atomic and crash-safe by restoring into a
-// temporary subvolume, swapping on success, and cleaning stale state on reboot.
+// Staged restore prepares a temporary subvolume before replacing the project
+// home, and reconciles stale state on startup. The replacement uses separate
+// moves and is not an atomic whole-tree operation.
 import { join, dirname, relative, resolve, sep } from "node:path";
 import { readdir, rm, stat, writeFile } from "node:fs/promises";
 import { exists } from "@cocalc/backend/misc/async-utils-node";
@@ -282,7 +283,7 @@ export async function finalizeRestoreStaging(
       mountRoot: dirname(home),
     }).catch((err) => {
       // The replacement is already authoritative. Cleanup failure must not
-      // turn a successful atomic restore into a failed lifecycle operation.
+      // turn a successful staged restore into a failed lifecycle operation.
       logger.warn("failed deleting replaced restore subvolume tree", {
         oldPath,
         err: `${err}`,

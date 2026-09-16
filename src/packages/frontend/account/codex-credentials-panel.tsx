@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { CODEX_CREDENTIALS_LABELS } from "./codex-labels";
 import {
   Alert,
   Button,
@@ -980,7 +981,7 @@ function CodexCredentialsPanelBody({
               <Space wrap>
                 <Tag color="green">Recommended</Tag>
                 <Text strong style={{ fontSize: 18 }}>
-                  Connect Codex with ChatGPT
+                  {CODEX_CREDENTIALS_LABELS.chatgpt}
                 </Text>
               </Space>
               <Text type="secondary">
@@ -1233,7 +1234,7 @@ function CodexCredentialsPanelBody({
             : [
                 {
                   key: "api-keys",
-                  label: "OpenAI API Keys",
+                  label: CODEX_CREDENTIALS_LABELS.apiKeys,
                   children: (
                     <Space
                       orientation="vertical"
@@ -1528,7 +1529,7 @@ function CodexCredentialsPanelBody({
       style={{ marginTop: "15px" }}
       header={
         <>
-          <Icon name="robot" /> OpenAI Credentials & Codex Payment Source
+          <Icon name="robot" /> {CODEX_CREDENTIALS_LABELS.title}
         </>
       }
     >

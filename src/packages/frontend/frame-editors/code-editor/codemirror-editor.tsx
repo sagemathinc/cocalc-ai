@@ -13,6 +13,7 @@ codemirror editor instance mainly for use in a frame tree.
 */
 
 import * as CodeMirror from "codemirror";
+import $ from "jquery";
 import "../generic/codemirror-plugins";
 import { Map, Set } from "immutable";
 import {

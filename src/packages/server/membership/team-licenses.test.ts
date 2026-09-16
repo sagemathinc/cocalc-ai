@@ -10,10 +10,14 @@ import {
 } from "@cocalc/server/purchases/test-data";
 import { uuid } from "@cocalc/util/misc";
 import { MAX_MEMBERSHIP_TIER_LABEL_LENGTH } from "@cocalc/util/membership-tier-label";
-import { assignMembershipPackageSeat } from "./packages";
+import {
+  assignMembershipPackageSeat,
+  createMembershipPackage,
+} from "./packages";
 import { resolveMembershipForAccount } from "./resolve";
 import {
   applyTeamLicenseSeatConfiguration,
+  getTeamLicenseOverviewForOwner,
   markTeamLicensePastDue,
   resolveTeamLicenseQuote,
 } from "./team-licenses";
@@ -102,6 +106,37 @@ describe("team licenses", () => {
     expect(membership.team_license_id).toBe(overview.id);
     expect(membership.team_license_status).toBe("active");
     expect(membership.expires).toBeUndefined();
+  });
+
+  it("returns only unexpired standalone team packages with a license overview", async () => {
+    const owner_account_id = uuid();
+    await createTestAccount(owner_account_id);
+    const overview = await applyTeamLicenseSeatConfiguration({
+      owner_account_id,
+      target_seats: { [standardTier]: 1 },
+    });
+    const standalone = await createMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: standardTier,
+      seat_count: 2,
+      expires_at: new Date(Date.now() + 86400000),
+    });
+    await createMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: standardTier,
+      seat_count: 2,
+      expires_at: new Date(0),
+    });
+    const refreshed = await getTeamLicenseOverviewForOwner({
+      owner_account_id,
+    });
+    expect(refreshed?.id).toBe(overview.id);
+    expect(refreshed?.standalone_packages?.map(({ id }) => id)).toEqual([
+      standalone,
+    ]);
+    expect(refreshed?.packages).toHaveLength(1);
   });
 
   it("keeps assigned seats active when renewal marks a team license past due", async () => {

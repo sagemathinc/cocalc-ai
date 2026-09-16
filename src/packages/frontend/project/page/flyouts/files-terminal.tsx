@@ -4,6 +4,7 @@
  */
 
 import { Alert } from "antd";
+import $ from "jquery";
 import { debounce } from "lodash";
 import {
   CSS,

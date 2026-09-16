@@ -16,6 +16,8 @@ import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
 import { EDITOR_COLOR_SCHEMES } from "@cocalc/util/db-schema/accounts";
 import { FOLLOW_APPEARANCE } from "@cocalc/util/appearance-editor";
 
+import { COLOR_SCHEME_LABEL } from "./labels";
+
 interface Props {
   theme: string;
   on_change: (selected: string) => void;
@@ -28,10 +30,7 @@ interface Props {
 export function EditorSettingsColorScheme(props: Props): React.JSX.Element {
   const intl = useIntl();
 
-  const title = intl.formatMessage({
-    id: "account.editor-settings.color-schemes.panel_title",
-    defaultMessage: "Editor Color Scheme",
-  });
+  const title = intl.formatMessage(COLOR_SCHEME_LABEL);
 
   return (
     <Panel

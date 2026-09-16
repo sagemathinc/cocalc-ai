@@ -1,5 +1,8 @@
 import { authFirstRequireAccount, declareHubApiPrincipalPolicy } from "./util";
 
+export const PROJECT_HOST_SESSION_UNAUTHORIZED =
+  "PROJECT_HOST_SESSION_UNAUTHORIZED";
+
 export type AiSessionState =
   | "queued"
   | "running"
@@ -45,6 +48,8 @@ export interface AiSessionRecord {
   error?: string | null;
   metadata_json?: string | null;
   metadata?: Record<string, unknown> | null;
+  // Monotonic revision from the project host's durable session outbox.
+  source_revision?: number | null;
 }
 
 export interface AiSessionsListOptions {

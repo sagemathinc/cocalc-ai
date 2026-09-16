@@ -41,6 +41,7 @@ import {
   ConatError,
   connect,
   Client,
+  type AuthenticatedCaller,
   type ClientOptions,
   MAX_INTEREST_TIMEOUT,
 } from "./client";
@@ -61,6 +62,7 @@ import {
   CLUSTER_INTEREST_OPEN,
   CLUSTER_INTEREST_PROTOCOL,
   CLUSTER_INTEREST_SNAPSHOT_REQUEST,
+  CLUSTER_LINK_COOKIE_NAME,
   type ClusterLink,
   type ClusterInterestOpen,
   type ClusterInterestOpenResponse,
@@ -259,6 +261,9 @@ export interface InterestUpdate {
 }
 
 export function init(opts: Options) {
+  if (opts.clusterName && opts.getUser && !opts.clusterLinkPassword) {
+    throw Error("authenticated cluster must have clusterLinkPassword set");
+  }
   return new ConatServer(opts);
 }
 
@@ -271,6 +276,7 @@ export type AllowFunction = (opts: {
   type: "pub" | "sub";
   user: any;
   subject: string;
+  forwardedCaller?: AuthenticatedCaller;
 }) => Promise<boolean>;
 
 export interface Options {
@@ -283,14 +289,16 @@ export interface Options {
   maxSubscriptionsPerClient?: number;
   maxSubscriptionsPerHub?: number;
   systemAccountPassword?: string;
+  // Authentication used only between nodes of this Conat cluster.
+  clusterLinkPassword?: string;
   // if true, use https when creating an internal client.
   ssl?: boolean;
 
   // WARNING: **superclusters are NOT fully iplemented yet.**
   //
   // if clusterName is set, enable clustering. Each node
-  // in the cluster must have a different name. systemAccountPassword
-  // must also be set.  This only has an impact when the id is '0'.
+  // in the cluster must have a different name. clusterLinkPassword
+  // must also be set. This only has an impact when the id is '0'.
   // This publishes interest state in a stream, so uses more resources.
   clusterName?: string;
 
@@ -426,6 +434,7 @@ export class ConatServer extends EventEmitter {
       maxSubscriptionsPerClient = MAX_SUBSCRIPTIONS_PER_CLIENT,
       maxSubscriptionsPerHub = MAX_SUBSCRIPTIONS_PER_HUB,
       systemAccountPassword,
+      clusterLinkPassword,
       clusterName,
       autoscanInterval = DEFAULT_AUTOSCAN_INTERVAL,
       longAutoscanInterval = DEFAULT_LONG_AUTOSCAN_INTERVAL,
@@ -484,6 +493,7 @@ export class ConatServer extends EventEmitter {
       maxSubscriptionsPerClient,
       maxSubscriptionsPerHub,
       systemAccountPassword,
+      clusterLinkPassword,
       clusterName,
       autoscanInterval,
       longAutoscanInterval,
@@ -517,6 +527,13 @@ export class ConatServer extends EventEmitter {
           };
         } else {
           systemAccounts = undefined;
+        }
+        if (this.options.clusterLinkPassword) {
+          systemAccounts ??= {};
+          systemAccounts[CLUSTER_LINK_COOKIE_NAME] = {
+            password: this.options.clusterLinkPassword,
+            user: { hub_id: "cluster-link" },
+          };
         }
         return await getUser(socket, systemAccounts);
       }
@@ -1148,11 +1165,15 @@ export class ConatServer extends EventEmitter {
   // CLUSTER STREAM
   ////////////////////////////////////
 
-  private isSystemUser = (user: any): boolean => {
+  private isClusterLinkUser = (user: any): boolean => {
+    return user?.hub_id === "cluster-link";
+  };
+
+  private isClusterControlUser = (user: any): boolean => {
     // Some tests and local no-auth deployments omit getUser entirely, in
     // which case all connections have user=null. In authenticated deployments
-    // the cluster control protocol is restricted to the explicit system user.
-    return user?.hub_id === "system" || (this.noAuth && user == null);
+    // the cluster control protocol is restricted to the cluster-link user.
+    return this.isClusterLinkUser(user) || (this.noAuth && user == null);
   };
 
   private clusterInterestSnapshot = () =>
@@ -1194,10 +1215,10 @@ export class ConatServer extends EventEmitter {
 
   private registerClusterInterestHandlers = ({ socket, user }) => {
     const requireSystemPeer = (respond?): boolean => {
-      if (!this.isSystemUser(user)) {
+      if (!this.isClusterControlUser(user)) {
         respond?.({
           ok: false,
-          error: "cluster interest protocol requires system account",
+          error: "cluster interest protocol requires cluster-link account",
           code: 403,
         });
         return false;
@@ -1452,6 +1473,29 @@ export class ConatServer extends EventEmitter {
     return targets.length;
   };
 
+  private authenticatedCaller = (user: any) => {
+    if (
+      typeof user?.cluster_id === "string" &&
+      typeof user?.bay_id === "string" &&
+      typeof user?.bay_credential_id === "string"
+    ) {
+      return {
+        cluster_id: user.cluster_id,
+        bay_id: user.bay_id,
+        bay_credential_id: user.bay_credential_id,
+      };
+    }
+    return undefined;
+  };
+
+  private isLocalClusterControlSubject = (subject: string): boolean => {
+    const clusterSubject = sysApiSubject({ clusterName: this.clusterName });
+    return (
+      subject === clusterSubject ||
+      subject === sysApiSubject({ clusterName: this.clusterName, id: this.id })
+    );
+  };
+
   private publish = async ({
     subject,
     data,
@@ -1470,7 +1514,24 @@ export class ConatServer extends EventEmitter {
     }
 
     const authStart = Date.now();
-    if (!(await this.isAllowed({ user: from, subject, type: "pub" }))) {
+    const clusterForward = this.isClusterLinkUser(from);
+    if (
+      clusterForward &&
+      data[6] == null &&
+      !this.isLocalClusterControlSubject(subject)
+    ) {
+      throw new ConatError("cluster-link publish is missing delivery targets", {
+        code: 403,
+      });
+    }
+    if (
+      !(await this.isAllowed({
+        user: from,
+        subject,
+        type: "pub",
+        forwardedCaller: clusterForward ? data[7] : undefined,
+      }))
+    ) {
       const message = `permission denied publishing to '${subject}' from ${JSON.stringify(
         from,
       )}`;
@@ -1490,6 +1551,12 @@ export class ConatServer extends EventEmitter {
       user: from,
       trusted: isHubUser(from),
     });
+    // This slot is server-owned authenticated caller metadata. Direct clients
+    // can never choose it; trusted cluster links preserve the value stamped by
+    // the first server while forwarding the message.
+    if (!clusterForward || data[7] == null) {
+      data[7] = this.authenticatedCaller(from);
+    }
     const auth_ms = Date.now() - authStart;
     const routeStart = Date.now();
 
@@ -1844,12 +1911,18 @@ export class ConatServer extends EventEmitter {
       }
       const [subject, ...data] = payload;
       const handlerStart = Date.now();
-      if (data?.[2]) {
+      const stats = this.stats[socket.id];
+      // The per-socket publish queue can outlive a disconnected socket. The
+      // publish must still run (the same logical client may have reconnected),
+      // but its deleted connection statistics can no longer be updated.
+      if (stats != null && data?.[2]) {
         // done
-        this.stats[socket.id].send.messages += 1;
+        stats.send.messages += 1;
       }
-      this.stats[socket.id].send.bytes += data[4]?.length ?? 0;
-      this.stats[socket.id].active = Date.now();
+      if (stats != null) {
+        stats.send.bytes += data[4]?.length ?? 0;
+        stats.active = Date.now();
+      }
       // this.log(JSON.stringify(this.stats));
 
       try {
@@ -2043,6 +2116,7 @@ export class ConatServer extends EventEmitter {
             encoding,
             raw,
             headers,
+            caller: this.authenticatedCaller(user),
           },
           Math.min(timeout, MAX_INTEREST_TIMEOUT),
         );
@@ -2135,6 +2209,7 @@ export class ConatServer extends EventEmitter {
             subject,
             pattern: target.pattern,
             payload,
+            caller: this.authenticatedCaller(user),
           },
           Math.min(timeout, MAX_INTEREST_TIMEOUT),
         );
@@ -2263,6 +2338,7 @@ export class ConatServer extends EventEmitter {
         encoding,
         raw,
         headers,
+        caller: this.authenticatedCaller(user),
       });
     });
 
@@ -2457,8 +2533,8 @@ export class ConatServer extends EventEmitter {
     if (!this.clusterName) {
       throw Error("if cluster is enabled, then the clusterName must be set");
     }
-    if (!this.options.systemAccountPassword) {
-      throw Error("cluster must have systemAccountPassword set");
+    if (!this.noAuth && !this.options.clusterLinkPassword) {
+      throw Error("authenticated cluster must have clusterLinkPassword set");
     }
 
     this.log("enabling cluster support", {
@@ -2485,6 +2561,7 @@ export class ConatServer extends EventEmitter {
         path: this.options.path,
         ssl: this.options.ssl,
         systemAccountPassword: this.options.systemAccountPassword,
+        clusterLinkPassword: this.options.clusterLinkPassword,
         clusterName: this.options.clusterName,
         autoscanInterval: this.options.autoscanInterval,
         longAutoscanInterval: this.options.longAutoscanInterval,
@@ -2574,15 +2651,15 @@ export class ConatServer extends EventEmitter {
 
   // Join this node to the cluster that contains a node with the given address.
   // - the address obviously must be reachable over the network
-  // - the systemAccountPassword of this node and the one with the given
+  // - the clusterLinkPassword of this node and the one with the given
   //   address must be the same.
   join = reuseInFlight(
     async (
       address: string,
       { timeout }: { timeout?: number } = {},
     ): Promise<ClusterLink> => {
-      if (!this.options.systemAccountPassword) {
-        throw Error("systemAccountPassword must be set");
+      if (!this.noAuth && !this.options.clusterLinkPassword) {
+        throw Error("authenticated cluster must have clusterLinkPassword set");
       }
       logger.debug("join: connecting to ", address);
       const link0 = this.clusterLinksByAddress[address];
@@ -2593,7 +2670,7 @@ export class ConatServer extends EventEmitter {
       try {
         const link = await clusterLink(
           address,
-          this.options.systemAccountPassword,
+          this.options.clusterLinkPassword,
           timeout,
           this.id,
         );

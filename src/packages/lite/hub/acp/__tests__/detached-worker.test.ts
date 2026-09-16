@@ -34,6 +34,7 @@ import {
   listQueuedAcpJobs,
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
+import { setAcpAdmissionLimitsProvider } from "../admission";
 
 jest.mock("@cocalc/ai/acp", () => ({
   CODEX_ACP_RECOVERY_ERROR_CODE: {
@@ -165,6 +166,32 @@ describe("detached worker queue liveness", () => {
       })?.worker_id,
     ).toBeNull();
   });
+
+  it("bounds retries for an admission-blocked queued thread", async () => {
+    const queued = enqueueAcpJob(makeRequest() as any);
+    const retry = {
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+    };
+
+    const admission = jest.fn(async () => ({ runningPerAccount: 0 }));
+    setAcpAdmissionLimitsProvider(admission);
+
+    acpTestInternals.kickQueuedAcpJobsForThread(retry);
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(admission).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 100; i++) {
+      acpTestInternals.kickQueuedAcpJobsForThread(retry);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+
+    expect(admission).toHaveBeenCalledTimes(1);
+    expect(acpTestInternals.queuedAcpJobThreadRetryCount()).toBe(1);
+    acpTestInternals.cancelQueuedAcpJobThreadRetries();
+    expect(acpTestInternals.queuedAcpJobThreadRetryCount()).toBe(0);
+  });
 });
 
 function makeRequest() {
@@ -216,6 +243,8 @@ beforeAll(() => {
 });
 
 beforeEach(() => {
+  setAcpAdmissionLimitsProvider(undefined);
+  acpTestInternals.cancelQueuedAcpJobThreadRetries();
   getAcpDatabase().prepare("DELETE FROM acp_jobs").run();
   jest.restoreAllMocks();
   (turns.startAcpTurnLease as any)?.mockReset?.();

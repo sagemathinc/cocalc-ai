@@ -14,6 +14,9 @@ import type {
 import getLogger from "@cocalc/backend/logger";
 import type {
   AdminSupportCategory,
+  AdminSupportAttachmentReference,
+  AdminSupportGetAttachmentRequest,
+  AdminSupportGetAttachmentResponse,
   AdminSupportGetImageRequest,
   AdminSupportGetImageResponse,
   AdminSupportImageReference,
@@ -592,6 +595,43 @@ const SUPPORT_IMAGE_MIME_EXTENSIONS = new Map([
   ["image/vnd.microsoft.icon", ".ico"],
 ]);
 
+const SUPPORT_ATTACHMENT_MIME_EXTENSIONS = new Map([
+  ...SUPPORT_IMAGE_MIME_EXTENSIONS,
+  ["application/pdf", ".pdf"],
+  [
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".docx",
+  ],
+]);
+
+function attachmentReference(
+  attachment: Attachment,
+): AdminSupportAttachmentReference | undefined {
+  const id = Number(attachment?.id);
+  const contentType = `${attachment?.content_type ?? ""}`
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+  const extension = SUPPORT_ATTACHMENT_MIME_EXTENSIONS.get(contentType);
+  const size = Number(attachment?.size);
+  if (
+    !Number.isSafeInteger(id) ||
+    id <= 0 ||
+    !extension ||
+    !Number.isSafeInteger(size) ||
+    size < 0 ||
+    attachment.deleted === true ||
+    attachment.malware_scan_result === "malware_found"
+  )
+    return undefined;
+  return {
+    attachment_id: id,
+    filename: `zendesk-attachment-${id}${extension}`,
+    content_type: contentType,
+    size,
+  };
+}
+
 function supportImageExtension(filename: string): string {
   const match = filename.toLowerCase().match(/(\.[a-z0-9]+)$/);
   return match?.[1] ?? "";
@@ -883,6 +923,10 @@ function normalizeTicketComment(
     created_at: safeDate(comment.created_at),
     body: redactSupportText(body, MAX_COMMENT_CHARS),
     images,
+    attachments: attachments
+      .map(attachmentReference)
+      .filter((ref): ref is AdminSupportAttachmentReference => ref != null)
+      .slice(0, MAX_IMAGES_PER_COMMENT),
     attachment_count: attachments.length,
     attachment_bytes: attachments.reduce(
       (sum, attachment) => sum + (Number(attachment?.size) || 0),
@@ -1088,6 +1132,7 @@ async function recordAudit({
   zendeskJobId,
   resultStatus,
   sourceTicketId,
+  attachmentId,
 }: {
   auditId: string;
   accountId: string;
@@ -1095,6 +1140,7 @@ async function recordAudit({
     | "list"
     | "show"
     | "get_image"
+    | "get_attachment"
     | "triage"
     | "search"
     | "plan_update"
@@ -1120,6 +1166,7 @@ async function recordAudit({
   zendeskJobId?: string;
   resultStatus?: string;
   sourceTicketId?: number;
+  attachmentId?: number;
 }): Promise<void> {
   try {
     await centralLog({
@@ -1130,6 +1177,7 @@ async function recordAudit({
         mode,
         reason,
         ticket_id: ticketId ?? null,
+        attachment_id: attachmentId ?? null,
         source_ticket_id: sourceTicketId ?? null,
         since_minutes: sinceMinutes ?? null,
         statuses: statuses ?? null,
@@ -1479,18 +1527,22 @@ function allowedZendeskAttachmentHost(
   );
 }
 
-async function fetchZendeskAttachmentImage({
+async function fetchZendeskAttachment({
   client,
   attachment,
   maxBytes,
+  imagesOnly = true,
 }: {
   client: Awaited<ReturnType<typeof getZendeskClient>>;
   attachment: Attachment;
   maxBytes: number;
+  imagesOnly?: boolean;
 }): Promise<{ data: Buffer; contentType: string }> {
-  const configuredType = normalizedImageContentType(attachment.content_type);
+  const configuredType = imagesOnly
+    ? normalizedImageContentType(attachment.content_type)
+    : attachmentReference(attachment)?.content_type;
   if (!configuredType) {
-    throw new Error("Zendesk attachment is not a supported image type");
+    throw new Error("Zendesk attachment is not a supported download type");
   }
   if (attachment.deleted === true) {
     throw new Error("Zendesk attachment was deleted");
@@ -1501,7 +1553,7 @@ async function fetchZendeskAttachmentImage({
   const declaredSize = Math.max(0, Math.floor(Number(attachment.size) || 0));
   if (declaredSize > maxBytes) {
     throw new Error(
-      `Zendesk image is ${declaredSize} bytes; maximum is ${maxBytes}`,
+      `Zendesk attachment is ${declaredSize} bytes; maximum is ${maxBytes}`,
     );
   }
   const rawUrl =
@@ -1522,12 +1574,14 @@ async function fetchZendeskAttachmentImage({
     for (let redirects = 0; redirects <= 4; redirects += 1) {
       if (
         current.protocol !== "https:" ||
+        current.username ||
+        current.password ||
+        (current.port && current.port !== "443") ||
         !allowedZendeskAttachmentHost(current.hostname, subdomain)
       ) {
         throw new Error("Zendesk attachment URL uses an untrusted host");
       }
-      // Zendesk attachment endpoints negotiate redirects, not image variants.
-      // A specific image Accept header can cause HTTP 406 before the redirect.
+      // Zendesk negotiates redirects here; a specific Accept type can cause 406.
       const headers: Record<string, string> = { Accept: "*/*" };
       if (current.hostname === `${subdomain.toLowerCase()}.zendesk.com`) {
         headers.Authorization = `Basic ${Buffer.from(`${username}/token:${token}`).toString("base64")}`;
@@ -1553,7 +1607,7 @@ async function fetchZendeskAttachmentImage({
       const responseLength = Number(response.headers.get("content-length"));
       if (Number.isFinite(responseLength) && responseLength > maxBytes) {
         throw new Error(
-          `Zendesk image is ${responseLength} bytes; maximum is ${maxBytes}`,
+          `Zendesk attachment is ${responseLength} bytes; maximum is ${maxBytes}`,
         );
       }
       const reader = response.body?.getReader();
@@ -1567,12 +1621,30 @@ async function fetchZendeskAttachmentImage({
         size += chunk.length;
         if (size > maxBytes) {
           await reader.cancel();
-          throw new Error(`Zendesk image exceeds the ${maxBytes}-byte maximum`);
+          throw new Error(
+            `Zendesk attachment exceeds the ${maxBytes}-byte maximum`,
+          );
         }
         chunks.push(chunk);
       }
-      if (size === 0) throw new Error("Zendesk attachment image was empty");
+      if (size === 0) throw new Error("Zendesk attachment was empty");
       const data = Buffer.concat(chunks, size);
+      // Only identify the container. PDFs/Office files can contain active
+      // content: never parse, extract, render, or execute them in this service.
+      if (!imagesOnly && !SUPPORT_IMAGE_MIME_EXTENSIONS.has(configuredType)) {
+        const matches =
+          configuredType === "application/pdf"
+            ? /^%PDF-(?:1\.[0-9]|2\.0)[\r\n]/.test(
+                data.subarray(0, 10).toString("ascii"),
+              )
+            : data.subarray(0, 4).equals(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+        if (!matches) {
+          throw new Error(
+            "Zendesk attachment content does not match its declared document type",
+          );
+        }
+        return { data, contentType: configuredType };
+      }
       const image = detectRasterImage(data);
       if (!image) {
         throw new Error(
@@ -1590,9 +1662,25 @@ async function fetchZendeskAttachmentImage({
 export async function getImage(
   opts: AdminSupportGetImageRequest & AuthOpts,
 ): Promise<AdminSupportGetImageResponse> {
+  return downloadTicketAttachment(opts, true);
+}
+
+export async function getAttachment(
+  opts: AdminSupportGetAttachmentRequest & AuthOpts,
+): Promise<AdminSupportGetAttachmentResponse> {
+  return downloadTicketAttachment(opts, false);
+}
+
+async function downloadTicketAttachment(
+  opts: AdminSupportGetImageRequest & AuthOpts,
+  imagesOnly: boolean,
+): Promise<AdminSupportGetImageResponse> {
   const started = Date.now();
   const auditId = uuid();
-  const accountId = await requireAdmin(opts);
+  const accountId = imagesOnly
+    ? await requireAdmin(opts)
+    : await requireFreshAdmin(opts);
+  const mode = imagesOnly ? "get_image" : "get_attachment";
   const reason = requiredReason(opts.reason);
   const ticketId = positiveTicketId(opts.ticket_id);
   const attachmentId = positiveTicketId(opts.attachment_id, "attachment_id");
@@ -1602,70 +1690,79 @@ export async function getImage(
     max: MAX_MAX_IMAGE_BYTES,
   });
   try {
-    const client = await getZendeskClient();
-    const { comments } = await withZendeskReadSlot(
-      () => loadTicket(ticketId),
-      "Zendesk image attachment lookup",
-    );
-    let commentId: number | undefined;
-    let attachment: Attachment | undefined;
-    for (const comment of comments) {
-      const match = (comment.attachments ?? []).find(
-        (candidate) => Number(candidate.id) === attachmentId,
-      );
-      if (match) {
-        commentId = Number(comment.id);
-        attachment = match;
-        break;
+    const result = await withZendeskReadSlot(async () => {
+      const client = await getZendeskClient();
+      const { comments } = await loadTicket(ticketId);
+      const reference = imagesOnly
+        ? zendeskAttachmentImageReference
+        : attachmentReference;
+      let commentId: number | undefined;
+      let attachment: Attachment | undefined;
+      for (const comment of comments) {
+        const match = (comment.attachments ?? []).find(
+          (candidate) => Number(candidate.id) === attachmentId,
+        );
+        if (match) {
+          commentId = Number(comment.id);
+          attachment = match;
+          break;
+        }
       }
-    }
-    if (!attachment || !commentId) {
-      throw new Error(
-        `image attachment ${attachmentId} is not part of ticket ${ticketId}`,
-      );
-    }
-    if (!zendeskAttachmentImageReference(attachment)) {
-      throw new Error("Zendesk attachment is not a safe supported image");
-    }
-    const detail = (await withTimeout(
-      client.attachments.show(attachmentId),
-      "Zendesk attachment metadata read",
-    )) as any;
-    const detailedAttachment = (detail?.result?.attachment ??
-      detail?.result ??
-      detail?.response?.attachment ??
-      attachment) as Attachment;
-    if (
-      Number(detailedAttachment?.id) !== attachmentId ||
-      !zendeskAttachmentImageReference(detailedAttachment)
-    ) {
-      throw new Error("Zendesk attachment metadata did not match the image");
-    }
-    const { data, contentType } = await fetchZendeskAttachmentImage({
-      client,
-      attachment: detailedAttachment,
-      maxBytes,
-    });
-    const filename = `ticket-${ticketId}-attachment-${attachmentId}${SUPPORT_IMAGE_MIME_EXTENSIONS.get(contentType)}`;
-    const result: AdminSupportGetImageResponse = {
-      audit_id: auditId,
-      ticket_id: ticketId,
-      comment_id: commentId,
-      attachment_id: attachmentId,
-      filename,
-      content_type: contentType,
-      size: data.length,
-      sha256: sha256(data),
-      data_base64: data.toString("base64"),
-    };
+      if (!attachment || !commentId) {
+        throw new Error(
+          `attachment ${attachmentId} is not part of ticket ${ticketId}`,
+        );
+      }
+      if (!reference(attachment)) {
+        throw new Error("Zendesk attachment is not a supported download");
+      }
+      const detail = (await withTimeout(
+        client.attachments.show(attachmentId),
+        "Zendesk attachment metadata read",
+      )) as any;
+      const detailedAttachment = (detail?.result?.attachment ??
+        detail?.result ??
+        detail?.response?.attachment ??
+        attachment) as Attachment;
+      if (
+        Number(detailedAttachment?.id) !== attachmentId ||
+        !reference(detailedAttachment) ||
+        reference(detailedAttachment)?.content_type !==
+          reference(attachment)?.content_type
+      ) {
+        throw new Error(
+          "Zendesk attachment metadata did not match the ticket attachment",
+        );
+      }
+      const { data, contentType } = await fetchZendeskAttachment({
+        client,
+        attachment: detailedAttachment,
+        maxBytes,
+        imagesOnly,
+      });
+      const filename = `ticket-${ticketId}-attachment-${attachmentId}${SUPPORT_ATTACHMENT_MIME_EXTENSIONS.get(contentType)}`;
+      const result: AdminSupportGetImageResponse = {
+        audit_id: auditId,
+        ticket_id: ticketId,
+        comment_id: commentId,
+        attachment_id: attachmentId,
+        filename,
+        content_type: contentType,
+        size: data.length,
+        sha256: sha256(data),
+        data_base64: data.toString("base64"),
+      };
+      return result;
+    }, "Zendesk attachment download");
     await recordAudit({
       auditId,
       accountId,
-      mode: "get_image",
+      mode,
       reason,
       ticketId,
+      attachmentId,
       resultCount: 1,
-      resultBytes: data.length,
+      resultBytes: result.size,
       durationMs: Date.now() - started,
     });
     return result;
@@ -1673,9 +1770,10 @@ export async function getImage(
     await recordAudit({
       auditId,
       accountId,
-      mode: "get_image",
+      mode,
       reason,
       ticketId,
+      attachmentId,
       durationMs: Date.now() - started,
       error,
     });

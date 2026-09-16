@@ -1,4 +1,8 @@
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
+import {
+  codexModelRecoveryConfig,
+  unavailableChatGptCodexModel,
+} from "@cocalc/util/ai/codex-model-recovery";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 import { upsertAcpSessionFromJob } from "./acp-sessions";
 
@@ -139,6 +143,9 @@ function init(): void {
   );
   db.exec(
     `CREATE INDEX IF NOT EXISTS acp_jobs_state_available_idx ON ${TABLE}(state, available_at, created_at)`,
+  );
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS acp_jobs_worker_updated_idx ON ${TABLE}(worker_id, updated_at)`,
   );
   ensureAcpTableMigrated(TABLE);
 }
@@ -491,6 +498,100 @@ export function oldestQueuedAcpJobTimestamp(): number | undefined {
     .get(Date.now()) as { oldest?: number | null } | undefined;
   const oldest = Number(row?.oldest ?? 0);
   return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
+}
+
+export function oldestClaimableQueuedAcpJobTimestamp({
+  worker_id,
+  include_unassigned,
+  known_worker_ids,
+  reclaimable_worker_ids,
+}: {
+  worker_id: string;
+  include_unassigned: boolean;
+  known_worker_ids?: string[];
+  reclaimable_worker_ids?: string[];
+}): number | undefined {
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) return undefined;
+  ensureInit();
+  const knownWorkerIds = Array.from(
+    new Set(
+      (known_worker_ids ?? []).map((id) => `${id}`.trim()).filter(Boolean),
+    ),
+  );
+  const reclaimableWorkerIds = Array.from(
+    new Set(
+      (reclaimable_worker_ids ?? [])
+        .map((id) => `${id}`.trim())
+        .filter(Boolean),
+    ),
+  );
+  const reclaimableSql = reclaimableWorkerIds.length
+    ? `OR head.worker_id IN (${reclaimableWorkerIds.map(() => "?").join(", ")})`
+    : "";
+  const missingSql = known_worker_ids
+    ? knownWorkerIds.length
+      ? `OR head.worker_id NOT IN (${knownWorkerIds.map(() => "?").join(", ")})`
+      : "OR (head.worker_id IS NOT NULL AND TRIM(head.worker_id) != '')"
+    : "";
+  // The queue pump only considers the first due job in each thread. A later
+  // unassigned job is not claimable while another worker owns the thread head.
+  const row = getAcpDatabase()
+    .prepare(
+      `WITH due AS (
+         SELECT *,
+                ROW_NUMBER() OVER (
+                  PARTITION BY project_id, path, thread_id
+                  ORDER BY ${THREAD_QUEUE_ORDER}
+                ) AS thread_position
+         FROM ${TABLE}
+         WHERE state = 'queued'
+           AND (available_at IS NULL OR available_at <= ?)
+       )
+       SELECT MIN(
+         CASE
+           WHEN updated_at IS NOT NULL AND updated_at > 0 THEN updated_at
+           ELSE created_at
+         END
+       ) AS oldest
+       FROM due AS head
+       WHERE thread_position = 1
+         AND (
+           head.worker_id = ?
+           OR (? = 1 AND (
+             head.worker_id IS NULL
+             OR TRIM(head.worker_id) = ''
+             ${reclaimableSql}
+             ${missingSql}
+           ))
+         )`,
+    )
+    .get(
+      Date.now(),
+      workerId,
+      include_unassigned ? 1 : 0,
+      ...reclaimableWorkerIds,
+      ...knownWorkerIds,
+    ) as { oldest?: number | null } | undefined;
+  const oldest = Number(row?.oldest ?? 0);
+  return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
+}
+
+export function latestAcpJobUpdateForWorker(
+  worker_id: string,
+): number | undefined {
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) return undefined;
+  ensureInit();
+  const row = getAcpDatabase()
+    .prepare(
+      `SELECT MAX(updated_at) AS latest
+       FROM ${TABLE}
+       WHERE worker_id = ?`,
+    )
+    .get(workerId) as { latest?: number | null } | undefined;
+  const latest = Number(row?.latest ?? 0);
+  return Number.isFinite(latest) && latest > 0 ? latest : undefined;
 }
 
 export function nextQueuedAcpJobAvailability(): number | undefined {
@@ -1169,19 +1270,58 @@ export function resendCanceledAcpJob({
   project_id,
   path,
   user_message_id,
+  modelRecovery,
 }: {
   project_id: string;
   path: string;
   user_message_id: string;
+  modelRecovery?: {
+    model: string;
+    expected_model: string;
+    account_id: string;
+    thread_id: string;
+  };
 }): AcpJobRow | undefined {
   ensureInit();
   const db = getAcpDatabase();
   const now = Date.now();
+  let replacement: string | null = null;
+  let expectedRequest: string | null = null;
+  if (modelRecovery) {
+    const current = getAcpJob({ project_id, path, user_message_id });
+    if (
+      !current ||
+      current.state !== "error" ||
+      current.account_id !== modelRecovery.account_id ||
+      current.thread_id !== modelRecovery.thread_id ||
+      unavailableChatGptCodexModel(current.error ?? "") !==
+        modelRecovery.expected_model ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(modelRecovery.model) ||
+      modelRecovery.model === modelRecovery.expected_model
+    )
+      return undefined;
+    const request = decodeAcpJobRequest(current);
+    if (
+      request.request_kind === "command" ||
+      request.config?.model !== modelRecovery.expected_model ||
+      ![undefined, "auto", "subscription"].includes(
+        request.config?.paymentSource,
+      )
+    )
+      return undefined;
+    expectedRequest = current.request_json;
+    replacement = JSON.stringify({
+      ...request,
+      config: codexModelRecoveryConfig(request.config, modelRecovery.model),
+    });
+  }
   // Historical name: this also retries terminal error jobs, which keep the
   // original request_json needed to resubmit the same user turn.
-  db.prepare(
-    `UPDATE ${TABLE}
+  const updated = db
+    .prepare(
+      `UPDATE ${TABLE}
       SET state = 'queued',
+          request_json = COALESCE(?, request_json),
           available_at = NULL,
           priority = CASE
             WHEN send_mode = 'immediate' THEN 1
@@ -1197,8 +1337,19 @@ export function resendCanceledAcpJob({
       WHERE project_id = ?
         AND path = ?
         AND user_message_id = ?
-        AND state IN ('canceled', 'error')`,
-  ).run(now, project_id, path, user_message_id);
+        AND state IN ('canceled', 'error')
+        AND (? IS NULL OR (state = 'error' AND request_json = ?))`,
+    )
+    .run(
+      replacement,
+      now,
+      project_id,
+      path,
+      user_message_id,
+      expectedRequest,
+      expectedRequest,
+    );
+  if (modelRecovery && updated.changes !== 1) return undefined;
   const job = getAcpJob({ project_id, path, user_message_id });
   mirrorAcpJobSession(job);
   return job;

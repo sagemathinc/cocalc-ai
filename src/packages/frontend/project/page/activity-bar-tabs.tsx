@@ -38,6 +38,7 @@ import { labels } from "@cocalc/frontend/i18n";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { confirmRemoveMyselfFromProject } from "@cocalc/frontend/projects/remove-myself";
 import { useProjectRuntimeCapabilities } from "@cocalc/frontend/project/runtime-capabilities";
+import { filterTabsForProjectAccess } from "./fixed-tab-access";
 
 import { tab_to_path } from "@cocalc/util/misc";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -85,12 +86,6 @@ const INDICATOR_STYLE: React.CSSProperties = {
 } as const;
 
 export const FIXED_TABS_BG_COLOR = UI_COLORS.inset;
-const VIEWER_FIXED_TABS = new Set<FixedTab>([
-  "active",
-  "docs",
-  "files",
-  "users",
-]);
 
 interface ThemedFixedTab {
   backgroundColor?: string;
@@ -140,31 +135,6 @@ function themedRootfsIconStyle({
     justifyContent: "center",
     width: size,
   };
-}
-
-function filterTabsForProjectAccess({
-  agentAIEnabled,
-  computeVmEnabled,
-  liteMode,
-  names,
-  rootfsEnabled = true,
-  viewer,
-}: {
-  agentAIEnabled: boolean;
-  computeVmEnabled: boolean;
-  liteMode: boolean;
-  names: readonly FixedTab[];
-  rootfsEnabled?: boolean;
-  viewer: boolean;
-}): FixedTab[] {
-  return names.filter((name) => {
-    if (!agentAIEnabled && name === "agents") return false;
-    if (!computeVmEnabled && name === "vms") return false;
-    if (!rootfsEnabled && name === "rootfs") return false;
-    if (liteMode && FIXED_PROJECT_TABS[name].noLite) return false;
-    if (viewer && !VIEWER_FIXED_TABS.has(name)) return false;
-    return true;
-  });
 }
 
 function preserveUnavailableTabs(opts: {

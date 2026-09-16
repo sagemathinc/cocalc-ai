@@ -7,7 +7,7 @@
 
 import { Button, Select, Space, Tag } from "antd";
 import { useState } from "react";
-import { FormattedMessage, useIntl } from "react-intl";
+import { defineMessages, FormattedMessage, useIntl } from "react-intl";
 import { Panel, Switch } from "@cocalc/frontend/antd-bootstrap";
 import { redux, Rendered, useTypedRedux } from "@cocalc/frontend/app-framework";
 import {
@@ -67,6 +67,14 @@ interface Props {
   is_stripe_customer: boolean;
   mode: "appearance" | "ai" | "other";
 }
+
+export const OTHER_APPEARANCE_LABELS = defineMessages({
+  animations: {
+    id: "account.other-settings.theme.antd.animations",
+    defaultMessage:
+      "<b>Animations</b>: briefly animate some aspects, e.g. buttons",
+  },
+});
 
 export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
   const intl = useIntl();
@@ -257,10 +265,7 @@ export function OtherSettings(props: Readonly<Props>): React.JSX.Element {
           checked={props.other_settings.get("antd_animate", true)}
           onChange={(e) => on_change("antd_animate", e.target.checked)}
         >
-          <FormattedMessage
-            id="account.other-settings.theme.antd.animations"
-            defaultMessage={`<b>Animations</b>: briefly animate some aspects, e.g. buttons`}
-          />
+          <FormattedMessage {...OTHER_APPEARANCE_LABELS.animations} />
         </Switch>
         <Switch
           checked={props.other_settings.get("antd_brandcolors", false)}

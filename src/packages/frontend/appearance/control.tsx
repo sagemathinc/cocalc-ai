@@ -11,7 +11,7 @@ import { parseAppearancePreference } from "@cocalc/util/appearance";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { useAppearance } from "./use-appearance";
 
-const messages = defineMessages({
+export const APPEARANCE_CONTROL_LABELS = defineMessages({
   appearance: { id: "appearance.control.label", defaultMessage: "Appearance" },
   system: { id: "appearance.control.system", defaultMessage: "System" },
   light: { id: "appearance.control.light", defaultMessage: "Light" },
@@ -20,8 +20,9 @@ const messages = defineMessages({
 
 export function AppearanceControl({ compact = false }: { compact?: boolean }) {
   const intl = useContext(IntlContext);
-  const label = (key: keyof typeof messages) =>
-    intl?.formatMessage(messages[key]) ?? messages[key].defaultMessage;
+  const label = (key: keyof typeof APPEARANCE_CONTROL_LABELS) =>
+    intl?.formatMessage(APPEARANCE_CONTROL_LABELS[key]) ??
+    APPEARANCE_CONTROL_LABELS[key].defaultMessage;
   const { preference, resolved, setPreference, saveError } = useAppearance();
   const attempted = useRef(false);
   const [showError, setShowError] = useState(false);

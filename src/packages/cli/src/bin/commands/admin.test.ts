@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 
 import { Command } from "commander";
 
@@ -614,6 +615,114 @@ test("admin support image verifies and writes a Zendesk attachment", async () =>
     reason: "inspect screenshot on ticket 20463",
   });
   assert.deepEqual(await readFile(output), image);
+});
+
+test("admin support attachment writes private bytes, omits body output, and never overwrites", async () => {
+  const data = Buffer.from("%PDF-1.6\n%%EOF\n");
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-support-document-"));
+  const outputPath = join(dir, "form.pdf");
+  let output: any;
+  let capturedArgs: any;
+  const response = {
+    ticket_id: 123,
+    attachment_id: 987,
+    filename: "ticket-123-attachment-987.pdf",
+    size: data.length,
+    data_base64: data.toString("base64"),
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
+  const program = new Command();
+  const deps = adminDeps({
+    adminSupport: {
+      getAttachment: async (opts: any) => {
+        capturedArgs = opts;
+        return response;
+      },
+    },
+  });
+  const withContext = deps.withContext;
+  deps.withContext = async (command, label, fn) => {
+    output = await withContext(command, label, fn);
+    return output;
+  };
+  registerAdminCommand(program, deps as any);
+  const args = [
+    "node",
+    "test",
+    "admin",
+    "support",
+    "attachment",
+    "123",
+    "987",
+    "--output",
+    outputPath,
+    "--max-bytes",
+    "4096",
+    "--reason",
+    "review form",
+  ];
+  await program.parseAsync(args);
+  assert.deepEqual(capturedArgs, {
+    ticket_id: 123,
+    attachment_id: 987,
+    max_bytes: 4096,
+    reason: "review form",
+  });
+  assert.deepEqual(await readFile(outputPath), data);
+  assert.equal(output.data_base64, undefined);
+  assert.match(output.warning, /Untrusted/);
+  await assert.rejects(program.parseAsync(args), /EEXIST/);
+  assert.deepEqual(await readFile(outputPath), data);
+});
+
+test("admin support attachment rejects integrity, identity, size and filename errors before writing", async () => {
+  const data = Buffer.from("%PDF-1.6\n%%EOF\n");
+  const dir = await mkdtemp(join(tmpdir(), "cocalc-support-document-errors-"));
+  for (const change of [
+    { sha256: "wrong" },
+    { size: 999 },
+    { ticket_id: 999 },
+    { attachment_id: 999 },
+    { filename: "../private.pdf" },
+    { filename: "ticket-123-attachment-987Xpdf" },
+    { filename: "ticket-123-attachment-987.exe" },
+  ]) {
+    const output = join(dir, "must-not-exist.pdf");
+    const program = new Command();
+    registerAdminCommand(
+      program,
+      adminDeps({
+        adminSupport: {
+          getAttachment: async () => ({
+            ticket_id: 123,
+            attachment_id: 987,
+            filename: "ticket-123-attachment-987.pdf",
+            size: data.length,
+            sha256: createHash("sha256").update(data).digest("hex"),
+            data_base64: data.toString("base64"),
+            ...change,
+          }),
+        },
+      }) as any,
+    );
+    await assert.rejects(
+      program.parseAsync([
+        "node",
+        "test",
+        "admin",
+        "support",
+        "attachment",
+        "123",
+        "987",
+        "--output",
+        output,
+        "--reason",
+        "review form",
+      ]),
+      /integrity|filename/,
+    );
+    await assert.rejects(readFile(output), /ENOENT/);
+  }
 });
 
 test("admin support triage forwards deterministic grouping options", async () => {

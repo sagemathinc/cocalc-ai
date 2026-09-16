@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const crypto = require("node:crypto");
 const os = require("node:os");
 const path = require("node:path");
 
@@ -99,6 +100,35 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
     assert.equal(cluster.bays[0].publicUrl, "");
     assert.equal(cluster.bays[1].publicUrl, "");
     assert.equal(cluster.bays[2].publicUrl, "");
+    assert.match(cluster.clusterId, /^dev-/);
+    assert.ok(cluster.credentialBootstrapFile);
+    const credentials = cluster.bays.map((bay) =>
+      fs.readFileSync(bay.credentialFile, "utf8").trim(),
+    );
+    assert.equal(new Set(credentials).size, 3);
+    for (const bay of cluster.bays) {
+      assert.equal(fs.statSync(bay.credentialFile).mode & 0o777, 0o600);
+    }
+    const bootstrap = JSON.parse(
+      fs.readFileSync(cluster.credentialBootstrapFile, "utf8"),
+    );
+    assert.deepEqual(
+      bootstrap.map(({ bay_id }) => bay_id),
+      ["bay-0", "bay-1", "bay-2"],
+    );
+    assert.ok(
+      bootstrap.every(({ secret_digest }) =>
+        /^[0-9a-f]{64}$/.test(secret_digest),
+      ),
+    );
+    assert.ok(
+      bootstrap.every(
+        (entry) =>
+          !credentials.some((credential) =>
+            credential.includes(entry.secret_digest),
+          ),
+      ),
+    );
 
     const envLines = toEnvLines(cluster);
     assert.ok(envLines.includes("HUB_CLUSTER_BAY_COUNT=3"));
@@ -109,6 +139,48 @@ test("normalizeHubCluster supports structured three-bay config", async () => {
       ),
     );
     assert.ok(envLines.includes("HUB_CLUSTER_BAY_PUBLIC_URLS="));
+    assert.ok(
+      envLines.some((line) => line.startsWith("COCALC_BAY_CREDENTIAL_FILE=")),
+    );
+    assert.ok(
+      envLines.some((line) =>
+        line.startsWith("COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE="),
+      ),
+    );
+  } finally {
+    await fs.promises.rm(root, { recursive: true, force: true });
+  }
+});
+
+test("consumed credential bootstrap is not recreated on dev restart", async () => {
+  const root = await fs.promises.mkdtemp(
+    path.join(os.tmpdir(), "cocalc-hub-bootstrap-"),
+  );
+  const env = {
+    STATE_DIR: path.join(root, "seed-state"),
+    COCALC_BAY_ID: "bay-0",
+    HUB_PORT: "13004",
+    HUB_BIND_HOST: "localhost",
+    HUB_ENABLE_SECOND_BAY: "1",
+    HUB_SECOND_BAY_ID: "bay-1",
+    HUB_SECOND_BAY_PORT: "13114",
+  };
+  try {
+    const first = normalizeHubCluster(env, { root });
+    assert.ok(fs.existsSync(first.credentialBootstrapFile));
+    const digest = crypto
+      .createHash("sha256")
+      .update(fs.readFileSync(first.credentialBootstrapFile))
+      .digest("hex");
+    fs.writeFileSync(
+      `${first.credentialBootstrapFile}.complete`,
+      `${digest}\n`,
+      { mode: 0o600 },
+    );
+    fs.unlinkSync(first.credentialBootstrapFile);
+    const second = normalizeHubCluster(env, { root });
+    assert.equal(second.credentialBootstrapFile, first.credentialBootstrapFile);
+    assert.equal(fs.existsSync(second.credentialBootstrapFile), false);
   } finally {
     await fs.promises.rm(root, { recursive: true, force: true });
   }

@@ -727,6 +727,7 @@ export interface TeamLicenseSeatLine {
 export interface TeamLicenseOverview extends TeamLicenseRecord {
   seat_lines: TeamLicenseSeatLine[];
   packages: MembershipPackageDetails[];
+  standalone_packages?: MembershipPackageDetails[];
 }
 
 export interface TeamLicenseQuoteLineItem {

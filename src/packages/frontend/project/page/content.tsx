@@ -15,6 +15,7 @@ or Loading... if the file is still being loaded.
 */
 
 import { Alert, Button } from "antd";
+import $ from "jquery";
 import { Map } from "immutable";
 import { debounce } from "lodash";
 import { Suspense, useCallback, useEffect, useMemo, useRef } from "react";

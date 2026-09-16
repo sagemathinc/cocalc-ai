@@ -23,6 +23,8 @@ export type SettingsPageDefinition = {
   key: SettingsPageType;
   label: MessageDescriptor;
   title?: MessageDescriptor;
+  // References to labels rendered by this page, never a separate keyword list.
+  controls?: readonly (MessageDescriptor | string)[];
 };
 
 export function renderSettingsPageIcon(

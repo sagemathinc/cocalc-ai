@@ -7,6 +7,19 @@ import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 
 const mockUseRecentAgentSessions = jest.fn();
 
+jest.mock("@cocalc/frontend/app-framework", () => ({
+  useTypedRedux: () => "account-1",
+  useProjectMapField: () => "runtime-1",
+}));
+jest.mock("@cocalc/frontend/chat/codex-defaults", () => ({
+  getDefaultCodexNewChatDefaults: () => ({ model: "gpt-5.6-sol" }),
+}));
+jest.mock("@cocalc/frontend/chat/codex-model-discovery", () => ({
+  cachedAccountCodexModels: () => undefined,
+  discoverAccountCodexModels: async () => undefined,
+  preferredAvailableCodexModel: () => undefined,
+}));
+
 jest.mock("antd", () => {
   const Button = ({ children, icon, ...props }: any) => (
     <button type="button" {...props}>

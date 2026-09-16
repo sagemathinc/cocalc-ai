@@ -5,6 +5,7 @@
 
 import { Button } from "antd";
 
+import $ from "jquery";
 import {
   useEffect,
   useIsMountedRef,

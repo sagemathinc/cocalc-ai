@@ -106,6 +106,11 @@ import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
 import { CodexQuotaHelp } from "./codex-quota-help";
 import { formatCodexErrorMarkdown } from "./codex-error-presentation";
+import {
+  unavailableChatGptCodexModel,
+  codexModelRecoveryConfig,
+} from "@cocalc/util/ai/codex-model-recovery";
+import { CodexModelRecovery } from "./codex-model-recovery";
 import { AcpPromptModal } from "./acp-prompt-modal";
 import {
   linkifyCommitHashes,
@@ -864,6 +869,7 @@ export default function Message({
       lastCodexLoadErrorRef.current = undefined;
     }
     if (
+      effectiveGenerating ||
       !allowAsyncCompletedCodexActivityLoad ||
       codexPreviewLog.loadState !== "error" ||
       !codexPreviewLog.loadError
@@ -875,12 +881,13 @@ export default function Message({
     }
     lastCodexLoadErrorRef.current = codexPreviewLog.loadError;
     antdMessage.error(`Unable to load activity: ${codexPreviewLog.loadError}`);
-    onExpandedCodexActivityChange?.(false);
+    // A failed preview fetch is not a user request to hide activity. Keep the
+    // visibility choice so reconnecting can recover the expanded preview.
   }, [
+    effectiveGenerating,
     allowAsyncCompletedCodexActivityLoad,
     codexPreviewLog.loadError,
     codexPreviewLog.loadState,
-    onExpandedCodexActivityChange,
   ]);
   const codexBodyValue = useMemo(() => {
     if (
@@ -1034,8 +1041,9 @@ export default function Message({
         : formatCodexErrorMarkdown(
             linkifyCommitHashes(renderedMessageValue),
             lite,
+            acpState === "error",
           ),
-    [is_viewers_message, renderedMessageValue],
+    [is_viewers_message, renderedMessageValue, acpState],
   );
   const showCodexErrorHelp =
     isCodexThread && !is_viewers_message && acpState === "error";
@@ -1083,6 +1091,46 @@ export default function Message({
   const acpResubmitParentMessageId = acpResubmitParentMessage
     ? field<string>(acpResubmitParentMessage, "message_id")
     : undefined;
+  const unavailableModel = showCodexErrorHelp
+    ? unavailableChatGptCodexModel(renderedMessageValue)
+    : undefined;
+
+  async function recoverModel(model: string) {
+    if (
+      !actions ||
+      !acpResubmitParentMessage ||
+      !messageThreadId ||
+      !unavailableModel ||
+      read_only
+    )
+      throw Error("Request is no longer retryable");
+    const config = actions.getCodexConfig(messageThreadId);
+    if (
+      config?.model !== unavailableModel ||
+      ![undefined, "auto", "subscription"].includes(config?.paymentSource)
+    ) {
+      throw Error(
+        "Conversation settings changed; retry from its settings instead",
+      );
+    }
+    const ok = await resendCanceledAcpTurn({
+      actions,
+      message: acpResubmitParentMessage,
+      modelRecovery: { model, expected_model: unavailableModel },
+    });
+    if (!ok) throw Error("Request is no longer retryable");
+    // The host retries its stored request atomically; update future turns only
+    // after acceptance, without overwriting concurrent conversation edits.
+    const latest = actions.getCodexConfig(messageThreadId);
+    if (latest?.model === unavailableModel) {
+      const next = codexModelRecoveryConfig(latest, model);
+      actions.setCodexConfig(messageThreadId, {
+        model,
+        reasoning: next.reasoning,
+        serviceTier: next.serviceTier,
+      });
+    }
+  }
 
   async function handleResubmitToAgent() {
     if (!actions || !acpResubmitParentMessage) return;
@@ -1105,6 +1153,7 @@ export default function Message({
   }
 
   function renderResubmitToAgentButton() {
+    if (unavailableModel) return null;
     if (!acpResubmitParentMessage) return null;
     return (
       <div style={{ marginTop: "8px" }}>
@@ -2100,6 +2149,22 @@ export default function Message({
   }
 
   function renderMessageBody({ message_class }) {
+    if (
+      unavailableModel &&
+      project_id &&
+      acpResubmitParentMessage &&
+      sender_is_viewer(account_id, acpResubmitParentMessage)
+    ) {
+      return (
+        <CodexModelRecovery
+          key={`${account_id}:${project_id}:${acpResubmitParentMessageId}:${unavailableModel}`}
+          projectId={project_id}
+          failedModel={unavailableModel}
+          details={renderedMessageValue}
+          onRetry={recoverModel}
+        />
+      );
+    }
     const value = renderedMessageMarkdown;
     const suppressPlaceholderBody = shouldSuppressAcpPlaceholderBody({
       value,

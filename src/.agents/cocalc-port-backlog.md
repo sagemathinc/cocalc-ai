@@ -148,10 +148,10 @@ Opportunistic, whenever convenient: the remaining Tier 1 and Tier 2 items below.
 | #8701 | Synctex jumps into non-source files                   | **Implemented in `synctex-fixes-20260907`, pending merge.** Reuse the log parser’s supported text-dependency extensions plus latex (case-insensitive); ignore other targets and release the automatic-sync flag. The sync-doc half is **superseded**: `syncstring_table_get_one()` now delegates to `getDocumentMetadataState()`, which handles absent legacy tables and uses patchflow metadata or an empty Map. Porting the old early-return guard would skip valid metadata handling. |
 | #8705 | Synctex numeric RegExp recompiled per call            | **Implemented in `synctex-fixes-20260907`, pending merge.** Compile once at module scope; retain parsing behavior.                                                                                                                                                                                                                                                                                                                                                                       |
 | #8700 | AI-history event-emitter leak                         | **Still open.** `frame-editors/ai/use-ai-history.ts` still registers a per-hook `listenerRef`; upstream uses a shared listener and subscribers.                                                                                                                                                                                                                                                                                                                                          |
-| #8693 | knitr TimeTravel frame path | **Implemented in PR #430.** TimeTravel and returning to Code retain the authored rnw/rtex source; same-type selections preserve subfiles. |
+| #8693 | knitr TimeTravel frame path                           | **Implemented in PR #430.** TimeTravel and returning to Code retain the authored rnw/rtex source; same-type selections preserve subfiles.                                                                                                                                                                                                                                                                                                                                                |
 | #8655 | Starred-projects bar unnecessary remeasurement        | **Still open.** `projects/projects-starred.tsx` resets measurement on `[starredProjects]`, not a signature of layout-affecting fields.                                                                                                                                                                                                                                                                                                                                                   |
 | #8714 | Peer-grading parsing runs serially                    | **Still open.** `course/assignments/actions.ts` loops over `peer_student_ids` serially while reading grades. Other parallel copy loops do not implement this fix.                                                                                                                                                                                                                                                                                                                        |
-| #8723 | Email-address field retains edited value after Cancel | **Merged in PR #426.** Cancel restores the saved email, the input is controlled, and saving locks the form until the request settles. The existing Card and fresh-auth flow remain. |
+| #8723 | Email-address field retains edited value after Cancel | **Merged in PR #426.** Cancel restores the saved email, the input is controlled, and saving locks the form until the request settles. The existing Card and fresh-auth flow remain.                                                                                                                                                                                                                                                                                                      |
 
 This audit did not refresh GitHub label counts or the larger-feature tiers.
 
@@ -312,6 +312,20 @@ getRecent / cancel`), landed in commit `035fc76478` _"document-build: integrate
 Upstream draft `aria-20251024`, +5963/-741. We want this, but **staged**, not as one port.
 
 ### Stage 1 (first, and the one Harald wants): the **quick navigation dialog**
+
+**2026-09-07 implementation:** `quick-navigation-20260907` extracts this as an
+independent power-user feature. Double-Shift is enabled by default, with shared
+Keyboard preferences and a separate shortcut/delay dialog opened from the title-bar gear. The port uses
+loaded projects and editor stores, shared starred-file data, available recent
+history, and the current settings registry with searchable labels shared with the preference controls. Search ranks exact names, word
+prefixes, substrings, and conservative typo matches with contextual highlighting.
+The frame preview supports current n-ary/tabbed layouts, immediate digit jumps from an
+empty query, Space-prefixed numeric searches, and Tab into the right-hand preview for frame selection. The list and preview use a stable two-column layout; previewing does not switch the background editor. Focus
+waits on store, frame-commit and mount events (without polling), and resolves the underlying CodeMirror actions for included LaTeX files. Help closes
+the dialog and opens the integrated Quick Navigation guide. Awaiting local manual
+review; this is not yet recorded as landed on main.
+
+The notes below describe the original upstream implementation for reference.
 
 The design goal, in Harald's words: a trigger like **double-tap Shift** pops a
 keyboard-focused nav box in the middle of the screen listing recent files etc.,

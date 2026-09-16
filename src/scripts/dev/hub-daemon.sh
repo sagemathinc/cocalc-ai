@@ -404,7 +404,7 @@ print_bootstrap_signup_url() {
 
 usage() {
   cat <<EOF
-Usage: $(basename "$0") <init|start|stop|restart|build|upgrade-hosts|reconcile-hosts|refresh|status|logs|env>
+Usage: $(basename "$0") <init|start|stop|restart|start-bay ID|stop-bay ID|restart-bay ID|build|upgrade-hosts|reconcile-hosts|refresh|status|logs|env>
 
 Config file: $CONFIG_FILE
 State dir:   $STATE_DIR
@@ -657,6 +657,40 @@ stop_attached_bays() {
   done
 }
 
+cluster_bay_index_by_id() {
+  local requested="${1:-}" idx
+  for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
+    if [ "$(cluster_bay_value "$idx" ID)" = "$requested" ]; then
+      printf '%s' "$idx"
+      return 0
+    fi
+  done
+  return 1
+}
+
+manage_named_bay() {
+  local action="${1:-}" bay_id="${2:-}" idx
+  load_config
+  idx="$(cluster_bay_index_by_id "$bay_id" || true)"
+  if [ -z "$idx" ]; then
+    echo "unknown bay: $bay_id" >&2
+    return 1
+  fi
+  if [ "$idx" = "$HUB_CLUSTER_PRIMARY_BAY_INDEX" ]; then
+    echo "manage the primary bay with the cluster-level start/stop/restart command" >&2
+    return 1
+  fi
+  case "$action" in
+    start) start_cluster_bay "$idx" ;;
+    stop) stop_cluster_bay "$idx" ;;
+    restart)
+      stop_cluster_bay "$idx"
+      start_cluster_bay "$idx"
+      ;;
+    *) return 1 ;;
+  esac
+}
+
 wait_for_file() {
   local file="${1:-}"
   local timeout_s="${2:-30}"
@@ -685,7 +719,7 @@ primary_seed_conat_password_value() {
 
 start_cluster_bay() {
   local idx="${1:-}"
-  local bay_id pid_file role port bind_host cmd data_dir state_dir debug_file stdout_log label region seed_bay_id seed_server seed_password software_base_url self_host_pair_url
+  local bay_id pid_file role port bind_host cmd data_dir state_dir debug_file stdout_log label region seed_bay_id seed_server seed_password software_base_url self_host_pair_url credential_file
   bay_id="$(cluster_bay_value "$idx" ID)"
   role="$(cluster_bay_value "$idx" ROLE)"
   pid_file="$(cluster_bay_pid_file "$idx")"
@@ -703,18 +737,11 @@ start_cluster_bay() {
   seed_password="$(cluster_bay_value "$idx" SEED_CONAT_PASSWORD)"
   software_base_url="$(cluster_bay_value "$idx" SOFTWARE_BASE_URL_FORCE)"
   self_host_pair_url="$(cluster_bay_value "$idx" SELF_HOST_PAIR_URL)"
+  credential_file="$(cluster_bay_value "$idx" CREDENTIAL_FILE)"
 
   if cluster_bay_running "$idx"; then
     echo "$bay_id already running (pid $(cat "$pid_file"))"
     return 0
-  fi
-
-  if [ "$role" = "attached" ]; then
-    seed_password="$(primary_seed_conat_password_value || true)"
-    if [ -z "$seed_password" ]; then
-      echo "unable to resolve seed hub conat password for $bay_id" >&2
-      return 1
-    fi
   fi
 
   mkdir -p "$state_dir"
@@ -792,6 +819,17 @@ start_cluster_bay() {
       unset COCALC_BAY_REGION
     fi
     export COCALC_CLUSTER_ROLE="$role"
+    export COCALC_CLUSTER_ID
+    if [ -n "$credential_file" ]; then
+      export COCALC_BAY_CREDENTIAL_FILE="$credential_file"
+    else
+      unset COCALC_BAY_CREDENTIAL_FILE
+    fi
+    if [ "$role" = "seed" ] && [ -n "$COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE" ]; then
+      export COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE
+    else
+      unset COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE
+    fi
     export HUB_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
     export COCALC_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
     export HUB_CLUSTER_BAY_PUBLIC_URLS="$HUB_CLUSTER_BAY_PUBLIC_URLS"
@@ -1054,6 +1092,8 @@ is_running() {
 
 start_daemon() {
   load_config
+  local primary_data_dir
+  primary_data_dir="$(cluster_bay_value "$HUB_CLUSTER_PRIMARY_BAY_INDEX" DATA_DIR)"
   if is_running; then
     echo "hub daemon already running (pid $(cat "$PID_FILE"))"
   else
@@ -1088,6 +1128,11 @@ start_daemon() {
       fi
       export COCALC_DISABLE_NEXT="$HUB_DISABLE_NEXT"
       export PORT="$HUB_PORT"
+      if [ -n "$primary_data_dir" ]; then
+        export DATA_BASE="$primary_data_dir"
+      else
+        unset DATA_BASE
+      fi
       export COCALC_PROJECT_HOST_SOFTWARE_PACKAGES_ROOT="$HUB_SOFTWARE_PACKAGES_ROOT"
       export COCALC_SETTING_PROJECT_HOSTS_ROUTE_MODE
       export COCALC_PROJECT_HOST_SOFTWARE_ENDPOINT_MODE="$(software_endpoint_mode)"
@@ -1115,6 +1160,17 @@ start_daemon() {
         unset COCALC_BAY_REGION
       fi
       export COCALC_CLUSTER_ROLE
+      export COCALC_CLUSTER_ID
+      if [ -n "$COCALC_BAY_CREDENTIAL_FILE" ]; then
+        export COCALC_BAY_CREDENTIAL_FILE
+      else
+        unset COCALC_BAY_CREDENTIAL_FILE
+      fi
+      if [ "$COCALC_CLUSTER_ROLE" = "seed" ] && [ -n "$COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE" ]; then
+        export COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE
+      else
+        unset COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE
+      fi
       export HUB_CLUSTER_BAY_IDS
       export COCALC_CLUSTER_BAY_IDS="$HUB_CLUSTER_BAY_IDS"
       export HUB_CLUSTER_BAY_PUBLIC_URLS
@@ -1204,7 +1260,10 @@ build_daemon() {
 }
 
 refresh_hub_env() {
-  eval "$(pnpm -s dev:hub:env)"
+  local env_script
+  # Capture separately: eval would hide a failed command substitution.
+  env_script="$(pnpm --reporter=silent run dev:hub:env)" || return $?
+  eval "$env_script"
 }
 
 upgrade_hosts() {
@@ -1383,10 +1442,13 @@ HUB_DEV_CLUSTER_JSON=$HUB_DEV_CLUSTER_JSON
 COCALC_BAY_ID=$COCALC_BAY_ID
 COCALC_BAY_LABEL=$COCALC_BAY_LABEL
 COCALC_BAY_REGION=$COCALC_BAY_REGION
+COCALC_CLUSTER_ID=$COCALC_CLUSTER_ID
 COCALC_CLUSTER_ROLE=$COCALC_CLUSTER_ROLE
 COCALC_CLUSTER_SEED_BAY_ID=$COCALC_CLUSTER_SEED_BAY_ID
 COCALC_CLUSTER_SEED_CONAT_SERVER=$COCALC_CLUSTER_SEED_CONAT_SERVER
 COCALC_CLUSTER_SEED_CONAT_PASSWORD=$COCALC_CLUSTER_SEED_CONAT_PASSWORD
+COCALC_BAY_CREDENTIAL_FILE=$COCALC_BAY_CREDENTIAL_FILE
+COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE=$COCALC_BAY_CREDENTIAL_BOOTSTRAP_FILE
 HUB_CLUSTER_BAY_COUNT=$HUB_CLUSTER_BAY_COUNT
 HUB_CLUSTER_PRIMARY_BAY_ID=$HUB_CLUSTER_PRIMARY_BAY_ID
 HUB_CLUSTER_PRIMARY_BAY_INDEX=$HUB_CLUSTER_PRIMARY_BAY_INDEX
@@ -1397,7 +1459,7 @@ HUB_CLUSTER_BAY_PUBLIC_URLS=$HUB_CLUSTER_BAY_PUBLIC_URLS
 EOF
   local idx key
   for idx in $(seq 0 $((HUB_CLUSTER_BAY_COUNT - 1))); do
-    for key in ID ROLE IS_PRIMARY PORT BIND_HOST CMD STATE_DIR DATA_DIR DEBUG_FILE STDOUT_LOG CLOUDFLARED_PID_FILE LABEL REGION SEED_BAY_ID SEED_CONAT_SERVER SEED_CONAT_PASSWORD SOFTWARE_BASE_URL_FORCE SELF_HOST_PAIR_URL PUBLIC_URL; do
+    for key in ID ROLE IS_PRIMARY PORT BIND_HOST CMD STATE_DIR DATA_DIR DEBUG_FILE STDOUT_LOG CLOUDFLARED_PID_FILE LABEL REGION SEED_BAY_ID SEED_CONAT_SERVER SEED_CONAT_PASSWORD CREDENTIAL_FILE SOFTWARE_BASE_URL_FORCE SELF_HOST_PAIR_URL PUBLIC_URL; do
       echo "HUB_CLUSTER_BAY_${idx}_${key}=$(cluster_bay_value "$idx" "$key")"
     done
   done
@@ -1434,6 +1496,15 @@ case "$cmd" in
   restart)
     stop_daemon 1
     start_daemon
+    ;;
+  start-bay)
+    manage_named_bay start "${2:-}"
+    ;;
+  stop-bay)
+    manage_named_bay stop "${2:-}"
+    ;;
+  restart-bay)
+    manage_named_bay restart "${2:-}"
     ;;
   build)
     build_daemon

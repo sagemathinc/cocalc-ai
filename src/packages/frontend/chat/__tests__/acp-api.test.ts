@@ -897,6 +897,42 @@ describe("queued ACP controls", () => {
     });
   });
 
+  it.each(["missing", "running", "error"])(
+    "does not create a fresh turn when model recovery returns %s",
+    async (state) => {
+      mockControlAcp.mockResolvedValue({ ok: false, state });
+      const acpState = new FakeAcpState();
+      const actions: any = {
+        store: {
+          get: (key) => ({ project_id: "proj", path: "x.chat", acpState })[key],
+          setState: jest.fn(),
+        },
+        syncdb: { set: jest.fn(), commit: jest.fn() },
+      };
+      const message: any = {
+        message_id: "user-msg",
+        thread_id: "thread",
+        history: [{ content: "original" }],
+      };
+      const modelRecovery = {
+        model: "gpt-5.6-terra",
+        expected_model: "gpt-5.6-sol",
+      };
+      expect(
+        await resendCanceledAcpTurn({ actions, message, modelRecovery }),
+      ).toBe(false);
+      expect(mockControlAcp).toHaveBeenCalledWith({
+        project_id: "proj",
+        path: "x.chat",
+        thread_id: "thread",
+        user_message_id: "user-msg",
+        action: "resend_with_model",
+        model_recovery: modelRecovery,
+      });
+      expect(mockStreamAcp).not.toHaveBeenCalled();
+    },
+  );
+
   it("resubmits the original prompt when the canceled backend job is missing", async () => {
     jest.spyOn(Date, "now").mockReturnValue(8300);
     mockControlAcp.mockResolvedValue({ ok: false, state: "missing" });

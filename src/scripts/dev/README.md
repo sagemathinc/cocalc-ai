@@ -174,8 +174,8 @@ Use these to print the fully resolved CLI/browser environment for the current
 local stack and apply it to your shell:
 
 ```bash
-eval "$(pnpm -s --dir src dev:lite:env)"
-eval "$(pnpm -s --dir src dev:hub:env)"
+eval "$(pnpm --reporter=silent --dir src run dev:lite:env)"
+eval "$(pnpm --reporter=silent --dir src run dev:hub:env)"
 ```
 
 If you want the raw configured daemon variables instead of shell exports:

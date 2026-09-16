@@ -4,13 +4,24 @@
  */
 
 import { useDndContext } from "@dnd-kit/core";
-import React, { useContext, useEffect, useMemo, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { Rendered } from "@cocalc/frontend/app-framework";
 import { IFrameContext, FrameContext } from "./frame-context";
 import { useFrameDropZone } from "./dnd/use-frame-drop-zone";
 import { DropZoneOverlay } from "./dnd/drop-zone-overlay";
 import { FrameDndZoneContext } from "./dnd/frame-dnd-provider";
 import { TabContainerContext } from "./tabs-container";
+
+import "./frame-leaf-container.css";
+import { FRAME_COMMIT_EVENT } from "./commit-event";
 
 interface Props {
   id: string;
@@ -33,6 +44,7 @@ export const FrameLeafContainer: React.FC<Props> = ({
   titlebar,
   leaf,
 }) => {
+  const rootRef = useRef<HTMLDivElement | null>(null);
   const titleBarRef = useRef<HTMLDivElement>(null);
   const [titleBarHeight, setTitleBarHeight] = useState(0);
   const { tabContainerId, tabSiblingCount, tabChildIds } =
@@ -57,13 +69,35 @@ export const FrameLeafContainer: React.FC<Props> = ({
   const { dropRef, isOver, isDragActive, activeZone, onPointerMove } =
     useFrameDropZone(id, frameLabel, titleBarHeight, tabInfo, setDropZone);
 
+  const setRoot = useCallback(
+    (node: HTMLDivElement | null) => {
+      rootRef.current = node;
+      dropRef(node);
+    },
+    [dropRef],
+  );
+  useLayoutEffect(() => {
+    rootRef.current?.dispatchEvent(
+      new Event(FRAME_COMMIT_EVENT, { bubbles: true }),
+    );
+  }, [
+    id,
+    contextValue.isFocused,
+    contextValue.isVisible,
+    contextValue.desc,
+    style?.display,
+  ]);
+
   const { active } = useDndContext();
   const isBeingDragged = active?.data?.current?.frameId === id;
 
   return (
     <FrameContext.Provider value={contextValue}>
       <div
-        ref={dropRef}
+        ref={setRoot}
+        data-frame-id={id}
+        role="region"
+        aria-label={frameLabel}
         className="smc-vfill cc-frame-leaf-container"
         style={{
           ...(style ?? {}),
