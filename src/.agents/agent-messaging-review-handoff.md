@@ -12,8 +12,8 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Fixed comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
 - Previously reviewed deficient head:
   `d38f3399be308a92721e40fdcb56244de3d1974e`.
-- Application/test checkpoint before this documentation update: `4590eac669`.
-- Latest rereview remediation commit: `10a059f943`.
+- Current private handoff head before this documentation update: `c855b662e4`.
+- Application remediation commit: `10a059f943`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -160,6 +160,17 @@ authenticated second human's actual
 membership downgrade/removal or an explicitly manufactured recovery child. Those
 paths have focused authorization/recovery tests, but report the remaining live
 distinction rather than treating the single probe as every D3 permutation.
+
+The exact handoff head produced and deployed dev-only host build
+`20260916T061335Z-c855b662e444`, SHA-256
+`8d48288b3926b48e8fc0fb5a37b390b66f31e64765c61ec271346b53a29552a2`. Direct
+inspection found all four managed host components aligned and healthy. Using the
+exact private server control package against the dev database and that host, a
+real overlapping start/stop/replacement-start preserved ordering and advanced the
+durable fence from revision 2 to 3. A forced old-revision host start was then
+rejected in 239 ms, and the replacement runtime executed normally. This did not
+include a separately authenticated human membership mutation or pause a prepared
+start before dispatch; do not inflate it into that remaining qualification.
 
 Also unfinished: matched-fleet project movement/cross-bay qualification,
 current-version external enrollment/send, and production-like load/RSS measurement.

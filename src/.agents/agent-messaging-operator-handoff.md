@@ -8,7 +8,7 @@ earlier checkpoints.
 
 ## Candidate and evidence
 
-- Current private application/test checkpoint: `4590eac669` on
+- Current private reviewer/deployment handoff: `c855b662e4` on
   `fix/agent-messaging-review-20260916`.
 - The workspace/browser/CLI build `0b3e34f358601cbf8f0b3826714623fbcb5b1072`
   and host archive `e43a2ccb10a7cea2012cbdddc296cc8aad85bb41` are historical
@@ -25,6 +25,13 @@ Dev QA update, September 16: clean build
 and healthy. Archive SHA-256 is
 `806c276cdf4a6ae49fd37ffa7d6d0572c91143ad01c876fc1f45bb2341025f2c`.
 This is a dev-only private candidate, not a production default.
+
+Later September 16 update: exact private handoff `c855b662e444` produced build
+`20260916T061335Z-c855b662e444` (SHA-256
+`8d48288b3926b48e8fc0fb5a37b390b66f31e64765c61ec271346b53a29552a2`). The QA
+host reports project-host, router, persist, and ACP worker healthy and aligned on
+that build. The upgrade watcher returned unknown, but direct deployment state
+proved promotion; no duplicate operation was submitted.
 
 | Requirement                   | Evidence                                                                                    | Remaining qualification                              |
 | ----------------------------- | ------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
@@ -148,9 +155,10 @@ final-candidate rollback has been exercised.
 ## Current prerequisites and next step
 
 Update September 16: the receiver QA host now runs private remediation build
-`20260916T023414Z-fc9ca3baea3a` across all four managed components. The host agent
-promoted it healthy at `2026-09-16T02:38:28.477Z`. The earlier rollback and native
-round-trip paragraphs are historical evidence, not the current artifact version.
+`20260916T061335Z-c855b662e444` across all four managed components. The host agent
+promoted it healthy at `2026-09-16T06:16:22.694Z`. The earlier rollback, restart,
+and native round-trip paragraphs are historical evidence, not the current artifact
+version.
 
 Restart operation `4e95ab3b-0b1c-4bcb-9004-732a58f372b7` then passed a live
 running-plus-queued ACP fence probe. Neither pre-restart marker appeared after the

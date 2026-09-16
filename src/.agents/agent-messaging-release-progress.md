@@ -13,6 +13,7 @@ been performed.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
 - Latest rereview remediation commit: `10a059f943`.
+- Current private reviewer/deployment handoff: `c855b662e4`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -112,6 +113,29 @@ and private repository before relying on this packet.
   disposal; immediately after restart and after the original 180-second deadline,
   both old markers and the old process remained absent. A newly accepted control
   turn created only `restart-fence-new-fc9ca3ba` with `new-authority-work`.
+- Exact private head `c855b662e444` produced dev-only project-host build
+  `20260916T061335Z-c855b662e444` (83,645,580 bytes, SHA-256
+  `8d48288b3926b48e8fc0fb5a37b390b66f31e64765c61ec271346b53a29552a2`).
+  The QA host upgrade watcher timed out with unknown status for operation
+  `f7e8b966-c3e6-4e15-b65e-b503969dfe9a`; it was not retried. Direct deployment
+  inspection proved the artifact was promoted healthy and project-host, router,
+  persist, and ACP worker were all running and aligned on the exact build.
+- The private schema loader converged the additive dev schema, including
+  `projects.runtime_lifecycle_revision`. The long-running lite1b hub workers still
+  load the older main-worktree server code, so subsequent qualification invoked
+  the exact private server control package directly against the dev database and
+  upgraded real host. This is deliberate mixed-version qualification, not a claim
+  that the full dev hub fleet is on the candidate.
+- On receiver project `66db94af-0745-4088-b922-879c58942201`, a cold direct
+  stop/start advanced the lifecycle revision to 1; stop took 3,123 ms and start
+  took 71,691 ms. The control change adds no start query or host RPC, but this
+  observed cold-start duration remains a performance datapoint rather than a
+  comparative benchmark.
+- A real overlapping start/stop/replacement-start completed in 12,983 ms. The old
+  start completed before the serialized stop; stop advanced revision 2 to 3 in
+  7,113 ms; and the replacement start completed in 5,769 ms. A direct host request
+  then forced revision 2 after revision 3 and was rejected as stale in 239 ms. A
+  post-fence project exec returned `restart-fence-c855b662e4`.
 
 ## Unresolved risks and unfinished work
 
@@ -121,6 +145,11 @@ and private repository before relying on this packet.
   second-human downgrade/removal and the subsequent successful restart on the
   matched `10a059f943` build. The earlier sequential restart evidence predates
   this correction and is not proof of the repaired race.
+- The exact-head direct-control probe exercises serialized ordering and post-fence
+  rejection on the real QA host, but it does not pause a prepared start before
+  host dispatch or perform the membership mutation through a separately
+  authenticated second human. Deterministic tests cover the former; the combined
+  human-boundary scenario remains for independent qualification.
 - The exact candidate passed a live detached-worker/session/running/queued restart
   probe. A real second-human membership downgrade/removal and a deliberately
   manufactured recovery child were not combined into that live probe. Their
