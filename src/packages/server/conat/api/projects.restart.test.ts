@@ -178,7 +178,10 @@ describe("projects.restart", () => {
       bay_id: "bay-1",
       epoch: 4,
     }));
-    interBayCheckStartAdmissionMock = jest.fn(async () => undefined);
+    interBayCheckStartAdmissionMock = jest.fn(async () => ({
+      storage_recovery_required: false,
+      runtime_authority_revision: "4",
+    }));
     interBayRestartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
       checkStartAdmission: (...args: any[]) =>
@@ -213,6 +216,7 @@ describe("projects.restart", () => {
     expect(interBayRestartMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       account_id: "acct-1",
+      runtime_authority_revision: "4",
       lro_op_id: "op-2",
       source_bay_id: "bay-0",
       epoch: 4,
@@ -222,7 +226,7 @@ describe("projects.restart", () => {
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        dedupe_key: "project-restart",
+        dedupe_key: "project-restart:4",
         kind: "project-start",
         input: { project_id: "proj-1", action: "restart" },
       }),
@@ -255,8 +259,98 @@ describe("projects.restart", () => {
 
     expect(response.op_id).toBe("existing-restart");
     expect(createLroDetailedMock).toHaveBeenCalledWith(
-      expect.objectContaining({ dedupe_key: "project-restart" }),
+      expect.objectContaining({ dedupe_key: "project-restart:4" }),
     );
     expect(interBayRestartMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an older owning bay omits the authority revision", async () => {
+    interBayCheckStartAdmissionMock.mockResolvedValueOnce({
+      storage_recovery_required: false,
+    });
+    const { restart } = await import("./projects");
+
+    await expect(
+      restart({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        wait: false,
+      }),
+    ).rejects.toThrow("did not provide a project runtime authority revision");
+    expect(createLroDetailedMock).not.toHaveBeenCalled();
+    expect(interBayRestartMock).not.toHaveBeenCalled();
+  });
+
+  it("does not coalesce a post-membership-change restart", async () => {
+    interBayCheckStartAdmissionMock
+      .mockResolvedValueOnce({
+        storage_recovery_required: false,
+        runtime_authority_revision: "4",
+      })
+      .mockResolvedValueOnce({
+        storage_recovery_required: false,
+        runtime_authority_revision: "5",
+      });
+    createLroDetailedMock
+      .mockResolvedValueOnce({
+        lro: {
+          op_id: "pre-change-restart",
+          kind: "project-start",
+          scope_type: "project",
+          scope_id: "proj-1",
+          status: "running",
+        },
+        created: true,
+      })
+      .mockResolvedValueOnce({
+        lro: {
+          op_id: "post-change-restart",
+          kind: "project-start",
+          scope_type: "project",
+          scope_id: "proj-1",
+          status: "queued",
+        },
+        created: true,
+      });
+    let releasePreChangeRestart: (() => void) | undefined;
+    interBayRestartMock
+      .mockImplementationOnce(
+        async () =>
+          await new Promise<void>((resolve) => {
+            releasePreChangeRestart = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { restart } = await import("./projects");
+
+    await restart({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+    expect(interBayRestartMock).toHaveBeenCalledTimes(1);
+
+    await restart({
+      account_id: "owner-2",
+      project_id: "proj-1",
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+
+    expect(
+      createLroDetailedMock.mock.calls.map(([input]) => input.dedupe_key),
+    ).toEqual(["project-restart:4", "project-restart:5"]);
+    expect(interBayRestartMock).toHaveBeenCalledTimes(2);
+    expect(interBayRestartMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        account_id: "owner-2",
+        lro_op_id: "post-change-restart",
+        runtime_authority_revision: "5",
+      }),
+    );
+
+    releasePreChangeRestart?.();
+    await flushBackgroundRestartTask();
   });
 });

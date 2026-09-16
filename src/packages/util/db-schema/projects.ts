@@ -539,6 +539,12 @@ Table({
       pg_type: "BIGINT",
       desc: "Monotonic owning-bay fence for project runtime stop/start ordering.",
     },
+    runtime_authority_revision: {
+      type: "integer",
+      pg_type: "BIGINT",
+      pg_default: "0",
+      desc: "Monotonic owning-bay revision of the project collaborator authority map.",
+    },
     rootfs_image: {
       type: "string",
       desc: "The root filesystem image for this project. This can be an arbitrary Docker image.",
@@ -992,6 +998,8 @@ export interface CreateProjectOptions {
   run_quota_revision?: number;
   // Monotonic owning-bay fence for runtime stop/start ordering.
   runtime_lifecycle_revision?: number;
+  // Monotonic owning-bay revision of the project collaborator authority map.
+  runtime_authority_revision?: number;
   // (optional) image ID
   image?: string;
   // Optional concatenated SSH public keys (one per line) provided by the master;

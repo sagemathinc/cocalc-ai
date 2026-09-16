@@ -264,9 +264,11 @@ describe("inter-bay fabric routing", () => {
     await getInterBayBridge()
       .projectControl("bay-1")
       .stop({ project_id: "proj-1" });
-    await getInterBayBridge()
-      .projectControl("bay-1")
-      .restart({ project_id: "proj-1", account_id: "acct-1" });
+    await getInterBayBridge().projectControl("bay-1").restart({
+      project_id: "proj-1",
+      account_id: "acct-1",
+      runtime_authority_revision: "0",
+    });
     await expect(
       getInterBayBridge().projectControl("bay-1").state({
         project_id: "proj-1",
@@ -337,7 +339,13 @@ describe("inter-bay fabric routing", () => {
     });
     await expect(projectRestartPromise).resolves.toEqual({
       name: "restart",
-      args: [{ project_id: "proj-1", account_id: "acct-1" }],
+      args: [
+        {
+          project_id: "proj-1",
+          account_id: "acct-1",
+          runtime_authority_revision: "0",
+        },
+      ],
     });
     await expect(projectStatePromise).resolves.toEqual({
       name: "state",

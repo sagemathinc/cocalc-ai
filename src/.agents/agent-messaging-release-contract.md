@@ -131,16 +131,19 @@ message. Resuming a connection never replays work.
 
 **Required restart boundary (declared by William):** after committing a removal
 or downgrade, the user must explicitly restart the project if they need to ensure
-the old authority can no longer be exercised. Once that restart successfully
-completes, the removed user has no project access and a read-only user cannot
-write or execute with their former collaborator privileges. Pre-restart agent
-and other project-local processes must be stopped. Old sessions, cached grants,
-CoCalc-managed credentials, scheduled jobs, or queued/recovered work must not
-restore those former privileges. Work may resume only under currently valid
-permissions and execution policy. A still-valid CoCalc credential is not
-permission to keep old rights.
-The same boundary applies when restarting to enforce a changed agent execution
-mode. This is not a requirement to invalidate every unrelated login or installation.
+the old CoCalc-managed authority can no longer be exercised. Once that restart
+successfully completes, the removed user's CoCalc account has no CoCalc-managed
+project access and a read-only user's CoCalc account cannot write or execute with
+its former collaborator privileges. Pre-restart agent and other project-local
+processes must be stopped. Old sessions, cached grants, CoCalc-managed
+credentials, scheduled jobs, or queued/recovered work must not restore those
+former privileges. Work may resume only under currently valid permissions and
+execution policy. A still-valid CoCalc credential is not permission to keep old
+rights.
+The same process-termination boundary applies when restarting to enforce a changed
+agent execution mode. Agent execution mode is resolved again at admission; unlike
+the collaborator map, it is not restored from a project-start authority snapshot.
+This is not a requirement to invalidate every unrelated login or installation.
 
 Suggested membership UI copy: "Removing or downgrading a collaborator does not
 automatically stop their running work. Restart the project after making the change
@@ -168,10 +171,11 @@ account's CoCalc-managed authority. If a former collaborator may have left
 untrusted persistent state, the owner must audit or restore project contents,
 remove or rotate project-local credentials, and then restart. This limitation is
 part of the trusted-collaborator model rather than a claim that restart sanitizes
-the filesystem.
+the filesystem. William explicitly approved this persistent project-local SSH key
+behavior on September 16, 2026.
 A message already admitted at another project follows that project's execution
-lifecycle. These limits do not permit continued old authority in the restarted
-project. See verification task D3.
+lifecycle. These limits do not permit continued old CoCalc-managed authority in
+the restarted project. See verification task D3.
 
 Project movement uses stop-before-move semantics: the old project container and
 agent do not keep running normally through the move. Verify this lifecycle and

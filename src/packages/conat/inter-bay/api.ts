@@ -348,6 +348,7 @@ export interface ProjectControlStartRequest {
 
 export interface ProjectControlStartAdmission {
   storage_recovery_required: boolean;
+  runtime_authority_revision: string;
 }
 
 export interface ProjectControlStopRequest {
@@ -359,6 +360,7 @@ export interface ProjectControlStopRequest {
 export interface ProjectControlRestartRequest {
   project_id: string;
   account_id: string;
+  runtime_authority_revision: string;
   lro_op_id?: string;
   source_bay_id?: string;
   epoch?: number;

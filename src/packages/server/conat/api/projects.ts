@@ -5140,6 +5140,7 @@ async function runProjectStartLikeAction({
       ? project_move_id
       : undefined;
   let storageRecoveryRequired = false;
+  let runtimeAuthorityRevision: string | undefined;
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
@@ -5166,6 +5167,7 @@ async function runProjectStartLikeAction({
         epoch: ownership.epoch,
       });
     storageRecoveryRequired = admission?.storage_recovery_required === true;
+    runtimeAuthorityRevision = admission?.runtime_authority_revision;
   } catch (err) {
     const runtimeSponsorDenial = extractRuntimeSponsorDenial(err);
     if (runtimeSponsorDenial) {
@@ -5176,6 +5178,11 @@ async function runProjectStartLikeAction({
       throw new Error(encodeRuntimeSponsorDenial(enrichedRuntimeSponsorDenial));
     }
     throw err;
+  }
+  if (kind === "restart" && !/^\d+$/.test(runtimeAuthorityRevision ?? "")) {
+    throw new Error(
+      "owning bay did not provide a project runtime authority revision",
+    );
   }
   const { lro: op, created } = await createLroDetailed({
     kind: "project-start",
@@ -5191,10 +5198,12 @@ async function runProjectStartLikeAction({
         : {}),
       ...(autostart ? { autostart } : {}),
     },
-    // Duplicate submissions of the same action share one lifecycle, but an
-    // explicit restart must never join an older start/restore: restart is the
-    // user-visible authority fence.
-    dedupe_key: kind === "restart" ? "project-restart" : "project-start",
+    // Duplicate restarts share one lifecycle only while collaborator authority
+    // is unchanged. A post-change restart must establish a newer fence.
+    dedupe_key:
+      kind === "restart"
+        ? `project-restart:${runtimeAuthorityRevision}`
+        : "project-start",
     status: "queued",
   });
   const response = {
@@ -5314,6 +5323,7 @@ async function runProjectStartLikeAction({
         await projectControl.restart({
           project_id,
           account_id,
+          runtime_authority_revision: runtimeAuthorityRevision!,
           lro_op_id: op.op_id,
           source_bay_id: getConfiguredBayId(),
           epoch: ownership.epoch,

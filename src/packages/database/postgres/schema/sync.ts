@@ -44,6 +44,10 @@ import {
   agentIdentityRecoverySchemaNeedsSync,
   ensureAgentIdentityRecoverySchema,
 } from "./agent-identity-recovery";
+import {
+  ensureProjectRuntimeAuthorityRevisionSchema,
+  projectRuntimeAuthorityRevisionSchemaNeedsSync,
+} from "./project-runtime-authority-revision";
 
 const log = getLogger("db:schema:sync");
 
@@ -469,6 +473,9 @@ export async function syncSchema(
     if (dbSchema.account_notification_index != null) {
       await ensureAccountNotificationRevisionSchema(db);
     }
+    if (dbSchema.projects != null) {
+      await ensureProjectRuntimeAuthorityRevisionSchema(db);
+    }
     if (dbSchema.purchases != null) {
       await ensurePurchaseCostCentsSchema(db);
     }
@@ -570,6 +577,13 @@ export async function schemaNeedsSync(
       (await accountNotificationRevisionSchemaNeedsSync(db))
     ) {
       dbg("detected missing account notification revision default");
+      return true;
+    }
+    if (
+      dbSchema.projects != null &&
+      (await projectRuntimeAuthorityRevisionSchemaNeedsSync(db))
+    ) {
+      dbg("detected missing project runtime authority revision trigger");
       return true;
     }
     if (
