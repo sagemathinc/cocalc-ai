@@ -5027,10 +5027,12 @@ export async function startFromHost({
 export async function restart({
   account_id,
   project_id,
+  restart_request_id,
   wait = true,
 }: {
   account_id: string;
   project_id: string;
+  restart_request_id: string;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -5039,10 +5041,14 @@ export async function restart({
   service: string;
   stream_name: string;
 }> {
+  if (!isValidUUID(restart_request_id)) {
+    throw new Error("restart_request_id must be a UUID");
+  }
   return await runProjectStartLikeAction({
     kind: "restart",
     account_id,
     project_id,
+    restart_request_id,
     wait,
   });
 }
@@ -5081,6 +5087,7 @@ async function runProjectStartLikeAction({
   kind,
   account_id,
   project_id,
+  restart_request_id,
   restore_backup_id,
   autostart,
   managed_egress_override,
@@ -5093,6 +5100,7 @@ async function runProjectStartLikeAction({
   kind: "start" | "restart";
   account_id: string;
   project_id: string;
+  restart_request_id?: string;
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
@@ -5193,16 +5201,18 @@ async function runProjectStartLikeAction({
     input: {
       project_id,
       action: kind,
+      ...(restart_request_id ? { restart_request_id } : {}),
       ...(effectiveRestoreBackupId
         ? { restore_backup_id: effectiveRestoreBackupId }
         : {}),
       ...(autostart ? { autostart } : {}),
     },
-    // Duplicate restarts share one lifecycle only while collaborator authority
-    // is unchanged. A post-change restart must establish a newer fence.
+    // Duplicate delivery of one logical restart shares a lifecycle. A later
+    // explicit restart uses a new request id and cannot join an older policy
+    // boundary, even when collaborator authority itself is unchanged.
     dedupe_key:
       kind === "restart"
-        ? `project-restart:${runtimeAuthorityRevision}`
+        ? `project-restart:${runtimeAuthorityRevision}:${restart_request_id}`
         : "project-start",
     status: "queued",
   });

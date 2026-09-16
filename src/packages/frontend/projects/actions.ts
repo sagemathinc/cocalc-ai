@@ -5612,9 +5612,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
         "state",
         "state",
       ]) as string | undefined;
+      const restartRequestId = uuid();
       actions?.setState({
         restart_request: Map({
-          token: uuid(),
+          token: restartRequestId,
           requested_at: new Date().toISOString(),
         }),
       });
@@ -5629,6 +5630,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           write: () =>
             webapp_client.conat_client.hub.projects.restart({
               project_id,
+              restart_request_id: restartRequestId,
               wait: false,
             }),
           matchesProjection: () =>

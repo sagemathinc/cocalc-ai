@@ -10,37 +10,18 @@ export const PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER =
 const PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION =
   "projects_bump_runtime_authority_revision";
 
-export async function ensureProjectRuntimeAuthorityRevisionSchema(
-  db: Client,
-): Promise<void> {
-  await db.query(
-    `CREATE OR REPLACE FUNCTION ${PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION}()
-     RETURNS TRIGGER AS $$
-     BEGIN
-       IF NEW.users IS DISTINCT FROM OLD.users THEN
-         NEW.runtime_authority_revision :=
-           COALESCE(OLD.runtime_authority_revision, 0) + 1;
-       END IF;
-       RETURN NEW;
-     END;
-     $$ LANGUAGE plpgsql`,
-  );
-  await db.query(
-    `DROP TRIGGER IF EXISTS ${PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER}
-       ON projects`,
-  );
-  await db.query(
-    `CREATE TRIGGER ${PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER}
-       BEFORE UPDATE OF users
-       ON projects
-       FOR EACH ROW
-       EXECUTE FUNCTION ${PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION}()`,
-  );
-}
+const CREATE_OR_REPLACE_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION ${PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION}()
+   RETURNS TRIGGER AS $$
+   BEGIN
+     IF NEW.users IS DISTINCT FROM OLD.users THEN
+       NEW.runtime_authority_revision :=
+         COALESCE(OLD.runtime_authority_revision, 0) + 1;
+     END IF;
+     RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql`;
 
-export async function projectRuntimeAuthorityRevisionSchemaNeedsSync(
-  db: Client,
-): Promise<boolean> {
+async function triggerExists(db: Client): Promise<boolean> {
   const { rows } = await db.query<{ trigger_exists: boolean }>(
     `SELECT EXISTS (
        SELECT 1
@@ -51,5 +32,43 @@ export async function projectRuntimeAuthorityRevisionSchemaNeedsSync(
      ) AS trigger_exists`,
     [PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER],
   );
-  return rows[0]?.trigger_exists !== true;
+  return rows[0]?.trigger_exists === true;
+}
+
+export async function ensureProjectRuntimeAuthorityRevisionSchema(
+  db: Client,
+): Promise<void> {
+  if (await triggerExists(db)) {
+    // CREATE OR REPLACE preserves the trigger binding and never exposes an
+    // unprotected collaborator-update window during routine schema sync.
+    await db.query(CREATE_OR_REPLACE_FUNCTION_SQL);
+    return;
+  }
+
+  await db.query("BEGIN");
+  try {
+    // Block collaborator updates while first installation establishes a
+    // generation boundary. Reads and unrelated normal project starts continue.
+    await db.query("LOCK TABLE projects IN SHARE ROW EXCLUSIVE MODE");
+    await db.query(CREATE_OR_REPLACE_FUNCTION_SQL);
+    if (!(await triggerExists(db))) {
+      await db.query(
+        `CREATE TRIGGER ${PROJECT_RUNTIME_AUTHORITY_REVISION_TRIGGER}
+           BEFORE UPDATE OF users
+           ON projects
+           FOR EACH ROW
+           EXECUTE FUNCTION ${PROJECT_RUNTIME_AUTHORITY_REVISION_FUNCTION}()`,
+      );
+    }
+    await db.query("COMMIT");
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  }
+}
+
+export async function projectRuntimeAuthorityRevisionSchemaNeedsSync(
+  db: Client,
+): Promise<boolean> {
+  return !(await triggerExists(db));
 }
