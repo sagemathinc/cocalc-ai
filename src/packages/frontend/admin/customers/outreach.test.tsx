@@ -1,7 +1,21 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { message } from "antd";
 
 import { CustomerOutreachCard, OutreachAdmin } from "./outreach";
+
+// rc-util's constant test ID makes the modal title collide with queue controls.
+jest.mock("@rc-component/util/lib/hooks/useId", () => ({
+  __esModule: true,
+  ...jest.requireActual("@rc-component/util/lib/hooks/useId"),
+  default: () => jest.requireActual("react").useId(),
+}));
 
 const api = {
   listOutreachDeliveries: jest.fn(),
@@ -18,6 +32,8 @@ const api = {
   getOrganization: jest.fn(),
   getCustomerTimeline: jest.fn(),
   createOutreachBatch: jest.fn(),
+  updateOutreachRecipient: jest.fn(),
+  removeOutreachRecipient: jest.fn(),
 };
 const runFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
@@ -110,6 +126,10 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             api.getCustomerTimeline(...args),
           createOutreachBatch: (...args: unknown[]) =>
             api.createOutreachBatch(...args),
+          updateOutreachRecipient: (...args: unknown[]) =>
+            api.updateOutreachRecipient(...args),
+          removeOutreachRecipient: (...args: unknown[]) =>
+            api.removeOutreachRecipient(...args),
         },
         adminSupport: { show: jest.fn() },
       },
@@ -423,6 +443,198 @@ describe("CRM outreach admin", () => {
     expect(screen.queryByText("person-id")).not.toBeInTheDocument();
     expect(screen.queryByText("opportunity-id")).not.toBeInTheDocument();
     expect(screen.queryByText("task-id")).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { action: "Edit", key: "{Enter}", title: "Edit draft recipient" },
+    { action: "Remove", key: " ", title: "Remove draft recipient" },
+  ])(
+    "opens $action by keyboard and restores its focus after Escape",
+    async ({ action, key, title }) => {
+      const user = userEvent.setup();
+      api.listOutreachDeliveries.mockResolvedValue({
+        deliveries: [{ ...delivery, state: "draft" }],
+        truncated: false,
+      });
+      render(<OutreachAdmin />);
+
+      const review = await screen.findByRole("button", { name: "Review" });
+      const edit = screen.getByRole("button", { name: "Edit" });
+      const remove = screen.getByRole("button", { name: "Remove" });
+      review.focus();
+      await user.tab();
+      expect(edit).toHaveFocus();
+      if (action === "Remove") {
+        await user.tab();
+        expect(remove).toHaveFocus();
+      }
+      const trigger = action === "Edit" ? edit : remove;
+      await user.keyboard(key);
+
+      const dialog = await screen.findByRole("dialog", { name: title });
+      await waitFor(() => expect(dialog).toHaveFocus());
+      expect(
+        within(dialog).getByRole("button", { name: "Cancel" }),
+      ).toBeEnabled();
+      expect(
+        within(dialog).getByRole("button", { name: "Review change" }),
+      ).toBeEnabled();
+      await user.tab();
+      expect(
+        within(dialog).getByRole("button", { name: "Close" }),
+      ).toHaveFocus();
+      await user.tab();
+      if (action === "Edit") {
+        const subject = within(dialog).getByRole("textbox", {
+          name: "Exact subject",
+        });
+        expect(subject).toHaveValue(delivery.subject);
+        expect(subject).toHaveFocus();
+        await user.tab();
+        expect(
+          within(dialog).getByRole("textbox", { name: "Markdown body" }),
+        ).toHaveFocus();
+        await user.tab();
+        expect(
+          within(dialog).getByRole("textbox", {
+            name: "Preflight override reason (optional)",
+          }),
+        ).toHaveFocus();
+        await user.tab();
+        expect(
+          within(dialog).getByRole("textbox", { name: "Audit reason" }),
+        ).toHaveFocus();
+      } else {
+        expect(within(dialog).getByRole("alert")).toHaveTextContent(
+          "Remove Ada Prospect from this draft batch?",
+        );
+        expect(
+          within(dialog).getByRole("textbox", { name: "Audit reason" }),
+        ).toHaveFocus();
+      }
+
+      await user.keyboard("{Escape}");
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("dialog", { name: title }),
+        ).not.toBeInTheDocument(),
+      );
+      await waitFor(() => expect(trigger).toHaveFocus());
+      expect(api.updateOutreachRecipient).not.toHaveBeenCalled();
+      expect(api.removeOutreachRecipient).not.toHaveBeenCalled();
+      expect(runFreshAuthAction).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["Edit", "Remove"])(
+    "%s previews the exact recipient before a fresh-authenticated commit",
+    async (action) => {
+      const user = userEvent.setup();
+      const mutation =
+        action === "Edit"
+          ? api.updateOutreachRecipient
+          : api.removeOutreachRecipient;
+      mutation.mockImplementation(async (request) => ({
+        preview: !request.commit,
+        action: `outreach.recipient.${action === "Edit" ? "update" : "remove"}`,
+        expected_version: 4,
+        idempotency_key: "recipient-preview-key",
+        proposed: request,
+        warnings: [],
+      }));
+      api.listOutreachDeliveries.mockResolvedValue({
+        deliveries: [
+          {
+            ...delivery,
+            state: "draft",
+            body_markdown: `Reviewed body\n\n${delivery.footer}`,
+          },
+        ],
+        truncated: false,
+      });
+      render(<OutreachAdmin />);
+      await user.click(await screen.findByRole("button", { name: action }));
+      const dialog = await screen.findByRole("dialog", {
+        name: `${action} draft recipient`,
+      });
+      if (action === "Edit") {
+        expect(
+          within(dialog).getByRole("textbox", { name: "Markdown body" }),
+        ).toHaveValue("Reviewed body");
+      }
+      await user.type(
+        within(dialog).getByRole("textbox", { name: "Audit reason" }),
+        "Reviewed recipient change",
+      );
+      await user.click(
+        within(dialog).getByRole("button", { name: "Review change" }),
+      );
+      const confirm = await screen.findByRole("button", {
+        name: "Confirm with fresh auth",
+      });
+      const expected = {
+        batch: delivery.batch_id,
+        delivery: delivery.id,
+        ...(action === "Edit"
+          ? { subject: delivery.subject, body_markdown: "Reviewed body" }
+          : {}),
+      };
+      expect(mutation).toHaveBeenLastCalledWith(
+        expect.objectContaining({ ...expected, commit: false }),
+      );
+      expect(runFreshAuthAction).not.toHaveBeenCalled();
+      await user.click(confirm);
+      await waitFor(() => expect(runFreshAuthAction).toHaveBeenCalledTimes(1));
+      expect(mutation).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          ...expected,
+          commit: true,
+          expected_version: 4,
+          idempotency_key: "recipient-preview-key",
+          browser_id: "browser-test",
+        }),
+      );
+    },
+  );
+
+  it("disables draft recipient actions in the read-only workspace", async () => {
+    const user = userEvent.setup();
+    api.getOutreachLimits.mockResolvedValue({
+      ...limits,
+      mutations_enabled: false,
+    });
+    api.listOutreachDeliveries.mockResolvedValue({
+      deliveries: [{ ...delivery, state: "draft" }],
+      truncated: false,
+    });
+    render(<OutreachAdmin />);
+
+    const review = await screen.findByRole("button", { name: "Review" });
+    const edit = screen.getByRole("button", { name: "Edit" });
+    const remove = screen.getByRole("button", { name: "Remove" });
+    expect(edit).toBeDisabled();
+    expect(remove).toBeDisabled();
+    review.focus();
+    await user.tab();
+    expect(edit).not.toHaveFocus();
+    expect(remove).not.toHaveFocus();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("does not offer Edit or Remove for a non-draft recipient", async () => {
+    api.listOutreachDeliveries.mockResolvedValue({
+      deliveries: [delivery],
+      truncated: false,
+    });
+    render(<OutreachAdmin />);
+
+    await screen.findByRole("button", { name: "Review" });
+    expect(
+      screen.queryByRole("button", { name: "Edit" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Remove" }),
+    ).not.toBeInTheDocument();
   });
 
   it("shows Customer 360 suppressions and opens their shared workspace", async () => {
