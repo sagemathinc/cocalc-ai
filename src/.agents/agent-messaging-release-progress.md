@@ -13,7 +13,9 @@ been performed.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
 - Latest rereview remediation commit: `10a059f943`.
-- Current private reviewer/deployment handoff: `c855b662e4`.
+- Latest application remediation commit: `c19bd57f3f`.
+- Current private reviewer/deployment handoff before this documentation update:
+  `c19bd57f3f`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -22,6 +24,13 @@ the exact final branch head after push. A reviewer must confirm that SHA, this b
 and private repository before relying on this packet.
 
 ## Confirmed remediation
+
+- Project users and their lifecycle revision are now read in one PostgreSQL
+  statement. Restart advances the durable revision before host lookup, including
+  hostless/pre-placement projects. Registration, user-map synchronization, and
+  managed-key synchronization carry that revision and share the host lifecycle
+  serializer, so delayed older authority cannot cross a successful restart.
+  Ordinary start now performs one project-row query instead of two.
 
 - Project stop now advances a durable owning-bay runtime lifecycle revision.
   Starts carry the revision in existing metadata and the project host serializes
@@ -80,6 +89,12 @@ and private repository before relying on this packet.
   Fetch Metadata checks in addition to their existing authentication requirements.
 
 ## Verification completed
+
+- At `c19bd57f3f`, the full 39-workspace `pnpm -C src build:dev` passed. Focused
+  authority-fence checks passed 62 project-host tests and 186 server tests. They
+  cover the atomic startup snapshot, stale registration/user/key rejection,
+  hostless restart, local and cross-bay revision propagation, and clone
+  registration. No deployment was performed for this checkpoint.
 
 - `pnpm -C src build:dev` passed after `10a059f943` across all 39 workspaces.
 - Rereview remediation checks passed: Lite 5 suites/119 tests, project-host 6
@@ -141,10 +156,11 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Live qualification must deliberately overlap a stale start with a real
-  second-human downgrade/removal and the subsequent successful restart on the
-  matched `10a059f943` build. The earlier sequential restart evidence predates
-  this correction and is not proof of the repaired race.
+- Independent re-review must first assess the `c19bd57f3f` corrections for the two
+  stale-authority findings reported against `2a0ff08783`. Live qualification must
+  then deliberately overlap a stale start with a real second-human downgrade or
+  removal and the subsequent successful restart on a matched build. Earlier live
+  evidence predates this correction and is not proof of the repaired race.
 - The exact-head direct-control probe exercises serialized ordering and post-fence
   rejection on the real QA host, but it does not pause a prepared start before
   host dispatch or perform the membership mutation through a separately

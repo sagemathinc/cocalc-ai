@@ -10,10 +10,11 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Private advisory: `GHSA-rff5-g9ff-7qhf`; private PR #2.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Fixed comparison base: `9b06a09f93fb5e9ada9b49555390ebfc1b97dbe7`.
-- Previously reviewed deficient head:
-  `d38f3399be308a92721e40fdcb56244de3d1974e`.
-- Current private handoff head before this documentation update: `c855b662e4`.
-- Application remediation commit: `10a059f943`.
+- Previously reviewed deficient heads:
+  `d38f3399be308a92721e40fdcb56244de3d1974e` and
+  `2a0ff08783cda555e772c18f17481516f6ba53c7`.
+- Current private handoff head before this documentation update: `c19bd57f3f`.
+- Latest application remediation commit: `c19bd57f3f`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -59,15 +60,21 @@ Review the full base-to-head diff. Important fix commits after the deficient hea
 | `d3acb5df63` | Lifecycle recovery, retention/cardinality, attribution, and CSRF   |
 | `4590eac669` | Separate-process PostgreSQL admission regression                   |
 | `10a059f943` | Runtime lifecycle fence, authenticated worker fencing, lease retry |
+| `c19bd57f3f` | Atomic authority snapshot and complete authority-mutation fencing  |
 
-The latest remediation adds a monotonic owning-bay runtime lifecycle revision.
+The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
 project host persists it while serializing the complete per-project start/stop
 operation. An older start either finishes before stop or is rejected afterward.
 Restart also fences a start that has not yet changed the project state snapshot.
-Ordinary start adds no PostgreSQL query or host RPC. Its host-side coordination is
-an uncontended in-memory tail plus a cached SQLite revision lookup; the additional
-durable write occurs only on stop/restart.
+The latest correction reads users and the lifecycle revision in one PostgreSQL
+statement, replacing the former two project-row reads with one. Restart advances
+the durable revision before host lookup, including when the project has no assigned
+host. Host registration, user-map updates, and managed-key updates carry the
+revision and run through the same host serializer. Periodic and cross-bay user
+synchronization preserve that binding. Ordinary start adds no PostgreSQL query or
+host RPC; it now performs one fewer project-row query. The additional durable write
+occurs only on stop/restart.
 
 ACP restart fencing now selects only strict executable matches backed by live
 host-owned worker registrations. New registrations include the kernel PID start
@@ -132,6 +139,13 @@ COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS=--experimental-vm-modules pnpm -C src/pack
 pnpm -C src/packages/lite jest --runInBand hub/acp/__tests__/acp-workers-sqlite.test.ts hub/acp/__tests__/detached-worker.test.ts
 ```
 
+Latest authority-fence regression commands:
+
+```sh
+pnpm -C src/packages/project-host test hub/projects.test.ts runtime-lifecycle.test.ts --runInBand
+pnpm -C src/packages/server test project-host/control.start.test.ts projects/control/base.test.ts projects/control/base.start-rootfs.test.ts conat/api/hosts.test.ts projects/create.start-lro.test.ts projects/create.clone.test.ts
+```
+
 The opt-in `server/agents/admission-state.multiprocess.test.ts` requires an isolated
 real PostgreSQL database named `smc_ephemeral_testing_database` and:
 
@@ -144,10 +158,12 @@ release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
 
-The full build and focused regressions passed after `10a059f943`. The added tests
+The full build and focused regressions passed after `c19bd57f3f`. The latest two
+focused commands passed 62 project-host tests and 186 server tests. The added tests
 cover both lifecycle race orderings, durable revision propagation, inactive state
-snapshots, unregistered/fake worker exclusion, PID-incarnation mismatch, and a
-lost reply after committed lease recovery. See
+snapshots, atomic user/revision loading, hostless restart, stale user/key/
+registration rejection, unregistered/fake worker exclusion, PID-incarnation
+mismatch, and a lost reply after committed lease recovery. See
 `agent-messaging-release-progress.md` for counts, artifact hashes, operation IDs,
 and exact residual risks. The exact candidate also passed a live detached-worker
 restart probe with an existing app-server session, a foreground 180-second turn,
@@ -155,11 +171,12 @@ and an accepted queued turn: successful restart disposed the runtime, neither ol
 marker appeared immediately or after the old deadline, and a new post-restart turn
 completed normally. This is real dev-host evidence, not inferred from mocks.
 
-The earlier live probe predates `10a059f943` and did not combine a separately
+The live probes predate `c19bd57f3f` and did not combine a separately
 authenticated second human's actual
 membership downgrade/removal or an explicitly manufactured recovery child. Those
 paths have focused authorization/recovery tests, but report the remaining live
-distinction rather than treating the single probe as every D3 permutation.
+distinction rather than treating the single probe as every D3 permutation. No dev
+or production deployment of `c19bd57f3f` was performed as part of this correction.
 
 The exact handoff head produced and deployed dev-only host build
 `20260916T061335Z-c855b662e444`, SHA-256
