@@ -315,6 +315,7 @@ describe("project-host ACP worker runtime wiring", () => {
       thread_id: "thread-1",
       title: "Test turn",
       updated_at: 2,
+      publication_revision: 7,
     });
 
     expect(callHubMock).toHaveBeenCalledWith({
@@ -327,6 +328,7 @@ describe("project-host ACP worker runtime wiring", () => {
           session_id: "session-1",
           state: "running",
           terminal: true,
+          source_revision: 7,
         }),
       ],
       timeout: 5_000,
@@ -363,6 +365,37 @@ describe("project-host ACP worker runtime wiring", () => {
         state: "running",
         terminal: 0,
       }),
+    );
+  });
+
+  it("discards session publications rejected after a project moves", async () => {
+    callHubMock.mockRejectedValueOnce(
+      Object.assign(new Error("host is not authorized"), {
+        code: "PROJECT_HOST_SESSION_UNAUTHORIZED",
+      }),
+    );
+    const { main } = await import("./acp-worker");
+
+    await main();
+
+    const publisher = setAcpSessionPublisherOverrideMock.mock.calls[0][0];
+    await expect(
+      publisher({
+        project_id: "00000000-0000-4000-8000-000000000123",
+        session_key: "stale-session-key",
+        state: "completed",
+        terminal: 1,
+        updated_at: 2,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(loggerDebugMock).toHaveBeenCalledWith(
+      "discarding stale ACP session publication",
+      expect.objectContaining({ session_key: "stale-session-key" }),
+    );
+    expect(loggerWarnMock).not.toHaveBeenCalledWith(
+      "failed to publish ACP session state to master hub",
+      expect.anything(),
     );
   });
 });

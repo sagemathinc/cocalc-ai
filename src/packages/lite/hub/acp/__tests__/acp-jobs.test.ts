@@ -45,6 +45,7 @@ import {
   listQueuedAcpJobThreadKeys,
   listQueuedAcpJobsForThread,
   nextQueuedAcpJobAvailability,
+  oldestClaimableQueuedAcpJobTimestamp,
   oldestQueuedAcpJobTimestamp,
   resendCanceledAcpJob,
   reprioritizeAcpJobImmediate,
@@ -102,6 +103,141 @@ afterAll(() => {
 });
 
 describe("acp job queue ordering", () => {
+  it("reports queued backlog only when the worker can claim it", () => {
+    const unassigned = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-unassigned-backlog",
+        assistantMessageId: "assistant-unassigned-backlog",
+        assistantDate: "2026-09-15T00:00:00.000Z",
+      }) as any,
+    );
+    const owned = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-owned-backlog",
+        assistantMessageId: "assistant-owned-backlog",
+        assistantDate: "2026-09-15T00:01:00.000Z",
+      }) as any,
+      { preferred_worker_id: "worker-current" },
+    );
+    const foreign = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-foreign-backlog",
+        assistantMessageId: "assistant-foreign-backlog",
+        assistantDate: "2026-09-15T00:02:00.000Z",
+      }) as any,
+      { preferred_worker_id: "worker-old" },
+    );
+    const delayed = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-delayed-owned-backlog",
+        assistantMessageId: "assistant-delayed-owned-backlog",
+        assistantDate: "2026-09-15T00:03:00.000Z",
+      }) as any,
+      {
+        preferred_worker_id: "worker-current",
+        available_at: Date.now() + 60_000,
+      },
+    );
+    const db = getAcpDatabase();
+    const setThread = db.prepare(
+      "UPDATE acp_jobs SET path = ?, thread_id = ? WHERE op_id = ?",
+    );
+    setThread.run(
+      "/tmp/unassigned.chat",
+      "thread-unassigned",
+      unassigned.op_id,
+    );
+    setThread.run("/tmp/owned.chat", "thread-owned", owned.op_id);
+    setThread.run("/tmp/foreign.chat", "thread-foreign", foreign.op_id);
+    setThread.run("/tmp/delayed.chat", "thread-delayed", delayed.op_id);
+    const setUpdatedAt = db.prepare(
+      "UPDATE acp_jobs SET created_at = ?, updated_at = ? WHERE op_id = ?",
+    );
+    setUpdatedAt.run(10_000, 10_000, unassigned.op_id);
+    setUpdatedAt.run(20_000, 20_000, owned.op_id);
+    setUpdatedAt.run(5_000, 5_000, foreign.op_id);
+    setUpdatedAt.run(1_000, 1_000, delayed.op_id);
+
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+      }),
+    ).toBe(10_000);
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: false,
+      }),
+    ).toBe(20_000);
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-unrelated",
+        include_unassigned: false,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("does not report a later claimable job behind a foreign-pinned thread head", () => {
+    const foreign = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-foreign-thread-head",
+        assistantMessageId: "assistant-foreign-thread-head",
+        assistantDate: "2026-09-15T00:00:00.000Z",
+      }) as any,
+      { preferred_worker_id: "worker-old" },
+    );
+    const unassigned = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-behind-foreign-head",
+        assistantMessageId: "assistant-behind-foreign-head",
+        assistantDate: "2026-09-15T00:01:00.000Z",
+      }) as any,
+    );
+    const setUpdatedAt = getAcpDatabase().prepare(
+      "UPDATE acp_jobs SET created_at = ?, updated_at = ? WHERE op_id = ?",
+    );
+    setUpdatedAt.run(10_000, 10_000, foreign.op_id);
+    setUpdatedAt.run(20_000, 20_000, unassigned.op_id);
+
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+      }),
+    ).toBeUndefined();
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-old",
+        include_unassigned: false,
+      }),
+    ).toBe(10_000);
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+        known_worker_ids: [],
+        reclaimable_worker_ids: [],
+      }),
+    ).toBe(10_000);
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+        known_worker_ids: ["worker-old"],
+        reclaimable_worker_ids: [],
+      }),
+    ).toBeUndefined();
+    expect(
+      oldestClaimableQueuedAcpJobTimestamp({
+        worker_id: "worker-current",
+        include_unassigned: true,
+        known_worker_ids: ["worker-old"],
+        reclaimable_worker_ids: ["worker-old"],
+      }),
+    ).toBe(10_000);
+  });
+
   it("reports a worker's latest job transition as queue progress", () => {
     const queued = enqueueAcpJob(
       makeRequest({

@@ -19,6 +19,7 @@ import type {
   AiSessionsListOptions,
   AiSessionState,
 } from "@cocalc/conat/hub/api/ai-sessions";
+import { PROJECT_HOST_SESSION_UNAUTHORIZED } from "@cocalc/conat/hub/api/ai-sessions";
 import { isValidUUID } from "@cocalc/util/misc";
 
 const TABLE = "ai_sessions";
@@ -81,9 +82,16 @@ export async function ensureAiSessionsSchema(): Promise<void> {
         finished_at TIMESTAMPTZ,
         error TEXT,
         metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-        source_bay_id TEXT NOT NULL
+        source_bay_id TEXT NOT NULL,
+        source_host_id UUID,
+        source_revision BIGINT
       )
     `);
+    await getPool().query(
+      `ALTER TABLE ${TABLE}
+         ADD COLUMN IF NOT EXISTS source_host_id UUID,
+         ADD COLUMN IF NOT EXISTS source_revision BIGINT`,
+    );
     await getPool().query(
       `CREATE INDEX IF NOT EXISTS ${TABLE}_account_state_updated_idx
          ON ${TABLE} (account_id, terminal, updated_at DESC)`,
@@ -200,6 +208,15 @@ function terminalFromRecord(record: AiSessionRecord): boolean {
   return TERMINAL_STATES.has(record.state);
 }
 
+function sourceRevision(value: unknown): number | null {
+  if (value == null || value === "") return null;
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw Error("invalid AI session source_revision");
+  }
+  return revision;
+}
+
 function isTerminalState(state: string | null | undefined): boolean {
   return TERMINAL_STATES.has(`${state ?? ""}` as AiSessionState);
 }
@@ -211,7 +228,7 @@ async function assertHostCanReportSession({
   host_id: string;
   project_id: string;
 }): Promise<void> {
-  const { rowCount } = await getPool().query(
+  const { rows } = await getPool().query(
     `
       SELECT 1
       FROM projects
@@ -222,8 +239,11 @@ async function assertHostCanReportSession({
     `,
     [project_id, host_id],
   );
-  if (!rowCount) {
-    throw Error("host is not authorized for this project session");
+  if (rows.length === 0) {
+    throw Object.assign(
+      new Error("host is not authorized for this project session"),
+      { code: PROJECT_HOST_SESSION_UNAUTHORIZED },
+    );
   }
 }
 
@@ -270,6 +290,8 @@ export async function upsertProjectHostAiSession({
   const now = new Date();
   const updated_at = timestamp(record.updated_at, now)!;
   const terminal = terminalFromRecord(record);
+  const source_revision = sourceRevision(record.source_revision);
+  const source_host_id = authenticated_host_id ? host_id : null;
   await ensureAiSessionsSchema();
   await getPool().query(
     `
@@ -280,12 +302,14 @@ export async function upsertProjectHostAiSession({
          payment_source_owner_account_id, site_funded_reservation_id, model,
          agent_kind, run_kind, title,
          prompt_snippet, queued_at, started_at, updated_at, last_heartbeat_at,
-         finished_at, error, metadata, source_bay_id)
+         finished_at, error, metadata, source_bay_id, source_host_id,
+         source_revision)
       VALUES
         ($1, $2, $3, $4::UUID, $5::UUID, $6::UUID, $7::UUID, $8, $9, $10,
          $11, $12, $13, $14, $15, $16, $17::UUID, $18::UUID, $19, $20, $21,
          $22, $23, $24::TIMESTAMPTZ, $25::TIMESTAMPTZ, $26::TIMESTAMPTZ,
-         $27::TIMESTAMPTZ, $28::TIMESTAMPTZ, $29, $30::jsonb, $31)
+         $27::TIMESTAMPTZ, $28::TIMESTAMPTZ, $29, $30::jsonb, $31,
+         $32::UUID, $33::BIGINT)
       ON CONFLICT (session_key) DO UPDATE SET
         session_id = COALESCE(EXCLUDED.session_id, ${TABLE}.session_id),
         op_id = COALESCE(EXCLUDED.op_id, ${TABLE}.op_id),
@@ -324,7 +348,32 @@ export async function upsertProjectHostAiSession({
         END,
         error = COALESCE(EXCLUDED.error, ${TABLE}.error),
         metadata = COALESCE(EXCLUDED.metadata, ${TABLE}.metadata),
-        source_bay_id = EXCLUDED.source_bay_id
+        source_bay_id = EXCLUDED.source_bay_id,
+        source_host_id = EXCLUDED.source_host_id,
+        source_revision = EXCLUDED.source_revision
+      WHERE
+        (NOT ${TABLE}.terminal OR EXCLUDED.terminal)
+        AND (
+          (
+            EXCLUDED.source_revision IS NOT NULL
+            AND (
+              ${TABLE}.source_host_id IS DISTINCT FROM EXCLUDED.source_host_id
+              OR ${TABLE}.source_revision IS NULL
+              OR EXCLUDED.source_revision > ${TABLE}.source_revision
+            )
+          )
+          OR (
+            EXCLUDED.source_revision IS NULL
+            AND ${TABLE}.source_revision IS NULL
+            AND (
+              EXCLUDED.updated_at > ${TABLE}.updated_at
+              OR (
+                EXCLUDED.updated_at = ${TABLE}.updated_at
+                AND (EXCLUDED.terminal OR NOT ${TABLE}.terminal)
+              )
+            )
+          )
+        )
     `,
     [
       session_key,
@@ -364,6 +413,8 @@ export async function upsertProjectHostAiSession({
       cleanText(record.error, 2048),
       JSON.stringify(cleanMetadata(record)),
       getConfiguredBayId(),
+      source_host_id,
+      source_revision,
     ],
   );
 }

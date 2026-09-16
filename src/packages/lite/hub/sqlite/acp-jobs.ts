@@ -496,6 +496,83 @@ export function oldestQueuedAcpJobTimestamp(): number | undefined {
   return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
 }
 
+export function oldestClaimableQueuedAcpJobTimestamp({
+  worker_id,
+  include_unassigned,
+  known_worker_ids,
+  reclaimable_worker_ids,
+}: {
+  worker_id: string;
+  include_unassigned: boolean;
+  known_worker_ids?: string[];
+  reclaimable_worker_ids?: string[];
+}): number | undefined {
+  const workerId = `${worker_id ?? ""}`.trim();
+  if (!workerId) return undefined;
+  ensureInit();
+  const knownWorkerIds = Array.from(
+    new Set(
+      (known_worker_ids ?? []).map((id) => `${id}`.trim()).filter(Boolean),
+    ),
+  );
+  const reclaimableWorkerIds = Array.from(
+    new Set(
+      (reclaimable_worker_ids ?? [])
+        .map((id) => `${id}`.trim())
+        .filter(Boolean),
+    ),
+  );
+  const reclaimableSql = reclaimableWorkerIds.length
+    ? `OR head.worker_id IN (${reclaimableWorkerIds.map(() => "?").join(", ")})`
+    : "";
+  const missingSql = known_worker_ids
+    ? knownWorkerIds.length
+      ? `OR head.worker_id NOT IN (${knownWorkerIds.map(() => "?").join(", ")})`
+      : "OR (head.worker_id IS NOT NULL AND TRIM(head.worker_id) != '')"
+    : "";
+  // The queue pump only considers the first due job in each thread. A later
+  // unassigned job is not claimable while another worker owns the thread head.
+  const row = getAcpDatabase()
+    .prepare(
+      `WITH due AS (
+         SELECT *,
+                ROW_NUMBER() OVER (
+                  PARTITION BY project_id, path, thread_id
+                  ORDER BY ${THREAD_QUEUE_ORDER}
+                ) AS thread_position
+         FROM ${TABLE}
+         WHERE state = 'queued'
+           AND (available_at IS NULL OR available_at <= ?)
+       )
+       SELECT MIN(
+         CASE
+           WHEN updated_at IS NOT NULL AND updated_at > 0 THEN updated_at
+           ELSE created_at
+         END
+       ) AS oldest
+       FROM due AS head
+       WHERE thread_position = 1
+         AND (
+           head.worker_id = ?
+           OR (? = 1 AND (
+             head.worker_id IS NULL
+             OR TRIM(head.worker_id) = ''
+             ${reclaimableSql}
+             ${missingSql}
+           ))
+         )`,
+    )
+    .get(
+      Date.now(),
+      workerId,
+      include_unassigned ? 1 : 0,
+      ...reclaimableWorkerIds,
+      ...knownWorkerIds,
+    ) as { oldest?: number | null } | undefined;
+  const oldest = Number(row?.oldest ?? 0);
+  return Number.isFinite(oldest) && oldest > 0 ? oldest : undefined;
+}
+
 export function latestAcpJobUpdateForWorker(
   worker_id: string,
 ): number | undefined {

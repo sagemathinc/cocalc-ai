@@ -293,8 +293,16 @@ describe("acp session registry", () => {
     });
     await new Promise((resolve) => setImmediate(resolve));
     published.length = 0;
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_sessions SET publication_attempted_at=0 WHERE op_id=?",
+      )
+      .run(runningRequest.chat.message_id);
 
     expect(publishActiveAcpSessions()).toBe(1);
+    await Promise.resolve();
+    expect(published).toEqual(["assistant-4:running:0"]);
+    expect(publishActiveAcpSessions()).toBe(0);
     await Promise.resolve();
     expect(published).toEqual(["assistant-4:running:0"]);
   });

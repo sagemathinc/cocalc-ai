@@ -16,10 +16,9 @@ import {
 import {
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
-  hasQueuedOrRunningAcpJobs,
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
-  oldestQueuedAcpJobTimestamp,
+  oldestClaimableQueuedAcpJobTimestamp,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
 import { countRunningAcpTurnLeasesForWorker } from "@cocalc/lite/hub/sqlite/acp-turns";
 import {
@@ -36,10 +35,9 @@ jest.mock("@cocalc/lite/hub/sqlite/acp-workers", () => ({
 jest.mock("@cocalc/lite/hub/sqlite/acp-jobs", () => ({
   countRunningAcpJobsForWorker: jest.fn(() => 0),
   decodeAcpJobRequest: jest.fn((row) => JSON.parse(row.request_json ?? "{}")),
-  hasQueuedOrRunningAcpJobs: jest.fn(() => false),
   latestAcpJobUpdateForWorker: jest.fn(() => undefined),
   listRunningAcpJobsByWorker: jest.fn(() => []),
-  oldestQueuedAcpJobTimestamp: jest.fn(() => undefined),
+  oldestClaimableQueuedAcpJobTimestamp: jest.fn(() => undefined),
 }));
 jest.mock("@cocalc/lite/hub/sqlite/acp-turns", () => ({
   countRunningAcpTurnLeasesForWorker: jest.fn(() => 0),
@@ -63,10 +61,6 @@ const mockListAcpWorkers = listAcpWorkers as jest.MockedFunction<
 const mockStopAcpWorker = stopAcpWorker as jest.MockedFunction<
   typeof stopAcpWorker
 >;
-const mockHasQueuedOrRunningAcpJobs =
-  hasQueuedOrRunningAcpJobs as jest.MockedFunction<
-    typeof hasQueuedOrRunningAcpJobs
-  >;
 const mockCountRunningAcpJobsForWorker =
   countRunningAcpJobsForWorker as jest.MockedFunction<
     typeof countRunningAcpJobsForWorker
@@ -82,9 +76,9 @@ const mockListRunningAcpJobsByWorker =
 const mockDecodeAcpJobRequest = decodeAcpJobRequest as jest.MockedFunction<
   typeof decodeAcpJobRequest
 >;
-const mockOldestQueuedAcpJobTimestamp =
-  oldestQueuedAcpJobTimestamp as jest.MockedFunction<
-    typeof oldestQueuedAcpJobTimestamp
+const mockOldestClaimableQueuedAcpJobTimestamp =
+  oldestClaimableQueuedAcpJobTimestamp as jest.MockedFunction<
+    typeof oldestClaimableQueuedAcpJobTimestamp
   >;
 const mockCountRunningAcpTurnLeasesForWorker =
   countRunningAcpTurnLeasesForWorker as jest.MockedFunction<
@@ -96,8 +90,6 @@ beforeEach(() => {
   mockListAcpWorkers.mockReset();
   mockListAcpWorkers.mockReturnValue([]);
   mockStopAcpWorker.mockReset();
-  mockHasQueuedOrRunningAcpJobs.mockReset();
-  mockHasQueuedOrRunningAcpJobs.mockReturnValue(false);
   mockCountRunningAcpJobsForWorker.mockReset();
   mockCountRunningAcpJobsForWorker.mockReturnValue(0);
   mockLatestAcpJobUpdateForWorker.mockReset();
@@ -108,8 +100,8 @@ beforeEach(() => {
   mockDecodeAcpJobRequest.mockImplementation((row) =>
     JSON.parse(row.request_json ?? "{}"),
   );
-  mockOldestQueuedAcpJobTimestamp.mockReset();
-  mockOldestQueuedAcpJobTimestamp.mockReturnValue(undefined);
+  mockOldestClaimableQueuedAcpJobTimestamp.mockReset();
+  mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(undefined);
   mockCountRunningAcpTurnLeasesForWorker.mockReset();
   mockCountRunningAcpTurnLeasesForWorker.mockReturnValue(0);
 });
@@ -696,8 +688,7 @@ describe("ACP worker control startup grace", () => {
       last_seen_running_jobs: 0,
       last_queue_progress_at: 70_000,
     });
-    mockHasQueuedOrRunningAcpJobs.mockReturnValue(true);
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(95_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(95_000);
 
     expect(
       __test__.workerDatabaseStateProtectsUnresponsiveWorker({
@@ -731,8 +722,7 @@ describe("ACP worker control startup grace", () => {
         created_at: 80_000,
       } as any,
     ]);
-    mockHasQueuedOrRunningAcpJobs.mockReturnValue(true);
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(80_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(80_000);
 
     expect(
       __test__.workerDatabaseStateProtectsUnresponsiveWorker({
@@ -759,8 +749,7 @@ describe("ACP worker control startup grace", () => {
       last_seen_running_jobs: 1,
       last_queue_progress_at: 50_000,
     });
-    mockHasQueuedOrRunningAcpJobs.mockReturnValue(true);
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(50_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(50_000);
 
     expect(
       __test__.workerDatabaseStateProtectsUnresponsiveWorker(
@@ -793,7 +782,7 @@ describe("queue-stalled ACP workers", () => {
   };
 
   it("terminates stale backlog when the worker has no live turn lease and no queue progress", () => {
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
 
     expect(
       __test__.shouldTerminateQueueStalledWorker({
@@ -811,7 +800,7 @@ describe("queue-stalled ACP workers", () => {
   });
 
   it("does not terminate while backlog is still inside the stall grace period", () => {
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(170_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(170_000);
 
     expect(
       __test__.shouldTerminateQueueStalledWorker({
@@ -828,8 +817,172 @@ describe("queue-stalled ACP workers", () => {
     ).toBe(false);
   });
 
+  it("only counts queue entries claimable by an active worker", () => {
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(undefined);
+
+    expect(
+      __test__.shouldTerminateQueueStalledWorker({
+        worker: worker as any,
+        status: {
+          worker_id: "worker-stalled",
+          state: "active",
+          started_at: 1_000,
+          last_queue_progress_at: 10_000,
+          running_turn_leases: 0,
+        } as any,
+        now: 200_000,
+        stallMs: 60_000,
+      }),
+    ).toBe(false);
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: [],
+      reclaimable_worker_ids: [],
+    });
+  });
+
+  it("counts queue affinity owned by a stopped worker as reclaimable", () => {
+    mockListAcpWorkers.mockReturnValue([
+      {
+        worker_id: "worker-stopped",
+        state: "stopped",
+        started_at: 1_000,
+        last_heartbeat_at: 1_000,
+      } as any,
+    ]);
+
+    __test__.shouldTerminateQueueStalledWorker({
+      worker: worker as any,
+      status: {
+        worker_id: "worker-stalled",
+        state: "active",
+        started_at: 1_000,
+        last_queue_progress_at: 10_000,
+        running_turn_leases: 0,
+      } as any,
+      now: 200_000,
+      stallMs: 60_000,
+    });
+
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: ["worker-stopped"],
+      reclaimable_worker_ids: ["worker-stopped"],
+    });
+  });
+
+  it("counts queue affinity owned by a stale worker without a live pid", () => {
+    mockListAcpWorkers.mockReturnValue([
+      {
+        worker_id: "worker-stale",
+        state: "active",
+        started_at: 1_000,
+        last_heartbeat_at: 100_000,
+        pid: null,
+      } as any,
+    ]);
+
+    __test__.shouldTerminateQueueStalledWorker({
+      worker: worker as any,
+      status: {
+        worker_id: "worker-stalled",
+        state: "active",
+        started_at: 1_000,
+        last_queue_progress_at: 10_000,
+        running_turn_leases: 0,
+      } as any,
+      now: 200_000,
+      stallMs: 60_000,
+    });
+
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: ["worker-stale"],
+      reclaimable_worker_ids: ["worker-stale"],
+    });
+  });
+
+  it("preserves stale affinity while its pid is alive inside recovery grace", () => {
+    jest.spyOn(process, "kill").mockImplementation(() => true);
+    mockListAcpWorkers.mockReturnValue([
+      {
+        worker_id: "worker-recovering",
+        state: "active",
+        started_at: 1_000,
+        last_heartbeat_at: 100_000,
+        pid: 2202,
+      } as any,
+    ]);
+
+    __test__.shouldTerminateQueueStalledWorker({
+      worker: worker as any,
+      status: {
+        worker_id: "worker-stalled",
+        state: "active",
+        started_at: 1_000,
+        last_queue_progress_at: 10_000,
+        running_turn_leases: 0,
+      } as any,
+      now: 200_000,
+      stallMs: 60_000,
+    });
+
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: true,
+      known_worker_ids: ["worker-recovering"],
+      reclaimable_worker_ids: [],
+    });
+  });
+
+  it("does not assign unpinned queue entries to a draining worker", () => {
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(undefined);
+
+    expect(
+      __test__.shouldTerminateQueueStalledWorker({
+        worker: worker as any,
+        status: {
+          worker_id: "worker-stalled",
+          state: "draining",
+          started_at: 1_000,
+          last_queue_progress_at: 10_000,
+          running_turn_leases: 0,
+        } as any,
+        now: 200_000,
+        stallMs: 60_000,
+      }),
+    ).toBe(false);
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).toHaveBeenCalledWith({
+      worker_id: "worker-stalled",
+      include_unassigned: false,
+    });
+  });
+
+  it("leaves stopped workers to the normal stopped-worker cleanup", () => {
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
+
+    expect(
+      __test__.shouldTerminateQueueStalledWorker({
+        worker: worker as any,
+        status: {
+          worker_id: "worker-stalled",
+          state: "stopped",
+          started_at: 1_000,
+          last_queue_progress_at: 10_000,
+          running_turn_leases: 0,
+        } as any,
+        now: 200_000,
+        stallMs: 60_000,
+      }),
+    ).toBe(false);
+    expect(mockOldestClaimableQueuedAcpJobTimestamp).not.toHaveBeenCalled();
+  });
+
   it("does not terminate immediately after a long-running job completes", () => {
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
     mockLatestAcpJobUpdateForWorker.mockReturnValue(199_000);
 
     expect(
@@ -851,7 +1004,7 @@ describe("queue-stalled ACP workers", () => {
   });
 
   it("does not terminate after execution settles but before its job transition", () => {
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
 
     expect(
       __test__.shouldTerminateQueueStalledWorker({
@@ -910,7 +1063,7 @@ describe("queue-stalled ACP workers", () => {
   });
 
   it("does not terminate a worker that owns a live running turn lease", () => {
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
     mockCountRunningAcpTurnLeasesForWorker.mockReturnValue(1);
 
     expect(
@@ -929,7 +1082,7 @@ describe("queue-stalled ACP workers", () => {
   });
 
   it("does not terminate a queue-stalled worker with a background terminal", () => {
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
 
     expect(
       __test__.shouldTerminateQueueStalledWorker({
@@ -975,7 +1128,7 @@ describe("queue-stalled ACP workers", () => {
 
   it("cancels termination when execution settles during confirmation", async () => {
     jest.spyOn(Date, "now").mockReturnValue(200_000);
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
     mockGetAcpWorker.mockReturnValue({
       worker_id: "worker-stalled",
       pid: worker.pid,
@@ -1003,7 +1156,7 @@ describe("queue-stalled ACP workers", () => {
 
   it("confirms termination when the worker remains stalled", async () => {
     jest.spyOn(Date, "now").mockReturnValue(200_000);
-    mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+    mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
     mockGetAcpWorker.mockReturnValue({
       worker_id: "worker-stalled",
       pid: worker.pid,
@@ -1094,7 +1247,7 @@ describe("queue-stalled ACP workers", () => {
             requestDrain,
           }) as any,
       );
-      mockOldestQueuedAcpJobTimestamp.mockReturnValue(10_000);
+      mockOldestClaimableQueuedAcpJobTimestamp.mockReturnValue(10_000);
 
       const reconciliation = __test__.reconcileProjectHostAcpWorkers();
       if (exitDuring === "delay") {
