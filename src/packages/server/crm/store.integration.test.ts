@@ -70,6 +70,7 @@ describePglite("integrated CRM store", () => {
       zendesk_ticket_ids INTEGER[] DEFAULT '{}',
       stripe_customer_id TEXT,
       cancelled_at TIMESTAMPTZ,
+      version INTEGER NOT NULL DEFAULT 1,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
     await pool.query(`CREATE TABLE commercial_order_contacts (
@@ -1479,8 +1480,11 @@ describePglite("integrated CRM store", () => {
       const current = async () =>
         (
           await pool.query(
-            "SELECT commercial_order_id,version FROM crm_opportunities WHERE id=$1",
-            [opportunity.id],
+            `SELECT o.commercial_order_id, o.version,
+                    o.version + co.version AS link_version
+               FROM crm_opportunities o, commercial_orders co
+              WHERE o.id=$1 AND co.id=$2`,
+            [opportunity.id, orderId],
           )
         ).rows[0];
 
@@ -1498,7 +1502,7 @@ describePglite("integrated CRM store", () => {
         link({
           ...linkRequest,
           commit: true,
-          expected_version: (await current()).version,
+          expected_version: (await current()).link_version,
           idempotency_key: `new-key-${randomUUID()}`,
         }),
       ).rejects.toThrow("opportunity already has a commercial order");
@@ -1513,6 +1517,49 @@ describePglite("integrated CRM store", () => {
           idempotency_key: `new-key-${randomUUID()}`,
         }),
       ).rejects.toThrow("opportunity is not linked to that commercial order");
+
+      // The order total changes after the preview: the reviewed version
+      // covers the order, so the commit is refused instead of linking an
+      // amount the reviewer never saw.
+      const staleTotal = await link(linkRequest);
+      if (!staleTotal.preview) throw Error("expected preview");
+      await pool.query(
+        "UPDATE commercial_orders SET agreed_total=950, version=version+1 WHERE id=$1",
+        [orderId],
+      );
+      await expect(
+        link({
+          ...linkRequest,
+          commit: true,
+          expected_version: staleTotal.expected_version,
+          idempotency_key: staleTotal.idempotency_key,
+        }),
+      ).rejects.toThrow("CRM record changed");
+      expect((await current()).commercial_order_id).toBeNull();
+
+      // A committed link still replays after both records change, because the
+      // idempotency payload hashes only stable request data.
+      const replayable = await link(linkRequest);
+      if (!replayable.preview) throw Error("expected preview");
+      const replayRequest = {
+        ...linkRequest,
+        commit: true,
+        expected_version: replayable.expected_version,
+        idempotency_key: replayable.idempotency_key,
+      };
+      committed(await link(replayRequest));
+      await pool.query(
+        "UPDATE crm_opportunities SET expected_value=1200, version=version+1 WHERE id=$1",
+        [opportunity.id],
+      );
+      await pool.query(
+        "UPDATE commercial_orders SET agreed_total=1200, version=version+1 WHERE id=$1",
+        [orderId],
+      );
+      const replay = await link(replayRequest);
+      if (replay.preview) throw Error("expected replay");
+      expect(replay.replayed).toBe(true);
+      await previewThenCommit(unlink, unlinkRequest);
 
       // The order is cancelled between the preview and the commit; the
       // commit's own read of the order sees it.

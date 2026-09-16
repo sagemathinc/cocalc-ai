@@ -841,6 +841,9 @@ type MutationOptions<T> = {
   idempotencyKey?: string;
   organizationId?: string | null;
   proposed: Partial<T> | Json;
+  // Stable request data to hash instead of `proposed`, when `proposed` shows
+  // live values that may change after a commit and would break its replay.
+  idempotencyPayload?: Json;
   warnings?: string[];
   currentVersion: (db: Queryable) => Promise<number>;
   apply: (client: PoolClient, eventId: string) => Promise<T>;
@@ -861,7 +864,10 @@ async function mutate<T>(
   assertSeedAuthority();
   const reason = requireReason(opts.reason);
   const actor = requireActor(opts.actor);
-  const hash = mutationPayloadHash(opts);
+  const hash = mutationPayloadHash({
+    ...opts,
+    proposed: opts.idempotencyPayload ?? opts.proposed,
+  });
   const key =
     `${opts.idempotencyKey ?? `crm:${opts.action}:${hash.slice(0, 24)}`}`.slice(
       0,
@@ -3857,6 +3863,7 @@ type OrderLinkFields = Pick<
   | "cancelled_at"
   | "agreed_total"
   | "currency"
+  | "version"
 >;
 
 // Decide whether an existing commercial order may be linked to an opportunity.
@@ -3873,7 +3880,7 @@ export function opportunityOrderLinkProblems(
     | "expected_value"
     | "currency"
   >,
-  order: Omit<OrderLinkFields, "id" | "order_number">,
+  order: Omit<OrderLinkFields, "id" | "order_number" | "version">,
   linkedElsewhere: boolean,
 ): { blocking: string[]; warnings: string[] } {
   const blocking: string[] = [];
@@ -3943,7 +3950,7 @@ async function readOrderLinkFields(
   forShare = false,
 ): Promise<OrderLinkFields> {
   const { rows } = await db.query(
-    `SELECT id,order_number,crm_organization_id,workflow_state,cancelled_at,agreed_total,currency
+    `SELECT id,order_number,crm_organization_id,workflow_state,cancelled_at,agreed_total,currency,version
        FROM commercial_orders
       WHERE id::text=$1 OR upper(order_number)=upper($1)
       ${forShare ? "FOR SHARE" : ""}`,
@@ -4014,18 +4021,32 @@ export async function linkOpportunityCommercialOrder(
       expected_value: opportunity.expected_value,
       opportunity_stage: opportunity.stage,
       resulting_opportunity_stage: opportunity.stage,
-      // Link and unlink are inverses, so content alone would make re-linking
-      // after an unlink replay the first link and write nothing.  Binding the
-      // payload to the version the preview used keeps a genuine retry, which
-      // resends that version, replayable.
+    },
+    // Hash only stable request data.  The amounts and stage above are read
+    // live, so hashing them would make a lost-response retry fail with an
+    // idempotency conflict once either record changed.  base_version keeps
+    // link and unlink, which are inverses, from replaying an earlier link
+    // after an unlink; a genuine retry resends the same version.
+    idempotencyPayload: {
+      opportunity_id: opportunityId,
+      commercial_order_id: order.id,
       base_version: opts.commit
         ? (opts.expected_version ?? null)
-        : opportunity.version,
+        : opportunity.version + order.version,
     },
     warnings: checks.warnings,
     resultType: "opportunity",
-    currentVersion: async (db) =>
-      (await loadOpportunity(db, opportunityId, db !== getPool())).version,
+    // The reviewed version covers the order as well as the opportunity, so a
+    // commit is refused if the order changed after the preview, for example a
+    // new total the reviewer never saw a warning for.  Both versions only
+    // increase, so their sum changes whenever either record does.
+    currentVersion: async (db) => {
+      const locked = db !== getPool();
+      return (
+        (await loadOpportunity(db, opportunityId, locked)).version +
+        (await readOrderLinkFields(db, order.id, locked)).version
+      );
+    },
     apply: async (client, eventId) => {
       await lockOrderLinks(client, order.id);
       // Re-read both sides under the locks: the order could have been
@@ -4109,6 +4130,10 @@ export async function unlinkOpportunityCommercialOrder(
       order_number: order.order_number,
       opportunity_stage: opportunity.stage,
       resulting_opportunity_stage: opportunity.stage,
+    },
+    idempotencyPayload: {
+      opportunity_id: opportunityId,
+      unlinked_commercial_order_id: order.id,
       base_version: opts.commit
         ? (opts.expected_version ?? null)
         : opportunity.version,
