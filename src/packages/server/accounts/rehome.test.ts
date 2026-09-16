@@ -28,15 +28,15 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
-jest.mock("@cocalc/backend/logger", () => ({
-  __esModule: true,
-  default: jest.fn(() => ({
+jest.mock("@cocalc/backend/logger", () => {
+  const logger = jest.fn(() => ({
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
-  })),
-}));
+  }));
+  return { __esModule: true, default: logger, getLogger: logger };
+});
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-1"),

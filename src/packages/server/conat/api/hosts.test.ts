@@ -244,6 +244,14 @@ jest.mock("@cocalc/server/purchases/get-balance", () => ({
   default: (...args: any[]) => getBalanceMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/get-spendable-balance", () => ({
+  __esModule: true,
+  getAccountFundingHolds: jest.fn(async () => ({
+    prepaid_held_usd: "0",
+    postpaid_committed_usd: "0",
+  })),
+}));
+
 jest.mock("@cocalc/server/bay-directory", () => ({
   __esModule: true,
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
@@ -2257,7 +2265,7 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return { rows: [{ stripe_usage_subscription: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -2350,7 +2358,7 @@ describe("hosts browser fresh auth gating", () => {
         savedMetadata = params?.[2];
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return { rows: [{ stripe_usage_subscription: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -2535,7 +2543,7 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [
             {
@@ -2574,9 +2582,11 @@ describe("hosts browser fresh auth gating", () => {
     );
     expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
       CUSTOMER_ACCOUNT_ID,
+      undefined,
     );
     expect(resolveMembershipForAccountMock).not.toHaveBeenCalledWith(
       ACCOUNT_ID,
+      undefined,
     );
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,
@@ -2848,7 +2858,7 @@ describe("hosts browser fresh auth gating", () => {
       if (sql.includes("FROM account_impersonation_sessions")) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
         };
@@ -2866,7 +2876,7 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
         };
@@ -2940,7 +2950,7 @@ describe("hosts browser fresh auth gating", () => {
       if (sql.includes("FROM account_impersonation_sessions")) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
         };

@@ -6,7 +6,6 @@
 import type { PoolClient } from "@cocalc/database/pool";
 import getPool from "@cocalc/database/pool";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
-import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
 import type { AutoBalanceConfig } from "@cocalc/util/db-schema/accounts";
 import {
@@ -19,10 +18,25 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import isAdminLocal from "@cocalc/server/accounts/is-admin";
 import isValidAccountLocal from "@cocalc/server/accounts/is-valid-account";
-import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { isBillingAuthorityEnabled } from "./billing-authority/config";
 
 type Queryable = Pick<PoolClient, "query">;
+
+async function getClusterAccountById(account_id: string) {
+  const { getClusterAccountById } =
+    await import("@cocalc/server/inter-bay/accounts");
+  return await getClusterAccountById(account_id);
+}
+
+async function requireDangerousSessionAuth(
+  options: Parameters<
+    typeof import("@cocalc/server/conat/api/dangerous-session-auth").requireDangerousSessionAuth
+  >[0],
+) {
+  const { requireDangerousSessionAuth } =
+    await import("@cocalc/server/conat/api/dangerous-session-auth");
+  return await requireDangerousSessionAuth(options);
+}
 
 export function billingAccountsTable(): "accounts" | "billing_accounts" {
   return centralBillingConfigured() ? "billing_accounts" : "accounts";

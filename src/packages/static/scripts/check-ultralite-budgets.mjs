@@ -309,7 +309,8 @@ const surfaces = [
   {
     label: "Essential Docs",
     chunks: [...initial, ...docs],
-    max: 300 * KiB,
+    // Course-sponsored compute adds a substantial safety and operations guide.
+    max: 305 * KiB,
   },
   {
     label: "minimal project settings",

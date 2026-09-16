@@ -14,6 +14,7 @@ import {
   billingAccountsTable,
   ensureBillingAccount,
 } from "@cocalc/server/purchases/billing-account";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import { ComputeFundingError } from "@cocalc/util/compute-funding";
 import type { ComputeVmFundingBinding } from "@cocalc/util/compute-vm-funding";
 
@@ -24,15 +25,30 @@ export async function assertFundingAccountHome(payer: string): Promise<void> {
   (
     await import("@cocalc/server/purchases/billing-authority/client")
   ).assertBillingAuthorityTopology();
-  if (
-    isMultiBayCluster() &&
-    getConfiguredBayId() !== getConfiguredClusterSeedBayId()
-  )
+  if (isBillingAuthorityEnabled()) {
+    if (
+      isMultiBayCluster() &&
+      getConfiguredBayId() !== getConfiguredClusterSeedBayId()
+    )
+      throw new ComputeFundingError(
+        "funding_conflict",
+        "Financial operations must run on the seed billing authority.",
+      );
+    await ensureBillingAccount(payer);
+    return;
+  }
+  const home = isMultiBayCluster()
+    ? await (
+        await import("@cocalc/server/inter-bay/accounts")
+      ).getClusterAccountById(payer)
+    : await (
+        await import("@cocalc/server/bay-directory")
+      ).resolveAccountHomeBay({ account_id: payer });
+  if (home?.home_bay_id !== getConfiguredBayId())
     throw new ComputeFundingError(
       "funding_conflict",
-      "Financial operations must run on the seed billing authority.",
+      "Financial account is homed on another home bay.",
     );
-  await ensureBillingAccount(payer);
 }
 
 /** A predecessor epoch can settle/check only a reservation that was actually
@@ -94,10 +110,44 @@ export async function assertFundingReservationAuthority(
  * The account rehome coordinator calls this while holding its existing fence.
  */
 export async function assertFundingAccountCanRehome(
-  _client: Pick<PoolClient, "query">,
-  _payer: string,
+  client: Pick<PoolClient, "query">,
+  payer: string,
 ): Promise<void> {
-  // Financial records are seed-global and do not move with account-home state.
+  if (isBillingAuthorityEnabled()) {
+    // Financial records are seed-global and do not move with account-home state.
+    return;
+  }
+  const tables = [
+    ["purchases", "account_id", ""],
+    ["subscriptions", "account_id", ""],
+    ["statements", "account_id", ""],
+    ["subscription_renewal_attempts", "account_id", ""],
+    ["credit_payment_roots", "account_id", ""],
+    ["credit_transfers", "sender_account_id", ""],
+    ["credit_transfer_deliveries", "recipient_account_id", ""],
+    ["credit_transfer_entries", "account_id", ""],
+    ["credit_transfer_ledger_observations", "account_id", ""],
+    ["account_funding_holds", "payer_account_id", ""],
+    ["compute_funding_pools", "payer_account_id", ""],
+    ["payment_fulfillments", "account_id", "AND state='pending'"],
+    ["provider_refund_attempts", "account_id", "AND state='pending'"],
+  ];
+  for (const [table, owner, condition] of tables) {
+    const { rows } = await client.query(
+      "SELECT to_regclass($1) AS table_name",
+      [`public.${table}`],
+    );
+    if (!rows[0]?.table_name) continue;
+    const { rows: obligations } = await client.query(
+      `SELECT 1 FROM ${table} WHERE ${owner}=$1 ${condition} LIMIT 1`,
+      [payer],
+    );
+    if (obligations.length)
+      throw new ComputeFundingError(
+        "funding_unavailable",
+        "Account funding records are not yet portable; this account cannot be rehomed.",
+      );
+  }
 }
 
 /** Called only after the account rehome and spending fences, before budget rows.
@@ -110,9 +160,8 @@ export async function lockFundingAuthority(
   client: PoolClient,
   payer: string,
 ): Promise<string> {
-  const home = isMultiBayCluster()
-    ? getConfiguredClusterSeedBayId()
-    : getConfiguredBayId();
+  const central = isBillingAuthorityEnabled() && isMultiBayCluster();
+  const home = central ? getConfiguredClusterSeedBayId() : getConfiguredBayId();
   const accountTable = billingAccountsTable();
   const {
     rows: [account],
@@ -121,10 +170,12 @@ export async function lockFundingAuthority(
      WHERE account_id=$1 AND deleted IS NOT TRUE FOR SHARE`,
     [payer, home],
   );
-  if (!account)
+  if (!account || (!central && account.home_bay_id !== home))
     throw new ComputeFundingError(
       "funding_conflict",
-      "The billing account is unavailable for funding.",
+      central
+        ? "The billing account is unavailable for funding."
+        : "The local account is not authoritative for funding.",
     );
   await client.query(
     `INSERT INTO account_funding_authorities (payer_account_id,epoch,home_bay_id,state)

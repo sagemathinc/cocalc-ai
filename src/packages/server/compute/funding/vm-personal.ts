@@ -161,7 +161,9 @@ async function prepareAutomaticVmPersonalFallbacks(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND c.state='approved' AND c.terms->>'activation'='fallback' AND v.owning_bay_id=$1
-      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=c.payer_account_id)
+      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a
+        WHERE a.account_id=c.payer_account_id AND a.deleted IS NOT TRUE
+          ${isBillingAuthorityEnabled() ? "" : "AND a.home_bay_id=$1"})
       AND v.state='stopped' AND v.desired_state='stopped' AND v.metadata#>'{billing,course_funding,stop_intent}' IS NOT NULL
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), fallbackCursor],
@@ -801,7 +803,9 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND c.state='preparing' AND v.owning_bay_id=$1 AND v.state='stopped' AND v.desired_state='stopped'
-      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=c.payer_account_id)
+      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a
+        WHERE a.account_id=c.payer_account_id AND a.deleted IS NOT TRUE
+          ${isBillingAuthorityEnabled() ? "" : "AND a.home_bay_id=$1"})
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), handoffCursor],
   );
@@ -811,6 +815,7 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
       : "00000000-0000-0000-0000-000000000000";
   for (const pending of rows) {
     try {
+      await assertFundingPayerHomeBay(pending.payer_account_id);
       const decision =
         pending.terms.activation === "fallback"
           ? await fallbackDecision(
@@ -928,6 +933,12 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
         { retryContention: true },
       );
     } catch (err) {
+      if (
+        !isBillingAuthorityEnabled() &&
+        (err as { code?: unknown })?.code === "funding_home_bay_required"
+      ) {
+        continue;
+      }
       logger.warn("personal funding handoff remains pending", {
         consent_id: pending.id,
         err,
@@ -941,7 +952,9 @@ async function closeEndedPersonalConsents(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','preparing','active')
-      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=c.payer_account_id)
+      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a
+        WHERE a.account_id=c.payer_account_id AND a.deleted IS NOT TRUE
+          ${isBillingAuthorityEnabled() ? "" : "AND a.home_bay_id=$1"})
       AND (v.desired_state='deleted' OR v.deleted_at IS NOT NULL OR (c.terms->>'ends_at')::timestamptz<=clock_timestamp())
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), closedConsentCursor],
@@ -952,6 +965,7 @@ async function closeEndedPersonalConsents(): Promise<void> {
       : "00000000-0000-0000-0000-000000000000";
   for (const consent of rows) {
     try {
+      await assertFundingPayerHomeBay(consent.payer_account_id);
       await withFundingAccountTransaction(
         consent.payer_account_id,
         async (db) => {
@@ -977,6 +991,12 @@ async function closeEndedPersonalConsents(): Promise<void> {
         },
       );
     } catch (err) {
+      if (
+        !isBillingAuthorityEnabled() &&
+        (err as { code?: unknown })?.code === "funding_home_bay_required"
+      ) {
+        continue;
+      }
       logger.warn("ended personal consent remains pending", {
         consent_id: consent.id,
         err,

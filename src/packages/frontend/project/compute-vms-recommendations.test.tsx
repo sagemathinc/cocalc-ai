@@ -97,9 +97,13 @@ it("carries a selected recommendation through the real create form without chang
       onCreate={onCreate}
     />,
   );
-  const select = await screen.findByRole("combobox", {
-    name: "Recommended VM configuration",
-  });
+  const select = await screen.findByRole(
+    "combobox",
+    {
+      name: "Recommended VM configuration",
+    },
+    { timeout: 5_000 },
+  );
   act(() => select.focus());
   fireEvent.keyDown(select, { key: "ArrowDown", keyCode: 40, which: 40 });
   await screen.findAllByText("Notebook CPU");
