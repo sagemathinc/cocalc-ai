@@ -1,6 +1,7 @@
 /** @jest-environment jsdom */
 
-import { CHAT_THREAD_META_ROW_DATE } from "@cocalc/chat";
+import { CHAT_THREAD_META_ROW_DATE, threadConfigRecordKey } from "@cocalc/chat";
+import { from_str } from "@cocalc/sync/editor/immer-db/doc";
 import { ChatActions } from "../actions";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { alert_message } from "@cocalc/frontend/alerts";
@@ -103,27 +104,74 @@ describe("sendChat identity fields", () => {
       paymentSource: "subscription",
       sessionMode: "workspace-write",
       workingDirectory: "/home/user",
+      sessionId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      reasoning: "high",
+      serviceTier: "standard",
     };
-    let row = {
-      event: "chat-thread-config",
-      sender_id: "__thread_config__",
-      date: CHAT_THREAD_META_ROW_DATE,
-      thread_id: threadId,
+    const row = {
+      ...threadConfigRecordKey(threadId),
       acp_config: config,
+      name: "Saved conversation",
+      pin: true,
+      "read-reader": 3,
+      codex_completion_notification: "off",
     };
+    const otherRow = {
+      ...threadConfigRecordKey("other-thread"),
+      acp_config: { model: "other-model" },
+    };
+    let doc = from_str(
+      "",
+      ["date", "sender_id", "event", "message_id", "thread_id"],
+      ["input"],
+    )
+      .set({
+        ...row,
+        sender_id: "__thread_config__",
+        date: "2026-02-21T18:00:00.000Z",
+        updated_at: "2026-09-16T18:00:00.000Z",
+        acp_config: { model: "stale-model" },
+      })
+      .set(row)
+      .set(otherRow);
     const actions = makeActions();
-    // Production uses get(), not the get_one-only fallback in older mocks.
-    actions.syncdb.get = jest.fn(() => [row]);
+    actions.syncdb.get_state = () => "ready";
+    // Exercise the real document filtering and frozen plain rows used by ImmerDB.
+    actions.syncdb.get = jest.fn((where) => doc.get(where));
+    actions.syncdb.get_one.mockImplementation((where) => doc.get_one(where));
     actions.syncdb.set.mockImplementation((next) => {
-      row = next;
+      doc = doc.set(next);
     });
+    actions.syncdb.delete.mockImplementation((where) => {
+      doc = doc.delete(where);
+    });
+    actions.ensureProjectReadState = () => undefined;
 
-    expect(actions.getCodexConfig(threadId)).toEqual(config);
+    const savedConfig = actions.getCodexConfig(threadId);
+    expect(savedConfig).toEqual(config);
+    expect(actions.getThreadMetadata(threadId)).toMatchObject({
+      name: row.name,
+      pin: true,
+      acp_config: config,
+      agent_model: config.model,
+    });
+    expect(actions.getThreadReadCount(threadId, "reader")).toBe(3);
     actions.setCodexConfig(threadId, { model: "gpt-5.6-luna" });
     expect(actions.getCodexConfig(threadId)).toMatchObject({
       ...config,
       model: "gpt-5.6-luna",
     });
+    expect(doc.get({ thread_id: threadId })).toEqual([
+      expect.objectContaining({
+        ...row,
+        acp_config: { ...config, model: "gpt-5.6-luna" },
+        agent_model: "gpt-5.6-luna",
+      }),
+    ]);
+    expect(doc.get_one({ thread_id: "other-thread" })).toEqual(otherRow);
+    expect(actions.syncdb.get_one).not.toHaveBeenCalled();
+    expect(actions.syncdb.commit).toHaveBeenCalledTimes(1);
+    expect(savedConfig.model).toBe("gpt-5.4-mini");
   });
 
   beforeEach(() => {
@@ -668,6 +716,44 @@ describe("thread-config by thread_id", () => {
       .mockImplementation(async () => {});
   });
 
+  it.each(["missing", "empty", "throwing"])(
+    "reads and preserves saved config through get_one when get is %s",
+    (getBehavior) => {
+      const threadId = "saved-thread";
+      const config = {
+        model: "gpt-5.4-mini",
+        paymentSource: "subscription",
+        workingDirectory: "/home/user",
+      };
+      let row = {
+        ...threadConfigRecordKey(threadId),
+        date: "2026-02-21T18:00:00.000Z",
+        acp_config: config,
+      };
+      const actions = makeActions();
+      if (getBehavior !== "missing") {
+        actions.syncdb.get = jest.fn(() => {
+          if (getBehavior === "throwing") throw Error("get unavailable");
+          return [];
+        });
+      }
+      actions.syncdb.get_one.mockImplementation((where) =>
+        where.thread_id === threadId ? row : undefined,
+      );
+      actions.syncdb.set.mockImplementation((next) => {
+        row = next;
+      });
+      expect(actions.getCodexConfig(threadId)).toEqual(config);
+      expect(actions.getThreadMetadata(threadId).thread_date).toBe(row.date);
+      actions.setCodexConfig(threadId, { model: "gpt-5.6-luna" });
+      expect(actions.getCodexConfig(threadId)).toMatchObject({
+        ...config,
+        model: "gpt-5.6-luna",
+      });
+      expect(actions.getCodexConfig("missing-thread")).toBeUndefined();
+    },
+  );
+
   it("reads thread metadata from thread-config using explicit thread_id", () => {
     const threadId = "11111111-1111-4111-8111-111111111111";
     const actions = makeActions();
@@ -720,11 +806,20 @@ describe("thread-config by thread_id", () => {
             thread_id: threadId,
             name: "Archived thread",
             archived: true,
+            acp_config: { model: "gpt-5.4-mini" },
           } as any)
         : undefined;
     const meta = actions.getThreadMetadata(threadId, { threadId });
     expect(meta.name).toBe("Archived thread");
     expect(meta.archived).toBe(true);
+    expect(actions.getCodexConfig(threadId)).toEqual({ model: "gpt-5.4-mini" });
+    actions.setCodexConfig(threadId, { model: "gpt-5.6-luna" });
+    expect(actions.syncdb.get_one).not.toHaveBeenCalled();
+    expect(actions.syncdb.set).not.toHaveBeenCalled();
+    expect(actions.syncdb.delete).not.toHaveBeenCalled();
+    expect(actions.syncdb.commit).not.toHaveBeenCalled();
+    actions.syncdb.get_state = () => "ready";
+    expect(actions.getCodexConfig(threadId)).toBeUndefined();
   });
 
   it("does not mutate thread config before syncdb is ready", () => {
