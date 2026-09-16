@@ -81,8 +81,34 @@ const MAX_LIST = 500;
 const MAX_BODY = 50_000;
 const markdown = new MarkdownIt({ html: false, linkify: true, breaks: true });
 
+const OUTREACH_OPT_OUT_PATH = /\/crm\/outreach\/opt-out\/[A-Za-z0-9_-]+/;
+
+// `outreach show` returns the stored body with its footer attached, so a
+// reviewer who edits that text naturally submits the footer back.  Remove an
+// unchanged trailing footer, and refuse any other opt-out link: appending the
+// preserved footer would otherwise send the recipient two opt-out links, one
+// of which may have been altered.
 export function composeOutreachBody(body: string, footer: string): string {
-  const value = `${bounded(body, "body_markdown", MAX_BODY)}\n\n${footer}`;
+  // A body file saved with Windows line endings must still match the stored
+  // footer, which always uses LF.
+  let message = bounded(
+    `${body ?? ""}`.replace(/\r\n?/g, "\n"),
+    "body_markdown",
+    MAX_BODY,
+  );
+  if (footer && message.endsWith(footer)) {
+    message = bounded(
+      message.slice(0, -footer.length),
+      "body_markdown",
+      MAX_BODY,
+    );
+  }
+  if (OUTREACH_OPT_OUT_PATH.test(message)) {
+    throw Error(
+      "body_markdown must not contain an opt-out link; the preserved footer with the recipient's opt-out link is appended automatically",
+    );
+  }
+  const value = `${message}\n\n${footer}`;
   if (value.length > MAX_BODY)
     throw Error(
       `rendered outreach body including its required footer must be at most ${MAX_BODY} characters`,
@@ -1782,6 +1808,17 @@ export async function updateOutreachRecipient(
     idempotencyKey: opts.idempotency_key,
     organizationId: delivery.organization_id,
     proposed,
+    // A key derived from the content alone makes a revision that restores
+    // earlier text replay that earlier commit instead of writing it: A to B,
+    // B to A, then A to B again would report success and leave A stored.
+    // Bind the key to the batch version the preview was taken against; a
+    // genuine retry of one reviewed commit still carries that same version.
+    idempotencyPayload: {
+      ...proposed,
+      base_batch_version: opts.commit
+        ? (opts.expected_version ?? null)
+        : batch.version,
+    },
     warnings: checks.warnings,
     resultType: "outreach_delivery",
     currentVersion: async (db) =>
