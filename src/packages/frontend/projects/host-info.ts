@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import type { Map as ImmutableMap } from "immutable";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -8,6 +8,24 @@ export type ProjectHostConnectionState = {
   observed: boolean;
   unavailableSince?: string;
 };
+
+export function unavailableSinceForHostStatusTransition({
+  previousStatus,
+  status,
+  unavailableSince,
+  now = new Date().toISOString(),
+}: {
+  previousStatus?: string;
+  status?: string;
+  unavailableSince?: string;
+  now?: string;
+}): string | undefined {
+  const starting = status === "starting" || status === "restarting";
+  const wasStarting =
+    previousStatus === "starting" || previousStatus === "restarting";
+  const enteringStartup = starting && !wasStarting;
+  return enteringStartup ? now : unavailableSince;
+}
 
 export function isPublicDirectoryShareHost(
   host_id?: string,
@@ -58,12 +76,17 @@ export function useHostInfo(
 
 export function useProjectHostConnectionState(
   host_id?: string,
+  hostStatus?: string,
 ): ProjectHostConnectionState {
   const client = webapp_client.conat_client;
   const [state, setState] = useState<ProjectHostConnectionState>(() => {
     const connected = !!client?.isProjectHostConnected?.(host_id);
     return { connected, observed: connected };
   });
+  const previousHostStatus = useRef<{
+    hostId?: string;
+    status?: string;
+  }>({});
   useEffect(() => {
     const initiallyConnected = !!client?.isProjectHostConnected?.(host_id);
     setState({ connected: initiallyConnected, observed: initiallyConnected });
@@ -89,6 +112,23 @@ export function useProjectHostConnectionState(
       client?.removeListener?.("project-host-disconnected", disconnected);
     };
   }, [client, host_id]);
+  useEffect(() => {
+    const previousStatus =
+      previousHostStatus.current.hostId === host_id
+        ? previousHostStatus.current.status
+        : undefined;
+    previousHostStatus.current = { hostId: host_id, status: hostStatus };
+    setState((previous) => {
+      const unavailableSince = unavailableSinceForHostStatusTransition({
+        previousStatus,
+        status: hostStatus,
+        unavailableSince: previous.unavailableSince,
+      });
+      return unavailableSince === previous.unavailableSince
+        ? previous
+        : { ...previous, unavailableSince };
+    });
+  }, [host_id, hostStatus]);
   return state;
 }
 
