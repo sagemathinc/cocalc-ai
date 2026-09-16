@@ -6,12 +6,16 @@
 import { createHash, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fence";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import { requireFundingApprovalSession } from "./approval-auth";
 import { validateFundingOrigin } from "./approval-config";
 import { withFundingAccountTransaction } from "./backing";
+import { assertFundingAccountHome } from "./authority";
+import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spending";
 import type {
   FundingApprovalReview,
   CourseFundingApprovalTerms,
@@ -95,6 +99,10 @@ export async function ensureCourseFundingApprovalSchema(): Promise<void> {
 
 export async function assertFundingPayerHomeBay(payer_account_id: string) {
   assertUuid(payer_account_id);
+  if (isBillingAuthorityEnabled()) {
+    await assertFundingAccountHome(payer_account_id);
+    return;
+  }
   const account = await getClusterAccountById(payer_account_id);
   const home_bay_id = account?.home_bay_id;
   if (!home_bay_id || home_bay_id !== getConfiguredBayId()) {
@@ -105,6 +113,36 @@ export async function assertFundingPayerHomeBay(payer_account_id: string) {
         home_bay_id,
       },
     );
+  }
+}
+
+async function withFundingIntentWriteFence<T>({
+  payer_account_id,
+  fn,
+}: {
+  payer_account_id: string;
+  fn: (db: PoolClient) => Promise<T>;
+}): Promise<T> {
+  if (!isBillingAuthorityEnabled()) {
+    return await withAccountRehomeWriteFence({
+      account_id: payer_account_id,
+      action: "propose course funding",
+      fn,
+    });
+  }
+  await assertFundingAccountHome(payer_account_id);
+  const db = await getPool().connect();
+  try {
+    await db.query("BEGIN");
+    await lockAccountSpending(db, payer_account_id);
+    const result = await fn(db);
+    await db.query("COMMIT");
+    return result;
+  } catch (err) {
+    await db.query("ROLLBACK");
+    throw err;
+  } finally {
+    db.release();
   }
 }
 
@@ -265,9 +303,8 @@ export function createCourseFundingApprovals<
     const terms_hash = createHash("sha256")
       .update(canonicalFundingTerms({ terms: JSON.parse(json), review }))
       .digest("hex");
-    return withAccountRehomeWriteFence({
-      account_id: payer_account_id,
-      action: "propose course funding",
+    return withFundingIntentWriteFence({
+      payer_account_id,
       fn: async (db) => {
         const prior = await db.query(
           "SELECT * FROM course_funding_approval_intents WHERE payer_account_id=$1 AND operation_id=$2",
@@ -352,7 +389,7 @@ export function createCourseFundingApprovals<
         origin,
       });
       const account = await db.query(
-        "SELECT banned, deleted FROM accounts WHERE account_id=$1",
+        `SELECT banned, deleted FROM ${billingAccountsTable()} WHERE account_id=$1`,
         [args.payer_account_id],
       );
       if (

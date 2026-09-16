@@ -42,6 +42,7 @@ import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import send, { support, url } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
+import { billingAccountsTable } from "./billing-account";
 
 const logger = getLogger("purchase:maintain-automatic-payments");
 
@@ -54,7 +55,8 @@ const logger = getLogger("purchase:maintain-automatic-payments");
 // not null) and uses the ROW_NUMBER() trick so we can grab the most recent one.
 // That's used to make a query that pull out just the latest_statements that
 // have both automatic_payment and paid_purchase_id both NULL.
-const QUERY = `
+function query() {
+  return `
 WITH latest_statements AS (
   SELECT
     a.account_id,
@@ -66,7 +68,7 @@ WITH latest_statements AS (
     s.paid_purchase_id,
     ROW_NUMBER() OVER(PARTITION BY a.account_id ORDER BY s.time DESC, s.id DESC) AS rn
   FROM
-    accounts a
+    ${billingAccountsTable()} a
   JOIN
     statements s
     ON a.account_id = s.account_id
@@ -95,6 +97,7 @@ WHERE
   AND paid_purchase_id IS NULL
   AND balance < 0
 `;
+}
 
 export default async function maintainAutomaticPayments({
   max_statements = Number.POSITIVE_INFINITY,
@@ -104,7 +107,7 @@ export default async function maintainAutomaticPayments({
   const pool = getPool();
   const bounded = Number.isFinite(max_statements);
   const { rows } = await pool.query(
-    `${QUERY} ORDER BY time, statement_id${bounded ? " LIMIT $1" : ""}`,
+    `${query()} ORDER BY time, statement_id${bounded ? " LIMIT $1" : ""}`,
     bounded ? [Math.max(0, Math.floor(max_statements))] : [],
   );
   logger.debug("Got ", rows.length, " statements to automatically pay");

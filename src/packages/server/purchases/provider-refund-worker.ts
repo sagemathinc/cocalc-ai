@@ -5,7 +5,6 @@
 
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import getConn from "@cocalc/server/stripe/connection";
 import { registerBillingAuthorityAccount } from "./billing-authority/context";
 import type { ProviderRefundAttempt } from "./provider-refund-attempts";
@@ -15,6 +14,9 @@ import {
 } from "./provider-refund-attempts";
 import { readProviderRefund } from "./provider-refund-reader";
 import { refreshAccountBalanceAndPublishBestEffort } from "./refresh-balance";
+import { billingAccountsTable } from "./billing-account";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 
 const logger = getLogger("purchases:provider-refund-worker");
 const LEASE_SECONDS = 60;
@@ -31,24 +33,29 @@ export async function claimProviderRefundReconciliation(
   } = await getPool().query<ProviderRefundAttempt>(
     `WITH candidate AS (
        SELECT r.id FROM provider_refund_attempts r
-       JOIN accounts a ON a.account_id=r.account_id
+       JOIN ${billingAccountsTable()} a ON a.account_id=r.account_id
        LEFT JOIN account_funding_authorities f ON f.payer_account_id=r.account_id
        WHERE r.state='pending' AND r.next_reconcile_at <= clock_timestamp()
          AND (r.provider_request IS NOT NULL OR r.provider_result IS NOT NULL)
          AND (r.reconcile_lease_expires_at IS NULL OR r.reconcile_lease_expires_at <= clock_timestamp())
          AND a.deleted IS NOT TRUE
-         AND COALESCE(NULLIF(TRIM(a.home_bay_id),''),$1)=$1
+         AND ($1::boolean OR COALESCE(NULLIF(TRIM(a.home_bay_id),''),$2)=$2)
          AND (f.state IS NULL OR f.state='active')
-         AND ($2::uuid IS NULL OR r.account_id=$2)
+         AND ($3::uuid IS NULL OR r.account_id=$3)
        ORDER BY r.next_reconcile_at, r.id
        LIMIT 1 FOR UPDATE OF r SKIP LOCKED
      )
      UPDATE provider_refund_attempts r
        SET reconcile_token=gen_random_uuid(),
-           reconcile_lease_expires_at=clock_timestamp()+$3*INTERVAL '1 second',
+           reconcile_lease_expires_at=clock_timestamp()+$4*INTERVAL '1 second',
            reconcile_attempts=r.reconcile_attempts+1
        FROM candidate c WHERE r.id=c.id RETURNING r.*`,
-    [getConfiguredBayId(), account_id ?? null, LEASE_SECONDS],
+    [
+      isBillingAuthorityEnabled(),
+      getConfiguredBayId(),
+      account_id ?? null,
+      LEASE_SECONDS,
+    ],
   );
   return row;
 }

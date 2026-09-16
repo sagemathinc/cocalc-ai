@@ -1584,6 +1584,34 @@ export interface AccountLocalAssertProductAccessTrustRequest {
   action: string;
 }
 
+export interface AccountLocalRequireFreshAuthRequest {
+  account_id: string;
+  browser_id?: string | null;
+  session_hash?: string | null;
+  require_second_factor?: boolean | "if_enabled";
+  allow_actor_impersonation?: boolean;
+}
+
+export interface AccountLocalIsAdminRequest {
+  account_id: string;
+}
+
+export interface AccountLocalBillingPreferencesRequest {
+  account_id: string;
+}
+
+export interface AccountLocalBillingPreferencesResult {
+  email_daily_statements: boolean;
+  use_balance_toward_subscriptions?: boolean;
+  use_balance_toward_team_licenses?: boolean;
+}
+
+export interface AccountLocalSetBillingProjectionRequest {
+  account_id: string;
+  balance?: number;
+  balance_alert?: boolean;
+}
+
 export interface AccountLocalGetMembershipPackagesRequest {
   owner_account_id: string;
 }
@@ -2847,6 +2875,10 @@ export type AccountLocalMethod =
   | "search-related-accounts"
   | "set-password-from-reset"
   | "assert-product-access-trust"
+  | "require-fresh-auth"
+  | "is-admin"
+  | "get-billing-preferences"
+  | "set-billing-projection"
   | "reconcile-dedicated-host-purchase-session"
   | "record-dedicated-host-metered-usage"
   | "close-dedicated-host-purchase-session"
@@ -4542,6 +4574,16 @@ export interface InterBayAccountLocalApi
   ) => Promise<void>;
   assertProductAccessTrust: (
     opts: AccountLocalAssertProductAccessTrustRequest,
+  ) => Promise<void>;
+  requireFreshAuth: (
+    opts: AccountLocalRequireFreshAuthRequest,
+  ) => Promise<void>;
+  isAdmin: (opts: AccountLocalIsAdminRequest) => Promise<boolean>;
+  getBillingPreferences: (
+    opts: AccountLocalBillingPreferencesRequest,
+  ) => Promise<AccountLocalBillingPreferencesResult>;
+  setBillingProjection: (
+    opts: AccountLocalSetBillingProjectionRequest,
   ) => Promise<void>;
   reconcileDedicatedHostPurchaseSession: (
     opts: AccountLocalReconcileDedicatedHostPurchaseSessionRequest,
@@ -7254,6 +7296,42 @@ export function createInterBayAccountLocalClient({
       method: "assert-product-access-trust",
     }),
   });
+  const requireFreshAuthClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "requireFreshAuth">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "require-fresh-auth",
+    }),
+  });
+  const isAdminClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "isAdmin">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "is-admin",
+    }),
+  });
+  const getBillingPreferencesClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getBillingPreferences">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-billing-preferences",
+    }),
+  });
+  const setBillingProjectionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "setBillingProjection">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "set-billing-projection",
+    }),
+  });
   const reconcileDedicatedHostPurchaseSessionClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
   >({
@@ -8413,6 +8491,13 @@ export function createInterBayAccountLocalClient({
       await setPasswordFromResetClient.setPasswordFromReset(opts),
     assertProductAccessTrust: async (opts) =>
       await assertProductAccessTrustClient.assertProductAccessTrust(opts),
+    requireFreshAuth: async (opts) =>
+      await requireFreshAuthClient.requireFreshAuth(opts),
+    isAdmin: async (opts) => await isAdminClient.isAdmin(opts),
+    getBillingPreferences: async (opts) =>
+      await getBillingPreferencesClient.getBillingPreferences(opts),
+    setBillingProjection: async (opts) =>
+      await setBillingProjectionClient.setBillingProjection(opts),
     reconcileDedicatedHostPurchaseSession: async (opts) =>
       await reconcileDedicatedHostPurchaseSessionClient.reconcileDedicatedHostPurchaseSession(
         opts,
@@ -9264,6 +9349,56 @@ export function createInterBayAccountLocalHandler({
           await impl.assertProductAccessTrust(opts),
       },
     }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "requireFreshAuth">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "require-fresh-auth",
+      }),
+      impl: {
+        requireFreshAuth: async (opts) => await impl.requireFreshAuth(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "isAdmin">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "is-admin",
+      }),
+      impl: {
+        isAdmin: async (opts) => await impl.isAdmin(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getBillingPreferences">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-billing-preferences",
+      }),
+      impl: {
+        getBillingPreferences: async (opts) =>
+          await impl.getBillingPreferences(opts),
+      },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "setBillingProjection">>(
+      {
+        ...options,
+        service: "inter-bay-account-local",
+        subject: accountLocalSubject({
+          dest_bay: bay_id,
+          method: "set-billing-projection",
+        }),
+        impl: {
+          setBillingProjection: async (opts) =>
+            await impl.setBillingProjection(opts),
+        },
+      },
+    ),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "reconcileDedicatedHostPurchaseSession">
     >({

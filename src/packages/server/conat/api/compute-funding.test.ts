@@ -33,6 +33,7 @@ const mockRemote = {
 };
 const mockRemoteClient = jest.fn(() => mockRemote);
 let mockMultiBay = false;
+let mockBillingAuthority = false;
 let mockCatalog = [{ bay_id: "home" }];
 
 jest.mock("@cocalc/database/pool", () => ({
@@ -48,6 +49,9 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 }));
 jest.mock("@cocalc/server/cluster-config", () => ({
   isMultiBayCluster: () => mockMultiBay,
+}));
+jest.mock("@cocalc/server/purchases/billing-authority/config", () => ({
+  isBillingAuthorityEnabled: () => mockBillingAuthority,
 }));
 jest.mock("@cocalc/server/bay-registry", () => ({
   listClusterBayRegistry: (...args) => mockRegistry(...args),
@@ -143,6 +147,7 @@ function client(account_id = payer) {
 beforeEach(() => {
   jest.resetAllMocks();
   mockMultiBay = false;
+  mockBillingAuthority = false;
   mockCatalog = [{ bay_id: "home" }];
   mockHome.mockResolvedValue({ home_bay_id: "home" });
   mockRegistry.mockResolvedValue([{ bay_id: "home" }, { bay_id: "remote" }]);
@@ -504,6 +509,25 @@ describe("read-only funding projections", () => {
       beneficiary_account_id: beneficiary,
       beneficiary_home_bay_id: "home",
     });
+    expect(mockRegistry).not.toHaveBeenCalled();
+  });
+
+  it("discovers seed-central funding without home routing or bay fanout", async () => {
+    mockBillingAuthority = true;
+    mockMultiBay = true;
+    mockHome.mockResolvedValue({ home_bay_id: "remote-home" });
+
+    await expect(client(beneficiary).listSources()).resolves.toEqual({
+      as_of: now.toISOString(),
+      sources: [],
+    });
+
+    expect(mockSourcesOnBay).toHaveBeenCalledWith({
+      beneficiary_account_id: beneficiary,
+      beneficiary_home_bay_id: "remote-home",
+    });
+    expect(mockRemote.computeFundingListSources).not.toHaveBeenCalled();
+    expect(mockRemote.computeFundingListSourcesOnBay).not.toHaveBeenCalled();
     expect(mockRegistry).not.toHaveBeenCalled();
   });
 

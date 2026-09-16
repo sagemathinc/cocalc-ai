@@ -11,7 +11,7 @@ import {
   ensureAccountAdminAuditLogSchema,
   recordAccountAdminAuditEventInTransaction,
 } from "@cocalc/server/accounts/admin-audit";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "./billing-account";
 import userIsInGroup from "@cocalc/server/accounts/is-in-group";
 import { lockAccountSpending } from "./lock-account-spending";
 import {
@@ -107,7 +107,7 @@ export async function adminGetMembershipPackageQuote({
   if (!trusted_admin && !(await userIsInGroup(admin_account_id, "admin"))) {
     throw Error("must be an admin");
   }
-  if (!(await isValidAccount(user_account_id))) {
+  if (!(await isValidBillingAccount(user_account_id))) {
     throw Error("target account is not valid");
   }
   if (product?.type !== "membership-package" || product.package_id) {
@@ -271,7 +271,7 @@ export default async function adminCreateMembershipPackagePurchase({
   if (!trusted_admin && !(await userIsInGroup(admin_account_id, "admin"))) {
     throw Error("must be an admin");
   }
-  if (!(await isValidAccount(user_account_id))) {
+  if (!(await isValidBillingAccount(user_account_id))) {
     throw Error("target account is not valid");
   }
   if (product?.type !== "membership-package" || product.package_id) {

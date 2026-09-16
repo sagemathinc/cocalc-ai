@@ -4,10 +4,10 @@
  */
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import type { CreditTransferManifest } from "@cocalc/util/credit-transfers";
 import { reconcileCreditTransfer } from "./core";
 import { creditTransferTransport } from "./api";
+import { billingAccountsTable } from "../billing-account";
 
 const logger = getLogger("purchases:credit-transfers");
 
@@ -19,14 +19,15 @@ export async function getPendingCreditTransferManifests(
 ): Promise<CreditTransferManifest[]> {
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100)
     throw Error("Invalid transfer reconciliation limit");
+  const accountTable = billingAccountsTable();
   const { rows } = await getPool().query<{ manifest: CreditTransferManifest }>(
     `SELECT t.manifest FROM credit_transfers t
-     JOIN accounts a ON a.account_id=t.sender_account_id
+     JOIN ${accountTable} a ON a.account_id=t.sender_account_id
      JOIN account_funding_authorities f ON f.payer_account_id=t.sender_account_id
-     WHERE t.state='pending' AND f.state='active' AND f.home_bay_id=$1
-       AND COALESCE(NULLIF(BTRIM(a.home_bay_id),''),$1)=$1
-     ORDER BY t.updated_at LIMIT $2`,
-    [getConfiguredBayId(), limit],
+     WHERE t.state='pending' AND f.state='active'
+       AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE
+     ORDER BY t.updated_at LIMIT $1`,
+    [limit],
   );
   return rows.map(({ manifest }) => manifest);
 }

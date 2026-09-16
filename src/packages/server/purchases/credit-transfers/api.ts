@@ -27,6 +27,7 @@ import {
 } from "./core";
 import { verifyPaymentPurchase } from "./payment-verification";
 import { moneyToDbString } from "@cocalc/util/money";
+import { isBillingAuthorityEnabled } from "../billing-authority/config";
 
 const remote = (bay: string) =>
   createInterBayAccountLocalClient({
@@ -92,6 +93,9 @@ function requireEnabled() {
 }
 async function actorHome(value?: string) {
   const account_id = fundingId(value, "Signed-in account");
+  if (isBillingAuthorityEnabled()) {
+    return { account_id, client: undefined };
+  }
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
   return {
     account_id,

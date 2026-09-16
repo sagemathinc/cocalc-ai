@@ -5,6 +5,9 @@
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 import { fundingId } from "@cocalc/util/compute-funding";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type {
@@ -158,7 +161,7 @@ async function prepareAutomaticVmPersonalFallbacks(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND c.state='approved' AND c.terms->>'activation'='fallback' AND v.owning_bay_id=$1
-      AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
+      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=c.payer_account_id)
       AND v.state='stopped' AND v.desired_state='stopped' AND v.metadata#>'{billing,course_funding,stop_intent}' IS NOT NULL
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), fallbackCursor],
@@ -782,6 +785,12 @@ export async function switchVmPersonalFunding(
 
 /** Owning-bay reconciliation. No account lock or DB transaction spans provider work. */
 export async function processVmPersonalFundingHandoffs(): Promise<void> {
+  if (
+    isBillingAuthorityEnabled() &&
+    getConfiguredBayId() !== getConfiguredClusterSeedBayId()
+  ) {
+    return;
+  }
   await (await import("./personal-expiry")).expirePersonalFundingConsents();
   await (
     await import("./vm-personal-remote")
@@ -792,7 +801,7 @@ export async function processVmPersonalFundingHandoffs(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND c.state='preparing' AND v.owning_bay_id=$1 AND v.state='stopped' AND v.desired_state='stopped'
-      AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
+      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=c.payer_account_id)
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), handoffCursor],
   );
@@ -932,7 +941,7 @@ async function closeEndedPersonalConsents(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
     `SELECT c.* FROM compute_vm_personal_consents c JOIN compute_vms v ON v.id=c.vm_id
     WHERE c.id>$2 AND v.owning_bay_id=$1 AND c.state IN ('pending','approved','preparing','active')
-      AND EXISTS (SELECT 1 FROM accounts a WHERE a.account_id=c.payer_account_id AND COALESCE(a.home_bay_id,$1)=$1)
+      AND EXISTS (SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=c.payer_account_id)
       AND (v.desired_state='deleted' OR v.deleted_at IS NOT NULL OR (c.terms->>'ends_at')::timestamptz<=clock_timestamp())
     ORDER BY c.id LIMIT 20`,
     [getConfiguredBayId(), closedConsentCursor],

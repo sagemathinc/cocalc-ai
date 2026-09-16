@@ -4,6 +4,7 @@
  */
 
 import type { PoolClient } from "@cocalc/database/pool";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 import type { AccountLocalDedicatedHostPolicySnapshot } from "@cocalc/conat/inter-bay/api";
 import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
 import { isTrustedAdminPostpaid } from "@cocalc/server/project-host/funding-policy";
@@ -223,7 +224,7 @@ export async function getComputeFundingPolicyInTransaction(
   // New service/backing must honor billing containment. Settlement and funded
   // cleanup intentionally do not call this admission check.
   const { rows: eligible } = await client.query(
-    `SELECT 1 FROM accounts a WHERE a.account_id=$1 AND a.banned IS NOT TRUE AND a.deleted IS NOT TRUE
+    `SELECT 1 FROM ${billingAccountsTable()} a WHERE a.account_id=$1 AND a.banned IS NOT TRUE AND a.deleted IS NOT TRUE
      AND NOT EXISTS (SELECT 1 FROM billing_authority_account_fences f WHERE f.account_id=a.account_id AND f.frozen)`,
     [payer],
   );

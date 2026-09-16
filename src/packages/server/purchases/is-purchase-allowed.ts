@@ -4,7 +4,11 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import {
+  isBillingAccountRestricted,
+  isValidBillingAccount,
+} from "./billing-account";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
 import {
   QUOTA_SPEC,
   Service,
@@ -68,11 +72,17 @@ export async function isPurchaseAllowed({
   if (costValue != null && costValue.gte(0)) {
     costValue = moneyRound2Up(costValue);
   }
-  if (!(await isValidAccount(account_id, client))) {
+  if (!(await isValidBillingAccount(account_id, client))) {
     return { allowed: false, reason: `${account_id} is not a valid account` };
   }
-  await ensureAccountSecurityStateReady(client);
-  if (isAccountBannedCached(account_id)) {
+  if (isBillingAuthorityEnabled()) {
+    if (await isBillingAccountRestricted(account_id, client)) {
+      return { allowed: false, reason: `${account_id} is banned` };
+    }
+  } else {
+    await ensureAccountSecurityStateReady(client);
+  }
+  if (!isBillingAuthorityEnabled() && isAccountBannedCached(account_id)) {
     return { allowed: false, reason: `${account_id} is banned` };
   }
   if (QUOTA_SPEC[service] == null) {

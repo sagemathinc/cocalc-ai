@@ -16,7 +16,8 @@ import {
 } from "@cocalc/server/accounts/rehome-fence";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import { assertPurchaseAllowed } from "@cocalc/server/purchases/is-purchase-allowed";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "./billing-account";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
 import {
   addMembershipPackageSeats,
   createMembershipPackage,
@@ -42,22 +43,24 @@ export async function createMembershipPackagePurchase(
   },
   client: PoolClient,
 ): Promise<{ package_id: string; purchase_id: number }> {
-  if (!(await isValidAccount(account_id, client))) {
+  if (!(await isValidBillingAccount(account_id, client))) {
     throw Error(`invalid account_id - ${account_id}`);
   }
   if (product?.type !== "membership-package") {
     throw Error("product type must be 'membership-package'");
   }
-  await assertAccountNotRehoming({
-    db: client,
-    account_id,
-    action: "purchase membership package",
-  });
-  await assertAccountWriteOnHomeBay({
-    db: client,
-    account_id,
-    action: "purchase membership package",
-  });
+  if (!isBillingAuthorityEnabled()) {
+    await assertAccountNotRehoming({
+      db: client,
+      account_id,
+      action: "purchase membership package",
+    });
+    await assertAccountWriteOnHomeBay({
+      db: client,
+      account_id,
+      action: "purchase membership package",
+    });
+  }
   const existingPurchase = await getExistingMembershipPackagePurchase({
     account_id,
     invoice_id,

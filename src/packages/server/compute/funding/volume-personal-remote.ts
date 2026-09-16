@@ -7,6 +7,7 @@ import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { fundingId } from "@cocalc/util/compute-funding";
@@ -333,9 +334,9 @@ async function reconcileRemotePersonalVolume(row: Row): Promise<void> {
 /** Payer-home durable retry; financial rehome carries this pending command. */
 export async function processRemotePersonalVolumeHandoffs(): Promise<void> {
   const { rows } = await getPool().query<Row>(
-    `SELECT c.* FROM compute_vm_personal_consents c JOIN accounts a ON a.account_id=c.payer_account_id
-      WHERE c.id>$1 AND COALESCE(a.home_bay_id,$2)=$2 AND c.handoff#>>'{remote_volume,state}'='pending' ORDER BY c.id LIMIT 20`,
-    [cursor, getConfiguredBayId()],
+    `SELECT c.* FROM compute_vm_personal_consents c JOIN ${billingAccountsTable()} a ON a.account_id=c.payer_account_id
+      WHERE c.id>$1 AND c.handoff#>>'{remote_volume,state}'='pending' ORDER BY c.id LIMIT 20`,
+    [cursor],
   );
   cursor =
     rows.length === 20

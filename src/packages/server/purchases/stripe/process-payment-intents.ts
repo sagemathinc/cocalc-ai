@@ -2,10 +2,10 @@ import getConn from "@cocalc/server/stripe/connection";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import {
   getStripeCustomerId,
+  setStripeCustomerId,
   getAccountIdFromStripeCustomerId,
   currentStripeSite,
 } from "./util";
-import { setStripeCustomerId } from "@cocalc/database/postgres/stripe";
 import getLogger from "@cocalc/backend/logger";
 import createCredit from "@cocalc/server/purchases/create-credit";
 import {
@@ -58,7 +58,7 @@ import {
   verifyDirectStudentCourseProduct,
   verifyDirectStudentCourseProducts,
 } from "@cocalc/server/purchases/direct-student-course-product";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "@cocalc/server/purchases/billing-account";
 import {
   processTeamLicenseRenewal,
   processTeamLicenseRenewalFailure,
@@ -141,7 +141,10 @@ async function assertPaymentCustomerCanBeUsedForAccount({
         paymentIntentCustomerId,
       },
     );
-    await setStripeCustomerId(account_id, paymentIntentCustomerId);
+    await setStripeCustomerId({
+      account_id,
+      id: paymentIntentCustomerId,
+    });
     return paymentIntentCustomerId;
   }
   throw Error("payment intent customer does not match payer");
@@ -558,7 +561,7 @@ export async function belongsToCurrentStripeSite({
   // intents as local if their account_id exists here.
   const account_id = `${paymentIntent.metadata?.account_id ?? ""}`.trim();
   if (account_id) {
-    return await isValidAccount(account_id);
+    return await isValidBillingAccount(account_id);
   }
   return false;
 }

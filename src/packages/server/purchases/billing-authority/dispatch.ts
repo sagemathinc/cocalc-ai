@@ -165,6 +165,34 @@ async function dispatchAccountLocal(
   input: Record<string, unknown>,
 ): Promise<unknown> {
   switch (operation) {
+    case "compute-funding-check":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-reservations")
+      ).checkComputeVmFundingLocal(input as any);
+    case "compute-funding-fallback":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-fallback-reason")
+      ).getComputeVmFallbackDecisionLocal(input as any);
+    case "compute-funding-lookup":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-lookup")
+      ).lookupComputeVmFundingLocal(input as any);
+    case "compute-funding-reserve":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-reservations")
+      ).reserveComputeVmFundingLocal(input as any);
+    case "compute-funding-settle":
+      return await (
+        await import("@cocalc/server/compute/funding/vm-settlement")
+      ).settleComputeVmFundingLocal(input as any);
+    case "update-billing-account-home":
+      await (
+        await import("@cocalc/server/purchases/billing-account")
+      ).updateBillingAccountLifecycle({
+        account_id: `${input.account_id ?? ""}`,
+        home_bay_id: `${input.home_bay_id ?? ""}`,
+      });
+      return null;
     case "admin-create-membership-package-purchase":
       return await adminCreateMembershipPackagePurchase(input as any);
     case "apply-funding-approval":

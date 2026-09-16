@@ -527,6 +527,8 @@ Team license renewal failed and was marked past_due.
 export async function getDueTeamLicensesForRenewal(): Promise<
   { id: string; owner_account_id: string }[]
 > {
+  const { billingAccountsTable } = await import("./billing-account");
+  const accountTable = billingAccountsTable();
   const { rows } = await getPool().query<{
     id: string;
     owner_account_id: string;
@@ -540,7 +542,7 @@ export async function getDueTeamLicensesForRenewal(): Promise<
               OR last_renewal_attempt_at < NOW() - INTERVAL '15 minutes')
          AND COALESCE(payment#>>'{status}', '') != 'active'
          AND NOT EXISTS (
-           SELECT 1 FROM accounts AS account
+           SELECT 1 FROM ${accountTable} AS account
             WHERE account.account_id=team_licenses.owner_account_id
               AND (account.banned IS TRUE OR account.deleted IS TRUE)
          )
