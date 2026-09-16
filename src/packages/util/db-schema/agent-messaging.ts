@@ -66,6 +66,43 @@ Table({
 });
 
 Table({
+  name: "agent_rpc_admission_state",
+  rules: {
+    primary_key: "token_id",
+    pg_constraints: [
+      {
+        name: "agent_rpc_admission_state_kind_check",
+        type: "check",
+        expression: "kind IN ('permit','preparation')",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_rpc_admission_state_expiry",
+        query: "(expires_at)",
+      },
+      {
+        name: "agent_rpc_admission_state_project",
+        query: "(project_id,kind,expires_at)",
+      },
+    ],
+  },
+  fields: {
+    token_id: required("uuid", "Opaque short-lived permit or reservation ID."),
+    kind: required("string", "Permit or single-use attachment preparation."),
+    binding_hash: required(
+      "string",
+      "SHA-256 of the canonical request binding; no message body is retained.",
+    ),
+    host_id: required("uuid", "Exact destination host binding."),
+    project_id: required("uuid", "Exact destination project binding."),
+    account_id: required("uuid", "Execution principal binding."),
+    created_at: created("Capability creation time."),
+    expires_at: { ...timestamp("Short capability expiry."), not_null: true },
+  },
+});
+
+Table({
   name: "agent_message_project_fences",
   rules: {
     primary_key: "project_id",

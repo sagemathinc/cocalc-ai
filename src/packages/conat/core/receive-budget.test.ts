@@ -1,4 +1,4 @@
-import { ReceiveBudget } from "./receive-budget";
+import { AggregateReceiveBudget, ReceiveBudget } from "./receive-budget";
 
 const limits = {
   maxMessageBytes: 10,
@@ -59,3 +59,24 @@ test.each([NaN, Infinity, -1, 0, 0.5])(
     expect(() => new ReceiveBudget({ ...limits, maxMessageBytes })).toThrow();
   },
 );
+
+test("separate subscriptions share one aggregate raw-fragment budget", () => {
+  const aggregate = new AggregateReceiveBudget(15);
+  const first = new ReceiveBudget(limits, aggregate);
+  const second = new ReceiveBudget(limits, aggregate);
+  expect(first.add("a", 10)).toBe(true);
+  expect(second.add("b", 6)).toBe(false);
+  expect(second.add("b", 5)).toBe(true);
+  first.clear();
+  expect(second.add("c", 10)).toBe(true);
+});
+
+test("closing a receive budget releases its aggregate allowance", () => {
+  const aggregate = new AggregateReceiveBudget(10);
+  const first = new ReceiveBudget(limits, aggregate);
+  const second = new ReceiveBudget(limits, aggregate);
+  expect(first.add("a", 10)).toBe(true);
+  expect(second.add("b", 1)).toBe(false);
+  first.clear();
+  expect(second.add("b", 10)).toBe(true);
+});

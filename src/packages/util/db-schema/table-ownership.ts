@@ -270,6 +270,69 @@ export const TABLE_OWNERSHIP = {
       "Account-owned statement and balance snapshot state derived from purchases and tied to payment reconciliation. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable commercial statement state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
   }),
 
+  ...entries(
+    [
+      "agent_personal_controls",
+      "agent_personal_names",
+      "agent_personal_grants",
+      "agent_personal_requests",
+      "agent_external_identities",
+      "agent_external_installations",
+    ],
+    {
+      ownership: "account-home",
+      authority: "account_id",
+      portability: "unsupported",
+      secondary_reference_fields: {
+        project_id:
+          "Named-agent locator for an account-home record, not project placement authority.",
+      },
+      notes:
+        "Human-scoped agent names, approvals, controls, and external installations are authoritative only on the account home bay. Account rehome must remain fenced until these rows have explicit migration support.",
+    },
+  ),
+
+  ...entries(["agent_identities", "agent_message_project_fences"], {
+    ownership: "project-owning",
+    authority: "project_id",
+    portability: "unsupported",
+    secondary_reference_fields: {
+      host_id: "Current project-host binding, not placement authority.",
+    },
+    notes:
+      "Native agent identity and restart-fence state belongs to the project owning bay. Project moves require explicit migration or reconstruction rules before these tables can be portable.",
+  }),
+
+  ...entries(
+    [
+      "agent_identity_runs",
+      "agent_rpc_links",
+      "agent_message_grants",
+      "agent_message_inbox",
+    ],
+    {
+      ownership: "row-scoped",
+      authority: "mixed",
+      portability: "unsupported",
+      notes:
+        "Agent run, permission, and delivery rows derive authority from referenced source and target identities. They must use agent routing helpers; generic account/project rehome must not move or delete them without table-specific reconciliation.",
+    },
+  ),
+
+  ...entries(["agent_rpc_admission_state"], {
+    ownership: "ephemeral",
+    authority: "local",
+    portability: "rebuildable",
+    secondary_reference_fields: {
+      account_id: "Execution-principal binding, not account-home state.",
+      project_id: "Destination binding, not durable project state.",
+      host_id: "Destination-host binding, not host-owned state.",
+    },
+    notes:
+      "Short-lived bay-local RPC permits and single-use attachment preparations shared by load-balanced hubs. Losing rows safely rejects the attempt; rows never authorize retries.",
+    rebuild: "No rebuild: callers must start a new explicit send attempt.",
+  }),
+
   ...entries(["external_credentials"], {
     ownership: "row-scoped",
     authority: "mixed",

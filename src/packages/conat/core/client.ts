@@ -2825,6 +2825,7 @@ export class SubscriptionEmitter extends EventEmitter {
     }
     this.dropOldSleepResolve?.();
     this.dropOldSleepResolve = undefined;
+    this.receiveBudget?.clear();
     this.emit("closed");
     this.client.conn.removeListener(this.subject, this.handle);
     // @ts-ignore

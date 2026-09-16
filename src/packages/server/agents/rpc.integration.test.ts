@@ -178,6 +178,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
           "agent_identities",
           "agent_identity_runs",
           "agent_rpc_links",
+          "agent_rpc_admission_state",
           "agent_personal_names",
           "agent_personal_grants",
           "agent_personal_controls",

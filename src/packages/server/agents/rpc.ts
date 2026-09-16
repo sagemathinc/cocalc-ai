@@ -53,6 +53,13 @@ import {
   personalMessagingEnabled,
   withPersonalHome,
 } from "./personal";
+import {
+  claimAgentRpcAdmissionState,
+  createAgentRpcAdmissionState,
+  deleteAgentRpcAdmissionState,
+  getAgentRpcAdmissionState,
+  hashAgentRpcAdmissionBinding,
+} from "./admission-state";
 
 const logger = getLogger("agents:rpc");
 
@@ -145,14 +152,6 @@ async function sourceRun(source: AgentEndpoint, run_id: string) {
   return run;
 }
 
-const permits = new Map<
-  string,
-  { envelope: string; expires: number; host_id: string }
->();
-const preparations = new Map<
-  string,
-  { key: string; host_id: string; expires: number }
->();
 function preparationKey(e: AgentRpcEnvelope) {
   return agentRpcEnvelopeKey({
     ...e,
@@ -160,12 +159,6 @@ function preparationKey(e: AgentRpcEnvelope) {
     deadline: 0,
     attachment_reservation: undefined,
   });
-}
-function prunePermits() {
-  for (const [key, value] of permits)
-    if (value.expires <= Date.now()) permits.delete(key);
-  for (const [key, value] of preparations)
-    if (value.expires <= Date.now()) preparations.delete(key);
 }
 async function hostFor(endpoint: AgentEndpoint) {
   const project = (
@@ -255,6 +248,7 @@ async function submitAgentRpcOperation(
   let submissionStarted = false;
   let observation: { account_id: string; link_id: string } | undefined;
   let accepted = false;
+  let permitId: string | undefined;
   try {
     const proof = await submissionProof(
       opts.source,
@@ -292,8 +286,6 @@ async function submitAgentRpcOperation(
         account_id: proof.link.approved_by,
         link_id: proof.link.link_id,
       };
-    prunePermits();
-    if (permits.size >= 1000) throw new Error("too many in-flight submissions");
     const envelope: AgentRpcEnvelope = {
       ...opts.request,
       source: opts.source,
@@ -308,29 +300,37 @@ async function submitAgentRpcOperation(
       deadline: Date.now() + 30_000,
     };
     if (phase !== "prepare" && envelope.snapshot_manifest) {
-      const prepared = preparations.get(envelope.attachment_reservation!);
-      if (
-        !prepared ||
-        prepared.key !== preparationKey(envelope) ||
-        prepared.host_id !== host.host_id
-      )
+      const prepared = await claimAgentRpcAdmissionState({
+        token_id: envelope.attachment_reservation!,
+        kind: "preparation",
+        binding_hash: hashAgentRpcAdmissionBinding(preparationKey(envelope)),
+        host_id: host.host_id,
+        project_id: envelope.target.project_id,
+        account_id: envelope.account_id,
+      });
+      if (!prepared)
         return rpcOutcome(opts.request, "rejected", {
           code: "attachment_preparation_unavailable",
           reason:
             "Attachment preparation expired, changed, or was already used; no message was submitted",
           chat_effect: "none",
         });
-      envelope.deadline = Math.min(envelope.deadline, prepared.expires);
-      preparations.delete(envelope.attachment_reservation!);
+      envelope.deadline = Math.min(
+        envelope.deadline,
+        prepared.expires_at.getTime(),
+      );
     }
-    permits.set(envelope.permit_id, {
-      envelope: agentRpcEnvelopeKey(envelope),
-      expires: envelope.deadline,
+    permitId = envelope.permit_id;
+    await createAgentRpcAdmissionState({
+      token_id: envelope.permit_id,
+      kind: "permit",
+      binding_hash: hashAgentRpcAdmissionBinding(agentRpcEnvelopeKey(envelope)),
       host_id: host.host_id,
+      project_id: envelope.target.project_id,
+      account_id: envelope.account_id,
+      expires_at: new Date(envelope.deadline),
     });
     if (phase === "prepare") {
-      if (preparations.size >= 1000)
-        throw new Error("attachment preparation capacity full");
       const ready = await host.api.prepareAgentRpcAttachments(envelope);
       validateAgentRpcPreparation(ready, opts.request);
       if (ready.outcome === "prepared") {
@@ -339,10 +339,14 @@ async function submitAgentRpcOperation(
           ready.expires_at <= Date.now()
         )
           throw new Error("attachment readiness expired or invalid");
-        preparations.set(ready.reservation_id, {
-          key: preparationKey(envelope),
+        await createAgentRpcAdmissionState({
+          token_id: ready.reservation_id,
+          kind: "preparation",
+          binding_hash: hashAgentRpcAdmissionBinding(preparationKey(envelope)),
           host_id: host.host_id,
-          expires: ready.expires_at,
+          project_id: envelope.target.project_id,
+          account_id: envelope.account_id,
+          expires_at: new Date(ready.expires_at),
         });
       }
       return ready;
@@ -384,6 +388,16 @@ async function submitAgentRpcOperation(
       },
     );
   } finally {
+    if (permitId)
+      await deleteAgentRpcAdmissionState({
+        token_id: permitId,
+        kind: "permit",
+      }).catch((error) =>
+        logger.warn("failed to release agent RPC admission permit", {
+          permit_id: permitId,
+          error: `${error}`,
+        }),
+      );
     // Observations are not receipts. Unavailable telemetry cannot change an
     // outcome or cause a send retry, and must not delay the host response.
     if (submissionStarted && observation)
@@ -680,12 +694,17 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
     process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1"
   )
     throw new Error("binary agent attachments disabled on recipient bay");
-  prunePermits();
-  const permit = permits.get(e.permit_id);
+  const permit = await getAgentRpcAdmissionState({
+    token_id: e.permit_id,
+    kind: "permit",
+  });
   if (
     !permit ||
-    permit.envelope !== agentRpcEnvelopeKey(e) ||
+    permit.binding_hash !==
+      hashAgentRpcAdmissionBinding(agentRpcEnvelopeKey(e)) ||
     permit.host_id !== opts.host_id ||
+    permit.project_id !== e.target.project_id ||
+    permit.account_id !== e.account_id ||
     e.account_id !== opts.account_id
   )
     throw new Error("RPC admission permit unavailable or mismatched");
