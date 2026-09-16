@@ -1342,6 +1342,46 @@ function registerOrder(crm: Command, deps: CrmCommandDeps): void {
         ),
     ),
   );
+  addMutationOptions(
+    order
+      .command("link <opportunity> <order>")
+      .description(
+        "preview or link an existing commercial order to an opportunity",
+      ),
+  ).action(
+    async (opportunity: string, orderId: string, opts: any, cmd: Command) =>
+      deps.withContext(
+        cmd,
+        "admin crm order link",
+        async (ctx) =>
+          await ctx.hub.adminCrm.linkOpportunityCommercialOrder(
+            mutationRequest("opportunity.link-order", opts, {
+              opportunity,
+              order: orderId,
+            }),
+          ),
+      ),
+  );
+  addMutationOptions(
+    order
+      .command("unlink <opportunity> <order>")
+      .description(
+        "preview or remove an opportunity's link to a commercial order",
+      ),
+  ).action(
+    async (opportunity: string, orderId: string, opts: any, cmd: Command) =>
+      deps.withContext(
+        cmd,
+        "admin crm order unlink",
+        async (ctx) =>
+          await ctx.hub.adminCrm.unlinkOpportunityCommercialOrder(
+            mutationRequest("opportunity.unlink-order", opts, {
+              opportunity,
+              order: orderId,
+            }),
+          ),
+      ),
+  );
 }
 
 function registerTopLevel(crm: Command, deps: CrmCommandDeps): void {

@@ -13,6 +13,8 @@ import {
   COMMERCIAL_COLLECTION_MODES,
   COMMERCIAL_NEXT_ACTIONS,
 } from "@cocalc/util/commercial-orders";
+import type { CommercialOrder } from "@cocalc/util/commercial-orders";
+import { toDecimal } from "@cocalc/util/money";
 import type {
   CrmActivityCreateRequest,
   CrmBackfillRequest,
@@ -29,6 +31,7 @@ import type {
   CrmOpportunityCreateRequest,
   CrmOpportunityListRequest,
   CrmOpportunityListResponse,
+  CrmOpportunityOrderLinkRequest,
   CrmOpportunityTransitionRequest,
   CrmOpportunityUpdateRequest,
   CrmOrderFromOpportunityRequest,
@@ -3813,6 +3816,17 @@ export async function createOrderFromOpportunity(
         items: proposed.items,
         contacts: proposed.contacts,
       });
+      // The new order is already committed on its own connection, so an
+      // order link could otherwise claim it before this update lands.
+      await lockOrderLinks(client, order.id);
+      // A retried create can return an order that an earlier, rolled-back
+      // attempt committed and that has since been linked elsewhere.
+      if (
+        await orderLinkedToAnotherOpportunity(client, order.id, opportunityId)
+      )
+        throw Error(
+          "commercial order is already linked to another opportunity",
+        );
       await client.query(
         "UPDATE crm_opportunities SET stage='won',commercial_order_id=$1,updated_by_account_id=$2,updated_at=NOW(),version=version+1 WHERE id=$3",
         [order.id, opts.account_id, opportunityId],
@@ -3830,6 +3844,306 @@ export async function createOrderFromOpportunity(
         occurred_at: new Date().toISOString(),
       });
       return order;
+    },
+  });
+}
+
+type OrderLinkFields = Pick<
+  CommercialOrder,
+  | "id"
+  | "order_number"
+  | "crm_organization_id"
+  | "workflow_state"
+  | "cancelled_at"
+  | "agreed_total"
+  | "currency"
+>;
+
+// Decide whether an existing commercial order may be linked to an opportunity.
+// Blocking problems are ownership and identity questions that no reviewer
+// should be able to override; warnings are discrepancies a reviewer can
+// legitimately accept, so they are surfaced in the preview and recorded with
+// the committed link.
+export function opportunityOrderLinkProblems(
+  opportunity: Pick<
+    CrmOpportunity,
+    | "organization_id"
+    | "commercial_order_id"
+    | "stage"
+    | "expected_value"
+    | "currency"
+  >,
+  order: Omit<OrderLinkFields, "id" | "order_number">,
+  linkedElsewhere: boolean,
+): { blocking: string[]; warnings: string[] } {
+  const blocking: string[] = [];
+  const warnings: string[] = [];
+  if (opportunity.commercial_order_id) {
+    blocking.push(
+      "opportunity already has a commercial order; unlink it before linking another",
+    );
+  }
+  if (!order.crm_organization_id) {
+    blocking.push(
+      "commercial order is not linked to a CRM organization; link the order to its organization first",
+    );
+  } else if (order.crm_organization_id !== opportunity.organization_id) {
+    blocking.push(
+      "commercial order belongs to a different organization than the opportunity",
+    );
+  }
+  if (linkedElsewhere) {
+    blocking.push("commercial order is already linked to another opportunity");
+  }
+  if (order.cancelled_at || order.workflow_state === "cancelled") {
+    blocking.push("a cancelled commercial order cannot be linked");
+  }
+  if (order.currency !== opportunity.currency) {
+    blocking.push(
+      `commercial order currency ${order.currency} does not match opportunity currency ${opportunity.currency}`,
+    );
+  }
+  if (opportunity.stage === "lost") {
+    blocking.push("a lost opportunity cannot be linked to a commercial order");
+  } else if (opportunity.stage !== "won") {
+    warnings.push(
+      `opportunity stage is ${opportunity.stage}; linking an order does not change the stage`,
+    );
+  }
+  if (
+    !toDecimal(order.agreed_total).equals(toDecimal(opportunity.expected_value))
+  ) {
+    warnings.push(
+      `commercial order total ${order.agreed_total} differs from the opportunity expected value ${opportunity.expected_value}`,
+    );
+  }
+  return { blocking, warnings };
+}
+
+// Every writer of crm_opportunities.commercial_order_id takes this lock on the
+// order first.  The schema has no unique index on that column, so without it
+// two transactions linking the same order to different opportunities would
+// each lock only their own opportunity row, both see the order as free, and
+// both commit.
+async function lockOrderLinks(db: Queryable, orderId: string): Promise<void> {
+  await db.query("SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))", [
+    "crm-opportunity-order-link",
+    orderId,
+  ]);
+}
+
+// Resolve an order by UUID or order number and read only the fields the link
+// decision uses.  Inside a transaction the row is read FOR SHARE, which waits
+// for, and then briefly blocks, a concurrent update that could cancel the order
+// or move it to another organization before the link commits.  Plain reads of
+// the order are unaffected.
+async function readOrderLinkFields(
+  db: Queryable,
+  selector: string,
+  forShare = false,
+): Promise<OrderLinkFields> {
+  const { rows } = await db.query(
+    `SELECT id,order_number,crm_organization_id,workflow_state,cancelled_at,agreed_total,currency
+       FROM commercial_orders
+      WHERE id::text=$1 OR upper(order_number)=upper($1)
+      ${forShare ? "FOR SHARE" : ""}`,
+    [selector],
+  );
+  if (!rows[0])
+    throw Object.assign(Error(`commercial order '${selector}' not found`), {
+      code: 404,
+    });
+  return { ...rows[0], agreed_total: `${rows[0].agreed_total}` };
+}
+
+async function orderLinkedToAnotherOpportunity(
+  db: Queryable,
+  orderId: string,
+  opportunityId: string,
+): Promise<boolean> {
+  const { rows } = await db.query<{ id: string }>(
+    "SELECT id FROM crm_opportunities WHERE commercial_order_id=$1 AND id<>$2 LIMIT 1",
+    [orderId, opportunityId],
+  );
+  return rows.length > 0;
+}
+
+// Link an existing commercial order to an opportunity.
+//
+// createOrderFromOpportunity is the forward path: it mints a new order for an
+// opportunity that has reached procurement.  It cannot help once the order
+// already exists -- an order raised directly in receivables, or a deal recorded
+// as won before its order was captured -- because it refuses any opportunity
+// that is not in procurement and always creates a second order.  This is the
+// repair path for those records.  It deliberately does not move the
+// opportunity's stage: linkage and pipeline progression are separate reviewed
+// decisions, and `opportunities transition` already owns the second.
+export async function linkOpportunityCommercialOrder(
+  opts: CrmOpportunityOrderLinkRequest,
+): Promise<CrmMutationResult<CrmOpportunity>> {
+  await prepareRead(opts.reason);
+  const selector = bounded(opts.order, "order", 200);
+  const opportunityId = await resolveOpportunityId(getPool(), opts.opportunity);
+  const opportunity = await loadOpportunity(getPool(), opportunityId);
+  const order = await readOrderLinkFields(getPool(), selector);
+  const checks = opportunityOrderLinkProblems(
+    opportunity,
+    order,
+    await orderLinkedToAnotherOpportunity(getPool(), order.id, opportunityId),
+  );
+  // A committed retry whose response was lost must reach mutate's replay
+  // check instead of being refused because its own link now exists.  A retry
+  // with a different idempotency key is still refused inside the transaction.
+  const retryOfThisLink =
+    opts.commit === true && opportunity.commercial_order_id === order.id;
+  if (checks.blocking.length && !retryOfThisLink)
+    throw Error(checks.blocking.join("; "));
+  return await mutate({
+    action: "opportunity.link-order",
+    actor: requireActor(opts.account_id),
+    reason: opts.reason,
+    commit: opts.commit,
+    expectedVersion: opts.expected_version,
+    idempotencyKey: opts.idempotency_key,
+    organizationId: opportunity.organization_id,
+    proposed: {
+      opportunity_id: opportunityId,
+      commercial_order_id: order.id,
+      order_number: order.order_number,
+      agreed_total: order.agreed_total,
+      expected_value: opportunity.expected_value,
+      opportunity_stage: opportunity.stage,
+      resulting_opportunity_stage: opportunity.stage,
+      // Link and unlink are inverses, so content alone would make re-linking
+      // after an unlink replay the first link and write nothing.  Binding the
+      // payload to the version the preview used keeps a genuine retry, which
+      // resends that version, replayable.
+      base_version: opts.commit
+        ? (opts.expected_version ?? null)
+        : opportunity.version,
+    },
+    warnings: checks.warnings,
+    resultType: "opportunity",
+    currentVersion: async (db) =>
+      (await loadOpportunity(db, opportunityId, db !== getPool())).version,
+    apply: async (client, eventId) => {
+      await lockOrderLinks(client, order.id);
+      // Re-read both sides under the locks: the order could have been
+      // cancelled, moved to another organization, or linked elsewhere since
+      // the preview.
+      const current = await loadOpportunity(client, opportunityId, true);
+      const currentOrder = await readOrderLinkFields(client, order.id, true);
+      const committedChecks = opportunityOrderLinkProblems(
+        current,
+        currentOrder,
+        await orderLinkedToAnotherOpportunity(client, order.id, opportunityId),
+      );
+      if (committedChecks.blocking.length)
+        throw Error(committedChecks.blocking.join("; "));
+      const { rows } = await client.query(
+        `UPDATE crm_opportunities
+            SET commercial_order_id=$1,updated_by_account_id=$2,updated_at=NOW(),version=version+1
+          WHERE id=$3 AND commercial_order_id IS NULL RETURNING *`,
+        [order.id, opts.account_id, opportunityId],
+      );
+      if (!rows[0]) throw Error("opportunity already has a commercial order");
+      await insertActivity(client, {
+        organization_id: current.organization_id,
+        opportunity_id: opportunityId,
+        commercial_order_id: order.id,
+        kind: "commercial_order",
+        source: "crm",
+        source_id: eventId,
+        summary: `Linked commercial order ${currentOrder.order_number}`,
+        details: opts.reason,
+        actor_account_id: opts.account_id,
+        occurred_at: new Date().toISOString(),
+        // Warnings are recomputed under the locks at commit, so this can
+        // include a discrepancy that arose after the preview was reviewed.
+        metadata: {
+          agreed_total: currentOrder.agreed_total,
+          expected_value: current.expected_value,
+          warnings_at_commit: committedChecks.warnings,
+        },
+      });
+      return opportunityRow(rows[0]);
+    },
+  });
+}
+
+function unlinkOrderWarnings(stage: CrmOpportunity["stage"]): string[] {
+  return stage === "won"
+    ? [
+        "the opportunity stays won and will be reported as a won opportunity without a commercial order until another order is linked",
+      ]
+    : [];
+}
+
+// Undo a link made by mistake.  The order must be named explicitly so a stale
+// command cannot remove a different link that replaced it.  The stage is left
+// alone for the same reason linking leaves it alone.
+export async function unlinkOpportunityCommercialOrder(
+  opts: CrmOpportunityOrderLinkRequest,
+): Promise<CrmMutationResult<CrmOpportunity>> {
+  await prepareRead(opts.reason);
+  const selector = bounded(opts.order, "order", 200);
+  const opportunityId = await resolveOpportunityId(getPool(), opts.opportunity);
+  const opportunity = await loadOpportunity(getPool(), opportunityId);
+  const order = await readOrderLinkFields(getPool(), selector);
+  const retryOfThisUnlink =
+    opts.commit === true && opportunity.commercial_order_id == null;
+  if (opportunity.commercial_order_id !== order.id && !retryOfThisUnlink)
+    throw Error("opportunity is not linked to that commercial order");
+  return await mutate({
+    action: "opportunity.unlink-order",
+    actor: requireActor(opts.account_id),
+    reason: opts.reason,
+    commit: opts.commit,
+    expectedVersion: opts.expected_version,
+    idempotencyKey: opts.idempotency_key,
+    organizationId: opportunity.organization_id,
+    proposed: {
+      opportunity_id: opportunityId,
+      commercial_order_id: null,
+      unlinked_commercial_order_id: order.id,
+      order_number: order.order_number,
+      opportunity_stage: opportunity.stage,
+      resulting_opportunity_stage: opportunity.stage,
+      base_version: opts.commit
+        ? (opts.expected_version ?? null)
+        : opportunity.version,
+    },
+    warnings: unlinkOrderWarnings(opportunity.stage),
+    resultType: "opportunity",
+    currentVersion: async (db) =>
+      (await loadOpportunity(db, opportunityId, db !== getPool())).version,
+    apply: async (client, eventId) => {
+      await lockOrderLinks(client, order.id);
+      const current = await loadOpportunity(client, opportunityId, true);
+      if (current.commercial_order_id !== order.id)
+        throw Error("opportunity is not linked to that commercial order");
+      const { rows } = await client.query(
+        `UPDATE crm_opportunities
+            SET commercial_order_id=NULL,updated_by_account_id=$1,updated_at=NOW(),version=version+1
+          WHERE id=$2 AND commercial_order_id=$3 RETURNING *`,
+        [opts.account_id, opportunityId, order.id],
+      );
+      if (!rows[0])
+        throw Error("opportunity is not linked to that commercial order");
+      await insertActivity(client, {
+        organization_id: current.organization_id,
+        opportunity_id: opportunityId,
+        commercial_order_id: order.id,
+        kind: "commercial_order",
+        source: "crm",
+        source_id: eventId,
+        summary: `Unlinked commercial order ${order.order_number}`,
+        details: opts.reason,
+        actor_account_id: opts.account_id,
+        occurred_at: new Date().toISOString(),
+        metadata: { warnings_at_commit: unlinkOrderWarnings(current.stage) },
+      });
+      return opportunityRow(rows[0]);
     },
   });
 }
@@ -4453,6 +4767,7 @@ export const __test__ = {
   normalizeDomain,
   normalizeEmail,
   normalizeWebsite,
+  opportunityOrderLinkProblems,
   OPPORTUNITY_TRANSITIONS,
   payloadHash,
   truncateRows,

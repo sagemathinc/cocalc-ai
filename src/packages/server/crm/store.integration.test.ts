@@ -69,6 +69,7 @@ describePglite("integrated CRM store", () => {
       customer_account_id UUID,
       zendesk_ticket_ids INTEGER[] DEFAULT '{}',
       stripe_customer_id TEXT,
+      cancelled_at TIMESTAMPTZ,
       updated_at TIMESTAMPTZ DEFAULT NOW()
     )`);
     await pool.query(`CREATE TABLE commercial_order_contacts (
@@ -1175,6 +1176,364 @@ describePglite("integrated CRM store", () => {
           source === "commercial_order" && summary === "Invoice Sent",
       ),
     ).toBe(true);
+  });
+
+  async function deleteOrderLinkFixtures(organizationIds: string[]) {
+    for (const statement of [
+      "DELETE FROM crm_activities WHERE organization_id=ANY($1::uuid[])",
+      "DELETE FROM crm_mutation_events WHERE organization_id=ANY($1::uuid[])",
+      "DELETE FROM crm_opportunities WHERE organization_id=ANY($1::uuid[])",
+      "DELETE FROM commercial_orders WHERE crm_organization_id=ANY($1::uuid[])",
+      "DELETE FROM crm_organizations WHERE id=ANY($1::uuid[])",
+    ]) {
+      await pool.query(statement, [organizationIds]);
+    }
+  }
+
+  it("links an existing order under review and unlinks a mistaken link", async () => {
+    async function commit<T>(
+      run: (request: any) => Promise<CrmMutationResult<T>>,
+      request: Record<string, unknown>,
+    ): Promise<T> {
+      const preview = await run(request);
+      if (!preview.preview) throw Error("expected preview");
+      return committed(
+        await run({
+          ...request,
+          commit: true,
+          expected_version: preview.expected_version,
+          idempotency_key: preview.idempotency_key,
+        }),
+      );
+    }
+    const organizationIds: string[] = [];
+    async function organization(label: string) {
+      const created = await commit(store.createOrganization, {
+        account_id: actor,
+        display_name: `${label} ${randomUUID()}`,
+        organization_type: "university",
+        lifecycle_stage: "customer",
+        reason: "reviewed order linkage fixture",
+      });
+      organizationIds.push(created.id);
+      return created;
+    }
+    async function opportunity(organizationId: string, stage: string) {
+      // Unique names: identical payloads would replay one committed create.
+      const created = await commit(store.createOpportunity, {
+        account_id: actor,
+        organization: organizationId,
+        name: `Order linkage ${stage} ${randomUUID()}`,
+        kind: "new_site_license",
+        owner_account_id: actor,
+        expected_value: "900",
+        expected_close_date: "2026-08-20",
+        reason: "reviewed order linkage fixture",
+      });
+      await pool.query("UPDATE crm_opportunities SET stage=$1 WHERE id=$2", [
+        stage,
+        created.id,
+      ]);
+      return created;
+    }
+    async function order(
+      organizationId: string,
+      { cancelled = false }: { cancelled?: boolean } = {},
+    ) {
+      const id = randomUUID();
+      const orderNumber = `AR-LINK-${id.slice(0, 8).toUpperCase()}`;
+      await pool.query(
+        `INSERT INTO commercial_orders
+           (id,order_number,organization_name,workflow_state,collection_state,fulfillment_state,currency,agreed_total,crm_organization_id,cancelled_at)
+         VALUES($1,$2,'Order linkage fixture',$3,'paid','provisioned','usd',900,$4,$5)`,
+        [
+          id,
+          orderNumber,
+          cancelled ? "cancelled" : "complete",
+          organizationId,
+          cancelled ? new Date() : null,
+        ],
+      );
+      return { id, orderNumber };
+    }
+    const linkedOrderOf = async (opportunityId: string) =>
+      (
+        await pool.query(
+          "SELECT commercial_order_id FROM crm_opportunities WHERE id=$1",
+          [opportunityId],
+        )
+      ).rows[0].commercial_order_id;
+
+    try {
+      const customer = await organization("Linked University");
+      const otherCustomer = await organization("Other University");
+      const won = await opportunity(customer.id, "won");
+      const otherWon = await opportunity(customer.id, "won");
+      const lost = await opportunity(customer.id, "lost");
+      const paid = await order(customer.id);
+
+      // A preview writes nothing, and the order resolves by number in any case.
+      const request = {
+        account_id: actor,
+        opportunity: won.id,
+        order: paid.orderNumber.toLowerCase(),
+        reason: "link the order raised directly in receivables",
+      };
+      const preview = await store.linkOpportunityCommercialOrder(request);
+      if (!preview.preview) throw Error("expected preview");
+      expect(preview.proposed).toMatchObject({ commercial_order_id: paid.id });
+      expect(preview.warnings).toEqual([]);
+      expect(await linkedOrderOf(won.id)).toBeNull();
+
+      const commitRequest = {
+        ...request,
+        commit: true,
+        expected_version: preview.expected_version,
+        idempotency_key: preview.idempotency_key,
+      };
+      const linked = committed(
+        await store.linkOpportunityCommercialOrder(commitRequest),
+      );
+      expect(linked.commercial_order_id).toBe(paid.id);
+      expect(linked.stage).toBe("won");
+      const activity = await pool.query(
+        "SELECT summary,metadata FROM crm_activities WHERE opportunity_id=$1 AND commercial_order_id=$2",
+        [won.id, paid.id],
+      );
+      expect(activity.rows).toEqual([
+        {
+          summary: `Linked commercial order ${paid.orderNumber}`,
+          // This harness declares agreed_total as plain NUMERIC, so equal
+          // amounts come back in different formats; comparing them as
+          // decimals keeps that from producing a warning.
+          metadata: {
+            agreed_total: "900",
+            expected_value: "900.0000000000",
+            warnings_at_commit: [],
+          },
+        },
+      ]);
+
+      // Retrying a commit whose response was lost replays it rather than
+      // refusing because the link it made now exists.
+      const replay = await store.linkOpportunityCommercialOrder(commitRequest);
+      if (replay.preview) throw Error("expected replay");
+      expect(replay.replayed).toBe(true);
+
+      await expect(
+        store.linkOpportunityCommercialOrder({
+          ...request,
+          opportunity: otherWon.id,
+        }),
+      ).rejects.toThrow(
+        "commercial order is already linked to another opportunity",
+      );
+      await expect(
+        store.linkOpportunityCommercialOrder({
+          ...request,
+          opportunity: otherWon.id,
+          order: (await order(otherCustomer.id)).id,
+        }),
+      ).rejects.toThrow(
+        "commercial order belongs to a different organization than the opportunity",
+      );
+      await expect(
+        store.linkOpportunityCommercialOrder({
+          ...request,
+          opportunity: otherWon.id,
+          order: (await order(customer.id, { cancelled: true })).id,
+        }),
+      ).rejects.toThrow("a cancelled commercial order cannot be linked");
+      await expect(
+        store.linkOpportunityCommercialOrder({
+          ...request,
+          opportunity: lost.id,
+          order: (await order(customer.id)).id,
+        }),
+      ).rejects.toThrow(
+        "a lost opportunity cannot be linked to a commercial order",
+      );
+
+      // Unlinking names the order, so it cannot remove a different link.
+      const unlinkRequest = {
+        account_id: actor,
+        opportunity: won.id,
+        order: paid.id,
+        reason: "the order belongs to a different opportunity",
+      };
+      await expect(
+        store.unlinkOpportunityCommercialOrder({
+          ...unlinkRequest,
+          order: (await order(customer.id)).id,
+        }),
+      ).rejects.toThrow("opportunity is not linked to that commercial order");
+      const unlinkPreview =
+        await store.unlinkOpportunityCommercialOrder(unlinkRequest);
+      if (!unlinkPreview.preview) throw Error("expected preview");
+      expect(unlinkPreview.warnings).toEqual([
+        "the opportunity stays won and will be reported as a won opportunity without a commercial order until another order is linked",
+      ]);
+      const unlinkCommit = {
+        ...unlinkRequest,
+        commit: true,
+        expected_version: unlinkPreview.expected_version,
+        idempotency_key: unlinkPreview.idempotency_key,
+      };
+      const unlinked = committed(
+        await store.unlinkOpportunityCommercialOrder(unlinkCommit),
+      );
+      expect(unlinked.commercial_order_id).toBeNull();
+      expect(unlinked.stage).toBe("won");
+      const unlinkReplay =
+        await store.unlinkOpportunityCommercialOrder(unlinkCommit);
+      if (unlinkReplay.preview) throw Error("expected replay");
+      expect(unlinkReplay.replayed).toBe(true);
+
+      // The freed order can now be linked to the opportunity it belongs to.
+      await commit(store.linkOpportunityCommercialOrder, {
+        ...request,
+        opportunity: otherWon.id,
+      });
+      expect(await linkedOrderOf(otherWon.id)).toBe(paid.id);
+      expect(await linkedOrderOf(won.id)).toBeNull();
+    } finally {
+      await deleteOrderLinkFixtures(organizationIds);
+    }
+  });
+
+  it("re-links after an unlink and refuses changes made after the preview", async () => {
+    const organizationIds: string[] = [];
+    try {
+      const orgRequest = {
+        account_id: actor,
+        display_name: `Relink University ${randomUUID()}`,
+        organization_type: "university" as const,
+        lifecycle_stage: "customer" as const,
+        reason: "reviewed relink fixture",
+      };
+      const orgPreview = await store.createOrganization(orgRequest);
+      if (!orgPreview.preview) throw Error("expected preview");
+      const customer = committed(
+        await store.createOrganization({
+          ...orgRequest,
+          commit: true,
+          expected_version: orgPreview.expected_version,
+          idempotency_key: orgPreview.idempotency_key,
+        }),
+      );
+      organizationIds.push(customer.id);
+      const oppRequest = {
+        account_id: actor,
+        organization: customer.id,
+        name: `Relink ${randomUUID()}`,
+        kind: "new_site_license" as const,
+        owner_account_id: actor,
+        expected_value: "900",
+        expected_close_date: "2026-08-20",
+        reason: "reviewed relink fixture",
+      };
+      const oppPreview = await store.createOpportunity(oppRequest);
+      if (!oppPreview.preview) throw Error("expected preview");
+      const opportunity = committed(
+        await store.createOpportunity({
+          ...oppRequest,
+          commit: true,
+          expected_version: oppPreview.expected_version,
+          idempotency_key: oppPreview.idempotency_key,
+        }),
+      );
+      await pool.query("UPDATE crm_opportunities SET stage='won' WHERE id=$1", [
+        opportunity.id,
+      ]);
+      const orderId = randomUUID();
+      await pool.query(
+        `INSERT INTO commercial_orders
+           (id,order_number,organization_name,workflow_state,collection_state,fulfillment_state,currency,agreed_total,crm_organization_id)
+         VALUES($1,$2,'Relink fixture','complete','paid','provisioned','usd',900,$3)`,
+        [orderId, `AR-RELINK-${orderId.slice(0, 8)}`, customer.id],
+      );
+      const linkRequest = {
+        account_id: actor,
+        opportunity: opportunity.id,
+        order: orderId,
+        reason: "link the reviewed order",
+      };
+      const unlinkRequest = { ...linkRequest, reason: "unlink the order" };
+      const link = store.linkOpportunityCommercialOrder;
+      const unlink = store.unlinkOpportunityCommercialOrder;
+      async function previewThenCommit(
+        operation: typeof link,
+        request: typeof linkRequest,
+      ) {
+        const preview = await operation(request);
+        if (!preview.preview) throw Error("expected preview");
+        return committed(
+          await operation({
+            ...request,
+            commit: true,
+            expected_version: preview.expected_version,
+            idempotency_key: preview.idempotency_key,
+          }),
+        );
+      }
+      const current = async () =>
+        (
+          await pool.query(
+            "SELECT commercial_order_id,version FROM crm_opportunities WHERE id=$1",
+            [opportunity.id],
+          )
+        ).rows[0];
+
+      // Identical link, unlink, link: the second link is written, not
+      // replayed from the first.
+      await previewThenCommit(link, linkRequest);
+      await previewThenCommit(unlink, unlinkRequest);
+      expect((await current()).commercial_order_id).toBeNull();
+      await previewThenCommit(link, linkRequest);
+      expect((await current()).commercial_order_id).toBe(orderId);
+
+      // A commit under a new key for a link that already exists skips the
+      // retry pre-check and is refused inside the transaction.
+      await expect(
+        link({
+          ...linkRequest,
+          commit: true,
+          expected_version: (await current()).version,
+          idempotency_key: `new-key-${randomUUID()}`,
+        }),
+      ).rejects.toThrow("opportunity already has a commercial order");
+
+      await previewThenCommit(unlink, unlinkRequest);
+      // The same shortcut for unlink once the link is already gone.
+      await expect(
+        unlink({
+          ...unlinkRequest,
+          commit: true,
+          expected_version: (await current()).version,
+          idempotency_key: `new-key-${randomUUID()}`,
+        }),
+      ).rejects.toThrow("opportunity is not linked to that commercial order");
+
+      // The order is cancelled between the preview and the commit; the
+      // commit's own read of the order sees it.
+      const preview = await link(linkRequest);
+      if (!preview.preview) throw Error("expected preview");
+      await pool.query(
+        "UPDATE commercial_orders SET workflow_state='cancelled', cancelled_at=NOW() WHERE id=$1",
+        [orderId],
+      );
+      await expect(
+        link({
+          ...linkRequest,
+          commit: true,
+          expected_version: preview.expected_version,
+          idempotency_key: preview.idempotency_key,
+        }),
+      ).rejects.toThrow("a cancelled commercial order cannot be linked");
+      expect((await current()).commercial_order_id).toBeNull();
+    } finally {
+      await deleteOrderLinkFixtures(organizationIds);
+    }
   });
 
   it("merges overlapping domains and people without duplicate-key failures", async () => {

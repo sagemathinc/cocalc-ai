@@ -925,6 +925,60 @@ test("order handoff preserves canonical receivables actions", async () => {
   assert.equal(captured.payment_terms_days, 0);
 });
 
+test("order link previews attaching an existing order without --commit", async () => {
+  let captured: any;
+  const { program } = setup({
+    linkOpportunityCommercialOrder: async (opts: any) => {
+      captured = opts;
+      return { preview: true, expected_version: 3 };
+    },
+  });
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "crm",
+    "order",
+    "link",
+    "opportunity-id",
+    "order-id",
+    "--reason",
+    "attach the order raised directly in receivables",
+  ]);
+  assert.equal(captured.opportunity, "opportunity-id");
+  assert.equal(captured.order, "order-id");
+  assert.equal(
+    captured.reason,
+    "attach the order raised directly in receivables",
+  );
+  assert.equal(captured.commit, false);
+});
+
+test("order unlink previews removing a link without --commit", async () => {
+  let captured: any;
+  const { program } = setup({
+    unlinkOpportunityCommercialOrder: async (opts: any) => {
+      captured = opts;
+      return { preview: true, expected_version: 4 };
+    },
+  });
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "crm",
+    "order",
+    "unlink",
+    "opportunity-id",
+    "order-id",
+    "--reason",
+    "remove a link made to the wrong order",
+  ]);
+  assert.equal(captured.opportunity, "opportunity-id");
+  assert.equal(captured.order, "order-id");
+  assert.equal(captured.commit, false);
+});
+
 test("daily digest resolves assignees and forwards deterministic windows", async () => {
   let captured: any;
   const { program } = setup({
