@@ -490,6 +490,20 @@ function isInterBayServiceSubject(subject: string): boolean {
   );
 }
 
+function isCompleteAuthenticatedCaller(
+  caller: AuthenticatedCaller | undefined,
+): caller is AuthenticatedCaller {
+  return (
+    caller != null &&
+    typeof caller.cluster_id === "string" &&
+    caller.cluster_id.trim().length > 0 &&
+    typeof caller.bay_id === "string" &&
+    caller.bay_id.trim().length > 0 &&
+    typeof caller.bay_credential_id === "string" &&
+    caller.bay_credential_id.trim().length > 0
+  );
+}
+
 export async function isAllowed({
   user,
   subject,
@@ -526,7 +540,7 @@ export async function isAllowed({
         return true;
       }
       if (
-        !forwardedCaller ||
+        !isCompleteAuthenticatedCaller(forwardedCaller) ||
         forwardedCaller.cluster_id !== getConfiguredClusterId()
       ) {
         return false;

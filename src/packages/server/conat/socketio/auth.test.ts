@@ -288,6 +288,30 @@ describe("test isAllowed for hub", () => {
           },
         }),
       ).toBe(false);
+      const incompleteCallers = [
+        { cluster_id: "test-cluster" },
+        { cluster_id: "test-cluster", bay_id: "bay-1" },
+        {
+          cluster_id: "test-cluster",
+          bay_credential_id: "credential-1",
+        },
+        { bay_id: "bay-1", bay_credential_id: "credential-1" },
+        { ...forwardedCaller, cluster_id: "" },
+        { ...forwardedCaller, bay_id: "" },
+        { ...forwardedCaller, bay_credential_id: "" },
+        { ...forwardedCaller, bay_id: "   " },
+      ];
+      for (const incomplete of incompleteCallers) {
+        expect(
+          await isAllowed({
+            user,
+            type: "pub",
+            subject: "global.directory.rpc.resolve-project-bay",
+            forwardedCaller: incomplete as any,
+          }),
+        ).toBe(false);
+      }
+      expect(isBayCredentialUserActiveMock).toHaveBeenCalledTimes(1);
       expect(await isAllowed({ user, type: "sub", subject: "global.>" })).toBe(
         false,
       );
