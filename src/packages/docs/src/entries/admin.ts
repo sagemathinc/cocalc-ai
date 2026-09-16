@@ -50,13 +50,13 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open the Admin -> News manager.",
+        description: "Open the Admin -> News section.",
         executable: true,
         id: "admin.news.open",
         label: "Open news manager",
       },
       {
-        description: "Open the Admin -> News editor for a new system notice.",
+        description: "Open the Admin -> News section for a new system notice.",
         executable: true,
         id: "admin.news.create-system",
         label: "Create system notice",
@@ -301,7 +301,7 @@ export const ADMIN_ENTRIES: DocsEntry[] = [
   {
     actions: [
       {
-        description: "Open the Admin -> Images section.",
+        description: "Open the Admin -> RootFS Images section.",
         executable: true,
         id: "admin.rootfs.open",
         label: "Open images",

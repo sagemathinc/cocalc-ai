@@ -90,7 +90,7 @@ those wizards when available instead of editing related fields independently.
 export const ADMIN_USERS_BODY = String.raw`
 ## What user management is for
 
-The admin user search surface is the starting point for account support and
+The admin **User Search** page is the starting point for account support and
 site operations. It lets admins find accounts and open account-specific tools.
 
 ## Common workflows
@@ -929,7 +929,7 @@ fresh authentication. A **conditional write** is read-only by default, but its
 
 Use Zendesk to reply to customers and manage ticket state. Use Accounts
 Receivable to review terms, generate/send Stripe invoices, record payment, and
-coordinate fulfillment. Use site-license administration for entitlement
+coordinate fulfillment. Use **Site Licenses** for entitlement
 details. CRM tasks represent important internal follow-up but do not replace a
 commercial order's constrained next action.
 
@@ -1155,7 +1155,7 @@ The standard policy is:
    (seven days by default).
 2. A reply completes the task and moves the shared work to the relationship
    owner.
-3. Viewed with no reply is shown as “view observed, no reply” and is eligible
+3. Viewed with no reply is shown as “View observed, no reply” and is eligible
    for a concise same-thread follow-up after review.
 4. No view and no reply should first prompt delivery/address verification,
    rather than a more aggressive message.
@@ -1355,7 +1355,7 @@ use when discussing a record with another admin or an agent.
 
 ## Find the right customer first
 
-1. Choose a **View** to narrow the queue to prospects, pilots, renewals,
+1. Use **Views** to narrow the queue to prospects, pilots, renewals,
    expansions, overdue follow-up, or another operational group.
 2. Search by customer name, alias, domain, contact, or customer number.
 3. Open the record and verify its domains, contacts, linked systems, and
@@ -1410,7 +1410,7 @@ label.
 - Continue invoicing, collection, payment verification, and fulfillment in
   **Admin → Accounts Receivable**.
 - Continue seat pools, domains, managers, and entitlement details in
-  site-license administration.
+  **Admin → Site Licenses**.
 - Use the [CRM outreach UI guide](/app-docs/admin/crm-outreach-ui) to compose,
   review, suppress, and follow up on proactive institutional conversations.
 - Use the [agent and CLI runbook](/app-docs/admin/crm) for automation, exact

@@ -187,7 +187,7 @@ converted automatically.
 
 ## Upload into one project folder
 
-Open a project you can edit. In the full CoCalc file browser, create and open a
+Open a project you can edit. In **Files** in full CoCalc, create and open a
 new \`research-workflow\` folder, then upload the three practice files there. For
 nested real datasets, preserve subdirectories; uploading only the notebook does
 not transfer their contents. See [Project files](/docs/files/project-files) and
@@ -277,7 +277,7 @@ Saved result matches the computation
 ~~~
 
 The notebook asserts the count and mean, saves \`notebook-result.json\`, and reads
-it back. Open that file from the project file browser. It should contain \`count\`
+it back. Open that file from **Files**. It should contain \`count\`
 4, \`mean\` 5.0, and an input SHA-256 hash. Save the notebook, close and reopen it,
 and confirm that its code and saved outputs are present.
 

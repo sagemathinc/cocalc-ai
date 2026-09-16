@@ -170,7 +170,7 @@ project content.
 ## Mention a collaborator
 
 Type \`@\` and choose a collaborator when the editor or chat surface supports
-mentions. CoCalc sends a notification and lists the mention on the notifications
+mentions. CoCalc sends a notification and lists the mention on the Notifications
 page so the collaborator can return to the context.
 
 You can mention yourself for testing or to bookmark something you want to find

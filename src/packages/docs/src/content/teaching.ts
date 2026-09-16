@@ -186,7 +186,7 @@ A site license is an institution-managed membership pool. CoCalc can use it for
 course access when the instructor's verified email domain and the license terms
 match the selected course membership.
 
-If the course UI says no matching site license is found, it usually means one
+If the course UI says **No matching site license found**, it usually means one
 of the following:
 
 - the instructor email address is not verified
@@ -229,12 +229,12 @@ Choose **Save changes** after changing options. Saving also starts
 reconfiguration of student projects; wait for it to complete and check any
 reported errors. New student projects get the current policy when they are
 created. To apply the saved course configuration again, use **Reconfigure all
-projects**.
+Projects**.
 
 ## File and upload restrictions
 
 - **Disable file actions** hides or disables common file-management actions in
-  the file browser, such as delete, download, copy, move, publish, and related
+  **Files**, such as delete, download, copy, move, publish, and related
   context-menu actions. It also disables drag-and-drop file reordering where
   that would otherwise expose file actions.
 - **Disable file uploads** disables the Upload button and drag-and-drop upload
@@ -297,7 +297,7 @@ copy.
 
 ## What happens when you create it
 
-When you click **Create shared project**, CoCalc creates a new project with a
+When you click **Create Shared Project**, CoCalc creates a new project with a
 course-specific title and description, saves its project id in the course
 settings, and configures collaborators.
 

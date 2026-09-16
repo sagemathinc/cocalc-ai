@@ -219,8 +219,8 @@ usually make deliberate overprovisioning the safest choice.
    be admitted. This is also the student count used by the host-sizing guidance.
    Leave headroom for instructor testing and accidental extra sessions.
 5. Set CPU, memory, and disk limits for each project.
-6. Set **Maximum run** to the longest permitted scheduled project lifetime.
-7. Set **Cleanup grace**. This is the spending-safety interval before forced
+6. Set **Maximum run (minutes)** to the longest permitted scheduled project lifetime.
+7. Set **Cleanup grace (minutes)**. This is the spending-safety interval before forced
    VM poweroff if cleanup cannot complete; it is not additional candidate time.
 8. Decide whether to allow terminals. They are disabled by default. This choice
    is frozen when a run is prepared.
@@ -263,7 +263,7 @@ cocalc host exam end <host> --stop-host --yes
 Replace the timestamp placeholders before running the prepare or deadline
 commands. Use an ISO 8601 UTC timestamp in the form \`YYYY-MM-DDTHH:MM:SSZ\`
 that is at least one minute in the future and within the configured **Maximum
-run** interval. The configure example keeps the existing admission token or
+run (minutes)** interval. The configure example keeps the existing admission token or
 generates one when needed.
 
 Configuration, preparation, and token rotation return the stable plaintext
@@ -283,7 +283,7 @@ the reusable project host online. Destructive early cleanup always requires
 1. Start the host and wait until it reports **running** and online.
 2. In the **Exams** tab, select a RootFS from the managed catalog.
 3. For a timed exam, choose **Delete all exam projects at**. For an open-ended
-   practice period, select **Practice mode: erase projects manually** instead.
+   practice period, select **Practice mode: erase projects manually (no automatic timeout)** instead.
 4. Leave **Also shut down the project host to save resources** selected unless
    the host should remain running for unrelated work after exam cleanup.
 5. Select **Prepare and test run** and complete fresh authentication.
@@ -330,7 +330,7 @@ import urllib.request
 urllib.request.urlopen("https://example.com", timeout=5)
 ~~~
 
-8. Return to the instructor panel, select **Refresh status**, and confirm that
+8. Return to the **Exams** tab, select **Refresh status**, and confirm that
    the active project count increased.
 9. To test project isolation, repeat the token flow in a genuinely separate
    browser profile. Separate tabs or incognito windows in the same browser
@@ -397,7 +397,7 @@ designed for zero retention, not recovery after cleanup.
 
 ## Lockdown-browser configuration
 
-Allowlist the single HTTPS exam hostname shown in the instructor panel,
+Allowlist the single HTTPS exam hostname shown in the **Exams** tab,
 including secure WebSockets to that same hostname. The student application,
 authentication, files, kernels, and project traffic all use this origin.
 
@@ -462,7 +462,7 @@ that should only be usable by a known set of people.
 
 ## Per-project RAM cap
 
-The host access page includes **Project resource policy**, where an owner or
+The host **Access** tab includes **Project resource policy**, where an owner or
 manager can set an optional RAM cap for each project running on the host.
 
 - **Private host:** an explicit cap sets the project's RAM limit. With the cap
@@ -779,7 +779,7 @@ require deprovision. Check current backups and interruption effects first.
 `;
 
 export const PROJECT_HOST_RELIABILITY_BODY = String.raw`
-## What the reliability view measures
+## What the Reliability view measures
 
 The host **Reliability** tab summarizes recent host availability. It is not a
 generic cloud SLA and it is not a project success metric. It answers: when this
@@ -831,7 +831,7 @@ events before blaming a notebook or terminal.
 `;
 
 export const PROJECT_HOST_SOFTWARE_LIFECYCLE_BODY = String.raw`
-## What the runtime tab is for
+## What the Runtime tab is for
 
 The host **Runtime** tab explains what software the host wants to run, what is
 actually installed, and what managed daemons are currently doing. It combines
@@ -872,7 +872,7 @@ health, rollout phase, and sometimes rollback hints. A daemon can be pinned by
 a host-specific override or inherit the cluster default.
 
 If a daemon is disruptive, prefer maintenance windows. If a desired version is
-not installed yet, setting it queues reconcile work. Refresh the runtime tab to
+not installed yet, setting it queues reconcile work. Refresh the **Runtime** tab to
 watch rollout, health, rollback, and repair state.
 
 ## Agent notes
@@ -885,7 +885,7 @@ parts of the runtime stack.
 `;
 
 export const PROJECT_HOST_STORAGE_BODY = String.raw`
-## What the storage tab is for
+## What the Storage tab is for
 
 The host **Storage** tab is where you inspect provider disk capacity, storage
 mode, usage, reservations, and host-level storage actions. It is the right
@@ -1094,7 +1094,7 @@ problem.
 
 ## First things to check
 
-Start with the drawer overview and the relevant tab:
+Start with the drawer **Overview** and the relevant tab:
 
 1. **Overview** for current state and active operations.
 2. **Reliability** for recent online/offline history.

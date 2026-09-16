@@ -191,9 +191,9 @@ backend state.
 `;
 
 export const PROJECT_LIST_BODY = String.raw`
-## What the projects page is for
+## What the Projects page is for
 
-The projects page lists the CoCalc projects you can access. Use it to open
+The Projects page lists the CoCalc projects you can access. Use it to open
 recent work, create projects, search, inspect activity, and manage the projects
 that back your courses, research, classes, and agent workspaces.
 
