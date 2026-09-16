@@ -1376,6 +1376,110 @@ describe("acp job queue ordering", () => {
     expect(claimed?.op_id).toBe(queued.op_id);
   });
 
+  function rejectedModelJob(
+    error = "The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account.",
+    paymentSource: "auto" | "subscription" | "account-api-key" = "auto",
+  ) {
+    const request = {
+      ...makeRequest({
+        userMessageId: randomUUID(),
+        assistantMessageId: randomUUID(),
+        assistantDate: new Date().toISOString(),
+      }),
+      prompt: "Visible request\nHidden file context and attachment references",
+      config: {
+        model: "gpt-5.6-sol",
+        paymentSource,
+        reasoning: "ultra" as const,
+        serviceTier: "fast" as const,
+        workingDirectory: "/tmp",
+        sessionMode: "workspace-write" as const,
+      },
+    };
+    const job = enqueueAcpJob(request);
+    setAcpJobState({ op_id: job.op_id, state: "error", error });
+    return {
+      request,
+      job,
+      options: {
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: job.user_message_id,
+        modelRecovery: {
+          account_id: request.account_id,
+          thread_id: job.thread_id,
+          model: "gpt-5.6-terra",
+          expected_model: "gpt-5.6-sol",
+        },
+      },
+    };
+  }
+
+  it("atomically retries a model rejection preserving original prompt, session and permissions", () => {
+    const { request, options } = rejectedModelJob();
+    const retried = resendCanceledAcpJob(options)!;
+    expect(retried.state).toBe("queued");
+    expect(decodeAcpJobRequest(retried)).toEqual({
+      ...request,
+      request_kind: "codex",
+      config: {
+        ...request.config,
+        model: "gpt-5.6-terra",
+        paymentSource: "subscription",
+        reasoning: undefined,
+        serviceTier: "standard",
+      },
+    });
+    expect(resendCanceledAcpJob(options)).toBeUndefined();
+  });
+
+  it.each(["account_id", "thread_id", "expected_model"])(
+    "rejects stale or mismatched recovery %s",
+    (key) => {
+      const { job, options } = rejectedModelJob();
+      expect(
+        resendCanceledAcpJob({
+          ...options,
+          modelRecovery: { ...options.modelRecovery, [key]: "different" },
+        }),
+      ).toBeUndefined();
+      expect(getAcpJobByOpId(job.op_id)?.state).toBe("error");
+      expect(getAcpJobByOpId(job.op_id)?.request_json).toBe(job.request_json);
+    },
+  );
+
+  it.each(["gpt-5.6-sol", "", "invalid model"])(
+    "rejects invalid replacement %s",
+    (model) => {
+      const { options } = rejectedModelJob();
+      expect(
+        resendCanceledAcpJob({
+          ...options,
+          modelRecovery: { ...options.modelRecovery, model },
+        }),
+      ).toBeUndefined();
+    },
+  );
+
+  it.each(["running", "queued", "completed", "canceled"] as const)(
+    "never model-retries a %s job",
+    (state) => {
+      const { job, options } = rejectedModelJob();
+      setAcpJobState({ op_id: job.op_id, state });
+      expect(resendCanceledAcpJob(options)).toBeUndefined();
+    },
+  );
+
+  it("does not model-retry an arbitrary failure", () => {
+    const { options } = rejectedModelJob("HTTP 429 rate limit");
+    expect(resendCanceledAcpJob(options)).toBeUndefined();
+  });
+
+  it("does not rewrite an explicitly API-funded request", () => {
+    const { options } = rejectedModelJob(undefined, "account-api-key");
+    expect(resendCanceledAcpJob(options)).toBeUndefined();
+  });
+
   it("can resend a terminal error job", async () => {
     const queued = enqueueAcpJob(
       makeRequest({

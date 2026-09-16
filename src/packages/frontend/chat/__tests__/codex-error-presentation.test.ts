@@ -6,6 +6,28 @@ import {
   CODEX_PROJECT_RESTART_HINT,
   CODEX_PROJECT_RESTART_TITLE,
 } from "../codex-error-presentation";
+import { unavailableChatGptCodexModel } from "@cocalc/util/ai/codex-model-recovery";
+
+it("recognizes only the specific ChatGPT model rejection and hides raw error markup", () => {
+  const error = `<span style='color:red'>{"type":"error","status":400,"message":"The 'gpt-5.6-sol' model is not supported when using Codex with a ChatGPT account."}</span>`;
+  expect(unavailableChatGptCodexModel(error)).toBe("gpt-5.6-sol");
+  expect(formatCodexErrorMarkdown(error)).toContain(
+    "Choose an available model",
+  );
+  expect(formatCodexErrorMarkdown(error)).not.toContain("<span");
+  const explanation = `Here is an explanation of this error: ${error}\nMore useful information.`;
+  expect(formatCodexErrorMarkdown(explanation, false, false)).toBe(explanation);
+  for (const other of [
+    "model not found",
+    "rate limit",
+    "authentication expired",
+    "network unavailable",
+    "unsupported reasoning effort",
+  ]) {
+    expect(unavailableChatGptCodexModel(other)).toBeUndefined();
+    expect(formatCodexErrorForDisplay(other)).toBe(other);
+  }
+});
 
 describe("Codex error presentation", () => {
   const error = JSON.stringify({

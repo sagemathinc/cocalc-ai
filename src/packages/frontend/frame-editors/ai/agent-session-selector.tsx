@@ -6,6 +6,11 @@
 import { Alert, Select, Space, Tag } from "antd";
 import type { ReactElement } from "react";
 import { useEffect, useMemo, useState } from "react";
+import {
+  useTypedRedux,
+  useProjectMapField,
+} from "@cocalc/frontend/app-framework";
+import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
 
 import type { AgentSessionRecord } from "@cocalc/frontend/chat/agent-session-index";
 import {
@@ -16,6 +21,12 @@ import { useCodexPaymentSource } from "@cocalc/frontend/chat/use-codex-payment-s
 import type { CodexPaymentSourceInfo } from "@cocalc/conat/hub/api/system";
 import * as LS from "@cocalc/frontend/misc/local-storage-typed";
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
+import { getDefaultCodexNewChatDefaults } from "@cocalc/frontend/chat/codex-defaults";
+import {
+  cachedAccountCodexModels,
+  discoverAccountCodexModels,
+  preferredAvailableCodexModel,
+} from "@cocalc/frontend/chat/codex-model-discovery";
 import { COLORS } from "@cocalc/util/theme";
 
 const ASSISTANT_SESSION_LS_PREFIX = "AI-CODEX-ASSISTANT-SESSION:v1";
@@ -71,12 +82,41 @@ export function usePersistentAgentSessionSelection({
       ),
     [paymentSource, rawSessions],
   );
+  const [discoveredDefault, setDiscoveredDefault] = useState<{
+    scope: string;
+    model: string;
+  }>();
+  const accountId = useTypedRedux("account", "account_id");
+  const runtimeVersion = useProjectMapField<string>(project_id, [
+    "state",
+    "tools_version",
+  ]);
+  const modelScope = `${accountId}:${project_id}:${runtimeVersion}:${paymentSource?.source}:${paymentSource?.subscriptionRevision}`;
+  const preferredModel = getDefaultCodexNewChatDefaults().model;
+  useEffect(() => {
+    if (!enabled || paymentSource?.source !== "subscription") return;
+    let cancelled = false;
+    const apply = (models: CodexModelCapabilityInfo[] | undefined) => {
+      const model = preferredAvailableCodexModel(models, preferredModel)?.model;
+      if (!cancelled && model)
+        setDiscoveredDefault({ scope: modelScope, model });
+    };
+    apply(cachedAccountCodexModels(project_id, paymentSource));
+    void discoverAccountCodexModels(project_id, paymentSource)
+      .then(apply)
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, project_id, modelScope, preferredModel]);
   const defaultCodexModel =
     paymentSource?.source === "site-api-key" &&
     paymentSource.siteFundedCodex?.enabled
       ? (paymentSource.siteFundedCodex.policy?.model ??
         DEFAULT_CODEX_MODEL_NAME)
-      : DEFAULT_CODEX_MODEL_NAME;
+      : discoveredDefault?.scope === modelScope
+        ? discoveredDefault.model
+        : preferredModel;
 
   useEffect(() => {
     if (!enabled) return;

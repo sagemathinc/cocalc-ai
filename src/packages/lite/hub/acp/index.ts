@@ -4546,6 +4546,10 @@ export class ChatStreamWriter {
         return undefined;
     }
   }
+
+  public getTerminalErrorText(): string | undefined {
+    return this.lastErrorText ?? undefined;
+  }
 }
 
 function normalizeSummaryText(text: string | null | undefined): string {
@@ -7504,6 +7508,7 @@ function agentsForProject(projectId: string): AcpAgent[] {
 
 type AcpExecutionResult = {
   terminalState: "completed" | "error" | "interrupted";
+  error?: string;
   recoveryCode?: CodexAcpRecoveryErrorCode;
   recoveryDetail?: string;
 };
@@ -7693,6 +7698,7 @@ async function executeAcpRequest({
   }
 
   let terminalState: AcpExecutionResult["terminalState"] = "completed";
+  let terminalError: string | undefined;
   try {
     logger.debug("evaluate: running", {
       reqId,
@@ -7748,6 +7754,10 @@ async function executeAcpRequest({
     }
   } finally {
     terminalState = chatWriter?.getTerminalState() ?? terminalState;
+    terminalError =
+      terminalState === "error"
+        ? chatWriter?.getTerminalErrorText()
+        : undefined;
     const elapsedMs = Date.now() - startedAt;
     logger.debug("evaluate: end", { reqId, elapsedMs });
     // TODO: we might not want to immediately close, since there is
@@ -7766,7 +7776,12 @@ async function executeAcpRequest({
     }
     await cleanup();
   }
-  return { terminalState, recoveryCode, recoveryDetail };
+  return {
+    terminalState,
+    error: terminalError,
+    recoveryCode,
+    recoveryDetail,
+  };
 }
 
 async function waitForChatWriterDisposal(
@@ -9787,10 +9802,12 @@ async function runQueuedAcpJob(job: AcpJobRow): Promise<void> {
       terminalState: result.terminalState,
       last_job_op_id: job.op_id,
       last_message_id: refreshedRequest.chat?.message_id,
+      error: result.error,
     });
     setAcpJobState({
       op_id: job.op_id,
       state: result.terminalState,
+      error: result.terminalState === "error" ? result.error : undefined,
       worker_id: job.worker_id ?? currentDetachedWorkerContext?.worker_id,
       recovery_code:
         result.terminalState === "error" ? result.recoveryCode : undefined,
@@ -11447,7 +11464,10 @@ async function handleAcpControlRequest(
       throw err;
     }
   }
-  if (request.action === "resend") {
+  if (request.action === "resend" || request.action === "resend_with_model") {
+    if (request.action === "resend_with_model" && !request.model_recovery) {
+      throw new Error("Model recovery requires a replacement model");
+    }
     const current = getAcpJob({ project_id, path, user_message_id });
     if (!current || !["canceled", "error"].includes(current.state)) {
       return { ok: false, state: current?.state ?? "missing" };
@@ -11466,6 +11486,13 @@ async function handleAcpControlRequest(
       project_id,
       path,
       user_message_id,
+      modelRecovery: request.model_recovery
+        ? {
+            ...request.model_recovery,
+            account_id: request.account_id,
+            thread_id,
+          }
+        : undefined,
     });
     if (!row || row.state !== "queued") {
       return { ok: false, state: row?.state ?? "missing" };
