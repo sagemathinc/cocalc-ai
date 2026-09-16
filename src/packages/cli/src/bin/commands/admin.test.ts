@@ -575,6 +575,9 @@ test("admin support conventions exposes the shared status workflow", async () =>
     vocabulary,
     /Quick Navigation opens as a side panel titled Users/,
   );
+  assert.match(vocabulary, /page is titled Help for this project/);
+  assert.match(vocabulary, /page and side panel are titled Virtual machines/);
+  assert.match(vocabulary, /Recent Files or Project Activity Log/);
   assert.match(vocabulary, /no Users tab on the left rail/);
 });
 
