@@ -10,6 +10,8 @@ import { assertAccountWriteOnHomeBay } from "@cocalc/database/postgres/account-r
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type { PaymentRoot } from "@cocalc/util/credit-transfers";
 import { v5 } from "uuid";
+import { isBillingAuthorityEnabled } from "../billing-authority/config";
+import { billingAccountsTable } from "../billing-account";
 
 export interface VerifiedPaymentRoot {
   root: PaymentRoot;
@@ -32,11 +34,13 @@ export async function verifyPaymentPurchase(
   root_id?: string,
 ): Promise<VerifiedPaymentRoot | undefined> {
   const db = getPool();
-  await assertAccountWriteOnHomeBay({
-    db,
-    account_id,
-    action: "verify transferable payment credit",
-  });
+  if (!isBillingAuthorityEnabled()) {
+    await assertAccountWriteOnHomeBay({
+      db,
+      account_id,
+      action: "verify transferable payment credit",
+    });
+  }
   const { rows: roots } = await db.query<
     PaymentRoot & {
       local_purchase_id: number;
@@ -53,11 +57,12 @@ export async function verifyPaymentPurchase(
   const stored = roots[0];
   if (root_id && !stored) return;
   if (stored) purchase_id = stored.local_purchase_id;
+  const accountTable = billingAccountsTable();
   const {
     rows: [row],
   } = await db.query(
     `SELECT p.cost::text,p.invoice_id,p.service,p.description,a.stripe_customer_id
-    FROM purchases p JOIN accounts a ON a.account_id=p.account_id
+    FROM purchases p JOIN ${accountTable} a ON a.account_id=p.account_id
     WHERE p.account_id=$1 AND p.id=$2 AND a.deleted IS NOT TRUE AND a.banned IS NOT TRUE`,
     [account_id, purchase_id],
   );

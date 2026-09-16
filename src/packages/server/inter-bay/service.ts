@@ -65,6 +65,7 @@ import type { ConatService } from "@cocalc/conat/service/typed";
 import type { SiteLicenseAffiliationReverificationSeat } from "@cocalc/conat/hub/api/purchases";
 import getLogger from "@cocalc/backend/logger";
 import { db } from "@cocalc/database";
+import getPool from "@cocalc/database/pool";
 import { callback2 } from "@cocalc/util/async-utils";
 import { getRequiresTokensDirect } from "@cocalc/server/auth/tokens/get-requires-token";
 import {
@@ -103,9 +104,15 @@ import {
   revokeAdminRole as revokeAdminRoleLocal,
 } from "@cocalc/server/accounts/admin-role";
 import { setAutoBalance as setAutoBalanceLocal } from "@cocalc/server/accounts/auto-balance";
+import {
+  USE_BALANCE_TOWARD_SUBSCRIPTIONS,
+  USE_BALANCE_TOWARD_TEAM_LICENSES,
+} from "@cocalc/util/db-schema/accounts";
 import { searchRelatedClusterAccounts } from "@cocalc/server/accounts/search-policy";
 import setPasswordFromResetLocal from "@cocalc/server/accounts/set-password-from-reset";
 import { adminDisableTwoFactor as adminDisableTwoFactorLocal } from "@cocalc/server/auth/two-factor";
+import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
+import isAdminLocal from "@cocalc/server/accounts/is-admin";
 import {
   getCodexFreshAuthActionStatus,
   startCodexFreshAuthChallengeLocal,
@@ -1329,6 +1336,63 @@ async function startAccountLocalService(): Promise<void> {
     },
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);
+    },
+    requireFreshAuth: async ({
+      account_id,
+      browser_id,
+      session_hash,
+      require_second_factor,
+      allow_actor_impersonation,
+    }) => {
+      await requireDangerousSessionAuth({
+        account_id,
+        browser_id,
+        session_hash,
+        require_second_factor,
+        allow_actor_impersonation,
+      });
+    },
+    isAdmin: async ({ account_id }) => await isAdminLocal(account_id),
+    getBillingPreferences: async ({ account_id }) => {
+      const { rows } = await getPool().query(
+        `SELECT email_daily_statements,
+                other_settings->>$2 AS use_balance_toward_subscriptions,
+                other_settings->>$3 AS use_balance_toward_team_licenses
+           FROM accounts
+          WHERE account_id=$1 AND deleted IS NOT TRUE`,
+        [
+          account_id,
+          USE_BALANCE_TOWARD_SUBSCRIPTIONS,
+          USE_BALANCE_TOWARD_TEAM_LICENSES,
+        ],
+      );
+      if (!rows[0]) throw Error("account not found");
+      const optionalBoolean = (value: unknown): boolean | undefined =>
+        value === "true" ? true : value === "false" ? false : undefined;
+      return {
+        email_daily_statements: rows[0].email_daily_statements === true,
+        use_balance_toward_subscriptions: optionalBoolean(
+          rows[0].use_balance_toward_subscriptions,
+        ),
+        use_balance_toward_team_licenses: optionalBoolean(
+          rows[0].use_balance_toward_team_licenses,
+        ),
+      };
+    },
+    setBillingProjection: async ({ account_id, balance, balance_alert }) => {
+      if (typeof balance !== "number" && typeof balance_alert !== "boolean")
+        return;
+      await getPool().query(
+        `UPDATE accounts
+            SET balance=COALESCE($2,balance),
+                balance_alert=COALESCE($3,balance_alert)
+          WHERE account_id=$1`,
+        [
+          account_id,
+          typeof balance === "number" ? balance : null,
+          typeof balance_alert === "boolean" ? balance_alert : null,
+        ],
+      );
     },
     reconcileDedicatedHostPurchaseSession: async (opts) => {
       await reconcileDedicatedHostPurchaseSessionLocal(opts);

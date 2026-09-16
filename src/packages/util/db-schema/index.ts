@@ -34,6 +34,7 @@ import "./api-keys";
 import "./auth";
 import "./blobs";
 import "./billing-authority";
+import "./billing-accounts";
 import "./bookmarks";
 import "./buckets";
 import "./central-log";

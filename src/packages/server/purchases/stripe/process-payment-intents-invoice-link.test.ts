@@ -34,6 +34,7 @@ jest.mock("./util", () => ({
   currentStripeSite: (...args: any[]) => mockCurrentStripeSite(...args),
   getAccountIdFromStripeCustomerId: jest.fn(),
   getStripeCustomerId: (...args: any[]) => mockGetStripeCustomerId(...args),
+  setStripeCustomerId: (...args: any[]) => mockSetStripeCustomerId(...args),
 }));
 
 jest.mock("@cocalc/server/purchases/create-credit", () => ({
@@ -554,8 +555,7 @@ describe("processPaymentIntents invoice-payment links", () => {
       "cus_paid_duplicate",
     );
     expect(mockSetStripeCustomerId).toHaveBeenCalledWith(
-      "acct-1",
-      "cus_paid_duplicate",
+      { account_id: "acct-1", id: "cus_paid_duplicate" },
     );
     expect(mockApplyMembershipChange).toHaveBeenCalledWith(
       expect.objectContaining({

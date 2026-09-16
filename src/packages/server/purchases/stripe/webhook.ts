@@ -7,13 +7,16 @@ import type { Request, Response } from "express";
 
 import getLogger from "@cocalc/backend/logger";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "@cocalc/server/purchases/billing-account";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import { createCreditFromPaidStripeInvoice } from "@cocalc/server/purchases/create-invoice";
 import { setUsageSubscription } from "@cocalc/server/purchases/stripe-usage-based-subscription";
 import getConn from "@cocalc/server/stripe/connection";
 import { acceptCommercialStripeWebhookEvent } from "@cocalc/server/commercial-orders/invoices/stripe";
-import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import {
+  executeBillingAuthorityCommand,
+  executeStripeWebhookPayload,
+} from "@cocalc/server/purchases/billing-authority/client";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 
 import {
@@ -39,62 +42,87 @@ export default async function stripeWebhookHandler(
     return;
   }
 
-  const { stripe_webhook_secret } = await getServerSettings();
-  if (!stripe_webhook_secret) {
-    logger.warn("Stripe webhook request received but webhook secret is unset");
-    res.status(503).json({ error: "stripe_webhook_not_configured" });
-    return;
-  }
-
   const signature = stripeSignature(req);
   if (!signature) {
     res.status(400).json({ error: "missing_stripe_signature" });
     return;
   }
 
-  let event;
   try {
-    const stripe = await getConn();
-    event = stripe.webhooks.constructEvent(
-      req.body,
+    const body = Buffer.isBuffer(req.body)
+      ? req.body
+      : typeof req.body === "string"
+        ? Buffer.from(req.body)
+        : undefined;
+    if (!body) {
+      res.status(400).json({ error: "invalid_stripe_payload" });
+      return;
+    }
+    const result = await executeStripeWebhookPayload({
+      body,
       signature,
-      stripe_webhook_secret,
-    );
-  } catch (err) {
-    logger.warn("Stripe webhook signature verification failed", { err });
-    res.status(400).json({ error: "invalid_stripe_signature" });
-    return;
-  }
-
-  const eventLogContext = {
-    event_id: event?.id,
-    event_type: event?.type,
-    stripe_object_id: stripeId(event?.data?.object),
-  };
-  logger.info("Stripe webhook event verified", eventLogContext);
-
-  try {
-    const result = await executeBillingAuthorityCommand<{
-      processed: boolean;
-      type: string;
-      action: string;
-    }>({
-      kind: "stripe-webhook",
-      event,
     });
     logger.info("Stripe webhook event handled", {
-      ...eventLogContext,
       action: result.action,
       processed: result.processed,
       result_type: result.type,
     });
     res.status(200).json({ ok: true, ...result });
   } catch (err) {
-    logger.warn("Stripe webhook processing failed", {
-      event_id: event?.id,
-      event_type: event?.type,
-      err,
+    logger.warn("Stripe webhook processing failed", { err });
+    const status = Number((err as any)?.status ?? (err as any)?.code);
+    res
+      .status(status === 400 || status === 413 || status === 503 ? status : 500)
+      .json({
+        error:
+          status === 400
+            ? "invalid_stripe_signature"
+            : "stripe_webhook_processing_failed",
+      });
+  }
+}
+
+export async function verifyAndProcessStripeWebhookPayload({
+  body,
+  signature,
+}: {
+  body: Buffer;
+  signature: string;
+}): Promise<{ processed: boolean; type: string; action: string }> {
+  const { stripe_webhook_secret } = await getServerSettings();
+  if (!stripe_webhook_secret) {
+    throw Object.assign(new Error("Stripe webhook is not configured"), {
+      code: 503,
+      status: 503,
     });
+  }
+  let event;
+  try {
+    const stripe = await getConn();
+    event = stripe.webhooks.constructEvent(
+      body,
+      signature,
+      stripe_webhook_secret,
+    );
+  } catch (err) {
+    logger.warn("Stripe webhook signature verification failed", { err });
+    throw Object.assign(new Error("Invalid Stripe webhook signature"), {
+      code: 400,
+      status: 400,
+    });
+  }
+  const eventLogContext = {
+    event_id: event?.id,
+    event_type: event?.type,
+    stripe_object_id: stripeId(event?.data?.object),
+  };
+  logger.info("Stripe webhook event verified", eventLogContext);
+  try {
+    return await executeBillingAuthorityCommand({
+      kind: "stripe-webhook",
+      event,
+    });
+  } catch (err) {
     try {
       await alertStripeWebhookFailure({ event, err });
     } catch (alertErr) {
@@ -104,7 +132,7 @@ export default async function stripeWebhookHandler(
         alertErr,
       });
     }
-    res.status(500).json({ error: "stripe_webhook_processing_failed" });
+    throw err;
   }
 }
 
@@ -400,7 +428,7 @@ async function metadataBelongsToCurrentSite(
     return !site || paymentSite === site;
   }
   const account_id = `${metadata?.account_id ?? ""}`.trim();
-  return !!account_id && (await isValidAccount(account_id));
+  return !!account_id && (await isValidBillingAccount(account_id));
 }
 
 async function alertStripeWebhookFailure({ event, err }: { event; err }) {

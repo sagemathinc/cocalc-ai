@@ -71,26 +71,20 @@ export const TABLE_OWNERSHIP = {
       "account_funding_authorities",
       "account_funding_holds",
       "compute_funding_pools",
+      "compute_funding_grants",
       "compute_funding_reservations",
       "compute_funding_events",
       "compute_funding_purchase_attributions",
       "compute_vm_personal_consents",
     ],
     {
-      ownership: "account-home",
-      authority: "payer_account_id",
-      portability: "portable",
+      ownership: "seed-global",
+      authority: "seed",
+      portability: "stable",
       notes:
-        "Authoritative payer-home accounting. Financial rehome freezes writes, copies liabilities and idempotency history, and activates a new authority epoch. Resource ownership and course collaboration do not confer payer authority; retired authority rows remain fencing tombstones.",
+        "Seed-authoritative sponsorship budgets, grants, reservations, events, attributions, and personal funding consents. Account rehome changes routing metadata but never moves or duplicates this financial state.",
     },
   ),
-  ...entries(["compute_funding_grants"], {
-    ownership: "account-home",
-    authority: "pool_id",
-    portability: "portable",
-    notes:
-      "Owned through compute_funding_pools.payer_account_id, not the beneficiary's home bay. Moves with its payer pool, preserving account-bound student identity and all reserved liabilities.",
-  }),
   ...entries(["compute_funding_exposure_policy"], {
     ownership: "stable-bay",
     authority: "bay_id",
@@ -100,48 +94,32 @@ export const TABLE_OWNERSHIP = {
   }),
   ...entries(
     [
-      "payment_fulfillments",
-      "provider_refund_attempts",
       "admin_membership_orders",
-      "credit_payment_roots",
-      "credit_transfer_entries",
-      "credit_transfer_ledger_observations",
-    ],
-    {
-      ownership: "account-home",
-      authority: "account_id",
-      portability: "portable",
-      notes:
-        "Account-home payment, order and transfer provenance. Financial rehome remaps local ledger references while preserving provider replay identities, refund obligations and transfer fragments.",
-    },
-  ),
-  ...entries(["credit_transfers"], {
-    ownership: "account-home",
-    authority: "sender_account_id",
-    portability: "portable",
-    notes:
-      "Sender-home coordinator and durable debit/compensation decision. Recipient identity and routing are delivery references, never sender spending authority.",
-  }),
-  ...entries(["credit_transfer_deliveries"], {
-    ownership: "account-home",
-    authority: "recipient_account_id",
-    portability: "portable",
-    notes:
-      "Recipient-home acceptance or rejection tombstone. Moves with the recipient; sender-home provenance and delivery identity survive retries and rehome.",
-  }),
-  ...entries(
-    [
+      "billing_accounts",
       "billing_authority_account_fences",
       "billing_authority_commands",
       "billing_authority_lease",
       "billing_authority_migrations",
+      "credit_payment_roots",
+      "credit_transfer_deliveries",
+      "credit_transfer_entries",
+      "credit_transfer_ledger_observations",
+      "credit_transfers",
+      "payment_fulfillments",
+      "provider_refund_attempts",
+      "purchases",
+      "statements",
+      "subscription_renewal_attempts",
+      "subscriptions",
+      "team_license_seat_lines",
+      "team_licenses",
     ],
     {
       ownership: "seed-global",
       authority: "seed",
       portability: "stable",
       notes:
-        "Durable billing command, fencing, and election state. Only the designated seed billing authority may mutate these tables; generic account rehome and bay drain must not move or delete them.",
+        "Seed-authoritative billing accounts, ledgers, provider provenance, transfers, subscriptions, purchased entitlement sources, and command/fencing state. Generic account rehome and bay drain must not move or delete them.",
     },
   ),
   ...entries(
@@ -167,10 +145,6 @@ export const TABLE_OWNERSHIP = {
       "password_reset",
       "password_reset_attempts",
       "remember_me",
-      "subscription_renewal_attempts",
-      "subscriptions",
-      "team_licenses",
-      "team_license_seat_lines",
       "usage_info",
     ],
     {
@@ -332,26 +306,6 @@ export const TABLE_OWNERSHIP = {
     },
     notes:
       "Account-home onboarding continuation delivery state. Scheduling and delivery must route to the account home bay; account rehome is unsafe until this state has explicit migration support.",
-  }),
-
-  ...entries(["purchases"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    secondary_reference_fields: {
-      project_id:
-        "Project reference for project-linked purchases, not placement authority.",
-    },
-    notes:
-      "Account-owned commercial ledger state and current balance source input. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable ledger state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
-  }),
-
-  ...entries(["statements"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    notes:
-      "Account-owned statement and balance snapshot state derived from purchases and tied to payment reconciliation. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable commercial statement state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
   }),
 
   ...entries(["external_credentials"], {

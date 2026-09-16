@@ -10,6 +10,7 @@ import type {
 import getPool from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import {
   getClusterAccountById,
   getClusterAccountsByIds,
@@ -36,6 +37,7 @@ export async function listCourseFundingSourcesOnBay({
 }): Promise<CourseFundingSources & { payer_home_bay_ids: string[] }> {
   const beneficiary = fundingId(beneficiary_account_id, "Beneficiary account");
   const local = getConfiguredBayId();
+  const central = isBillingAuthorityEnabled();
   const home = (account: { home_bay_id?: string } | null | undefined) => {
     if (!account) return;
     return account.home_bay_id || (!isMultiBayCluster() ? local : undefined);
@@ -114,8 +116,10 @@ export async function listCourseFundingSourcesOnBay({
       );
     }
     payerHomes.add(payerHome);
-    // A stale copy left by rehome is not authoritative and must not be advertised.
-    if (payerHome !== local) continue;
+    // Before seed billing, payer-home data is authoritative and stale copies
+    // left by rehome must not be advertised. With seed billing all financial
+    // source rows are authoritative here regardless of the payer's account home.
+    if (!central && payerHome !== local) continue;
     sources.push({
       pool_id: source.pool_id,
       grant_id: source.grant_id,

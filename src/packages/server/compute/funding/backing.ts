@@ -21,6 +21,7 @@ import { lockFundingAuthority, assertFundingAccountHome } from "./authority";
 import { assertAccountWriteOnHomeBay } from "@cocalc/database/postgres/account-rehome-fence";
 import { prepareDedicatedHostPolicyInputsLocal } from "@cocalc/server/project-host/admission";
 import type { DedicatedHostPolicyInputs } from "@cocalc/server/project-host/admission";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 
 export interface AccountFundingBacking {
   ledger_balance_usd: string;
@@ -96,11 +97,13 @@ export async function withFundingAccountTransaction<T>(
 ): Promise<T> {
   const account_id = fundingId(accountId, "Payer account");
   await assertFundingAccountHome(account_id);
-  await assertAccountWriteOnHomeBay({
-    db: getPool(),
-    account_id,
-    action: "prepare account funding",
-  });
+  if (!isBillingAuthorityEnabled()) {
+    await assertAccountWriteOnHomeBay({
+      db: getPool(),
+      account_id,
+      action: "prepare account funding",
+    });
+  }
   // Policy failure blocks new authorization, not settlement or replay of work
   // already authorized. Provider and seed-bay calls finish before BEGIN.
   let policy: DedicatedHostPolicyInputs | undefined;

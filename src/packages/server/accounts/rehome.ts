@@ -1682,6 +1682,21 @@ export async function runAccountRehomeOperation(
         account_id: op.account_id,
         home_bay_id: op.dest_bay_id,
       });
+      const { isBillingAuthorityEnabled } =
+        await import("@cocalc/server/purchases/billing-authority/config");
+      if (isBillingAuthorityEnabled()) {
+        const { executeBillingAuthorityCommand } =
+          await import("@cocalc/server/purchases/billing-authority/client");
+        await executeBillingAuthorityCommand({
+          kind: "account-local",
+          operation: "update-billing-account-home",
+          input: {
+            account_id: op.account_id,
+            home_bay_id: op.dest_bay_id,
+            idempotency_key: `account-rehome:${op_id}:billing-home`,
+          },
+        });
+      }
       await waitForAccountHomeBayReadPath({
         // Use the rehomed account itself for the convergence lookup. The
         // requesting admin may be homed on a different bay, so polling with

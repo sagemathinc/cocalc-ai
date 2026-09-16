@@ -9,6 +9,7 @@ we have no yet attempted to send out an email.
 import getPool from "@cocalc/database/pool";
 import getLogger from "@cocalc/backend/logger";
 import emailStatement from "./email-statement";
+import { getBillingAccountPreferences } from "../billing-account";
 
 const logger = getLogger("purchases:email-new-statements");
 
@@ -71,10 +72,6 @@ async function getRecentStatements(limit: number) {
 }
 // email_daily_statements
 async function getEmailDaily(account_id: string): Promise<boolean> {
-  const pool = getPool();
-  const { rows } = await pool.query(
-    "SELECT email_daily_statements FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
-  return !!rows[0].email_daily_statements;
+  return (await getBillingAccountPreferences(account_id))
+    .email_daily_statements;
 }

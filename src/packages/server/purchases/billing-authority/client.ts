@@ -135,6 +135,17 @@ function intrinsicCommandId(
       break;
     case "account-local":
       key = recordField(command.input, "idempotency_key");
+      if (command.operation.startsWith("compute-funding-")) {
+        key = JSON.stringify([
+          recordField(command.input, "funding_epoch") ??
+            recordField(command.input, "meter_as_of") ??
+            recordField(command.input, "running_until"),
+          recordField(command.input, "resource_id") ??
+            recordField(command.input, "reservation_id") ??
+            recordField(command.input, "account_id"),
+          recordField(command.input, "resource_generation"),
+        ]);
+      }
       if (command.operation === "apply-funding-approval") {
         // Bind retries to both the reviewed intent and independent sign-in.
         // A new sign-in must not reuse a prior session's failed authorization.
@@ -346,6 +357,37 @@ export async function setBillingAccountFrozen({
     reason,
     actor_account_id,
   })) as { account_id: string; frozen: boolean; generation: number };
+}
+
+export async function executeStripeWebhookPayload({
+  body,
+  signature,
+}: {
+  body: Buffer;
+  signature: string;
+}): Promise<{ processed: boolean; type: string; action: string }> {
+  if (body.length > 2 * 1024 * 1024) {
+    throw Object.assign(new Error("Stripe webhook payload is too large"), {
+      code: 413,
+      status: 413,
+    });
+  }
+  if (!signature || signature.length > 16_384) {
+    throw Object.assign(new Error("Invalid Stripe webhook signature"), {
+      code: 400,
+      status: 400,
+    });
+  }
+  if (!isBillingAuthorityEnabled()) {
+    const { verifyAndProcessStripeWebhookPayload } =
+      await import("../stripe/webhook");
+    return await verifyAndProcessStripeWebhookPayload({ body, signature });
+  }
+  return (await transport({
+    action: "stripe-webhook-raw",
+    body_base64: body.toString("base64"),
+    signature,
+  })) as { processed: boolean; type: string; action: string };
 }
 
 function inferFenceCause(reason: string): BillingAuthorityFenceCause {

@@ -19,6 +19,7 @@ import { readMonthlyCollection } from "./monthly-collection";
 import createPaymentIntent from "./stripe/create-payment-intent";
 import send from "@cocalc/server/messages/send";
 import { registerBillingAuthorityAccount } from "./billing-authority/context";
+import { billingAccountsTable } from "./billing-account";
 import { COST_OR_METERED_COST } from "./get-balance";
 
 const logger = getLogger("purchases:monthly-collection");
@@ -92,10 +93,11 @@ export async function maintainMonthlyCollections({
   if (!settings.stripe_secret_key || !settings.stripe_publishable_key) return;
   const minimum = settings.pay_as_you_go_min_payment ?? 0;
   const pool = getPool();
+  const accountTable = billingAccountsTable();
   // Apply the claim's eligibility filters before LIMIT. Otherwise an already
   // covered or below-minimum statement can starve every later account.
   const { rows } = await pool.query(
-    `SELECT a.account_id FROM accounts a
+    `SELECT a.account_id FROM ${accountTable} a
      JOIN LATERAL (SELECT id,time,automatic_payment,paid_purchase_id,balance,automatic_payment_intent_id FROM statements
        WHERE account_id=a.account_id AND interval='month' AND time<=clock_timestamp() ORDER BY time DESC,id DESC LIMIT 1) s ON TRUE
      WHERE a.monthly_collection->>'enabled'='true' AND a.banned IS NOT TRUE AND a.deleted IS NOT TRUE

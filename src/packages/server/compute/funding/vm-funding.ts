@@ -10,6 +10,12 @@ import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
+import {
+  getConfiguredClusterRole,
+  getConfiguredClusterSeedBayId,
+} from "@cocalc/server/cluster-config";
+import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import { ComputeFundingError, fundingId } from "@cocalc/util/compute-funding";
 import type {
   CourseVmFundingSource,
@@ -73,6 +79,34 @@ const local: VmFundingInternalApi = {
 };
 
 export async function payerApi(payer: string): Promise<VmFundingInternalApi> {
+  if (isBillingAuthorityEnabled()) {
+    const role = getConfiguredClusterRole();
+    if (
+      role === "standalone" ||
+      (role === "seed" &&
+        getConfiguredBayId() === getConfiguredClusterSeedBayId())
+    ) {
+      return local;
+    }
+    const execute = async <T>(operation: string, input: object): Promise<T> =>
+      await executeBillingAuthorityCommand<T>({
+        kind: "account-local",
+        operation: operation as any,
+        input: input as Record<string, unknown>,
+      });
+    return {
+      getComputeVmFallbackDecision: async (opts) =>
+        await execute("compute-funding-fallback", opts),
+      lookupComputeVmFunding: async (opts) =>
+        await execute("compute-funding-lookup", opts),
+      reserveComputeVmFunding: async (opts) =>
+        await execute("compute-funding-reserve", opts),
+      checkComputeVmFunding: async (opts) =>
+        await execute("compute-funding-check", opts),
+      settleComputeVmFunding: async (opts) =>
+        await execute("compute-funding-settle", opts),
+    };
+  }
   const location = await resolveAccountHomeBay({
     account_id: payer,
     user_account_id: payer,

@@ -9,6 +9,7 @@ import {
   assertAccountWriteOnHomeBay,
 } from "@cocalc/database/postgres/account-rehome-fence";
 import { ComputeFundingError, fundingId } from "@cocalc/util/compute-funding";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
 
 // Compiled writer protocol consumed by isolated-development rollout inspection.
 export const FUNDING_ACCOUNT_WRITER_PROTOCOL_VERSION = 1;
@@ -22,16 +23,18 @@ export async function lockAccountSpending(
   accountId: string,
 ): Promise<void> {
   const account_id = fundingId(accountId, "Spending account");
-  await assertAccountNotRehoming({
-    db: client,
-    account_id,
-    action: "change account spending",
-  });
-  await assertAccountWriteOnHomeBay({
-    db: client,
-    account_id,
-    action: "change account spending",
-  });
+  if (!isBillingAuthorityEnabled()) {
+    await assertAccountNotRehoming({
+      db: client,
+      account_id,
+      action: "change account spending",
+    });
+    await assertAccountWriteOnHomeBay({
+      db: client,
+      account_id,
+      action: "change account spending",
+    });
+  }
   await client.query(
     "SELECT pg_advisory_xact_lock(hashtext('account-funding'), hashtext($1))",
     [account_id],

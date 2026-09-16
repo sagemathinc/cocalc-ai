@@ -27,15 +27,22 @@ import {
 } from "@cocalc/server/compute/funding/approvals";
 import { hasCardPaymentMethod } from "./stripe/get-payment-methods";
 import { getServerSettings } from "@cocalc/database/settings";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
+import {
+  billingAccountsTable,
+  ensureBillingAccount,
+} from "@cocalc/server/purchases/billing-account";
 
 export async function readMonthlyCollection(
   account_id: string,
   db: Pick<PoolClient, "query"> = getPool(),
 ) {
+  await ensureBillingAccount(account_id, db);
+  const table = billingAccountsTable();
   const {
     rows: [row],
   } = await db.query(
-    "SELECT monthly_collection, stripe_usage_subscription, banned, deleted FROM accounts WHERE account_id=$1",
+    `SELECT monthly_collection, stripe_usage_subscription, home_bay_id, banned, deleted FROM ${table} WHERE account_id=$1`,
     [account_id],
   );
   if (!row || row.banned || row.deleted)
@@ -47,12 +54,14 @@ export async function readMonthlyCollection(
   };
   return {
     consent,
+    home_bay_id: row.home_bay_id ?? getConfiguredBayId(),
     legacy_enabled:
       row.monthly_collection == null && !!row.stripe_usage_subscription,
   };
 }
 async function actorHome(value?: string) {
   const account_id = fundingId(value, "Signed-in account");
+  if (isBillingAuthorityEnabled()) return { account_id };
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
   if (!home_bay_id) throw Error("Account home is unavailable");
   return {
@@ -137,7 +146,7 @@ export async function applyMonthlyCollection(
 ) {
   requireFundingAccountTransaction(db, account_id);
   normalizeMonthlyCollectionTerms(terms);
-  const { consent } = await readMonthlyCollection(account_id, db);
+  const { consent, home_bay_id } = await readMonthlyCollection(account_id, db);
   if (consent.version !== terms.expected_version)
     throw Error("Monthly collection changed. Refresh and review again.");
   const next: MonthlyCollectionConsent = {
@@ -146,8 +155,9 @@ export async function applyMonthlyCollection(
     terms_version: 1,
     updated_at: new Date().toISOString(),
   };
+  const table = billingAccountsTable();
   await db.query(
-    "UPDATE accounts SET monthly_collection=$2::jsonb WHERE account_id=$1",
+    `UPDATE ${table} SET monthly_collection=$2::jsonb WHERE account_id=$1`,
     [account_id, JSON.stringify(next)],
   );
   const summary = {
@@ -172,7 +182,7 @@ export async function applyMonthlyCollection(
       targets: [
         {
           target_account_id: account_id,
-          target_home_bay_id: getConfiguredBayId(),
+          target_home_bay_id: home_bay_id,
           dedupe_key: `monthly-collection:${intent_id}`,
           summary_json: summary,
         },

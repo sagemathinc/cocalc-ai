@@ -104,6 +104,8 @@ export async function scheduleSubscriptionRenewalAttempt({
 }
 
 export async function scheduleMissingSubscriptionRenewalAttempts(): Promise<number> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const accountTable = billingAccountsTable();
   await cancelStaleSubscriptionRenewalAttempts();
   await getPool().query(
     `UPDATE subscription_renewal_attempts
@@ -133,7 +135,7 @@ export async function scheduleMissingSubscriptionRenewalAttempts(): Promise<numb
       WHERE s.metadata->>'type'='membership'
         AND s.status='active'
         AND NOT EXISTS (
-          SELECT 1 FROM accounts AS account
+          SELECT 1 FROM ${accountTable} AS account
            WHERE account.account_id=s.account_id
              AND (account.banned IS TRUE OR account.deleted IS TRUE)
         )
@@ -205,6 +207,16 @@ export async function claimDueSubscriptionRenewalAttempts({
 }: {
   limit: number;
 }): Promise<SubscriptionRenewalAttempt[]> {
+  const { billingAccountsTable } = await import("./billing-account");
+  const { isBillingAuthorityEnabled } =
+    await import("./billing-authority/config");
+  const accountTable = billingAccountsTable();
+  const legacyHomePredicate = isBillingAuthorityEnabled()
+    ? ""
+    : `AND EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
+            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),$3)=$3)
+          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> $3))`;
   const { rows } = await getPool().query<SubscriptionRenewalAttempt>(
     `WITH candidates AS (
        SELECT a.id
@@ -216,15 +228,12 @@ export async function claimDueSubscriptionRenewalAttempts({
           AND s.status='active'
           AND s.current_period_end=a.period_end
         WHERE a.state IN ('scheduled','processing')
-          AND EXISTS (SELECT 1 FROM accounts owner WHERE owner.account_id=a.account_id
-            AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),$3)=$3)
-          AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
-            WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> $3))
+          ${legacyHomePredicate}
           AND a.not_before <= NOW()
           AND a.next_attempt_at <= NOW()
           AND (a.lease_expires_at IS NULL OR a.lease_expires_at <= NOW())
           AND NOT EXISTS (
-            SELECT 1 FROM accounts AS account
+            SELECT 1 FROM ${accountTable} AS account
              WHERE account.account_id=a.account_id
                AND (account.banned IS TRUE OR account.deleted IS TRUE)
           )

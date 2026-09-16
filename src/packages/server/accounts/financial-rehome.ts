@@ -18,6 +18,7 @@ import {
   importCreditTransferStateInTransaction,
   type CreditTransferPortableState,
 } from "@cocalc/server/purchases/credit-transfers/portability";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 
 type Row = Record<string, any>;
 type IdMaps = Record<
@@ -73,7 +74,10 @@ const ledgerTables = ["purchases", "subscriptions", "statements"] as const;
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 
 export function financialRehomeEnabled(): boolean {
-  return process.env.COCALC_ENABLE_FINANCIAL_REHOME === "yes";
+  return (
+    !isBillingAuthorityEnabled() &&
+    process.env.COCALC_ENABLE_FINANCIAL_REHOME === "yes"
+  );
 }
 
 async function exists(client: PoolClient, table: string) {

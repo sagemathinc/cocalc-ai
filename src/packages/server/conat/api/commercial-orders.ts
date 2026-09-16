@@ -61,7 +61,10 @@ import type {
 } from "@cocalc/util/commercial-orders";
 import type { UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import centralLog from "@cocalc/database/postgres/central-log";
-import isAdmin from "@cocalc/server/accounts/is-admin";
+import {
+  isBillingAccountAdmin,
+  requireBillingAccountDangerousAuth,
+} from "@cocalc/server/purchases/billing-account";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { dispatchCommercialSeedRequest } from "@cocalc/server/commercial-orders/dispatch";
@@ -71,7 +74,6 @@ import {
 } from "@cocalc/server/commercial-orders/feature-flags";
 import { recordCommercialOperator } from "@cocalc/server/commercial-orders/observability";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
-import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 
 type Request = {
   account_id?: string;
@@ -84,7 +86,7 @@ type Request = {
 async function requireAdmin(opts: Request, fresh: boolean): Promise<string> {
   const accountId = `${opts.account_id ?? ""}`.trim();
   if (!accountId) throw Error("must be signed in");
-  if (!(await isAdmin(accountId))) {
+  if (!(await isBillingAccountAdmin(accountId))) {
     throw Object.assign(Error("admin privileges required"), { code: 403 });
   }
   const reason = `${opts.reason ?? ""}`.trim();
@@ -93,7 +95,7 @@ async function requireAdmin(opts: Request, fresh: boolean): Promise<string> {
   if (reason.length > 2_000)
     throw Error("audit reason must be at most 2000 characters");
   if (fresh) {
-    await requireDangerousSessionAuth({
+    await requireBillingAccountDangerousAuth({
       account_id: accountId,
       browser_id: opts.browser_id,
       session_hash: opts.session_hash,

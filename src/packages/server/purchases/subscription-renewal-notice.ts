@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
 import {
   USE_BALANCE_TOWARD_SUBSCRIPTIONS,
   USE_BALANCE_TOWARD_SUBSCRIPTIONS_DEFAULT,
@@ -14,6 +13,7 @@ import { toDecimal } from "@cocalc/util/money";
 import type { MoneyValue } from "@cocalc/util/money";
 import { getTotalBalance } from "./get-balance";
 import { getBillingReadiness } from "./stripe/billing-readiness";
+import { getBillingAccountPreferences } from "./billing-account";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -63,19 +63,12 @@ async function useBalanceTowardRenewalSetting({
   defaultValue: boolean;
   settingKey: string;
 }): Promise<boolean> {
-  const pool = getPool("long");
-  const { rows } = await pool.query(
-    "SELECT other_settings->>$2 as use_balance FROM accounts WHERE account_id=$1",
-    [account_id, settingKey],
-  );
-  switch (rows[0]?.use_balance) {
-    case "true":
-      return true;
-    case "false":
-      return false;
-    default:
-      return defaultValue;
-  }
+  const preferences = await getBillingAccountPreferences(account_id);
+  const value =
+    settingKey === USE_BALANCE_TOWARD_SUBSCRIPTIONS
+      ? preferences.use_balance_toward_subscriptions
+      : preferences.use_balance_toward_team_licenses;
+  return value ?? defaultValue;
 }
 
 export async function getRenewalPaymentNotice({

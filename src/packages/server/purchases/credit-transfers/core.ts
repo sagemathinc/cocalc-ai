@@ -9,6 +9,9 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { lockAccountSpending } from "../lock-account-spending";
 import { registerBillingAuthorityAccount } from "../billing-authority/context";
+import { isBillingAuthorityEnabled } from "../billing-authority/config";
+import { billingAccountsTable } from "../billing-account";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import {
   lockAccountRehomeFence,
   assertAccountNotRehoming,
@@ -75,9 +78,11 @@ export async function withCreditTransferAccounts<T>(
   ].sort();
   for (const account_id of ordered) {
     await registerBillingAuthorityAccount(account_id);
-    const { home_bay_id } = await resolveAccountHomeBay({ account_id });
-    if (home_bay_id !== getConfiguredBayId())
-      throw Error("Transfer account is homed on a different bay");
+    if (!isBillingAuthorityEnabled()) {
+      const { home_bay_id } = await resolveAccountHomeBay({ account_id });
+      if (home_bay_id !== getConfiguredBayId())
+        throw Error("Transfer account is homed on a different bay");
+    }
   }
   const client = await getPool().connect();
   try {
@@ -119,23 +124,29 @@ async function recipientInTransaction(
   account_id: string,
 ): Promise<CreditTransferRecipient> {
   const authority_epoch = epoch(client, account_id);
-  const {
-    rows: [account],
-  } = await client.query(
-    `SELECT email_address,email_address_verified,display_name,first_name,last_name
-    FROM accounts WHERE account_id=$1 AND deleted IS NOT TRUE AND banned IS NOT TRUE FOR SHARE`,
-    [account_id],
-  );
-  if (
-    !account?.email_address ||
-    !account.email_address_verified?.[account.email_address]
-  )
+  const central = isBillingAuthorityEnabled();
+  const account = central
+    ? await getClusterAccountById(account_id)
+    : (
+        await client.query(
+          `SELECT email_address,email_address_verified,display_name,first_name,last_name
+             FROM accounts
+            WHERE account_id=$1 AND deleted IS NOT TRUE AND banned IS NOT TRUE
+            FOR SHARE`,
+          [account_id],
+        )
+      ).rows[0];
+  const verified = central
+    ? account?.email_address_verified === true
+    : account?.email_address_verified?.[account?.email_address];
+  if (!account?.email_address || account.banned === true || !verified)
     throw Error(
       "Recipient must be an existing account with a verified email address",
     );
+  const location = await resolveAccountHomeBay({ account_id });
   return {
     account_id,
-    home_bay_id: getConfiguredBayId(),
+    home_bay_id: location.home_bay_id,
     authority_epoch,
     email_address: account.email_address,
     display_name:
@@ -168,11 +179,13 @@ export async function prepareCreditTransferApproval(
     account_id: terms.recipient.account_id,
   });
   if (
-    payerHome.home_bay_id !== getConfiguredBayId() ||
+    (!isBillingAuthorityEnabled() &&
+      payerHome.home_bay_id !== getConfiguredBayId()) ||
     recipientHome.home_bay_id !== terms.recipient.home_bay_id
   )
     throw Error("Account authority changed; request a new preview");
   const recipient =
+    isBillingAuthorityEnabled() ||
     recipientHome.home_bay_id === getConfiguredBayId()
       ? await getCreditTransferRecipientLocal(terms.recipient.account_id)
       : await transport.recipient(
@@ -215,6 +228,7 @@ export async function prepareCreditTransferApproval(
       account_id: root.account_id,
     });
     const result =
+      isBillingAuthorityEnabled() ||
       rootHome.home_bay_id === getConfiguredBayId()
         ? await verifyPaymentPurchase(
             root.account_id,
@@ -250,7 +264,10 @@ export async function withCreditTransferApprovalTransaction<T>(
   if (!preparedIntents.has(prepared))
     throw Error("Missing trusted transfer preflight");
   const accounts = [prepared.payer_account_id];
-  if (prepared.terms.recipient.home_bay_id === getConfiguredBayId())
+  if (
+    isBillingAuthorityEnabled() ||
+    prepared.terms.recipient.home_bay_id === getConfiguredBayId()
+  )
     accounts.push(prepared.terms.recipient.account_id);
   return withCreditTransferAccounts(accounts, fn);
 }
@@ -344,10 +361,13 @@ export async function applyCreditTransferInTransaction(
     );
     return { ...entry.receipt, state: existing.state };
   }
+  const accountTable = billingAccountsTable();
   const {
     rows: [sender],
   } = await client.query(
-    "SELECT 1 FROM accounts WHERE account_id=$1 AND banned IS NOT TRUE AND deleted IS NOT TRUE FOR SHARE",
+    `SELECT 1 FROM ${accountTable}
+      WHERE account_id=$1 AND banned IS NOT TRUE AND deleted IS NOT TRUE
+      FOR SHARE`,
     [payer_account_id],
   );
   if (!sender) throw Error("Sender account is unavailable");
@@ -371,7 +391,9 @@ export async function applyCreditTransferInTransaction(
   );
   if (available.lt(terms.amount_usd))
     throw Error("Insufficient cleared, unencumbered payment credit");
-  const sameBay = terms.recipient.home_bay_id === getConfiguredBayId();
+  const sameBay =
+    isBillingAuthorityEnabled() ||
+    terms.recipient.home_bay_id === getConfiguredBayId();
   if (
     sameBay &&
     transferHash(
@@ -385,7 +407,9 @@ export async function applyCreditTransferInTransaction(
     transfer_id: randomUUID(),
     operation_id,
     sender_account_id: payer_account_id,
-    sender_home_bay_id: getConfiguredBayId(),
+    sender_home_bay_id: (
+      await resolveAccountHomeBay({ account_id: payer_account_id })
+    ).home_bay_id,
     sender_authority_epoch,
     terms,
     fragments: selectCreditFragments(lots, eligible, terms.amount_usd),
@@ -511,6 +535,7 @@ async function notifyTransfer(
     action_label: "View billing",
     action_link: "/settings/balance",
   };
+  const targetHome = await resolveAccountHomeBay({ account_id });
   await createNotificationEventGraphInTransaction({
     db: client,
     input: {
@@ -521,7 +546,7 @@ async function notifyTransfer(
       targets: [
         {
           target_account_id: account_id,
-          target_home_bay_id: getConfiguredBayId(),
+          target_home_bay_id: targetHome.home_bay_id,
           dedupe_key: `credit-transfer:${manifest.transfer_id}:${leg}`,
           summary_json: summary,
         },
@@ -584,16 +609,20 @@ async function receiveCommittedTransfer(
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
-    await lockAccountRehomeFence({ db: client, account_id });
+    if (!isBillingAuthorityEnabled()) {
+      await lockAccountRehomeFence({ db: client, account_id });
+    }
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtext('account-funding'),hashtext($1))",
       [account_id],
     );
-    await assertAccountNotRehoming({
-      db: client,
-      account_id,
-      action: "receive transferred credit",
-    });
+    if (!isBillingAuthorityEnabled()) {
+      await assertAccountNotRehoming({
+        db: client,
+        account_id,
+        action: "receive transferred credit",
+      });
+    }
     const {
       rows: [authority],
     } = await client.query(
@@ -633,7 +662,7 @@ export async function getOutgoingCreditTransferLocal(
   transfer_id: string,
 ): Promise<CreditTransferManifest> {
   const home = await resolveAccountHomeBay({ account_id });
-  if (home.home_bay_id !== getConfiguredBayId())
+  if (!isBillingAuthorityEnabled() && home.home_bay_id !== getConfiguredBayId())
     throw Error("Transfer sender authority changed");
   const {
     rows: [row],
@@ -658,7 +687,7 @@ export async function deliverCreditTransferLocal(
     account_id: opts.sender_account_id,
   });
   const manifest =
-    home.home_bay_id === getConfiguredBayId()
+    isBillingAuthorityEnabled() || home.home_bay_id === getConfiguredBayId()
       ? await getOutgoingCreditTransferLocal(
           opts.sender_account_id,
           opts.transfer_id,
@@ -677,7 +706,10 @@ export async function deliverCreditTransferLocal(
   const recipientHome = await resolveAccountHomeBay({
     account_id: manifest.terms.recipient.account_id,
   });
-  if (recipientHome.home_bay_id !== getConfiguredBayId())
+  if (
+    !isBillingAuthorityEnabled() &&
+    recipientHome.home_bay_id !== getConfiguredBayId()
+  )
     throw Error("Transfer recipient routing changed");
   return receiveCommittedTransfer(manifest);
 }
@@ -689,7 +721,7 @@ export async function reconcileCreditTransfer(
   const home = await resolveAccountHomeBay({
     account_id: manifest.sender_account_id,
   });
-  if (home.home_bay_id !== getConfiguredBayId())
+  if (!isBillingAuthorityEnabled() && home.home_bay_id !== getConfiguredBayId())
     throw Error("Transfer reconciliation requires sender home authority");
   const committed = await getOutgoingCreditTransferLocal(
     manifest.sender_account_id,
@@ -700,7 +732,9 @@ export async function reconcileCreditTransfer(
   const recipientHome = await resolveAccountHomeBay({
     account_id: manifest.terms.recipient.account_id,
   });
-  const result = await transport.deliver(recipientHome.home_bay_id, manifest);
+  const result = isBillingAuthorityEnabled()
+    ? await receiveCommittedTransfer(manifest)
+    : await transport.deliver(recipientHome.home_bay_id, manifest);
   if (
     result.transfer_id !== manifest.transfer_id ||
     result.manifest_hash !== transferHash(manifest) ||

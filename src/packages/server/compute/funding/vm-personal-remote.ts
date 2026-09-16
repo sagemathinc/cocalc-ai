@@ -6,6 +6,7 @@ import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import type {
@@ -347,8 +348,8 @@ async function reconcileRemoteVm(initial: ConsentRow): Promise<void> {
 /** Payer-home coordinator; commands and reservations follow financial rehome. */
 export async function processRemotePersonalVmHandoffs(): Promise<void> {
   const { rows } = await getPool().query<ConsentRow>(
-    `SELECT c.* FROM compute_vm_personal_consents c JOIN accounts a ON a.account_id=c.payer_account_id
-      WHERE c.id>$1 AND COALESCE(a.home_bay_id,$2)=$2 AND c.vm_id IS NOT NULL AND
+    `SELECT c.* FROM compute_vm_personal_consents c JOIN ${billingAccountsTable()} a ON a.account_id=c.payer_account_id
+      WHERE c.id>$1 AND c.vm_id IS NOT NULL AND
       (c.handoff#>>'{remote_vm,state}'='pending' OR
         (c.review->>'owning_bay_id'<>$2 AND (c.state='preparing' OR (c.state='approved' AND c.terms->>'activation'='fallback'))))
       ORDER BY c.id LIMIT 20`,

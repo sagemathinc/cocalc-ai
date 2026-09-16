@@ -22,6 +22,7 @@ import {
 } from "@cocalc/server/bay-config";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { isMultiBayCluster } from "@cocalc/server/cluster-config";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import { listClusterBayRegistry } from "@cocalc/server/bay-registry";
 import { listCourseFundingSourcesOnBay } from "@cocalc/server/compute/funding/sources";
 import { getCourseFundingUsageProjection } from "@cocalc/server/compute/funding/usage-projection";
@@ -114,6 +115,7 @@ function requireAccount(account_id?: string): string {
 }
 
 async function remoteHome(account_id: string) {
+  if (isBillingAuthorityEnabled()) return;
   const { home_bay_id } = await resolveAccountHomeBay({ account_id });
   if (home_bay_id === getConfiguredBayId()) return;
   return createInterBayAccountLocalClient({
@@ -281,6 +283,15 @@ export async function listSources(
   const remote = await remoteHome(account_id);
   if (remote)
     return await remote.computeFundingListSources({ account_id, ...filter });
+  if (isBillingAuthorityEnabled()) {
+    const { home_bay_id } = await resolveAccountHomeBay({ account_id });
+    const snapshot = await listCourseFundingSourcesOnBay({
+      beneficiary_account_id: account_id,
+      beneficiary_home_bay_id: home_bay_id,
+      ...filter,
+    });
+    return { as_of: snapshot.as_of, sources: snapshot.sources };
+  }
   const configured = getConfiguredClusterBayCatalog().map(
     ({ bay_id }) => bay_id,
   );

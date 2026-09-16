@@ -54,6 +54,12 @@ export type BillingAuthorityAccountLocalOperation =
   | "legacy-apply-financial-home-bay"
   | "legacy-apply-financial-migration"
   | "legacy-configure-financial-renewal-home-bay"
+  | "compute-funding-check"
+  | "compute-funding-fallback"
+  | "compute-funding-lookup"
+  | "compute-funding-reserve"
+  | "compute-funding-settle"
+  | "update-billing-account-home"
   | "purchase-team-license-change";
 
 export interface BillingAuthorityHubApiCall {
@@ -192,6 +198,11 @@ export type BillingAuthorityTransportRequest =
       cause: BillingAuthorityFenceCause;
       reason: string;
       actor_account_id?: string;
+    }
+  | {
+      action: "stripe-webhook-raw";
+      body_base64: string;
+      signature: string;
     }
   | { action: "health" };
 

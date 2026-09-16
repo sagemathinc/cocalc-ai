@@ -4,8 +4,8 @@
  */
 import getPool from "@cocalc/database/pool";
 import { getLogger } from "@cocalc/backend/logger";
-import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { withFundingAccountTransaction } from "./backing";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 
 const logger = getLogger("compute:funding:personal-expiry");
 let cursor = "00000000-0000-0000-0000-000000000000";
@@ -17,11 +17,11 @@ export async function expirePersonalFundingConsents(): Promise<void> {
     id: string;
     payer_account_id: string;
   }>(
-    `SELECT c.id,c.payer_account_id FROM compute_vm_personal_consents c JOIN accounts a ON a.account_id=c.payer_account_id
-     WHERE c.id>$1 AND COALESCE(a.home_bay_id,$2)=$2 AND c.state IN ('pending','approved','preparing','active')
+    `SELECT c.id,c.payer_account_id FROM compute_vm_personal_consents c JOIN ${billingAccountsTable()} a ON a.account_id=c.payer_account_id
+     WHERE c.id>$1 AND c.state IN ('pending','approved','preparing','active')
        AND ((c.terms->>'ends_at')::timestamptz<=clock_timestamp()
          OR (c.state='pending' AND c.approval_expires_at<=clock_timestamp())) ORDER BY c.id LIMIT 20`,
-    [cursor, getConfiguredBayId()],
+    [cursor],
   );
   cursor =
     rows.length === 20

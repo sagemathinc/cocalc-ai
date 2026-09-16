@@ -10,7 +10,7 @@ In all cases, it returns the purchase id number.
 import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
 import { lockAccountSpending } from "./lock-account-spending";
 import type { Credit } from "@cocalc/util/db-schema/purchases";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "./billing-account";
 import getLogger from "@cocalc/backend/logger";
 import getBalance from "./get-balance";
 import {
@@ -79,7 +79,7 @@ async function createCreditInTransaction({
   service?: "credit" | "auto-credit";
 }): Promise<number> {
   logger.debug("createCredit", { account_id, invoice_id, amount, service });
-  if (!(await isValidAccount(account_id, client))) {
+  if (!(await isValidBillingAccount(account_id, client))) {
     throw Error(`${account_id} is not a valid account`);
   }
   await assertBillingAuthorityAccountRegistered(account_id);
