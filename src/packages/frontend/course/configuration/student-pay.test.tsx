@@ -4,6 +4,7 @@
  */
 
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { IntlProvider } from "react-intl";
 import StudentPay from "./student-pay";
 
@@ -71,6 +72,48 @@ describe("StudentPay", () => {
         expires_at: new Date("2027-07-01T00:00:00.000Z"),
       },
     ]);
+  });
+
+  it("opts the course into compute budgets and links to the budget", async () => {
+    const setComputeBudgetEnabled = jest.fn();
+    const openComputeBudget = jest.fn();
+    const values = new Map<string, unknown>([
+      ["compute_budget_enabled", true],
+      ["required_membership_class", "student"],
+      ["student_pay", true],
+      ["institute_pay", false],
+      ["site_license_pay", false],
+    ]);
+    const user = userEvent.setup();
+    render(
+      <IntlProvider locale="en">
+        <StudentPay
+          actions={{
+            configuration: {
+              configure_all_projects: jest.fn(),
+              set_compute_budget_enabled: setComputeBudgetEnabled,
+              set_course_membership: jest.fn(),
+              set_pay_choice: jest.fn(),
+            },
+          }}
+          settings={{ get: (key: string) => values.get(key) }}
+          project_id="course-project"
+          onManageSeats={jest.fn()}
+          onOpenComputeBudget={openComputeBudget}
+        />
+      </IntlProvider>,
+    );
+
+    const checkbox = await screen.findByRole("checkbox", {
+      name: "Enable compute budget for this course",
+    });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    expect(setComputeBudgetEnabled).toHaveBeenCalledWith(false);
+    await user.click(
+      screen.getByRole("button", { name: "Open compute budget" }),
+    );
+    expect(openComputeBudget).toHaveBeenCalledTimes(1);
   });
 
   it("shows site-license benefits instead of retail course-seat terms", async () => {

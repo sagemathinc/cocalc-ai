@@ -37,14 +37,17 @@ it("connects load, keyboard editing and explicit versioned save without financia
       screen.getByRole("heading", { name: "Edit recommendation" }),
     ).toHaveFocus(),
   );
+  const cancel = screen.getByRole("button", { name: "Cancel edit" });
+  const apply = screen.getByRole("button", { name: "Apply recommendation" });
+  expect(
+    cancel.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   await user.tab();
   await user.type(
     screen.getByRole("textbox", { name: "Recommendation label" }),
     "Notebook CPU",
   );
-  await user.click(
-    screen.getByRole("button", { name: "Apply recommendation" }),
-  );
+  await user.click(apply);
   expect(api.setCourseVmRecommendations).not.toHaveBeenCalled();
   await user.click(
     screen.getByRole("button", { name: "Save recommendations" }),

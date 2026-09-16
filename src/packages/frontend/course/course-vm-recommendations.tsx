@@ -425,6 +425,14 @@ export function CourseVmRecommendationsEditor({
           </div>
           <Space wrap style={{ marginBlock: 12 }}>
             <Button
+              onClick={() => {
+                setEditing(undefined);
+                setError("");
+              }}
+            >
+              Cancel edit
+            </Button>
+            <Button
               icon={<PlusOutlined aria-hidden />}
               onClick={applyEdit}
               disabled={
@@ -434,14 +442,6 @@ export function CourseVmRecommendationsEditor({
               }
             >
               Apply recommendation
-            </Button>
-            <Button
-              onClick={() => {
-                setEditing(undefined);
-                setError("");
-              }}
-            >
-              Cancel edit
             </Button>
           </Space>
         </div>

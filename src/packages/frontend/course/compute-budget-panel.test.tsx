@@ -78,6 +78,9 @@ it("previews by keyboard, focuses the result and requests separate authorization
   expect(
     screen.getByRole("checkbox", { name: "Select Pending" }),
   ).toBeDisabled();
+  expect(
+    screen.getByText("Waiting for student to join the course"),
+  ).toBeVisible();
   select.focus();
   await user.keyboard(" ");
   const preview = screen.getByRole("button", { name: "Preview allocation" });
@@ -132,6 +135,30 @@ it.each([
     expect(service.proposeAllocation).not.toHaveBeenCalled();
   },
 );
+
+it("explains when course-funded compute is disabled", async () => {
+  const service = api();
+  service.getCourseSummary.mockResolvedValue({
+    as_of: new Date().toISOString(),
+    pools: [],
+    sponsorship: {
+      enabled: false,
+      available: false,
+      reason: "New course sponsorship is disabled.",
+    },
+  });
+  render(<ComputeBudget {...props} api={service} />);
+
+  expect(
+    await screen.findByText(
+      "Course-funded compute is not available on this site",
+    ),
+  ).toBeVisible();
+  expect(
+    screen.getByText(/cannot allocate course credit until this service/i),
+  ).toBeVisible();
+  expect(screen.queryByText("New course sponsorship is disabled.")).toBeNull();
+});
 
 it("does not show a stale preview after terms change", async () => {
   const service = api();

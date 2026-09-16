@@ -21,10 +21,11 @@ interface Props {
   type: string;
   actions: CourseEditorActions;
   counts: { students: number; assignments: number; handouts: number };
+  computeBudgetEnabled: boolean;
 }
 
 export const CourseTabBar: React.FC<Props> = (props: Props) => {
-  const { frame_id, type, actions, counts } = props;
+  const { frame_id, type, actions, counts, computeBudgetEnabled } = props;
 
   const intl = useIntl();
 
@@ -55,10 +56,14 @@ export const CourseTabBar: React.FC<Props> = (props: Props) => {
       eventKey: "course_configuration",
       title: intl.formatMessage(labels.configuration),
     }),
-    Tab({
-      eventKey: "course_compute_budget",
-      title: "Compute budget",
-    }),
+    ...(computeBudgetEnabled
+      ? [
+          Tab({
+            eventKey: "course_compute_budget",
+            title: "Compute budget",
+          }),
+        ]
+      : []),
   ];
 
   return (

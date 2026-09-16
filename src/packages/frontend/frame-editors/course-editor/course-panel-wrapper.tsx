@@ -103,6 +103,17 @@ function CoursePanelWrapper(props: FrameProps) {
   const error: string | undefined = useRedux(name, "error");
   const user_map = useTypedRedux("users", "user_map");
   const project_map = useTypedRedux("projects", "project_map");
+  const computeBudgetEnabled = !!settings?.get("compute_budget_enabled");
+
+  React.useEffect(() => {
+    if (
+      settings != null &&
+      desc.get("type") === "course_compute_budget" &&
+      !computeBudgetEnabled
+    ) {
+      actions.set_frame_type(id, "course_configuration");
+    }
+  }, [actions, computeBudgetEnabled, desc, id, settings]);
 
   function render_panel(): Rendered {
     if (
@@ -170,6 +181,7 @@ function CoursePanelWrapper(props: FrameProps) {
         frame_id={id}
         type={desc.get("type")}
         counts={counts()}
+        computeBudgetEnabled={computeBudgetEnabled}
       />
     );
   }

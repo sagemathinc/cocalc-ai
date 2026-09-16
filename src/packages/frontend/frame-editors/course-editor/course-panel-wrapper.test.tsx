@@ -109,3 +109,43 @@ it.each(["/funding.course", canonicalPath])(
     });
   },
 );
+
+it("leaves a disabled compute budget frame", () => {
+  const setFrameType = jest.fn();
+  const fields = {
+    students: Map(),
+    assignments: Map(),
+    handouts: Map(),
+    settings: Map({ compute_budget_enabled: false }),
+  };
+  (useRedux as jest.Mock).mockImplementation((name, field) =>
+    name === courseName ? fields[field] : undefined,
+  );
+  (useEditorRedux as jest.Mock).mockReturnValue(() => undefined);
+  (redux.getActions as jest.Mock).mockReturnValue({});
+  (redux.getStore as jest.Mock).mockReturnValue({
+    num_students: () => 0,
+    num_assignments: () => 0,
+    num_handouts: () => 0,
+  });
+  const Wrapped = wrap(() => null);
+
+  render(
+    <Wrapped
+      {...({
+        id: "compute",
+        project_id: projectId,
+        path: canonicalPath,
+        font_size: 14,
+        actions: {
+          path: canonicalPath,
+          course_actions: {},
+          set_frame_type: setFrameType,
+        },
+        desc: Map({ type: "course_compute_budget" }),
+      } as unknown as FrameProps)}
+    />,
+  );
+
+  expect(setFrameType).toHaveBeenCalledWith("compute", "course_configuration");
+});

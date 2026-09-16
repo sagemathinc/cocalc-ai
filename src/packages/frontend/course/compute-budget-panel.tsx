@@ -283,8 +283,14 @@ export function ComputeBudget({
           type="warning"
           showIcon
           title={
-            summary.sponsorship?.reason ??
-            "New course sponsorship is unavailable."
+            summary.sponsorship?.enabled === false
+              ? "Course-funded compute is not available on this site"
+              : "Course-funded compute is temporarily unavailable"
+          }
+          description={
+            summary.sponsorship?.enabled === false
+              ? "You can configure VM recommendations, but instructors cannot allocate course credit until this service is enabled."
+              : "CoCalc could not verify that course credit can be allocated safely. Try again later or contact support."
           }
         />
       )}
@@ -442,7 +448,7 @@ export function ComputeBudget({
               render: (_, student) =>
                 student.account_id
                   ? (student.email ?? "Account linked")
-                  : "Account not linked",
+                  : "Waiting for student to join the course",
             },
           ]}
         />

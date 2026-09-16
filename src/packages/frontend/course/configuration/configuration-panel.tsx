@@ -63,6 +63,9 @@ export function ConfigurationPanel({
             settings={settings}
             actions={actions}
             project_id={project_id}
+            onOpenComputeBudget={() =>
+              frameActions.set_frame_type(frame_id, "course_compute_budget")
+            }
             onManageSeats={() => {
               actions?.set_manage_seats_open(true);
               frameActions.set_frame_type(frame_id, "course_students");
@@ -148,6 +151,7 @@ export function UpgradeConfiguration({
   actions,
   project_id,
   onManageSeats,
+  onOpenComputeBudget,
 }) {
   return (
     <StudentPay
@@ -155,6 +159,7 @@ export function UpgradeConfiguration({
       settings={settings}
       project_id={project_id}
       onManageSeats={onManageSeats}
+      onOpenComputeBudget={onOpenComputeBudget}
     />
   );
 }
