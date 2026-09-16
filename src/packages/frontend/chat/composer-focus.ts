@@ -63,7 +63,7 @@ export function refocusChatComposerInput(
   root: ParentNode | null | undefined,
   control?: ChatInputControl | null,
 ): boolean {
-  if (control?.focus?.() !== false) {
+  if (control?.focus && control.focus() !== false) {
     return true;
   }
   const target = findChatComposerFocusTarget(root);

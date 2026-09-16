@@ -203,6 +203,12 @@ class SessionManager {
     this._save_to_local_storage_closed();
   }
 
+  // Files that were open in projects closed during earlier sessions; they are
+  // restored when such a project is opened again. Read-only snapshot.
+  getClosedProjectFiles(): State {
+    return { ...(this._state_closed ?? {}) };
+  }
+
   private _save_to_local_storage(): void {
     if (this._state == null || this._local_storage_name == null) {
       return;

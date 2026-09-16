@@ -58,6 +58,12 @@ export const ACCOUNT_PREFERENCES_COMMUNICATION_PAGE = {
     id: "account.settings.overview.communication",
     defaultMessage: "Notification preferences and communication settings.",
   }),
+  controls: [
+    ...NOTIFICATION_CATEGORIES.map(({ label }) => label),
+    ...NOTIFICATION_EMAIL_MODES.map(({ label }) => label),
+    ...CODEX_EVENT_ROWS.map(({ label }) => label),
+    ...CODEX_EMAIL_OPTIONS.map(({ label }) => label),
+  ],
   icon: "mail",
   key: "communication",
   label: labels.communication,

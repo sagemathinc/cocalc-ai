@@ -335,5 +335,7 @@ export function createEditor<T = EditorSpec>(
     );
   };
   Editor.displayName = opts.display_name;
+  // Expose the same labels used by the editor to navigation and frame previews.
+  Object.assign(Editor, { editor_spec: { ...opts.editor_spec, chat } });
   return Editor;
 }

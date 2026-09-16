@@ -8,6 +8,8 @@ import { LabeledRow } from "@cocalc/frontend/components";
 import { DEFAULT_FONT_SIZE } from "@cocalc/util/consts/ui";
 import { useIntl } from "react-intl";
 
+import { FONT_SIZE_LABEL } from "./labels";
+
 interface Props {
   font_size: number;
   on_change: (name: string, value: number) => void;
@@ -18,14 +20,11 @@ export function EditorSettingsFontSize(props: Props) {
 
   return (
     <LabeledRow
-      label={intl.formatMessage({
-        id: "account.editor-settings.font-size.label",
-        defaultMessage: "Default global font size",
-      })}
+      label={intl.formatMessage(FONT_SIZE_LABEL)}
       className="cc-account-prefs-font-size"
     >
       <InputNumber
-        aria-label="Default global font size"
+        aria-label={intl.formatMessage(FONT_SIZE_LABEL)}
         onChange={(n) => props.on_change("font_size", n ?? DEFAULT_FONT_SIZE)}
         min={5}
         max={32}

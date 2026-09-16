@@ -1,0 +1,13 @@
+/* Result rows: hover and selection feedback. Colors are palette variables so
+   both themes work; inline styles cannot express :hover. */
+.cc-quick-nav-result {
+  background: var(--cocalc-ui-surface);
+  color: var(--cocalc-ui-text);
+  transition: background-color 80ms ease-out;
+}
+.cc-quick-nav-result:hover {
+  background: var(--cocalc-ui-hover);
+}
+.cc-quick-nav-result[aria-selected="true"] {
+  background: var(--cocalc-ui-selected);
+}

@@ -122,6 +122,7 @@ export const DOCS_ENTRY_IDS = [
   "ai.codex-automation",
   "ai.codex-notifications",
   "ai.editor-agent",
+  "docs.quick-navigation",
   "docs.browser",
   "docs.executable-actions",
   "docs.browser-automation",
@@ -131,6 +132,7 @@ export const DOCS_ENTRY_IDS = [
 // without accounts, admins, collaborators, project hosts, or sandbox images.
 // Keep its in-project docs flyout focused on workflows that make sense there.
 const DOCS_PLUS_ENTRY_IDS = new Set<string>([
+  "docs.quick-navigation",
   "projects.open-terminal",
   "terminal.use-terminal",
   "terminal.graphical-applications",
