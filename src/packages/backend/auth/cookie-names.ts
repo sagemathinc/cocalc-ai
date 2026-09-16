@@ -59,3 +59,10 @@ export const HUB_PASSWORD_COOKIE_NAME = basePathCookieName({
   basePath,
   name: "hub_password",
 });
+
+// Private hub-to-hub fabric credential. This is distinct from the general hub
+// password so each bay can be attributed and rotated independently.
+export const BAY_CREDENTIAL_COOKIE_NAME = basePathCookieName({
+  basePath,
+  name: "bay_credential",
+});

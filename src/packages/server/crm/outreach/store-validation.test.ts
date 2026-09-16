@@ -5,7 +5,9 @@
 
 import {
   batchRow,
+  assertDraftOutreachRecipient,
   canQueueOutreachBatch,
+  composeOutreachBody,
   decodeZendeskId,
   deliveryRow,
   missingRequiredMergeFields,
@@ -98,5 +100,30 @@ describe("CRM outreach reviewed-content validation", () => {
       "webhook/opt-out secret must be configured before adding outreach recipients",
     );
     expect(requireOutreachOptOutSecret(" secret ")).toBe("secret");
+  });
+
+  it("preserves the exact reviewed footer when editing draft content", () => {
+    const footer = "Postal address\n\nOpt out: https://example.test/token";
+    expect(composeOutreachBody("Updated body", footer)).toBe(
+      `Updated body\n\n${footer}`,
+    );
+  });
+
+  it("applies the body limit after appending the preserved footer", () => {
+    expect(() => composeOutreachBody("x".repeat(49_999), "footer")).toThrow(
+      "including its required footer must be at most 50000 characters",
+    );
+  });
+
+  it("rejects edits after either the batch or delivery leaves draft", () => {
+    expect(() =>
+      assertDraftOutreachRecipient("approved", "draft", "edited"),
+    ).toThrow("only draft recipients can be edited");
+    expect(() =>
+      assertDraftOutreachRecipient("draft", "queued", "edited"),
+    ).toThrow("only draft recipients can be edited");
+    expect(() =>
+      assertDraftOutreachRecipient("draft", "draft", "edited"),
+    ).not.toThrow();
   });
 });
