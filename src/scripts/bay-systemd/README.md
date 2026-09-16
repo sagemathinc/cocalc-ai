@@ -525,6 +525,8 @@ The repeatable wrapper for a small cluster is `bay-cluster.sh`:
 ./src/scripts/bay-systemd/bay-cluster.sh install-topology \
   --cluster bella \
   --seed-bay bay-0 \
+  --seed-conat-server https://seed.internal.example/conat \
+  --restart-hub-workers \
   --bay bay-0=ubuntu@34.0.157.185=10.206.0.21 \
   --bay bay-1=ubuntu@34.0.146.0=10.206.0.22
 
@@ -541,6 +543,20 @@ By default `install-topology` rotates `COCALC_CLUSTER_SHARED_SECRET` across all
 listed bays using a temporary secret file copied over SSH. Use `--secret-file`
 to install a pre-generated shared secret, or `--no-rotate-secret` to only update
 topology and preserve existing secrets.
+
+The same command creates a distinct opaque Conat fabric credential for each
+bay. Each raw credential is installed only on its owning bay as
+`/etc/cocalc/bay-credential`; the seed additionally receives a digest-only
+bootstrap manifest. To rotate one bay after installation, use the seed-side
+`pnpm --dir packages/server bay-credential` command documented in
+`docs/multibay-credentials.md`, install the replacement file on that bay, and
+restart only that bay's hub workers before revoking the old credential.
+
+The seed fabric URL must use HTTPS outside loopback. Attached bays never receive
+the seed's generic Conat password. Credential files are transferred through
+remotely created mode-0700 temporary directories, and the seed consumes the
+digest manifest as a one-shot enrollment file. On the first installation use
+`--restart-hub-workers`; later enrollment is imported live by the seed watcher.
 
 ## Important Constraints
 
