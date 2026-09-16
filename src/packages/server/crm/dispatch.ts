@@ -69,6 +69,7 @@ import {
   transitionOutreachBatch,
   transitionOutreachTemplate,
   updateOutreachBatch,
+  updateOutreachRecipient,
 } from "./outreach/store";
 import { applyOutreachOptOut } from "./outreach/opt-out";
 import { enqueueOutreachZendeskEvent } from "./outreach/webhook";
@@ -204,6 +205,8 @@ export async function dispatchCrmSeedRequest(
       return await updateOutreachBatch(opts);
     case "addOutreachRecipient":
       return await addOutreachRecipient(opts);
+    case "updateOutreachRecipient":
+      return await updateOutreachRecipient(opts);
     case "removeOutreachRecipient":
       return await removeOutreachRecipient(opts);
     case "transitionOutreachBatch":

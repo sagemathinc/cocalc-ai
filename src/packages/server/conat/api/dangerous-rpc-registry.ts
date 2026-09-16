@@ -32,6 +32,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "adds reviewed prospect identity and immutable message content to an outreach batch",
   },
+  "adminCrm.updateOutreachRecipient": {
+    decision: "fresh-auth-required",
+    reason: "edits reviewed recipient content in a draft outreach batch",
+  },
   "adminCrm.archiveOrganization": {
     decision: "fresh-auth-required",
     reason: "archives a canonical customer relationship record",

@@ -82,6 +82,7 @@ export function crmActionCapabilities(
       "createOutreachBatch",
       "updateOutreachBatch",
       "addOutreachRecipient",
+      "updateOutreachRecipient",
       "removeOutreachRecipient",
       "transitionOutreachBatch",
       "mutateOutreachDelivery",

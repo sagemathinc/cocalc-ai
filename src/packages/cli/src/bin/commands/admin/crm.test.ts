@@ -1165,6 +1165,7 @@ test("outreach help exposes the shared runbook and operations families", () => {
     "create",
     "update",
     "add",
+    "edit",
     "remove",
     "preview",
     "approve",
@@ -1180,6 +1181,48 @@ test("outreach help exposes the shared runbook and operations families", () => {
   batch.outputHelp();
   assert.match(batchHelp, /create, add, preview, approve, then queue/);
   assert.match(batchHelp, /commits sequentially rather than atomically/);
+});
+
+test("outreach batch edit previews exact replacement content", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "cocalc-outreach-edit-"));
+  const bodyFile = join(directory, "body.md");
+  await writeFile(bodyFile, "Updated reviewed body\n");
+  let payload: any;
+  const { program } = setup({
+    updateOutreachRecipient: async (opts: any) => {
+      payload = opts;
+      return {
+        preview: true,
+        action: "outreach.recipient.update",
+        expected_version: 4,
+        idempotency_key: "edit-preview-key",
+      };
+    },
+  });
+
+  await program.parseAsync([
+    "node",
+    "test",
+    "admin",
+    "crm",
+    "outreach",
+    "batch",
+    "edit",
+    "batch-1",
+    "delivery-1",
+    "--subject",
+    "Updated subject",
+    "--body-file",
+    bodyFile,
+    "--reason",
+    "Correct reviewed draft wording",
+  ]);
+
+  assert.equal(payload.batch, "batch-1");
+  assert.equal(payload.delivery, "delivery-1");
+  assert.equal(payload.subject, "Updated subject");
+  assert.equal(payload.body_markdown, "Updated reviewed body\n");
+  assert.equal(payload.commit, false);
 });
 
 test("organization-first outreach draft previews only batch creation", async () => {
