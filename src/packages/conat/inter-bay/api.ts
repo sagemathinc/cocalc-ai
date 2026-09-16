@@ -1643,6 +1643,15 @@ export interface AccountLocalReleaseSiteLicensePoolSeatRequest {
   package_id: string;
 }
 
+export interface AccountLocalCleanupSiteLicenseAccessRequest {
+  account_id: string;
+}
+
+export interface AccountLocalCleanupSiteLicenseAccessResult {
+  revoked_assignment_ids: string[];
+  canceled_request_ids: string[];
+}
+
 export interface AccountLocalUpdateSiteLicenseRequest {
   actor_account_id: string;
   site_license_id: string;
@@ -2866,6 +2875,7 @@ export type AccountLocalMethod =
   | "revoke-site-license-pool-seat"
   | "assign-site-license-pool-seat"
   | "release-site-license-pool-seat"
+  | "cleanup-site-license-access-for-account-deletion"
   | "list-software-license-tiers"
   | "upsert-software-license-tier"
   | "list-software-licenses"
@@ -4403,6 +4413,9 @@ export interface InterBayAccountLocalApi {
   releaseSiteLicensePoolSeat: (
     opts: AccountLocalReleaseSiteLicensePoolSeatRequest,
   ) => Promise<{ revoked: boolean }>;
+  cleanupSiteLicenseAccessForAccountDeletion: (
+    opts: AccountLocalCleanupSiteLicenseAccessRequest,
+  ) => Promise<AccountLocalCleanupSiteLicenseAccessResult>;
   listSoftwareLicenseTiers: (
     opts: AccountLocalListSoftwareLicenseTiersRequest,
   ) => Promise<SoftwareLicenseTier[]>;
@@ -7319,6 +7332,15 @@ export function createInterBayAccountLocalClient({
       method: "release-site-license-pool-seat",
     }),
   });
+  const cleanupSiteLicenseAccessForAccountDeletionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "cleanupSiteLicenseAccessForAccountDeletion">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "cleanup-site-license-access-for-account-deletion",
+    }),
+  });
   const listSoftwareLicenseTiersClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "listSoftwareLicenseTiers">
   >({
@@ -8164,6 +8186,10 @@ export function createInterBayAccountLocalClient({
       await assignSiteLicensePoolSeatClient.assignSiteLicensePoolSeat(opts),
     releaseSiteLicensePoolSeat: async (opts) =>
       await releaseSiteLicensePoolSeatClient.releaseSiteLicensePoolSeat(opts),
+    cleanupSiteLicenseAccessForAccountDeletion: async (opts) =>
+      await cleanupSiteLicenseAccessForAccountDeletionClient.cleanupSiteLicenseAccessForAccountDeletion(
+        opts,
+      ),
     listSoftwareLicenseTiers: async (opts) =>
       await listSoftwareLicenseTiersClient.listSoftwareLicenseTiers(opts),
     upsertSoftwareLicenseTier: async (opts) =>
@@ -9324,6 +9350,23 @@ export function createInterBayAccountLocalHandler({
       impl: {
         releaseSiteLicensePoolSeat: async (opts) =>
           await impl.releaseSiteLicensePoolSeat(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "cleanupSiteLicenseAccessForAccountDeletion"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "cleanup-site-license-access-for-account-deletion",
+      }),
+      impl: {
+        cleanupSiteLicenseAccessForAccountDeletion: async (opts) =>
+          await impl.cleanupSiteLicenseAccessForAccountDeletion(opts),
       },
     }),
     createServiceHandler<

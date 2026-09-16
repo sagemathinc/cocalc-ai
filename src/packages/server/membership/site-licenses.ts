@@ -201,6 +201,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "external-claim-side-effect-failed",
   "seat-manually-assigned",
   "seat-released-by-user",
+  "seat-released-for-account-deletion",
   "seat-released-for-upgrade",
   "seat-affiliation-reverified",
   "seat-released-after-reverification-grace",
@@ -2990,6 +2991,111 @@ export async function releaseSiteLicensePoolSeat({
     return await releaseWithClient(client);
   }
   return await withLocalSiteLicenseTransaction(releaseWithClient);
+}
+
+export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
+  account_id,
+  client,
+}: {
+  account_id: string;
+  client?: PoolClient;
+}): Promise<{
+  revoked_assignment_ids: string[];
+  canceled_request_ids: string[];
+}> {
+  const accountId = normalizeAccountId(account_id);
+  const cleanupWithClient = async (dbClient: PoolClient) => {
+    await ensureSiteLicenseSchema(dbClient);
+    const { rows: assignmentRows } = await dbClient.query<{
+      package_id: string;
+    }>(
+      `SELECT a.package_id
+         FROM membership_package_assignments a
+         JOIN membership_packages p ON p.id=a.package_id
+        WHERE a.account_id=$1
+          AND a.revoked_at IS NULL
+          AND p.kind IN ('site', 'domain')
+          AND NULLIF(p.metadata ->> 'site_license_id', '') IS NOT NULL
+        FOR UPDATE OF a`,
+      [accountId],
+    );
+    const revoked_assignment_ids: string[] = [];
+    for (const { package_id } of assignmentRows) {
+      const { siteLicense } = await getSiteLicenseForPackage(
+        package_id,
+        dbClient,
+      );
+      const assignments = await listMembershipPackageAssignments({
+        package_id,
+        include_revoked: false,
+        client: dbClient,
+      });
+      const assignment = assignments.find(
+        (row) => row.account_id === accountId,
+      );
+      if (!assignment) continue;
+      const revoked = await revokeMembershipPackageSeat(
+        { package_id, account_id: accountId },
+        dbClient,
+      );
+      if (!revoked) continue;
+      await revokeSiteLicenseClaimIdentityForAssignment({
+        assignment,
+        account_id: accountId,
+        client: dbClient,
+      });
+      await recordSiteLicenseAuditEvent({
+        site_license_id: siteLicense.id,
+        action: "seat-released-for-account-deletion",
+        target_account_id: accountId,
+        package_id,
+        metadata: { assignment_id: assignment.id },
+        client: dbClient,
+      });
+      revoked_assignment_ids.push(assignment.id);
+    }
+
+    const { rows: requestRows } = await dbClient.query<{
+      site_license_id: string;
+    }>(
+      `SELECT site_license_id
+         FROM site_license_pool_requests
+        WHERE account_id=$1 AND state='pending'
+        FOR UPDATE`,
+      [accountId],
+    );
+    const canceled_request_ids: string[] = [];
+    const siteLicenseIds = new Set(
+      requestRows.map(({ site_license_id }) => site_license_id),
+    );
+    for (const site_license_id of siteLicenseIds) {
+      const canceled = await cancelPendingSiteLicensePoolRequestsForAccount({
+        site_license_id,
+        account_id: accountId,
+        reviewer_account_id: null,
+        review_note: "Canceled because the account was deleted.",
+        client: dbClient,
+      });
+      for (const request of canceled) {
+        await recordSiteLicenseAuditEvent({
+          site_license_id,
+          action: "pool-request-canceled",
+          target_account_id: accountId,
+          package_id: request.package_id,
+          request_id: request.id,
+          metadata: { reason: "account-deleted" },
+          client: dbClient,
+        });
+        canceled_request_ids.push(request.id);
+      }
+    }
+    return { revoked_assignment_ids, canceled_request_ids };
+  };
+
+  if (client != null) {
+    return await cleanupWithClient(client);
+  }
+  return await withLocalSiteLicenseTransaction(cleanupWithClient);
 }
 
 async function revokeSiteLicenseClaimIdentityForAssignment({

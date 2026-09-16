@@ -251,6 +251,7 @@ import {
   archiveSiteLicensePool,
   assignSiteLicensePoolSeat,
   cancelSiteLicensePoolRequest,
+  cleanupSiteLicenseAccessForAccountDeletionOnSeed,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
@@ -1428,6 +1429,12 @@ async function startAccountLocalService(): Promise<void> {
             revoked: await releaseSiteLicensePoolSeat(opts),
           }
         : await getSeedSiteLicenseClient().releaseSiteLicensePoolSeat(opts),
+    cleanupSiteLicenseAccessForAccountDeletion: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await cleanupSiteLicenseAccessForAccountDeletionOnSeed(opts)
+        : await getSeedSiteLicenseClient().cleanupSiteLicenseAccessForAccountDeletion(
+            opts,
+          ),
     listSoftwareLicenseTiers: async ({ actor_account_id, include_disabled }) =>
       isSeedSiteLicenseBay()
         ? await listLicenseTiersOnSeed({ include_disabled })

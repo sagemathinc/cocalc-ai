@@ -25,6 +25,7 @@ import {
   adminProvisionSiteLicense,
   archiveSiteLicensePool,
   cancelSiteLicensePoolRequest,
+  cleanupSiteLicenseAccessForAccountDeletionOnSeed,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
@@ -2193,6 +2194,123 @@ describe("site license seat pools", () => {
       request_id: request.id,
     });
     expect(canceled.state).toBe("canceled");
+  });
+
+  it("releases site-license access when an account is deleted", async () => {
+    const admin_account_id = uuid();
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const replacement_account_id = uuid();
+    const domain = `account-delete-${uuid().slice(0, 8)}.edu`;
+    const email = `student@${domain}`;
+    for (const accountId of [
+      admin_account_id,
+      owner_account_id,
+      account_id,
+      replacement_account_id,
+    ]) {
+      await createTestAccount(accountId);
+    }
+    await markAdmin(admin_account_id);
+    await markVerifiedEmail(account_id, email);
+
+    const overview = await provisionSiteLicenseForTest({
+      actor_account_id: admin_account_id,
+      owner_account_id,
+      name: "Account Deletion Campus",
+      organization_name: "Example University",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Student",
+          membership_class: studentTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+          exclusive_group: "teaching",
+        },
+        {
+          pool_name: "Instructor",
+          membership_class: instructorTier,
+          seat_count: 5,
+          requires_approval: true,
+          verification_policy: "email-domain",
+          exclusive_group: "instructor",
+        },
+      ],
+    });
+    const studentPool = overview.pools.find(
+      ({ pool_name }) => pool_name === "Student",
+    )!;
+    const instructorPool = overview.pools.find(
+      ({ pool_name }) => pool_name === "Instructor",
+    )!;
+    const assignment = await claimMembershipPackageSeat({
+      account_id,
+      package_id: studentPool.id,
+    });
+    await runMembershipSideEffectsPass({ limit: 100 });
+    const request = await requestSiteLicensePool({
+      account_id,
+      package_id: instructorPool.id,
+    });
+
+    await expect(
+      cleanupSiteLicenseAccessForAccountDeletionOnSeed({ account_id }),
+    ).resolves.toEqual({
+      revoked_assignment_ids: [assignment.id],
+      canceled_request_ids: [request.id],
+    });
+    const assignmentState = await getPool().query(
+      `SELECT revoked_at
+         FROM membership_package_assignments
+        WHERE id=$1`,
+      [assignment.id],
+    );
+    expect(assignmentState.rows[0].revoked_at).toBeTruthy();
+    const requestState = await getPool().query(
+      `SELECT state, review_note
+         FROM site_license_pool_requests
+        WHERE id=$1`,
+      [request.id],
+    );
+    expect(requestState.rows[0]).toMatchObject({
+      state: "canceled",
+      review_note: "Canceled because the account was deleted.",
+    });
+    const refreshedOverview = await getSiteLicenseOverview({
+      account_id: owner_account_id,
+      site_license_id: overview.site_license.id,
+    });
+    expect(refreshedOverview.recent_audit_events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          action: "seat-released-for-account-deletion",
+          target_account_id: account_id,
+          package_id: studentPool.id,
+        }),
+        expect.objectContaining({
+          action: "pool-request-canceled",
+          target_account_id: account_id,
+          request_id: request.id,
+        }),
+      ]),
+    );
+    await getPool().query(
+      `UPDATE accounts
+          SET deleted=true, email_address=NULL, passports=NULL
+        WHERE account_id=$1`,
+      [account_id],
+    );
+    await markVerifiedEmail(replacement_account_id, email);
+    await expect(
+      claimMembershipPackageSeat({
+        account_id: replacement_account_id,
+        package_id: studentPool.id,
+      }),
+    ).resolves.toEqual(
+      expect.objectContaining({ account_id: replacement_account_id }),
+    );
   });
 
   it("classifies site-license affiliation reverification status", async () => {
