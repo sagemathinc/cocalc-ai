@@ -50,6 +50,14 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "creates durable institutional commercial terms from an opportunity",
   },
+  "adminCrm.linkOpportunityCommercialOrder": {
+    decision: "fresh-auth-required",
+    reason: "links an existing commercial order to a reviewed opportunity",
+  },
+  "adminCrm.unlinkOpportunityCommercialOrder": {
+    decision: "fresh-auth-required",
+    reason: "removes a reviewed opportunity's link to a commercial order",
+  },
   "adminCrm.createOpportunity": {
     decision: "fresh-auth-required",
     reason: "creates a durable commercial opportunity",

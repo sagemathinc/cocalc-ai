@@ -22,6 +22,14 @@ describe("billing authority operation classification", () => {
     expect(isBillingAuthorityHubApiCall("adminCrm.updateOrganization")).toBe(
       false,
     );
+    // Attaching an existing order writes only CRM rows; it creates, changes
+    // and collects no money, so it stays out of the serialized authority.
+    expect(
+      isBillingAuthorityHubApiCall("adminCrm.linkOpportunityCommercialOrder"),
+    ).toBe(false);
+    expect(
+      isBillingAuthorityHubApiCall("adminCrm.unlinkOpportunityCommercialOrder"),
+    ).toBe(false);
     expect(
       isBillingAuthorityHubApiCall("legacyMigration.applyFinancialMigration"),
     ).toBe(true);

@@ -22,6 +22,7 @@ import {
   getSupportContext,
   getTask,
   getTimeline,
+  linkOpportunityCommercialOrder,
   listExternalReferences,
   listOpportunities,
   listOrganizations,
@@ -36,6 +37,7 @@ import {
   searchOrganizations,
   transitionOpportunity,
   transitionTask,
+  unlinkOpportunityCommercialOrder,
   updateOpportunity,
   updateOrganization,
   updatePerson,
@@ -159,6 +161,10 @@ export async function dispatchCrmSeedRequest(
       return await mutateExternalReference(opts);
     case "createCommercialOrderFromOpportunity":
       return await createOrderFromOpportunity(opts);
+    case "linkOpportunityCommercialOrder":
+      return await linkOpportunityCommercialOrder(opts);
+    case "unlinkOpportunityCommercialOrder":
+      return await unlinkOpportunityCommercialOrder(opts);
     case "backfill":
       return await backfill(opts);
     case "listOutreachTemplates":

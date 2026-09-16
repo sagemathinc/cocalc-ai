@@ -874,6 +874,8 @@ fresh authentication. A **conditional write** is read-only by default, but its
 - **previewed mutation** — \`cocalc admin crm links add\`
 - **previewed mutation** — \`cocalc admin crm links remove\`
 - **previewed mutation** — \`cocalc admin crm order create\`
+- **previewed mutation** — \`cocalc admin crm order link\`
+- **previewed mutation** — \`cocalc admin crm order unlink\`
 - **read** — \`cocalc admin crm outreach list\`
 - **read** — \`cocalc admin crm outreach show\`
 - **read** — \`cocalc admin crm outreach preview\`
