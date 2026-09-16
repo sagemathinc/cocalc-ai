@@ -17,7 +17,7 @@ processes. Save important results in files and plan how to resume long jobs.
 ## Open a terminal
 
 1. Open the project.
-2. Open **Files** or the activity bar.
+2. Open **New** on the activity bar, or click **New** in **Files**.
 3. Choose **Terminal** or create a file ending in \`.term\`.
 4. Run normal shell commands.
 
@@ -54,8 +54,8 @@ part of the project environment.
 
 ## Open and organize terminals
 
-Open a terminal from the project activity bar, **Files**, or by opening a
-file ending in \`.term\`. For the short action flow, see
+Open a terminal from **New** on the project activity bar or in **Files**, or by
+opening a file ending in \`.term\`. For the short action flow, see
 [Open a terminal](/docs/projects/open-terminal).
 
 Terminal files are path-based. A terminal at \`analysis/run.term\` starts in the

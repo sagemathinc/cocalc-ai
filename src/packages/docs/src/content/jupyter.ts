@@ -257,8 +257,11 @@ produced.
 
 ## Switch between the views
 
-Switch a notebook frame with the **Studio** and **Classic** buttons in the
-notebook header, or from **View → Switch to Studio Notebook View**.
+To switch a notebook frame to Studio, open the frame's **Jupyter** menu and
+choose **Change Type → Jupyter Studio (experimental)**. To switch back, click
+**Studio** in the notebook header and choose **Return to classic**. In either
+view, **Help → All Keyboard Shortcuts and Commands...** lists **Toggle Studio
+Notebook View**, which switches the frame to the other view.
 
 Both views act on the same notebook, so you can switch at any time without
 losing state. Because this is a frame in the frame editor, you can also split

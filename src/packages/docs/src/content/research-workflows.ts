@@ -187,7 +187,7 @@ converted automatically.
 
 ## Upload into one project folder
 
-Open a project you can edit. In **Files** in full CoCalc, create and open a
+Open a project you can edit. In full CoCalc, open **Files**, create and open a
 new \`research-workflow\` folder, then upload the three practice files there. For
 nested real datasets, preserve subdirectories; uploading only the notebook does
 not transfer their contents. See [Project files](/docs/files/project-files) and

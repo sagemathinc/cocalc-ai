@@ -469,13 +469,16 @@ detached volume is permanent and destroys all data on it.
 
 The VM table shows operating system, provider, architecture, machine type, GPU,
 location, boot-disk size, capacity type, price, funding, egress, expiration, and
-current lifecycle state. Use:
+current lifecycle state. In a project's VM page, each VM has **Connect** and
+**Manage account VMs**. The second opens the account-wide **Virtual Machines**
+tab, which adds the other controls below. Use:
 
 - **Connect** for project SSH, CLI SSH, DNS, direct SSH, and Windows RDP;
-- **Start/Stop** to control compute without deleting the persistent disk;
+- **Stop** or **Start**, whichever the VM's state shows, to control compute
+  without deleting the persistent disk;
 - **Manage > Change machine type** after stopping a VM;
-- **Manage > Set deletion deadline** to add, change, or clear automatic
-  deletion;
+- **Manage > Set deletion deadline**, shown as **Change deletion deadline**
+  once a deadline is set, to add, change, or clear automatic deletion;
 - **Manage > Create similar** to start a new form from that VM's configuration;
 - **Manage > Change funding** to move between eligible funding lanes; and
 - **Manage > Delete VM** to delete the VM, boot disk, public address, and DNS

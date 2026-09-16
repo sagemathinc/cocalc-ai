@@ -27,7 +27,7 @@ remote kernel does not copy or synchronize files in either direction.
 | Notebook cells, Markdown, and captured notebook outputs | The notebook in your CoCalc project |
 | A dataset opened by code in a remote kernel | The remote machine |
 | Files written by that code, such as CSV files, models, or saved images | The remote machine |
-| Files opened from **Files** or the project terminal | Your CoCalc project |
+| Anything listed in **Files** or opened from the project terminal | Your CoCalc project |
 
 For example, a plot displayed in a cell can be saved as notebook output in
 CoCalc. A PNG written by that same cell to disk is on the remote machine, not
