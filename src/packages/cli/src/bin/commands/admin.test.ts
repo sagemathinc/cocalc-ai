@@ -558,9 +558,34 @@ test("admin support conventions exposes the shared status workflow", async () =>
   assert.match(output.statuses.open, /actively investigating/);
   assert.match(output.statuses.pending, /waiting for the requester/);
   assert.match(output.statuses.solved, /complete and verified/);
-  assert.equal(output.version, 2);
+  assert.equal(output.version, 3);
   assert.match(output.workflow.join("\n"), /multiline comments/);
   assert.match(output.workflow.join("\n"), /--public-reply-file/);
+  const vocabulary = output.vocabulary.join("\n");
+  assert.match(vocabulary, /spelled and capitalized as it renders/);
+  assert.match(vocabulary, /left-rail tab for a project's files is Files/);
+  assert.match(vocabulary, /accept that name from a user/);
+  assert.match(vocabulary, /Git browser, not Git viewer/);
+  assert.match(vocabulary, /Exams tab of a project host/);
+  assert.match(vocabulary, /tooltip Manage project hosts and virtual machines/);
+  assert.match(vocabulary, /accessible name is Compute/);
+  assert.match(vocabulary, /Quick Navigation lists the same page as Compute/);
+  assert.match(vocabulary, /say sign in, not log in or login/);
+  assert.match(
+    vocabulary,
+    /Approve CLI Login, Approve Mobile App Login or Approve Elevated CLI Login/,
+  );
+  assert.match(vocabulary, /configured site name/);
+  assert.match(vocabulary, /tooltips Open as flyout and Open as full page/);
+  assert.match(vocabulary, /which account settings call the Activity Bar/);
+  assert.match(vocabulary, /Quick Navigation opens as a flyout titled Users/);
+  assert.match(
+    vocabulary,
+    /page and flyout both show the title Help for this project/,
+  );
+  assert.match(vocabulary, /page and flyout are titled Virtual machines/);
+  assert.match(vocabulary, /Recent Files or Project Activity Log/);
+  assert.match(vocabulary, /no Users tab on the left rail/);
 });
 
 test("admin support image verifies and writes a Zendesk attachment", async () => {

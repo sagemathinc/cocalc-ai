@@ -17,7 +17,7 @@ processes. Save important results in files and plan how to resume long jobs.
 ## Open a terminal
 
 1. Open the project.
-2. Open the file browser or the activity bar.
+2. Open **New** on the activity bar, or click **New** in **Files**.
 3. Choose **Terminal** or create a file ending in \`.term\`.
 4. Run normal shell commands.
 
@@ -54,8 +54,8 @@ part of the project environment.
 
 ## Open and organize terminals
 
-Open a terminal from the project activity bar, the file browser, or by opening a
-file ending in \`.term\`. For the short action flow, see
+Open a terminal from **New** on the project activity bar or in **Files**, or by
+opening a file ending in \`.term\`. For the short action flow, see
 [Open a terminal](/docs/projects/open-terminal).
 
 Terminal files are path-based. A terminal at \`analysis/run.term\` starts in the
@@ -72,7 +72,7 @@ similar to \`xdg-open\` on Linux or \`open\` on macOS:
 open path/to/file.ipynb path/to/script.py path/to/folder
 ~~~
 
-This is often faster than switching to the file browser when you are already
+This is often faster than switching to **Files** when you are already
 working in a terminal. Paths are interpreted relative to the terminal's current
 directory.
 

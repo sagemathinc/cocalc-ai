@@ -120,7 +120,7 @@ The dialog searches the projects in your project list, the editors open in
 projects you have opened in this browser session, starred files, files you
 recently used in this browser and tabs remembered for closed projects, recent
 files from project history already loaded in this browser, project panels such as
-Files or Log, the pages of the top navigation bar (Projects, Compute hosts,
+Files or Log, the pages of the top navigation bar (Projects, Compute,
 Notifications, and Admin for administrators), and account settings. Each file
 appears once; its frames are chosen
 in the preview on the right. This is not a search of every file on disk. The

@@ -334,7 +334,7 @@ performance benchmark or a guarantee that a larger model fits in memory.
 | \`torch.version.cuda\` is \`None\` | The selected kernel has a non-CUDA build. Correct the environment before investigating GPU allocation. |
 | CUDA build version exists, but availability is false. | Check project placement, GPU exposure, and driver compatibility with the host operator. In a project terminal, \`nvidia-smi\` can provide driver/device diagnostics when installed; its absence alone does not identify the cause. |
 | Allocation or out-of-memory error | Inspect device usage, reduce the workload, and release unused tensors or restart this kernel. The tiny check should precede a full training run. |
-| The result is correct but the saved file is missing from the expected folder. | Use the absolute path printed by the cell. Check the notebook's working directory rather than assuming it matches the file browser. |
+| The result is correct but the saved file is missing from the expected folder. | Use the absolute path printed by the cell. Check the notebook's working directory rather than assuming it matches the directory shown in **Files**. |
 
 When asking for help, include the preflight output, intended image, and exact
 error. Review output before sharing it externally; avoid sharing unrelated
@@ -499,7 +499,7 @@ Log**, and view **HTML (Converted)**. Use one build at a time. Merely opening
 the source document is not a request to render it.
 
 Check that the render finishes successfully and produces \`report.html\`.
-Open the HTML in the project's file browser or the editor's converted HTML
+Open the HTML in **Files** or the editor's converted HTML
 view. Verify all of the following:
 
 1. The title reads **A reproducible measurement report**.

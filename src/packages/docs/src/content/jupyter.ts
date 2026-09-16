@@ -24,7 +24,7 @@ project files. See [kernel recovery](/docs/troubleshooting/jupyter-kernel-termin
 4. Pick a filename and kernel.
 5. Start running cells.
 
-You can also create or open \`.ipynb\` files from the file browser, terminal, or
+You can also create or open \`.ipynb\` files from **Files**, the terminal, or
 agent tools.
 
 ## Work with notebooks from agents
@@ -199,7 +199,7 @@ Choose one action: **Ask** for a question, **Document** for an explanation,
 or **Translate** for another language.
 
 1. Enter a question for **Ask**, or optionally describe what **Document**
-   should emphasize. For **Translate**, check the target-language field.
+   should emphasize. For **Translate**, check the **Target language** field.
 2. Check **Recent agent sessions** when shown, then choose **Send**. If
    **Automatically submit to Agent** is unchecked, send the prepared draft
    from the agent chat. Follow the request there and review the result.
@@ -257,8 +257,11 @@ produced.
 
 ## Switch between the views
 
-Switch a notebook frame with the **Studio** and **Classic** buttons in the
-notebook header, or from **View → Switch to Studio Notebook View**.
+To switch a notebook frame to Studio, open the frame's **Jupyter** menu and
+choose **Change Type → Jupyter Studio (experimental)**. To switch back, click
+**Studio** in the notebook header and choose **Return to classic**. In either
+view, **Help → All Keyboard Shortcuts and Commands...** lists **Toggle Studio
+Notebook View**, which switches the frame to the other view.
 
 Both views act on the same notebook, so you can switch at any time without
 losing state. Because this is a frame in the frame editor, you can also split
@@ -273,7 +276,7 @@ buttons for that cell.
 
 ## Reading mode
 
-Turn on **Reading mode** to hide code cells entirely and show only outputs and
+Turn on **Reading** to hide code cells entirely and show only outputs and
 markdown. This is useful for presenting a notebook or reading through results.
 
 Reading mode does not make the notebook read-only. Double-click an output, or
@@ -283,7 +286,7 @@ use the pencil button, to edit the cell behind it.
 
 Use the width control in the notebook header to switch between:
 
-1. **Wide** — full frame width.
+1. **Full width** — the whole width of the frame.
 2. **Comfortable** — centered, with room for the mini table of contents.
 3. **Narrow** — compact and centered.
 
@@ -339,7 +342,7 @@ offers both scopes:
 
 1. **Run above in section** and **Run cell and below in section** stop at the
    section boundary.
-2. **Run all above** and **Run all below** cover the whole notebook.
+2. **Run All Above Selected Cell** and **Run Selected Cell and All Below** cover the whole notebook.
 
 Section-scoped runs are the reason headings pay off while you work, not only
 when you read: they let you re-run the part of the notebook you are editing

@@ -76,7 +76,7 @@ uses a different browser access path.
 
 | Connection | Default Star path | Operator check |
 | --- | --- | --- |
-| Browser to the site | Public HTTPS reaches Caddy, which forwards ordinary application requests to the local CoCalc web service on 127.0.0.1:9100. | Check the public hostname, certificate, and websocket access. A login page loading does not by itself verify notebooks and terminals. |
+| Browser to the site | Public HTTPS reaches Caddy, which forwards ordinary application requests to the local CoCalc web service on 127.0.0.1:9100. | Check the public hostname, certificate, and websocket access. The **Sign in** page loading does not by itself verify notebooks and terminals. |
 | CoCalc to project compute | Star registers its project host on the same VM, with an internal HTTP address of 127.0.0.1:9002 and SSH address of 127.0.0.1:2222. | These are backend addresses on the VM, not browser destinations or instructions to expose those ports publicly. |
 | CoCalc to stored site state | The default site uses local PostgreSQL through a local socket. | Include site state as well as project files in recovery planning. |
 | Project backup service | A local Rustic REST service listens on 127.0.0.1:9345 and stores its repository on the VM. | A local backup repository is not an off-VM recovery copy. |

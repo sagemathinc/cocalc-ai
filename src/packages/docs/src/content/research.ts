@@ -111,8 +111,8 @@ needs that conversation, retaining its path and thread query parameters. Use
 2. Follow [Add project collaborators](/docs/projects/collaborators). Choose
    **Collaborator** when the person must edit or rerun the analysis, or
    **Viewer** when they only need to read the saved results. For a viewer,
-   include the notebook, handoff note, and any supporting files in their read
-   policy; for this example, \`research-demo/\` selects the example folder.
+   include the notebook, handoff note, and any supporting files in their
+   **Viewer file access** selection; for this example, \`research-demo/\` selects the example folder.
 3. For a collaborator, keep the Essential notebook and README links. For a
    viewer, open each file through **File actions -> Full CoCalc** and copy its
    full-interface URL instead. Use the full interface for viewer access.
