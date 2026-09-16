@@ -12,6 +12,7 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
+- Latest rereview remediation commit: `10a059f943`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -20,6 +21,20 @@ the exact final branch head after push. A reviewer must confirm that SHA, this b
 and private repository before relying on this packet.
 
 ## Confirmed remediation
+
+- Project stop now advances a durable owning-bay runtime lifecycle revision.
+  Starts carry the revision in existing metadata and the project host serializes
+  complete start/stop operations. A stale start cannot cross a successful stop,
+  and restart fences in-flight starts even before they report `starting`. Ordinary
+  start gains no PostgreSQL query or host RPC; only stop/restart adds a durable
+  write.
+- Restart fencing accepts only executable-conformant ACP workers with matching
+  host-owned registrations. Current registrations bind PID to kernel start
+  identity, all worker fence calls share one concurrent timeout window, and PID
+  identity is rechecked before termination.
+- Ambiguous identity recovery retains and retries the exact old/new run pair, so a
+  reply lost after commit does not wedge the worker. The review handoff now names
+  private PR #2 correctly.
 
 - Bounded Conat receivers reject non-binary fragments before accounting or
   retention. Real loopback transport tests cover forged structured bodies,
@@ -65,6 +80,13 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- `pnpm -C src build:dev` passed after `10a059f943` across all 39 workspaces.
+- Rereview remediation checks passed: Lite 5 suites/119 tests, project-host 6
+  suites/116 tests, server lifecycle 3 suites/155 tests, server messaging 5
+  suites/82 tests, and ownership 1 suite/6 tests. Frontend lint passed. Three
+  Conat suites reported 27 passing tests but retained a pre-existing open handle;
+  the runner was terminated instead of recording its non-exit as a clean command.
+
 - Full `pnpm -C src build:dev` passed at application checkpoint `d3acb5df63` plus
   the subsequently added test-only commit `4590eac669`.
 - Server agent and kill-switch suites: 13 suites, 173 tests passed.
@@ -95,6 +117,10 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
+- Live qualification must deliberately overlap a stale start with a real
+  second-human downgrade/removal and the subsequent successful restart on the
+  matched `10a059f943` build. The earlier sequential restart evidence predates
+  this correction and is not proof of the repaired race.
 - The exact candidate passed a live detached-worker/session/running/queued restart
   probe. A real second-human membership downgrade/removal and a deliberately
   manufactured recovery child were not combined into that live probe. Their

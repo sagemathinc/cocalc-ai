@@ -13,6 +13,7 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Previously reviewed deficient head:
   `d38f3399be308a92721e40fdcb56244de3d1974e`.
 - Application/test checkpoint before this documentation update: `4590eac669`.
+- Latest rereview remediation commit: `10a059f943`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -47,16 +48,32 @@ proposed requirement change. Do not silently substitute stricter product policy.
 
 Review the full base-to-head diff. Important fix commits after the deficient head:
 
-| Commit       | Area                                                              |
-| ------------ | ----------------------------------------------------------------- |
-| `e3ed056286` | Reject non-binary fragments at bounded Conat receivers            |
-| `e6e131fa84` | Recheck external credential expiry after asynchronous guards      |
-| `ec8c6d5b4a` | Rebuild agent execution configuration after startup               |
-| `d58f268066` | Recheck native registration authority after chat lookup           |
-| `b833453029` | Fence durable ACP work and project runtimes on successful stop    |
-| `664cab8839` | Shared PostgreSQL admission, aggregate raw receive cap, ownership |
-| `d3acb5df63` | Lifecycle recovery, retention/cardinality, attribution, and CSRF  |
-| `4590eac669` | Separate-process PostgreSQL admission regression                  |
+| Commit       | Area                                                               |
+| ------------ | ------------------------------------------------------------------ |
+| `e3ed056286` | Reject non-binary fragments at bounded Conat receivers             |
+| `e6e131fa84` | Recheck external credential expiry after asynchronous guards       |
+| `ec8c6d5b4a` | Rebuild agent execution configuration after startup                |
+| `d58f268066` | Recheck native registration authority after chat lookup            |
+| `b833453029` | Fence durable ACP work and project runtimes on successful stop     |
+| `664cab8839` | Shared PostgreSQL admission, aggregate raw receive cap, ownership  |
+| `d3acb5df63` | Lifecycle recovery, retention/cardinality, attribution, and CSRF   |
+| `4590eac669` | Separate-process PostgreSQL admission regression                   |
+| `10a059f943` | Runtime lifecycle fence, authenticated worker fencing, lease retry |
+
+The latest remediation adds a monotonic owning-bay runtime lifecycle revision.
+Stop advances it durably; starts carry it in metadata they already load; and the
+project host persists it while serializing the complete per-project start/stop
+operation. An older start either finishes before stop or is rejected afterward.
+Restart also fences a start that has not yet changed the project state snapshot.
+Ordinary start adds no PostgreSQL query or host RPC. Its host-side coordination is
+an uncontended in-memory tail plus a cached SQLite revision lookup; the additional
+durable write occurs only on stop/restart.
+
+ACP restart fencing now selects only strict executable matches backed by live
+host-owned worker registrations. New registrations include the kernel PID start
+identity, fence RPCs run concurrently under one timeout window, and process
+identity is checked again before signaling. Identity recovery retains and retries
+the exact expired/replacement run pair after an ambiguous transport failure.
 
 The implementation uses shared PostgreSQL admission state. Permits remain reusable
 for repeated authorization until release/expiry; attachment preparations are
@@ -107,6 +124,14 @@ pnpm -C src/packages/util jest --runInBand db-schema/table-ownership.test.ts
 pnpm -C src lint:frontend
 ```
 
+Additional rereview regressions:
+
+```sh
+pnpm -C src/packages/project-host jest --runInBand runtime-lifecycle.test.ts worker-manager.test.ts sqlite/projects.test.ts
+COCALC_TEST_USE_PGLITE=1 NODE_OPTIONS=--experimental-vm-modules pnpm -C src/packages/server jest --runInBand project-host/control.start.test.ts projects/control/base.test.ts conat/api/hosts.test.ts
+pnpm -C src/packages/lite jest --runInBand hub/acp/__tests__/acp-workers-sqlite.test.ts hub/acp/__tests__/detached-worker.test.ts
+```
+
 The opt-in `server/agents/admission-state.multiprocess.test.ts` requires an isolated
 real PostgreSQL database named `smc_ephemeral_testing_database` and:
 
@@ -119,7 +144,10 @@ release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
 
-The full build and focused regressions passed. See
+The full build and focused regressions passed after `10a059f943`. The added tests
+cover both lifecycle race orderings, durable revision propagation, inactive state
+snapshots, unregistered/fake worker exclusion, PID-incarnation mismatch, and a
+lost reply after committed lease recovery. See
 `agent-messaging-release-progress.md` for counts, artifact hashes, operation IDs,
 and exact residual risks. The exact candidate also passed a live detached-worker
 restart probe with an existing app-server session, a foreground 180-second turn,
@@ -127,7 +155,8 @@ and an accepted queued turn: successful restart disposed the runtime, neither ol
 marker appeared immediately or after the old deadline, and a new post-restart turn
 completed normally. This is real dev-host evidence, not inferred from mocks.
 
-That live probe did not combine a separately authenticated second human's actual
+The earlier live probe predates `10a059f943` and did not combine a separately
+authenticated second human's actual
 membership downgrade/removal or an explicitly manufactured recovery child. Those
 paths have focused authorization/recovery tests, but report the remaining live
 distinction rather than treating the single probe as every D3 permutation.
