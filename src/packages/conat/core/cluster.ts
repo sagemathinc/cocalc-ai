@@ -11,6 +11,8 @@ const INTEREST_CHANGE_WAIT_MS = 250;
 
 const logger = getLogger("conat:core:cluster");
 
+export const CLUSTER_LINK_COOKIE_NAME = "cluster-link";
+
 export const CLUSTER_INTEREST_PROTOCOL = 1;
 export const CLUSTER_INTEREST_OPEN = "cluster-interest-open";
 export const CLUSTER_INTEREST_DELTA = "cluster-interest-delta";
@@ -59,11 +61,18 @@ function unrefDelay(ms: number): Promise<void> {
 
 export async function clusterLink(
   address: string,
-  systemAccountPassword: string,
+  clusterLinkPassword?: string,
   timeout = CREATE_LINK_TIMEOUT,
   localId?: string,
 ) {
-  const client = connect({ address, systemAccountPassword });
+  const client = connect({
+    address,
+    extraHeaders: clusterLinkPassword
+      ? {
+          Cookie: `${CLUSTER_LINK_COOKIE_NAME}=${clusterLinkPassword}`,
+        }
+      : undefined,
+  });
   if (client.info == null) {
     try {
       await client.waitUntilSignedIn({

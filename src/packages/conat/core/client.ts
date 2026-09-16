@@ -573,7 +573,8 @@ const cache = refCacheSync<ClientOptions, Client>({
   createObject: (opts: ClientOptions) => {
     if (LOG_CLIENT_CREATION) {
       logger.debug("Conat: creating cached client", {
-        cacheKey: clientCacheKey(opts),
+        // The cache key contains authentication headers. Never include it in
+        // diagnostics; summarizeClientOptions records the useful safe shape.
         options: summarizeClientOptions(opts),
         stack: LOG_CLIENT_CREATION_STACK
           ? new Error("conat client creation").stack
@@ -608,8 +609,12 @@ export class Client extends EventEmitter {
   private subs: { [subject: string]: SubscriptionEmitter } = {};
   private rpcServiceQueues: { [subject: string]: string } = {};
   private rpcServiceImpls: { [subject: string]: any } = {};
-  private fastRpcServiceHandlers: { [subject: string]: (payload: any) => any } =
-    {};
+  private fastRpcServiceHandlers: {
+    [subject: string]: (
+      payload: any,
+      context?: { caller?: AuthenticatedCaller; subject?: string },
+    ) => any;
+  } = {};
   private rawRpcPending: Map<string, RawRpcPending> = new Map();
   private sockets: {
     // all socket servers created using this Client
@@ -1358,7 +1363,7 @@ export class Client extends EventEmitter {
   });
 
   private handleRpcRequest = async (
-    { subject, pattern, encoding, raw, headers },
+    { subject, pattern, encoding, raw, headers, caller },
     respond,
   ) => {
     if (respond == null) {
@@ -1378,6 +1383,7 @@ export class Client extends EventEmitter {
       headers,
       client: this,
       subject,
+      caller,
     });
     this.recvStats(raw?.byteLength ?? raw?.length ?? 0);
     try {
@@ -1422,6 +1428,7 @@ export class Client extends EventEmitter {
     encoding,
     raw,
     headers,
+    caller,
   }) => {
     const respond = (response) => {
       if (!this.isClosed()) {
@@ -1442,6 +1449,7 @@ export class Client extends EventEmitter {
       headers,
       client: this,
       subject,
+      caller,
     });
     this.recvStats(raw?.byteLength ?? raw?.length ?? 0);
     try {
@@ -1511,7 +1519,10 @@ export class Client extends EventEmitter {
     pending.resolve(resp);
   };
 
-  private handleFastRpcRequest = async ({ pattern, payload }, respond) => {
+  private handleFastRpcRequest = async (
+    { pattern, payload, caller, subject },
+    respond,
+  ) => {
     const handlerStart = Date.now();
     if (respond == null) {
       return;
@@ -1526,7 +1537,7 @@ export class Client extends EventEmitter {
       return;
     }
     try {
-      const response = await handler(payload);
+      const response = await handler(payload, { caller, subject });
       respond({
         ...response,
         serviceHandlerMs: Date.now() - handlerStart,
@@ -1871,7 +1882,10 @@ export class Client extends EventEmitter {
 
   fastRpcService = async (
     subject: string,
-    handler: (payload: any) => any,
+    handler: (
+      payload: any,
+      context?: { caller?: AuthenticatedCaller; subject?: string },
+    ) => any,
     opts: RpcServiceOptions = {},
   ): Promise<RpcServiceHandle> => {
     const client = this.resolveClient(subject);
@@ -2800,6 +2814,7 @@ interface Chunk {
   encoding: DataEncoding;
   buffer: Buffer;
   headers?: any;
+  caller?: AuthenticatedCaller;
 }
 
 // if an incoming message has chunks at least this old
@@ -2864,9 +2879,9 @@ class SubscriptionEmitter extends EventEmitter {
       return;
     }
     const traceEnabled = conatTraceListeners.size > 0;
-    const [id, seq, done, encoding, buffer, headers] = data;
+    const [id, seq, done, encoding, buffer, headers, , caller] = data;
     // console.log({ id, seq, done, encoding, buffer, headers });
-    const chunk = { seq, done, encoding, buffer, headers };
+    const chunk = { seq, done, encoding, buffer, headers, caller };
     const { incoming } = this;
     if (incoming[id] == null) {
       if (seq != 0) {
@@ -2984,6 +2999,7 @@ class SubscriptionEmitter extends EventEmitter {
       //         console.log(`ERROR - invalid data ${subject}`, incoming[id], err);
       //       }
 
+      const authenticatedCaller = incoming[id]?.[0]?.caller;
       delete incoming[id];
       const mesg = new Message({
         encoding,
@@ -2991,6 +3007,7 @@ class SubscriptionEmitter extends EventEmitter {
         headers,
         client: this.client,
         subject,
+        caller: authenticatedCaller,
       });
       this.emit("message", mesg);
       this.client.recvStats(raw.byteLength);
@@ -3070,6 +3087,12 @@ function concatArrayBuffers(buffers) {
 
 export type Headers = { [key: string]: JSONValue };
 
+export interface AuthenticatedCaller {
+  cluster_id: string;
+  bay_id: string;
+  bay_credential_id: string;
+}
+
 export class MessageData<T = any> {
   public readonly encoding: DataEncoding;
   public readonly raw;
@@ -3100,11 +3123,27 @@ export class MessageData<T = any> {
 export class Message<T = any> extends MessageData<T> {
   private client: Client;
   public readonly subject;
+  public readonly caller?: AuthenticatedCaller;
 
-  constructor({ encoding, raw, headers, client, subject }) {
+  constructor({
+    encoding,
+    raw,
+    headers,
+    client,
+    subject,
+    caller,
+  }: {
+    encoding: DataEncoding;
+    raw: any;
+    headers?: Headers;
+    client: Client;
+    subject: string;
+    caller?: AuthenticatedCaller;
+  }) {
     super({ encoding, raw, headers });
     this.client = client;
     this.subject = subject;
+    this.caller = caller;
   }
 
   isRequest = (): boolean => !!this.headers?.[REPLY_HEADER];

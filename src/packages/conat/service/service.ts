@@ -98,7 +98,13 @@ export type CallConatServiceFunction = typeof callConatService;
 export interface Options extends ServiceDescription {
   description?: string;
   version?: string;
-  handler: (mesg) => Promise<any>;
+  handler: (
+    mesg,
+    context?: {
+      caller?: import("../core/client").AuthenticatedCaller;
+      subject?: string;
+    },
+  ) => Promise<any>;
   client: Client;
   parallel?: boolean;
   maxParallelHandlers?: number;
@@ -256,7 +262,10 @@ export class ConatService extends EventEmitter {
       resp = "pong";
     } else {
       try {
-        resp = await this.options.handler(request);
+        resp = await this.options.handler(request, {
+          caller: mesg.caller,
+          subject: mesg.subject,
+        });
       } catch (err) {
         resp = { error: `${err}` };
       }

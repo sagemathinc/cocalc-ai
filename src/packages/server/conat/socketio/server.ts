@@ -61,8 +61,60 @@ import { handleMetrics, initMetrics } from "./metrics";
 import { startHubConatManagedEgressLoop } from "./managed-egress";
 import { configureHubServiceAdmissionDenialRecorder } from "../api/service-admission-denials";
 import { startConatAdmissionSettingsRefresh } from "../admission-settings";
+import {
+  ensureLocalSeedBayCredential,
+  isBayCredentialUserActive,
+} from "@cocalc/server/inter-bay/bay-credentials";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 
 const logger = getLogger("conat-server");
+const BAY_CREDENTIAL_SWEEP_MS = 5_000;
+
+function startBayCredentialRevocationSweep(server: ConatServer): void {
+  if (getConfiguredClusterRole() !== "seed") return;
+  let running = false;
+  const timer = setInterval(async () => {
+    if (running) return;
+    running = true;
+    const bayConnections = Object.entries(server.getStatsSnapshot()).filter(
+      ([, stats]) => (stats.user as any)?.bay_credential_id,
+    );
+    if (!bayConnections.length) {
+      running = false;
+      return;
+    }
+    try {
+      const checks = await Promise.all(
+        bayConnections.map(async ([id, stats]) => ({
+          id,
+          active: await isBayCredentialUserActive(stats.user as any),
+        })),
+      );
+      const revoked = checks
+        .filter(({ active }) => !active)
+        .map(({ id }) => id);
+      if (revoked.length) {
+        logger.info("disconnecting revoked bay credential connections", {
+          count: revoked.length,
+        });
+        server.disconnectSockets(revoked);
+      }
+    } catch (err) {
+      // Registry availability is part of bay authentication. If it cannot be
+      // checked, disconnect every bay principal rather than extending access.
+      const ids = bayConnections.map(([id]) => id);
+      logger.error(
+        "failed to check bay credential revocations; disconnecting bay connections",
+        { count: ids.length, err },
+      );
+      server.disconnectSockets(ids);
+    } finally {
+      running = false;
+    }
+  }, BAY_CREDENTIAL_SWEEP_MS);
+  timer.unref?.();
+  server.once("closed", () => clearInterval(timer));
+}
 
 async function checkPortAvailable(port: number): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -139,7 +191,13 @@ export async function init(
   logger.debug("init");
   configureHubServiceAdmissionDenialRecorder();
   startConatAdmissionSettingsRefresh();
+  if (getConfiguredClusterRole() === "seed") {
+    await ensureLocalSeedBayCredential();
+  }
   const { kucalc, ...options } = options0;
+  const configuredClusterLinkPassword =
+    `${process.env.COCALC_CONAT_SHARED_SECRET ?? ""}`.trim() || undefined;
+  const clusterRole = getConfiguredClusterRole();
 
   if (kucalc) {
   }
@@ -149,6 +207,10 @@ export async function init(
     isAllowed,
     systemAccountPassword:
       options.systemAccountPassword ?? (await secureRandomString(64)),
+    clusterLinkPassword:
+      options.clusterLinkPassword ??
+      configuredClusterLinkPassword ??
+      (await secureRandomString(64)),
     path: join(basePath, "conat"),
     port,
     clusterName,
@@ -161,6 +223,29 @@ export async function init(
     //   - we use dns to periodically lookup the other servers and join to them.
     // we might switch to something else, but for now this should be fine
     opts.systemAccountPassword = conatPassword;
+    if (
+      clusterRole !== "standalone" &&
+      !options.clusterLinkPassword &&
+      !configuredClusterLinkPassword
+    ) {
+      throw Error(
+        "multibay clustered Conat requires COCALC_CONAT_SHARED_SECRET",
+      );
+    }
+    // Existing single-bay Kubernetes deployments use the hub password for
+    // their internal links. Multibay requires the dedicated per-bay secret.
+    opts.clusterLinkPassword =
+      options.clusterLinkPassword ??
+      configuredClusterLinkPassword ??
+      conatPassword;
+    if (
+      clusterRole !== "standalone" &&
+      opts.clusterLinkPassword === opts.systemAccountPassword
+    ) {
+      throw Error(
+        "multibay Conat cluster-link and generic system credentials must differ",
+      );
+    }
     opts.clusterIpAddress = await localAddress();
     if (!opts.clusterName) {
       opts.clusterName = "default";
@@ -174,6 +259,7 @@ export async function init(
     // things would get fixed by k8s within SCAN_INTERVAL.
     opts.forgetClusterNodeInterval = 4 * SCAN_INTERVAL;
     const server = createConatServer(opts);
+    startBayCredentialRevocationSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
@@ -184,6 +270,15 @@ export async function init(
     return server;
   }
 
+  if (
+    clusterRole !== "standalone" &&
+    opts.clusterLinkPassword === opts.systemAccountPassword
+  ) {
+    throw Error(
+      "multibay Conat cluster-link and generic system credentials must differ",
+    );
+  }
+
   if ((conatSocketioCount ?? 1) <= 1) {
     const standalonePort = await resolveStandalonePort();
     const server = createConatServer({
@@ -192,6 +287,7 @@ export async function init(
       httpServer: undefined,
       port: standalonePort,
     });
+    startBayCredentialRevocationSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,
@@ -208,6 +304,7 @@ export async function init(
       clusterName: "default",
       id: "node",
     });
+    startBayCredentialRevocationSweep(server);
     attachManagedEgressLoop({
       server,
       systemAccountPassword: opts.systemAccountPassword,

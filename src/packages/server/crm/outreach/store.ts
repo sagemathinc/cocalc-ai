@@ -1777,7 +1777,6 @@ export async function updateOutreachRecipient(
   const delivery = await resolveDelivery(getPool(), opts.delivery);
   if (delivery.batch_id !== batch.id)
     throw Error("delivery belongs to a different batch");
-  assertDraftOutreachRecipient(batch.state, delivery.state, "edited");
   const subject = bounded(opts.subject, "subject", 500);
   const body = bounded(opts.body_markdown, "body_markdown", MAX_BODY);
   const bodyMarkdown = composeOutreachBody(body, delivery.footer);
@@ -1794,7 +1793,11 @@ export async function updateOutreachRecipient(
     ),
   };
   const previewDelivery = { ...delivery, ...proposed };
-  const checks = await deliveryPreflight(previewDelivery);
+  // Committed retries must reach the replay lookup before checking live state.
+  // New commits still run preflight in mutate's transactional validation.
+  const checks = opts.commit
+    ? { blocking_errors: [], warnings: [] }
+    : await deliveryPreflight(previewDelivery);
   if (checks.warnings.length && !proposed.override_reason)
     checks.warnings.push(
       "commit requires override_reason for the listed warnings",
