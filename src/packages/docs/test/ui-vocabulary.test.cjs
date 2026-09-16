@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { existsSync, readFileSync, readdirSync } = require("node:fs");
 const { join } = require("node:path");
+const ts = require("typescript");
 const {
   UI_VOCABULARY,
   UI_VOCABULARY_FACTS,
@@ -27,48 +28,50 @@ const cache = new Map();
 function read(file) {
   if (!cache.has(file)) {
     const path = join(packagesRoot, file);
-    cache.set(
-      file,
-      existsSync(path) ? collapse(readFileSync(path, "utf8")) : null,
-    );
+    cache.set(file, existsSync(path) ? readFileSync(path, "utf8") : null);
   }
   return cache.get(file);
 }
 
-function skipString(text, index) {
-  const quote = text[index];
-  for (let i = index + 1; i < text.length; i++) {
-    if (text[i] === "\\") i++;
-    else if (text[i] === quote) return i;
-  }
-  return text.length;
-}
-
-// The definition that carries a message id: from the nearest `{` or `<` before
-// the id to the `}` or `/>` that closes it. String contents are skipped, so an
-// ICU placeholder such as "{projectLabel} Activity Log" does not end it early.
-// This covers defineMessage and formatMessage objects as well as
-// <FormattedMessage id=... /> elements.
+// Parse raw source before collapsing whitespace: comments and braces inside
+// strings are not definition boundaries, regardless of the order of fields.
+const parsedSources = new Map();
 function messageDefinition(text, messageId) {
-  const at = text.indexOf(`"${messageId}"`);
-  if (at < 0) return null;
-  const start = Math.max(text.lastIndexOf("{", at), text.lastIndexOf("<", at));
-  if (start < 0) return null;
-  let depth = 0;
-  for (let i = at + messageId.length + 2; i < text.length; i++) {
-    const char = text[i];
-    if (char === '"' || char === "'" || char === "`") {
-      i = skipString(text, i);
-    } else if (char === "{") {
-      depth++;
-    } else if (char === "}") {
-      if (depth === 0) return text.slice(start, i + 1);
-      depth--;
-    } else if (char === "/" && text[i + 1] === ">" && depth === 0) {
-      return text.slice(start, i + 2);
-    }
+  if (!parsedSources.has(text)) {
+    parsedSources.set(
+      text,
+      ts.createSourceFile(
+        "source.tsx",
+        text,
+        ts.ScriptTarget.Latest,
+        true,
+        ts.ScriptKind.TSX,
+      ),
+    );
   }
-  return null;
+  const source = parsedSources.get(text);
+  function visit(node) {
+    if (
+      (ts.isPropertyAssignment(node) || ts.isJsxAttribute(node)) &&
+      node.name.getText(source) === "id"
+    ) {
+      const value = node.initializer;
+      const literal =
+        value && ts.isJsxExpression(value) ? value.expression : value;
+      if (
+        literal &&
+        ts.isStringLiteral(literal) &&
+        literal.text === messageId
+      ) {
+        const message = node.parent.properties.find(
+          (field) => field.name?.getText(source) === "defaultMessage",
+        );
+        return message ? collapse(message.getText(source)) : null;
+      }
+    }
+    return ts.forEachChild(node, visit);
+  }
+  return visit(source) ?? null;
 }
 
 const HOW_TO_FIX =
@@ -110,7 +113,7 @@ test(
               `${where} not found in message ${anchor.messageId} in ${anchor.file}`,
             );
           }
-        } else if (!text.includes(collapse(anchor.text))) {
+        } else if (!collapse(text).includes(collapse(anchor.text))) {
           failures.push(
             `${where} not found in ${anchor.file} (${anchor.role})`,
           );
@@ -132,7 +135,7 @@ test(
         const expected = collapse(use.text ?? entry.label);
         if (text == null) {
           failures.push(`${entry.id}: ${use.file} does not exist`);
-        } else if (!text.includes(expected)) {
+        } else if (!collapse(text).includes(expected)) {
           failures.push(
             `${entry.id} (${entry.label}): ${JSON.stringify(expected)} not found in ${use.file}`,
           );
@@ -191,7 +194,8 @@ test(
   () => {
     const failures = [];
     for (const fact of UI_VOCABULARY_FACTS) {
-      const text = read(fact.file);
+      const raw = read(fact.file);
+      const text = raw == null ? null : collapse(raw);
       const target = collapse(fact.text);
       if (text == null) {
         failures.push(
@@ -230,20 +234,22 @@ test("the source reader collapses whitespace and does not decode escapes", () =>
 });
 
 test("a message anchor reads only its own definition", () => {
-  const source = collapse(`
-    files: { id: "labels.files", defaultMessage: "Files" },
-    explorer: {
-      id: "labels.explorer",
-      description: "added later",
-      defaultMessage: "Explorer",
-    },
-    <FormattedMessage id="page.title" defaultMessage="Recent Files" />
-    <FormattedMessage
+  const source = `
+    const messages = {
+      files: { id: "labels.files", defaultMessage: "Files" },
+      explorer: {
+        id: "labels.explorer",
+        description: "added later",
+        defaultMessage: "Explorer",
+      },
+    };
+    const title = <FormattedMessage id="page.title" defaultMessage="Recent Files" />;
+    const activity = <FormattedMessage
       id="page.activity"
       defaultMessage="{projectLabel} Activity Log"
       values={{ projectLabel }}
-    />
-  `);
+    />;
+  `;
   assert.ok(
     messageDefinition(source, "page.activity").includes(
       'defaultMessage="{projectLabel} Activity Log"',
@@ -256,6 +262,48 @@ test("a message anchor reads only its own definition", () => {
     messageDefinition(source, "page.title").includes(
       'defaultMessage="Recent Files"',
     ),
+  );
+  assert.equal(messageDefinition(source, "labels.missing"), null);
+});
+
+test("message fields can precede the id even with ICU placeholders", () => {
+  const source = `
+    const activity = {
+      defaultMessage: "{projectLabel} Activity Log",
+      description: "Shown before <files> or {users}",
+      id: "page.activity",
+    };
+    const title = <FormattedMessage
+      defaultMessage="{projectLabel} Activity Log"
+      values={{ projectLabel }}
+      id={"page.title"}
+    />;
+  `;
+  assert.equal(
+    messageDefinition(source, "page.activity"),
+    'defaultMessage: "{projectLabel} Activity Log"',
+  );
+  assert.equal(
+    messageDefinition(source, "page.title"),
+    'defaultMessage="{projectLabel} Activity Log"',
+  );
+});
+
+test("comments and other string fields cannot satisfy a message anchor", () => {
+  const source = `
+    // { id: "labels.files", defaultMessage: "Files" }
+    const other = { description: "labels.files", defaultMessage: "Files" };
+    const files = {
+      id: "labels.files",
+      // defaultMessage: "Files"
+      defaultMessage: "Documents",
+    };
+    const missing = { id: "labels.missing" };
+    const adjacent = { id: "labels.adjacent", defaultMessage: "Files" };
+  `;
+  assert.equal(
+    messageDefinition(source, "labels.files"),
+    'defaultMessage: "Documents"',
   );
   assert.equal(messageDefinition(source, "labels.missing"), null);
 });
