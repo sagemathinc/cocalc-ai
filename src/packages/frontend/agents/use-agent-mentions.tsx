@@ -113,7 +113,7 @@ export function useAgentMentions({
     if (epoch !== generation.current) return false;
     if (connections.controls?.paused)
       throw new Error(
-        "Your agent communication is paused. Resume it in My Agents before sending.",
+        "Your agent communication is paused. Resume it in Agents before sending.",
       );
     const links = connections.connections.filter(
       (connection) =>
@@ -138,7 +138,7 @@ export function useAgentMentions({
       )
     )
       throw new Error(
-        `Communication with @${reference.name} was paused or revoked. Explicitly re-enable it in My Agents; your draft has not been sent.`,
+        `Communication with @${reference.name} was paused or revoked. Explicitly re-enable it in Agents; your draft has not been sent.`,
       );
     setStates((states) => ({ ...states, [stateKey]: "Needs approval" }));
     if (pending.current) return false;
@@ -286,7 +286,7 @@ export function useAgentMentions({
                       openAccountSettings({ page: "my-agents" });
                     }}
                   >
-                    My Agents
+                    Agents
                   </a>
                 </>
               }

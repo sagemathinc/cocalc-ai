@@ -4,6 +4,7 @@ import {
   markAgentOpened,
   moveAgent,
   moveAgentBefore,
+  moveAgentToIndex,
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
   serializeAgentWorkspaceOrganization,
@@ -111,6 +112,20 @@ it("supports drag ordering without crossing the pinned boundary", () => {
     "b",
   ]);
   expect(moveAgentBefore(agents, organization, "a", "b")).toBe(organization);
+});
+
+it("moves agents to an exact sortable-list index", () => {
+  expect(
+    moveAgentToIndex(agents, DEFAULT_AGENT_WORKSPACE_ORGANIZATION, "a", 2),
+  ).toMatchObject({ mode: "custom", custom: ["b", "c", "a"] });
+  expect(
+    moveAgentToIndex(
+      agents,
+      { ...DEFAULT_AGENT_WORKSPACE_ORGANIZATION, pinned: ["a", "b"] },
+      "b",
+      0,
+    ).pinned,
+  ).toEqual(["b", "a"]);
 });
 
 it("records last-opened timestamps", () => {

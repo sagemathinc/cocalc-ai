@@ -17,6 +17,7 @@ import {
   markAgentOpened,
   moveAgent,
   moveAgentBefore,
+  moveAgentToIndex,
   MY_AGENTS_ORGANIZATION_SETTING,
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
@@ -79,7 +80,7 @@ export function useAgentWorkspaceOrganization(
           );
       })
       .catch((err) => {
-        logger.warn("unable to save My Agents organization", err);
+        logger.warn("unable to save agent organization", err);
         if (generation === accountGenerationRef.current) {
           setSaveError("Unable to save agent organization. Try again.");
         }
@@ -127,6 +128,9 @@ export function useAgentWorkspaceOrganization(
     },
     moveBefore(agentId: string, beforeAgentId: string) {
       save(moveAgentBefore(agents, latestRef.current, agentId, beforeAgentId));
+    },
+    moveToIndex(agentId: string, newIndex: number) {
+      save(moveAgentToIndex(agents, latestRef.current, agentId, newIndex));
     },
   };
 }

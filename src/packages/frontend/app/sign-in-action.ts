@@ -2,7 +2,7 @@
 Do something somewhat friendly when a user signs in for the first time,
 either after creating an account or being signed out.
 
-Users who enable the experimental My Agents workspace open it after normal
+Users who enable the experimental Agents workspace open it after normal
 sign-in. Other existing users open the most recent project they actively used.
 Accounts with no projects stay on the Projects page, where the first-run
 onboarding flow can ask what they actually want and choose an appropriate RootFS

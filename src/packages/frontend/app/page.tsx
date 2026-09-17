@@ -484,9 +484,9 @@ export const Page: React.FC = () => {
         active_top_tab={active_top_tab}
         tooltip="Work with registered agents, chats, artifacts, and terminals"
         icon="robot"
-        label="My Agents"
+        label="Agents"
         hide_label={isNarrow}
-        ariaLabel="My Agents"
+        ariaLabel="Agents"
       />
     );
   }

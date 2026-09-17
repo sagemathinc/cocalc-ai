@@ -239,7 +239,7 @@ export class PageActions extends Actions<PageState> {
         if (change_history) {
           set_url(getPageUrlPath({ page: "agents", agent_id }));
         }
-        set_window_title("My Agents");
+        set_window_title("Agents");
         return;
       }
       case "projects":

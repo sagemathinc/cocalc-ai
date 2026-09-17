@@ -11,9 +11,9 @@ export function MyAgentsPreference() {
   const [error, setError] = useState("");
   return (
     <section aria-labelledby={`${id}-title`} style={{ marginBlock: 24 }}>
-      <h3 id={`${id}-title`}>My Agents workspace</h3>
+      <h3 id={`${id}-title`}>Agents workspace</h3>
       <label id={`${id}-label`} htmlFor={id}>
-        Enable My Agents Page (Experimental)
+        Enable Agents Page (Experimental)
       </label>{" "}
       <Switch
         id={id}
@@ -30,16 +30,16 @@ export function MyAgentsPreference() {
               .getActions("account")
               .set_other_settings_and_wait(MY_AGENTS_UI_SETTING, value);
           } catch {
-            setError("Unable to save the My Agents preference. Try again.");
+            setError("Unable to save the Agents preference. Try again.");
           } finally {
             setBusy(false);
           }
         }}
       />
       <p id={`${id}-description`}>
-        Show My Agents as a main workspace for your registered agents and open
-        it after normal sign-in. Explicit links and document return URLs still
-        open their requested destination. This is a rollout preference, not a
+        Show Agents as a main workspace for your registered agents and open it
+        after normal sign-in. Explicit links and document return URLs still open
+        their requested destination. This is a rollout preference, not a
         permission boundary. Turning it off hides the workspace but does not
         stop agents, revoke connections, or remove project access.
       </p>

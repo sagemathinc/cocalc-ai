@@ -44,7 +44,7 @@ export function AgentMessagingPreference() {
         controls; it does not pause communication or revoke any connections or
         external credentials.
       </p>
-      <a href="/settings/my-agents">Inspect, pause or revoke in My Agents</a>
+      <a href="/settings/my-agents">Inspect, pause or revoke in Agents</a>
       {error && <Alert role="alert" type="error" title={error} />}
     </section>
   );

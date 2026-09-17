@@ -188,6 +188,35 @@ export function moveAgent(
   };
 }
 
+export function moveAgentToIndex(
+  agents: NamedAgent[],
+  organization: AgentWorkspaceOrganization,
+  agentId: string,
+  newIndex: number,
+): AgentWorkspaceOrganization {
+  const current = organizeAgents(agents, organization);
+  const inPinned = current.pinned.some(
+    ({ endpoint }) => endpoint.agent_id === agentId,
+  );
+  const ids = orderedIds(inPinned ? current.pinned : current.unpinned);
+  const oldIndex = ids.indexOf(agentId);
+  if (
+    oldIndex < 0 ||
+    newIndex < 0 ||
+    newIndex >= ids.length ||
+    oldIndex === newIndex
+  ) {
+    return organization;
+  }
+  ids.splice(oldIndex, 1);
+  ids.splice(newIndex, 0, agentId);
+  return {
+    ...organization,
+    mode: inPinned ? organization.mode : "custom",
+    ...(inPinned ? { pinned: ids } : { custom: ids }),
+  };
+}
+
 export function moveAgentBefore(
   agents: NamedAgent[],
   organization: AgentWorkspaceOrganization,

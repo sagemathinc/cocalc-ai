@@ -81,7 +81,7 @@ export const MyAgentsWorkspacePage = lazyWithRetry(
           .MyAgentsWorkspacePage,
       };
     }),
-  "My Agents workspace route",
+  "Agents workspace route",
 );
 
 export const NotificationPage = lazyWithRetry(

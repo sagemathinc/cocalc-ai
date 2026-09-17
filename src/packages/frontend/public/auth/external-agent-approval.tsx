@@ -201,7 +201,7 @@ export function ExternalAgentApproval({
                 <Alert
                   type="info"
                   role="note"
-                  title="Your agent connections are paused. Resume them in My Agents before approving this request."
+                  title="Your agent connections are paused. Resume them in Agents before approving this request."
                 />
               )}
             </>

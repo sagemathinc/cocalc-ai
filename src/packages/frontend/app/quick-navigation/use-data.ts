@@ -198,7 +198,7 @@ export function useNavigationData() {
         items.push({
           id: `agent:${agent.endpoint.agent_id}`,
           title: agent.thread_title || `@${agent.name}`,
-          detail: `My Agents › ${agent.project_title || agent.endpoint.project_id}`,
+          detail: `Agents › ${agent.project_title || agent.endpoint.project_id}`,
           keywords: `@${agent.name} ${agent.description ?? ""}`,
           priority: pinned ? 4 : 8,
           recent: agentOrganization.lastOpened[agent.endpoint.agent_id],
@@ -360,7 +360,7 @@ export function useNavigationData() {
   }[] = [
     {
       page: "agents",
-      title: "My Agents",
+      title: "Agents",
       keywords: "named registered agents chats artifacts terminals",
       show: signedIn && !lite && showMyAgents,
     },

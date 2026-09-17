@@ -30,7 +30,7 @@ export const AI_ENTRIES: DocsEntry[] = [
     status: "ready",
     summary:
       "Use registered agents, their chats, artifacts, and terminals from one workspace.",
-    title: "Use the My Agents workspace",
+    title: "Use the Agents workspace",
   },
   {
     audiences: ["agents", "researchers", "students", "teams"],

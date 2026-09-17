@@ -169,7 +169,7 @@ function AccountAgentsPage() {
       )}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
         <Input.Search
-          aria-label="Search My Agents"
+          aria-label="Search Agents"
           placeholder="Name, thread or project"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -183,14 +183,14 @@ function AccountAgentsPage() {
             setRevision((n) => n + 1);
           }}
         >
-          Refresh My Agents
+          Refresh Agents
         </Button>
       </div>
       {(directoryError || error) && (
         <div role="alert">
           <Alert
             type="error"
-            title="My Agents needs attention"
+            title="Agents needs attention"
             description={directoryError || error}
           />
         </div>
@@ -741,6 +741,6 @@ export const MY_AGENTS_SETTINGS_PAGE = {
   key: "my-agents",
   label: defineMessage({
     id: "account.settings.my-agents.label",
-    defaultMessage: "My Agents",
+    defaultMessage: "Agents",
   }),
 } satisfies SettingsPageDefinition;

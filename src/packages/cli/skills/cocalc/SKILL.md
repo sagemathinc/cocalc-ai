@@ -337,8 +337,10 @@ In a turn marked workbench-enabled, publication is part of finishing durable
 reviewable work unless the user asks otherwise. Publish plans saved to disk as
 file references (not duplicate editable Markdown), images as file references,
 completed commits/PRs as their respective cards, and support drafts for approval
-as proposed actions. Ordinary answers and scratch work stay in chat. The Agents
-page/flyout is not workbench-enabled; do not publish there by default.
+as proposed actions. Ordinary answers and scratch work stay in chat. The full
+Agents workspace is workbench-enabled when the selected thread has Workbench
+enabled; publish there normally. Lightweight agent flyouts are not
+workbench-enabled, so do not publish from a flyout by default.
 
 Prefer `project chat artifact publish`:
 

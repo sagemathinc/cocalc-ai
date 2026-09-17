@@ -29,12 +29,18 @@ import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   ProjectContext,
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
 import { EmbeddedProjectFile } from "@cocalc/frontend/project/page/content";
 import { Icon, Loading } from "@cocalc/frontend/components";
+import {
+  DragHandle,
+  SortableItem,
+  SortableList,
+} from "@cocalc/frontend/components/sortable-list";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
@@ -623,8 +629,8 @@ function AgentWorkspace({
               : displayedAgent.thread_title || `@${displayedAgent.name}`}
           </Text>
           <Text type="secondary" ellipsis style={{ display: "block" }}>
-            {unregistered ? "Not yet in My Agents" : `@${displayedAgent.name}`}{" "}
-            · {displayedAgent.project_title || agent.endpoint.project_id}
+            {unregistered ? "Not yet registered" : `@${displayedAgent.name}`} ·{" "}
+            {displayedAgent.project_title || agent.endpoint.project_id}
             {sharing ? ` · ${sharing}` : ""}
           </Text>
         </div>
@@ -635,8 +641,8 @@ function AgentWorkspace({
             threadId={selectedThread}
             threadTitle={threadTitle}
             projectTitle={agent.project_title}
-            triggerLabel="Add to My Agents"
-            modalTitle="Add thread to My Agents"
+            triggerLabel="Add to Agents"
+            modalTitle="Add thread to Agents"
           />
         )}
         {!unregistered && !displayedAgent.available && (
@@ -692,7 +698,6 @@ export function MyAgentsWorkspacePage() {
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
-  const [draggingId, setDraggingId] = useState<string>();
   const agents = directory?.agents ?? [];
   const agentOrganization = useAgentWorkspaceOrganization(
     agents,
@@ -783,48 +788,39 @@ export function MyAgentsWorkspacePage() {
     set_url(getPageUrlPath({ page: "agents", agent_id: agentId }));
   }
 
-  function renderAgentRow(agent: NamedAgent, pinned: boolean) {
+  function renderAgentRow(
+    agent: NamedAgent,
+    pinned: boolean,
+    reorderable = true,
+  ) {
     const active = agent.endpoint.agent_id === selected?.endpoint.agent_id;
-    const group = pinned
-      ? agentOrganization.groups.pinned
-      : agentOrganization.groups.unpinned;
     const id = agent.endpoint.agent_id;
-    const index = group.findIndex(({ endpoint }) => endpoint.agent_id === id);
     return (
       <div
-        key={`${agent.endpoint.project_id}:${id}`}
         role="listitem"
-        draggable
-        onDragStart={(event) => {
-          setDraggingId(id);
-          event.dataTransfer.effectAllowed = "move";
-          event.dataTransfer.setData("text/plain", id);
-        }}
-        onDragEnd={() => setDraggingId(undefined)}
-        onDragOver={(event) => {
-          if (draggingId && draggingId !== id) event.preventDefault();
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          const source = draggingId || event.dataTransfer.getData("text/plain");
-          if (source && source !== id) agentOrganization.moveBefore(source, id);
-          setDraggingId(undefined);
-        }}
         style={{
           alignItems: "center",
           background: active ? UI_COLORS.selected : "transparent",
           borderRadius: 6,
           display: "flex",
-          opacity: draggingId === id ? 0.55 : 1,
         }}
       >
-        <Button
-          type="text"
-          icon={<Icon name="bars" />}
-          aria-label={`Drag @${agent.name} to reorder`}
-          title="Drag to reorder"
-          style={{ cursor: "grab", flex: "0 0 auto" }}
-        />
+        {reorderable ? (
+          <DragHandle
+            id={id}
+            ariaLabel={`Drag @${agent.name} to reorder`}
+            title="Drag to reorder"
+            style={{
+              alignItems: "center",
+              cursor: "grab",
+              display: "flex",
+              flex: "0 0 auto",
+              padding: "10px 6px",
+            }}
+          />
+        ) : (
+          <span aria-hidden style={{ flex: "0 0 26px" }} />
+        )}
         <button
           type="button"
           aria-current={active ? "page" : undefined}
@@ -847,44 +843,53 @@ export function MyAgentsWorkspacePage() {
             {agent.project_title || agent.endpoint.project_id}
           </Text>
         </button>
-        <Space.Compact direction="vertical">
-          <Button
-            type="text"
-            size="small"
-            icon={<Icon name={pinned ? "star-filled" : "star"} />}
-            aria-label={`${pinned ? "Unpin" : "Pin"} @${agent.name}`}
-            title={pinned ? "Unpin" : "Pin"}
-            onClick={() => agentOrganization.setPinned(id, !pinned)}
-          />
-          {(pinned || agentOrganization.organization.mode === "custom") && (
-            <Space.Compact>
-              <Button
-                type="text"
-                size="small"
-                icon={<Icon name="arrow-up" />}
-                aria-label={`Move @${agent.name} up`}
-                disabled={index === 0}
-                onClick={() => agentOrganization.move(id, -1)}
-              />
-              <Button
-                type="text"
-                size="small"
-                icon={<Icon name="arrow-down" />}
-                aria-label={`Move @${agent.name} down`}
-                disabled={index === group.length - 1}
-                onClick={() => agentOrganization.move(id, 1)}
-              />
-            </Space.Compact>
-          )}
-        </Space.Compact>
+        <Button
+          type="text"
+          size="small"
+          icon={<Icon name={pinned ? "star-filled" : "star"} />}
+          aria-label={`${pinned ? "Unpin" : "Pin"} @${agent.name}`}
+          title={pinned ? "Unpin" : "Pin"}
+          onClick={() => agentOrganization.setPinned(id, !pinned)}
+        />
       </div>
+    );
+  }
+
+  function renderSortableAgentGroup(group: NamedAgent[], pinned: boolean) {
+    if (search.trim()) {
+      return group.map((agent) => (
+        <div key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}>
+          {renderAgentRow(agent, pinned, false)}
+        </div>
+      ));
+    }
+    const ids = group.map(({ endpoint }) => endpoint.agent_id);
+    return (
+      <SortableList
+        items={ids}
+        onDragStop={(_oldIndex, newIndex, activeId) => {
+          if (typeof activeId === "string") {
+            agentOrganization.moveToIndex(activeId, newIndex);
+          }
+        }}
+      >
+        {group.map((agent) => (
+          <SortableItem
+            key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+            id={agent.endpoint.agent_id}
+            hideActive={false}
+          >
+            {renderAgentRow(agent, pinned)}
+          </SortableItem>
+        ))}
+      </SortableList>
     );
   }
 
   if (loading && !directory) return <Loading theme="medium" />;
   return (
     <main
-      aria-label="My Agents workspace"
+      aria-label="Agents workspace"
       style={{
         background: UI_COLORS.page,
         color: UI_COLORS.text,
@@ -909,7 +914,7 @@ export function MyAgentsWorkspacePage() {
       >
         <Space direction="vertical" size={10} style={{ width: "100%" }}>
           <Title level={3} style={{ margin: 0 }}>
-            My Agents
+            Agents
           </Title>
           <Button
             type="primary"
@@ -959,7 +964,7 @@ export function MyAgentsWorkspacePage() {
               Pinned
             </Text>
           )}
-          {visibleGroups.pinned.map((agent) => renderAgentRow(agent, true))}
+          {renderSortableAgentGroup(visibleGroups.pinned, true)}
           {visibleGroups.unpinned.length > 0 && (
             <Text type="secondary" style={{ display: "block", padding: 6 }}>
               {agentOrganization.organization.mode === "custom"
@@ -967,11 +972,15 @@ export function MyAgentsWorkspacePage() {
                 : "Recent"}
             </Text>
           )}
-          {visibleGroups.unpinned.map((agent) => renderAgentRow(agent, false))}
+          {renderSortableAgentGroup(visibleGroups.unpinned, false)}
         </div>
-        <a href="/settings/my-agents" style={{ paddingTop: 10 }}>
+        <Button
+          type="link"
+          style={{ padding: "10px 0 0", textAlign: "left" }}
+          onClick={() => openAccountSettings({ page: "my-agents" })}
+        >
           Manage agents and connections
-        </a>
+        </Button>
       </aside>
       <section
         aria-label={selected ? `Agent @${selected.name}` : "Agent workspace"}
@@ -1013,7 +1022,12 @@ export function MyAgentsWorkspacePage() {
             style={{ marginTop: 80 }}
             description="Name an agent chat to make it available here."
           >
-            <a href="/settings/my-agents">Manage named agents</a>
+            <Button
+              type="link"
+              onClick={() => openAccountSettings({ page: "my-agents" })}
+            >
+              Manage named agents
+            </Button>
           </Empty>
         ) : !selected ? (
           <Empty

@@ -360,7 +360,7 @@ it("offers registered agents without inspecting project chat files", () => {
     expect.objectContaining({
       id: "agent:agent-id",
       title: "Review release",
-      detail: "My Agents › Other",
+      detail: "Agents › Other",
       priority: 4,
       recent: 123,
       destination: { kind: "agent", agentId: "agent-id" },
