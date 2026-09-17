@@ -34,6 +34,7 @@ let account: any;
 let closedSession: Record<string, string[]>;
 let stores: Record<string, Store>;
 let dkv: any;
+let namedAgents: any[];
 const getProjectStore = jest.fn((id) => stores[id]);
 jest.mock("react-intl", () => ({
   ...jest.requireActual("react-intl"),
@@ -98,6 +99,12 @@ import { noteActivity, resetRecentActivityForTests } from "./recent-activity";
 jest.mock("@cocalc/frontend/logger", () => ({
   getLogger: () => ({ debug: jest.fn() }),
 }));
+jest.mock("@cocalc/frontend/agents/api", () => ({
+  useNamedAgents: (enabled) => ({
+    directory: enabled ? { agents: namedAgents, enabled: true } : undefined,
+    loading: false,
+  }),
+}));
 beforeEach(() => {
   window.localStorage.clear();
   resetRecentActivityForTests();
@@ -116,6 +123,7 @@ beforeEach(() => {
     user_type: "signed_in",
     groups: [],
   });
+  namedAgents = [];
   stores = {
     active: new Store({ open_files_order: [] }),
     other: new Store({
@@ -318,6 +326,46 @@ it("offers the top navigation pages, with Admin only for admins", async () => {
   account = account.set("user_type", "public");
   const { result: signedOut } = renderHook(() => useNavigationData());
   expect(appPages(signedOut.current.items)).toEqual([]);
+});
+
+it("offers registered agents without inspecting project chat files", () => {
+  namedAgents = [
+    {
+      account_id: "account",
+      name: "reviewer",
+      endpoint: { project_id: "other", agent_id: "agent-id" },
+      path: "hidden.chat",
+      thread_id: "thread",
+      thread_title: "Review release",
+      project_title: "Other",
+      available: true,
+      updated_at: new Date().toISOString(),
+    },
+  ];
+  account = account.set(
+    "other_settings",
+    fromJS({
+      experimental_my_agents_page: true,
+      experimental_my_agents_organization_v1: {
+        version: 1,
+        mode: "recent",
+        pinned: ["agent-id"],
+        custom: [],
+        lastOpened: { "agent-id": 123 },
+      },
+    }),
+  );
+  const { result } = renderHook(() => useNavigationData());
+  expect(result.current.items).toContainEqual(
+    expect.objectContaining({
+      id: "agent:agent-id",
+      title: "Review release",
+      detail: "My Agents › Other",
+      priority: 4,
+      recent: 123,
+      destination: { kind: "agent", agentId: "agent-id" },
+    }),
+  );
 });
 
 it("lists remembered tabs and recently used files of closed projects after a refresh", async () => {

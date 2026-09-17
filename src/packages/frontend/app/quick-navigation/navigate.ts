@@ -102,6 +102,12 @@ export async function navigate(
     redux.getActions("page").set_active_tab(destination.page, true);
     return;
   }
+  if (destination.kind === "agent") {
+    const page = redux.getActions("page");
+    page.setState({ active_agent_id: destination.agentId });
+    page.set_active_tab("agents", true);
+    return;
+  }
   const { projectId } = destination;
   const projectsStore: any = redux.getStore("projects");
   if (projectsStore?.is_project_open?.(projectId)) {
