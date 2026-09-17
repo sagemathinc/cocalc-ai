@@ -165,6 +165,9 @@ describe("PublicHomeApp visual quality contract", () => {
       "grid-template-columns: repeat(2, minmax(0, 1fr)) !important;",
     );
 
+    expect(css).toContain("@media (max-width: 620px)");
+    expect(css).toContain(".cocalc-public-home-final-actions .ant-btn");
+
     expect(css).toContain("@media (max-width: 560px)");
     expect(css).toContain(".cocalc-public-home-feature-grid");
     expect(css).toContain(".cocalc-public-home-codex-grid");

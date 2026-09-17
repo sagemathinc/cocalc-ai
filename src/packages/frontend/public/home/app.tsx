@@ -99,6 +99,16 @@ const HOME_PAGE_CSS = `
     }
   }
 
+  @media (max-width: 620px) {
+    .cocalc-public-home-final-actions {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .cocalc-public-home-final-actions .ant-btn {
+      width: 100%;
+    }
+  }
+
   @media (max-width: 560px) {
     .cocalc-public-home {
       gap: 28px !important;
