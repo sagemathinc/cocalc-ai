@@ -62,6 +62,24 @@ describe("wireHostsApi", () => {
     });
   });
 
+  it("wires RPC execution authorization to the owning hub with host attribution", async () => {
+    const { hubApi } = await import("@cocalc/lite/hub/api");
+    const { wireHostsApi } = await import("./hosts");
+    wireHostsApi();
+    const opts = {
+      account_id: "target-account",
+      authorization: { version: 2, link_id: "link" },
+    };
+    await hubApi.agent.authorizeRpcExecution(opts as any);
+    expect(callHubMock).toHaveBeenCalledTimes(1);
+    expect(callHubMock).toHaveBeenCalledWith({
+      client: { id: "master-client" },
+      name: "agent.authorizeRpcExecution",
+      args: [opts],
+      host_id: process.env.PROJECT_HOST_ID,
+    });
+  });
+
   it("wires mention validation through the authenticated source host", async () => {
     const { hubApi } = await import("@cocalc/lite/hub/api");
     const { wireHostsApi } = await import("./hosts");

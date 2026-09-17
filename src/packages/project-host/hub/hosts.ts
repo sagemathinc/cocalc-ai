@@ -45,6 +45,8 @@ export function wireHostsApi(): void {
     forwardHost("agent.beginMessageAdmission", [opts]);
   hubApi.agent.authorizeRpcAdmission = (opts) =>
     forwardHost("agent.authorizeRpcAdmission", [opts]);
+  hubApi.agent.authorizeRpcExecution = (opts) =>
+    forwardHost("agent.authorizeRpcExecution", [opts]);
 
   hubApi.hosts.issueProjectHostAgentAuthToken = async (opts: {
     host_id?: string;
