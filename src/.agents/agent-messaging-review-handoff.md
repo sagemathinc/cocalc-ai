@@ -13,9 +13,9 @@ Prepared September 17, 2026. This packet requests independent re-review. It is
 - Previously reviewed deficient heads:
   `d38f3399be308a92721e40fdcb56244de3d1974e` and
   `2a0ff08783cda555e772c18f17481516f6ba53c7`, with the latest rereview
-  performed at `0f705b40e732a153957996bc85616a3a8e1e2145`.
-- Current private handoff head before this documentation update: `4b75bde488`.
-- Latest application remediation commit: `4b75bde488`.
+  performed at `ad63f225d75a9b3fccb043e8fcaa61e3e1af9acc`.
+- Current private handoff head before this documentation update: `3ffeb8d759`.
+- Latest application remediation commit: `3ffeb8d759`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -70,6 +70,7 @@ Review the full base-to-head diff. Important fix commits after the deficient hea
 | `cb1b45960f` | Membership-generation restart dedupe and owner-side revision check   |
 | `439417a928` | Atomic trigger install and intent-scoped restart idempotency         |
 | `4b75bde488` | Preserve distinct frontend restart intents before RPC submission     |
+| `3ffeb8d759` | Keep concurrent frontend restart status ordered by latest intent     |
 
 The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
@@ -104,6 +105,11 @@ When a project has an assigned host, restart requires a successful routed stop
 response; an unavailable host causes restart to fail rather than report an
 unestablished boundary. The replacement start ignores only the pre-fence recent
 state snapshot and remains bound to the newly advanced lifecycle revision.
+
+Concurrent frontend requests retain their own RPC outcomes, but only the latest
+restart UUID may update shared UI state. Older completions cannot replace the
+latest token, tracked LRO, error, optimistic lifecycle state, projection repair, or
+delayed reconciliation. Projection diagnostics are also request-scoped.
 
 ACP restart fencing now selects only strict executable matches backed by live
 host-owned worker registrations. New registrations include the kernel PID start
@@ -201,6 +207,13 @@ It launches independent Node processes. It passed cross-process permit reads and
 release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
+
+At application commit `3ffeb8d759`, the focused frontend project-actions suite
+passed 29 tests. The overlap regressions cover newer-success/older-success,
+newer-failure/older-success, and newer-success/older-failure completion orderings
+and verify that the newest token, LRO, error, and optimistic status remain
+authoritative. Frontend package typecheck and repository frontend lint passed. No
+deployment was performed.
 
 At application commit `4b75bde488`, the focused frontend project-actions suite
 passed 27 tests, including an overlap regression that holds one restart RPC open

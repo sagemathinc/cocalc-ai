@@ -12,10 +12,10 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
-- Latest independently reviewed head: `0f705b40e7`.
-- Latest application remediation commit: `4b75bde488`.
+- Latest independently reviewed head: `ad63f225d7`.
+- Latest application remediation commit: `3ffeb8d759`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `4b75bde488`.
+  `3ffeb8d759`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -37,6 +37,11 @@ and private repository before relying on this packet.
   when collaborator membership is unchanged, so execution-mode changes receive a
   new host stop boundary. Missing or malformed IDs fail closed, and all first-party
   frontend, essential-frontend, CLI, development, and course callers supply them.
+- Concurrent primary-frontend restart calls preserve independent RPC outcomes, but
+  only the latest action UUID may update shared UI status. Older completions cannot
+  replace the latest token, tracked LRO, error, optimistic lifecycle state,
+  projection repair, or delayed reconciliation. Projection diagnostic identifiers
+  include the action UUID.
 - Project collaborator-map changes now advance a monotonic authority revision in
   PostgreSQL. Explicit restarts coalesce only when that revision is unchanged, so
   a restart requested after a committed removal or downgrade cannot join an active
@@ -124,6 +129,11 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- At `3ffeb8d759`, the focused frontend project-actions suite passed 29 tests. The
+  overlap regressions cover all material older/newer success and failure orderings
+  and assert that only the newest intent controls shared restart status. Frontend
+  package typecheck and repository frontend lint passed. No deployment was
+  performed.
 - At `4b75bde488`, the focused frontend project-actions suite passed 27 tests. Its
   overlap regression holds the first restart RPC unresolved, invokes restart again,
   and verifies two RPCs with distinct request UUIDs. Frontend package typecheck and
@@ -218,8 +228,8 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must assess `4b75bde488`, including the frontend action
-  coalescing finding reported against `0f705b40e7`. Live
+- Independent re-review must assess `3ffeb8d759`, including the out-of-order
+  frontend completion finding reported against `ad63f225d7`. Live
   qualification must then deliberately overlap a stale restart with a real
   second-human downgrade/removal or execution-mode change and the subsequent
   successful restart on a matched build. Earlier live evidence predates this
