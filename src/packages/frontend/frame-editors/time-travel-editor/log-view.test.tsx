@@ -10,7 +10,10 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 jest.mock("@cocalc/frontend/components", () => ({
   Loading: () => <div>Loading...</div>,
-  TimeAgo: () => <span>timeago</span>,
+  TimeAgo: (props) => {
+    expect(props.time_ago_absolute).toBeUndefined();
+    return <span>timeago</span>;
+  },
   Tooltip: ({ children }) => <>{children}</>,
 }));
 
