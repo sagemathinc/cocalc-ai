@@ -282,6 +282,7 @@ function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   const port =
     parsePort(process.env.COCALC_BAY_HUB_BASE_PORT) ??
     parsePort(process.env.COCALC_BAY_WORKER_PORT) ??
+    parsePort(process.env.HUB_PORT) ??
     parsePort(process.env.PORT);
   if (port != null) {
     const host = localOriginHost(process.env.COCALC_BAY_HUB_BIND_HOST);
