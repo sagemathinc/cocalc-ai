@@ -1,11 +1,14 @@
 import userIsInGroup from "./is-in-group";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 
-export default async function isAdmin(account_id?: string): Promise<boolean> {
+export default async function isAdmin(
+  account_id?: string,
+  client?: PoolClient,
+): Promise<boolean> {
   if (!account_id) {
     throw Error("invalid account");
   }
-  return await userIsInGroup(account_id, "admin");
+  return await userIsInGroup(account_id, "admin", client);
 }
 
 export async function getAdmins(): Promise<Set<string>> {

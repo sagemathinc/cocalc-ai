@@ -34,13 +34,15 @@ import {
   getClusterAccountById,
 } from "@cocalc/server/inter-bay/accounts";
 import { isValidUUID } from "@cocalc/util/misc";
+import { validateExternalAgentLabel } from "@cocalc/conat/agents/external";
+import { requireUuid } from "@cocalc/conat/agents/protocol";
 
 const CHALLENGE_TTL_MS = 8 * 60 * 60_000;
 const PENDING_CLI_LOGIN_ACCOUNT_ID = "00000000-0000-0000-0000-000000000000";
 const CLI_LOGIN_START_IP_LIMIT_10M = 20;
 const CLI_LOGIN_START_IP_LIMIT_DAY = 100;
 
-export type CliAuthChallengeKind = "login" | "elevate";
+export type CliAuthChallengeKind = "login" | "elevate" | "external-agent";
 export type CliAuthClientKind = "cli" | "mobile";
 export type CliAuthChallengeStatus =
   | "pending"
@@ -271,7 +273,7 @@ async function assertCliLoginStartRateLimit({
           COUNT(*) FILTER (WHERE created >= NOW() - INTERVAL '10 minutes')::INT AS count_10m,
           COUNT(*) FILTER (WHERE created >= NOW() - INTERVAL '1 day')::INT AS count_day
           FROM account_cli_auth_challenges
-         WHERE kind = 'login'
+         WHERE kind IN ('login','external-agent')
            AND created >= NOW() - INTERVAL '1 day'
            AND metadata->>'ip_key' = $1
       `,
@@ -346,7 +348,9 @@ async function insertChallengeWithDb({
   metadata?: Record<string, unknown>;
 }): Promise<{ id: string; expire: Date }> {
   const id = randomUUID();
-  const expire = new Date(Date.now() + CHALLENGE_TTL_MS);
+  const expire = new Date(
+    Date.now() + (kind === "external-agent" ? 15 * 60_000 : CHALLENGE_TTL_MS),
+  );
   await db.query(
     `
       INSERT INTO account_cli_auth_challenges(
@@ -468,7 +472,7 @@ function approvalPath(
   challenge_id: string,
 ): string {
   const path =
-    kind === "login"
+    kind !== "elevate"
       ? `/auth/cli-login/${challenge_id}`
       : `/auth/cli-elevate/${challenge_id}`;
   return basePath === "/" ? path : `${basePath}${path}`;
@@ -583,6 +587,69 @@ export async function startCliLoginChallenge({
     home_bay_url:
       (await getBayPublicOriginForRequest(req, getConfiguredBayId())) ??
       undefined,
+  };
+}
+
+export async function startExternalAgentLoginChallenge({
+  req,
+  label,
+  secret_hash,
+}: {
+  req: any;
+  label: string;
+  secret_hash: string;
+}) {
+  const { assertExternalAgentLoginEnabled } =
+    await import("@cocalc/server/agents/external");
+  assertExternalAgentLoginEnabled();
+  validateExternalAgentLabel(label);
+  if (typeof secret_hash !== "string" || !/^[a-f0-9]{64}$/.test(secret_hash))
+    throw new Error("invalid external credential hash");
+  const db = getPool(),
+    poll_token = createOpaqueToken();
+  const ipKey = getRequestIpKey(req);
+  await assertCliLoginStartRateLimit({ db, ipKey });
+  const inserted = await insertChallengeWithDb({
+    db,
+    kind: "external-agent",
+    account_id: PENDING_CLI_LOGIN_ACCOUNT_ID,
+    poll_token,
+    metadata: { label: label.trim(), secret_hash, ip_key: ipKey },
+  });
+  return {
+    challenge_id: inserted.id,
+    poll_token,
+    expires_at: inserted.expire,
+    approval_url: await challengeApprovalUrl({
+      req,
+      kind: "external-agent",
+      challenge_id: inserted.id,
+    }),
+  };
+}
+
+/** Called only by the sealed inter-bay external enrollment service after fresh
+ * human authentication at the account home. Claiming does not grant authority. */
+export async function claimExternalAgentLoginChallenge(
+  challenge_id: string,
+  account_id: string,
+) {
+  requireUuid(account_id, "account_id");
+  const result = await getPool().query<CliAuthChallengeRow>(
+    `UPDATE account_cli_auth_challenges
+    SET account_id=$2 WHERE id=$1 AND kind='external-agent' AND status='pending'
+    AND expire>now() AND (account_id=$2 OR account_id=$3) RETURNING *`,
+    [cleanChallengeId(challenge_id), account_id, PENDING_CLI_LOGIN_ACCOUNT_ID],
+  );
+  const row = result.rows[0];
+  if (!row)
+    throw new Error(
+      "external login challenge expired, unavailable or claimed by another account",
+    );
+  return {
+    label: `${row.metadata?.label ?? ""}`,
+    secret_hash: `${row.metadata?.secret_hash ?? ""}`,
+    expires_at: new Date(row.expire).toISOString(),
   };
 }
 
@@ -755,9 +822,34 @@ export async function getCliAuthChallengeStatus({
   redeem_token?: string;
   fresh_auth_until?: Date | null;
   factor_level?: AuthSessionFactorLevel | null;
+  external?: {
+    installation:
+      | import("@cocalc/conat/agents/external").ExternalAgentInstallation
+      | null;
+    api_url?: string;
+  };
 }> {
   const row = await ensureActiveChallengeForPoll({ challenge_id, poll_token });
   const metadata = row.metadata ?? {};
+  if (row.kind === "external-agent") {
+    const external =
+      row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID
+        ? { installation: null }
+        : await (
+            await import("@cocalc/server/agents/external")
+          ).externalEnrollmentStatus(
+            row.account_id,
+            row.id,
+            `${metadata.secret_hash ?? ""}`,
+          );
+    return {
+      challenge_id: row.id,
+      kind: row.kind,
+      state: external.installation ? "approved" : "pending",
+      expires_at: new Date(row.expire),
+      external,
+    };
+  }
   return {
     challenge_id: row.id,
     kind: row.kind,
@@ -910,13 +1002,14 @@ export async function getCliAuthApprovalInfo({
   auth_client: CliAuthClientKind;
   state: CliAuthChallengeStatus;
   expires_at: Date;
+  external?: { label: string; origin_bay_id: string };
 }> {
   const row = await getChallengeRow(cleanChallengeId(challenge_id));
   if (!row) {
     throw new Error("unknown cli auth challenge");
   }
   const isPendingLogin =
-    row.kind === "login" && row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
+    row.kind !== "elevate" && row.account_id === PENDING_CLI_LOGIN_ACCOUNT_ID;
   const label = isPendingLogin ? {} : await getAccountLabel(row.account_id);
   return {
     challenge_id: row.id,
@@ -933,6 +1026,14 @@ export async function getCliAuthApprovalInfo({
     auth_client: cleanAuthClientKind(row.metadata?.auth_client),
     state: row.status,
     expires_at: new Date(row.expire),
+    ...(row.kind === "external-agent"
+      ? {
+          external: {
+            label: `${row.metadata?.label ?? ""}`,
+            origin_bay_id: getConfiguredBayId(),
+          },
+        }
+      : {}),
   };
 }
 

@@ -7,6 +7,7 @@ export {};
 
 let poolQueryMock: jest.Mock;
 let startMock: jest.Mock;
+let restartMock: jest.Mock;
 let reserveSlotMock: jest.Mock;
 let heartbeatSlotMock: jest.Mock;
 let isAdminMock: jest.Mock;
@@ -54,6 +55,7 @@ jest.mock("@cocalc/server/projects/control", () => ({
   __esModule: true,
   getProject: jest.fn(async () => ({
     start: (...args: any[]) => startMock(...args),
+    restart: (...args: any[]) => restartMock(...args),
   })),
 }));
 
@@ -155,12 +157,32 @@ describe("project-control runtime sponsor start policy", () => {
     jest.resetModules();
     poolQueryMock = jest.fn();
     startMock = jest.fn(async () => undefined);
+    restartMock = jest.fn(async () => undefined);
     reserveSlotMock = jest.fn(async () => undefined);
     heartbeatSlotMock = jest.fn(async () => undefined);
     isAdminMock = jest.fn(async () => false);
     countsTowardManagedCpuBudgetForHostMock = jest.fn(async () => true);
     getManagedProjectCpuPolicyMock = jest.fn(async () => ({ allowed: true }));
     assertProjectStartAllowedDuringMoveMock = jest.fn(async () => undefined);
+  });
+
+  it("rejects restart when collaborator authority changed after admission", async () => {
+    mockProjectRow({});
+    const { handleProjectControlRestart } = await import("./project-control");
+
+    await expect(
+      handleProjectControlRestart({
+        project_id: "project-1",
+        account_id: "owner",
+        runtime_authority_revision: "1",
+        lro_op_id: "restart-1",
+        source_bay_id: "bay-0",
+        epoch: 0,
+      }),
+    ).rejects.toThrow("project collaborator authority changed");
+
+    expect(reserveSlotMock).not.toHaveBeenCalled();
+    expect(restartMock).not.toHaveBeenCalled();
   });
 
   it("blocks ordinary collaborator starts when sponsor starts are disabled", async () => {
@@ -276,7 +298,10 @@ describe("project-control runtime sponsor start policy", () => {
       epoch: 0,
     });
 
-    expect(admission).toEqual({ storage_recovery_required: true });
+    expect(admission).toEqual({
+      storage_recovery_required: true,
+      runtime_authority_revision: "0",
+    });
   });
 
   it("allows explicit manual start when automatic starts are disabled", async () => {

@@ -17,6 +17,7 @@ export type ProjectRuntimeSponsor = {
   sponsor_account_id: string;
   owning_bay_id: string;
   host_id?: string | null;
+  runtime_authority_revision: string;
   users?: Record<string, { group?: string }> | null;
   allow_collaborator_starts_using_sponsor?: boolean | null;
   autostart_enabled?: boolean | null;
@@ -34,11 +35,14 @@ export async function loadProjectRuntimeSponsor(
     users?: Record<string, { group?: string }> | null;
     owning_bay_id?: string | null;
     host_id?: string | null;
+    runtime_authority_revision?: string | number | null;
   }>(
     `
       SELECT runtime_sponsor_account_id, usage_account_id, course,
              allow_collaborator_starts_using_sponsor, autostart_enabled, users,
-             owning_bay_id, host_id
+             owning_bay_id, host_id,
+             COALESCE(runtime_authority_revision, 0)::text
+               AS runtime_authority_revision
         FROM projects
        WHERE project_id=$1
        LIMIT 1
@@ -57,6 +61,7 @@ export async function loadProjectRuntimeSponsor(
     sponsor_account_id,
     owning_bay_id: row.owning_bay_id ?? getConfiguredBayId(),
     host_id: row.host_id ?? null,
+    runtime_authority_revision: `${row.runtime_authority_revision ?? "0"}`,
     users: row.users,
     allow_collaborator_starts_using_sponsor:
       row.allow_collaborator_starts_using_sponsor,

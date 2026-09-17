@@ -27,6 +27,29 @@ const publicKeyPem = publicKey
   .toString();
 
 describe("project-host agent session tokens", () => {
+  it.each(["account", "agent"] as const)(
+    "signs credential provenance %s and rejects tampering",
+    (auth_actor) => {
+      const issued = issueProjectHostAuthToken({
+        host_id: hostId,
+        account_id: accountId,
+        private_key: privateKeyPem,
+        auth_actor,
+      });
+      const verify = (token: string) =>
+        verifyProjectHostAuthToken({
+          token,
+          host_id: hostId,
+          public_key: publicKeyPem,
+        });
+      expect(verify(issued.token).auth_actor).toBe(auth_actor);
+      const parts = issued.token.split(".");
+      const claims = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+      claims.auth_actor = auth_actor === "agent" ? "account" : "agent";
+      parts[1] = Buffer.from(JSON.stringify(claims)).toString("base64url");
+      expect(() => verify(parts.join("."))).toThrow("invalid token signature");
+    },
+  );
   it("signs and verifies the stable session id", () => {
     const issued = issueProjectHostAuthToken({
       host_id: hostId,

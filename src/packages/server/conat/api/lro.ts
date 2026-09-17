@@ -23,6 +23,8 @@ import {
   hostAccessRoleCan,
 } from "@cocalc/server/project-host/access";
 import { cancelStaleProjectStartLros } from "@cocalc/server/projects/start-lro-cleanup";
+import { resolveHostBay } from "@cocalc/server/inter-bay/directory";
+import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 
 const DISMISSABLE_STATUSES: LroStatus[] = [
   "succeeded",
@@ -124,6 +126,20 @@ export async function list({
   scope_id: string;
   include_completed?: boolean;
 }): Promise<LroSummary[]> {
+  if (scope_type === "host") {
+    const ownership = await resolveHostBay(scope_id);
+    const bay_id = ownership?.bay_id;
+    if (bay_id && bay_id !== getConfiguredBayId()) {
+      // The owning bay checks access and reads its authoritative operation log.
+      return await getInterBayBridge()
+        .hostConnection(bay_id)
+        .listHostOperations({
+          account_id,
+          host_id: scope_id,
+          include_completed,
+        });
+    }
+  }
   await assertScopeAccess({ account_id, scope_type, scope_id, mode: "read" });
   if (scope_type === "project") {
     await cancelStaleProjectStartLros({ project_id: scope_id });

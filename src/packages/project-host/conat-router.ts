@@ -4,6 +4,7 @@
  */
 
 import { once } from "node:events";
+import { createHmac } from "node:crypto";
 import {
   createServer as createHttpServer,
   type IncomingMessage,
@@ -248,6 +249,17 @@ export function resolveProjectHostConatRouterClusterName({
   );
 }
 
+export function deriveProjectHostConatClusterLinkPassword(
+  systemAccountPassword: string,
+): string {
+  if (!systemAccountPassword) {
+    throw new Error("project-host conat system account password is required");
+  }
+  return createHmac("sha256", systemAccountPassword)
+    .update("cocalc-project-host-conat-cluster-link-v1")
+    .digest("base64url");
+}
+
 export async function startProjectHostConatRouterServer({
   httpServer,
   ssl,
@@ -281,6 +293,9 @@ export async function startProjectHostConatRouterServer({
     getUser: conatAuth.getUser,
     isAllowed: conatAuth.isAllowed,
     systemAccountPassword,
+    clusterLinkPassword: deriveProjectHostConatClusterLinkPassword(
+      systemAccountPassword,
+    ),
     localClusterSize,
     clusterName,
   });

@@ -20,11 +20,19 @@ let loadAccountPersistStateMock: jest.Mock;
 let restoreAccountPersistStateMock: jest.Mock;
 let clearAccountPersistStateMock: jest.Mock;
 let createInterBayAccountLocalClientMock: jest.Mock;
+let personalRehomeGuardMock: jest.Mock;
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: jest.fn(() => ({
     query: queryMock,
+    connect: async () => ({
+      query: async (sql, params) =>
+        ["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)
+          ? { rows: [] }
+          : queryMock(sql, params),
+      release: () => {},
+    }),
   })),
 }));
 
@@ -82,6 +90,9 @@ jest.mock("@cocalc/server/accounts/is-admin", () => ({
 jest.mock("@cocalc/server/accounts/rehome-fence", () => ({
   lockAccountRehomeFence: jest.fn(async () => undefined),
 }));
+jest.mock("@cocalc/server/agents/personal-rehome", () => ({
+  assertNoPersonalStateForRehome: (...args) => personalRehomeGuardMock(...args),
+}));
 
 jest.mock("@cocalc/server/accounts/persist-portability", () => ({
   loadAccountPersistState: (...args: any[]) =>
@@ -123,6 +134,7 @@ describe("account rehome", () => {
 
   beforeEach(() => {
     jest.resetModules();
+    personalRehomeGuardMock = jest.fn(async () => {});
     operationRow = {
       op_id: OP_ID,
       account_id: TARGET_ACCOUNT_ID,
@@ -381,6 +393,81 @@ describe("account rehome", () => {
       operation_status: "succeeded",
       status: "rehomed",
     });
+  });
+
+  it.each([
+    "requested",
+    "destination_accepted",
+    "source_flipped",
+    "projections_copied",
+  ])(
+    "personal state blocks resumed rehome at %s before copy/cleanup/routing changes",
+    async (stage) => {
+      operationRow.stage = stage;
+      personalRehomeGuardMock.mockRejectedValue(
+        new Error(
+          "Account rehome is unavailable while this account has personal agent state",
+        ),
+      );
+      const { runAccountRehomeOperation } = await import("./rehome");
+      await expect(runAccountRehomeOperation(OP_ID)).rejects.toThrow(
+        "personal agent state",
+      );
+      expect(personalRehomeGuardMock).toHaveBeenCalledWith(
+        expect.anything(),
+        TARGET_ACCOUNT_ID,
+      );
+      expect(acceptRehomeMock).not.toHaveBeenCalled();
+      expect(copyRehomeStateMock).not.toHaveBeenCalled();
+      expect(clearAccountPersistStateMock).not.toHaveBeenCalled();
+      expect(updateClusterAccountHomeBayMock).not.toHaveBeenCalled();
+      expect(
+        queryMock.mock.calls.some(([sql]) =>
+          /DELETE FROM|UPDATE accounts/.test(sql),
+        ),
+      ).toBe(false);
+      expect(operationRow.status).toBe("failed");
+    },
+  );
+
+  it("personal-state guard prevents creating a new rehome operation", async () => {
+    const { listClusterBayRegistry } =
+      await import("@cocalc/server/bay-registry");
+    jest
+      .mocked(listClusterBayRegistry)
+      .mockResolvedValueOnce([{ bay_id: "bay-2" }] as any);
+    queryMock.mockImplementation(async (sql) => {
+      if (sql.includes("SELECT to_jsonb(accounts) AS account"))
+        return {
+          rows: [
+            {
+              account: { account_id: TARGET_ACCOUNT_ID, home_bay_id: "bay-1" },
+            },
+          ],
+        };
+      if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX"))
+        return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    });
+    personalRehomeGuardMock.mockRejectedValue(
+      new Error(
+        "Account rehome is unavailable while this account has personal agent state",
+      ),
+    );
+    const { rehomeAccountOnHomeBay } = await import("./rehome");
+    await expect(
+      rehomeAccountOnHomeBay({
+        account_id: REQUESTED_BY,
+        target_account_id: TARGET_ACCOUNT_ID,
+        dest_bay_id: "bay-2",
+      }),
+    ).rejects.toThrow("personal agent state");
+    expect(
+      queryMock.mock.calls.some(([sql]) =>
+        sql.includes("INSERT INTO account_rehome_operations"),
+      ),
+    ).toBe(false);
+    expect(acceptRehomeMock).not.toHaveBeenCalled();
   });
 
   it("copies membership portability state during source-flipped account rehome", async () => {

@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   _test,
   classifyHostAvailabilitySnapshot,
@@ -11,6 +12,30 @@ import {
 } from "./availability";
 
 describe("classifyHostAvailabilitySnapshot", () => {
+  it("never repairs a stale rehome tombstone belonging to another bay", async () => {
+    await getPool().query(`CREATE TABLE IF NOT EXISTS project_hosts (
+      id UUID PRIMARY KEY, bay_id TEXT, status TEXT, last_seen TIMESTAMP,
+      deleted TIMESTAMP, metadata JSONB, public_url TEXT, internal_url TEXT
+    )`);
+    const local = "ba222222-2222-4222-8222-222222222222";
+    const remote = "ba333333-3333-4333-8333-333333333333";
+    await getPool().query(
+      `INSERT INTO project_hosts (id, bay_id, status, last_seen)
+       VALUES ($1, $3, 'running', NOW() - INTERVAL '1 day'),
+              ($2, 'other-bay', 'running', NOW() - INTERVAL '1 day')`,
+      [local, remote, getConfiguredBayId()],
+    );
+    try {
+      const ids = (await _test.getRunningStaleHosts()).map(({ id }) => id);
+      expect(ids).toContain(local);
+      expect(ids).not.toContain(remote);
+    } finally {
+      await getPool().query(
+        "DELETE FROM project_hosts WHERE id=ANY($1::uuid[])",
+        [[local, remote]],
+      );
+    }
+  });
   it("allows durable unobserved availability events", async () => {
     await ensureHostAvailabilitySchema();
     const id = "0f490467-90fe-4f06-a896-dd4c8ef1945a";

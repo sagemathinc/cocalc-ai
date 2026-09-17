@@ -113,6 +113,13 @@ function shouldPublishTunnelBrowserDns(metadata: HostMetadata): boolean {
 }
 
 const DEFAULT_SOFTWARE_BASE_URL = "https://software.cocalc.ai/software";
+const AGENT_MESSAGING_HOST_ENV_FLAGS = [
+  "COCALC_AGENT_MESSAGING_ENABLED",
+  "COCALC_AGENT_MESSAGING_RPC_ENABLED",
+  "COCALC_AGENT_PERSONAL_MESSAGING_ENABLED",
+  "COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED",
+  "COCALC_AGENT_EXTERNAL_LOGIN_ENABLED",
+] as const;
 type BootstrapManagedArtifact =
   | "project-host"
   | "container-runtime"
@@ -1326,6 +1333,14 @@ export async function buildBootstrapScripts(
     `DEBUG_CONSOLE=yes`,
     `COCALC_SSH_SERVER=0.0.0.0:${sshPort}`,
   ];
+  // These fail-closed rollout gates must match on hubs and project-host
+  // runtimes. Propagate only the literal enabling value; unset/disabled gates
+  // are omitted when bootstrap rewrites the managed environment.
+  for (const flag of AGENT_MESSAGING_HOST_ENV_FLAGS) {
+    if (process.env[flag] === "1") {
+      envLines.push(`${flag}=1`);
+    }
+  }
   if (directHttpsEnabled) {
     envLines.push(`COCALC_PROJECT_HOST_DIRECT_HTTPS_PORT=443`);
     envLines.push(

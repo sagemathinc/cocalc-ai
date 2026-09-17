@@ -229,6 +229,46 @@ describe("startProjectOnHost placement", () => {
     interBayHostListMock = jest.fn(async () => []);
   });
 
+  it("binds users and the lifecycle revision in one project snapshot", async () => {
+    const projectQueries: string[] = [];
+    queryMock = jest.fn(async (sql: string) => {
+      if (
+        sql.includes("FROM projects") &&
+        sql.includes("WHERE project_id=$1")
+      ) {
+        projectQueries.push(sql);
+        return {
+          rows: [
+            {
+              title: "Atomic snapshot",
+              users: { viewer: { group: "read_only" } },
+              image: "cocalc.local/rootfs/atomic",
+              host_id: "host-1",
+              region: "wnam",
+              owning_bay_id: "bay-0",
+              run_quota: {},
+              run_quota_revision: "3",
+              runtime_lifecycle_revision: "9",
+              env: {},
+              autostart_enabled: true,
+            },
+          ],
+        };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { loadProject } = await import("./control");
+    await expect(loadProject("proj-1")).resolves.toMatchObject({
+      users: { viewer: { group: "read_only" } },
+      runtime_lifecycle_revision: 9,
+    });
+
+    expect(projectQueries).toHaveLength(1);
+    expect(projectQueries[0]).toContain("users");
+    expect(projectQueries[0]).toContain("runtime_lifecycle_revision");
+  });
+
   it("only uses shared pool hosts for automatic placement without an account", async () => {
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
@@ -516,8 +556,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -601,6 +642,7 @@ describe("startProjectOnHost placement", () => {
       authorized_keys: "ssh-ed25519 AAAATEST user@test",
       run_quota: {},
       run_quota_revision: 0,
+      runtime_lifecycle_revision: 0,
     });
     expect(startProjectMock).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -608,6 +650,7 @@ describe("startProjectOnHost placement", () => {
         authorized_keys: "ssh-ed25519 AAAATEST user@test",
         run_quota: {},
         run_quota_revision: 0,
+        runtime_lifecycle_revision: 0,
         image: "sagemathinc/sagemath-x86_64:10.7",
         restore: "none",
         apply_pending_copies: false,
@@ -640,8 +683,9 @@ describe("startProjectOnHost placement", () => {
 
     queryMock = jest.fn(async (sql: string, params: any[]) => {
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         expect(params).toEqual(["proj-1"]);
         return {
@@ -727,8 +771,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -801,6 +846,7 @@ describe("startProjectOnHost placement", () => {
         authorized_keys: "ssh-ed25519 AAAATEST user@test",
         run_quota: {},
         run_quota_revision: 0,
+        runtime_lifecycle_revision: 0,
       },
     });
     expect(interBayHostControlStartProjectMock).toHaveBeenCalledWith({
@@ -813,6 +859,7 @@ describe("startProjectOnHost placement", () => {
         restore: "none",
         restore_backup_id: undefined,
         run_quota_revision: 0,
+        runtime_lifecycle_revision: 0,
         lro_op_id: "op-1",
       }),
     });
@@ -849,8 +896,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -970,8 +1018,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -1118,8 +1167,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         expect(params).toEqual(["proj-1"]);
         return {
@@ -1228,8 +1278,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -1337,8 +1388,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -1442,8 +1494,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         loadProjectCalls += 1;
         return {
@@ -1545,8 +1598,9 @@ describe("startProjectOnHost placement", () => {
         };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         return {
           rows: [
@@ -1658,8 +1712,9 @@ describe("startProjectOnHost placement", () => {
         return { rows: [{ exists: false }] };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         return {
           rows: [
@@ -1768,8 +1823,9 @@ describe("startProjectOnHost placement", () => {
         };
       }
       if (
-        sql ===
-        "SELECT title, users, rootfs_image as image, host_id, region, owning_bay_id, run_quota FROM projects WHERE project_id=$1"
+        sql.includes(
+          "COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision",
+        )
       ) {
         return {
           rows: [
@@ -1848,5 +1904,46 @@ describe("startProjectOnHost placement", () => {
       phase_timings_ms: { runner_start: 1234 },
     });
     await retry;
+  });
+
+  it("advances the durable runtime fence before sending stop", async () => {
+    const stopProject = jest.fn(async () => ({
+      project_id: "proj-1",
+      state: "opened",
+    }));
+    createHostControlClientMock = jest.fn(() => ({ stopProject }));
+    queryMock = jest.fn(async (sql: string) => {
+      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+        return { rows: [] };
+      }
+      if (sql.includes("SET runtime_lifecycle_revision")) {
+        return { rows: [{ runtime_lifecycle_revision: "7" }] };
+      }
+      if (sql.includes("LEFT JOIN project_hosts")) {
+        return {
+          rows: [
+            {
+              host_id: "host-1",
+              project_owning_bay_id: "bay-0",
+              host_bay_id: "bay-0",
+              ssh_server: null,
+              metadata: {},
+            },
+          ],
+        };
+      }
+      if (sql.includes("SET state=$2::jsonb")) {
+        return { rowCount: 1, rows: [] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    });
+
+    const { stopProjectOnHost } = await import("./control");
+    await stopProjectOnHost("proj-1");
+
+    expect(stopProject).toHaveBeenCalledWith({
+      project_id: "proj-1",
+      runtime_lifecycle_revision: 7,
+    });
   });
 });

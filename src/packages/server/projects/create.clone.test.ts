@@ -280,7 +280,14 @@ describe("projects.createProject clone routing", () => {
       backup_repo_id: null,
     }));
     resolveHostBayMock = jest.fn(async () => null);
-    hostConnectionGetMock = jest.fn();
+    hostConnectionGetMock = jest.fn(async () => ({
+      host_id: HOST_ID,
+      bay_id: "bay-7",
+      region: "us-west1",
+      can_place: true,
+      status: "running",
+      online: true,
+    }));
     hostControlCreateProjectMock = jest.fn(async () => ({
       project_id: insertedProjectId,
       state: { state: "stopped" },
@@ -457,6 +464,7 @@ describe("projects.createProject clone routing", () => {
         users: { [ACCOUNT_ID]: { group: "owner" } },
         image: CATALOG_ROOTFS_IMAGE,
         start: false,
+        runtime_lifecycle_revision: 0,
       },
     });
   });
@@ -969,123 +977,139 @@ describe("projects.createProject clone routing", () => {
     expect(hostCreateProjectMock).not.toHaveBeenCalled();
   });
 
-  it("creates a project on a host owned by another bay when remote placement is allowed", async () => {
-    queryMock = jest.fn(async (sql: string, params: any[]) => {
-      if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
-        return { rows: [], rowCount: null };
-      }
-      if (
-        sql.includes(
-          "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
-        )
-      ) {
-        return { rows: [] };
-      }
-      if (
-        sql.includes(
-          "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
-        )
-      ) {
-        return { rows: [] };
-      }
-      if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
-        expect(params).toEqual([HOST_ID]);
-        return { rows: [] };
-      }
-      if (sql.startsWith("INSERT INTO projects ")) {
-        insertedProjectId = params[0];
-        expect(params[7]).toBe(HOST_ID);
-        expect(params[8]).toBe("wnam");
-        expect(params[9]).toBe("bay-0");
-        return { rowCount: 1 };
-      }
-      if (isRootfsScanSelectionQuery(sql)) {
-        return rootfsScanAllowedRows({ image_id: "official-cocalc-base" });
-      }
-      if (
-        sql.includes("SELECT release_id") &&
-        sql.includes("FROM rootfs_images")
-      ) {
-        expect(params).toEqual(["cocalc.local/rootfs/base"]);
-        return { rows: [{ release_id: "release-base" }] };
-      }
-      if (
-        sql.includes("SELECT release_id") &&
-        sql.includes("FROM rootfs_releases")
-      ) {
-        expect(params).toEqual(["cocalc.local/rootfs/base"]);
-        return { rows: [] };
-      }
-      if (sql.includes("INSERT INTO project_rootfs_states")) {
-        return { rowCount: 1 };
-      }
-      if (
-        sql.includes("FROM project_rootfs_states") &&
-        sql.includes(
-          "ORDER BY CASE state_role WHEN 'current' THEN 0 ELSE 1 END",
-        )
-      ) {
-        return {
-          rows: [
-            {
-              project_id: insertedProjectId,
-              state_role: "current",
-              runtime_image: "cocalc.local/rootfs/base",
-              release_id: null,
-              image_id: null,
-              set_by_account_id: null,
-              created: new Date(),
-              updated: new Date(),
-            },
-          ],
-        };
-      }
-      throw new Error(`unexpected query: ${sql}`);
-    });
-    poolConnectMock = jest.fn(async () => ({
-      query: queryMock,
-      release: releaseMock,
-    }));
-    resolveHostBayMock = jest.fn(async () => ({
-      bay_id: "bay-7",
-      epoch: 1,
-    }));
-    hostConnectionGetMock = jest.fn(async ({ account_id, host_id }) => {
-      expect(account_id).toBe(ACCOUNT_ID);
-      expect(host_id).toBe(HOST_ID);
-      return {
-        host_id: HOST_ID,
+  it.each([false, true])(
+    "creates a project on a remote host (stale local tombstone: %s)",
+    async (tombstone) => {
+      queryMock = jest.fn(async (sql: string, params: any[]) => {
+        if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+          return { rows: [], rowCount: null };
+        }
+        if (
+          sql.includes(
+            "SELECT project_id FROM deleted_projects WHERE project_id=$1 LIMIT 1",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (
+          sql.includes(
+            "SELECT project_id FROM projects WHERE project_id=$1 LIMIT 1",
+          )
+        ) {
+          return { rows: [] };
+        }
+        if (sql.includes("SELECT * FROM project_hosts WHERE id=$1")) {
+          expect(params).toEqual([HOST_ID]);
+          return {
+            rows: tombstone
+              ? [
+                  {
+                    id: HOST_ID,
+                    bay_id: "bay-7",
+                    status: "running",
+                    last_seen: new Date(0),
+                    metadata: {},
+                  },
+                ]
+              : [],
+          };
+        }
+        if (sql.startsWith("INSERT INTO projects ")) {
+          insertedProjectId = params[0];
+          expect(params[7]).toBe(HOST_ID);
+          expect(params[8]).toBe("wnam");
+          expect(params[9]).toBe("bay-0");
+          return { rowCount: 1 };
+        }
+        if (isRootfsScanSelectionQuery(sql)) {
+          return rootfsScanAllowedRows({ image_id: "official-cocalc-base" });
+        }
+        if (
+          sql.includes("SELECT release_id") &&
+          sql.includes("FROM rootfs_images")
+        ) {
+          expect(params).toEqual(["cocalc.local/rootfs/base"]);
+          return { rows: [{ release_id: "release-base" }] };
+        }
+        if (
+          sql.includes("SELECT release_id") &&
+          sql.includes("FROM rootfs_releases")
+        ) {
+          expect(params).toEqual(["cocalc.local/rootfs/base"]);
+          return { rows: [] };
+        }
+        if (sql.includes("INSERT INTO project_rootfs_states")) {
+          return { rowCount: 1 };
+        }
+        if (
+          sql.includes("FROM project_rootfs_states") &&
+          sql.includes(
+            "ORDER BY CASE state_role WHEN 'current' THEN 0 ELSE 1 END",
+          )
+        ) {
+          return {
+            rows: [
+              {
+                project_id: insertedProjectId,
+                state_role: "current",
+                runtime_image: "cocalc.local/rootfs/base",
+                release_id: null,
+                image_id: null,
+                set_by_account_id: null,
+                created: new Date(),
+                updated: new Date(),
+              },
+            ],
+          };
+        }
+        throw new Error(`unexpected query: ${sql}`);
+      });
+      poolConnectMock = jest.fn(async () => ({
+        query: queryMock,
+        release: releaseMock,
+      }));
+      resolveHostBayMock = jest.fn(async () => ({
         bay_id: "bay-7",
-        region: "us-west1",
-        can_place: true,
-        status: "running",
-        online: true,
-      };
-    });
+        epoch: 1,
+      }));
+      hostConnectionGetMock = jest.fn(async ({ account_id, host_id }) => {
+        expect(account_id).toBe(ACCOUNT_ID);
+        expect(host_id).toBe(HOST_ID);
+        return {
+          host_id: HOST_ID,
+          bay_id: "bay-7",
+          region: "us-west1",
+          can_place: true,
+          status: "running",
+          online: true,
+        };
+      });
 
-    const createProject = (await import("./create")).default;
-    const project_id = await createProject({
-      title: "Remote host placement",
-      description: "",
-      account_id: ACCOUNT_ID,
-      host_id: HOST_ID,
-      rootfs_image: "cocalc.local/rootfs/base",
-      start: false,
-    });
-
-    expect(typeof project_id).toBe("string");
-    expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
-    expect(hostConnectionGetMock).toHaveBeenCalledTimes(1);
-    expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
-      account_id: ACCOUNT_ID,
-      host_id: HOST_ID,
-      create: {
-        image: "cocalc.local/rootfs/base",
-        project_id,
-        start: false,
+      const createProject = (await import("./create")).default;
+      const project_id = await createProject({
         title: "Remote host placement",
-        users: { [ACCOUNT_ID]: { group: "owner" } },
-      },
-    });
-  });
+        description: "",
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        rootfs_image: "cocalc.local/rootfs/base",
+        start: false,
+      });
+
+      expect(typeof project_id).toBe("string");
+      expect(resolveHostBayMock).toHaveBeenCalledWith(HOST_ID);
+      expect(hostConnectionGetMock).toHaveBeenCalledTimes(1);
+      expect(hostControlCreateProjectMock).toHaveBeenCalledWith({
+        account_id: ACCOUNT_ID,
+        host_id: HOST_ID,
+        create: {
+          image: "cocalc.local/rootfs/base",
+          project_id,
+          start: false,
+          runtime_lifecycle_revision: 0,
+          title: "Remote host placement",
+          users: { [ACCOUNT_ID]: { group: "owner" } },
+        },
+      });
+    },
+  );
 });

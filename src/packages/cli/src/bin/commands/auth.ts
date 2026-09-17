@@ -1,4 +1,13 @@
 import { Command } from "commander";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  EXTERNAL_AGENT_TOKEN_PREFIX,
+  type ExternalAgentInstallation,
+} from "@cocalc/conat/agents/external";
+import {
+  externalAgentProfilePath,
+  saveExternalAgentCredential,
+} from "../core/external-agent-profile";
 import { describeProjectScopedAuth } from "../../core/auth-cookies";
 import { resolveAgentTokenFromEnv } from "../../core/agent-token";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
@@ -96,7 +105,11 @@ export function registerAuthCommand(
 
   type CliChallengeStatus = {
     challenge_id: string;
-    kind: "login" | "elevate";
+    kind: "login" | "elevate" | "external-agent";
+    external?: {
+      installation: ExternalAgentInstallation | null;
+      api_url?: string;
+    };
     state: "pending" | "approved" | "redeemed";
     expires_at: string | Date;
     redeem_token?: string;
@@ -683,6 +696,70 @@ export function registerAuthCommand(
     };
   }
 
+  async function runExternalAgentLogin(
+    globals: any,
+    opts: { agent: string; agentLabel?: string; pollMs?: string },
+  ) {
+    externalAgentProfilePath(opts.agent);
+    const effective = resolveEffectiveGlobals(globals);
+    const apiBaseUrl = effective.api
+      ? normalizeUrl(effective.api)
+      : defaultApiBaseUrl();
+    const secret = randomBytes(32).toString("hex");
+    const start = await postCliAuthApi<CliChallengeStart>({
+      apiBaseUrl,
+      endpoint: "auth/cli/agent/start",
+      body: {
+        label: opts.agentLabel ?? opts.agent,
+        secret_hash: createHash("sha256").update(secret).digest("hex"),
+      },
+    });
+    process.stderr.write(
+      `Open this URL to approve a distinct send-only external agent (not account login):\n${start.approval_url}\n`,
+    );
+    const status = await waitForCliChallenge({
+      apiBaseUrl,
+      endpoint: "auth/cli/login/status",
+      challenge_id: start.challenge_id,
+      poll_token: start.poll_token,
+      expires_at: start.expires_at,
+      pollMs: Math.max(200, durationToMs(opts.pollMs, 1500)),
+    });
+    const installation = status.external?.installation;
+    if (
+      status.kind !== "external-agent" ||
+      status.state !== "approved" ||
+      !installation ||
+      installation.installation_id !== start.challenge_id ||
+      installation.state !== "active"
+    )
+      throw new Error(
+        "external agent enrollment did not return a matching approval",
+      );
+    const path = saveExternalAgentCredential(opts.agent, {
+      version: 1,
+      kind: "external-agent",
+      api_url: status.external?.api_url ?? apiBaseUrl,
+      source: {
+        kind: "external",
+        account_id: installation.account_id,
+        agent_id: installation.agent_id,
+        installation_id: installation.installation_id,
+      },
+      token: `${EXTERNAL_AGENT_TOKEN_PREFIX}${installation.account_id}.${installation.installation_id}.${secret}`,
+      expires_at: installation.expires_at,
+    });
+    return {
+      agent_profile: opts.agent,
+      path,
+      agent_id: installation.agent_id,
+      expires_at: installation.expires_at,
+      destinations: installation.destinations,
+      authority: "external-agent-send-only",
+      human_profile_unchanged: true,
+    };
+  }
+
   async function runAuthElevate(
     globals: any,
     opts: {
@@ -926,6 +1003,14 @@ export function registerAuthCommand(
     .command("login")
     .description("sign in via browser approval or store explicit credentials")
     .option("--email <email>", "optional email hint shown during browser login")
+    .option(
+      "--agent <profile>",
+      "enroll a separate send-only external agent; never create a human session",
+    )
+    .option(
+      "--agent-label <label>",
+      "installation label shown during external agent approval",
+    )
     .option("--poll-ms <duration>", "poll interval while waiting", "1500ms")
     .option("--no-set-current", "do not set this profile as current")
     .addHelpText(
@@ -938,10 +1023,23 @@ Examples:
     )
     .action(
       async (
-        opts: { email?: string; pollMs?: string; setCurrent?: boolean },
+        opts: {
+          email?: string;
+          pollMs?: string;
+          setCurrent?: boolean;
+          agent?: string;
+          agentLabel?: string;
+        },
         command: Command,
       ) => {
         await runLocalCommand(command, "auth login", async (globals: any) => {
+          if (opts.agent)
+            return runExternalAgentLogin(globals, {
+              ...opts,
+              agent: opts.agent,
+            });
+          if (opts.agentLabel)
+            throw new Error("--agent-label requires --agent");
           if (hasLegacyStoredCredentials(globals)) {
             return await saveAuthProfile(globals, opts);
           }

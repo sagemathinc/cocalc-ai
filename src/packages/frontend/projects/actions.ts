@@ -453,6 +453,11 @@ export class ProjectsActions extends Actions<ProjectsState> {
     Object.create(null);
   private recentProjectMoveTransitionUntil: Record<string, number> =
     Object.create(null);
+  private latestRestartRequestId = new globalThis.Map<string, string>();
+  private restartLifecycleBaseline = new globalThis.Map<
+    string,
+    string | undefined
+  >();
   private recentProjectMoveSummaries: Record<string, LroSummary> =
     Object.create(null);
   private recentHostInfoLookupFailureAt: Record<string, number> =
@@ -5591,58 +5596,98 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  restart_project = reuseInFlight(
-    async (project_id: string, _options?): Promise<void> => {
+  restart_project = async (project_id: string, _options?): Promise<void> => {
+    // Each invocation is a distinct user intent; the server deduplicates retries
+    // of this invocation using the UUID captured below.
+    const restartRequestId = uuid();
+    this.latestRestartRequestId.set(project_id, restartRequestId);
+    const isLatestRequest = () =>
+      this.latestRestartRequestId.get(project_id) === restartRequestId;
+    try {
       await ensureProjectReduxRuntime();
-      if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
-        const message = projectHardDeletingMessage();
-        redux.getProjectActions(project_id)?.setState({
-          control_error: message,
-        });
-        alert_message({ type: "warning", message, timeout: 12 });
+    } catch (err) {
+      if (isLatestRequest()) {
+        this.latestRestartRequestId.delete(project_id);
+        this.restartLifecycleBaseline.delete(project_id);
+      }
+      throw err;
+    }
+    this.projectLifecycleReconcileTokens[project_id] =
+      (this.projectLifecycleReconcileTokens[project_id] ?? 0) + 1;
+    if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
+      if (!isLatestRequest()) {
         return;
       }
-      this.project_log(project_id, {
-        event: "project_restart_requested",
+      this.latestRestartRequestId.delete(project_id);
+      this.restartLifecycleBaseline.delete(project_id);
+      const message = projectHardDeletingMessage();
+      redux.getProjectActions(project_id)?.setState({
+        control_error: message,
       });
-      const actions = redux.getProjectActions(project_id);
-      const previousLifecycleState = store.getIn([
-        "project_map",
+      alert_message({ type: "warning", message, timeout: 12 });
+      return;
+    }
+    if (!this.restartLifecycleBaseline.has(project_id)) {
+      this.restartLifecycleBaseline.set(
         project_id,
-        "state",
-        "state",
-      ]) as string | undefined;
+        store.getIn(["project_map", project_id, "state", "state"]) as
+          | string
+          | undefined,
+      );
+    }
+    this.project_log(project_id, {
+      event: "project_restart_requested",
+    });
+    const actions = redux.getProjectActions(project_id);
+    const previousLifecycleState =
+      this.restartLifecycleBaseline.get(project_id);
+    if (isLatestRequest()) {
       actions?.setState({
         restart_request: Map({
-          token: uuid(),
+          token: restartRequestId,
           requested_at: new Date().toISOString(),
         }),
       });
-      const clearRestartRequest = () =>
-        actions?.setState({ restart_request: undefined });
-      try {
+    }
+    const clearRestartRequest = () => {
+      if (!isLatestRequest()) {
+        return;
+      }
+      actions?.setState({ restart_request: undefined });
+      this.latestRestartRequestId.delete(project_id);
+      this.restartLifecycleBaseline.delete(project_id);
+    };
+    try {
+      if (isLatestRequest()) {
         this.optimisticProjectStateUpdate(project_id, "starting");
-        const resp = await writeAndWaitForProjection({
-          consumer: "projects",
-          id: `project:${project_id}:restart`,
-          name: "project.restart",
-          write: () =>
-            webapp_client.conat_client.hub.projects.restart({
-              project_id,
-              wait: false,
-            }),
-          matchesProjection: () =>
-            this.projectedProjectStateMatches({
-              project_id,
-              states: ["starting", "running"],
-            }),
-          repair: () =>
-            this.repairProjectProjection({
-              kind: "project-ids",
-              project_ids: [project_id],
-              reason: "project-start",
-            }),
-        });
+      }
+      const resp = await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:restart:${restartRequestId}`,
+        name: "project.restart",
+        write: () =>
+          webapp_client.conat_client.hub.projects.restart({
+            project_id,
+            restart_request_id: restartRequestId,
+            wait: false,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectStateMatches({
+            project_id,
+            states: ["starting", "running"],
+          }),
+        repair: async () => {
+          if (!isLatestRequest()) {
+            return;
+          }
+          await this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "project-start",
+          });
+        },
+      });
+      if (isLatestRequest()) {
         actions.trackStartOp(resp);
         setTimeout(clearRestartRequest, PROJECT_RESTART_REQUEST_VISIBLE_MS);
         this.scheduleProjectLifecycleReconcile({
@@ -5650,8 +5695,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
           optimisticState: "starting",
           reason: "restart_project",
         });
-      } catch (err) {
-        clearRestartRequest();
+      }
+    } catch (err) {
+      if (isLatestRequest()) {
+        actions.setState({ restart_request: undefined });
         this.optimisticProjectStateUpdate(
           project_id,
           previousLifecycleState ?? "running",
@@ -5659,11 +5706,15 @@ export class ProjectsActions extends Actions<ProjectsState> {
         actions.setState({
           control_error: `Error restarting project -- ${err}`,
         });
-        throw err;
+        this.latestRestartRequestId.delete(project_id);
+        this.restartLifecycleBaseline.delete(project_id);
       }
+      throw err;
+    }
+    if (isLatestRequest()) {
       actions.setState({ control_error: "" });
-    },
-  );
+    }
+  };
 
   // Explicitly set whether or not project is hidden for the given account
   // (hide=true means hidden)

@@ -10,8 +10,29 @@ describe("client handle-target", () => {
   });
 
   afterEach(() => {
+    jest.restoreAllMocks();
     jest.dontMock("@cocalc/frontend/misc/remember-me");
     delete (globalThis as any).__cocalc_public_app;
+  });
+
+  it("restores a thread permalink without adding a browser history entry", async () => {
+    window.history.replaceState(
+      { marker: "retained" },
+      "",
+      "/static/app.html?target=projects%2Fp1%2Ffiles%2Fhome%2Fuser%2Fsend.chat&tab=vms#thread=beta",
+    );
+    const pushState = jest.spyOn(window.history, "pushState");
+    const replaceState = jest.spyOn(window.history, "replaceState");
+    const { default: target } = await import("./handle-target");
+    expect(target).toBe("projects/p1/files/home/user/send.chat");
+    expect(pushState).not.toHaveBeenCalled();
+    expect(replaceState).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe(
+      "/projects/p1/files/home/user/send.chat",
+    );
+    expect(window.location.search).toBe("?tab=vms");
+    expect(window.location.hash).toBe("#thread=beta");
+    expect(window.history.state).toEqual({ marker: "retained" });
   });
 
   it("does not rewrite public docs routes to projects when imported in public shell", async () => {

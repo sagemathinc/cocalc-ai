@@ -510,7 +510,7 @@ export function TimeTravel(props: Props) {
               {commit.shortHash}
             </Button>{" "}
             · {commit.authorName} ·{" "}
-            <TimeAgo date={new Date(commit.timestampMs)} time_ago_absolute />
+            <TimeAgo date={new Date(commit.timestampMs)} />
           </span>
         );
       }
@@ -526,7 +526,7 @@ export function TimeTravel(props: Props) {
             {t != null && (
               <>
                 {" "}
-                · <TimeAgo date={new Date(t)} time_ago_absolute />
+                · <TimeAgo date={new Date(t)} />
               </>
             )}
           </span>
@@ -544,7 +544,7 @@ export function TimeTravel(props: Props) {
             {t != null && (
               <>
                 {" "}
-                · <TimeAgo date={new Date(t)} time_ago_absolute />
+                · <TimeAgo date={new Date(t)} />
               </>
             )}
           </span>
@@ -742,7 +742,7 @@ export function TimeTravel(props: Props) {
               {meta.timeMs != null && (
                 <>
                   {meta.subtitle ? " · " : ""}
-                  <TimeAgo date={new Date(meta.timeMs)} time_ago_absolute />
+                  <TimeAgo date={new Date(meta.timeMs)} />
                 </>
               )}
             </div>
@@ -1024,10 +1024,7 @@ export function TimeTravel(props: Props) {
                 <span>{commit.subject}</span>
                 <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
                   {commit.authorName} ·{" "}
-                  <TimeAgo
-                    date={new Date(commit.timestampMs)}
-                    time_ago_absolute
-                  />
+                  <TimeAgo date={new Date(commit.timestampMs)} />
                 </div>
               </div>
             ))}

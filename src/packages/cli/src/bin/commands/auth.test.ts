@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { Command } from "commander";
+import { createHash, randomUUID } from "node:crypto";
+import { readExternalAgentCredential } from "../core/external-agent-profile";
 
 import { registerAuthCommand, type AuthCommandDeps } from "./auth";
 import { sanitizeProfileName } from "../../core/auth-config";
@@ -46,6 +48,100 @@ function makeDeps(
     ...overrides,
   };
 }
+
+test("external agent login creates only a separate scoped profile, despite ambient human credentials", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "cocalc-external-login-"));
+  const priorHome = process.env.HOME,
+    priorFetch = globalThis.fetch;
+  process.env.HOME = dir;
+  const challenge_id = randomUUID(),
+    account_id = randomUUID(),
+    agent_id = randomUUID();
+  const calls: { url: string; body: any; headers: any }[] = [];
+  let secretHash = "";
+  globalThis.fetch = (async (url, options) => {
+    const body = JSON.parse(`${options?.body}`);
+    calls.push({ url: `${url}`, body, headers: options?.headers });
+    if (`${url}`.endsWith("auth/cli/agent/start")) {
+      secretHash = body.secret_hash;
+      assert.equal(body.label, "Security agent");
+      return {
+        json: async () => ({
+          challenge_id,
+          poll_token: "poll-only",
+          approval_url: "https://origin.test/approve",
+          expires_at: new Date(Date.now() + 900_000).toISOString(),
+        }),
+      } as Response;
+    }
+    assert.ok(`${url}`.endsWith("auth/cli/login/status"));
+    return {
+      json: async () => ({
+        challenge_id,
+        kind: "external-agent",
+        state: "approved",
+        external: {
+          api_url: "https://home.test",
+          installation: {
+            installation_id: challenge_id,
+            account_id,
+            agent_id,
+            state: "active",
+            expires_at: new Date(Date.now() + 3600_000).toISOString(),
+            destinations: [],
+          },
+        },
+      }),
+    } as Response;
+  }) as typeof fetch;
+  try {
+    const capture: { data?: any } = {};
+    const program = new Command();
+    registerAuthCommand(
+      program,
+      makeDeps(capture, {
+        runLocalCommand: async (_cmd, _name, fn) => {
+          capture.data = await fn({
+            api: "https://origin.test",
+            cookie: "human-cookie",
+            bearer: "human-bearer",
+          });
+        },
+        saveAuthConfig: () => {
+          throw new Error("human profile must not change");
+        },
+      }),
+    );
+    await program.parseAsync([
+      "node",
+      "test",
+      "auth",
+      "login",
+      "--agent",
+      "soc2",
+      "--agent-label",
+      "Security agent",
+    ]);
+    const credential = readExternalAgentCredential("soc2", dir);
+    assert.equal(credential.source.agent_id, agent_id);
+    assert.equal(
+      createHash("sha256")
+        .update(credential.token.split(".").at(-1)!)
+        .digest("hex"),
+      secretHash,
+    );
+    assert.equal(capture.data.human_profile_unchanged, true);
+    assert.equal(calls.length, 2);
+    assert.ok(!JSON.stringify(calls).includes("human-cookie"));
+    assert.ok(!JSON.stringify(calls).includes("human-bearer"));
+    assert.ok(!JSON.stringify(capture.data).includes(credential.token));
+  } finally {
+    globalThis.fetch = priorFetch;
+    if (priorHome === undefined) delete process.env.HOME;
+    else process.env.HOME = priorHome;
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("auth status reports project-scoped auth clearly", async () => {
   const dir = mkdtempSync(join(tmpdir(), "cocalc-cli-auth-status-"));

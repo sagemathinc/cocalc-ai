@@ -116,7 +116,7 @@ export function LogView({
                 {row.timeMs != null && (
                   <>
                     {row.subtitle ? " · " : ""}
-                    <TimeAgo date={new Date(row.timeMs)} time_ago_absolute />
+                    <TimeAgo date={new Date(row.timeMs)} />
                   </>
                 )}
               </div>

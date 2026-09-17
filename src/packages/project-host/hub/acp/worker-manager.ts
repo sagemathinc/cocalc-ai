@@ -25,13 +25,19 @@ import {
   type AcpWorkerState,
 } from "@cocalc/lite/hub/sqlite/acp-workers";
 import {
+  ACP_PROJECT_RESTART_FENCE_REASON,
   countRunningAcpJobsForWorker,
   decodeAcpJobRequest,
   latestAcpJobUpdateForWorker,
   listRunningAcpJobsByWorker,
   oldestClaimableQueuedAcpJobTimestamp,
+  fenceAcpJobsForProject,
 } from "@cocalc/lite/hub/sqlite/acp-jobs";
-import { countRunningAcpTurnLeasesForWorker } from "@cocalc/lite/hub/sqlite/acp-turns";
+import {
+  countRunningAcpTurnLeasesForWorker,
+  fenceAcpTurnLeasesForProject,
+} from "@cocalc/lite/hub/sqlite/acp-turns";
+import { clearAcpPayloadsForProject } from "@cocalc/lite/hub/sqlite/acp-queue";
 import { getSoftwareVersions } from "../../software";
 import { getProjectHostConatClient } from "../../runtime-client";
 import { getProjectHostProcessTitle } from "../../process-role";
@@ -110,6 +116,7 @@ type WorkerProcessInfo = {
   pid: number;
   env: Record<string, string>;
   cmdline: string[];
+  start_time_ticks?: string;
 };
 
 type WorkerWithStatus = WorkerProcessInfo & {
@@ -634,6 +641,57 @@ async function requestWorkerDrain(
   }
 }
 
+export async function fenceProjectHostAcpWork({
+  project_id,
+  reason = ACP_PROJECT_RESTART_FENCE_REASON,
+}: {
+  project_id: string;
+  reason?: string;
+}): Promise<void> {
+  // Persist the terminal fence before asking workers to release live runtimes.
+  // This also covers a host with no currently running ACP worker.
+  fenceAcpJobsForProject({ project_id, reason });
+  fenceAcpTurnLeasesForProject({ project_id, reason });
+  clearAcpPayloadsForProject(project_id);
+  const launch = workerLaunchSignature();
+  const host_id = `${process.env.PROJECT_HOST_ID ?? ""}`.trim();
+  const workers = registeredManageableProjectHostAcpWorkers({
+    workers: listProjectHostAcpWorkers(),
+    launch,
+    rows: listAcpWorkers({
+      host_id: host_id || undefined,
+      states: ["active", "draining"],
+    }),
+  });
+  await Promise.all(
+    workers.map(async (worker) => {
+      const worker_id = workerIdOf(worker);
+      const host_id = `${worker.env.PROJECT_HOST_ID ?? ""}`.trim();
+      try {
+        if (!worker_id || !host_id)
+          throw new Error("worker identity unavailable");
+        await acpDaemonControlClient({
+          client: getProjectHostConatClient(),
+          host_id,
+          worker_id,
+          timeout: Math.max(ACP_WORKER_CONTROL_TIMEOUT_MS, 10_000),
+          waitForInterest: true,
+        }).fenceProject({ project_id, reason });
+      } catch (err) {
+        logger.warn("ACP worker did not acknowledge project restart fence", {
+          project_id,
+          worker_id,
+          pid: worker.pid,
+          err,
+        });
+        if (sameObservedWorkerProcess(worker)) {
+          await terminateWorker(worker, "project_restart_fence_unacknowledged");
+        }
+      }
+    }),
+  );
+}
+
 export function workerBundleVersionOf(
   worker: WorkerProcessInfo,
   launch: WorkerLaunch,
@@ -685,6 +743,35 @@ function readProcCmdline(pid: number): string[] {
     .filter((value) => value.length > 0);
 }
 
+function readProcStartTimeTicks(pid: number): string | undefined {
+  const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+  const commandEnd = stat.lastIndexOf(")");
+  if (commandEnd < 0) return;
+  // Fields after the command start at process-state (field 3); starttime is 22.
+  return stat
+    .slice(commandEnd + 2)
+    .trim()
+    .split(/\s+/)[19];
+}
+
+function sameObservedWorkerProcess(worker: WorkerProcessInfo): boolean {
+  try {
+    if (
+      worker.start_time_ticks != null &&
+      readProcStartTimeTicks(worker.pid) !== worker.start_time_ticks
+    ) {
+      return false;
+    }
+    const env = readProcEnviron(worker.pid);
+    return (
+      `${env.COCALC_PROJECT_HOST_ACP_WORKER ?? ""}`.trim() === "1" &&
+      `${env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() === workerIdOf(worker)
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function listProjectHostAcpWorkers(): WorkerProcessInfo[] {
   const hostId = `${process.env.PROJECT_HOST_ID ?? ""}`.trim();
   return readdirSync("/proc")
@@ -705,6 +792,7 @@ export function listProjectHostAcpWorkers(): WorkerProcessInfo[] {
             pid,
             env,
             cmdline: readProcCmdline(pid),
+            start_time_ticks: readProcStartTimeTicks(pid),
           },
         ];
       } catch {
@@ -770,6 +858,32 @@ export function partitionExpectedProjectHostAcpWorkers({
     }
   }
   return { expectedWorkers, ignoredWorkers };
+}
+
+export function registeredManageableProjectHostAcpWorkers({
+  workers,
+  launch,
+  rows,
+}: {
+  workers: WorkerProcessInfo[];
+  launch: WorkerLaunch;
+  rows: AcpWorkerRow[];
+}): WorkerProcessInfo[] {
+  const registered = new Map(rows.map((row) => [row.worker_id, row]));
+  return partitionManageableProjectHostAcpWorkers({
+    workers,
+    launch,
+  }).managedWorkers.filter((worker) => {
+    const row = registered.get(workerIdOf(worker));
+    return (
+      row != null &&
+      row.state !== "stopped" &&
+      Number(row.pid) === worker.pid &&
+      (row.pid_start_time_ticks == null ||
+        `${row.pid_start_time_ticks}` === `${worker.start_time_ticks ?? ""}`) &&
+      row.host_id === `${worker.env.PROJECT_HOST_ID ?? ""}`.trim()
+    );
+  });
 }
 
 function isRecognizedWorkerEntrypoint(entryPoint?: string): boolean {

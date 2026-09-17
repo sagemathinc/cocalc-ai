@@ -9,6 +9,7 @@ import type { DiffPreviewSource } from "./preview-types";
 
 export function parsePreviewSource(
   source: DiffPreviewSource,
+  context?: number,
 ): FileDiffMetadata[] {
   if (source.kind === "patch") {
     return parsePatchFiles(source.patch, undefined, true).flatMap(
@@ -19,7 +20,7 @@ export function parsePreviewSource(
     parseDiffFromFile(
       { name: source.path, contents: source.before },
       { name: source.path, contents: source.after },
-      undefined,
+      { context },
       true,
     ),
   ];

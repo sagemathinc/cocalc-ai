@@ -10,6 +10,20 @@ import {
   getRememberMeHashFromCookieValue,
 } from "@cocalc/server/auth/remember-me";
 import LRU from "lru-cache";
+import {
+  AGENT_IDENTITY_TOKEN_PREFIX,
+  allowsAgentSubject,
+} from "@cocalc/conat/agents/protocol";
+import { agentStore } from "@cocalc/server/agents/store";
+import {
+  EXTERNAL_AGENT_TOKEN_PREFIX,
+  parseExternalAgentToken,
+  allowsExternalAgentSubject,
+} from "@cocalc/conat/agents/external";
+import {
+  assertExternalAgentLoginEnabled,
+  externalStore,
+} from "@cocalc/server/agents/external";
 import { conatPassword } from "@cocalc/backend/data";
 import {
   ACCOUNT_ID_COOKIE_NAME,
@@ -125,6 +139,9 @@ function assertHubInteractiveEgressAllowed(
 }
 
 type CoCalcUserWithAgent = CoCalcUser & {
+  auth_agent_id?: string;
+  auth_agent_run_id?: string;
+  auth_external_installation_id?: string;
   auth_actor?: "account" | "agent";
   auth_scopes?: string[];
   auth_project_id?: string;
@@ -260,6 +277,39 @@ export async function getUser(
 ): Promise<CoCalcUser> {
   const bearerToken = getBearerToken(socket);
   if (bearerToken) {
+    if (bearerToken.startsWith(EXTERNAL_AGENT_TOKEN_PREFIX)) {
+      assertExternalAgentLoginEnabled();
+      const installation = await externalStore().authenticate(bearerToken);
+      return {
+        account_id: installation.account_id,
+        auth_actor: "agent",
+        auth_agent_id: installation.agent_id,
+        auth_external_installation_id: installation.installation_id,
+        auth_token_fingerprint: createHash("sha256")
+          .update(parseExternalAgentToken(bearerToken).secret)
+          .digest("hex"),
+        auth_iat_s: new Date(installation.created_at).getTime() / 1000,
+        auth_exp_s: new Date(installation.expires_at).getTime() / 1000,
+        auth_scopes: [],
+      };
+    }
+    if (bearerToken.startsWith(AGENT_IDENTITY_TOKEN_PREFIX)) {
+      const run = await agentStore().authenticate(bearerToken);
+      await assertAccountSecurityStateAllowsToken({
+        account_id: run.account_id,
+        issued_at_s: run.issued_at.getTime() / 1000,
+      });
+      return {
+        account_id: run.account_id,
+        auth_actor: "agent",
+        auth_agent_id: run.agent_id,
+        auth_agent_run_id: run.run_id,
+        auth_token_fingerprint: run.token_hash,
+        auth_iat_s: run.issued_at.getTime() / 1000,
+        auth_exp_s: run.expires_at.getTime() / 1000,
+        auth_scopes: [],
+      };
+    }
     const hostToken = await verifyProjectHostToken(bearerToken, {
       purpose: "master-conat",
     });
@@ -578,6 +628,65 @@ export async function isAllowed({
     return true;
   }
   const agentUser = user as CoCalcUserWithAgent;
+  if (agentUser.auth_external_installation_id) {
+    try {
+      assertExternalAgentLoginEnabled();
+      if (
+        !agentUser.account_id ||
+        !agentUser.auth_agent_id ||
+        !agentUser.auth_token_fingerprint ||
+        !allowsExternalAgentSubject(
+          agentUser.account_id,
+          agentUser.auth_external_installation_id,
+          subject,
+          type,
+        )
+      )
+        return false;
+      const installation = await externalStore().enrollmentStatus(
+        agentUser.account_id,
+        agentUser.auth_external_installation_id,
+        agentUser.auth_token_fingerprint,
+      );
+      return installation?.agent_id === agentUser.auth_agent_id;
+    } catch {
+      return false;
+    }
+  }
+  if (agentUser.auth_agent_id) {
+    try {
+      if (
+        !agentUser.auth_agent_run_id ||
+        !agentUser.auth_token_fingerprint ||
+        !allowsAgentSubject(
+          agentUser.auth_agent_id,
+          agentUser.auth_agent_run_id,
+          subject,
+          type,
+        )
+      )
+        return false;
+      const run = await agentStore().activeRun(
+        agentUser.auth_agent_id,
+        agentUser.auth_agent_run_id,
+        agentUser.auth_token_fingerprint,
+      );
+      return await hasProjectCollaboratorAccessAllowRemote({
+        account_id: run.account_id,
+        project_id: run.project_id,
+      });
+    } catch {
+      return false;
+    }
+  }
+  // Only an identity credential may publish to the identity-sealed service.
+  if (
+    subject.startsWith("agent-messaging.") ||
+    subject.startsWith("agent-external.") ||
+    subject.startsWith("_INBOX.agent-external.") ||
+    subject.startsWith("_INBOX.agent-identity.")
+  )
+    return false;
   if (agentUser.auth_actor === "agent") {
     const agentApiSubject = [
       "hub",
@@ -607,6 +716,7 @@ export async function isAllowed({
       if (
         type !== "pub" ||
         parsed == null ||
+        parsed.operation === "automation" ||
         (parsed.version === "account-project" &&
           parsed.account_id !== userId) ||
         !agentUser.auth_scopes?.includes("project_session") ||

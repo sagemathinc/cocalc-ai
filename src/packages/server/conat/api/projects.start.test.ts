@@ -209,6 +209,7 @@ describe("projects.start", () => {
     poolQueryMock = jest.fn(async () => ({ rows: [{ "?column?": 1 }] }));
     interBayCheckStartAdmissionMock = jest.fn(async () => ({
       storage_recovery_required: false,
+      runtime_authority_revision: "0",
     }));
     interBayStartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
@@ -571,6 +572,7 @@ describe("projects.start", () => {
   it("uses the long control timeout for automatic storage recovery", async () => {
     interBayCheckStartAdmissionMock = jest.fn(async () => ({
       storage_recovery_required: true,
+      runtime_authority_revision: "0",
     }));
     const { start } = await import("./projects");
 

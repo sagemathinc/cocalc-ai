@@ -225,19 +225,55 @@ describe("site-funded Codex reservations", () => {
     });
   });
 
-  it("enforces account concurrency and canonical remaining allowance", async () => {
+  it("admits at most two simultaneous turns per account across projects and hosts", async () => {
+    const accountId = uuid();
+    const attempts = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        reserveSiteFundedCodexTurn(
+          options({ accountId, poolLimitMicrousd: 1_000_000 }),
+        ),
+      ),
+    );
+    const admitted = attempts.filter((entry) => entry.allowed);
+    expect(admitted).toHaveLength(2);
+    expect(attempts.filter((entry) => !entry.allowed)).toEqual([
+      expect.objectContaining({ allowed: false, code: "account_concurrency" }),
+      expect.objectContaining({ allowed: false, code: "account_concurrency" }),
+    ]);
+    const first = admitted[0];
+    if (!first.allowed) throw new Error("expected reservation");
+    await finishSiteFundedCodexTurn({
+      reservationId: first.reservation.reservationId,
+      status: "released",
+    });
+    const replacement = await reserveSiteFundedCodexTurn(
+      options({ accountId, poolLimitMicrousd: 1_000_000 }),
+    );
+    expect(replacement.allowed).toBe(true);
+  });
+
+  it("still enforces the operator's global concurrency limit", async () => {
+    const first = await reserveSiteFundedCodexTurn({
+      ...options({ poolLimitMicrousd: 1_000_000 }),
+      globalConcurrency: 1,
+    });
+    expect(first.allowed).toBe(true);
+    const second = await reserveSiteFundedCodexTurn({
+      ...options({ poolLimitMicrousd: 1_000_000 }),
+      globalConcurrency: 1,
+    });
+    expect(second).toMatchObject({
+      allowed: false,
+      code: "global_concurrency",
+    });
+  });
+
+  it("enforces canonical remaining allowance", async () => {
     const accountId = uuid();
     const first = await reserveSiteFundedCodexTurn(
       options({ accountId, maxTurnCostMicrousd: 10_000 }),
     );
     expect(first.allowed).toBe(true);
-    const concurrent = await reserveSiteFundedCodexTurn(
-      options({ accountId, maxTurnCostMicrousd: 10_000 }),
-    );
-    expect(concurrent).toMatchObject({
-      allowed: false,
-      code: "account_concurrency",
-    });
     if (!first.allowed) throw new Error("expected reservation");
     await recordSiteFundedCodexUsageEvent({
       eventId: uuid(),

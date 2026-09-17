@@ -4,6 +4,7 @@ import {
   configureProjectHostAcpWorkerLauncher,
   partitionManageableProjectHostAcpWorkers,
   partitionExpectedProjectHostAcpWorkers,
+  registeredManageableProjectHostAcpWorkers,
   planProjectHostAcpWorkerRollout,
   shouldTerminateOverdueDrainingWorker,
 } from "./hub/acp/worker-manager";
@@ -350,6 +351,64 @@ describe("planProjectHostAcpWorkerRollout", () => {
       expectedWorkers: [workers[0]],
       ignoredWorkers: [workers[1]],
     });
+  });
+
+  it("requires a matching host-owned registration before fencing a worker", () => {
+    const worker = {
+      pid: 501,
+      start_time_ticks: "12345",
+      env: {
+        COCALC_PROJECT_HOST_ACP_WORKER: "1",
+        COCALC_ACP_INSTANCE_ID: "worker-current",
+        PROJECT_HOST_ID: "host-1",
+      },
+      cmdline: [
+        "/usr/bin/node",
+        "/opt/cocalc/project-host/bundles/current/main/index.js",
+      ],
+    };
+    const row = {
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "current",
+      bundle_path: "/opt/cocalc/project-host/bundles/current",
+      pid: 501,
+      pid_start_time_ticks: "12345",
+      state: "active",
+      started_at: 1,
+      last_heartbeat_at: 1,
+      last_seen_running_jobs: 0,
+      last_queue_progress_at: 1,
+    } as const;
+
+    expect(
+      registeredManageableProjectHostAcpWorkers({
+        workers: [worker],
+        launch: launch as any,
+        rows: [],
+      }),
+    ).toEqual([]);
+    expect(
+      registeredManageableProjectHostAcpWorkers({
+        workers: [worker],
+        launch: launch as any,
+        rows: [{ ...row, pid: 999 }],
+      }),
+    ).toEqual([]);
+    expect(
+      registeredManageableProjectHostAcpWorkers({
+        workers: [worker],
+        launch: launch as any,
+        rows: [{ ...row, pid_start_time_ticks: "54321" }],
+      }),
+    ).toEqual([]);
+    expect(
+      registeredManageableProjectHostAcpWorkers({
+        workers: [worker],
+        launch: launch as any,
+        rows: [row],
+      }),
+    ).toEqual([worker]);
   });
 
   it("accepts ACP workers that use the project-host process title as argv0", () => {
@@ -1208,6 +1267,11 @@ describe("queue-stalled ACP workers", () => {
         }
         if (String(filename).endsWith("/cmdline")) {
           return [process.execPath, entryPoint].join("\0");
+        }
+        if (String(filename).endsWith("/stat")) {
+          return `${pid} (node) ${["S", ...Array(18).fill("0"), `${pid}`].join(
+            " ",
+          )}`;
         }
         throw new Error(`Unexpected read: ${filename}`);
       });
