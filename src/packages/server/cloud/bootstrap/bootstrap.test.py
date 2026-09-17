@@ -3454,6 +3454,9 @@ reserve_project_startup_io_capacity
             self.assertIn(
                 'PROJECT_STARTUP_CGROUP_LOCK_WAIT_SECONDS="120"', script
             )
+            self.assertIn(
+                'PROJECT_STORAGE_CGROUP_LOCK_WAIT_SECONDS="120"', script
+            )
             self.assertIn("acquire_project_cgroup_shared_lock", script)
             prepare_startup_body = script.split(
                 "  prepare-project-startup-cgroup)", 1
@@ -3476,6 +3479,90 @@ reserve_project_startup_io_capacity
             self.assertIn('PROJECT_NETWORK_NFT_TIMEOUT_SECONDS="30"', script)
             self.assertIn("project-cgroup-lock-timeout", script)
             self.assertIn("attach_storage_worker_to_project", script)
+            storage_attach_body = script.split(
+                "attach_storage_worker_to_project() {", 1
+            )[1].split("\n}\n", 1)[0]
+            self.assertIn(
+                "acquire_project_storage_cgroup_shared_lock",
+                storage_attach_body,
+            )
+            self.assertIn(
+                'if project_pool_hierarchy_ready && [ -d "$target" ]; then',
+                storage_attach_body,
+            )
+            self.assertLess(
+                storage_attach_body.index(
+                    "acquire_project_storage_cgroup_shared_lock"
+                ),
+                storage_attach_body.index("acquire_project_storage_cgroup_lock"),
+            )
+            self.assertLess(
+                storage_attach_body.index("release_project_lock"),
+                storage_attach_body.index("acquire_project_storage_cgroup_lock"),
+            )
+            self.assertIn(
+                "if ! project_pool_hierarchy_ready; then",
+                storage_attach_body,
+            )
+            storage_attach_function = (
+                "attach_storage_worker_to_project() {"
+                + storage_attach_body
+                + "\n}\n"
+            )
+            cgroup_dir = Path(tmpdir) / "storage-project-cgroup"
+            cgroup_dir.mkdir()
+            marker_dir = Path(tmpdir) / "storage-attach-markers"
+            marker_dir.mkdir()
+            lock_path = Path(tmpdir) / "project-cgroups.lock"
+            concurrency_harness = f"""
+set -euo pipefail
+LOCK_PATH={json.dumps(str(lock_path))}
+CGROUP_DIR={json.dumps(str(cgroup_dir))}
+MARKER_DIR={json.dumps(str(marker_dir))}
+PROJECT_IO_CLASS_STATE_DIR={json.dumps(str(Path(tmpdir) / "io-class"))}
+project_id_from_delete_root() {{ printf '%s\n' test-project; }}
+project_cgroup() {{ printf '%s\n' "$CGROUP_DIR"; }}
+project_pool_hierarchy_ready() {{ return 0; }}
+require_finite_project_pool_memory_max() {{ :; }}
+configure_project_pool_hierarchy() {{ return 99; }}
+configure_project_cgroup() {{ return 99; }}
+acquire_project_cgroup_lock() {{
+  exec 9>"$LOCK_PATH"
+  flock -x -w 2 9
+}}
+acquire_project_storage_cgroup_shared_lock() {{
+  exec 9>"$LOCK_PATH"
+  flock -s -w 2 9
+}}
+acquire_project_storage_cgroup_lock() {{
+  exec 9>"$LOCK_PATH"
+  flock -x -w 2 9
+}}
+release_project_lock() {{ flock -u 9; exec 9>&-; }}
+verify_project_pid_in_pool() {{
+  : > "$MARKER_DIR/$$"
+  for _attempt in $(seq 1 100); do
+    [ "$(find "$MARKER_DIR" -type f | wc -l)" -ge 2 ] && return 0
+    sleep 0.02
+  done
+  return 1
+}}
+deny() {{ printf 'SECURITY_DENY code=%s detail=%s\n' "$1" "$2" >&2; exit 2; }}
+{storage_attach_function}
+attach_storage_worker_to_project /mnt/cocalc/project-test
+"""
+            workers = [
+                subprocess.Popen(
+                    ["bash", "-c", concurrency_harness],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                )
+                for _ in range(2)
+            ]
+            worker_results = [worker.communicate(timeout=5) for worker in workers]
+            for worker, (_stdout, stderr) in zip(workers, worker_results):
+                self.assertEqual(worker.returncode, 0, stderr)
             self.assertIn('"$$" > "$target/cgroup.procs"', script)
             self.assertIn("PROJECT_STORAGE_WORKER_MEMORY_MAX", script)
             self.assertNotIn("project-network-lock-timeout", script)
