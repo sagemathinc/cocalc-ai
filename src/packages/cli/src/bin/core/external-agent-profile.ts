@@ -88,12 +88,20 @@ export function saveExternalAgentCredential(
       flag: "wx",
     });
     renameSync(temporary, path);
-  } finally {
+  } catch (error) {
     try {
       unlinkSync(temporary);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } catch (cleanupError) {
+      if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw Object.assign(
+          new Error(
+            "Failed to save external agent credential and remove temporary file",
+          ),
+          { cause: error, cleanupError },
+        );
+      }
     }
+    throw error;
   }
   return path;
 }
