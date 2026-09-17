@@ -139,15 +139,17 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("Give agents the project context they need."),
+      screen.getByText("A shared workspace for people and AI agents."),
     ).not.toBeNull();
-    expect(screen.getByText("A reviewable Codex workflow.")).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Open the thread" }),
+      screen.getByText("Direct, inspect, and continue agent work."),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Start with the project" }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "Integrated chat or a terminal agent",
+        name: "Choose the interface without moving the work",
       }),
     ).not.toBeNull();
     expect(

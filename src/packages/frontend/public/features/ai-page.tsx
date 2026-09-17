@@ -70,19 +70,19 @@ const AI_PAGE_CSS = `
 function ThreadMock() {
   const messages = [
     {
-      body: "The notebook export test is failing. Please inspect the conversion step and run the focused test.",
+      body: "Check the synthetic notebook, explain the failed result, and save a short review note in this project.",
       icon: "user",
       label: "human",
     },
     {
-      body: "I found the outdated path handling, updated the file, and I am running the package test now.",
+      body: "I found the mismatched input, reran the notebook, and saved the review note beside it.",
       icon: "robot",
       label: "codex",
     },
     {
-      body: "The thread keeps the proposed change and result together.",
+      body: "The conversation, files, and result remain in the same project for review and follow-up.",
       icon: "history",
-      label: "review thread",
+      label: "project record",
       variant: "note",
     },
   ] satisfies {
@@ -103,9 +103,9 @@ function ThreadMock() {
           <Flex align="center" gap={10}>
             <IconBadge accent={AI_ACCENT} icon="robot" />
             <div>
-              <Text strong>Agent thread</Text>
+              <Text strong>Agent work in a project</Text>
               <div style={{ color: PUBLIC_COLORS.mutedText }}>
-                conversation and project context
+                conversation, files, and runtime context
               </div>
             </div>
           </Flex>
@@ -147,28 +147,28 @@ function ThreadMock() {
 function WorkflowStrip() {
   const steps = [
     {
-      body: "Open a Codex chat when the work needs agent help.",
+      body: "Open the project that already contains the files, environment, and collaborators.",
       icon: "comments",
       label: "1",
-      title: "Open the thread",
+      title: "Start with the project",
     },
     {
-      body: "Add the specific file, error, image, or instruction the turn needs.",
+      body: "Name the outcome and point to the file, notebook, error, image, or service that matters.",
       icon: "markdown",
       label: "2",
-      title: "Give useful context",
+      title: "Set a concrete task",
     },
     {
-      body: "Let Codex inspect the project and use CoCalc-aware tools.",
+      body: "Follow the conversation and inspect the files, commands, notebook state, and test output it uses.",
       icon: "robot",
       label: "3",
-      title: "Run the turn",
+      title: "Inspect the work",
     },
     {
-      body: "Review the patch, test output, and discussion before keeping the change.",
+      body: "Review the result, then continue in the same project with an agent or a collaborator.",
       icon: "history",
       label: "4",
-      title: "Review the result",
+      title: "Review and continue",
     },
   ] satisfies {
     body: string;
@@ -190,7 +190,7 @@ function WorkflowStrip() {
       >
         <Flex vertical gap={22}>
           <Title level={3} style={{ margin: 0 }}>
-            A reviewable Codex workflow.
+            Direct, inspect, and continue agent work.
           </Title>
           <Row gutter={[14, 14]}>
             {steps.map((step) => (
@@ -259,13 +259,17 @@ export default function AIFeaturePage({
           <Row className="feature-ai-hero-row" gutter={[28, 28]} align="middle">
             <Col xs={24} lg={11}>
               <Flex vertical gap={14}>
+                <Text strong style={{ color: AI_ACCENT }}>
+                  Persistent AI agent workspace
+                </Text>
                 <Title level={2} style={{ margin: 0 }}>
-                  Give agents the project context they need.
+                  A shared workspace for people and AI agents.
                 </Title>
                 <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                  Use integrated Codex in project chat, or run terminal-based
-                  agents beside the files, tools, services, and collaborators
-                  they need.
+                  Use integrated Codex in project chat or run terminal-based
+                  agents beside the files, notebooks, terminals, applications,
+                  compute, and collaborators they need. Inspect what changed,
+                  keep the result with the project, and continue later.
                 </Paragraph>
                 <Flex wrap gap={12}>
                   <Button type="primary" href={primaryHref}>
@@ -289,14 +293,14 @@ export default function AIFeaturePage({
 
         <PublicSection ariaLabel="Ways to use AI agents in CoCalc">
           <Title level={3} style={{ margin: 0 }}>
-            Integrated chat or a terminal agent
+            Choose the interface without moving the work
           </Title>
           <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
             Codex runs through project chat and can work with project files,
             terminals, and live notebook state. Claude Code, OpenCode, and other
             shell-based agents run in project terminals as normal Linux tools;
-            their interfaces, credentials, and capabilities are separate from
-            Codex chat.
+            their interfaces, credentials, and capabilities remain separate from
+            Codex chat, while the project keeps the work in one place.
           </Paragraph>
           <Flex gap={12} wrap>
             {showCodexDocs ? (
@@ -314,7 +318,7 @@ export default function AIFeaturePage({
         <PublicSection>
           <FeatureFinalBand
             action={{
-              body: "Open a project when the agent thread should stay with the work it changes.",
+              body: "Open a project when agent work should remain with the files, environment, and people who will review it.",
               href: primaryHref,
               label: primaryLabel,
               title: "Start in a project",
@@ -344,7 +348,7 @@ export default function AIFeaturePage({
                 ? [{ href: `mailto:${helpEmail}`, label: "Contact support" }]
                 : []),
             ]}
-            title="When AI work belongs in CoCalc"
+            title="Use CoCalc when agent work must stay inspectable"
           >
             <BulletList
               items={[
