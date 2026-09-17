@@ -10,8 +10,7 @@ import {
   lightAppearance,
 } from "@cocalc/util/appearance-palette";
 
-export const PUBLIC_DISPLAY_FONT_FAMILY =
-  '"Space Grotesk", "Helvetica Neue", Arial, sans-serif';
+export const PUBLIC_DISPLAY_FONT_FAMILY = '"Helvetica Neue", Arial, sans-serif';
 
 // Warm paper tone from the public-site mock; no matching global COLORS token.
 const PUBLIC_PAPER_BACKGROUND = "#fbf8f3";

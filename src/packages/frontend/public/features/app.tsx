@@ -937,6 +937,7 @@ export default function PublicFeaturesApp({
         />
       }
       config={config}
+      hideTitleVisually={initialRoute.slug === "ai"}
       title={
         initialRoute.view === "index"
           ? undefined

@@ -181,8 +181,8 @@ describe("PublicHomeApp", () => {
         .getAttribute("href"),
     ).toBe("/auth/sign-up");
     expect(
-      within(hero).getByRole("link", { name: "Ways to run CoCalc" }),
-    ).toHaveAttribute("href", "/products");
+      within(hero).getByRole("link", { name: "Explore AI workflows" }),
+    ).toHaveAttribute("href", "/features/ai");
     expect(within(hero).queryByRole("link", { name: "SageMath" })).toBeNull();
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),

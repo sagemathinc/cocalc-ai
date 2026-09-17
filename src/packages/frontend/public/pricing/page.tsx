@@ -25,8 +25,44 @@ import { joinUrlPath } from "@cocalc/util/url-path";
 import { PublicGrid, PublicSection } from "../layout/shell";
 import { publicPath } from "../routes";
 import { MembershipOverviewTable } from "./membership-overview-table";
+import { PUBLIC_COLORS } from "../theme";
 
 const { Paragraph, Title } = Typography;
+
+const PRICING_PAGE_CSS = `
+  .cocalc-public-pricing {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    min-width: 0;
+    gap: clamp(36px, 5vw, 64px);
+  }
+
+  .cocalc-public-pricing > section:first-of-type {
+    padding: 24px 0 32px;
+    border-bottom: 1px solid ${PUBLIC_COLORS.border};
+  }
+
+  .cocalc-public-pricing > section:first-of-type h2 {
+    font-size: clamp(28px, 3vw, 36px);
+    font-weight: 500;
+    letter-spacing: -0.035em;
+    line-height: 1.08;
+  }
+
+  .cocalc-public-pricing > section:first-of-type .ant-typography:not(h2) {
+    max-width: 720px;
+    font-size: 18px;
+    line-height: 1.65;
+  }
+
+  .cocalc-public-pricing > section:not(:first-of-type) {
+    padding-top: 24px;
+  }
+
+  .cocalc-public-pricing h3 {
+    line-height: 1.2;
+  }
+`;
 
 type PublicMembershipTier = MembershipPricingTier;
 
@@ -137,7 +173,8 @@ export default function PricingPage({
     : appPath("auth/sign-up");
 
   return (
-    <>
+    <div className="cocalc-public-pricing">
+      <style>{PRICING_PAGE_CSS}</style>
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
           Find the right fit
@@ -361,6 +398,6 @@ export default function PricingPage({
           ) : null}
         </PublicGrid>
       </PublicSection>
-    </>
+    </div>
   );
 }

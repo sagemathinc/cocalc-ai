@@ -171,6 +171,9 @@ describe("PublicTopNav", () => {
       screen.getByRole("link", { name: "CoCalc home" }).querySelectorAll("img")
         .length,
     ).toBe(2);
+    expect(
+      screen.getByRole("link", { name: "CoCalc home" }).querySelector("img"),
+    ).toHaveAttribute("src", "/test-assets/cocalc-icon.svg");
   });
 
   it("uses the full CoCalc lockup when the square logo setting is empty", async () => {

@@ -50,34 +50,24 @@ import PublicTopNav, { type PublicTopNavActiveKey } from "./top-nav";
 const { Content, Footer, Header, Sider } = Layout;
 const { Paragraph, Text, Title } = Typography;
 
-const PUBLIC_DISPLAY_FONT_URL = joinUrlPath(
-  appBasePath,
-  "public/fonts/space-grotesk/SpaceGrotesk-wght.woff2",
-);
 export const PUBLIC_INTERACTIVE_CARD_CLASS = "cocalc-public-interactive-card";
 export const PUBLIC_PAGE_CSS = `
-  @font-face {
-    font-family: "Space Grotesk";
-    src: url("${PUBLIC_DISPLAY_FONT_URL}") format("woff2");
-    font-style: normal;
-    font-weight: 300 700;
-    font-display: swap;
-  }
-
   .cocalc-public-page h1,
   .cocalc-public-page h2,
   .cocalc-public-page h3,
   .cocalc-public-page h4,
   .cocalc-public-page .ant-card-head-title {
     font-family: ${PUBLIC_DISPLAY_FONT_FAMILY};
-    letter-spacing: 0;
+    letter-spacing: -0.025em;
+    font-weight: 600;
   }
 
   .cocalc-public-footer a:hover {
     color: ${PUBLIC_COLORS.accent} !important;
   }
 
-  .cocalc-public-page .ant-typography a:not(.ant-btn) {
+  .cocalc-public-page .ant-typography a:not(.ant-btn),
+  .cocalc-public-page .cocalc-public-policy-article a:not(.ant-btn) {
     text-decoration: underline;
     text-underline-offset: 0.15em;
   }

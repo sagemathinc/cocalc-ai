@@ -18,6 +18,7 @@ module.exports = {
     customExportConditions: ["node", "node-addons"],
   },
   moduleNameMapper: {
+    "^@cocalc/frontend/art$": "<rootDir>/test/mocks/art.js",
     "^@cocalc/frontend/codemirror/static$":
       "<rootDir>/test/mocks/codemirror-static.js",
     "^@cocalc/frontend/codemirror/init$":

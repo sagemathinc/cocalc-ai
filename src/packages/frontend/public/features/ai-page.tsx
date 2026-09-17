@@ -28,26 +28,20 @@ const { Paragraph, Text, Title } = Typography;
 const AI_ACCENT = FEATURE_ACCENTS.ai;
 const AI_PAGE_CSS = `
 .feature-ai-hero {
-  background:
-    radial-gradient(circle at 88% 12%, ${alpha(AI_ACCENT, 0.12)}, transparent 34%),
-    linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.brandTint} 100%);
-  border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  box-shadow: ${PUBLIC_ELEVATION.panelStrong};
-  overflow: hidden;
-  padding: clamp(24px, 4vw, 48px);
+  padding: clamp(24px, 5vw, 64px) 0 24px;
 }
 
-.feature-ai-hero-title.ant-typography {
-  font-size: clamp(38px, 5.5vw, 66px);
-  letter-spacing: -0.045em;
-  line-height: 1.02;
+.cocalc-public-page .feature-ai-hero-title.ant-typography {
+  font-size: clamp(38px, 5vw, 62px);
+  font-weight: 500;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
   margin: 0;
-  max-width: 10.5ch;
+  max-width: 23ch;
 }
 
 .feature-ai-eyebrow {
-  color: ${AI_ACCENT};
+  color: ${PUBLIC_COLORS.link};
   font-size: ${PUBLIC_TYPE.eyebrow}px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -74,8 +68,7 @@ const AI_PAGE_CSS = `
 .feature-ai-project-window {
   background: ${PUBLIC_COLORS.surface};
   border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  box-shadow: ${PUBLIC_ELEVATION.panelStrong};
+  border-radius: 4px;
   overflow: hidden;
 }
 
@@ -181,19 +174,13 @@ const AI_PAGE_CSS = `
 }
 
 .feature-ai-workflow-panel {
-  background: ${PUBLIC_COLORS.surface};
-  border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  box-shadow: ${PUBLIC_ELEVATION.panel};
-  padding: clamp(22px, 3vw, 34px);
+  border-top: 1px solid ${PUBLIC_COLORS.border};
+  padding: clamp(28px, 4vw, 48px) 0;
 }
 
 .feature-ai-step {
-  background: ${PUBLIC_COLORS.surfaceMuted};
-  border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
   height: 100%;
-  padding: 18px;
+  padding: 18px 0;
 }
 
 .feature-ai-step-number {
@@ -210,12 +197,9 @@ const AI_PAGE_CSS = `
 }
 
 .feature-ai-story-card {
-  background: ${PUBLIC_COLORS.surface};
-  border: 1px solid ${PUBLIC_COLORS.border};
-  border-radius: ${PUBLIC_RADIUS.panel}px;
-  box-shadow: ${PUBLIC_ELEVATION.card};
+  border-top: 1px solid ${PUBLIC_COLORS.border};
   height: 100%;
-  padding: 22px;
+  padding: 24px 0;
 }
 
 .feature-ai-interface-shell {
@@ -282,10 +266,10 @@ const AI_PAGE_CSS = `
 
 @media (max-width: 600px) {
   .feature-ai-hero {
-    padding: 22px;
+    padding: 22px 0;
   }
 
-  .feature-ai-hero-title.ant-typography {
+  .cocalc-public-page .feature-ai-hero-title.ant-typography {
     font-size: 38px;
   }
 
@@ -785,7 +769,7 @@ export default function AIFeaturePage({
   return (
     <>
       <style>{AI_PAGE_CSS}</style>
-      <Flex vertical gap={42}>
+      <Flex vertical gap={64}>
         <PublicSection>
           <section
             aria-labelledby="feature-ai-hero-title"
@@ -796,8 +780,8 @@ export default function AIFeaturePage({
               gutter={[36, 34]}
               align="middle"
             >
-              <Col xs={24} lg={11}>
-                <Flex vertical gap={18}>
+              <Col xs={24}>
+                <Flex vertical gap={24}>
                   <Text className="feature-ai-eyebrow" strong>
                     AI agents in persistent projects
                   </Text>
@@ -809,7 +793,14 @@ export default function AIFeaturePage({
                     Run AI agents where files, notebooks, compute, and teams
                     stay together.
                   </Title>
-                  <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
+                  <Paragraph
+                    style={{
+                      fontSize: PUBLIC_TYPE.lead,
+                      lineHeight: 1.65,
+                      margin: 0,
+                      maxWidth: 660,
+                    }}
+                  >
                     Use integrated Codex or terminal-based agents beside the
                     same project files, live notebooks, Linux terminals,
                     applications, and collaborators. Inspect the work as it
@@ -820,14 +811,20 @@ export default function AIFeaturePage({
                     <Button size="large" type="primary" href={primaryHref}>
                       {primaryLabel}
                     </Button>
-                    <Button size="large" href="#how-agent-work-flows">
+                    <Button
+                      size="large"
+                      href="#how-agent-work-flows"
+                      type="text"
+                    >
                       See how it works
                     </Button>
                   </Flex>
                 </Flex>
               </Col>
-              <Col xs={24} lg={13}>
-                <ProjectWorkspaceMock />
+              <Col xs={24}>
+                <div style={{ maxWidth: 900, margin: "12px auto 0" }}>
+                  <ProjectWorkspaceMock />
+                </div>
               </Col>
             </Row>
             <ProofStrip />

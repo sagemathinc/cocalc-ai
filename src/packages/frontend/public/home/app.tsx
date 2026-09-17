@@ -31,8 +31,10 @@ interface HomeConfig extends PublicConfig {
   site_description?: string;
 }
 
-const HERO_IMAGE_URL = "/public/landing/project-notebook-20260916.jpg";
-const WORKFLOW_IMAGE_URL = "/public/landing/project-terminal-20260916.jpg";
+const HERO_IMAGE_URL = appPath("public/landing/project-notebook-20260916.jpg");
+const WORKFLOW_IMAGE_URL = appPath(
+  "public/landing/project-terminal-20260916.jpg",
+);
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
 const CARD_TITLE_STYLE = {
@@ -69,6 +71,37 @@ const HOME_PAGE_CSS = `
     max-width: 100%;
   }
 
+  .cocalc-public-home-hero-visual {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 525px);
+    align-items: center;
+    gap: clamp(24px, 5vw, 64px);
+    padding: clamp(20px, 4vw, 48px);
+    background: ${PUBLIC_COLORS.surface};
+    border-top: 3px solid ${PUBLIC_COLORS.accent};
+  }
+
+  .cocalc-public-home-hero-visual figcaption {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .cocalc-public-home-hero-visual img {
+    grid-column: 2;
+  }
+
+  @media (max-width: 760px) {
+    .cocalc-public-home-hero-visual {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .cocalc-public-home-hero-visual img {
+      grid-column: 1;
+      width: min(100%, 525px) !important;
+      justify-self: center;
+    }
+  }
+
   @media (max-width: 920px) {
     .cocalc-public-home-hero,
     .cocalc-public-home-products,
@@ -78,7 +111,7 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-hero-title {
-      font-size: 42px !important;
+      font-size: 52px !important;
       line-height: 1.08 !important;
     }
 
@@ -115,7 +148,7 @@ const HOME_PAGE_CSS = `
     }
 
     .cocalc-public-home-hero-title {
-      font-size: 34px !important;
+      font-size: 38px !important;
     }
 
     .cocalc-public-home-actions .ant-btn,
@@ -455,7 +488,7 @@ function Eyebrow({ children }: { children: ReactNode }) {
         color: PUBLIC_COLORS.linkHover,
         display: "block",
         fontSize: 12,
-        letterSpacing: 0,
+        letterSpacing: "0.08em",
         textTransform: "uppercase",
       }}
     >
@@ -543,14 +576,12 @@ function Hero({
       aria-label={`${siteName} hero`}
       className="cocalc-public-home-hero"
       style={{
-        alignItems: "center",
         display: "grid",
-        gap: 42,
-        gridTemplateColumns: "minmax(0, 1fr) minmax(320px, 1fr)",
-        padding: "32px 0 12px",
+        gap: 48,
+        padding: "64px 0 12px",
       }}
     >
-      <Flex vertical gap={20}>
+      <Flex vertical gap={24} style={{ maxWidth: 860 }}>
         <Eyebrow>Persistent shared projects</Eyebrow>
         <div>
           <Title
@@ -558,22 +589,23 @@ function Hero({
             level={1}
             style={{
               color: PUBLIC_COLORS.heading,
-              fontSize: 58,
-              letterSpacing: 0,
-              lineHeight: 1.02,
+              fontSize: 68,
+              fontWeight: 500,
+              letterSpacing: "-0.04em",
+              lineHeight: 1.06,
               margin: 0,
-              maxWidth: 620,
+              maxWidth: 860,
             }}
           >
             Keep people, AI agents, and project work together.
           </Title>
           <Paragraph
             style={{
-              color: PUBLIC_COLORS.mutedText,
+              color: PUBLIC_COLORS.text,
               fontSize: 19,
-              lineHeight: 1.5,
-              margin: "20px 0 0",
-              maxWidth: 590,
+              lineHeight: 1.65,
+              margin: "24px 0 0",
+              maxWidth: 620,
             }}
           >
             Files, notebooks, terminals, services, and history stay in a shared
@@ -593,8 +625,8 @@ function Hero({
           >
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
-          <Button href={appPath("products")} size="large">
-            Ways to run CoCalc
+          <Button href={appPath("features/ai")} size="large" type="text">
+            Explore AI workflows
           </Button>
         </Flex>
       </Flex>
@@ -607,19 +639,19 @@ function Hero({
           style={{
             aspectRatio: "1050 / 650",
             border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: PANEL_RADIUS,
-            boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.08)}`,
+            borderRadius: 4,
             display: "block",
             objectFit: "contain",
             width: "100%",
+            maxWidth: 525,
           }}
         />
         <figcaption
           style={{
-            color: PUBLIC_COLORS.mutedText,
-            fontSize: 13,
-            lineHeight: 1.45,
-            marginTop: 8,
+            color: PUBLIC_COLORS.text,
+            fontSize: 18,
+            lineHeight: 1.65,
+            maxWidth: 360,
           }}
         >
           A saved Jupyter notebook in a fresh CoCalc.ai project, using only
@@ -660,12 +692,9 @@ function AgentDefinitionSection() {
           <div
             key={card.title}
             style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${alpha(card.accent, 0.18)}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
+              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
               minHeight: 190,
-              padding: 18,
+              padding: "24px 0",
             }}
           >
             <Flex vertical gap={14}>
@@ -710,7 +739,6 @@ function AudienceRoutesSection() {
               background: PUBLIC_COLORS.surface,
               border: `1px solid ${alpha(route.accent, 0.18)}`,
               borderRadius: PANEL_RADIUS,
-              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
               color: "inherit",
               display: "grid",
               gap: 16,
@@ -773,16 +801,16 @@ function WorkflowsSection() {
               alt="A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average"
               className="cocalc-public-home-workflow-image"
               decoding="async"
-              loading="eager"
+              loading="lazy"
               src={WORKFLOW_IMAGE_URL}
               style={{
                 aspectRatio: "2 / 1",
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PANEL_RADIUS,
-                boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.06)}`,
                 display: "block",
                 objectFit: "contain",
                 width: "100%",
+                maxWidth: 400,
               }}
             />
             <figcaption
@@ -800,10 +828,9 @@ function WorkflowsSection() {
           <aside
             aria-label="One CoCalc project model"
             style={{
-              background: `linear-gradient(180deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
+              background: PUBLIC_COLORS.surface,
               border: `1px solid ${PUBLIC_COLORS.border}`,
               borderRadius: PANEL_RADIUS,
-              boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.07)}`,
               padding: 18,
             }}
           >
@@ -863,7 +890,6 @@ function WorkflowsSection() {
                 background: PUBLIC_COLORS.surface,
                 border: `1px solid ${PUBLIC_COLORS.border}`,
                 borderRadius: PANEL_RADIUS,
-                boxShadow: `0 10px 30px ${alpha(PUBLIC_COLORS.shadowInk, 0.05)}`,
                 color: "inherit",
                 minHeight: 190,
                 padding: 18,
@@ -924,7 +950,6 @@ function ProductsSection() {
           background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,
           borderRadius: PANEL_RADIUS,
-          boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.07)}`,
           padding: 20,
         }}
       >
@@ -991,11 +1016,11 @@ function DifferenceSection() {
         aria-label="Why CoCalc is different"
         className="cocalc-public-home-difference"
         style={{
-          background: `linear-gradient(135deg, ${PUBLIC_COLORS.surfaceMuted} 0%, ${PUBLIC_COLORS.surface} 100%)`,
+          background: PUBLIC_COLORS.surface,
           border: `1px solid ${PUBLIC_COLORS.border}`,
           borderRadius: PANEL_RADIUS,
           display: "grid",
-          gap: 34,
+          gap: 56,
           gridTemplateColumns: "minmax(0, 0.7fr) minmax(0, 1.3fr)",
           margin: "16px 0",
           padding: 36,
