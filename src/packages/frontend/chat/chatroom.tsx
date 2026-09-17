@@ -2664,7 +2664,8 @@ function ChatPanelContent({
     </>
   );
   const automationBanner = selectedThreadAutomationConfig ? (
-    <div
+    <section
+      aria-label="Thread automation controls"
       style={{
         margin: "8px 8px 0 8px",
         padding: "6px 8px",
@@ -2672,6 +2673,9 @@ function ChatPanelContent({
         background: automationBannerAppearance.background,
         color: UI_COLORS.text,
         borderRadius: 4,
+        flexShrink: 0,
+        position: "relative",
+        zIndex: 1,
       }}
     >
       {automationDetailsOpen ? (
@@ -2786,7 +2790,7 @@ function ChatPanelContent({
           </div>
         ) : null}
       </div>
-    </div>
+    </section>
   ) : null;
 
   const renderChatContent = () => (
