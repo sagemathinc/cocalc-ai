@@ -170,8 +170,8 @@ const WORKFLOW_FEATURES = [
     href: "features/ai",
     icon: "robot",
     summary:
-      "Ask Codex to help with files, notebooks, terminals, and documents while humans review changes in the same project.",
-    title: "Codex Agent Chat",
+      "Use integrated Codex or terminal-based agents beside the files, tools, and collaborators involved in the work.",
+    title: "AI Agents",
   },
   {
     accent: PUBLIC_COLORS.success,
@@ -249,7 +249,7 @@ const PRODUCT_OPTIONS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Free local runtime for self-directed technical work and evaluation.",
+    body: "Free local runtime for self-directed work and evaluation.",
     href: "products/cocalc-plus",
     icon: "laptop",
     label: "Local",
@@ -291,7 +291,7 @@ const PRODUCT_OPTIONS = [
 const AGENT_DEFINITION_CARDS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Agents run on the same persistent computer as your files, notebooks, terminals, and services instead of in a disconnected coding tool.",
+    body: "Codex works in project chat, while terminal-based agents run beside the files, notebooks, terminals, and services they need.",
     icon: "robot",
     title: "Runs where your work lives",
   },
@@ -305,7 +305,7 @@ const AGENT_DEFINITION_CARDS = [
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Use the integrated Codex experience, Claude Code in a terminal, or other shell-capable agents without moving the project somewhere else.",
     icon: "terminal",
-    title: "Bring the agent you use",
+    title: "Use terminal agents too",
   },
 ] satisfies Array<{
   accent: string;
@@ -541,7 +541,7 @@ function Hero({
       }}
     >
       <Flex vertical gap={20}>
-        <Eyebrow>Shared Linux Workspace</Eyebrow>
+        <Eyebrow>Persistent shared projects</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
@@ -555,7 +555,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            A persistent shared computer for technical work.
+            Keep people, AI agents, and project work together.
           </Title>
           <Paragraph
             style={{
@@ -566,9 +566,8 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            People and AI agents work in the same Linux project with shared
-            files, notebooks, terminals, services, and history. The computer is
-            ready whenever the work continues.
+            Files, notebooks, terminals, services, and history stay in a shared
+            Linux project so work can continue, be reviewed, and be handed off.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -664,8 +663,8 @@ function AudienceRoutesSection() {
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
         eyebrow="Who it helps"
-        title="Built for research, technical teams, and teaching."
-        body="Start with the path that matches how your group works."
+        title="For work that must persist across people and agents."
+        body="Research, platform, and teaching teams can start with the path that matches how their work is created, reviewed, and operated."
       />
       <div
         className="cocalc-public-home-audience-grid"
@@ -730,7 +729,7 @@ function WorkflowsSection() {
         }
         body="Use notebooks, documents, terminals, agents, courses, slide decks, and more inside the same persistent Linux environment."
         eyebrow="Core workflows"
-        title="One computer, many workflows."
+        title="One project, many workflows."
       />
       <div
         className="cocalc-public-home-workflow-layout"

@@ -90,7 +90,7 @@ describe("PublicHomeApp", () => {
     ]);
     expectHomepageSectionsLabeled(container);
     expect(
-      screen.getByText("Shared Linux Workspace").closest(".ant-typography"),
+      screen.getByText("Persistent shared projects").closest(".ant-typography"),
     ).toHaveStyle({ color: PUBLIC_COLORS.linkHover });
 
     // Section identity + order are canaried by the aria-label array above.
@@ -108,7 +108,7 @@ describe("PublicHomeApp", () => {
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
     expect(heroHeadings[0]).toHaveTextContent(
-      "A persistent shared computer for technical work.",
+      "Keep people, AI agents, and project work together.",
     );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
     expect(
@@ -150,11 +150,10 @@ describe("PublicHomeApp", () => {
     const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");
     expect(heroLead).not.toBeNull();
     expect(textLength(heroLead as Element)).toBeLessThanOrEqual(210);
-    expect(hero.textContent ?? "").toMatch(/Shared Linux Workspace/i);
-    expect(hero.textContent ?? "").toMatch(/People and AI agents work/i);
-    expect(hero.textContent ?? "").toMatch(/same Linux project/i);
+    expect(hero.textContent ?? "").toMatch(/Persistent shared projects/i);
+    expect(hero.textContent ?? "").toMatch(/shared Linux project/i);
     expect(hero.textContent ?? "").toMatch(
-      /ready whenever the work continues/i,
+      /work can continue, be reviewed, and be handed off/i,
     );
     expect(hero.textContent ?? "").not.toMatch(
       /collaborative technical computing online since 2013/i,
@@ -217,7 +216,7 @@ describe("PublicHomeApp", () => {
     for (const title of [
       "Runs where your work lives",
       "You stay in review",
-      "Bring the agent you use",
+      "Use terminal agents too",
     ]) {
       expect(
         within(agents).getByRole("heading", { level: 3, name: title }),
@@ -234,7 +233,7 @@ describe("PublicHomeApp", () => {
     expect(
       within(audiences).getByRole("heading", {
         level: 2,
-        name: "Built for research, technical teams, and teaching.",
+        name: "For work that must persist across people and agents.",
       }),
     ).not.toBeNull();
     expect(
@@ -295,7 +294,7 @@ describe("PublicHomeApp", () => {
       "Jupyter Notebooks",
       "LaTeX Editor",
       "Linux Terminal",
-      "Codex Agent Chat",
+      "AI Agents",
       "Teaching a Course",
       "Whiteboard",
     ]) {

@@ -300,14 +300,14 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
   {
     slug: "ai",
     aliases: ["openai-chatgpt"],
-    title: "Codex Agent Chat",
-    navLabel: "Codex",
+    title: "AI Agents in CoCalc",
+    navLabel: "AI Agents",
     metadataTitle: "AI Agents",
-    tagline: "Use Codex where the technical work already lives.",
+    tagline: "Use AI agents where the work already lives.",
     summary:
-      "Work with Codex alongside your files, notebooks, terminals, screenshots, review notes, and collaborators.",
+      "Use integrated Codex or terminal-based agents alongside your files, notebooks, terminals, review notes, and collaborators.",
     metadataSummary:
-      "Work with Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state.",
+      "Use integrated Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state, or run other agents as terminal tools.",
     image: "/public/features/chatgpt-fix-code.png",
     docsUrl: "/docs/ai/codex-chat",
     index: true,
@@ -601,7 +601,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     summary:
       "Compare CoCalc's persistent shared projects with API-first agent sandboxes, then choose based on who needs to use and review the environment.",
     metadataSummary:
-      "Compare CoCalc's persistent shared projects with API-first AI agent sandboxes for research, engineering, collaboration, review, and deployment.",
+      "Compare CoCalc's persistent shared projects with API-first AI agent sandboxes for collaboration, review, durable project work, and deployment.",
     index: true,
     sections: [
       {
@@ -621,9 +621,9 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Choose CoCalc when",
         bullets: [
-          "Researchers or technical teams work directly in the notebooks, files, documents, terminals, and services",
-          "People need real-time collaboration, review context, history, and recovery beside the computation",
-          "The project should persist across sessions, collaborators, and agent-assisted work",
+          "People and agents work directly in the same notebooks, files, documents, terminals, and services",
+          "Collaborators need live work, review context, history, and recovery in one place",
+          "The work must persist across sessions, collaborators, reviews, and handoffs",
           "You need a hosted service, a local or single-VM installation, or a customer-operated private deployment path",
         ],
       },

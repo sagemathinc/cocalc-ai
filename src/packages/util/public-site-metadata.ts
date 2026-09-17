@@ -158,7 +158,7 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
 };
 
 export const PUBLIC_SITE_DESCRIPTION =
-  "CoCalc is a persistent shared computer for technical work, where people and AI agents collaborate in the same Linux project with files, notebooks, terminals, history, and recovery.";
+  "CoCalc keeps people, AI agents, and project work together in persistent shared Linux projects with files, notebooks, terminals, history, and recovery.";
 
 const PRODUCT_SITEMAP_PATHS = [
   "products",

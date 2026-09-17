@@ -134,12 +134,17 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Codex Agent Chat",
+        name: "AI Agents in CoCalc",
         level: 1,
       }),
     ).not.toBeNull();
-    expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
-    expect(screen.getByText("Run an agent turn in order.")).not.toBeNull();
+    expect(
+      screen.getByText("Give agents the project context they need."),
+    ).not.toBeNull();
+    expect(screen.getByText("A reviewable Codex workflow.")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Open the thread" }),
+    ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
         name: "Integrated chat or a terminal agent",
@@ -153,11 +158,33 @@ describe("PublicFeaturesApp", () => {
         name: "Compare with agent sandboxes",
       })[0],
     ).toHaveAttribute("href", "/features/compare");
+    expect(screen.getByText(/Review Codex activity and diffs/)).not.toBeNull();
     expect(
-      screen.getByText(/Use TimeTravel to inspect or restore/),
-    ).not.toBeNull();
+      screen.queryByText(/files touched during agent-assisted work/),
+    ).toBeNull();
     expect(screen.queryByText(/how an agent changed a file/)).toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
+  });
+
+  it("does not link to hosted Codex docs from CoCalc Plus", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        initialRoute={{ slug: "ai", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: "Read the Codex guide" }),
+    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "Codex setup" })).toBeNull();
+    const accountLinks = screen.getAllByRole("link", {
+      name: "Create account",
+    });
+    expect(accountLinks.length).toBeGreaterThan(0);
+    for (const link of accountLinks) {
+      expect(link).toHaveAttribute("href", "/auth/sign-up?intent=codex");
+    }
   });
 
   it("uses projects as the ai CTA for authenticated users", () => {

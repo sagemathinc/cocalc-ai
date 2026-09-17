@@ -39,13 +39,13 @@ const SANDBOX_BOUNDARY = COMPARE_PAGE.sections?.find(
 const DECISION_ROWS = [
   {
     cocalc:
-      "R&D teams need files, notebooks, terminals, output, discussion, and TimeTravel in one reviewable project.",
+      "People and agents need files, notebooks, terminals, output, discussion, and review history in one shared project.",
     other: "Those artifacts already live somewhere stable.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
-      "Data scientists, engineers, researchers, and AI agents need shared kernels, terminals, and visible cursors during live work.",
+      "Collaborators and AI agents need to inspect the same files, notebooks, terminals, and running services.",
     other: "Collaboration stays on one surface.",
     question: "Who needs to inspect the work?",
   },
@@ -342,6 +342,10 @@ export default function CompareFeaturePage({
     title: "Talk with CoCalc about fit",
   });
   const hasBuiltinTrustPage = !!builtinPolicyPath(config, "trust");
+  const boundaryLinks = SANDBOX_BOUNDARY.links?.filter(
+    ({ href }) =>
+      config?.cocalc_product !== "plus" || !href.startsWith("/docs/"),
+  );
   const nextRoutes = hasBuiltinTrustPage
     ? [
         ...NEXT_ROUTES,
@@ -397,12 +401,12 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Best fit: ongoing work that needs shared execution, review, and
-                handoff.
+                Best fit: ongoing work that people and agents need to execute,
+                review, and hand off in one context.
               </li>
               <li>
-                Better elsewhere: one-off notebooks, dashboards, editors, or
-                isolated reports.
+                A sandbox or lighter tool may fit when each run is isolated and
+                people review the results somewhere else.
               </li>
             </ul>
           </div>
@@ -453,7 +457,7 @@ export default function CompareFeaturePage({
             ))}
           </div>
           <Flex gap={12} wrap>
-            {SANDBOX_BOUNDARY.links?.map((link) => (
+            {boundaryLinks?.map((link) => (
               <LinkButton
                 href={featureAppPath(link.href.replace(/^\/+/, ""))}
                 key={link.href}

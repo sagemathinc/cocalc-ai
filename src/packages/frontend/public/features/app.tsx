@@ -700,7 +700,11 @@ function FeatureDetail({
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
   if (slug === "ai") {
     return (
-      <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
+      <AIFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+        product={config?.cocalc_product}
+      />
     );
   }
   if (slug === "jupyter-notebook") {

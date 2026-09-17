@@ -31,7 +31,7 @@ describe("core landing page initial HTML", () => {
       const home = renderPublicRoutePrerender({ section: "home" }, basePath);
       expect(home).toContain('data-cocalc-public-prerender="home"');
       expect(home).toContain(
-        "A persistent shared computer for technical work.",
+        "Keep people, AI agents, and project work together.",
       );
       expect(home).toContain(
         `href="${basePath === "/" ? "" : basePath}/features/compare"`,
@@ -82,6 +82,20 @@ describe("core landing page initial HTML", () => {
     expect(html).toContain("If your design requires automatic fleets");
     expect(html).not.toContain("sandboxes are disposable");
   });
+
+  it.each(["ai", "compare"])(
+    "does not prerender hosted documentation links for %s on Plus",
+    (slug) => {
+      const html = renderPublicRoutePrerender(
+        { section: "features", route: { view: "detail", slug } },
+        "/prefix",
+        { cocalc_product: "plus" },
+      );
+
+      expect(html).toContain('data-cocalc-public-prerender="feature"');
+      expect(html).not.toContain('href="/prefix/docs/');
+    },
+  );
 });
 
 describe("feature initial HTML product availability", () => {

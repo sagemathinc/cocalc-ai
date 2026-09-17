@@ -75,7 +75,7 @@ describe("PublicHomeApp visual quality contract", () => {
       "Jupyter Notebooks",
       "LaTeX Editor",
       "Linux Terminal",
-      "Codex Agent Chat",
+      "AI Agents",
       "Teaching a Course",
       "Whiteboard",
     ]);
@@ -89,7 +89,7 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(getCardTitles(codexGrid, "h3")).toEqual([
       "Runs where your work lives",
       "You stay in review",
-      "Bring the agent you use",
+      "Use terminal agents too",
     ]);
 
     expect(getDirectCards(audienceGrid)).toHaveLength(3);
@@ -213,7 +213,7 @@ describe("PublicHomeApp visual quality contract", () => {
     const h1 = container.querySelectorAll("h1");
     expect(h1).toHaveLength(1);
     expect(h1[0]).toHaveTextContent(
-      "A persistent shared computer for technical work.",
+      "Keep people, AI agents, and project work together.",
     );
     expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
 

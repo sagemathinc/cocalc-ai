@@ -117,7 +117,7 @@ describe("public shell rendering", () => {
   });
 
   it.each([
-    ["/", "home", "A persistent shared computer for technical work."],
+    ["/", "home", "Keep people, AI agents, and project work together."],
     ["/products", "products", "Ways to Run CoCalc"],
     ["/pricing", "pricing", "Hosted memberships"],
   ])(

@@ -147,13 +147,13 @@ function ThreadMock() {
 function WorkflowStrip() {
   const steps = [
     {
-      body: "Start a conversation, then invite Codex when the turn needs code.",
+      body: "Open a Codex chat when the work needs agent help.",
       icon: "comments",
       label: "1",
-      title: "Choose the thread",
+      title: "Open the thread",
     },
     {
-      body: "Paste the specific file, error, image, or instruction the turn needs.",
+      body: "Add the specific file, error, image, or instruction the turn needs.",
       icon: "markdown",
       label: "2",
       title: "Give useful context",
@@ -190,7 +190,7 @@ function WorkflowStrip() {
       >
         <Flex vertical gap={22}>
           <Title level={3} style={{ margin: 0 }}>
-            Run an agent turn in order.
+            A reviewable Codex workflow.
           </Title>
           <Row gutter={[14, 14]}>
             {steps.map((step) => (
@@ -239,14 +239,17 @@ function WorkflowStrip() {
 export default function AIFeaturePage({
   helpEmail,
   isAuthenticated,
+  product,
 }: {
   helpEmail?: string;
   isAuthenticated?: boolean;
+  product?: string;
 }) {
   const primaryHref = isAuthenticated
     ? appPath("projects")
     : featureSignUpPath("codex");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
+  const showCodexDocs = product !== "plus";
 
   return (
     <>
@@ -257,17 +260,22 @@ export default function AIFeaturePage({
             <Col xs={24} lg={11}>
               <Flex vertical gap={14}>
                 <Title level={2} style={{ margin: 0 }}>
-                  Codex where the work happens.
+                  Give agents the project context they need.
                 </Title>
                 <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-                  Ask Codex to edit Markdown, code, or notebooks without leaving
-                  the project.
+                  Use integrated Codex in project chat, or run terminal-based
+                  agents beside the files, tools, services, and collaborators
+                  they need.
                 </Paragraph>
                 <Flex wrap gap={12}>
-                  <Button type="primary" href={appPath("docs/ai/codex-chat")}>
-                    Read the Codex guide
+                  <Button type="primary" href={primaryHref}>
+                    {primaryLabel}
                   </Button>
-                  <Button href={primaryHref}>{primaryLabel}</Button>
+                  {showCodexDocs ? (
+                    <Button href={appPath("docs/ai/codex-chat")}>
+                      Read the Codex guide
+                    </Button>
+                  ) : null}
                 </Flex>
               </Flex>
             </Col>
@@ -291,7 +299,9 @@ export default function AIFeaturePage({
             Codex chat.
           </Paragraph>
           <Flex gap={12} wrap>
-            <Button href={appPath("docs/ai/codex-chat")}>Codex setup</Button>
+            {showCodexDocs ? (
+              <Button href={appPath("docs/ai/codex-chat")}>Codex setup</Button>
+            ) : null}
             <Button href={appPath("features/terminal")}>
               Terminal workflows
             </Button>
@@ -341,7 +351,7 @@ export default function AIFeaturePage({
                 "Bring Codex in when the turn depends on surrounding project context.",
                 "Keep review in CoCalc when people need context before accepting a change.",
                 "Use shell-based agents when command output belongs with the project.",
-                "Use TimeTravel to inspect or restore earlier versions of files touched during agent-assisted work.",
+                "Review Codex activity and diffs in its project thread; use TimeTravel for supported collaborative file history.",
               ]}
             />
           </FeatureFinalBand>

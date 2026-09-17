@@ -11,6 +11,7 @@ import {
   type PublicFeaturePage,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
+import { getDocsEntry } from "@cocalc/docs";
 import {
   getPublicRouteMetadata,
   type PublicMetadataRoute,
@@ -59,9 +60,9 @@ function publicLink(basePath: string, path: string, label: string): string {
 function renderHome(basePath: string): string {
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
 <header>
-  <p>Shared Linux workspace</p>
-  <h1>A persistent shared computer for technical work.</h1>
-  <p>People and AI agents work in the same Linux project with shared files, notebooks, terminals, services, and history. The computer is ready whenever the work continues.</p>
+  <p>Persistent shared projects</p>
+  <h1>Keep people, AI agents, and project work together.</h1>
+  <p>Files, notebooks, terminals, services, and history stay in a shared Linux project so work can continue, be reviewed, and be handed off.</p>
   <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, "products", "Ways to run CoCalc")}</p>
 </header>
 <section>
@@ -70,7 +71,7 @@ function renderHome(basePath: string): string {
   <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
 </section>
 <section>
-  <h2>One project, many technical workflows.</h2>
+  <h2>One project, many workflows.</h2>
   <p>Keep notebooks, terminals, code, documents, services, discussion, history, and recovery in one durable project.</p>
   <p>${publicLink(basePath, "features", "Browse feature workflows")} ${publicLink(basePath, "docs", "Read the documentation")}</p>
 </section>
@@ -148,6 +149,7 @@ function renderPricing(basePath: string): string {
 function renderSection(
   section: PublicFeatureSection,
   basePath: string,
+  config: PublicRouteMetadataConfig,
 ): string {
   const paragraphs = (section.paragraphs ?? [])
     .map((paragraph) => `<p>${htmlEscape(paragraph)}</p>`)
@@ -161,6 +163,13 @@ function renderSection(
   const links =
     section.links?.length != null && section.links.length > 0
       ? `<ul>${section.links
+          .filter(
+            ({ href }) =>
+              !href.startsWith("/docs/") ||
+              getDocsEntry(href.slice("/docs/".length), {
+                product: config.cocalc_product === "plus" ? "plus" : undefined,
+              }) != null,
+          )
           .map(
             ({ href, label }) =>
               `<li><a href="${htmlEscape(publicFeatureHref(href, basePath))}">${htmlEscape(label)}</a></li>`,
@@ -197,7 +206,7 @@ function renderFeatureDetail(
   config: PublicRouteMetadataConfig,
 ): string {
   const sections = (page.sections ?? [])
-    .map((section) => renderSection(section, basePath))
+    .map((section) => renderSection(section, basePath, config))
     .join("");
   const title = page.metadataTitle ?? page.title;
   return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
@@ -232,7 +241,7 @@ function renderFeatureIndex(
     .join("");
   return `<main data-cocalc-public-prerender="feature-index" style="${ARTICLE_STYLE}">
 <h1>CoCalc features</h1>
-<p>A persistent shared computer for technical work, with notebooks, terminals, documents, software environments, collaboration, and AI agents in one project.</p>
+<p>Keep people, AI agents, and project work together with notebooks, terminals, documents, software environments, collaboration, and history in persistent Linux projects.</p>
 <ul>${pages}</ul>
 </main>`;
 }
