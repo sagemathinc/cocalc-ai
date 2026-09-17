@@ -76,3 +76,22 @@ it("serializes rapid organization writes and computes from optimistic state", as
   second.resolve();
   await act(async () => await second.promise);
 });
+
+it("persists hiding as personal workspace organization", async () => {
+  const save = deferred();
+  mockSave.mockReturnValue(save.promise);
+  const { result } = renderHook(() =>
+    useAgentWorkspaceOrganization([agent("a"), agent("b")]),
+  );
+
+  act(() => result.current.setHidden("a", true));
+
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+  expect(mockSave.mock.calls[0][1]).toMatchObject({
+    hidden: '["a"]',
+    pinned: "[]",
+  });
+  expect(result.current.groups.hidden.map(({ name }) => name)).toEqual(["a"]);
+  save.resolve();
+  await act(async () => await save.promise);
+});

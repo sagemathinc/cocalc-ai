@@ -15,6 +15,7 @@ export interface AgentWorkspaceOrganization {
   mode: "recent" | "custom";
   pinned: string[];
   custom: string[];
+  hidden: string[];
   lastOpened: Record<string, number>;
 }
 
@@ -24,6 +25,7 @@ export const DEFAULT_AGENT_WORKSPACE_ORGANIZATION: AgentWorkspaceOrganization =
     mode: "recent",
     pinned: [],
     custom: [],
+    hidden: [],
     lastOpened: {},
   };
 
@@ -87,6 +89,7 @@ export function normalizeAgentWorkspaceOrganization(
     mode: input.mode === "custom" ? "custom" : "recent",
     pinned: uniqueIds(input.pinned),
     custom: uniqueIds(input.custom),
+    hidden: uniqueIds(input.hidden),
     lastOpened,
   };
 }
@@ -102,6 +105,7 @@ export function serializeAgentWorkspaceOrganization(
     mode: normalized.mode,
     pinned: JSON.stringify(normalized.pinned),
     custom: JSON.stringify(normalized.custom),
+    hidden: JSON.stringify(normalized.hidden),
     lastOpened: JSON.stringify(normalized.lastOpened),
   };
 }
@@ -125,14 +129,23 @@ function inStoredOrder(agents: NamedAgent[], order: string[]): NamedAgent[] {
 export function organizeAgents(
   agents: NamedAgent[],
   organization: AgentWorkspaceOrganization,
-): { pinned: NamedAgent[]; unpinned: NamedAgent[] } {
+): { pinned: NamedAgent[]; unpinned: NamedAgent[]; hidden: NamedAgent[] } {
   const pinnedIds = new Set(organization.pinned);
+  const hiddenIds = new Set(organization.hidden);
   const pinned = inStoredOrder(
-    agents.filter(({ endpoint }) => pinnedIds.has(endpoint.agent_id)),
+    agents.filter(
+      ({ endpoint }) =>
+        pinnedIds.has(endpoint.agent_id) && !hiddenIds.has(endpoint.agent_id),
+    ),
     organization.pinned,
   );
   const remainder = agents.filter(
-    ({ endpoint }) => !pinnedIds.has(endpoint.agent_id),
+    ({ endpoint }) =>
+      !pinnedIds.has(endpoint.agent_id) && !hiddenIds.has(endpoint.agent_id),
+  );
+  const hidden = inStoredOrder(
+    agents.filter(({ endpoint }) => hiddenIds.has(endpoint.agent_id)),
+    organization.hidden,
   );
   const unpinned =
     organization.mode === "custom"
@@ -143,7 +156,56 @@ export function organizeAgents(
             (organization.lastOpened[a.endpoint.agent_id] ?? 0);
           return delta || byName(a, b);
         });
-  return { pinned, unpinned };
+  return { pinned, unpinned, hidden };
+}
+
+export type AgentRecencySection = {
+  key: "today" | "last7days" | "older";
+  title: "Today" | "Last 7 days" | "Older";
+  agents: NamedAgent[];
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export function groupAgentsByRecency(
+  agents: NamedAgent[],
+  lastOpened: Record<string, number>,
+  now = Date.now(),
+): AgentRecencySection[] {
+  const sections: AgentRecencySection[] = [
+    { key: "today", title: "Today", agents: [] },
+    { key: "last7days", title: "Last 7 days", agents: [] },
+    { key: "older", title: "Older", agents: [] },
+  ];
+  for (const agent of agents) {
+    const opened = lastOpened[agent.endpoint.agent_id] ?? 0;
+    const delta = Math.max(0, now - opened);
+    const section =
+      opened > 0 && delta < DAY_MS
+        ? sections[0]
+        : opened > 0 && delta < 7 * DAY_MS
+          ? sections[1]
+          : sections[2];
+    section.agents.push(agent);
+  }
+  return sections.filter(({ agents }) => agents.length > 0);
+}
+
+export function setAgentHidden(
+  agents: NamedAgent[],
+  organization: AgentWorkspaceOrganization,
+  agentId: string,
+  hidden: boolean,
+): AgentWorkspaceOrganization {
+  const current = organizeAgents(agents, organization);
+  const hiddenIds = orderedIds(current.hidden).filter((id) => id !== agentId);
+  if (hidden) hiddenIds.unshift(agentId);
+  return {
+    ...organization,
+    hidden: hiddenIds,
+    pinned: organization.pinned.filter((id) => id !== agentId),
+    custom: organization.custom.filter((id) => id !== agentId),
+  };
 }
 
 function orderedIds(agents: NamedAgent[]): string[] {
@@ -163,6 +225,7 @@ export function setAgentPinned(
     ...organization,
     pinned: nextPinned,
     custom: orderedIds(current.unpinned).filter((id) => id !== agentId),
+    hidden: organization.hidden.filter((id) => id !== agentId),
   };
 }
 

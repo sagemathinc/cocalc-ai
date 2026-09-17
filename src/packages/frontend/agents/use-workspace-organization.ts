@@ -22,6 +22,7 @@ import {
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
   serializeAgentWorkspaceOrganization,
+  setAgentHidden,
   setAgentPinned,
   type AgentWorkspaceOrganization,
 } from "./workspace-organization";
@@ -122,6 +123,9 @@ export function useAgentWorkspaceOrganization(
     },
     setPinned(agentId: string, pinned: boolean) {
       save(setAgentPinned(agents, latestRef.current, agentId, pinned));
+    },
+    setHidden(agentId: string, hidden: boolean) {
+      save(setAgentHidden(agents, latestRef.current, agentId, hidden));
     },
     move(agentId: string, delta: -1 | 1) {
       save(moveAgent(agents, latestRef.current, agentId, delta));

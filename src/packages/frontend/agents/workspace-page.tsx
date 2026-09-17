@@ -45,11 +45,14 @@ import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { COLORS } from "@cocalc/util/theme";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid } from "@cocalc/util/misc";
+import { Resizable } from "re-resizable";
 import {
   Alert,
   Button,
+  Dropdown,
   Empty,
   Input,
   Modal,
@@ -64,6 +67,7 @@ import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
+import { groupAgentsByRecency } from "./workspace-organization";
 import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
 import {
@@ -73,6 +77,25 @@ import {
 } from "./workspace-model";
 
 const { Text, Title } = Typography;
+
+const DEFAULT_AGENT_SIDEBAR_WIDTH = 280;
+const MIN_AGENT_SIDEBAR_WIDTH = 220;
+const MAX_AGENT_SIDEBAR_WIDTH = 600;
+const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
+
+function initialAgentSidebarWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_AGENT_SIDEBAR_WIDTH;
+  const stored = Number.parseInt(
+    window.localStorage.getItem(AGENT_SIDEBAR_WIDTH_STORAGE_KEY) ?? "",
+    10,
+  );
+  return Number.isFinite(stored)
+    ? Math.min(
+        MAX_AGENT_SIDEBAR_WIDTH,
+        Math.max(MIN_AGENT_SIDEBAR_WIDTH, stored),
+      )
+    : DEFAULT_AGENT_SIDEBAR_WIDTH;
+}
 
 interface PendingAgent {
   projectId: string;
@@ -692,6 +715,10 @@ export function MyAgentsWorkspacePage() {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [mobileList, setMobileList] = useState(true);
+  const [showHidden, setShowHidden] = useState(false);
+  const [agentSidebarWidth, setAgentSidebarWidth] = useState(
+    initialAgentSidebarWidth,
+  );
   const [mountedWorkspaces, setMountedWorkspaces] = useState<Set<string>>(
     () => new Set(),
   );
@@ -735,8 +762,17 @@ export function MyAgentsWorkspacePage() {
     return {
       pinned: agentOrganization.groups.pinned.filter(filter),
       unpinned: agentOrganization.groups.unpinned.filter(filter),
+      hidden: agentOrganization.groups.hidden.filter(filter),
     };
   }, [agentOrganization.groups, search]);
+  const recencySections = useMemo(
+    () =>
+      groupAgentsByRecency(
+        visibleGroups.unpinned,
+        agentOrganization.organization.lastOpened,
+      ),
+    [agentOrganization.organization.lastOpened, visibleGroups.unpinned],
+  );
 
   const handleRegisteredThreadSelected = useCallback(
     (workspace: string, nextAgent: NamedAgent) => {
@@ -792,6 +828,7 @@ export function MyAgentsWorkspacePage() {
     agent: NamedAgent,
     pinned: boolean,
     reorderable = true,
+    hidden = false,
   ) {
     const active = agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
@@ -840,23 +877,58 @@ export function MyAgentsWorkspacePage() {
             {agent.thread_title || `@${agent.name}`}
           </Text>
           <Text type="secondary" ellipsis style={{ display: "block" }}>
-            {agent.project_title || agent.endpoint.project_id}
+            @{agent.name} · {agent.project_title || agent.endpoint.project_id}
           </Text>
         </button>
-        <Button
-          type="text"
-          size="small"
-          icon={<Icon name={pinned ? "star-filled" : "star"} />}
-          aria-label={`${pinned ? "Unpin" : "Pin"} @${agent.name}`}
-          title={pinned ? "Unpin" : "Pin"}
-          onClick={() => agentOrganization.setPinned(id, !pinned)}
-        />
+        {!hidden && (
+          <Button
+            type="text"
+            size="small"
+            icon={
+              <Icon
+                name={pinned ? "star-filled" : "star"}
+                style={{ color: pinned ? COLORS.STAR : UI_COLORS.secondary }}
+              />
+            }
+            aria-label={`${pinned ? "Unpin" : "Pin"} @${agent.name}`}
+            title={pinned ? "Unpin" : "Pin"}
+            onClick={() => agentOrganization.setPinned(id, !pinned)}
+          />
+        )}
+        <Dropdown
+          trigger={["click"]}
+          menu={{
+            items: [
+              {
+                key: hidden ? "show" : "hide",
+                icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
+                label: hidden ? "Show in Agents" : "Hide from Agents",
+              },
+            ],
+            onClick: ({ domEvent }) => {
+              domEvent.stopPropagation();
+              agentOrganization.setHidden(id, !hidden);
+            },
+          }}
+        >
+          <Button
+            type="text"
+            size="small"
+            aria-label={`More actions for @${agent.name}`}
+            title={`More actions for @${agent.name}`}
+            icon={<Icon name="ellipsis-vertical" />}
+          />
+        </Dropdown>
       </div>
     );
   }
 
-  function renderSortableAgentGroup(group: NamedAgent[], pinned: boolean) {
-    if (search.trim()) {
+  function renderSortableAgentGroup(
+    group: NamedAgent[],
+    pinned: boolean,
+    reorderable = true,
+  ) {
+    if (search.trim() || !reorderable) {
       return group.map((agent) => (
         <div key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}>
           {renderAgentRow(agent, pinned, false)}
@@ -887,6 +959,125 @@ export function MyAgentsWorkspacePage() {
   }
 
   if (loading && !directory) return <Loading theme="medium" />;
+  const sidebar = (
+    <aside
+      aria-label="Agents"
+      style={{
+        background: UI_COLORS.inset,
+        borderRight: `1px solid ${UI_COLORS.border}`,
+        display: "flex",
+        flex: 1,
+        flexDirection: "column",
+        height: "100%",
+        minWidth: 0,
+        padding: 12,
+        ...(isNarrow && !mobileList ? { display: "none" } : {}),
+      }}
+    >
+      <Space direction="vertical" size={10} style={{ width: "100%" }}>
+        <Title level={3} style={{ margin: 0 }}>
+          Agents
+        </Title>
+        <Button
+          type="primary"
+          block
+          icon={<Icon name="plus" />}
+          onClick={() => {
+            setCreating(true);
+            setMobileList(false);
+          }}
+        >
+          New Agent
+        </Button>
+        <Input.Search
+          allowClear
+          aria-label="Search agents"
+          placeholder="Search agents"
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+        />
+        <Segmented
+          block
+          aria-label="Agent ordering"
+          options={[
+            { label: "Recent", value: "recent" },
+            { label: "Custom", value: "custom" },
+          ]}
+          value={agentOrganization.organization.mode}
+          onChange={(value) =>
+            agentOrganization.setMode(value as "recent" | "custom")
+          }
+        />
+        {agentOrganization.saveError && (
+          <Alert
+            role="alert"
+            type="error"
+            showIcon
+            title={agentOrganization.saveError}
+          />
+        )}
+      </Space>
+      <div
+        role="list"
+        style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 12 }}
+      >
+        {visibleGroups.pinned.length > 0 && (
+          <Text type="secondary" style={{ display: "block", padding: 6 }}>
+            Pinned
+          </Text>
+        )}
+        {renderSortableAgentGroup(visibleGroups.pinned, true)}
+        {agentOrganization.organization.mode === "custom" ? (
+          <>
+            {visibleGroups.unpinned.length > 0 && (
+              <Text type="secondary" style={{ display: "block", padding: 6 }}>
+                Custom order
+              </Text>
+            )}
+            {renderSortableAgentGroup(visibleGroups.unpinned, false)}
+          </>
+        ) : (
+          recencySections.map((section) => (
+            <div key={section.key}>
+              <Text type="secondary" style={{ display: "block", padding: 6 }}>
+                {section.title}
+              </Text>
+              {renderSortableAgentGroup(section.agents, false, false)}
+            </div>
+          ))
+        )}
+        {visibleGroups.hidden.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <Button
+              type="text"
+              block
+              style={{ textAlign: "left" }}
+              icon={<Icon name={showHidden ? "caret-down" : "caret-right"} />}
+              aria-expanded={showHidden}
+              onClick={() => setShowHidden((value) => !value)}
+            >
+              Hidden ({visibleGroups.hidden.length})
+            </Button>
+            {showHidden &&
+              visibleGroups.hidden.map((agent) => (
+                <div
+                  key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+                >
+                  {renderAgentRow(agent, false, false, true)}
+                </div>
+              ))}
+          </div>
+        )}
+      </div>
+      <Button
+        type="link"
+        style={{ padding: "10px 0 0", textAlign: "left" }}
+        onClick={() => openAccountSettings({ page: "my-agents" })}
+      >
+        Manage agents and connections
+      </Button>
+    </aside>
+  );
   return (
     <main
       aria-label="Agents workspace"
@@ -899,89 +1090,50 @@ export function MyAgentsWorkspacePage() {
         overflow: "hidden",
       }}
     >
-      <aside
-        aria-label="Agents"
-        style={{
-          background: UI_COLORS.inset,
-          borderRight: `1px solid ${UI_COLORS.border}`,
-          display: "flex",
-          flex: "0 0 280px",
-          flexDirection: "column",
-          minWidth: 220,
-          padding: 12,
-          ...(isNarrow && !mobileList ? { display: "none" } : {}),
-        }}
-      >
-        <Space direction="vertical" size={10} style={{ width: "100%" }}>
-          <Title level={3} style={{ margin: 0 }}>
-            Agents
-          </Title>
-          <Button
-            type="primary"
-            block
-            icon={<Icon name="plus" />}
-            onClick={() => {
-              setCreating(true);
-              setMobileList(false);
-            }}
-          >
-            New Agent
-          </Button>
-          <Input.Search
-            allowClear
-            aria-label="Search agents"
-            placeholder="Search agents"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-          />
-          <Segmented
-            block
-            aria-label="Agent ordering"
-            options={[
-              { label: "Recent", value: "recent" },
-              { label: "Custom", value: "custom" },
-            ]}
-            value={agentOrganization.organization.mode}
-            onChange={(value) =>
-              agentOrganization.setMode(value as "recent" | "custom")
-            }
-          />
-          {agentOrganization.saveError && (
-            <Alert
-              role="alert"
-              type="error"
-              showIcon
-              title={agentOrganization.saveError}
-            />
-          )}
-        </Space>
-        <div
-          role="list"
-          style={{ flex: 1, minHeight: 0, overflowY: "auto", marginTop: 12 }}
+      {isNarrow ? (
+        sidebar
+      ) : (
+        <Resizable
+          size={{ width: agentSidebarWidth, height: "100%" }}
+          enable={{ right: true }}
+          minWidth={MIN_AGENT_SIDEBAR_WIDTH}
+          maxWidth={MAX_AGENT_SIDEBAR_WIDTH}
+          handleStyles={{
+            right: {
+              width: "6px",
+              right: "-3px",
+              cursor: "col-resize",
+              background: "transparent",
+              zIndex: 2,
+            },
+          }}
+          handleComponent={{
+            right: (
+              <div
+                aria-label="Resize Agents panel"
+                style={{ width: "100%", height: "100%" }}
+              />
+            ),
+          }}
+          onResizeStop={(_, __, ___, delta) => {
+            const width = Math.min(
+              MAX_AGENT_SIDEBAR_WIDTH,
+              Math.max(
+                MIN_AGENT_SIDEBAR_WIDTH,
+                agentSidebarWidth + delta.width,
+              ),
+            );
+            setAgentSidebarWidth(width);
+            window.localStorage.setItem(
+              AGENT_SIDEBAR_WIDTH_STORAGE_KEY,
+              `${width}`,
+            );
+          }}
+          style={{ flex: "0 0 auto" }}
         >
-          {visibleGroups.pinned.length > 0 && (
-            <Text type="secondary" style={{ display: "block", padding: 6 }}>
-              Pinned
-            </Text>
-          )}
-          {renderSortableAgentGroup(visibleGroups.pinned, true)}
-          {visibleGroups.unpinned.length > 0 && (
-            <Text type="secondary" style={{ display: "block", padding: 6 }}>
-              {agentOrganization.organization.mode === "custom"
-                ? "Custom order"
-                : "Recent"}
-            </Text>
-          )}
-          {renderSortableAgentGroup(visibleGroups.unpinned, false)}
-        </div>
-        <Button
-          type="link"
-          style={{ padding: "10px 0 0", textAlign: "left" }}
-          onClick={() => openAccountSettings({ page: "my-agents" })}
-        >
-          Manage agents and connections
-        </Button>
-      </aside>
+          {sidebar}
+        </Resizable>
+      )}
       <section
         aria-label={selected ? `Agent @${selected.name}` : "Agent workspace"}
         style={{
