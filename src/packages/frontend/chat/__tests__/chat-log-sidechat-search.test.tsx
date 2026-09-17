@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import {
   clearChatViewportAnchorCacheForTests,
+  loadChatViewportAnchor,
   saveChatViewportAnchor,
 } from "../chat-scroll-anchor";
 import {
@@ -91,6 +92,80 @@ jest.mock("../composing", () => ({
 }));
 
 describe("ChatLog sidechat search jumps", () => {
+  it("preserves bottom intent across streaming growth, but records deliberate reading positions", () => {
+    jest.useFakeTimers();
+    const keepBottomAnchoredRef = { current: false };
+    const manualScrollRef = { current: false };
+    const props = {
+      messages: new Map([
+        ["1000", { date: 1000, history: [{ content: "long running turn" }] }],
+      ]) as any,
+      sortedDates: ["1000"],
+      account_id: "acct-1",
+      user_map: undefined,
+      mode: "sidechat",
+      scrollCacheId: "growing-turn",
+      keepBottomAnchoredRef,
+      manualScrollRef,
+    };
+    const view = render(<MessageList {...props} />);
+    try {
+      const scroller = document.createElement("div");
+      Object.defineProperties(scroller, {
+        clientHeight: { value: 400 },
+        scrollHeight: { value: 2000, configurable: true },
+        scrollTop: { value: 1600, writable: true },
+      });
+      scroller.getBoundingClientRect = () =>
+        ({ top: 0, bottom: 400 }) as DOMRect;
+      const row = document.createElement("div");
+      row.dataset.itemIndex = "0";
+      row.getBoundingClientRect = () =>
+        ({ top: -1600, bottom: 1400 }) as DOMRect;
+      scroller.appendChild(row);
+      act(() => {
+        latestVirtuosoProps.scrollerRef(scroller);
+        latestVirtuosoProps.atBottomStateChange(true);
+        jest.advanceTimersByTime(2000);
+      });
+      expect(loadChatViewportAnchor("growing-turn")?.atBottom).toBe(true);
+
+      // The turn grows before the browser/virtualizer catches up to its new bottom.
+      Object.defineProperty(scroller, "scrollHeight", { value: 3000 });
+      act(() => {
+        latestVirtuosoProps.atBottomStateChange(false);
+        latestVirtuosoProps.onScroll();
+        jest.advanceTimersByTime(20);
+      });
+      expect(loadChatViewportAnchor("growing-turn")?.atBottom).toBe(true);
+      view.rerender(<MessageList {...props} isVisible={false} />);
+      mockScrollToIndex.mockClear();
+      view.rerender(<MessageList {...props} isVisible />);
+      expect(mockScrollToIndex).toHaveBeenCalledWith({
+        index: Number.MAX_SAFE_INTEGER,
+        behavior: "auto",
+      });
+      act(() => jest.advanceTimersByTime(1600));
+      act(() => {
+        fireEvent.wheel(screen.getByTestId("virtuoso").parentElement!, {
+          deltaY: -100,
+        });
+        latestVirtuosoProps.onScroll();
+        jest.advanceTimersByTime(20);
+      });
+      expect(loadChatViewportAnchor("growing-turn")).toEqual(
+        expect.objectContaining({
+          atBottom: false,
+          date: "1000",
+          offsetPx: -1600,
+        }),
+      );
+    } finally {
+      view.unmount();
+      jest.useRealTimers();
+    }
+  });
+
   it("does not carry bottom retries across a thread switch after explicit navigation", () => {
     jest.useFakeTimers();
     const scrollToBottomRef = { current: undefined as any };

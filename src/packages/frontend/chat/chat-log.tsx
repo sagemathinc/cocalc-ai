@@ -1014,7 +1014,9 @@ export function MessageList({
           return;
         if (!isVisibleRef.current) return;
         const anchor = captureChatViewportAnchor({
-          forceAtBottom,
+          // Streaming can grow a row before Virtuoso follows it. Preserve the
+          // user's bottom-following intent across that intermediate layout.
+          forceAtBottom: forceAtBottom || keepBottomAnchoredRef?.current,
           scroller: scrollerRef.current,
           sortedDates: sortedDatesRef.current,
         });
@@ -1026,7 +1028,7 @@ export function MessageList({
         anchorCaptureFrameRef.current = window.setTimeout(capture, 0);
       }
     },
-    [cacheId, useVirtuoso],
+    [cacheId, keepBottomAnchoredRef, useVirtuoso],
   );
 
   const clearUserScrollIntentLater = () => {
