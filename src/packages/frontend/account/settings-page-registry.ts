@@ -21,6 +21,7 @@ import {
 import { MEMBERSHIP_SETTINGS_PAGE } from "./membership-page";
 import { LEGACY_MIGRATION_SETTINGS_PAGE } from "./legacy-migration-page";
 import { PUBLIC_SHARES_SETTINGS_PAGE } from "./public-shares-page";
+import { MY_AGENTS_SETTINGS_PAGE } from "./my-agents-page";
 import { BALANCE_SETTINGS_PAGE } from "@cocalc/frontend/purchases/balance-page";
 import { PAYMENT_METHODS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payment-methods-page";
 import { PAYMENTS_SETTINGS_PAGE } from "@cocalc/frontend/purchases/payments-page";
@@ -47,6 +48,7 @@ export const SETTINGS_PAGE_DEFINITIONS = {
   payments: PAYMENTS_SETTINGS_PAGE,
   profile: ACCOUNT_PREFERENCES_PROFILE_PAGE,
   "public-shares": PUBLIC_SHARES_SETTINGS_PAGE,
+  "my-agents": MY_AGENTS_SETTINGS_PAGE,
   purchases: PURCHASES_SETTINGS_PAGE,
   statements: STATEMENTS_SETTINGS_PAGE,
   "team-licenses": TEAM_LICENSES_SETTINGS_PAGE,

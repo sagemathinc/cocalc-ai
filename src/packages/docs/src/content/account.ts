@@ -15,8 +15,8 @@ to another browser.
 
 ## Profile and identity
 
-Use **Profile** to edit your name, email, avatar, and color. Your account id
-and creation time are shown for reference. The avatar image is visible in
+Use **Profile** to edit your name, email, avatar, and color. Your **Account ID**
+and **Created** date are shown for reference. The avatar image is visible in
 collaboration surfaces, while the account color is also used independently in
 realtime editing and other shared contexts.
 
@@ -136,7 +136,7 @@ export const BILLING_SETTINGS_BODY = String.raw`
 ## What billing settings are for
 
 Billing settings collect licenses, purchases, payment methods, statements,
-and store access for the signed-in account. These screens are
+and balance for the signed-in account. These screens are
 account-scoped. Purchased membership tiers and dedicated project hosts may
 change how projects run, but the purchase history and payment instruments
 belong to the account.

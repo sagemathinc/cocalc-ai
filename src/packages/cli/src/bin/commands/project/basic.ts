@@ -9,6 +9,7 @@ import type {
   ExecuteCodeOutput,
   ExecuteCodeOutputAsync,
 } from "@cocalc/util/types/execute-code";
+import { uuid } from "@cocalc/util/misc";
 
 import type { ProjectCommandDeps } from "../project";
 import { durationToMs } from "../../../core/utils";
@@ -740,6 +741,7 @@ export function registerProjectBasicCommands(
           const ws = await resolveProjectFromArgOrContext(ctx, opts.project);
           const op = await ctx.hub.projects.restart({
             project_id: ws.project_id,
+            restart_request_id: uuid(),
             wait: false,
           });
 

@@ -170,6 +170,12 @@ export const mutateExternalReference = mutation("mutateExternalReference");
 export const createCommercialOrderFromOpportunity = mutation(
   "createCommercialOrderFromOpportunity",
 );
+export const linkOpportunityCommercialOrder = mutation(
+  "linkOpportunityCommercialOrder",
+);
+export const unlinkOpportunityCommercialOrder = mutation(
+  "unlinkOpportunityCommercialOrder",
+);
 export const backfill = mutation("backfill");
 export const listOutreachTemplates = read("listOutreachTemplates");
 export const getOutreachTemplate = read("getOutreachTemplate");

@@ -10,6 +10,7 @@ export interface AcpWorkerRow {
   bundle_version: string;
   bundle_path: string;
   pid?: number | null;
+  pid_start_time_ticks?: string | null;
   state: AcpWorkerState;
   started_at: number;
   last_heartbeat_at: number;
@@ -31,6 +32,7 @@ function init(): void {
       bundle_version TEXT NOT NULL,
       bundle_path TEXT NOT NULL,
       pid INTEGER,
+      pid_start_time_ticks TEXT,
       state TEXT NOT NULL,
       started_at INTEGER NOT NULL,
       last_heartbeat_at INTEGER NOT NULL,
@@ -52,6 +54,9 @@ function init(): void {
     db.exec(
       `ALTER TABLE ${TABLE} ADD COLUMN last_queue_progress_at INTEGER NOT NULL DEFAULT 0`,
     );
+  }
+  if (!hasColumn("pid_start_time_ticks")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN pid_start_time_ticks TEXT`);
   }
   if (!hasColumn("live_app_server_runtimes")) {
     db.exec(
@@ -85,13 +90,14 @@ export function upsertAcpWorker(row: AcpWorkerRow): AcpWorkerRow {
     Number(row.last_queue_progress_at) || Number(row.started_at) || Date.now();
   db.prepare(
     `INSERT INTO ${TABLE}
-      (worker_id, host_id, bundle_version, bundle_path, pid, state, started_at, last_heartbeat_at, last_seen_running_jobs, live_app_server_runtimes, background_terminal_processes, last_queue_progress_at, exit_requested_at, stopped_at, stop_reason)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (worker_id, host_id, bundle_version, bundle_path, pid, pid_start_time_ticks, state, started_at, last_heartbeat_at, last_seen_running_jobs, live_app_server_runtimes, background_terminal_processes, last_queue_progress_at, exit_requested_at, stopped_at, stop_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(worker_id) DO UPDATE SET
         host_id = excluded.host_id,
         bundle_version = excluded.bundle_version,
         bundle_path = excluded.bundle_path,
         pid = COALESCE(excluded.pid, ${TABLE}.pid),
+        pid_start_time_ticks = COALESCE(excluded.pid_start_time_ticks, ${TABLE}.pid_start_time_ticks),
         state = excluded.state,
         started_at = COALESCE(${TABLE}.started_at, excluded.started_at),
         last_heartbeat_at = excluded.last_heartbeat_at,
@@ -108,6 +114,7 @@ export function upsertAcpWorker(row: AcpWorkerRow): AcpWorkerRow {
     row.bundle_version,
     row.bundle_path,
     row.pid ?? null,
+    row.pid_start_time_ticks ?? null,
     row.state,
     row.started_at,
     row.last_heartbeat_at,

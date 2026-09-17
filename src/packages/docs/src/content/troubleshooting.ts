@@ -170,7 +170,7 @@ membership, account-security, funding, or usage-window checks. After signing
 in, use **Account Settings** for the requirement named in the error:
 
 - **Profile > Security** for CoCalc two-factor authentication.
-- **Membership**, **Balance**, or **Payment methods** for the named membership,
+- **Membership**, **Balance**, or **Payment Methods** for the named membership,
   prepaid-credit, or saved-payment-method requirement.
 - **Usage & Limits** for usage windows and reset information. If a window is
   exhausted, follow the reset information in the message.

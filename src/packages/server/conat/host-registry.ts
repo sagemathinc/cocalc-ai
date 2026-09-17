@@ -1744,12 +1744,14 @@ export async function initHostRegistryService() {
         const { rows } = await pool().query<{
           project_id: string;
           users: any;
+          runtime_lifecycle_revision: number;
           updated_ms: number;
         }>(
           `
             SELECT
               project_id,
               COALESCE(users, '{}'::jsonb) AS users,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
               FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1
@@ -1786,12 +1788,14 @@ export async function initHostRegistryService() {
         const { rows } = await pool().query<{
           project_id: string;
           users: any;
+          runtime_lifecycle_revision: number;
           updated_ms: number;
         }>(
           `
             SELECT
               project_id,
               COALESCE(users, '{}'::jsonb) AS users,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision,
               FLOOR(EXTRACT(EPOCH FROM COALESCE(last_edited, created, to_timestamp(0))) * 1000)::bigint AS updated_ms
             FROM projects
             WHERE host_id=$1

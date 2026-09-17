@@ -54,12 +54,19 @@ import purchaseMembershipPackage, {
 } from "@cocalc/server/purchases/membership-package";
 import { uuid } from "@cocalc/util/misc";
 import { resolveMembershipForAccount } from "./resolve";
+import * as membershipGrants from "./grants";
+import {
+  assertMembershipRecipientNotDeleting,
+  beginMembershipRecipientDeletion,
+} from "./recipient-deletion";
+import * as clusterAccounts from "@cocalc/server/inter-bay/accounts";
 import { getMembershipClaimIdentity } from "./claim-directory";
 import {
   addMembershipPackageSeats,
   assignMembershipPackageSeat,
   claimCourseMembershipPackageSeatsForAcceptedInvite,
   claimMembershipPackageSeat,
+  claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   listClaimableMembershipPackagesForAccount,
   listLocalClaimableMembershipPackagesForVerifiedEmails,
   listMembershipPackageDetailsForOwner,
@@ -69,9 +76,15 @@ import {
   updateMembershipPackage,
 } from "./packages";
 import {
+  completeMembershipGrantRevocationsForAccount,
+  queueMembershipGrantSyncEffect,
   resetMembershipSideEffectsMaintenanceStateForTests,
   runMembershipSideEffectsPass,
 } from "./side-effects";
+import {
+  adminProvisionSiteLicense,
+  cleanupSiteLicenseAccessForAccountDeletionOnSeed,
+} from "./site-licenses";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -273,6 +286,380 @@ describe("membership packages", () => {
       process.env.COCALC_CLUSTER_SEED_BAY_ID = clusterSeedBayIdEnv;
     }
   });
+
+  it("retries committed deletion revocations without draining unrelated accounts", async () => {
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const unrelated = uuid();
+    for (const id of [owner_account_id, account_id, unrelated]) {
+      await createTestAccount(id);
+      await setAccountHomeBay(id, "bay-1");
+      await queueMembershipGrantSyncEffect({
+        owner_account_id,
+        package_id: uuid(),
+        assignment_id: uuid(),
+        desired_payload: {
+          desired_state: "revoked",
+          account_id: id,
+          grant_id: uuid(),
+        },
+      });
+    }
+    await getPool().query(`UPDATE membership_side_effects_outbox
+      SET next_attempt_at=NOW()+INTERVAL '1 hour',
+          lease_expires_at=NOW()+INTERVAL '1 minute'`);
+    const revoke = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("home bay unavailable"));
+    let finish!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    revoke.mockImplementationOnce(async () => {
+      entered();
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    });
+    createInterBayAccountLocalClientMock.mockReturnValue({
+      revokeMembershipGrant: revoke,
+    });
+    await expect(
+      cleanupSiteLicenseAccessForAccountDeletionOnSeed({ account_id }),
+    ).rejects.toThrow("home bay unavailable");
+    let completed = false;
+    const retry = cleanupSiteLicenseAccessForAccountDeletionOnSeed({
+      account_id,
+    }).then(() => {
+      completed = true;
+    });
+    await started;
+    expect(completed).toBe(false);
+    finish();
+    await retry;
+    expect(completed).toBe(true);
+    expect(revoke).toHaveBeenCalledTimes(2);
+    expect(
+      revoke.mock.calls.every(([args]) => args.account_id === account_id),
+    ).toBe(true);
+    const { rows } = await getPool()
+      .query(`SELECT desired_payload_json->>'account_id' AS account_id
+      FROM membership_side_effects_outbox WHERE desired_revision > applied_revision`);
+    expect(rows.map((row) => row.account_id).sort()).toEqual(
+      [owner_account_id, unrelated].sort(),
+    );
+    await completeMembershipGrantRevocationsForAccount(account_id);
+    expect(revoke).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for an in-flight activation and concurrent worker before completing revocation", async () => {
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(account_id);
+    await setAccountHomeBay(account_id, "bay-1");
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+    });
+    await assignMembershipPackageSeat({
+      package_id,
+      account_id,
+      assigned_by_account_id: owner_account_id,
+    });
+    let finish!: () => void;
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const events: string[] = [];
+    createInterBayAccountLocalClientMock.mockReturnValue({
+      upsertMembershipGrant: async (grant) => {
+        entered();
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+        events.push("active");
+        return { grant_id: grant.id };
+      },
+      revokeMembershipGrant: async () => {
+        events.push("revoked");
+      },
+    });
+    const worker = runMembershipSideEffectsPass();
+    await started;
+    await revokeMembershipPackageSeat({ package_id, account_id });
+    const secondWorker = runMembershipSideEffectsPass();
+    let completed = false;
+    const barrier = completeMembershipGrantRevocationsForAccount(
+      account_id,
+    ).then(() => {
+      completed = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(completed).toBe(false);
+    finish();
+    await Promise.all([worker, secondWorker, barrier]);
+    expect(events).toEqual(["active", "revoked"]);
+    expect(completed).toBe(true);
+    expect(await listOutboxKinds()).toEqual([]);
+  });
+
+  it("waits for an existing recipient producer transaction before committing deletion", async () => {
+    const account_id = uuid();
+    const client = await getPool().connect();
+    let completed = false;
+    let deletion: Promise<void> | undefined;
+    try {
+      await client.query("BEGIN");
+      await assertMembershipRecipientNotDeleting(account_id, client);
+      deletion = beginMembershipRecipientDeletion(account_id).then(() => {
+        completed = true;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(completed).toBe(false);
+      await client.query("COMMIT");
+      await deletion;
+      expect(completed).toBe(true);
+      await client.query("BEGIN");
+      await expect(
+        assertMembershipRecipientNotDeleting(account_id, client),
+      ).rejects.toThrow("account deletion has started");
+    } finally {
+      await client.query("ROLLBACK");
+      client.release();
+      await deletion;
+    }
+  });
+
+  it("retains a revocation that arrives before the first grant activation", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    const grant_id = uuid();
+    await membershipGrants.revokeMembershipGrantById({ account_id, grant_id });
+    await membershipGrants.createMembershipGrant({
+      id: grant_id,
+      account_id,
+      membership_class: teamTier,
+      source: "team-seat",
+    });
+    expect(
+      await membershipGrants.listActiveMembershipGrantsForAccount(account_id),
+    ).toEqual([]);
+    const fresh_id = await membershipGrants.createMembershipGrant({
+      account_id,
+      membership_class: teamTier,
+      source: "team-seat",
+    });
+    expect(
+      (
+        await membershipGrants.listActiveMembershipGrantsForAccount(account_id)
+      ).map(({ id }) => id),
+    ).toEqual([fresh_id]);
+  });
+
+  it("review regression: cleanup must fence a concurrent claim during the grant barrier", async () => {
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    const replacement_account_id = uuid();
+    for (const id of [owner_account_id, account_id, replacement_account_id]) {
+      await createTestAccount(id);
+    }
+    await setAccountHomeBay(account_id, "bay-1");
+    const domain = `delete-race-${uuid().slice(0, 8)}.edu`;
+    const email = `student@${domain}`;
+    const overview = await adminProvisionSiteLicense({
+      actor_account_id: owner_account_id,
+      owner_account_id,
+      trusted_admin: true,
+      name: "Deletion race",
+      organization_name: "Review fixture",
+      allowed_domains: [domain],
+      pools: [
+        {
+          pool_name: "Student",
+          membership_class: teamTier,
+          seat_count: 5,
+          requires_approval: false,
+          verification_policy: "email-domain",
+        },
+      ],
+    });
+    const package_id = overview.pools[0].id;
+    const claim = (id: string) =>
+      claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
+        account_id: id,
+        package_id,
+        verified_email_addresses: [email],
+      });
+    await claim(account_id);
+    await runMembershipSideEffectsPass();
+    let concurrentClaimRejected = false;
+    createInterBayAccountLocalClientMock.mockReturnValue({
+      // A second already-authorized request reaches the seed while cleanup
+      // waits for the home bay. No deletion/freeze has happened yet.
+      revokeMembershipGrant: async () => {
+        await expect(claim(account_id)).rejects.toThrow(
+          "account deletion has started",
+        );
+        concurrentClaimRejected = true;
+      },
+    });
+    await cleanupSiteLicenseAccessForAccountDeletionOnSeed({ account_id });
+    expect(concurrentClaimRejected).toBe(true);
+    await getPool().query(
+      "UPDATE accounts SET deleted=true WHERE account_id=$1",
+      [account_id],
+    );
+    // Maintenance can still activate the seed-owned claim identity even
+    // though the home-bay grant now fails for the deleted account.
+    await runMembershipSideEffectsPass();
+    const { rows } = await getPool().query(
+      "SELECT id FROM membership_package_assignments WHERE account_id=$1 AND revoked_at IS NULL",
+      [account_id],
+    );
+    // Record the user-visible consequence before asserting the invariant.
+    let replacementError: unknown;
+    try {
+      await claim(replacement_account_id);
+    } catch (err) {
+      replacementError = err;
+    }
+    expect({
+      activeAssignments: rows,
+      replacementError: `${replacementError}`,
+    }).toEqual({
+      activeAssignments: [],
+      replacementError: "undefined",
+    });
+  });
+
+  it("review regression: timed-out activation must not overtake the revocation barrier", async () => {
+    const owner_account_id = uuid();
+    const account_id = uuid();
+    await createTestAccount(owner_account_id);
+    await createTestAccount(account_id);
+    const package_id = await createTestMembershipPackage({
+      owner_account_id,
+      kind: "team",
+      membership_class: teamTier,
+      seat_count: 1,
+    });
+    await assignMembershipPackageSeat({
+      package_id,
+      account_id,
+      assigned_by_account_id: owner_account_id,
+    });
+    let finishRemoteActivation!: () => void;
+    let remoteWork!: Promise<void>;
+    // Mock only source routing/transport; use the real grant receiver against
+    // the local fixture database to represent the remote home bay.
+    const routing = jest
+      .spyOn(clusterAccounts, "getClusterAccountById")
+      .mockResolvedValue({ account_id, home_bay_id: "bay-1" } as any);
+    let grantId!: string;
+    createInterBayAccountLocalClientMock.mockReturnValue({
+      upsertMembershipGrant: async (grant) => {
+        grantId = grant.id;
+        // Transport timeout does not cancel an already-dispatched handler.
+        remoteWork = new Promise<void>((resolve) => {
+          finishRemoteActivation = resolve;
+        }).then(async () => {
+          await membershipGrants.createMembershipGrant(grant);
+        });
+        throw new Error("request timeout");
+      },
+      revokeMembershipGrant: async (opts) => {
+        await membershipGrants.revokeMembershipGrantById(opts);
+      },
+    });
+    try {
+      expect((await runMembershipSideEffectsPass()).failed).toBe(1);
+      await revokeMembershipPackageSeat({ package_id, account_id });
+      await completeMembershipGrantRevocationsForAccount(account_id);
+      const before = await getPool().query(
+        "SELECT revoked_at FROM membership_grants WHERE id=$1",
+        [grantId],
+      );
+      expect(before.rows[0].revoked_at).toBeTruthy();
+      finishRemoteActivation();
+      await remoteWork;
+      expect(await listOutboxKinds()).toEqual([]);
+      const after = await getPool().query(
+        "SELECT revoked_at FROM membership_grants WHERE id=$1",
+        [grantId],
+      );
+      expect(after.rows[0].revoked_at).not.toBeNull();
+    } finally {
+      routing.mockRestore();
+    }
+  });
+
+  (process.env.COCALC_TEST_USE_PGLITE === "1" ? it.skip : it)(
+    "review regression: concurrent same-bay barriers must not exhaust the pool",
+    async () => {
+      const pool = getPool();
+      const ids = [uuid(), uuid()];
+      for (const account_id of ids) {
+        await createTestAccount(account_id);
+        await queueMembershipGrantSyncEffect({
+          owner_account_id: account_id,
+          package_id: uuid(),
+          assignment_id: uuid(),
+          desired_payload: {
+            desired_state: "revoked",
+            account_id,
+            grant_id: uuid(),
+          },
+        });
+      }
+      let enterCount = 0;
+      let bothEntered!: () => void;
+      const entered = new Promise<void>((resolve) => {
+        bothEntered = resolve;
+      });
+      const original = membershipGrants.revokeMembershipGrantOnHomeBay;
+      const delivery = jest
+        .spyOn(membershipGrants, "revokeMembershipGrantOnHomeBay")
+        .mockImplementation(async (opts) => {
+          if (++enterCount === 2) bothEntered();
+          await entered;
+          await original(opts);
+        });
+      let completed = false;
+      const barriers = Promise.all(
+        ids.map(completeMembershipGrantRevocationsForAccount),
+      ).then(() => {
+        completed = true;
+      });
+      const max = pool.options.max;
+      let waiting = 0;
+      let completedWithoutRescue = false;
+      try {
+        await entered;
+        const deadline = Date.now() + 1000;
+        while (!completed && pool.waitingCount < 2 && Date.now() < deadline) {
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        waiting = pool.waitingCount;
+        completedWithoutRescue = completed;
+      } finally {
+        // Rescue the expected pool deadlock before reporting the failure.
+        pool.options.max = 6;
+        await pool.query("SELECT 1");
+        await barriers;
+        pool.options.max = max;
+        delivery.mockRestore();
+      }
+      expect({ completedWithoutRescue, waiting }).toEqual({
+        completedWithoutRescue: true,
+        waiting: 0,
+      });
+    },
+  );
 
   it("assigns seats, resolves grant-backed membership, and revokes assignments", async () => {
     const owner_account_id = uuid();

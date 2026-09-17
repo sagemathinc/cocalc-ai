@@ -2023,7 +2023,9 @@ export class ChatActions extends Actions<ChatState> {
       });
       const preferred = this.pickPreferredThreadConfigRecord(rows, threadId);
       if (preferred != null) {
-        return this.toImmutableRecord(preferred);
+        // ImmerDB and chat accessors use plain objects, including nested
+        // acp_config. Converting here hides the saved model from recovery.
+        return preferred;
       }
       return (
         this.getSyncdbOne({

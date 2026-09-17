@@ -66,6 +66,11 @@ import {
 } from "./packages";
 import { listActiveMembershipGrantsForAccount } from "./grants";
 import {
+  assertMembershipRecipientNotDeleting,
+  beginMembershipRecipientDeletion,
+} from "./recipient-deletion";
+import {
+  completeMembershipGrantRevocationsForAccount,
   queueMembershipClaimIdentitySyncEffect,
   queueMembershipGrantSyncEffect,
 } from "./side-effects";
@@ -201,6 +206,7 @@ const SITE_LICENSE_AUDIT_ACTIONS = new Set<SiteLicenseAuditAction>([
   "external-claim-side-effect-failed",
   "seat-manually-assigned",
   "seat-released-by-user",
+  "seat-released-for-account-deletion",
   "seat-released-for-upgrade",
   "seat-affiliation-reverified",
   "seat-released-after-reverification-grace",
@@ -1949,7 +1955,7 @@ async function assertSiteLicenseManager({
   client?: PoolClient;
 }): Promise<void> {
   await ensureSiteLicenseSchema(client);
-  if (await isAdmin(account_id)) {
+  if (await isAdmin(account_id, client)) {
     return;
   }
   const allowedRoles: SiteLicenseManagerRole[] = write
@@ -2859,6 +2865,7 @@ export async function assignSiteLicensePoolSeat({
   const assignWithClient = async (
     dbClient: PoolClient,
   ): Promise<MembershipPackageAssignment> => {
+    await assertMembershipRecipientNotDeleting(targetAccountId, dbClient);
     const { siteLicense, pkg } = await getSiteLicenseForPackage(
       packageId,
       dbClient,
@@ -2990,6 +2997,111 @@ export async function releaseSiteLicensePoolSeat({
     return await releaseWithClient(client);
   }
   return await withLocalSiteLicenseTransaction(releaseWithClient);
+}
+
+export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
+  account_id,
+}: {
+  account_id: string;
+}): Promise<{
+  revoked_assignment_ids: string[];
+  canceled_request_ids: string[];
+}> {
+  const accountId = normalizeAccountId(account_id);
+  await beginMembershipRecipientDeletion(accountId);
+  const cleanupWithClient = async (dbClient: PoolClient) => {
+    await ensureSiteLicenseSchema(dbClient);
+    const { rows: assignmentRows } = await dbClient.query<{
+      package_id: string;
+    }>(
+      `SELECT a.package_id
+         FROM membership_package_assignments a
+         JOIN membership_packages p ON p.id=a.package_id
+        WHERE a.account_id=$1
+          AND a.revoked_at IS NULL
+          AND p.kind IN ('site', 'domain')
+          AND NULLIF(p.metadata ->> 'site_license_id', '') IS NOT NULL
+        FOR UPDATE OF a`,
+      [accountId],
+    );
+    const revoked_assignment_ids: string[] = [];
+    for (const { package_id } of assignmentRows) {
+      const { siteLicense } = await getSiteLicenseForPackage(
+        package_id,
+        dbClient,
+      );
+      const assignments = await listMembershipPackageAssignments({
+        package_id,
+        include_revoked: false,
+        client: dbClient,
+      });
+      const assignment = assignments.find(
+        (row) => row.account_id === accountId,
+      );
+      if (!assignment) continue;
+      const revoked = await revokeMembershipPackageSeat(
+        { package_id, account_id: accountId },
+        dbClient,
+      );
+      if (!revoked) continue;
+      await revokeSiteLicenseClaimIdentityForAssignment({
+        assignment,
+        account_id: accountId,
+        client: dbClient,
+      });
+      await recordSiteLicenseAuditEvent({
+        site_license_id: siteLicense.id,
+        action: "seat-released-for-account-deletion",
+        target_account_id: accountId,
+        package_id,
+        metadata: { assignment_id: assignment.id },
+        client: dbClient,
+      });
+      revoked_assignment_ids.push(assignment.id);
+    }
+
+    const { rows: requestRows } = await dbClient.query<{
+      site_license_id: string;
+    }>(
+      `SELECT site_license_id
+         FROM site_license_pool_requests
+        WHERE account_id=$1 AND state='pending'
+        FOR UPDATE`,
+      [accountId],
+    );
+    const canceled_request_ids: string[] = [];
+    const siteLicenseIds = new Set(
+      requestRows.map(({ site_license_id }) => site_license_id),
+    );
+    for (const site_license_id of siteLicenseIds) {
+      const canceled = await cancelPendingSiteLicensePoolRequestsForAccount({
+        site_license_id,
+        account_id: accountId,
+        reviewer_account_id: null,
+        review_note: "Canceled because the account was deleted.",
+        client: dbClient,
+      });
+      for (const request of canceled) {
+        await recordSiteLicenseAuditEvent({
+          site_license_id,
+          action: "pool-request-canceled",
+          target_account_id: accountId,
+          package_id: request.package_id,
+          request_id: request.id,
+          metadata: { reason: "account-deleted" },
+          client: dbClient,
+        });
+        canceled_request_ids.push(request.id);
+      }
+    }
+    return { revoked_assignment_ids, canceled_request_ids };
+  };
+
+  const result = await withLocalSiteLicenseTransaction(cleanupWithClient);
+  // Commit seed changes first. The home-bay RPC may need the same database,
+  // and retries must discover revocations committed by a previous attempt.
+  await completeMembershipGrantRevocationsForAccount(accountId);
+  return result;
 }
 
 async function revokeSiteLicenseClaimIdentityForAssignment({
@@ -3959,46 +4071,60 @@ export async function requestSiteLicensePool({
   package_id,
   requester_note,
   accepted_terms,
-  client,
 }: {
   account_id: string;
   package_id: string;
   requester_note?: string | null;
   accepted_terms?: boolean;
-  client?: PoolClient;
 }): Promise<SiteLicensePoolRequest> {
   const accountId = normalizeAccountId(account_id);
   const packageId = normalizePackageId(package_id);
-  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
-    accountId,
-    client,
-  );
+  const verifiedEmailAddresses =
+    await getVerifiedEmailAddressesForAccount(accountId);
   return await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     account_id: accountId,
     package_id: packageId,
     verified_email_addresses: verifiedEmailAddresses,
     requester_note,
     accepted_terms,
-    client,
   });
 }
 
-export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+type SiteLicensePoolRequestInput = {
+  account_id: string;
+  package_id: string;
+  verified_email_addresses: string[];
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+};
+
+export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay(
+  opts: SiteLicensePoolRequestInput,
+): Promise<SiteLicensePoolRequest> {
+  const { request, notification } = await withLocalSiteLicenseTransaction(
+    (client) => createSiteLicensePoolRequestWithClient({ ...opts, client }),
+  );
+  if (notification) {
+    await notifySiteLicensePoolRequestCreatedBestEffort(notification);
+  }
+  return request;
+}
+
+async function createSiteLicensePoolRequestWithClient({
   account_id,
   package_id,
   verified_email_addresses,
   requester_note,
   accepted_terms,
   client,
-}: {
-  account_id: string;
-  package_id: string;
-  verified_email_addresses: string[];
-  requester_note?: string | null;
-  accepted_terms?: boolean;
-  client?: PoolClient;
-}): Promise<SiteLicensePoolRequest> {
+}: SiteLicensePoolRequestInput & { client: PoolClient }): Promise<{
+  request: SiteLicensePoolRequest;
+  notification?: Parameters<
+    typeof notifySiteLicensePoolRequestCreatedBestEffort
+  >[0];
+}> {
   const accountId = normalizeAccountId(account_id);
+  await assertMembershipRecipientNotDeleting(accountId, client);
   const packageId = normalizePackageId(package_id);
   const { siteLicense, pkg } = await getSiteLicenseForPackage(
     packageId,
@@ -4023,6 +4149,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
   const activeClaim = await getMembershipClaimIdentity({
     scope_key: scopeKey,
     canonical_identity: canonicalIdentity,
+    client,
   });
   if (activeClaim != null && activeClaim.account_id !== accountId) {
     throw Error("site-license pool already claimed for this identity");
@@ -4056,7 +4183,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     existingSamePackageRequestRows.rows[0],
   );
   if (existingSamePackageRequest) {
-    return existingSamePackageRequest;
+    return { request: existingSamePackageRequest };
   }
   const exclusivePackageIds = await listSiteLicensePackageIdsByExclusiveGroup({
     site_license_id: siteLicense.id,
@@ -4150,12 +4277,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     client: pool,
   });
   const request = normalizeSiteLicensePoolRequestRow(rows[0])!;
-  await notifySiteLicensePoolRequestCreatedBestEffort({
-    siteLicense,
-    pkg,
-    request,
-  });
-  return request;
+  return { request, notification: { siteLicense, pkg, request } };
 }
 
 export async function reviewSiteLicensePoolRequest({
@@ -4533,6 +4655,13 @@ async function withSiteLicenseRequestTransaction<T>({
     initial_request.package_id,
   );
   return await withLocalSiteLicenseTransaction(async (client) => {
+    // Match request creation: recipient first, then request/package/schema
+    // locks. Otherwise replacement can hold recipient while approval holds
+    // the request (or a schema lock) that replacement needs.
+    await assertMembershipRecipientNotDeleting(
+      initial_request.account_id,
+      client,
+    );
     const { rows } = await client.query<RawSiteLicensePoolRequest>(
       `SELECT *
            FROM site_license_pool_requests
@@ -4543,6 +4672,9 @@ async function withSiteLicenseRequestTransaction<T>({
     const request = normalizeSiteLicensePoolRequestRow(rows[0]);
     if (!request) {
       throw Error("site-license request not found");
+    }
+    if (request.account_id !== initial_request.account_id) {
+      throw Error("site-license request recipient changed; retry review");
     }
     const { pkg } = await getSiteLicenseForPackage(request.package_id, client);
     return await fn({ client, request, siteLicense, pkg });

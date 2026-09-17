@@ -369,7 +369,15 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
 
   async gotoFragment(fragmentId: FragmentId) {
     const { chat, thread, attention } = fragmentId;
-    if (!chat) {
+    let selectedThread = thread;
+    if (thread) {
+      try {
+        selectedThread = decodeURIComponent(thread);
+      } catch {
+        return;
+      }
+    }
+    if (!chat && !thread) {
       return;
     }
     const frameId = await this.waitUntilFrameReady({
@@ -380,18 +388,18 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
     }
     // Publish the target for message-driven thread selection without rewriting
     // the incoming URL (which may also contain attention or thread parameters).
-    this.set_frame_data({ id: frameId, fragmentId: chat });
+    if (chat) this.set_frame_data({ id: frameId, fragmentId: chat });
     let attentionOpened = false;
     for (const d of [1, 10, 50, 500, 1000]) {
       const actions = this.getChatActions(frameId);
       if (thread) {
-        actions?.setSelectedThread?.(thread);
+        actions?.setSelectedThread?.(selectedThread!);
       }
-      if (attention && actions && !attentionOpened) {
+      if (chat && attention && actions && !attentionOpened) {
         actions.openCodexAttention(chat, attention);
         attentionOpened = true;
       }
-      actions?.scrollToDate(chat, { persistFragment: false });
+      if (chat) actions?.scrollToDate(chat, { persistFragment: false });
       await delay(d);
     }
   }

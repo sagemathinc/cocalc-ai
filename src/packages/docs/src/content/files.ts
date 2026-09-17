@@ -25,7 +25,7 @@ course assignments.
 TimeTravel can show multiple history sources for the same file. In addition to
 CoCalc's high-resolution edit history, it can browse Git revisions when the file
 is in a Git repository, and it can also expose snapshots and backups when those
-are available. Use the Git viewer when you want to inspect full commits across a
+are available. Use the Git browser when you want to inspect full commits across a
 repository; use TimeTravel when you want a fast, file-focused slider through the
 versions of the file you are editing.
 
@@ -47,7 +47,7 @@ to collaborators, agents, terminals, and most project tools.
 
 1. Open the project.
 2. Use **New** to create notebooks, terminals, scripts, folders, and documents.
-3. Upload files or drag them into the file browser when appropriate.
+3. Upload files or drag them into **Files** when appropriate.
 4. Organize related work into folders.
 5. Use descriptive names that humans and agents can refer to.
 
@@ -191,7 +191,7 @@ A failed R Markdown render can offer **Fix with Agent...** below the error
 output when AI help is available. Use that control to carry the render failure
 into an agent conversation.
 
-1. Render the document and inspect the error output in the build log.
+1. Render the document and inspect the error output in the **Build Log**.
 2. Choose **Fix with Agent...**. If you want debugging guidance first and the
    option is available, choose **Ask Agent for a Hint...**.
 3. Review the error context in the confirmation and select a recent agent
@@ -344,7 +344,7 @@ tools, or a clean release record.
 2. Clone a repository or run \`git init\`.
 3. Configure remotes and credentials as needed.
 4. Commit meaningful changes.
-5. Push or pull through the terminal, file tools, or Git viewer.
+5. Push or pull through the terminal, file tools, or Git browser.
 
 Store deploy keys and access tokens using project secrets or SSH keys, not
 inside the repository.
@@ -401,7 +401,7 @@ not push commits or submit a GitHub review.
 Git and TimeTravel solve different problems. Git is for intentional repository
 history. TimeTravel is for file-focused recovery and inspection. When a file is
 in Git, TimeTravel can also make Git revisions easy to browse with a slider, and
-the Git viewer is available when you need full commit context.
+the Git browser is available when you need full commit context.
 
 ## Why this matters in CoCalc
 

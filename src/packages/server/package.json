@@ -64,6 +64,7 @@
   "dependencies": {
     "@cocalc/ai": "workspace:*",
     "@cocalc/backend": "workspace:*",
+    "@cocalc/chat": "workspace:*",
     "@cocalc/cloud": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/database": "workspace:*",

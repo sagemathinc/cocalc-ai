@@ -240,6 +240,27 @@ function addMutationOptions(command: Command): Command {
     .option("--commit", "apply the reviewed preview", false);
 }
 
+// Reversible mutations can intentionally restore earlier values. Let the server
+// bind preview keys to its current version; bind implicit commit keys to the
+// reviewed version so a later revision is distinct and a retry stays stable.
+function versionedMutationRequest(
+  action: string,
+  opts: MutationOptions,
+  payload: Json,
+): Json {
+  const request = mutationRequest(action, opts, payload);
+  if (!`${opts.idempotencyKey ?? ""}`.trim()) {
+    request.idempotency_key = opts.commit
+      ? mutationKey(action, {
+          ...payload,
+          reason: request.reason,
+          reviewed_version: request.expected_version,
+        })
+      : undefined;
+  }
+  return request;
+}
+
 function addPageOptions(command: Command): Command {
   return command
     .option("--cursor <cursor>", "pagination cursor")
@@ -1342,6 +1363,46 @@ function registerOrder(crm: Command, deps: CrmCommandDeps): void {
         ),
     ),
   );
+  addMutationOptions(
+    order
+      .command("link <opportunity> <order>")
+      .description(
+        "preview or link an existing commercial order to an opportunity",
+      ),
+  ).action(
+    async (opportunity: string, orderId: string, opts: any, cmd: Command) =>
+      deps.withContext(
+        cmd,
+        "admin crm order link",
+        async (ctx) =>
+          await ctx.hub.adminCrm.linkOpportunityCommercialOrder(
+            versionedMutationRequest("opportunity.link-order", opts, {
+              opportunity,
+              order: orderId,
+            }),
+          ),
+      ),
+  );
+  addMutationOptions(
+    order
+      .command("unlink <opportunity> <order>")
+      .description(
+        "preview or remove an opportunity's link to a commercial order",
+      ),
+  ).action(
+    async (opportunity: string, orderId: string, opts: any, cmd: Command) =>
+      deps.withContext(
+        cmd,
+        "admin crm order unlink",
+        async (ctx) =>
+          await ctx.hub.adminCrm.unlinkOpportunityCommercialOrder(
+            versionedMutationRequest("opportunity.unlink-order", opts, {
+              opportunity,
+              order: orderId,
+            }),
+          ),
+      ),
+  );
 }
 
 function registerTopLevel(crm: Command, deps: CrmCommandDeps): void {
@@ -2174,7 +2235,7 @@ it stops at the first failed row and may leave the preceding rows committed.
       "admin crm outreach batch edit",
       async (ctx) =>
         await ctx.hub.adminCrm.updateOutreachRecipient(
-          mutationRequest("outreach.recipient.update", opts, {
+          versionedMutationRequest("outreach.recipient.update", opts, {
             batch,
             delivery,
             subject: opts.subject,

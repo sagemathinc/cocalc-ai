@@ -113,7 +113,11 @@ export function crmActionCapabilities(
   ) {
     return ["visible", "mutate", "pipeline"];
   }
-  if (action === "createCommercialOrderFromOpportunity") {
+  if (
+    action === "createCommercialOrderFromOpportunity" ||
+    action === "linkOpportunityCommercialOrder" ||
+    action === "unlinkOpportunityCommercialOrder"
+  ) {
     return ["visible", "mutate", "pipeline", "commercial"];
   }
   if (action === "mutateExternalReference") {

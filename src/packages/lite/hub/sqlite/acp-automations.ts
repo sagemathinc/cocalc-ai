@@ -18,6 +18,7 @@ export interface AcpAutomationRow {
   path: string;
   thread_id: string;
   account_id: string;
+  settings_revision?: string;
   enabled: boolean;
   title?: string | null;
   run_kind?: "codex" | "command" | null;
@@ -57,6 +58,7 @@ function init(): void {
       path TEXT NOT NULL,
       thread_id TEXT NOT NULL,
       account_id TEXT NOT NULL,
+      settings_revision TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
       title TEXT,
       run_kind TEXT,
@@ -99,6 +101,9 @@ function init(): void {
   }>;
   const hasColumn = (name: string): boolean =>
     columns.some((x) => x?.name === name);
+  if (!hasColumn("settings_revision")) {
+    db.exec(`ALTER TABLE ${TABLE} ADD COLUMN settings_revision TEXT`);
+  }
   if (!hasColumn("days_of_week")) {
     db.exec(`ALTER TABLE ${TABLE} ADD COLUMN days_of_week TEXT`);
   }
@@ -244,13 +249,14 @@ export function upsertAcpAutomation(
   const created_at = row.created_at ?? now;
   db.prepare(
     `INSERT INTO ${TABLE}
-      (automation_id, project_id, path, thread_id, account_id, enabled, title, run_kind, prompt, command, command_cwd, command_timeout_ms, command_max_output_bytes, schedule_type, days_of_week, local_time, interval_minutes, window_start_local_time, window_end_local_time, timezone, pause_after_unacknowledged_runs, status, next_run_at, last_run_started_at, last_run_finished_at, last_acknowledged_at, unacknowledged_runs, paused_reason, last_error, last_job_op_id, last_message_id, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (automation_id, project_id, path, thread_id, account_id, settings_revision, enabled, title, run_kind, prompt, command, command_cwd, command_timeout_ms, command_max_output_bytes, schedule_type, days_of_week, local_time, interval_minutes, window_start_local_time, window_end_local_time, timezone, pause_after_unacknowledged_runs, status, next_run_at, last_run_started_at, last_run_finished_at, last_acknowledged_at, unacknowledged_runs, paused_reason, last_error, last_job_op_id, last_message_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(automation_id) DO UPDATE SET
         project_id=excluded.project_id,
         path=excluded.path,
         thread_id=excluded.thread_id,
         account_id=excluded.account_id,
+        settings_revision=COALESCE(excluded.settings_revision, ${TABLE}.settings_revision),
         enabled=excluded.enabled,
         title=excluded.title,
         run_kind=excluded.run_kind,
@@ -284,6 +290,7 @@ export function upsertAcpAutomation(
     row.path,
     row.thread_id,
     row.account_id,
+    row.settings_revision ?? null,
     encodeBool(row.enabled),
     row.title ?? null,
     row.run_kind ?? null,
@@ -492,6 +499,7 @@ export function toAutomationRecord(
     path: row.path,
     thread_id: row.thread_id,
     account_id: row.account_id,
+    settings_revision: row.settings_revision ?? undefined,
     title: row.title ?? undefined,
     run_kind: row.run_kind ?? undefined,
     prompt: row.prompt ?? undefined,

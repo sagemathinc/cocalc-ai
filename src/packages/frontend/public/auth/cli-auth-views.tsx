@@ -22,6 +22,7 @@ import {
   inferSecondFactorInputMethod,
 } from "@cocalc/frontend/auth/second-factor-input";
 import { COLORS } from "@cocalc/util/theme";
+import { ExternalAgentApproval } from "./external-agent-approval";
 
 const STACK_STYLE: CSSProperties = {
   display: "flex",
@@ -80,7 +81,8 @@ const ACTION_LINK_STYLE: CSSProperties = {
 
 type ChallengeInfo = {
   challenge_id: string;
-  kind: "login" | "elevate";
+  kind: "login" | "elevate" | "external-agent";
+  external?: { label: string; origin_bay_id: string };
   account_id: string | null;
   email_address?: string | null;
   display_name?: string | null;
@@ -351,6 +353,18 @@ export function PublicCliLoginApprovalView({
           {error || "Loading sign-in request…"}
         </Alert>
       </div>
+    );
+  }
+
+  if (info.kind === "external-agent" && info.external) {
+    return (
+      <ExternalAgentApproval
+        challengeId={challengeId}
+        label={info.external.label}
+        originBayId={info.external.origin_bay_id}
+        isAuthenticated={isAuthenticated}
+        accountLabel={currentCliLoginAccountLabel(info)}
+      />
     );
   }
 

@@ -58,6 +58,7 @@ import type {
 } from "@cocalc/conat/hub/api/hosts";
 import { getAccountProductAccessTrust } from "@cocalc/server/accounts/trusted-product-access";
 import { getClusterAccountsByIdsDirect } from "@cocalc/server/accounts/cluster-directory";
+import { getClusterAccountById } from "@cocalc/server/inter-bay/accounts";
 import type {
   AccountUsageOverview,
   MembershipEffectiveLimits,
@@ -242,7 +243,7 @@ import {
 } from "@cocalc/server/inter-bay/directory";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getClusterAccountByEmail } from "@cocalc/server/inter-bay/accounts";
-import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-sessions";
+import { validateHostActionAuth } from "@cocalc/server/auth/host-action-auth";
 import { getInterBayBridge } from "@cocalc/server/inter-bay/bridge";
 import { getRoutedHostControlClient } from "@cocalc/server/project-host/client";
 import {
@@ -262,7 +263,6 @@ import {
 } from "@cocalc/server/project-host/spend";
 import { evaluateDedicatedHostBillingEnforcement } from "@cocalc/server/project-host/spend-enforcement";
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
-import { getImpersonationSessionBySessionHash } from "@cocalc/server/auth/impersonation";
 import { requireDangerousSessionAuth } from "./dangerous-session-auth";
 import {
   ensureHostOwnerSshTrust as ensureHostOwnerSshTrustInternal,
@@ -1301,17 +1301,13 @@ async function maybeRequireFreshAuthForInteractiveHostAction({
       code: "fresh_auth_required",
     });
   }
-  await requireFreshAuthForSessionHash({
+  const auth = await validateHostActionAuth({
     account_id: owner,
     session_hash: resolvedSessionHash,
-    allow_actor_impersonation: true,
-  });
-  const impersonation = await getImpersonationSessionBySessionHash({
-    session_hash: resolvedSessionHash,
-    subject_account_id: owner,
   });
   return {
-    allow_second_factor_override: impersonation ? true : undefined,
+    allow_second_factor_override:
+      auth.allow_second_factor_override || undefined,
     session_hash: resolvedSessionHash,
   };
 }
@@ -2352,6 +2348,7 @@ export async function getProjectStartMetadata({
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2396,6 +2393,7 @@ export async function getProjectStartMetadataLocal({
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -2410,7 +2408,8 @@ export async function getProjectStartMetadataLocal({
   try {
     ({ rows } = await pool().query(
       `SELECT title, users, rootfs_image AS image, run_quota,
-              COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision, env,
+              COALESCE(run_quota_revision, 0)::bigint AS run_quota_revision,
+              COALESCE(runtime_lifecycle_revision, 0)::bigint AS runtime_lifecycle_revision, env,
               autostart_enabled
          FROM projects
         WHERE project_id=$1
@@ -2455,6 +2454,7 @@ export async function getProjectStartMetadataLocal({
     authorized_keys: authorized_keys || undefined,
     run_quota: row.run_quota ?? undefined,
     run_quota_revision: Number(row.run_quota_revision ?? 0),
+    runtime_lifecycle_revision: Number(row.runtime_lifecycle_revision ?? 0),
     env: row.env ?? undefined,
     autostart_enabled: row.autostart_enabled,
     project_secrets_cache: await getProjectSecretsRuntimeCache({ project_id }),
@@ -3323,8 +3323,8 @@ export async function reserveSiteFundedCodexTurn({
         "Site-funded Codex is disabled. Connect a ChatGPT plan or personal OpenAI API key to continue.",
     };
   }
-  const accounts = await getClusterAccountsByIdsDirect([account_id]);
-  const account = accounts.find((entry) => entry.account_id === account_id);
+  // The host's bay need not store the executing human's account or directory row.
+  const account = await getClusterAccountById(account_id);
   if (!account || account.banned || !account.email_address_verified) {
     return {
       allowed: false,

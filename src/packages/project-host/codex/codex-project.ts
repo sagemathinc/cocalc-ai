@@ -24,6 +24,8 @@ import type {
 import {
   codexAuthJsonToAppServerLogin,
   setCodexProjectSpawner,
+  TURN_MENTION_FILE_ENV,
+  turnMentionFilePath,
 } from "@cocalc/ai/acp";
 import { hubApi } from "@cocalc/lite/hub/api";
 import { which } from "@cocalc/backend/which";
@@ -573,6 +575,7 @@ async function rotateProjectCliBearerWithRetry(
 }
 
 export type ProjectCliTokenLease = {
+  identityContainerPath?: string;
   hostPath: string;
   containerPath: string;
   setAgentSessionKey: (agentSessionKey: string) => Promise<void>;
@@ -645,8 +648,38 @@ export async function createProjectCliTokenLease({
     }
   };
   await writeToken(initialToken);
-
+  const { createAgentIdentityLease } = await import("./agent-identity-lease");
+  let identityLease: Awaited<ReturnType<typeof createAgentIdentityLease>>;
   let closed = false;
+  let identityPreparation: Promise<void> | undefined;
+  const prepareIdentity = (): Promise<void> => {
+    if (closed) return Promise.resolve();
+    if (identityPreparation) return identityPreparation;
+    identityPreparation = (async () => {
+      if (identityLease) {
+        await identityLease.refresh();
+      } else {
+        // Registration can happen after earlier turns in this same process.
+        identityLease = await createAgentIdentityLease({
+          api: hubApi.agent,
+          projectId,
+          accountId: resolvedAccountId,
+          env: currentEnv,
+          hostDir,
+        });
+      }
+    })().finally(() => {
+      identityPreparation = undefined;
+    });
+    return identityPreparation;
+  };
+  try {
+    await prepareIdentity();
+  } catch (error) {
+    await fs.rm(hostDir, { recursive: true, force: true });
+    throw error;
+  }
+
   let generation = 0;
   let timer: NodeJS.Timeout | undefined;
   let refreshPromise: Promise<void> | undefined;
@@ -707,7 +740,11 @@ export async function createProjectCliTokenLease({
   return {
     hostPath,
     containerPath,
+    get identityContainerPath() {
+      return identityLease ? join(containerDir, "identity.json") : undefined;
+    },
     setAgentSessionKey: async (nextAgentSessionKey: string) => {
+      await prepareIdentity();
       const nextSessionId = projectCliSessionId(nextAgentSessionKey);
       if (closed || nextSessionId === sessionId) return;
       const setGeneration = ++generation;
@@ -736,6 +773,8 @@ export async function createProjectCliTokenLease({
       closed = true;
       if (timer) clearTimeout(timer);
       await refreshPromise?.catch(() => undefined);
+      await identityPreparation?.catch(() => undefined);
+      await identityLease?.close();
       await fs.rm(hostDir, { recursive: true, force: true });
     },
   };
@@ -1163,15 +1202,20 @@ async function containerIsRunning(name: string): Promise<boolean> {
   }
 }
 
-async function ensureProjectContainerRunning({
+export async function ensureProjectContainerRunning({
   accountId,
   projectId,
+  timeout = PROJECT_START_TIMEOUT_MS,
 }: {
   accountId?: string;
   projectId: string;
+  timeout?: number;
 }): Promise<void> {
+  const deadline = Date.now() + timeout;
   const name = projectContainerName(projectId);
   if (await containerIsRunning(name)) return;
+  if (Date.now() >= deadline)
+    throw new Error("project startup deadline expired before start request");
 
   const row = getProject(projectId);
   if (!row) {
@@ -1197,16 +1241,15 @@ async function ensureProjectContainerRunning({
     account_id: accountId,
     project_id: projectId,
     autostart: true,
-    timeout: PROJECT_START_TIMEOUT_MS,
+    timeout: Math.max(1, deadline - Date.now()),
   });
 
-  const deadline = Date.now() + PROJECT_START_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await containerIsRunning(name)) return;
     await delay(PROJECT_START_POLL_MS);
   }
   throw new Error(
-    `project container ${name} did not start within ${PROJECT_START_TIMEOUT_MS}ms`,
+    `project container ${name} did not start within ${timeout}ms`,
   );
 }
 
@@ -1882,7 +1925,17 @@ async function spawnCodexAppServerInProjectRuntime({
   delete execEnv.COCALC_AGENT_TOKEN;
   delete execEnv.COCALC_BEARER_TOKEN_FILE;
   delete execEnv.COCALC_AGENT_TOKEN_FILE;
+  delete execEnv.COCALC_AGENT_IDENTITY_FILE;
+  // Never inherit another turn's reference path. Codex shell commands inherit
+  // the process environment, not the unsupported turn/start.env field.
+  execEnv[TURN_MENTION_FILE_ENV] = "";
   if (cliTokenLease) {
+    if (cliTokenLease.identityContainerPath) {
+      execEnv.COCALC_AGENT_IDENTITY_FILE = cliTokenLease.identityContainerPath;
+      execEnv[TURN_MENTION_FILE_ENV] = turnMentionFilePath(
+        cliTokenLease.identityContainerPath,
+      );
+    }
     execEnv.COCALC_BEARER_TOKEN_FILE = cliTokenLease.containerPath;
     execEnv.COCALC_AGENT_TOKEN_FILE = cliTokenLease.containerPath;
   }
@@ -2066,7 +2119,17 @@ async function spawnCodexAppServerInProjectRuntime({
     appServerLogin,
     handleAppServerRequest,
     runtimeEnv,
-    setAgentSessionKey: cliTokenLease?.setAgentSessionKey,
+    setAgentSessionKey: cliTokenLease
+      ? async (agentSessionKey) => {
+          await cliTokenLease.setAgentSessionKey(agentSessionKey);
+          // Refresh keeps this run's identity path stable. A newly registered
+          // identity needs a fresh process before it can be used by shell tools.
+          if (cliTokenLease.identityContainerPath) {
+            runtimeEnv.COCALC_AGENT_IDENTITY_FILE =
+              cliTokenLease.identityContainerPath;
+          }
+        }
+      : undefined,
     siteFundedTurn,
   };
 }

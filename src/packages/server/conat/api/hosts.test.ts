@@ -548,6 +548,143 @@ const HOST_ID = "host-123";
 const ACCOUNT_ID = "acct-123";
 const CUSTOMER_ACCOUNT_ID = "customer-acct-456";
 
+describe("site-funded Codex account directory routing", () => {
+  const request = {
+    host_id: HOST_ID,
+    project_id: "project-remote",
+    account_id: ACCOUNT_ID,
+    funded_turn_id: "23c90922-ac10-425e-a2de-bcc17511e719",
+    idempotency_key: "remote-account-admission",
+  };
+  let lookup: jest.SpyInstance;
+  let membership: jest.Mock;
+  let overview: jest.Mock;
+
+  beforeEach(async () => {
+    queryMock = jest.fn(async () => ({ rows: [], rowCount: 1 }));
+    jest
+      .spyOn(
+        await import("@cocalc/server/launch/kill-switches"),
+        "isAiLaunchDisabled",
+      )
+      .mockResolvedValue(false);
+    jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-policy"),
+        "getSiteFundedCodexConfiguration",
+      )
+      .mockResolvedValue({ enabled: true } as any);
+    lookup = jest.spyOn(
+      await import("@cocalc/server/inter-bay/accounts"),
+      "getClusterAccountById",
+    );
+    lookup.mockResolvedValue({
+      account_id: ACCOUNT_ID,
+      home_bay_id: "remote-account-home",
+      email_address_verified: true,
+    });
+    membership = jest.fn(async () => ({ source: "free", class: "free" }));
+    overview = jest.fn(async () => ({ meters: [] }));
+    jest
+      .spyOn(
+        await import("@cocalc/server/inter-bay/fabric"),
+        "getInterBayFabricClient",
+      )
+      .mockReturnValue({} as any);
+    jest
+      .spyOn(
+        await import("@cocalc/conat/inter-bay/api"),
+        "createInterBayAccountLocalClient",
+      )
+      .mockReturnValue({
+        getMembership: membership,
+        getAccountUsageOverview: overview,
+      } as any);
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it("reserves eligible remote usage under the executing human, not the host owner", async () => {
+    overview.mockResolvedValue({
+      meters: [
+        { id: "ai-5h", limit: 10, remaining: 5 },
+        { id: "ai-7d", limit: 20, remaining: 15 },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    const reserve = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({ allowed: true } as any);
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toEqual({
+      allowed: true,
+    });
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        accountId: ACCOUNT_ID,
+        homeBayId: "remote-account-home",
+        hostId: HOST_ID,
+        projectId: request.project_id,
+        poolId: "site-funded-codex-free",
+      }),
+    );
+  });
+
+  it("finds a remote account absent locally, then checks its home-bay entitlement", async () => {
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
+      allowed: false,
+      reason: expect.stringContaining("membership does not include"),
+    });
+    expect(lookup).toHaveBeenCalledWith(ACCOUNT_ID);
+    expect(getClusterAccountsByIdsDirectMock).not.toHaveBeenCalled();
+    expect(membership).toHaveBeenCalledWith({ account_id: ACCOUNT_ID });
+  });
+
+  it.each([
+    null,
+    { banned: true, email_address_verified: true },
+    { email_address_verified: false },
+  ])("denies an ineligible directory account: %j", async (account) => {
+    lookup.mockResolvedValue(account);
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({
+      allowed: false,
+      code: "ineligible",
+    });
+    expect(membership).not.toHaveBeenCalled();
+  });
+
+  it("does not fall back to local metadata when the directory is unavailable", async () => {
+    lookup.mockRejectedValue(new Error("directory unavailable"));
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).rejects.toThrow(
+      "directory unavailable",
+    );
+    expect(getClusterAccountsByIdsDirectMock).not.toHaveBeenCalled();
+    expect(membership).not.toHaveBeenCalled();
+  });
+
+  it("checks the host and project authorization before reading account metadata", async () => {
+    queryMock.mockResolvedValue({ rows: [], rowCount: 0 });
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).rejects.toThrow(
+      "host is not authorized",
+    );
+    expect(lookup).not.toHaveBeenCalled();
+  });
+});
+
 beforeEach(() => {
   getClusterAccountsByIdsDirectMock = jest.fn(async () => []);
   createLroMock = jest.fn(async (opts: any) => ({
@@ -6333,6 +6470,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
       host_id: HOST_UUID,
       owning_bay_id: "bay-7",
       users: { [ACCOUNT_UUID]: { group: "owner" } },
+      runtime_lifecycle_revision: 12,
     }));
     updateProjectUsersMock = jest.fn(async () => undefined);
     routedHostControlClientMock = jest.fn(async () => ({
@@ -6362,6 +6500,28 @@ describe("hosts.issueProjectHostAuthToken", () => {
       expect.objectContaining({
         account_id: ACCOUNT_UUID,
         host_id: HOST_UUID,
+        auth_actor: "account",
+      }),
+    );
+  });
+
+  it("marks host-issued project agent credentials as agent, never human scheduling authority", async () => {
+    const { issueProjectHostAgentAuthToken } = await import("./hosts");
+    await issueProjectHostAgentAuthToken({
+      account_id: ACCOUNT_UUID,
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+    });
+    expect(assertProjectHostAgentTokenAccessMock).toHaveBeenCalledWith({
+      account_id: ACCOUNT_UUID,
+      host_id: HOST_UUID,
+      project_id: PROJECT_UUID,
+    });
+    expect(issueProjectHostAuthTokenJwtMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_UUID,
+        host_id: HOST_UUID,
+        auth_actor: "agent",
       }),
     );
   });
@@ -6587,6 +6747,7 @@ describe("hosts.issueProjectHostAuthToken", () => {
     expect(updateProjectUsersMock).toHaveBeenCalledWith({
       project_id: PROJECT_UUID,
       users: { [ACCOUNT_UUID]: { group: "owner" } },
+      runtime_lifecycle_revision: 12,
     });
   });
 

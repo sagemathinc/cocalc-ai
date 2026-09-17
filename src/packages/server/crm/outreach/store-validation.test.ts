@@ -109,6 +109,67 @@ describe("CRM outreach reviewed-content validation", () => {
     );
   });
 
+  it("does not double the footer when the body was copied from outreach show", () => {
+    const footer =
+      "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    const composed = composeOutreachBody(`Updated body\n\n${footer}\n`, footer);
+    expect(composed).toBe(`Updated body\n\n${footer}`);
+    expect(composed.split("/crm/outreach/opt-out/")).toHaveLength(2);
+  });
+
+  it("matches the footer in a body file saved with Windows line endings", () => {
+    const footer =
+      "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    expect(
+      composeOutreachBody(
+        `Updated body\r\n\r\n${footer.replace(/\n/g, "\r\n")}\r\n`,
+        footer,
+      ),
+    ).toBe(`Updated body\n\n${footer}`);
+  });
+
+  it("refuses a body carrying an extra or altered opt-out link", () => {
+    const footer =
+      "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    expect(() =>
+      composeOutreachBody(
+        "Updated body\n\nUnsubscribe: https://example.test/crm/outreach/opt-out/other",
+        footer,
+      ),
+    ).toThrow("body_markdown must not contain an opt-out link");
+    expect(() =>
+      composeOutreachBody(`Updated body\n\n${footer} Thanks again.`, footer),
+    ).toThrow("body_markdown must not contain an opt-out link");
+  });
+
+  it("refuses a copied footer whose opt-out token was deleted", () => {
+    const footer =
+      "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    expect(() =>
+      composeOutreachBody(
+        "Updated body\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/",
+        footer,
+      ),
+    ).toThrow("body_markdown must not contain an opt-out link");
+  });
+
+  it("matches a footer configured with Windows line endings and keeps it verbatim", () => {
+    const footer =
+      "Postal address\r\n\r\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    const copied = `Updated body\n\n${footer.replace(/\r\n/g, "\n")}`;
+    expect(composeOutreachBody(copied, footer)).toBe(
+      `Updated body\n\n${footer}`,
+    );
+  });
+
+  it("refuses a body that is only the preserved footer", () => {
+    const footer =
+      "Postal address\n\nTo stop receiving partnership outreach from CoCalc: https://example.test/crm/outreach/opt-out/token";
+    expect(() => composeOutreachBody(footer, footer)).toThrow(
+      "body_markdown is required",
+    );
+  });
+
   it("applies the body limit after appending the preserved footer", () => {
     expect(() => composeOutreachBody("x".repeat(49_999), "footer")).toThrow(
       "including its required footer must be at most 50000 characters",

@@ -470,13 +470,82 @@ describe("project-host Conat auth", () => {
         const subject = `acp.project-${project_id}.account-${account_id}.${operation}`;
 
         await expect(
-          isAllowed({ user: { account_id }, type: "pub", subject }),
+          isAllowed({
+            user: { account_id, auth_actor: "account" },
+            type: "pub",
+            subject,
+          }),
         ).resolves.toBe(true);
         await expect(
           isAllowed({ user: { account_id }, type: "sub", subject }),
         ).resolves.toBe(false);
       },
     );
+
+    it.each(["agent", undefined] as const)(
+      "rejects automation from %s credential provenance, including forged handshake claims",
+      async (auth_actor) => {
+        mockVerifyProjectHostAuthToken.mockReturnValue({
+          act: "account",
+          sub: account_id,
+          iat: 1000,
+          auth_actor,
+        });
+        mockGetRow.mockReturnValue({
+          users: { [account_id]: { group: "collaborator" } },
+        });
+        const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+        const user = await getUser({
+          handshake: {
+            auth: {
+              bearer: "signed-project-token",
+              auth_actor: "account",
+              human: true,
+            },
+            headers: {},
+          },
+        } as any);
+        expect(user.auth_actor).toBe(auth_actor);
+        await expect(
+          isAllowed({
+            user,
+            type: "pub",
+            subject: `acp.project-${project_id}.account-${account_id}.automation`,
+          }),
+        ).resolves.toBe(false);
+        await expect(
+          isAllowed({
+            user,
+            type: "pub",
+            subject: `acp.project-${project_id}.account-${account_id}.api`,
+          }),
+        ).resolves.toBe(true);
+      },
+    );
+
+    it("accepts scheduling only from a freshly signed account credential with project access", async () => {
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        act: "account",
+        sub: account_id,
+        iat: 1000,
+        auth_actor: "account",
+      });
+      mockGetRow.mockReturnValue({
+        users: { [account_id]: { group: "collaborator" } },
+      });
+      const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+      const user = await getUser({
+        handshake: { auth: { bearer: "signed-human-token" }, headers: {} },
+      } as any);
+      const subject = `acp.project-${project_id}.account-${account_id}.automation`;
+      await expect(isAllowed({ user, type: "pub", subject })).resolves.toBe(
+        true,
+      );
+      mockGetRow.mockReturnValue({ users: {} });
+      await expect(isAllowed({ user, type: "pub", subject })).resolves.toBe(
+        false,
+      );
+    });
 
     it("rejects account and project authorization mismatches", async () => {
       mockGetRow.mockImplementation((_table, key) => {
@@ -500,6 +569,40 @@ describe("project-host Conat auth", () => {
           type: "pub",
           subject: `acp.project-${otherProjectId}.account-${account_id}.api`,
         }),
+      ).resolves.toBe(false);
+    });
+
+    it("refreshing a legacy human token enables automation without upgrading the old connection", async () => {
+      mockGetRow.mockReturnValue({
+        users: { [account_id]: { group: "collaborator" } },
+      });
+      const { getUser, isAllowed } = createProjectHostConatAuth({ host_id });
+      const subject = `acp.project-${project_id}.account-${account_id}.automation`;
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        act: "account",
+        sub: account_id,
+        iat: 1000,
+      });
+      const old = await getUser({
+        handshake: { auth: { bearer: "old-human-token" }, headers: {} },
+      } as any);
+      await expect(
+        isAllowed({ user: old, type: "pub", subject }),
+      ).resolves.toBe(false);
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        act: "account",
+        sub: account_id,
+        iat: 2000,
+        auth_actor: "account",
+      });
+      const refreshed = await getUser({
+        handshake: { auth: { bearer: "refreshed-human-token" }, headers: {} },
+      } as any);
+      await expect(
+        isAllowed({ user: refreshed, type: "pub", subject }),
+      ).resolves.toBe(true);
+      await expect(
+        isAllowed({ user: old, type: "pub", subject }),
       ).resolves.toBe(false);
     });
 

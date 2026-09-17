@@ -39,6 +39,10 @@ with this parser, but it's much harder without.
 */
 
 import { startswith } from "@cocalc/util/misc";
+import {
+  parseAgentMention,
+  serializeAgentMention,
+} from "@cocalc/util/agent-mentions";
 
 function renderMention(tokens, idx): string {
   // TODO: we could dynamically update the username using the account-id
@@ -67,6 +71,25 @@ export function mentionPlugin(md): void {
       let tokens = blockTokens[j].children;
 
       for (let i = tokens.length - 1; i >= 2; i--) {
+        if (
+          isMentionClose(tokens[i].content) &&
+          tokens[i - 2].content?.startsWith('<span class="agent-mention" ')
+        ) {
+          const reference = parseAgentMention(
+            `${tokens[i - 2].content}${tokens[i - 1].content}${tokens[i].content}`,
+          );
+          if (reference) {
+            const token = new Token("agent-mention", "", 0);
+            token.level = tokens[i].level;
+            token.reference = reference;
+            tokens = tokens
+              .slice(0, i - 2)
+              .concat([token], tokens.slice(i + 1));
+            blockTokens[j].children = tokens;
+            i -= 2;
+            continue;
+          }
+        }
         if (
           !(
             isMentionClose(tokens[i].content) &&
@@ -100,4 +123,6 @@ export function mentionPlugin(md): void {
 
   md.core.ruler.after("inline", "mention", mention);
   md.renderer.rules.mention = renderMention;
+  md.renderer.rules["agent-mention"] = (tokens, idx) =>
+    serializeAgentMention(tokens[idx].reference);
 }

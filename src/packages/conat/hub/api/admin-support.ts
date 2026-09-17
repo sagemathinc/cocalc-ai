@@ -363,7 +363,7 @@ export interface AdminSupportSpamResponse {
 }
 
 export const ADMIN_SUPPORT_CONVENTIONS = {
-  version: 2,
+  version: 3,
   statuses: {
     new: "We have not reviewed or acted on the ticket.",
     open: "CoCalc is actively investigating or still owes work, including after an interim reply.",
@@ -391,6 +391,17 @@ export const ADMIN_SUPPORT_CONVENTIONS = {
     "Merge duplicates only after explicit approval, keeping the more complete or canonical ticket as the target.",
     "Mark spam only for clear unsolicited junk. Zendesk spam handling deletes the ticket and suspends the requester; if Zendesk definitively rejects that action, CoCalc instead solves and tags the ticket without replying and reports that the requester was not suspended.",
     "Limit account and project inspection to data relevant to the support request, use a ticket-specific audit reason, and never expose secrets or unnecessary personal data in replies.",
+  ],
+  vocabulary: [
+    "Name what the user can see, spelled and capitalized as it renders, instead of a description or an internal name.",
+    "The left-rail tab for a project's files is Files. Use that name, not file browser. The Tour of the File Explorer and some help text call the same page the file explorer, so accept that name from a user without correcting it.",
+    "Use the name Git browser, not Git viewer. Its capitalization varies: the chat thread menu and the drawer header show Git browser, TimeTravel has a Git Browser button, and chat buttons and tooltips say Open git browser.",
+    "Exam controls are on the Exams tab of a project host, not an instructor panel.",
+    "Project hosts and virtual machines open from an icon-only button in the top navigation. It shows no text label. Hovering it shows the tooltip Manage project hosts and virtual machines, and its accessible name is Compute. Quick Navigation lists the same page as Compute. The page it opens has the tabs Project Hosts and Virtual Machines. There is no page named Compute hosts.",
+    "When describing how to sign in to the site, say sign in, not log in or login, matching the Sign in link in the top navigation and the Sign In button on the sign-in form. Some screens still say login, so quote them as they appear. Examples: the sign-in approval page that a CLI or the mobile app opens, whose heading says sign-in but whose button reads Approve CLI Login, Approve Mobile App Login or Approve Elevated CLI Login; the Please login to prompt shown to signed-out visitors; and the Start device login button for ChatGPT.",
+    "Headings that contain the site name, such as Sign in to CoCalc, show the configured site name and differ on white-labeled deployments.",
+    "Where the interface uses more than one name for one thing, use the name shown where the user is looking and do not present any one of them as the only correct name. A rail tab opens either as a full page or as a flyout, and icon buttons with the tooltips Open as flyout and Open as full page switch between them, so a tab's title can differ between the two. Current cases: the left rail itself, which account settings call the Activity Bar; the Agents rail tab and the Codex assistant; the Image rail tab and the RootFS Images admin page; the Docs rail tab, whose page and flyout both show the title Help for this project; the VMs rail tab, whose page and flyout are titled Virtual machines; the Log rail tab, whose page is titled Recent Files or Project Activity Log to match its Files and Activity toggle, and whose flyout is titled Recent; and project settings, which the Settings rail tab opens as a page titled Project Settings or a flyout titled Status and Settings, and which Quick Navigation opens as a flyout titled Users.",
+    "Collaborators are managed in the People section of project settings. There is no Users tab on the left rail.",
   ],
 } as const;
 

@@ -293,6 +293,7 @@ export interface ProjectReference {
   owning_bay_id: string;
   usage_account_id?: string | null;
   users?: Record<string, any>;
+  runtime_lifecycle_revision?: number;
   allow_collaborator_destructive_storage_actions?: boolean | null;
 }
 
@@ -376,6 +377,7 @@ export interface ProjectControlStartRequest {
 
 export interface ProjectControlStartAdmission {
   storage_recovery_required: boolean;
+  runtime_authority_revision: string;
 }
 
 export interface ProjectControlStopRequest {
@@ -387,6 +389,7 @@ export interface ProjectControlStopRequest {
 export interface ProjectControlRestartRequest {
   project_id: string;
   account_id: string;
+  runtime_authority_revision: string;
   lro_op_id?: string;
   source_bay_id?: string;
   epoch?: number;
@@ -1766,6 +1769,15 @@ export interface AccountLocalReleaseSiteLicensePoolSeatRequest {
   package_id: string;
 }
 
+export interface AccountLocalCleanupSiteLicenseAccessRequest {
+  account_id: string;
+}
+
+export interface AccountLocalCleanupSiteLicenseAccessResult {
+  revoked_assignment_ids: string[];
+  canceled_request_ids: string[];
+}
+
 export interface AccountLocalUpdateSiteLicenseRequest {
   actor_account_id: string;
   site_license_id: string;
@@ -2429,6 +2441,8 @@ export interface ProjectCollabInviteCreateRequest {
   direct?: boolean;
   /** Internal result of an admin check performed on the actor's home bay. */
   trusted_admin?: boolean;
+  /** Internal attestation from the inviter's account home, never client input. */
+  trusted_product_access_checked?: boolean;
   invite_role?: Exclude<ProjectUserRole, "owner">;
   read_policy?: ProjectViewerReadPolicy | null;
 }
@@ -2779,6 +2793,7 @@ export type HostConnectionMethod =
   | "add-host-ssh-authorized-key"
   | "remove-host-ssh-authorized-key"
   | "list-host-runtime-deployments"
+  | "list-host-operations"
   | "set-host-runtime-deployments"
   | "get-host-managed-component-status"
   | "get-project-start-metadata"
@@ -2919,6 +2934,7 @@ export type AccountLocalMethod =
   | "save-blob"
   | "get-blob"
   | "create-cli-login-session"
+  | "validate-host-action-auth"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
   | "get-chat-speech-capabilities"
@@ -2997,6 +3013,7 @@ export type AccountLocalMethod =
   | "revoke-site-license-pool-seat"
   | "assign-site-license-pool-seat"
   | "release-site-license-pool-seat"
+  | "cleanup-site-license-access-for-account-deletion"
   | "list-software-license-tiers"
   | "upsert-software-license-tier"
   | "list-software-licenses"
@@ -3522,6 +3539,11 @@ export interface InterBayExternalCredentialsApi {
 }
 
 export interface InterBayHostConnectionApi {
+  listHostOperations: (opts: {
+    account_id?: string;
+    host_id: string;
+    include_completed?: boolean;
+  }) => Promise<LroSummary[]>;
   get: (opts: GetHostConnectionRequest) => Promise<HostConnectionInfo>;
   list: (opts: Parameters<Hosts["listHosts"]>[0]) => Promise<Host[]>;
   listHostAccess: (
@@ -3883,6 +3905,7 @@ const HOST_CONNECTION_METHOD_SPECS = [
     name: "listHostRuntimeDeployments",
     method: "list-host-runtime-deployments",
   },
+  { name: "listHostOperations", method: "list-host-operations" },
   {
     name: "setHostRuntimeDeployments",
     method: "set-host-runtime-deployments",
@@ -4586,6 +4609,10 @@ export interface InterBayAccountLocalApi
   createCliLoginSession: (
     opts: AccountLocalCreateCliLoginSessionRequest,
   ) => Promise<AccountLocalCreateCliLoginSessionResult>;
+  validateHostActionAuth: (opts: {
+    account_id: string;
+    session_hash: string;
+  }) => Promise<{ allow_second_factor_override: boolean }>;
   startCodexFreshAuth: (
     opts: AccountLocalStartCodexFreshAuthRequest,
   ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
@@ -4761,6 +4788,9 @@ export interface InterBayAccountLocalApi
   releaseSiteLicensePoolSeat: (
     opts: AccountLocalReleaseSiteLicensePoolSeatRequest,
   ) => Promise<{ revoked: boolean }>;
+  cleanupSiteLicenseAccessForAccountDeletion: (
+    opts: AccountLocalCleanupSiteLicenseAccessRequest,
+  ) => Promise<AccountLocalCleanupSiteLicenseAccessResult>;
   listSoftwareLicenseTiers: (
     opts: AccountLocalListSoftwareLicenseTiersRequest,
   ) => Promise<SoftwareLicenseTier[]>;
@@ -7202,6 +7232,15 @@ export function createInterBayAccountLocalClient({
       method: "create-cli-login-session",
     }),
   });
+  const validateHostActionAuthClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "validateHostActionAuth">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "validate-host-action-auth",
+    }),
+  });
   const startCodexFreshAuthClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "startCodexFreshAuth">
   >({
@@ -7737,6 +7776,15 @@ export function createInterBayAccountLocalClient({
     subject: accountLocalSubject({
       dest_bay,
       method: "release-site-license-pool-seat",
+    }),
+  });
+  const cleanupSiteLicenseAccessForAccountDeletionClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "cleanupSiteLicenseAccessForAccountDeletion">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "cleanup-site-license-access-for-account-deletion",
     }),
   });
   const listSoftwareLicenseTiersClient = createServiceClient<
@@ -8532,6 +8580,8 @@ export function createInterBayAccountLocalClient({
       await verifySignInPasswordClient.verifySignInPassword(opts),
     createCliLoginSession: async (opts) =>
       await createCliLoginSessionClient.createCliLoginSession(opts),
+    validateHostActionAuth: async (opts) =>
+      await validateHostActionAuthClient.validateHostActionAuth(opts),
     startCodexFreshAuth: async (opts) =>
       await startCodexFreshAuthClient.startCodexFreshAuth(opts),
     getCodexFreshAuthStatus: async (opts) =>
@@ -8676,6 +8726,10 @@ export function createInterBayAccountLocalClient({
       await assignSiteLicensePoolSeatClient.assignSiteLicensePoolSeat(opts),
     releaseSiteLicensePoolSeat: async (opts) =>
       await releaseSiteLicensePoolSeatClient.releaseSiteLicensePoolSeat(opts),
+    cleanupSiteLicenseAccessForAccountDeletion: async (opts) =>
+      await cleanupSiteLicenseAccessForAccountDeletionClient.cleanupSiteLicenseAccessForAccountDeletion(
+        opts,
+      ),
     listSoftwareLicenseTiers: async (opts) =>
       await listSoftwareLicenseTiersClient.listSoftwareLicenseTiers(opts),
     upsertSoftwareLicenseTier: async (opts) =>
@@ -9203,6 +9257,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         createCliLoginSession: async (opts) =>
           await impl.createCliLoginSession(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "validateHostActionAuth">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "validate-host-action-auth",
+      }),
+      impl: {
+        validateHostActionAuth: async (opts) =>
+          await impl.validateHostActionAuth(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "startCodexFreshAuth">>({
@@ -9997,6 +10065,23 @@ export function createInterBayAccountLocalHandler({
       impl: {
         releaseSiteLicensePoolSeat: async (opts) =>
           await impl.releaseSiteLicensePoolSeat(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<
+        InterBayAccountLocalApi,
+        "cleanupSiteLicenseAccessForAccountDeletion"
+      >
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "cleanup-site-license-access-for-account-deletion",
+      }),
+      impl: {
+        cleanupSiteLicenseAccessForAccountDeletion: async (opts) =>
+          await impl.cleanupSiteLicenseAccessForAccountDeletion(opts),
       },
     }),
     createServiceHandler<

@@ -860,6 +860,7 @@ export type SiteLicenseAuditAction =
   | "external-claim-side-effect-failed"
   | "seat-manually-assigned"
   | "seat-released-by-user"
+  | "seat-released-for-account-deletion"
   | "seat-released-for-upgrade"
   | "seat-affiliation-reverified"
   | "seat-released-after-reverification-grace";

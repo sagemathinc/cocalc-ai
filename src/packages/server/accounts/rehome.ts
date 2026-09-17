@@ -19,6 +19,7 @@ import type {
 import { createBrowserSessionClient } from "@cocalc/conat/service/browser-session";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { lockAccountRehomeFence } from "@cocalc/server/accounts/rehome-fence";
+import { assertNoPersonalStateForRehome } from "@cocalc/server/agents/personal-rehome";
 import {
   getBayPublicOrigin,
   getClusterBayPublicOrigins,
@@ -892,6 +893,7 @@ async function createOperation({
   try {
     await client.query("BEGIN");
     await lockAccountRehomeFence({ db: client, account_id });
+    await assertNoPersonalStateForRehome(client, account_id);
     const active = await client.query(
       `
         SELECT *
@@ -1619,6 +1621,22 @@ export async function runAccountRehomeOperation(
   }
 
   try {
+    // Recheck resumed/old operations before any remote accept, home flip, or
+    // cleanup. Personal writes use this same fence and reject running rehomes.
+    if (op.stage !== "complete") {
+      const client = await getPool().connect();
+      try {
+        await client.query("BEGIN");
+        await lockAccountRehomeFence({ db: client, account_id: op.account_id });
+        await assertNoPersonalStateForRehome(client, op.account_id);
+        await client.query("COMMIT");
+      } catch (err) {
+        await client.query("ROLLBACK");
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
     const financial_handoff = await getAccountFinancialHandoff(op_id);
     let account = op.account;
     if (!account) {

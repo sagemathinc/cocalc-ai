@@ -12,7 +12,7 @@ and configuration.
 
 import type { SettingsPageType } from "@cocalc/util/types/settings";
 import { Button, Flex, Menu, Select, Space } from "antd";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { MessageDescriptor, useIntl } from "react-intl";
 import { SignOut } from "@cocalc/frontend/account/sign-out";
 import {
@@ -76,10 +76,12 @@ const LOAD_ACCOUNT_INFO_TIMEOUT = 15_000;
 
 export const AccountPage: React.FC = () => {
   const intl = useIntl();
+  const navigationId = useId();
   const [hidden, setHidden] = useState(IS_MOBILE);
 
   const { width: windowWidth } = useWindowDimensions();
   const isWide = windowWidth > 800;
+  const compactNavigation = IS_MOBILE || windowWidth <= 600;
 
   const raw_active_page = useTypedRedux("account", "active_page") ?? "index";
   const active_page = getAccountSettingsRouteFromState({
@@ -123,7 +125,7 @@ export const AccountPage: React.FC = () => {
     return (
       <span>
         {renderSettingsPageIcon(icon, "menu")}
-        {!hidden && <> {intl.formatMessage(label)}</>}
+        {(!hidden || compactNavigation) && <> {intl.formatMessage(label)}</>}
       </span>
     );
   }
@@ -213,6 +215,7 @@ export const AccountPage: React.FC = () => {
         style={{
           overflow: "auto",
           padding: "8px 10px 0 10px",
+          minWidth: 0,
         }}
       >
         {lite && (
@@ -227,7 +230,10 @@ export const AccountPage: React.FC = () => {
             Close
           </Button>
         )}
+        <label htmlFor={`${navigationId}-select`}>Settings menu</label>
         <Select
+          id={`${navigationId}-select`}
+          aria-label="Settings menu"
           size="large"
           value={active_page}
           options={mobileNavigationOptions}
@@ -255,13 +261,14 @@ export const AccountPage: React.FC = () => {
       setHidden(!hidden);
     }
 
-    if (IS_MOBILE || !isWide) {
+    if (compactNavigation) {
       return renderMobileLoggedInView();
     }
 
     return (
       <div className="smc-vfill" style={{ flexDirection: "row" }}>
         <div
+          id={`${navigationId}-sidebar`}
           style={{
             background: "#00000005",
             borderRight: "1px solid rgba(5, 5, 5, 0.06)",
@@ -310,6 +317,9 @@ export const AccountPage: React.FC = () => {
             }}
           />
           <Button
+            aria-label={hidden ? "Show settings menu" : "Hide settings menu"}
+            aria-expanded={!hidden}
+            aria-controls={`${navigationId}-sidebar`}
             block
             size="small"
             type="text"

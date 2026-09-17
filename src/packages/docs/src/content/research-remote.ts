@@ -160,7 +160,7 @@ work in a fresh project, see [reproduce an analysis](/docs/research/reproduce-an
   input and rerun the validation. Do not treat an older \`result.json\` as evidence
   that the latest execution succeeded.
 
-After retaining the result, use CoCalc's file browser to inspect and delete only
+After retaining the result, use **Files** to inspect and delete only
 the scratch \`research-cli-demo\` directory if you no longer need it. Your local
 files remain in the directory printed as \`LOCAL_RUN\`; review them before deleting
 that directory. The analysis process exits on completion, so there is no service
@@ -353,7 +353,7 @@ Avoid \`interrupt-all\` when your goal is to stop only this exercise.
 
 Retain the session ID and local result files with your research notes. After
 confirming no scratch turn remains active, delete the scratch input directory
-through CoCalc's file browser if it is no longer useful. The session-control
+through **Files** if it is no longer useful. The session-control
 commands above do not delete conversation history or undo file changes.
 `;
 
@@ -632,7 +632,7 @@ cocalc --profile "$CLI_PROFILE" project app delete research-dashboard-demo \\
 ~~~
 
 The uploaded Python and CSV files remain research files. Inspect and remove only
-\`research-dashboard-demo\` in the project's file browser if no longer needed;
+\`research-dashboard-demo\` in **Files** if no longer needed;
 retain your local copies for reproduction. Stopping the app does not stop the
 project itself.
 `;

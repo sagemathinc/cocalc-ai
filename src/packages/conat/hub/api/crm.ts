@@ -451,6 +451,11 @@ export interface CrmExternalReferenceMutationRequest extends CrmMutationRequest 
   metadata?: Record<string, unknown>;
 }
 
+export interface CrmOpportunityOrderLinkRequest extends CrmMutationRequest {
+  opportunity: string;
+  order: string;
+}
+
 export interface CrmOrderFromOpportunityRequest extends CrmMutationRequest {
   opportunity: string;
   next_action: string;
@@ -801,6 +806,12 @@ export interface AdminCrmApi {
   createCommercialOrderFromOpportunity: (
     opts: CrmOrderFromOpportunityRequest,
   ) => Promise<CrmMutationResult<CommercialOrder>>;
+  linkOpportunityCommercialOrder: (
+    opts: CrmOpportunityOrderLinkRequest,
+  ) => Promise<CrmMutationResult<CrmOpportunity>>;
+  unlinkOpportunityCommercialOrder: (
+    opts: CrmOpportunityOrderLinkRequest,
+  ) => Promise<CrmMutationResult<CrmOpportunity>>;
   backfill: (opts: CrmBackfillRequest) => Promise<CrmBackfillResponse>;
   listOutreachTemplates: (
     opts: CrmOutreachTemplateListRequest,
@@ -919,6 +930,8 @@ export const adminCrm = {
   addActivity: authFirstRequireAccount,
   mutateExternalReference: authFirstRequireAccount,
   createCommercialOrderFromOpportunity: authFirstRequireAccount,
+  linkOpportunityCommercialOrder: authFirstRequireAccount,
+  unlinkOpportunityCommercialOrder: authFirstRequireAccount,
   backfill: authFirstRequireAccount,
   listOutreachTemplates: authFirstRequireAccount,
   getOutreachTemplate: authFirstRequireAccount,
