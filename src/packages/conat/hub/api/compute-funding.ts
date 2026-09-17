@@ -51,6 +51,9 @@ export interface CourseFundingPoolSummary extends FundingBudget {
   lane: ComputeFundingLane;
   version?: number;
   allow_overcommit?: boolean;
+  approval_limit_usd: string;
+  approval_starts_at: string;
+  approval_ends_at: string;
   starts_at: string;
   ends_at: string;
   grants: CourseFundingGrantSummary[];
@@ -86,7 +89,8 @@ export interface CourseFundingAllocationStatus {
   status: "pending" | "approved" | "rejected" | "expired";
   approval_url?: string;
   pool_id?: string;
-  expires_at: string;
+  expires_at?: string;
+  completed_at?: string;
 }
 
 export interface CourseFundingSourceSummary
@@ -141,6 +145,9 @@ export interface CourseFundingPoolChangeDraft extends CourseFundingCourseRequest
 export interface CourseFundingPoolChangePreview {
   terms: CourseFundingPoolChangeDraft;
   pool: CourseFundingPoolSummary;
+  // True only when the aggregate payer mandate grows. Grant reallocations,
+  // reductions, and closure remain inside the already approved envelope.
+  requires_financial_approval: boolean;
   // Computed from locked stored terms, never supplied by the caller.
   requires_course_access: boolean;
   // Present when additional backing is needed; closure must work after policy loss.

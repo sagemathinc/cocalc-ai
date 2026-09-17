@@ -39,17 +39,22 @@ import { getComputeFundingPolicyInTransaction } from "@cocalc/server/compute/fun
 import {
   proposeCourseFundingAllocation,
   getCourseFundingAllocationStatus,
+  hasCourseFundingPoolChangeApproval,
   proposeCourseFundingPoolChange,
 } from "@cocalc/server/compute/funding/approvals";
 import {
+  changeCourseFundingPoolWithinEnvelopeInTransaction,
+  getCourseFundingPoolChangeOperation,
   normalizeCourseFundingPoolChangeDraft,
   previewCourseFundingPoolChangeInTransaction,
 } from "@cocalc/server/compute/funding/pool-changes";
+import { prepareFundingRecipientAccounts } from "@cocalc/server/compute/funding/approval-recipients";
 import {
   ComputeFundingError,
   fundingId,
   normalizeCourseFundingDraft,
 } from "@cocalc/util/compute-funding";
+import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type {
   CourseFundingDraft,
   FundingBudget,
@@ -100,6 +105,59 @@ export async function proposePoolChange(
       operation_id,
       terms,
     });
+  const completed = await getCourseFundingPoolChangeOperation({
+    payer_account_id: account_id,
+    operation_id,
+    terms,
+  });
+  if (completed) {
+    return {
+      id: operation_id,
+      status: "approved",
+      pool_id: completed.pool_id,
+      completed_at: completed.completed_at,
+    };
+  }
+  // A retry of an approval-backed expansion must recover its existing intent
+  // even when the applied operation has already advanced the pool version.
+  if (
+    await hasCourseFundingPoolChangeApproval({
+      payer_account_id: account_id,
+      operation_id,
+    })
+  ) {
+    return await proposeCourseFundingPoolChange({
+      payer_account_id: account_id,
+      operation_id,
+      terms,
+    });
+  }
+  const preview = await previewPoolChange({ account_id, terms });
+  if (!preview.requires_financial_approval) {
+    const finishRecipientChecks = await prepareFundingRecipientAccounts(
+      [
+        account_id,
+        ...preview.pool.grants.map((grant) => grant.beneficiary_account_id),
+      ],
+      preview.requires_course_access,
+    );
+    const result = await withFundingAccountTransaction(
+      account_id,
+      async (db) =>
+        await changeCourseFundingPoolWithinEnvelopeInTransaction(db, {
+          payer_account_id: account_id,
+          operation_id,
+          terms,
+          home_bay_by_account_id: await finishRecipientChecks(db),
+        }),
+    );
+    return {
+      id: operation_id,
+      status: "approved",
+      pool_id: result.pool_id,
+      completed_at: result.completed_at,
+    };
+  }
   // The intent service validates first-time proposals. Replays must recover the
   // original intent even after applying it has changed the pool's version.
   return await proposeCourseFundingPoolChange({
@@ -193,10 +251,16 @@ async function readPayerSummary(
         course_instance_id: string;
         starts_at: Date;
         ends_at: Date;
+        approval_starts_at: Date;
+        approval_ends_at: Date;
       }
     >(
       `SELECT id, course_project_id, course_instance_id, state, lane, version, allow_overcommit, authorized_usd::text, spent_usd::text,
-         reserved_usd::text, released_usd::text, starts_at, ends_at
+         reserved_usd::text, released_usd::text,
+         COALESCE(approval_limit_usd, authorized_usd-released_usd)::text AS approval_limit_usd,
+         COALESCE(approval_starts_at,starts_at) AS approval_starts_at,
+         COALESCE(approval_ends_at,ends_at) AS approval_ends_at,
+         starts_at, ends_at
        FROM compute_funding_pools
        WHERE payer_account_id=$1 AND ($2::uuid IS NULL OR course_project_id=$2) AND ($3::uuid IS NULL OR course_instance_id=$3)
        ORDER BY starts_at, id LIMIT 1001`,
@@ -261,6 +325,15 @@ async function readPayerSummary(
           ? {}
           : { allow_overcommit: pool.allow_overcommit }),
         ...budget(pool),
+        approval_limit_usd:
+          pool.approval_limit_usd ??
+          moneyToDbString(
+            toDecimal(pool.authorized_usd).minus(pool.released_usd),
+          ),
+        approval_starts_at: (
+          pool.approval_starts_at ?? pool.starts_at
+        ).toISOString(),
+        approval_ends_at: (pool.approval_ends_at ?? pool.ends_at).toISOString(),
         starts_at: pool.starts_at.toISOString(),
         ends_at: pool.ends_at.toISOString(),
         grants: byPool.get(pool.id) ?? [],

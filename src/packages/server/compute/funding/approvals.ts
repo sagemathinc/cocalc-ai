@@ -95,6 +95,15 @@ export async function ensureCourseFundingApprovalSchema(): Promise<void> {
   await getPool()
     .query(`CREATE INDEX IF NOT EXISTS course_funding_approval_intents_payer_created
     ON course_funding_approval_intents(payer_account_id, created_at)`);
+  await getPool()
+    .query(`CREATE TABLE IF NOT EXISTS course_funding_pool_changes (
+    payer_account_id UUID NOT NULL,
+    operation_id UUID NOT NULL,
+    request_hash TEXT NOT NULL,
+    pool_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (payer_account_id, operation_id)
+  )`);
 }
 
 export async function assertFundingPayerHomeBay(payer_account_id: string) {
@@ -268,6 +277,23 @@ export function createCourseFundingApprovals<
     );
     if (!rows[0]) throw new Error("Funding intent not found");
     return await status({ payer_account_id, intent_id: rows[0].id });
+  }
+
+  async function hasOperation({
+    payer_account_id,
+    operation_id,
+  }: {
+    payer_account_id: string;
+    operation_id: string;
+  }): Promise<boolean> {
+    await assertFundingPayerHomeBay(payer_account_id);
+    assertUuid(operation_id);
+    const { rows } = await getPool().query(
+      `SELECT 1 FROM course_funding_approval_intents
+        WHERE payer_account_id=$1 AND operation_id=$2`,
+      [payer_account_id, operation_id],
+    );
+    return rows.length === 1;
   }
 
   async function propose({
@@ -451,6 +477,7 @@ export function createCourseFundingApprovals<
     retrieve,
     status,
     statusByOperation,
+    hasOperation,
     approve,
     approval_origin: origin,
   };
@@ -561,6 +588,15 @@ export async function proposeCourseFundingPoolChange(opts: {
   if (!active)
     throw new Error("Trusted financial approval is not configured on this bay");
   return allocationStatus(await active.propose(opts));
+}
+
+export async function hasCourseFundingPoolChangeApproval(opts: {
+  payer_account_id: string;
+  operation_id: string;
+}): Promise<boolean> {
+  if (!active)
+    throw new Error("Trusted financial approval is not configured on this bay");
+  return await active.hasOperation(opts);
 }
 
 export async function proposeVmPersonalFundingApproval(opts: {

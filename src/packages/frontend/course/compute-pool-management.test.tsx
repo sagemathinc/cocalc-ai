@@ -30,6 +30,9 @@ const pool: CourseFundingPoolSummary = {
   spent_usd: "0",
   reserved_usd: "0",
   released_usd: "0",
+  approval_limit_usd: "100",
+  approval_starts_at: "2026-01-01T00:00:00Z",
+  approval_ends_at: "2030-01-01T00:00:00Z",
   starts_at: "2026-01-01T00:00:00Z",
   ends_at: "2030-01-01T00:00:00Z",
   grants: [
@@ -61,14 +64,26 @@ function fixture() {
         ...pool,
         state: terms.action === "close" ? "closed" : "active",
       },
+      requires_financial_approval:
+        terms.amount_usd != null && Number(terms.amount_usd) > 100,
+      requires_course_access: false,
       as_of: new Date().toISOString(),
     })),
-    proposePoolChange: jest.fn().mockResolvedValue({
-      id: "intent",
-      status: "pending",
-      approval_url: "https://approve.example.test/pool",
-      expires_at: "2030-01-01T00:00:00Z",
-    }),
+    proposePoolChange: jest.fn().mockImplementation(async ({ terms }) =>
+      terms.amount_usd != null && Number(terms.amount_usd) > 100
+        ? {
+            id: "intent",
+            status: "pending",
+            approval_url: "https://approve.example.test/pool",
+            expires_at: "2030-01-01T00:00:00Z",
+          }
+        : {
+            id: "operation",
+            status: "approved",
+            pool_id: pool.id,
+            expires_at: new Date().toISOString(),
+          },
+    ),
     getAllocationStatus: jest.fn().mockResolvedValue({
       id: "intent",
       status: "pending",
@@ -130,11 +145,9 @@ it("adjusts exact pool and student totals through server preview and isolated ap
     }),
   });
   expect(f.api.proposePoolChange).not.toHaveBeenCalled();
-  await user.click(
-    screen.getByRole("button", { name: "Request pool authorization" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   const link = await screen.findByRole("link", {
-    name: "Review pool change and authorize",
+    name: "Authorize",
   });
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
   expect(screen.getByRole("button", { name: "Close pool" })).toBeDisabled();
@@ -144,7 +157,7 @@ it("adjusts exact pool and student totals through server preview and isolated ap
     expires_at: "2030-01-01T00:00:00Z",
   });
   await waitFor(() => expect(f.onUpdated).toHaveBeenCalled());
-  expect(await screen.findByText("Pool change approved")).toBeVisible();
+  expect(await screen.findByText("Pool updated")).toBeVisible();
 });
 
 it("revokes selected grants without changing pool backing and supports Escape focus restoration", async () => {
@@ -180,14 +193,10 @@ it("closes only through preview and proposal, retaining the same operation ID on
   f.api.proposePoolChange.mockRejectedValueOnce(Error("Network unavailable"));
   await user.click(screen.getByRole("button", { name: "Close pool" }));
   await user.click(screen.getByRole("button", { name: "Preview pool change" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Request pool authorization" }),
-  );
+  await user.click(await screen.findByRole("button", { name: "Save changes" }));
   expect(await screen.findByText("Network unavailable")).toBeVisible();
-  await user.click(
-    screen.getByRole("button", { name: "Request pool authorization" }),
-  );
-  await screen.findByRole("link", { name: "Review pool change and authorize" });
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  await waitFor(() => expect(f.onUpdated).toHaveBeenCalled());
   expect(f.api.proposePoolChange.mock.calls[0]).toEqual(
     f.api.proposePoolChange.mock.calls[1],
   );
@@ -268,7 +277,7 @@ it("applies a bulk student ceiling and matches the exact pool total", async () =
   });
 });
 
-it("does not bypass authorization after an expired intent", async () => {
+it("does not bypass authorization after an expired expansion intent", async () => {
   const f = fixture(),
     user = userEvent.setup();
   f.api.getAllocationStatus.mockResolvedValue({
@@ -276,15 +285,19 @@ it("does not bypass authorization after an expired intent", async () => {
     status: "expired",
     expires_at: "2026-01-01T00:00:00Z",
   });
-  await user.click(screen.getByRole("button", { name: "Close pool" }));
-  await user.click(screen.getByRole("button", { name: "Preview pool change" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Request pool authorization" }),
+  await user.click(screen.getByRole("button", { name: "Adjust budget" }));
+  fireEvent.change(
+    screen.getByRole("spinbutton", { name: "Total pool ceiling (USD)" }),
+    { target: { value: "120" } },
   );
-  expect(await screen.findByText("Pool change expired")).toBeVisible();
+  fireEvent.change(
+    screen.getByRole("spinbutton", { name: "Ceiling for Alice (USD)" }),
+    { target: { value: "120" } },
+  );
+  await user.click(screen.getByRole("button", { name: "Preview pool change" }));
+  await user.click(await screen.findByRole("button", { name: "Authorize" }));
+  expect(await screen.findByText("Authorization expired")).toBeVisible();
   expect(f.onUpdated).not.toHaveBeenCalled();
-  expect(
-    screen.queryByRole("link", { name: "Review pool change and authorize" }),
-  ).toBeNull();
-  expect(screen.getByRole("button", { name: "Close pool" })).toBeEnabled();
+  expect(screen.queryByRole("link", { name: "Authorize" })).toBeNull();
+  expect(screen.getByRole("button", { name: "Adjust budget" })).toBeEnabled();
 });

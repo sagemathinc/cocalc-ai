@@ -43,6 +43,13 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
 );
+jest.mock("@cocalc/server/compute/funding/rollout", () => ({
+  assertSponsorshipAdmission: async () => ({ checked_at: new Date() }),
+  getSponsorshipAvailability: async () => ({
+    enabled: true,
+    available: true,
+  }),
+}));
 
 let unregister: () => void;
 beforeAll(async () => {
@@ -146,63 +153,80 @@ it.each(["deleted", "removed collaborator"])(
       );
     for (const actor of [f.student, f.outsider])
       expect((await client(actor).getOwnedPools()).pools).toEqual([]);
-    const requests: CourseFundingPoolChangeDraft[] = [
-      { ...f.base, action: "close" },
-      {
-        ...f.base,
-        action: "revise",
-        grants: [
-          {
-            grant_id: f.grant.id,
-            expected_version: f.grant.version,
-            action: "revoke",
-          },
-        ],
-      },
-      {
-        ...f.base,
-        action: "revise",
-        amount_usd: "50",
-        grants: [
-          {
-            grant_id: f.grant.id,
-            expected_version: f.grant.version,
-            action: "revise",
-            amount_usd: "50",
-          },
-        ],
-      },
-    ];
+    const current = async () =>
+      (await client(f.payer).getCourseSummary(f.course)).pools[0];
+    const requests: CourseFundingPoolChangeDraft[] = [];
+    let latest = await current();
+    requests.push({
+      ...f.base,
+      expected_version: latest.version!,
+      action: "revise",
+      amount_usd: "50",
+      grants: [
+        {
+          grant_id: latest.grants[0].id,
+          expected_version: latest.grants[0].version!,
+          action: "revise",
+          amount_usd: "50",
+        },
+      ],
+    });
     for (const terms of requests) {
-      expect(
-        (await client(f.payer).previewPoolChange({ terms }))
-          .requires_course_access,
-      ).toBe(false);
+      const preview = await client(f.payer).previewPoolChange({ terms });
+      expect(preview.requires_course_access).toBe(false);
+      expect(preview.requires_financial_approval).toBe(false);
       const operation_id = randomUUID();
       const proposed = await client(f.payer).proposePoolChange({
         terms,
         operation_id,
       });
       expect(proposed).toMatchObject({
-        status: "pending",
-        approval_url: expect.stringContaining(
-          "https://approve.example.test/funding/",
-        ),
+        status: "approved",
+        pool_id: f.base.pool_id,
       });
       expect(
         await client(f.payer).proposePoolChange({ terms, operation_id }),
       ).toEqual(proposed);
-      for (const actor of [f.student, f.outsider]) {
-        await expect(
-          client(actor).previewPoolChange({ terms }),
-        ).rejects.toMatchObject({ code: "funding_not_found" });
-        await expect(
-          client(actor).proposePoolChange({
-            terms,
-            operation_id: randomUUID(),
-          }),
-        ).rejects.toMatchObject({ code: "funding_not_found" });
-      }
+    }
+    latest = await current();
+    const revoke: CourseFundingPoolChangeDraft = {
+      ...f.base,
+      expected_version: latest.version!,
+      action: "revise",
+      grants: [
+        {
+          grant_id: latest.grants[0].id,
+          expected_version: latest.grants[0].version!,
+          action: "revoke",
+        },
+      ],
+    };
+    await expect(
+      client(f.payer).proposePoolChange({
+        terms: revoke,
+        operation_id: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ status: "approved" });
+    latest = await current();
+    await expect(
+      client(f.payer).proposePoolChange({
+        terms: {
+          ...f.base,
+          expected_version: latest.version!,
+          action: "close",
+        },
+        operation_id: randomUUID(),
+      }),
+    ).resolves.toMatchObject({ status: "approved" });
+    for (const actor of [f.student, f.outsider]) {
+      await expect(
+        client(actor).previewPoolChange({
+          terms: {
+            ...f.base,
+            action: "close",
+          },
+        }),
+      ).rejects.toMatchObject({ code: "funding_not_found" });
     }
     expect(mockProjectBay).not.toHaveBeenCalled();
     expect(mockProjectAccess).not.toHaveBeenCalled();
@@ -242,6 +266,166 @@ it("returns only the beneficiary's authoritative pool-limited source through the
     available_usd: "0",
     available_for_new_resources: false,
   });
+});
+
+it("requires isolated approval only when the aggregate pool envelope expands", async () => {
+  const f = await fixture();
+  mockProjectBay
+    .mockReset()
+    .mockResolvedValue({ bay_id: getConfiguredBayId() });
+  mockProjectAccess.mockReset().mockResolvedValue(undefined);
+  const withinEnvelope: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    action: "revise",
+    amount_usd: "80",
+    grants: [
+      {
+        grant_id: f.grant.id,
+        expected_version: f.grant.version,
+        action: "revise",
+        amount_usd: "80",
+      },
+    ],
+  };
+  expect(
+    (await client(f.payer).previewPoolChange({ terms: withinEnvelope }))
+      .requires_financial_approval,
+  ).toBe(false);
+  await expect(
+    client(f.payer).proposePoolChange({
+      operation_id: randomUUID(),
+      terms: withinEnvelope,
+    }),
+  ).resolves.toMatchObject({ status: "approved", pool_id: f.base.pool_id });
+
+  let current = (await client(f.payer).getCourseSummary(f.course)).pools[0];
+  const increaseStudentWithinEnvelope: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    expected_version: current.version!,
+    action: "revise",
+    amount_usd: "100",
+    grants: [
+      {
+        grant_id: current.grants[0].id,
+        expected_version: current.grants[0].version!,
+        action: "revise",
+        amount_usd: "95",
+      },
+    ],
+  };
+  expect(
+    (
+      await client(f.payer).previewPoolChange({
+        terms: increaseStudentWithinEnvelope,
+      })
+    ).requires_financial_approval,
+  ).toBe(false);
+  await expect(
+    client(f.payer).proposePoolChange({
+      operation_id: randomUUID(),
+      terms: increaseStudentWithinEnvelope,
+    }),
+  ).resolves.toMatchObject({ status: "approved" });
+
+  current = (await client(f.payer).getCourseSummary(f.course)).pools[0];
+  expect(current).toMatchObject({
+    approval_limit_usd: "100.0000000000",
+  });
+  const expanded: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    expected_version: current.version!,
+    action: "revise",
+    amount_usd: "120",
+  };
+  const preview = await client(f.payer).previewPoolChange({ terms: expanded });
+  expect(preview.requires_financial_approval).toBe(true);
+  await expect(
+    client(f.payer).proposePoolChange({
+      operation_id: randomUUID(),
+      terms: expanded,
+    }),
+  ).resolves.toMatchObject({
+    status: "pending",
+    approval_url: expect.stringContaining(
+      "https://approve.example.test/funding/",
+    ),
+  });
+});
+
+it("allows dates to move inside their approved window but authorizes an extension", async () => {
+  const f = await fixture();
+  mockProjectBay
+    .mockReset()
+    .mockResolvedValue({ bay_id: getConfiguredBayId() });
+  mockProjectAccess.mockReset().mockResolvedValue(undefined);
+  const originalEnd = f.allocation.pool.ends_at.toISOString();
+  const shorterEnd = new Date(
+    f.allocation.pool.ends_at.getTime() - 3_600_000,
+  ).toISOString();
+  const shorter: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    action: "revise",
+    ends_at: shorterEnd,
+    grants: [
+      {
+        grant_id: f.grant.id,
+        expected_version: f.grant.version,
+        action: "revise",
+        ends_at: shorterEnd,
+      },
+    ],
+  };
+  await expect(
+    client(f.payer).proposePoolChange({
+      operation_id: randomUUID(),
+      terms: shorter,
+    }),
+  ).resolves.toMatchObject({ status: "approved" });
+  let current = (await client(f.payer).getCourseSummary(f.course)).pools[0];
+  const restore: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    expected_version: current.version!,
+    action: "revise",
+    ends_at: originalEnd,
+    grants: [
+      {
+        grant_id: current.grants[0].id,
+        expected_version: current.grants[0].version!,
+        action: "revise",
+        ends_at: originalEnd,
+      },
+    ],
+  };
+  expect(
+    (await client(f.payer).previewPoolChange({ terms: restore }))
+      .requires_financial_approval,
+  ).toBe(false);
+  await client(f.payer).proposePoolChange({
+    operation_id: randomUUID(),
+    terms: restore,
+  });
+  current = (await client(f.payer).getCourseSummary(f.course)).pools[0];
+  const extendedEnd = new Date(
+    f.allocation.pool.ends_at.getTime() + 3_600_000,
+  ).toISOString();
+  const extend: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    expected_version: current.version!,
+    action: "revise",
+    ends_at: extendedEnd,
+    grants: [
+      {
+        grant_id: current.grants[0].id,
+        expected_version: current.grants[0].version!,
+        action: "revise",
+        ends_at: extendedEnd,
+      },
+    ],
+  };
+  expect(
+    (await client(f.payer).previewPoolChange({ terms: extend }))
+      .requires_financial_approval,
+  ).toBe(true);
 });
 
 it("requires owning-project permission for pool/grant increases or expanded dates at preview and proposal", async () => {

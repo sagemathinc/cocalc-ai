@@ -595,6 +595,8 @@ Table({
             hide_navbar_membership: false,
             low_credit_notifications: false,
             low_credit_threshold_usd: 10,
+            low_sponsored_compute_notifications: false,
+            low_sponsored_compute_threshold_usd: 10,
             cookie_consent: null,
           },
           display_name: "",

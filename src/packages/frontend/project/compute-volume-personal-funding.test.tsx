@@ -64,10 +64,9 @@ it("previews storage by keyboard and proposes only the exact reviewed disk terms
   expect(screen.getByText("Research data")).toBeVisible();
   expect(screen.getByText("$0.003")).toBeVisible();
   expect(api.proposeVolumePersonalFunding).not.toHaveBeenCalled();
-  await user.click(
-    screen.getByRole("button", { name: "Request storage authorization" }),
-  );
-  await screen.findByRole("link", { name: "Review storage and authorize" });
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
+  await screen.findByRole("link", { name: "Authorize" });
+  expect(screen.getByText("Authorization required")).toBeVisible();
   expect(api.proposeVolumePersonalFunding.mock.calls[0][0].terms).toEqual(
     api.previewVolumePersonalFunding.mock.calls[0][0].terms,
   );

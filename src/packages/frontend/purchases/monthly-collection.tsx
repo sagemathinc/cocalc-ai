@@ -119,6 +119,24 @@ export default function MonthlyCollection({
               I authorize monthly collection from my saved payment method.
             </Checkbox>
           )}
+          {!!pending.length && (
+            <Alert
+              type="warning"
+              showIcon
+              role="status"
+              title="Authorization required"
+              description={pending.map((p) => (
+                <FinancialApprovalLink
+                  key={p.intent_id}
+                  approvalUrl={p.approval_url}
+                  buttonProps={{ type: "primary" }}
+                >
+                  Authorize
+                </FinancialApprovalLink>
+              ))}
+              style={{ marginTop: 12 }}
+            />
+          )}
           <div
             style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 12 }}
           >
@@ -134,19 +152,9 @@ export default function MonthlyCollection({
                 disabled={busy || (!enabled && !accepted)}
                 onClick={propose}
               >
-                {enabled
-                  ? "Request disabling monthly collection"
-                  : "Request monthly collection"}
+                {enabled ? "Disable monthly collection" : "Authorize"}
               </Button>
             )}
-            {pending.map((p) => (
-              <FinancialApprovalLink
-                key={p.intent_id}
-                approvalUrl={p.approval_url}
-              >
-                Review monthly collection and authorize
-              </FinancialApprovalLink>
-            ))}
             <Button
               style={{
                 whiteSpace: "normal",

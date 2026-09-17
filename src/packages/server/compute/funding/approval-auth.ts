@@ -275,7 +275,7 @@ export async function issueFundingApprovalSession(opts: {
   origin: string;
 }) {
   const token = randomBytes(32).toString("hex");
-  const expire = new Date(Date.now() + 15 * 60_000);
+  const expire = new Date(Date.now() + 8 * 60 * 60_000);
   await recordNewAuthSession({
     account_id: opts.auth.account_id,
     session_hash: fundingSessionHash(token),
@@ -293,7 +293,8 @@ export async function issueFundingApprovalSession(opts: {
     fresh_auth_until: expire,
     metadata: {
       financial_approval_origin: opts.origin,
-      financial_intent_id: opts.intent_id,
+      financial_approval_scope: "account",
+      authenticated_for_intent_id: opts.intent_id,
     },
   });
   return { account_id: opts.auth.account_id, token };
@@ -321,7 +322,8 @@ export async function requireFundingApprovalSession(opts: {
     (opts.payer_account_id != null &&
       session.account_id !== opts.payer_account_id) ||
     session.metadata?.financial_approval_origin !== opts.origin ||
-    session.metadata?.financial_intent_id !== opts.intent_id
+    (session.metadata?.financial_approval_scope !== "account" &&
+      session.metadata?.financial_intent_id !== opts.intent_id)
   ) {
     throw new Error("Financial sign-in required");
   }

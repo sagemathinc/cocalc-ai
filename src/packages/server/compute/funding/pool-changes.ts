@@ -3,6 +3,8 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
+import { createHash } from "node:crypto";
+import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import type {
   CourseFundingGrantChange,
@@ -28,6 +30,10 @@ import { enqueueCourseFundingReceiptInTransaction } from "./receipts";
 
 function invalid(message: string): never {
   throw new ComputeFundingError("invalid_funding_request", message);
+}
+
+function poolChangeRequestHash(terms: CourseFundingPoolChangeDraft): string {
+  return createHash("sha256").update(JSON.stringify(terms)).digest("hex");
 }
 
 function version(value: unknown): number {
@@ -179,6 +185,13 @@ function publicPool(
     lane: pool.lane,
     version: pool.version,
     allow_overcommit: pool.allow_overcommit,
+    approval_limit_usd:
+      pool.approval_limit_usd ??
+      moneyToDbString(toDecimal(pool.authorized_usd).minus(pool.released_usd)),
+    approval_starts_at: (
+      pool.approval_starts_at ?? pool.starts_at
+    ).toISOString(),
+    approval_ends_at: (pool.approval_ends_at ?? pool.ends_at).toISOString(),
     ...budget(pool),
     starts_at: pool.starts_at.toISOString(),
     ends_at: pool.ends_at.toISOString(),
@@ -313,10 +326,24 @@ async function plan(
         );
     }
   }
+  const approvalLimit = toDecimal(
+    current.approval_limit_usd ??
+      toDecimal(current.authorized_usd).minus(current.released_usd),
+  );
+  const approvalStarts = current.approval_starts_at ?? current.starts_at;
+  const approvalEnds = current.approval_ends_at ?? current.ends_at;
+  const requiresFinancialApproval =
+    terms.action !== "close" &&
+    (toDecimal(pool.authorized_usd)
+      .minus(pool.released_usd)
+      .gt(approvalLimit) ||
+      pool.starts_at < approvalStarts ||
+      pool.ends_at > approvalEnds);
   return {
     current,
     pool,
     grants,
+    requires_financial_approval: requiresFinancialApproval,
     requires_course_access:
       terms.action !== "close" &&
       (expandsCommitment(current, pool) ||
@@ -356,6 +383,7 @@ export async function previewCourseFundingPoolChangeInTransaction(
   return {
     terms,
     pool: publicPool(result.pool, result.grants),
+    requires_financial_approval: result.requires_financial_approval,
     requires_course_access: result.requires_course_access,
     as_of: result.as_of,
     ...(result.available_backing_usd === undefined
@@ -379,7 +407,59 @@ export async function changeCourseFundingPoolInTransaction(
 ): Promise<{ pool_id: string }> {
   const payer = fundingId(opts.payer_account_id, "Payer account");
   const terms = normalizeCourseFundingPoolChangeDraft(opts.terms);
-  const { current, pool, grants } = await plan(db, payer, terms);
+  const planned = await plan(db, payer, terms);
+  return await applyPlannedPoolChange(db, {
+    payer,
+    operation_id: opts.operation_id,
+    terms,
+    home_bay_by_account_id: opts.home_bay_by_account_id,
+    planned,
+    extend_approval_envelope: true,
+  });
+}
+
+async function applyPlannedPoolChange(
+  db: PoolClient,
+  opts: {
+    payer: string;
+    operation_id: string;
+    terms: CourseFundingPoolChangeDraft;
+    home_bay_by_account_id: Record<string, string>;
+    planned: Awaited<ReturnType<typeof plan>>;
+    extend_approval_envelope?: boolean;
+  },
+): Promise<{ pool_id: string }> {
+  const { payer, terms, planned } = opts;
+  const { current, pool, grants } = planned;
+  pool.approval_limit_usd ??= moneyToDbString(
+    toDecimal(current.authorized_usd).minus(current.released_usd),
+  );
+  pool.approval_starts_at ??= current.starts_at;
+  pool.approval_ends_at ??= current.ends_at;
+  if (opts.extend_approval_envelope && planned.requires_financial_approval) {
+    const currentLimit = toDecimal(
+      current.approval_limit_usd ??
+        toDecimal(current.authorized_usd).minus(current.released_usd),
+    );
+    const requestedLimit = toDecimal(pool.authorized_usd).minus(
+      pool.released_usd,
+    );
+    pool.approval_limit_usd = moneyToDbString(
+      requestedLimit.gt(currentLimit) ? requestedLimit : currentLimit,
+    );
+    pool.approval_starts_at = new Date(
+      Math.min(
+        (current.approval_starts_at ?? current.starts_at).getTime(),
+        pool.starts_at.getTime(),
+      ),
+    );
+    pool.approval_ends_at = new Date(
+      Math.max(
+        (current.approval_ends_at ?? current.ends_at).getTime(),
+        pool.ends_at.getTime(),
+      ),
+    );
+  }
   const added = toDecimal(pool.authorized_usd).minus(current.authorized_usd);
   if (added.gt(0)) {
     const { rows } = await db.query(
@@ -400,7 +480,8 @@ export async function changeCourseFundingPoolInTransaction(
       amount_usd: moneyToDbString(released),
     });
   await db.query(
-    `UPDATE compute_funding_pools SET authorized_usd=$3,released_usd=$4,starts_at=$5,ends_at=$6,state=$7,version=$8,updated_at=clock_timestamp()
+    `UPDATE compute_funding_pools SET authorized_usd=$3,released_usd=$4,starts_at=$5,ends_at=$6,state=$7,version=$8,
+       approval_limit_usd=$9,approval_starts_at=$10,approval_ends_at=$11,updated_at=clock_timestamp()
     WHERE id=$1 AND payer_account_id=$2`,
     [
       pool.id,
@@ -411,6 +492,9 @@ export async function changeCourseFundingPoolInTransaction(
       pool.ends_at,
       pool.state,
       pool.version,
+      pool.approval_limit_usd,
+      pool.approval_starts_at,
+      pool.approval_ends_at,
     ],
   );
   for (const grant of grants) {
@@ -443,4 +527,89 @@ export async function changeCourseFundingPoolInTransaction(
     home_bay_by_account_id: opts.home_bay_by_account_id,
   });
   return { pool_id: pool.id };
+}
+
+/** Apply a pool edit under its existing aggregate amount/date mandate.
+ * The operation journal makes an unknown network outcome safe to retry. The
+ * envelope classification is recomputed while the payer and pool are locked.
+ */
+export async function changeCourseFundingPoolWithinEnvelopeInTransaction(
+  db: PoolClient,
+  opts: {
+    payer_account_id: string;
+    operation_id: string;
+    terms: CourseFundingPoolChangeDraft;
+    home_bay_by_account_id: Record<string, string>;
+  },
+): Promise<{ pool_id: string; completed_at: string }> {
+  const payer = fundingId(opts.payer_account_id, "Payer account");
+  const operation_id = fundingId(opts.operation_id, "Funding operation");
+  const terms = normalizeCourseFundingPoolChangeDraft(opts.terms);
+  const request_hash = poolChangeRequestHash(terms);
+  const prior = await db.query<{
+    request_hash: string;
+    pool_id: string;
+    created_at: Date;
+  }>(
+    `SELECT request_hash,pool_id,created_at FROM course_funding_pool_changes
+      WHERE payer_account_id=$1 AND operation_id=$2`,
+    [payer, operation_id],
+  );
+  if (prior.rows[0]) {
+    if (prior.rows[0].request_hash !== request_hash)
+      invalid("Funding operation terms changed; use a new operation ID.");
+    return {
+      pool_id: prior.rows[0].pool_id,
+      completed_at: prior.rows[0].created_at.toISOString(),
+    };
+  }
+  const planned = await plan(db, payer, terms);
+  if (planned.requires_financial_approval)
+    throw new ComputeFundingError(
+      "funding_conflict",
+      "This change increases the approved course spending envelope.",
+    );
+  const result = await applyPlannedPoolChange(db, {
+    payer,
+    operation_id,
+    terms,
+    home_bay_by_account_id: opts.home_bay_by_account_id,
+    planned,
+  });
+  const inserted = await db.query<{ created_at: Date }>(
+    `INSERT INTO course_funding_pool_changes
+      (payer_account_id,operation_id,request_hash,pool_id)
+      VALUES ($1,$2,$3,$4) RETURNING created_at`,
+    [payer, operation_id, request_hash, result.pool_id],
+  );
+  return {
+    ...result,
+    completed_at: inserted.rows[0].created_at.toISOString(),
+  };
+}
+
+export async function getCourseFundingPoolChangeOperation(opts: {
+  payer_account_id: string;
+  operation_id: string;
+  terms: CourseFundingPoolChangeDraft;
+}): Promise<{ pool_id: string; completed_at: string } | undefined> {
+  const payer = fundingId(opts.payer_account_id, "Payer account");
+  const operation_id = fundingId(opts.operation_id, "Funding operation");
+  const terms = normalizeCourseFundingPoolChangeDraft(opts.terms);
+  const { rows } = await getPool().query<{
+    request_hash: string;
+    pool_id: string;
+    created_at: Date;
+  }>(
+    `SELECT request_hash,pool_id,created_at FROM course_funding_pool_changes
+      WHERE payer_account_id=$1 AND operation_id=$2`,
+    [payer, operation_id],
+  );
+  if (!rows[0]) return;
+  if (rows[0].request_hash !== poolChangeRequestHash(terms))
+    invalid("Funding operation terms changed; use a new operation ID.");
+  return {
+    pool_id: rows[0].pool_id,
+    completed_at: rows[0].created_at.toISOString(),
+  };
 }

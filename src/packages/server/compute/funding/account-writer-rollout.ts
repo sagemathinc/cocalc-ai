@@ -82,6 +82,8 @@ export async function verifyFundingAccountWriters(
         "compute_vms",
         "compute_volumes",
         "compute_resource_work",
+        "course_funding_approval_intents",
+        "course_funding_pool_changes",
       ],
     ],
   );

@@ -103,8 +103,9 @@ it("supports keyboard preview, isolated approval and focus restoration", async (
   expect(service.proposeCreditTransfer).not.toHaveBeenCalled();
   await user.click(screen.getByRole("button", { name: "Authorize" }));
   const link = await screen.findByRole("link", {
-    name: "Review transfer and authorize",
+    name: "Authorize",
   });
+  expect(screen.getByText("Authorization required")).toBeVisible();
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
   expect(screen.getByRole("textbox", { name: "Amount (USD)" })).toBeDisabled();
   await user.click(
@@ -126,7 +127,7 @@ it("retries an uncertain proposal with the same operation and terms", async () =
   await user.click(await screen.findByRole("button", { name: "Authorize" }));
   await screen.findByRole("alert");
   await user.click(screen.getByRole("button", { name: "Authorize" }));
-  await screen.findByRole("link", { name: "Review transfer and authorize" });
+  await screen.findByRole("link", { name: "Authorize" });
   expect(service.proposeCreditTransfer.mock.calls[0][0]).toEqual(
     service.proposeCreditTransfer.mock.calls[1][0],
   );
@@ -195,9 +196,10 @@ it("resumes a durable pending approval after reopening billing without reproposi
       screen.getByRole("heading", { name: "Transfer preview" }),
     ).toHaveFocus(),
   );
-  expect(
-    screen.getByRole("link", { name: "Review transfer and authorize" }),
-  ).toHaveAttribute("href", "https://approve.example.test/funding/existing");
+  expect(screen.getByRole("link", { name: "Authorize" })).toHaveAttribute(
+    "href",
+    "https://approve.example.test/funding/existing",
+  );
   expect(service.proposeCreditTransfer).not.toHaveBeenCalled();
   await user.click(
     screen.getByRole("button", { name: "Refresh transfer status" }),

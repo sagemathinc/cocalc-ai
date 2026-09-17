@@ -6,21 +6,17 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
 jest.mock("@cocalc/frontend/components/icon", () => ({ Icon: () => null }));
 function fixture() {
   return {
-    getMonthlyCollection: jest
-      .fn()
-      .mockResolvedValue({
-        consent: { enabled: false, version: 0, terms_version: 1 },
-        available: true,
-        legacy_enabled: false,
-        pending: [],
-      }),
-    proposeMonthlyCollection: jest
-      .fn()
-      .mockResolvedValue({
-        intent_id: "intent",
-        approval_url: "https://approve.example.test/funding/intent",
-        status: "pending",
-      }),
+    getMonthlyCollection: jest.fn().mockResolvedValue({
+      consent: { enabled: false, version: 0, terms_version: 1 },
+      available: true,
+      legacy_enabled: false,
+      pending: [],
+    }),
+    proposeMonthlyCollection: jest.fn().mockResolvedValue({
+      intent_id: "intent",
+      approval_url: "https://approve.example.test/funding/intent",
+      status: "pending",
+    }),
   } satisfies jest.Mocked<MonthlyCollectionApi>;
 }
 it("requires explicit consent, then separate approval, and restores focus after confirmation", async () => {
@@ -29,7 +25,7 @@ it("requires explicit consent, then separate approval, and restores focus after 
   const user = userEvent.setup();
   const checkbox = await screen.findByRole("checkbox");
   const button = screen.getByRole("button", {
-    name: "Request monthly collection",
+    name: "Authorize",
   });
   expect(button).toBeDisabled();
   await user.click(checkbox);
@@ -37,10 +33,11 @@ it("requires explicit consent, then separate approval, and restores focus after 
   expect(button).toHaveFocus();
   await user.keyboard("{Enter}");
   const link = await screen.findByRole("link", {
-    name: "Review monthly collection and authorize",
+    name: "Authorize",
   });
+  expect(screen.getByText("Authorization required")).toBeVisible();
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
-  expect(screen.getByRole("status")).toHaveTextContent("disabled");
+  expect(screen.getByText("Monthly collection is disabled.")).toBeVisible();
   expect(api.proposeMonthlyCollection).toHaveBeenCalledWith(
     expect.objectContaining({
       terms: {
@@ -65,7 +62,7 @@ it("requires explicit consent, then separate approval, and restores focus after 
       screen.getByRole("heading", { name: "Monthly collection" }),
     ).toHaveFocus(),
   );
-  expect(screen.getByRole("status")).toHaveTextContent("enabled");
+  expect(screen.getByText("Monthly collection is enabled.")).toBeVisible();
 });
 it("retries a lost proposal with the same operation and can resume a saved approval", async () => {
   const api = fixture();
@@ -73,13 +70,9 @@ it("retries a lost proposal with the same operation and can resume a saved appro
   render(<MonthlyCollection api={api} />);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("checkbox"));
-  await user.click(
-    screen.getByRole("button", { name: "Request monthly collection" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   await screen.findByRole("alert");
-  await user.click(
-    screen.getByRole("button", { name: "Request monthly collection" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   await screen.findByRole("link");
   expect(api.proposeMonthlyCollection.mock.calls[0]).toEqual(
     api.proposeMonthlyCollection.mock.calls[1],
@@ -97,7 +90,7 @@ it("allows disabling legacy enrollment", async () => {
   const user = userEvent.setup();
   await user.click(
     await screen.findByRole("button", {
-      name: "Request disabling monthly collection",
+      name: "Disable monthly collection",
     }),
   );
   expect(api.proposeMonthlyCollection).toHaveBeenCalledWith(
@@ -111,9 +104,7 @@ it("clears an expired proposal and requires a new opt-in", async () => {
   render(<MonthlyCollection api={api} />);
   const user = userEvent.setup();
   await user.click(await screen.findByRole("checkbox"));
-  await user.click(
-    screen.getByRole("button", { name: "Request monthly collection" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   await screen.findByRole("link");
   await user.click(
     screen.getByRole("button", { name: "Refresh monthly collection" }),
@@ -122,9 +113,7 @@ it("clears an expired proposal and requires a new opt-in", async () => {
     expect(screen.queryByRole("link")).not.toBeInTheDocument(),
   );
   expect(screen.getByRole("checkbox")).not.toBeChecked();
-  expect(
-    screen.getByRole("button", { name: "Request monthly collection" }),
-  ).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Authorize" })).toBeDisabled();
 });
 it("recovers a pending approval after reload without proposing another", async () => {
   const api = fixture();

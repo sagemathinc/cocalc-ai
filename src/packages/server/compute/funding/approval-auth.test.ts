@@ -31,7 +31,7 @@ const origin = "http://127.0.0.2:19200";
 beforeEach(() => {
   jest.clearAllMocks();
 });
-it("binds the independently verified session to origin, payer and intent", async () => {
+it("binds the reusable independently verified session to origin and payer", async () => {
   const now = new Date().toISOString();
   const result = await issueFundingApprovalSession({
     auth: {
@@ -53,10 +53,32 @@ it("binds the independently verified session to origin, payer and intent", async
       factor_level: "passkey",
       metadata: {
         financial_approval_origin: origin,
-        financial_intent_id: intent_id,
+        financial_approval_scope: "account",
+        authenticated_for_intent_id: intent_id,
       },
     }),
   );
+  const created = (recordNewAuthSession as jest.Mock).mock.calls[0][0];
+  const lifetime = created.fresh_auth_until.getTime() - Date.now();
+  expect(lifetime).toBeGreaterThan(7.9 * 60 * 60_000);
+  expect(lifetime).toBeLessThanOrEqual(8 * 60 * 60_000);
+});
+it("accepts the reusable approval session for another exact intent", async () => {
+  (getAuthSession as jest.Mock).mockResolvedValue({
+    account_id,
+    metadata: {
+      financial_approval_origin: origin,
+      financial_approval_scope: "account",
+    },
+  });
+  await expect(
+    requireFundingApprovalSession({
+      session_hash: "hash",
+      payer_account_id: account_id,
+      intent_id: randomUUID(),
+      origin,
+    }),
+  ).resolves.toBe(account_id);
 });
 it("rejects ordinary, wrong-intent and wrong-origin sessions", async () => {
   for (const metadata of [

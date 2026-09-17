@@ -167,6 +167,16 @@ Table({
       pg_check: "CHECK (lane IN ('prepaid', 'postpaid'))",
     },
     ...budgetFields(),
+    // The independently approved maximum is separate from the currently held
+    // budget, so a reduced live pool can be restored without reauthorization.
+    approval_limit_usd: {
+      type: "string",
+      pg_type: "NUMERIC(20,10)",
+      pg_check:
+        "CHECK (approval_limit_usd IS NULL OR (approval_limit_usd > 0 AND approval_limit_usd < 10000000000))",
+    },
+    approval_starts_at: { type: "timestamp" },
+    approval_ends_at: { type: "timestamp" },
     allow_overcommit: { type: "boolean", not_null: true, pg_default: "false" },
     starts_at: { type: "timestamp", not_null: true },
     ends_at: { type: "timestamp", not_null: true },

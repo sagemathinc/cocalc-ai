@@ -165,13 +165,17 @@ describe("isolated financial browser approval", () => {
       storage_retention_hours: 72,
     },
   };
-  const apply = jest.fn(async () => ({
-    ...intent,
-    status: "applied" as const,
-  }));
+  let applied = false;
+  const apply = jest.fn(async () => {
+    applied = true;
+    return { ...intent, status: "applied" as const };
+  });
   const approvals: any = {
     propose: jest.fn(),
-    retrieve: jest.fn(async () => intent),
+    retrieve: jest.fn(async () => ({
+      ...intent,
+      status: applied ? ("applied" as const) : intent.status,
+    })),
     status: jest.fn(async () => ({ status: "pending" })),
     approve: apply,
   };
@@ -208,9 +212,13 @@ describe("isolated financial browser approval", () => {
     });
   });
   beforeEach(async () => {
+    applied = false;
     loginEmail = `payer-${++loginNumber}@example.test`;
     apply.mockClear();
-    approvals.retrieve.mockImplementation(async () => intent);
+    approvals.retrieve.mockImplementation(async () => ({
+      ...intent,
+      status: applied ? ("applied" as const) : intent.status,
+    }));
     sessions.clear();
     (beginFundingApprovalPassword as jest.Mock).mockImplementation(
       async (opts) => {
@@ -313,6 +321,23 @@ describe("isolated financial browser approval", () => {
         intent_id: id,
         terms_hash: intent.terms_hash,
       }),
+    );
+    await page
+      .getByRole("heading", { name: "Authorization complete", level: 1 })
+      .waitFor();
+    expect(await page.getByRole("status").innerText()).toContain(
+      "You are done and can now close this tab.",
+    );
+    expect(await page.locator(".success-mark").innerText()).toBe("✓");
+    expect(
+      await page
+        .locator("details.receipt")
+        .evaluate((el) => (el as HTMLDetailsElement).open),
+    ).toBe(false);
+    const details = page.getByText("Show details");
+    await details.click();
+    expect(await page.locator("body").innerText()).toContain(
+      "student@example.test",
     );
   });
   it("supports passwordless email followed by a passkey", async () => {

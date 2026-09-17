@@ -245,20 +245,27 @@ export default function VmPersonalFunding({
             </Descriptions.Item>
           </Descriptions>
           {consent.state === "pending" && consent.approval_url && (
-            <FinancialApprovalLink
-              approvalUrl={consent.approval_url}
-              buttonProps={{
-                type: "primary",
-                style: {
-                  whiteSpace: "normal",
-                  height: "auto",
-                  minHeight: 32,
-                  maxWidth: "100%",
-                },
-              }}
-            >
-              Review personal funding and authorize
-            </FinancialApprovalLink>
+            <Alert
+              type="warning"
+              showIcon
+              title="Authorization required"
+              description={
+                <FinancialApprovalLink
+                  approvalUrl={consent.approval_url}
+                  buttonProps={{
+                    type: "primary",
+                    style: {
+                      whiteSpace: "normal",
+                      height: "auto",
+                      minHeight: 32,
+                      maxWidth: "100%",
+                    },
+                  }}
+                >
+                  Authorize
+                </FinancialApprovalLink>
+              }
+            />
           )}
           {outstanding && (
             <Button
@@ -447,7 +454,7 @@ export default function VmPersonalFunding({
                   disabled={blocked || previewStale}
                   icon={<Icon name="external-link" />}
                 >
-                  Request personal authorization
+                  Authorize
                 </Button>
               </Space>
             </section>

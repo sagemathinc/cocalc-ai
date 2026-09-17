@@ -13,6 +13,9 @@ import { template } from "./test/course-vm-template-fixture";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
 jest.mock("@cocalc/frontend/components/icon", () => ({ Icon: () => null }));
+jest.mock("@cocalc/frontend/account/low-credit-notification-setting", () => ({
+  SponsoredComputeReminder: () => <div>Sponsored pool alert</div>,
+}));
 beforeEach(() => {
   const getComputedStyle = window.getComputedStyle;
   jest
@@ -124,7 +127,7 @@ it("previews by keyboard, focuses the result and requests separate authorization
   expect(screen.getByText(/No credit is allocated yet/i)).toBeVisible();
   await user.click(screen.getByRole("button", { name: "Authorize" }));
   const link = await screen.findByRole("link", {
-    name: "Review allocation and authorize",
+    name: "Authorize",
   });
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
   expect(

@@ -33,7 +33,9 @@ import {
 } from "./compute-budget-model";
 import { CourseVmRecommendationsEditor } from "./course-vm-recommendations";
 import { ComputePoolManagement } from "./compute-pool-management";
+import { usableCeiling } from "./compute-pool-management-model";
 import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
+import { SponsoredComputeReminder } from "@cocalc/frontend/account/low-credit-notification-setting";
 
 type Summary = Awaited<ReturnType<ComputeFundingApi["getCourseSummary"]>>;
 type Preview = Awaited<ReturnType<ComputeFundingApi["previewAllocation"]>>;
@@ -308,6 +310,13 @@ export function ComputeBudget({
           Updated {new Date(summary.as_of).toLocaleString()}
         </Typography.Paragraph>
       )}
+      <section
+        aria-label="Sponsored compute alerts"
+        style={{ marginBottom: 16 }}
+      >
+        <Typography.Title level={5}>Spending alert</Typography.Title>
+        <SponsoredComputeReminder />
+      </section>
       {summary?.pools.map((pool) => (
         <section
           key={pool.id}
@@ -315,7 +324,7 @@ export function ComputeBudget({
           style={{ marginBottom: 24 }}
         >
           <Typography.Title level={5}>
-            {moneyToCurrency(pool.authorized_usd)} {pool.lane} budget
+            {moneyToCurrency(usableCeiling(pool))} {pool.lane} budget
           </Typography.Title>
           <p>
             {pool.state} · {new Date(pool.starts_at).toLocaleString()} to{" "}
@@ -326,6 +335,13 @@ export function ComputeBudget({
             {moneyToCurrency(pool.reserved_usd)} · Returned{" "}
             {moneyToCurrency(pool.released_usd)}
           </p>
+          <Typography.Paragraph type="secondary">
+            Secure authorization: up to{" "}
+            {moneyToCurrency(pool.approval_limit_usd)} from{" "}
+            {new Date(pool.approval_starts_at).toLocaleString()} through{" "}
+            {new Date(pool.approval_ends_at).toLocaleString()}. Changes within
+            this envelope do not require another secure authorization.
+          </Typography.Paragraph>
           <div
             role="region"
             aria-label="Student budget details"
@@ -398,13 +414,30 @@ export function ComputeBudget({
       {intent && (
         <div role="status" aria-live="polite" style={{ marginBottom: 16 }}>
           <Alert
-            type={intent.status === "approved" ? "success" : "info"}
+            type={
+              intent.status === "approved"
+                ? "success"
+                : intent.status === "rejected"
+                  ? "error"
+                  : "warning"
+            }
             showIcon
-            title={`Allocation ${intent.status}`}
+            title={
+              intent.status === "approved"
+                ? "Course budget authorized"
+                : intent.status === "pending"
+                  ? "Authorization required"
+                  : intent.status === "expired"
+                    ? "Authorization expired"
+                    : "Authorization rejected"
+            }
             description={
               pending && intent.approval_url ? (
-                <FinancialApprovalLink approvalUrl={intent.approval_url}>
-                  Review allocation and authorize
+                <FinancialApprovalLink
+                  approvalUrl={intent.approval_url}
+                  buttonProps={{ type: "primary" }}
+                >
+                  Authorize
                 </FinancialApprovalLink>
               ) : undefined
             }

@@ -16,6 +16,10 @@ const mockPropose = jest.fn();
 const mockStatus = jest.fn();
 const mockPreviewChange = jest.fn();
 const mockProposeChange = jest.fn();
+const mockHasPoolChangeApproval = jest.fn();
+const mockGetPoolChangeOperation = jest.fn();
+const mockApplyPoolChange = jest.fn();
+const mockPrepareRecipients = jest.fn();
 const mockSourcesOnBay = jest.fn();
 const mockRegistry = jest.fn();
 const mockSponsorship = jest.fn();
@@ -91,11 +95,20 @@ jest.mock("@cocalc/server/compute/funding/approvals", () => ({
   proposeCourseFundingAllocation: (...args) => mockPropose(...args),
   getCourseFundingAllocationStatus: (...args) => mockStatus(...args),
   proposeCourseFundingPoolChange: (...args) => mockProposeChange(...args),
+  hasCourseFundingPoolChangeApproval: (...args) =>
+    mockHasPoolChangeApproval(...args),
 }));
 jest.mock("@cocalc/server/compute/funding/pool-changes", () => ({
   ...jest.requireActual("@cocalc/server/compute/funding/pool-changes"),
   previewCourseFundingPoolChangeInTransaction: (...args) =>
     mockPreviewChange(...args),
+  getCourseFundingPoolChangeOperation: (...args) =>
+    mockGetPoolChangeOperation(...args),
+  changeCourseFundingPoolWithinEnvelopeInTransaction: (...args) =>
+    mockApplyPoolChange(...args),
+}));
+jest.mock("@cocalc/server/compute/funding/approval-recipients", () => ({
+  prepareFundingRecipientAccounts: (...args) => mockPrepareRecipients(...args),
 }));
 
 import * as handlers from "./compute-funding";
@@ -169,7 +182,21 @@ beforeEach(() => {
   );
   mockQuery.mockResolvedValue({ rows: [{ as_of: now }] });
   mockPolicy.mockResolvedValue({ available_backing_usd: "8.75" });
-  mockPreviewChange.mockResolvedValue({ requires_course_access: false });
+  mockPreviewChange.mockResolvedValue({
+    pool: { grants: [] },
+    requires_course_access: false,
+    requires_financial_approval: false,
+  });
+  mockHasPoolChangeApproval.mockResolvedValue(false);
+  mockGetPoolChangeOperation.mockResolvedValue(undefined);
+  mockApplyPoolChange.mockResolvedValue({
+    pool_id: intent,
+    completed_at: now.toISOString(),
+  });
+  mockPrepareRecipients.mockResolvedValue(async () => ({
+    [payer]: "home",
+    [beneficiary]: "home",
+  }));
   mockAccounts.mockResolvedValue([
     {
       account_id: beneficiary,
@@ -319,7 +346,7 @@ describe("compute funding principal and routing boundaries", () => {
       operation_id: operation,
       terms: change,
     });
-    expect(mockProposeChange).toHaveBeenCalled();
+    expect(mockApplyPoolChange).toHaveBeenCalled();
   });
 
   it("checks course collaboration at its owning bay before any backing read", async () => {
@@ -475,12 +502,16 @@ describe("read-only funding projections", () => {
     }
     expect(result).toEqual({
       as_of: now.toISOString(),
+      sponsorship: undefined,
       pools: [
         {
           id: "pool",
           state: "active",
           lane: "prepaid",
           ...money,
+          approval_limit_usd: "10.0000000000",
+          approval_starts_at: now.toISOString(),
+          approval_ends_at: terms.ends_at,
           starts_at: now.toISOString(),
           ends_at: terms.ends_at,
           grants: [
@@ -570,17 +601,23 @@ describe("read-only funding projections", () => {
       { query: mockQuery },
       { payer_account_id: payer, terms: change },
     );
-    expect(mockProposeChange).toHaveBeenCalledWith({
-      payer_account_id: payer,
-      operation_id: operation,
-      terms: change,
-    });
+    expect(mockApplyPoolChange).toHaveBeenCalledWith(
+      { query: mockQuery },
+      expect.objectContaining({
+        payer_account_id: payer,
+        operation_id: operation,
+        terms: change,
+      }),
+    );
     expect(mockProjectBay).not.toHaveBeenCalled();
   });
 
   it("blocks expanded pool previews when the owning project denies access", async () => {
     mockLocalAccess.mockRejectedValue(Error("permission denied"));
-    mockPreviewChange.mockResolvedValue({ requires_course_access: true });
+    mockPreviewChange.mockResolvedValue({
+      requires_course_access: true,
+      requires_financial_approval: true,
+    });
     await expect(
       client().previewPoolChange({
         terms: { ...change, action: "revise", amount_usd: "20" },
@@ -591,6 +628,7 @@ describe("read-only funding projections", () => {
   });
 
   it("leaves replay and version validation to the pool intent service", async () => {
+    mockHasPoolChangeApproval.mockResolvedValue(true);
     mockPreviewChange.mockRejectedValue(Error("stale version"));
     await client().proposePoolChange({
       operation_id: operation,

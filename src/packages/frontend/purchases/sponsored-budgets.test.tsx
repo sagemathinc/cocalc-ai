@@ -38,6 +38,7 @@ function fixture() {
       terms,
       pool: { ...pool, state: "closed", released_usd: "50" },
       requires_course_access: false,
+      requires_financial_approval: true,
       as_of: new Date().toISOString(),
     })),
     proposePoolChange: jest.fn().mockResolvedValue({
@@ -84,12 +85,10 @@ it("reaches payer closure by keyboard without course access or sponsorship enabl
       course_instance_id: pool.course_instance_id,
     },
   });
-  await user.click(
-    screen.getByRole("button", { name: "Request pool authorization" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   expect(
     await screen.findByRole("link", {
-      name: "Review pool change and authorize",
+      name: "Authorize",
     }),
   ).toHaveAttribute("href", "https://approve.example.test/funding/intent");
   expect(api.proposePoolChange).toHaveBeenCalledTimes(1);

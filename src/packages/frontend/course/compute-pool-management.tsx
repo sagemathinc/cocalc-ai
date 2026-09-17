@@ -248,16 +248,30 @@ export function ComputePoolManagement({
         >
           <Alert
             showIcon
-            type={intent.status === "approved" ? "success" : "info"}
-            title={`Pool change ${intent.status}`}
+            type={
+              intent.status === "approved"
+                ? "success"
+                : intent.status === "rejected"
+                  ? "error"
+                  : "warning"
+            }
+            title={
+              intent.status === "approved"
+                ? "Pool updated"
+                : intent.status === "pending"
+                  ? "Authorization required"
+                  : intent.status === "expired"
+                    ? "Authorization expired"
+                    : "Authorization rejected"
+            }
             description={
               <>
-                <div>
-                  Expires {new Date(intent.expires_at).toLocaleString()}
-                </div>
                 {pending && intent.approval_url && (
-                  <FinancialApprovalLink approvalUrl={intent.approval_url}>
-                    Review pool change and authorize
+                  <FinancialApprovalLink
+                    approvalUrl={intent.approval_url}
+                    buttonProps={{ type: "primary" }}
+                  >
+                    Authorize
                   </FinancialApprovalLink>
                 )}
               </>
@@ -526,13 +540,28 @@ export function ComputePoolManagement({
                   ))}
                 </ul>
                 <Button
-                  icon={<Icon name="external-link" />}
+                  icon={
+                    <Icon
+                      name={
+                        preview.requires_financial_approval
+                          ? "external-link"
+                          : "save"
+                      }
+                    />
+                  }
                   loading={busy}
                   disabled={stale}
                   onClick={() => void propose()}
                 >
-                  Request pool authorization
+                  {preview.requires_financial_approval
+                    ? "Authorize"
+                    : "Save changes"}
                 </Button>
+                <Typography.Paragraph type="secondary">
+                  {preview.requires_financial_approval
+                    ? "This increases the course spending envelope and requires secure authorization."
+                    : "This stays within the amount and dates you already authorized."}
+                </Typography.Paragraph>
               </section>
             )}
           </section>

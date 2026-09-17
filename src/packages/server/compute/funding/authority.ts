@@ -129,6 +129,8 @@ export async function assertFundingAccountCanRehome(
     ["credit_transfer_ledger_observations", "account_id", ""],
     ["account_funding_holds", "payer_account_id", ""],
     ["compute_funding_pools", "payer_account_id", ""],
+    ["course_funding_approval_intents", "payer_account_id", ""],
+    ["course_funding_pool_changes", "payer_account_id", ""],
     ["payment_fulfillments", "account_id", "AND state='pending'"],
     ["provider_refund_attempts", "account_id", "AND state='pending'"],
   ];

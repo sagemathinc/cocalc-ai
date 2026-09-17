@@ -79,6 +79,8 @@ export interface AccountState {
     low_credit_threshold_usd?: number;
     low_course_credit_notifications?: boolean;
     low_course_credit_threshold_usd?: number;
+    low_sponsored_compute_notifications?: boolean;
+    low_sponsored_compute_threshold_usd?: number;
     auto_update_file_listing?: boolean;
     follow_current_path?: boolean;
     show_symbol_bar_labels?: boolean; // whether to show labels on the menu buttons

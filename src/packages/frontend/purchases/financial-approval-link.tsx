@@ -66,8 +66,8 @@ export function FinancialApprovalLink({
       >
         <Typography.Paragraph>
           To protect financial actions from project and notebook content, CoCalc
-          confirms this action on a separate secure site. You will sign in again
-          before reviewing the final details.
+          confirms this action on a separate secure site. You may be asked to
+          sign in before reviewing the final details.
         </Typography.Paragraph>
         <Typography.Paragraph>
           Verify that your browser opens:{" "}

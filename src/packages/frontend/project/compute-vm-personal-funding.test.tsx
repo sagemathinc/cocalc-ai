@@ -86,12 +86,11 @@ it("previews by keyboard and only proposes the exact reviewed authorization", as
       fallback_reasons: [],
     }),
   });
-  await user.click(
-    screen.getByRole("button", { name: "Request personal authorization" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   const link = await screen.findByRole("link", {
-    name: "Review personal funding and authorize",
+    name: "Authorize",
   });
+  expect(screen.getByText("Authorization required")).toBeVisible();
   expect(link).toHaveAttribute("rel", "noopener noreferrer");
   expect(api.proposeVmPersonalFunding.mock.calls[0][0].terms).toEqual(
     api.previewVmPersonalFunding.mock.calls[0][0].terms,
@@ -127,9 +126,7 @@ it("drops a pending preview after changing the resource funding generation", asy
       screen.getByRole("button", { name: "Preview personal funding" }),
     ).not.toHaveClass("ant-btn-loading"),
   );
-  expect(
-    screen.queryByRole("button", { name: "Request personal authorization" }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "Authorize" })).toBeNull();
 });
 
 it.each(["switch", "preserve"] as const)(
@@ -180,9 +177,7 @@ it.each(["switch", "preserve"] as const)(
       expect(region).toHaveTextContent("Existing policy; unchanged");
     } else
       expect(region).toHaveTextContent("Storage uses the same personal cap");
-    await user.click(
-      screen.getByRole("button", { name: "Request personal authorization" }),
-    );
+    await user.click(screen.getByRole("button", { name: "Authorize" }));
     expect(
       api.proposeVmPersonalFunding.mock.calls[0][0].terms.home_volume_ids,
     ).toEqual(["home"]);

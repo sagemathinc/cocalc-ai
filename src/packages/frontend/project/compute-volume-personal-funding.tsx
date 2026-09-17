@@ -218,18 +218,19 @@ export default function VolumePersonalFunding({
           />
           <Space wrap style={{ maxWidth: "100%" }}>
             {consent.state === "pending" && consent.approval_url && (
-              <FinancialApprovalLink
-                approvalUrl={consent.approval_url}
-                buttonProps={{
-                  style: {
-                    whiteSpace: "normal",
-                    height: "auto",
-                    minHeight: 32,
-                  },
-                }}
-              >
-                Review storage and authorize
-              </FinancialApprovalLink>
+              <Alert
+                type="warning"
+                showIcon
+                title="Authorization required"
+                description={
+                  <FinancialApprovalLink
+                    approvalUrl={consent.approval_url}
+                    buttonProps={{ type: "primary" }}
+                  >
+                    Authorize
+                  </FinancialApprovalLink>
+                }
+              />
             )}
             {consent.state === "approved" && (
               <Button
@@ -357,7 +358,7 @@ export default function VolumePersonalFunding({
             }
             icon={<Icon name="external-link" />}
           >
-            Request storage authorization
+            Authorize
           </Button>
         </section>
       )}

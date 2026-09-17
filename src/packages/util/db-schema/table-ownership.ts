@@ -696,6 +696,15 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     notes:
       "Course-credit crossing state moves with account financial authority alongside its notification records, so retries and moves do not repeat threshold alerts.",
   }),
+  ...adHocEntries(["notification_sponsored_compute_states"], {
+    ownership: "account-home",
+    authority: "account_id",
+    portability: "portable",
+    source: "sponsored-compute notification bootstrap",
+    migrate_to_schema: true,
+    notes:
+      "Per-pool threshold crossing state moves with the instructor account so rehome does not repeat sponsored-compute alerts.",
+  }),
   ...adHocEntries(["account_financial_handoffs"], {
     ownership: "stable-bay",
     authority: "local",
@@ -717,6 +726,15 @@ export const AD_HOC_POSTGRES_TABLE_OWNERSHIP = {
     migrate_to_schema: true,
     notes:
       "Payer-home immutable approval and application receipts. Financial rehome preserves applied operations but expires pending browser approvals and removes their authenticated session binding; no fresh-auth capability migrates.",
+  }),
+  ...adHocEntries(["course_funding_pool_changes"], {
+    ownership: "account-home",
+    authority: "payer_account_id",
+    portability: "portable",
+    source: "course funding pool envelope service",
+    migrate_to_schema: true,
+    notes:
+      "Idempotency journal for pool changes applied inside an existing financial envelope. Central billing keeps it seed-global; legacy payer-home authority moves it with the payer.",
   }),
   ...adHocEntries(["admin_support_mutations"], {
     ownership: "seed-global",

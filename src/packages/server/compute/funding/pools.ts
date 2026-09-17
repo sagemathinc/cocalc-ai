@@ -32,6 +32,9 @@ export interface CourseFundingPoolRow extends FundingBudget {
   currency: "USD";
   lane: ComputeFundingLane;
   allow_overcommit: boolean;
+  approval_limit_usd: string | null;
+  approval_starts_at: Date | null;
+  approval_ends_at: Date | null;
   starts_at: Date;
   ends_at: Date;
   state: ComputeFundingPoolState;
@@ -118,8 +121,9 @@ export async function createCourseFundingPoolInTransaction(
   } = await client.query<CourseFundingPoolRow>(
     `INSERT INTO compute_funding_pools
        (id, payer_account_id, course_project_id, course_instance_id, hold_id,
-        operation_id, request_hash, lane, authorized_usd, allow_overcommit, starts_at, ends_at, state)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+        operation_id, request_hash, lane, authorized_usd, approval_limit_usd,
+        approval_starts_at, approval_ends_at, allow_overcommit, starts_at, ends_at, state)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9,$11,$12,$10,$11,$12,$13) RETURNING *`,
     [
       id,
       payer,

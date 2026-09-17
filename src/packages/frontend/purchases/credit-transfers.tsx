@@ -254,6 +254,23 @@ export default function CreditTransfers({
             <dt>Transferable credit remaining</dt>
             <dd>{moneyToCurrency(preview.remaining_transferable_usd)} USD</dd>
           </dl>
+          {status?.state === "approval_required" && status.approval_url && (
+            <Alert
+              type="warning"
+              showIcon
+              role="status"
+              title="Authorization required"
+              description={
+                <FinancialApprovalLink
+                  approvalUrl={status.approval_url}
+                  buttonProps={{ type: "primary" }}
+                >
+                  Authorize
+                </FinancialApprovalLink>
+              }
+              style={{ marginBottom: 12 }}
+            />
+          )}
           <Space wrap>
             {!status && (
               <Button
@@ -263,11 +280,6 @@ export default function CreditTransfers({
               >
                 Authorize
               </Button>
-            )}
-            {status?.state === "approval_required" && status.approval_url && (
-              <FinancialApprovalLink approvalUrl={status.approval_url}>
-                Review transfer and authorize
-              </FinancialApprovalLink>
             )}
             {operation && !terminal && (
               <Button

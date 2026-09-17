@@ -22,7 +22,7 @@ proposeCourseFundingPoolChange({ payer_account_id, terms, operation_id });
 getCourseFundingAllocationStatus({ payer_account_id, intent_id });
 // All return CourseFundingAllocationStatus:
 // { id, approval_url, status: "pending" | "approved" | "expired",
-//   expires_at, pool_id? }
+//   expires_at?, completed_at?, pool_id? }
 ```
 
 Allocation `terms` is `CourseFundingDraft`; change `terms` is
@@ -33,6 +33,15 @@ the expected pool version on commit. `operation_id` is a UUID idempotency key. R
 with different terms is rejected. UI and CLI open the returned URL and poll the
 account-authenticated status RPC. They never receive a redeemable approval token.
 Do not expose the factory's server-only `approve` method as a hub/agent RPC.
+
+The approved pool amount and date window are a durable envelope, stored
+separately from the live held budget. Grant reallocations, pool reductions,
+closures, and restoring a previously reduced amount/date inside that envelope
+commit directly through the payer's financial transaction. Raising the maximum,
+starting earlier, or ending later creates a new isolated approval intent. The
+classification is recomputed under the same locks as the write; the browser's
+preview is not authoritative. Direct operations have their own exact-terms
+idempotency journal.
 
 The generic store factory is `createCourseFundingApprovals({ approval_origin,
 validateTerms, resolveReview, apply })`. Its callback receives
@@ -198,8 +207,10 @@ and second-factor verification run on the account's authoritative home bay over
 the authenticated inter-bay service. The WebAuthn challenge uses the isolated
 origin and the parent application RP ID, allowing an existing application
 passkey while still requiring the browser to interact with the isolated host.
-The approval session is bound to one intent and origin, expires after 15 minutes,
-and has no general remember-me row.
+The approval session is bound to the payer account and isolated origin, expires
+after 8 hours, and has no normal-application authority. It may skip independent
+sign-in for another intent during that window, but every exact financial intent
+still requires an explicit CSRF-protected approval POST on the isolated origin.
 
 Terms, resolved account names/emails, and retention policy are snapshotted and
 hashed. Review includes payer, recipients, individual amounts, total commitment,

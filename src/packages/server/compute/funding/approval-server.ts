@@ -64,7 +64,7 @@ function page(
   );
   res.type("html")
     .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} - ${siteName}</title>
-    <style nonce="${nonce}">${appearanceStyleSheet()}*{box-sizing:border-box}body{font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:${UI_COLORS.text};background:${UI_COLORS.page};min-height:100vh}.top{height:64px;background:${UI_COLORS.surface};border-bottom:1px solid ${UI_COLORS.border};display:flex;align-items:center;padding:0 24px}.brand{font-size:21px;font-weight:700;color:${UI_COLORS.text};text-decoration:none}.secure{margin-left:auto;color:${UI_COLORS.secondary};font-size:14px}main{max-width:760px;margin:40px auto;padding:0 20px 40px}.card{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.border};border-radius:8px;box-shadow:0 12px 32px ${UI_COLORS.shadow};padding:32px}.auth-card{max-width:480px;margin:auto}h1{font-size:24px;line-height:1.25;margin:0 0 8px}h2{font-size:19px}.subtitle,.muted{color:${UI_COLORS.secondary};font-size:15px;line-height:1.5}.stack{display:flex;flex-direction:column;gap:16px;margin-top:20px}.field{display:flex;flex-direction:column;gap:6px}label{font-size:14px;font-weight:600}input,button{font:inherit;max-width:100%;border-radius:8px}input{display:block;width:100%;background:${UI_COLORS.surface};color:${UI_COLORS.text};border:1px solid ${UI_COLORS.border};padding:10px 12px;font-size:16px}button{border:0;background:${UI_COLORS.primary};color:${UI_COLORS.onPrimary};font-weight:600;padding:11px 16px;cursor:pointer}button.secondary{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.controlBorder};color:${UI_COLORS.text}}button:disabled{cursor:not-allowed;opacity:.65}.link-button{background:none!important;border:0!important;color:${UI_COLORS.link}!important;padding:0!important;font-weight:400!important}.center{text-align:center}.alert{border-radius:8px;padding:10px 12px;font-size:14px;line-height:1.45;background:${UI_COLORS.infoBg};border:1px solid ${UI_COLORS.info};color:${UI_COLORS.text}}.alert-error{background:${UI_COLORS.dangerBg};border-color:${UI_COLORS.danger}}.divider{display:flex;align-items:center;gap:12px;color:${UI_COLORS.secondary};font-size:13px}.divider:before,.divider:after{content:"";height:1px;background:${UI_COLORS.border};flex:1}.method-row{display:flex;gap:8px;flex-wrap:wrap}.method-row button{width:auto}dt{font-weight:600;margin-top:12px}dd{margin:4px 0 0}pre,dd{white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;table-layout:fixed;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:8px;overflow-wrap:anywhere;border-bottom:1px solid ${UI_COLORS.border}}th:first-child{width:60%}a{overflow-wrap:anywhere;color:${UI_COLORS.link}}:focus-visible{outline:3px solid ${UI_COLORS.focus};outline-offset:3px}@media(max-width:520px){.top{padding:0 16px}.secure{display:none}main{margin-top:20px;padding:0 12px 24px}.card{padding:22px 18px}}</style></head>
+    <style nonce="${nonce}">${appearanceStyleSheet()}*{box-sizing:border-box}body{font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:${UI_COLORS.text};background:${UI_COLORS.page};min-height:100vh}.top{height:64px;background:${UI_COLORS.surface};border-bottom:1px solid ${UI_COLORS.border};display:flex;align-items:center;padding:0 24px}.brand{font-size:21px;font-weight:700;color:${UI_COLORS.text};text-decoration:none}.secure{margin-left:auto;color:${UI_COLORS.secondary};font-size:14px}main{max-width:760px;margin:40px auto;padding:0 20px 40px}.card{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.border};border-radius:8px;box-shadow:0 12px 32px ${UI_COLORS.shadow};padding:32px}.auth-card{max-width:480px;margin:auto}h1{font-size:24px;line-height:1.25;margin:0 0 8px}h2{font-size:19px}.subtitle,.muted{color:${UI_COLORS.secondary};font-size:15px;line-height:1.5}.stack{display:flex;flex-direction:column;gap:16px;margin-top:20px}.field{display:flex;flex-direction:column;gap:6px}label{font-size:14px;font-weight:600}input,button{font:inherit;max-width:100%;border-radius:8px}input{display:block;width:100%;background:${UI_COLORS.surface};color:${UI_COLORS.text};border:1px solid ${UI_COLORS.border};padding:10px 12px;font-size:16px}button{border:0;background:${UI_COLORS.primary};color:${UI_COLORS.onPrimary};font-weight:600;padding:11px 16px;cursor:pointer}button.secondary{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.controlBorder};color:${UI_COLORS.text}}button:disabled{cursor:not-allowed;opacity:.65}.link-button{background:none!important;border:0!important;color:${UI_COLORS.link}!important;padding:0!important;font-weight:400!important}.center{text-align:center}.alert{border-radius:8px;padding:10px 12px;font-size:14px;line-height:1.45;background:${UI_COLORS.infoBg};border:1px solid ${UI_COLORS.info};color:${UI_COLORS.text}}.alert-error{background:${UI_COLORS.dangerBg};border-color:${UI_COLORS.danger}}.divider{display:flex;align-items:center;gap:12px;color:${UI_COLORS.secondary};font-size:13px}.divider:before,.divider:after{content:"";height:1px;background:${UI_COLORS.border};flex:1}.method-row{display:flex;gap:8px;flex-wrap:wrap}.method-row button{width:auto}.success{text-align:center;padding:18px 0 8px}.success-mark{align-items:center;background:${UI_COLORS.successBg};border:2px solid ${UI_COLORS.success};border-radius:50%;color:${UI_COLORS.success};display:flex;font-size:38px;font-weight:700;height:72px;justify-content:center;margin:0 auto 18px;width:72px}.success p{font-size:17px}.receipt{border-top:1px solid ${UI_COLORS.border};margin-top:28px;padding-top:18px}.receipt summary{color:${UI_COLORS.link};cursor:pointer;font-weight:600}.receipt-body{margin-top:18px;text-align:left}dt{font-weight:600;margin-top:12px}dd{margin:4px 0 0}pre,dd{white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;table-layout:fixed;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:8px;overflow-wrap:anywhere;border-bottom:1px solid ${UI_COLORS.border}}th:first-child{width:60%}a{overflow-wrap:anywhere;color:${UI_COLORS.link}}:focus-visible{outline:3px solid ${UI_COLORS.focus};outline-offset:3px}@media(max-width:520px){.top{padding:0 16px}.secure{display:none}main{margin-top:20px;padding:0 12px 24px}.card{padding:22px 18px}}</style></head>
     <body><header class="top"><span class="brand">${siteName}</span><span class="secure">Secure financial confirmation</span></header><main><section class="card${content.includes("data-auth-card") ? " auth-card" : ""}"><h1>${escapeHtml(title)}</h1>${content}</section></main>${opts.script ? `<script nonce="${nonce}">${opts.script}</script>` : ""}</body></html>`);
 }
 
@@ -147,6 +147,7 @@ function setCookie(
   name: string,
   value: string,
   secure: boolean,
+  maxAge = 15 * 60_000,
 ) {
   // HTTP is restricted to a distinct loopback IP. Production needs __Host- + Secure.
   res.cookie(name, value, {
@@ -154,7 +155,7 @@ function setCookie(
     httpOnly: true,
     sameSite: "strict",
     path: "/",
-    maxAge: 15 * 60_000,
+    maxAge,
   });
 }
 
@@ -442,8 +443,15 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       intent_id: id,
       payer_account_id: signedIn.account_id,
     });
-    setCookie(res, COOKIE, signedIn.token, secure);
-    setCookie(res, CSRF_COOKIE, randomBytes(32).toString("hex"), secure);
+    const approvalSessionAge = 8 * 60 * 60_000;
+    setCookie(res, COOKIE, signedIn.token, secure, approvalSessionAge);
+    setCookie(
+      res,
+      CSRF_COOKIE,
+      randomBytes(32).toString("hex"),
+      secure,
+      approvalSessionAge,
+    );
     clearPendingAuth(req, res);
   }
   function intentId(req: Request): string {
@@ -582,8 +590,7 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       payer_account_id: actor.payer_account_id,
       intent_id: id,
     });
-    page(
-      res,
+    const approvalTitle =
       "kind" in intent.terms
         ? intent.terms.kind === "monthlyCollection"
           ? "Approve Monthly Collection"
@@ -592,8 +599,21 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
             : intent.terms.kind === "personalVolumeFunding"
               ? "Approve Personal Storage Funding"
               : "Approve Personal VM Funding"
-        : "Approve Course Funding",
-      `${fundingReview(intent)}
+        : "Approve Course Funding";
+    if (intent.status === "applied") {
+      page(
+        res,
+        "Authorization complete",
+        `<div class="success" role="status"><div class="success-mark" aria-hidden="true">&#10003;</div><p>You are done and can now close this tab.</p></div>
+        <details class="receipt"><summary>Show details</summary><div class="receipt-body">${fundingReview(intent)}</div></details>`,
+        { siteName },
+      );
+      return;
+    }
+    page(
+      res,
+      approvalTitle,
+      `<p class="subtitle">Your secure sign-in remains valid on this approval site for up to 8 hours. Every financial authorization still requires your explicit confirmation.</p>${fundingReview(intent)}
       ${
         intent.status === "pending"
           ? `<form method="post" action="/funding/${id}/approve">${formToken(req, res, id, "approve")}

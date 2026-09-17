@@ -5,6 +5,7 @@ import { LowCreditNotificationSetting } from "./low-credit-notification-setting"
 
 let mockEnabled = false;
 let mockCourseEnabled = false;
+let mockSponsoredEnabled = false;
 const mockSave = jest.fn();
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useAccountOtherSetting: (name) =>
@@ -12,7 +13,9 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
       ? mockEnabled
       : name === "low_course_credit_notifications"
         ? mockCourseEnabled
-        : 10,
+        : name === "low_sponsored_compute_notifications"
+          ? mockSponsoredEnabled
+          : 10,
   useActions: () => ({ set_other_settings: mockSave }),
 }));
 it("saves opt-in and threshold using account settings with keyboard controls", async () => {
@@ -36,6 +39,31 @@ it("saves opt-in and threshold using account settings with keyboard controls", a
   expect(input).toHaveFocus();
   await user.keyboard("{ArrowUp}");
   expect(mockSave).toHaveBeenLastCalledWith("low_credit_threshold_usd", 11);
+});
+it("offers a sponsored-pool crossing alert", async () => {
+  mockSponsoredEnabled = false;
+  const user = userEvent.setup();
+  const view = render(<LowCreditNotificationSetting />);
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Notify me when an active sponsored compute pool falls below",
+  });
+  const input = screen.getByRole("spinbutton", {
+    name: "Low sponsored credit threshold in USD",
+  });
+  expect(input).toBeDisabled();
+  await user.click(checkbox);
+  expect(mockSave).toHaveBeenLastCalledWith(
+    "low_sponsored_compute_notifications",
+    true,
+  );
+  mockSponsoredEnabled = true;
+  view.rerender(<LowCreditNotificationSetting />);
+  await user.click(input);
+  await user.keyboard("{ArrowUp}");
+  expect(mockSave).toHaveBeenLastCalledWith(
+    "low_sponsored_compute_threshold_usd",
+    11,
+  );
 });
 it("offers an independently keyboard-operable course reminder", async () => {
   mockEnabled = false;

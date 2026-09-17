@@ -10,8 +10,10 @@ import {
 import { createCourseFundingPoolInTransaction } from "./pools";
 import {
   changeCourseFundingPoolInTransaction,
+  changeCourseFundingPoolWithinEnvelopeInTransaction,
   previewCourseFundingPoolChangeInTransaction,
 } from "./pool-changes";
+import { ensureCourseFundingApprovalSchema } from "./approvals";
 import { setPolicyFailure } from "./__tests__/policy-source";
 import { finalizeClosingCourseFundingPoolInTransaction } from "./pool-lifecycle";
 import { finalizeSettledCourseFundingPools } from "./pool-lifecycle-worker";
@@ -30,7 +32,10 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
 );
-beforeAll(async () => await before({ noConat: true }), 60_000);
+beforeAll(async () => {
+  await before({ noConat: true });
+  await ensureCourseFundingApprovalSchema();
+}, 60_000);
 afterAll(after);
 
 async function fixture() {
@@ -139,6 +144,9 @@ it("previews exact totals without mutation, then increases backed pool and stude
   expect(preview.pool.authorized_usd).toBe("120.0000000000");
   expect((await f.pool()).authorized_usd).toBe("100.0000000000");
   await f.apply(terms);
+  expect(await f.pool()).toMatchObject({
+    approval_limit_usd: "120.0000000000",
+  });
   expect((await f.backing()).prepaid_held_usd).toBe("120.0000000000");
   const { rows } = await getPool().query(
     "SELECT * FROM notification_target_outbox WHERE target_account_id=ANY($1::uuid[])",
@@ -154,6 +162,50 @@ it("previews exact totals without mutation, then increases backed pool and stude
   await expect(f.apply(terms)).rejects.toMatchObject({
     code: "funding_conflict",
   });
+});
+
+it("serializes direct envelope edits and replays only the committed operation", async () => {
+  const f = await fixture();
+  const terms: CourseFundingPoolChangeDraft = {
+    ...f.base,
+    action: "revise",
+    amount_usd: "80",
+    grants: f.allocation.grants.map((grant) => ({
+      grant_id: grant.id,
+      expected_version: grant.version,
+      action: "revise" as const,
+      amount_usd: grant.id === f.grant.id ? "30" : "50",
+    })),
+  };
+  const operation_id = randomUUID();
+  const apply = (id: string) =>
+    withFundingAccountTransaction(f.payer, (db) =>
+      changeCourseFundingPoolWithinEnvelopeInTransaction(db, {
+        payer_account_id: f.payer,
+        operation_id: id,
+        terms,
+        home_bay_by_account_id: f.homes,
+      }),
+    );
+  const outcomes = await Promise.all([
+    apply(operation_id),
+    apply(operation_id),
+  ]);
+  expect(outcomes[0]).toEqual(outcomes[1]);
+  await expect(apply(randomUUID())).rejects.toMatchObject({
+    code: "funding_conflict",
+  });
+  const committed = await apply(operation_id);
+  expect(committed.pool_id).toBe(f.base.pool_id);
+  expect(await f.pool()).toMatchObject({
+    version: f.base.expected_version + 1,
+    approval_limit_usd: "100.0000000000",
+  });
+  const { rows } = await getPool().query(
+    "SELECT operation_id FROM course_funding_pool_changes WHERE payer_account_id=$1",
+    [f.payer],
+  );
+  expect(rows).toEqual([{ operation_id }]);
 });
 
 it("revokes only a student's uncommitted capacity without returning earmarked pool money to the payer", async () => {

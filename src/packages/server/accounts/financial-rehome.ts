@@ -57,11 +57,16 @@ const tables: Record<string, { owner: string; key: string }> = {
   provider_refund_attempts: { owner: "account_id", key: "id" },
   admin_membership_orders: { owner: "account_id", key: "id" },
   course_funding_approval_intents: { owner: "payer_account_id", key: "id" },
+  course_funding_pool_changes: {
+    owner: "payer_account_id",
+    key: "operation_id",
+  },
   notification_events: { owner: "@notification", key: "event_id" },
   notification_targets: { owner: "target_account_id", key: "event_id" },
   notification_target_outbox: { owner: "target_account_id", key: "outbox_id" },
   notification_email_outbox: { owner: "target_account_id", key: "email_id" },
   notification_course_credit_states: { owner: "account_id", key: "id" },
+  notification_sponsored_compute_states: { owner: "account_id", key: "id" },
 };
 const transferOwners = {
   credit_payment_roots: "account_id",
@@ -93,6 +98,9 @@ export async function ensureFinancialRehomeSchema(): Promise<void> {
   await (
     await import("@cocalc/server/notifications/course-credit-state")
   ).ensureCourseCreditNoticeSchema();
+  await (
+    await import("@cocalc/server/notifications/sponsored-compute-state")
+  ).ensureSponsoredComputeNoticeSchema();
   await (
     await import("@cocalc/server/compute/funding/approvals")
   ).ensureCourseFundingApprovalSchema();

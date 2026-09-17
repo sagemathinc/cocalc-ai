@@ -10,6 +10,7 @@ import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getClusterAccountsByIds } from "@cocalc/server/inter-bay/accounts";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { mapParallelLimit } from "@cocalc/util/async-utils";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 import { fundingId } from "@cocalc/util/compute-funding";
 import type { FundingApprovalReview } from "./approval-review";
 
@@ -42,9 +43,10 @@ export async function checkFundingApprovalRecipientsOnHome(
     banned: boolean | null;
     deleted: boolean | null;
   }>(
-    `SELECT account_id, home_bay_id, banned, deleted FROM accounts
+    `SELECT account_id, COALESCE(NULLIF(home_bay_id,''),$2) AS home_bay_id,
+            banned, deleted FROM accounts
       WHERE account_id=ANY($1::uuid[]) ORDER BY account_id FOR SHARE`,
-    [ids],
+    [ids, DEFAULT_BAY_ID],
   );
   if (
     rows.length !== ids.length ||
@@ -67,10 +69,22 @@ export async function prepareFundingApprovalRecipients(
   review: FundingApprovalReview,
   require_active: boolean,
 ): Promise<(db: PoolClient) => Promise<Record<string, string>>> {
+  return await prepareFundingRecipientAccounts(
+    [review.payer, ...review.recipients].map((a) => a.account_id),
+    require_active,
+  );
+}
+
+/** Resolve and check a bounded set of account homes before a financial lock.
+ * Used by already-authorized pool changes that still need authoritative
+ * recipient status checks and receipt routing, but no new approval review.
+ */
+export async function prepareFundingRecipientAccounts(
+  account_ids: string[],
+  require_active: boolean,
+): Promise<(db: PoolClient) => Promise<Record<string, string>>> {
   const started = Date.now();
-  const ids = [
-    ...new Set([review.payer, ...review.recipients].map((a) => a.account_id)),
-  ];
+  const ids = [...new Set(account_ids.map((id) => fundingId(id, "Recipient")))];
   const accounts = new Map(
     (await getClusterAccountsByIds(ids)).map((a) => [a.account_id, a]),
   );
