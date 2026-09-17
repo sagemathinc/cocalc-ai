@@ -171,7 +171,12 @@ test("applying a course RootFS mutates every managed project and restarts active
           };
         },
         restart: async (opts) => {
-          calls.push(["restart", opts]);
+          const { restart_request_id, ...rest } = opts;
+          assert.match(
+            restart_request_id,
+            /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+          );
+          calls.push(["restart", rest]);
           return { op_id: `restart-${opts.project_id}` };
         },
       },
