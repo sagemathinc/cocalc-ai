@@ -200,11 +200,11 @@ const WORKFLOW_FEATURES = [
 const AUDIENCE_ROUTES = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep experiments, code, papers, outputs, and AI-assisted changes together in one shared project, where collaborators can review what happened and decide what to do next.",
-    button: "Explore workflows",
-    href: "features/compare",
+    body: "Keep experiments, datasets, code, papers, outputs, and AI-assisted changes together, then explore CPU, RAM, and GPU options when the work needs more capacity.",
+    button: "Plan research compute",
+    href: "docs/hosts/choose-compute",
     icon: "project-outlined",
-    title: "Research and engineering teams",
+    title: "Researchers, analysts, and builders",
   },
   {
     accent: COLORS.GRAY_D,
@@ -212,7 +212,7 @@ const AUDIENCE_ROUTES = [
     button: "Review product paths",
     href: "products",
     icon: "servers",
-    title: "IT and platform teams",
+    title: "Organizations and platform teams",
   },
   {
     accent: COLORS.RUN,
@@ -220,7 +220,7 @@ const AUDIENCE_ROUTES = [
     button: "Course workflows",
     href: "features/teaching",
     icon: "graduation-cap",
-    title: "Technical courses and workshops",
+    title: "Educators and learners",
   },
 ] satisfies Array<{
   accent: string;
@@ -293,19 +293,19 @@ const AGENT_DEFINITION_CARDS = [
     accent: COLORS.AI_ASSISTANT_FONT,
     body: "Codex works in project chat, while terminal-based agents run beside the files, notebooks, terminals, and services they need.",
     icon: "robot",
-    title: "Runs where your work lives",
+    title: "Work with files and services",
   },
   {
     accent: COLORS.RUN,
     body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work before keeping it.",
     icon: "search",
-    title: "You stay in review",
+    title: "Review agent changes",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Use the integrated Codex experience, Claude Code in a terminal, or other shell-capable agents without moving the project somewhere else.",
     icon: "terminal",
-    title: "Use terminal agents too",
+    title: "Integrated chat or terminal",
   },
 ] satisfies Array<{
   accent: string;
@@ -629,7 +629,7 @@ function AgentDefinitionSection() {
       <SectionIntro
         body="Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use."
         eyebrow="Agent-ready by design"
-        title="Agents work where your project lives."
+        title="Give AI agents the files and tools they need."
       />
       <Flex gap={12} style={{ marginTop: 18 }} wrap>
         <Button href={appPath("features/ai")}>See agent workflows</Button>
@@ -680,7 +680,7 @@ function AudienceRoutesSection() {
       <SectionIntro
         eyebrow="Who it helps"
         title="For work that must persist across people and agents."
-        body="Research, platform, and teaching teams can start with the path that matches how their work is created, reviewed, and operated."
+        body="Researchers, builders, educators, and organizations can start with the path that matches how their work is created, reviewed, taught, or operated."
       />
       <div
         className="cocalc-public-home-audience-grid"

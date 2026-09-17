@@ -87,17 +87,17 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(getDirectCards(codexGrid)).toHaveLength(3);
     expectGridTemplate(codexGrid, "repeat(3, minmax(0, 1fr))");
     expect(getCardTitles(codexGrid, "h3")).toEqual([
-      "Runs where your work lives",
-      "You stay in review",
-      "Use terminal agents too",
+      "Work with files and services",
+      "Review agent changes",
+      "Integrated chat or terminal",
     ]);
 
     expect(getDirectCards(audienceGrid)).toHaveLength(3);
     expectGridTemplate(audienceGrid, "repeat(3, minmax(0, 1fr))");
     expect(getCardTitles(audienceGrid, "h3")).toEqual([
-      "Research and engineering teams",
-      "IT and platform teams",
-      "Technical courses and workshops",
+      "Researchers, analysts, and builders",
+      "Organizations and platform teams",
+      "Educators and learners",
     ]);
     for (const card of getDirectCards(audienceGrid)) {
       expect(card.tagName).toBe("A");

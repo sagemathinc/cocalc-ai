@@ -204,7 +204,7 @@ describe("PublicHomeApp", () => {
     expect(
       within(agents).getByRole("heading", {
         level: 2,
-        name: "Agents work where your project lives.",
+        name: "Give AI agents the files and tools they need.",
       }),
     ).not.toBeNull();
     expect(agents.textContent ?? "").toMatch(
@@ -219,9 +219,9 @@ describe("PublicHomeApp", () => {
       }),
     ).toHaveAttribute("href", "/features/compare");
     for (const title of [
-      "Runs where your work lives",
-      "You stay in review",
-      "Use terminal agents too",
+      "Work with files and services",
+      "Review agent changes",
+      "Integrated chat or terminal",
     ]) {
       expect(
         within(agents).getByRole("heading", { level: 3, name: title }),
@@ -246,23 +246,23 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(
       within(audiences).getByRole("link", {
-        name: /Research and engineering teams/i,
+        name: /Researchers, analysts, and builders/i,
       }),
-    ).toHaveAttribute("href", "/features/compare");
+    ).toHaveAttribute("href", "/docs/hosts/choose-compute");
     expect(
       within(audiences).getByRole("link", {
-        name: /Technical courses and workshops/i,
+        name: /Educators and learners/i,
       }),
     ).toHaveAttribute("href", "/features/teaching");
     expect(
       within(audiences).getByRole("link", {
-        name: /IT and platform teams/i,
+        name: /Organizations and platform teams/i,
       }),
     ).toHaveAttribute("href", "/products");
     for (const title of [
-      "Research and engineering teams",
-      "IT and platform teams",
-      "Technical courses and workshops",
+      "Researchers, analysts, and builders",
+      "Organizations and platform teams",
+      "Educators and learners",
     ]) {
       expect(
         within(audiences).getByRole("heading", { level: 3, name: title }),
