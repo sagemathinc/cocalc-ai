@@ -23,6 +23,7 @@ import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 import { ensureLocalCloudflaredBinary } from "./cloudflared-installer";
 import {
   ensureCloudflareTunnelForHub,
+  ensureCloudflareTunnelHostname,
   hasHubCloudflareTunnel,
   type CloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
@@ -1287,6 +1288,7 @@ async function writeCloudflaredConfig(opts: {
   noTLSVerify: boolean;
   publicViewerHostname?: string;
   additionalHostnames?: string[];
+  additionalIngress?: Array<{ hostname: string; origin: string }>;
 }): Promise<boolean> {
   const yamlString = (value: string): string => JSON.stringify(value);
   const ingress: string[] = [
@@ -1320,6 +1322,12 @@ async function writeCloudflaredConfig(opts: {
       ingress.push("    originRequest:");
       ingress.push("      noTLSVerify: true");
     }
+  }
+  for (const route of opts.additionalIngress ?? []) {
+    if (!route.hostname || seenHostnames.has(route.hostname)) continue;
+    ingress.push(`  - hostname: ${yamlString(route.hostname)}`);
+    ingress.push(`    service: ${yamlString(route.origin)}`);
+    seenHostnames.add(route.hostname);
   }
   ingress.push("  - service: http_status:404");
   const lines = [
@@ -1482,6 +1490,27 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
       additionalHostnames.push(bayHostname);
     }
   }
+  const additionalIngress: Array<{ hostname: string; origin: string }> = [];
+  if (process.env.COCALC_FUNDING_APPROVAL_ENABLED === "1") {
+    const approvalOrigin = clean(process.env.COCALC_FUNDING_APPROVAL_ORIGIN);
+    const approvalPort = parsePort(process.env.COCALC_FUNDING_APPROVAL_PORT);
+    if (approvalOrigin && approvalPort) {
+      const approvalUrl = new URL(approvalOrigin);
+      if (approvalUrl.protocol !== "https:") {
+        throw new Error(
+          "Public financial approval ingress requires an HTTPS origin.",
+        );
+      }
+      additionalIngress.push({
+        hostname: approvalUrl.hostname,
+        origin: `http://127.0.0.2:${approvalPort}`,
+      });
+      await ensureCloudflareTunnelHostname({
+        tunnel,
+        hostname: approvalUrl.hostname,
+      });
+    }
+  }
   const credentialsChanged = await writeCloudflaredCredentials(
     credentialsPath,
     tunnel,
@@ -1494,6 +1523,7 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
     noTLSVerify,
     publicViewerHostname,
     additionalHostnames,
+    additionalIngress,
   });
 
   return {
