@@ -339,10 +339,14 @@ async function getMembershipClaimIdentityRow({
 
 async function withClaimDirectoryTransaction<T>(
   fn: (client: PoolClient) => Promise<T>,
+  recipient_account_id?: string,
 ): Promise<T> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    if (recipient_account_id) {
+      await assertMembershipRecipientNotDeleting(recipient_account_id, client);
+    }
     await ensureMembershipClaimDirectorySchema(client);
     const result = await fn(client);
     await client.query("COMMIT");
@@ -549,6 +553,7 @@ export async function reserveMembershipClaimIdentityDirect(
   opts: WithClient<MembershipClaimIdentityReserveRequest>,
 ): Promise<MembershipClaimIdentityReserveResult> {
   if (opts.client != null) {
+    await assertMembershipRecipientNotDeleting(opts.account_id, opts.client);
     await ensureMembershipClaimDirectorySchema(opts.client);
     return await reserveMembershipClaimIdentityWithClient({
       ...opts,
@@ -560,7 +565,7 @@ export async function reserveMembershipClaimIdentityDirect(
       ...opts,
       client,
     });
-  });
+  }, opts.account_id);
 }
 
 export async function reserveMembershipClaimIdentity(
@@ -589,7 +594,6 @@ export async function activateMembershipClaimIdentityDirect({
   metadata,
 }: MembershipClaimIdentityActivateRequest): Promise<void> {
   await withClaimDirectoryTransaction(async (client) => {
-    await assertMembershipRecipientNotDeleting(account_id, client);
     const normalizedScopeKey = normalizeScopeKey(scope_key);
     const normalizedScopeKind = normalizeScopeKind(scope_kind);
     const normalizedCanonicalIdentity =
@@ -721,7 +725,7 @@ export async function activateMembershipClaimIdentityDirect({
         normalizeMetadata(metadata),
       ],
     );
-  });
+  }, account_id);
 }
 
 export async function activateMembershipClaimIdentity(

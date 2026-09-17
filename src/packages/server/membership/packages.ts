@@ -1493,11 +1493,13 @@ async function assertValidCourseSeatProject({
 
 async function withPackageOwnerWriteFence<T>({
   package_id,
+  recipient_account_id,
   action,
   client,
   fn,
 }: {
   package_id: string;
+  recipient_account_id?: string;
   action: string;
   client?: PoolClient;
   fn: (opts: {
@@ -1511,6 +1513,12 @@ async function withPackageOwnerWriteFence<T>({
   }
   if (isSeedBay() && isSeedAuthoritativeSitePackage(pkg)) {
     if (client != null) {
+      if (recipient_account_id) {
+        await assertMembershipRecipientNotDeleting(
+          recipient_account_id,
+          client,
+        );
+      }
       const lockedPkg = await getMembershipPackageForUpdate({
         package_id,
         client,
@@ -1523,6 +1531,12 @@ async function withPackageOwnerWriteFence<T>({
     const dbClient = await getPool().connect();
     try {
       await dbClient.query("BEGIN");
+      if (recipient_account_id) {
+        await assertMembershipRecipientNotDeleting(
+          recipient_account_id,
+          dbClient,
+        );
+      }
       const lockedPkg = await getMembershipPackageForUpdate({
         package_id,
         client: dbClient,
@@ -2549,16 +2563,11 @@ export async function assignMembershipPackageSeat(
   return await withPackageOwnerWriteFence({
     package_id,
     action: "assign membership package seat",
+    recipient_account_id: account_id?.trim() || undefined,
     client,
     fn: async ({ client: dbClient, pkg }) => {
       const pool = getQueryClient(dbClient);
       const normalizedAccountId = `${account_id ?? ""}`.trim() || undefined;
-      if (normalizedAccountId && isSeedAuthoritativeSitePackage(pkg)) {
-        await assertMembershipRecipientNotDeleting(
-          normalizedAccountId,
-          dbClient,
-        );
-      }
       const normalizedEmailAddress = normalizeEmailAddress(email_address);
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
@@ -3356,12 +3365,10 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
     return await withPackageOwnerWriteFence({
       package_id,
       action: "claim membership package seat",
+      recipient_account_id: account_id,
       client,
       fn: async ({ client: dbClient, pkg }) => {
         const pool = getQueryClient(dbClient);
-        if (isSeedAuthoritativeSitePackage(pkg)) {
-          await assertMembershipRecipientNotDeleting(account_id, dbClient);
-        }
         if (pkg.expires_at && pkg.expires_at <= new Date()) {
           throw Error("membership package has expired");
         }

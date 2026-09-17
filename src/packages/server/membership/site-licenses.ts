@@ -1955,7 +1955,7 @@ async function assertSiteLicenseManager({
   client?: PoolClient;
 }): Promise<void> {
   await ensureSiteLicenseSchema(client);
-  if (await isAdmin(account_id)) {
+  if (await isAdmin(account_id, client)) {
     return;
   }
   const allowedRoles: SiteLicenseManagerRole[] = write
@@ -2865,6 +2865,7 @@ export async function assignSiteLicensePoolSeat({
   const assignWithClient = async (
     dbClient: PoolClient,
   ): Promise<MembershipPackageAssignment> => {
+    await assertMembershipRecipientNotDeleting(targetAccountId, dbClient);
     const { siteLicense, pkg } = await getSiteLicenseForPackage(
       packageId,
       dbClient,
@@ -4654,6 +4655,13 @@ async function withSiteLicenseRequestTransaction<T>({
     initial_request.package_id,
   );
   return await withLocalSiteLicenseTransaction(async (client) => {
+    // Match request creation: recipient first, then request/package/schema
+    // locks. Otherwise replacement can hold recipient while approval holds
+    // the request (or a schema lock) that replacement needs.
+    await assertMembershipRecipientNotDeleting(
+      initial_request.account_id,
+      client,
+    );
     const { rows } = await client.query<RawSiteLicensePoolRequest>(
       `SELECT *
            FROM site_license_pool_requests
@@ -4664,6 +4672,9 @@ async function withSiteLicenseRequestTransaction<T>({
     const request = normalizeSiteLicensePoolRequestRow(rows[0]);
     if (!request) {
       throw Error("site-license request not found");
+    }
+    if (request.account_id !== initial_request.account_id) {
+      throw Error("site-license request recipient changed; retry review");
     }
     const { pkg } = await getSiteLicenseForPackage(request.package_id, client);
     return await fn({ client, request, siteLicense, pkg });

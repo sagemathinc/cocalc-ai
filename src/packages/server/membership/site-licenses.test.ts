@@ -20,6 +20,7 @@ import {
 } from "./packages";
 import { resolveMembershipForAccount } from "./resolve";
 import { activateMembershipClaimIdentityDirect } from "./claim-directory";
+import * as recipientDeletion from "./recipient-deletion";
 import { runMembershipSideEffectsPass } from "./side-effects";
 import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-affiliation-maintenance";
 import {
@@ -1527,6 +1528,115 @@ describe("site license seat pools", () => {
       }),
     );
   });
+
+  (process.env.COCALC_TEST_USE_PGLITE === "1" ? it.skip : it).each([
+    false,
+    true,
+  ])(
+    "concurrent approval and replacement serialize (approval locks first: %s)",
+    async (approvalLocksFirst) => {
+      const admin = uuid();
+      const owner = uuid();
+      const recipient = uuid();
+      const domain = `review-lock-${uuid().slice(0, 8)}.edu`;
+      for (const id of [admin, owner, recipient]) await createTestAccount(id);
+      await markAdmin(admin);
+      await markVerifiedEmail(recipient, `student@${domain}`);
+      const overview = await provisionSiteLicenseForTest({
+        actor_account_id: admin,
+        owner_account_id: owner,
+        name: "Private concurrency review",
+        organization_name: "Review",
+        allowed_domains: [domain],
+        pools: ["First", "Replacement"].map((pool_name) => ({
+          pool_name,
+          membership_class: instructorTier,
+          seat_count: 2,
+          requires_approval: true,
+          verification_policy: "manager-approval" as const,
+          exclusive_group: "teaching",
+        })),
+      });
+      const first = await requestSiteLicensePool({
+        account_id: recipient,
+        package_id: overview.pools[0].id,
+      });
+      let notifyApproval!: () => void;
+      let releaseApproval!: () => void;
+      let notifyReplacement!: () => void;
+      const approvalPaused = new Promise<void>((resolve) => {
+        notifyApproval = resolve;
+      });
+      const approvalGate = new Promise<void>((resolve) => {
+        releaseApproval = resolve;
+      });
+      const replacementLocked = new Promise<void>((resolve) => {
+        notifyReplacement = resolve;
+      });
+      const original = recipientDeletion.assertMembershipRecipientNotDeleting;
+      let calls = 0;
+      const spy = jest
+        .spyOn(recipientDeletion, "assertMembershipRecipientNotDeleting")
+        .mockImplementation(async (account, client) => {
+          const call = ++calls;
+          if (call === 1 && approvalLocksFirst) await original(account, client);
+          if (call === 1) {
+            notifyApproval();
+            await approvalGate;
+          }
+          if (call === 2 && approvalLocksFirst) notifyReplacement();
+          await original(account, client);
+          if (call === 2 && !approvalLocksFirst) notifyReplacement();
+        });
+      const timeout = setTimeout(releaseApproval, 8000);
+      try {
+        const approval = reviewSiteLicensePoolRequest({
+          actor_account_id: owner,
+          request_id: first.id,
+          action: "approve",
+        });
+        // Attach rejection handlers before releasing either operation.
+        const approvalResult = Promise.allSettled([approval]);
+        await approvalPaused;
+        const replacement = requestSiteLicensePool({
+          account_id: recipient,
+          package_id: overview.pools[1].id,
+        });
+        const replacementResult = Promise.allSettled([replacement]);
+        await replacementLocked;
+        releaseApproval();
+        const results = [
+          ...(await approvalResult),
+          ...(await replacementResult),
+        ];
+        expect(
+          results.map((result) =>
+            result.status === "rejected"
+              ? `${result.reason?.code}: ${result.reason?.message}`
+              : "fulfilled",
+          ),
+        ).not.toEqual(
+          expect.arrayContaining([expect.stringContaining("40P01")]),
+        );
+        expect(results[1].status).toBe("fulfilled");
+        if (approvalLocksFirst) {
+          expect(results[0].status).toBe("fulfilled");
+        } else {
+          expect(results[0]).toMatchObject({
+            status: "rejected",
+            reason: expect.objectContaining({
+              message: expect.stringContaining("request is not pending"),
+            }),
+          });
+        }
+      } finally {
+        clearTimeout(timeout);
+        releaseApproval();
+        spy.mockRestore();
+      }
+    },
+    20000,
+  );
 
   it("allows requesting a site-license pool again after revocation", async () => {
     const admin_account_id = uuid();

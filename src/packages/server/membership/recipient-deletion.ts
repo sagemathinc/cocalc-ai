@@ -31,6 +31,8 @@ export async function assertMembershipRecipientNotDeleting(
   account_id: string,
   client: PoolClient,
 ): Promise<void> {
+  // Producers must acquire this lock before request, package, or schema locks
+  // and retain it until commit, so replacement and approval serialize safely.
   assertSeedBay();
   await client.query(
     `INSERT INTO membership_recipient_deletions (account_id) VALUES ($1)

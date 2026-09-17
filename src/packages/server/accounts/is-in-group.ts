@@ -1,12 +1,13 @@
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 
 export type Group = "admin" | "partner" | "crm";
 
 export default async function userIsInGroup(
   account_id: string,
   group: Group,
+  client?: PoolClient,
 ): Promise<boolean> {
-  const pool = getPool("long");
+  const pool = client ?? getPool("long");
   const { rows } = await pool.query(
     "SELECT groups FROM accounts WHERE account_id=$1",
     [account_id],
