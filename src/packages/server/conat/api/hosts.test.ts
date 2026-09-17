@@ -2719,11 +2719,9 @@ describe("hosts browser fresh auth gating", () => {
     );
     expect(resolveMembershipForAccountMock).toHaveBeenCalledWith(
       CUSTOMER_ACCOUNT_ID,
-      undefined,
     );
     expect(resolveMembershipForAccountMock).not.toHaveBeenCalledWith(
       ACCOUNT_ID,
-      undefined,
     );
     expect(
       reconcileDedicatedHostPurchaseSessionForAccountMock,

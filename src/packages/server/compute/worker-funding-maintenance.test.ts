@@ -169,6 +169,7 @@ it("claims queued cleanup while funding is pending and never overlaps the pendin
     jest.mocked(db.claimComputeWork).mockResolvedValueOnce([
       {
         id: "cleanup-work",
+        attempt: 1,
         resource_kind: "vm",
         resource_id: deleting.id,
         action: "delete",
@@ -184,6 +185,8 @@ it("claims queued cleanup while funding is pending and never overlaps the pendin
     expect(provider.deleteProviderComputeVm).toHaveBeenCalled();
     expect(db.finishComputeWork).toHaveBeenCalledWith({
       id: "cleanup-work",
+      worker_id: expect.any(String),
+      attempt: 1,
       state: "done",
     });
     expect(deleting.state).toBe("deleted");
