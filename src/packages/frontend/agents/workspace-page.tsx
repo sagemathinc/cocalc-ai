@@ -451,6 +451,7 @@ function AgentProjectContext({
   const [retry, setRetry] = useState(0);
   const initialThreadRef = useRef(agent.thread_id);
   const requestedThreadRef = useRef<string | undefined>(undefined);
+  const wasActiveRef = useRef(active);
   const useEditor = useEditorRedux<{ local_view_state: any }>({
     project_id: agent.endpoint.project_id,
     path: agent.path,
@@ -464,23 +465,27 @@ function AgentProjectContext({
     manageWorkspaceSelection: false,
   });
 
+  const openEmbeddedFile = useCallback(async () => {
+    await ensureProjectReduxRuntime();
+    const actions = redux.getProjectActions(agent.endpoint.project_id);
+    if (!actions) throw new Error("Unable to load this agent's project");
+    await actions.open_file({
+      path: agent.path,
+      embedded: true,
+      foreground: false,
+      foreground_project: false,
+      wait_for_ready: true,
+      change_history: false,
+      fragmentId: { thread: initialThreadRef.current },
+    });
+  }, [agent.endpoint.project_id, agent.path]);
+
   useEffect(() => {
     let disposed = false;
     setReady(false);
     setError("");
     void (async () => {
-      await ensureProjectReduxRuntime();
-      const actions = redux.getProjectActions(agent.endpoint.project_id);
-      if (!actions) throw new Error("Unable to load this agent's project");
-      await actions.open_file({
-        path: agent.path,
-        embedded: true,
-        foreground: false,
-        foreground_project: false,
-        wait_for_ready: true,
-        change_history: false,
-        fragmentId: { thread: initialThreadRef.current },
-      });
+      await openEmbeddedFile();
       if (!disposed) setReady(true);
     })().catch((err) => {
       if (!disposed) setError(`${err}`);
@@ -488,7 +493,14 @@ function AgentProjectContext({
     return () => {
       disposed = true;
     };
-  }, [agent.endpoint.project_id, agent.path, retry]);
+  }, [openEmbeddedFile, retry]);
+
+  useEffect(() => {
+    const becameActive = active && !wasActiveRef.current;
+    wasActiveRef.current = active;
+    if (!becameActive || !ready) return;
+    void openEmbeddedFile().catch((err) => setError(`${err}`));
+  }, [active, openEmbeddedFile, ready]);
 
   useEffect(() => {
     if (!active || !ready) return;
