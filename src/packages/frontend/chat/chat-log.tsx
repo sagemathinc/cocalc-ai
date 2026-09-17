@@ -61,7 +61,11 @@ import {
 import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
-import { CodexAttentionCard } from "./codex-attention-card";
+import {
+  CodexAttentionCard,
+  type CodexAttentionDraft,
+  type CodexAttentionDraftUpdater,
+} from "./codex-attention-card";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -948,6 +952,9 @@ export function MessageList({
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [attentionDrafts, setAttentionDrafts] = useState<
+    Record<string, CodexAttentionDraft>
+  >({});
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
   const initialAnchor = useMemo(
     () => loadChatViewportAnchor(cacheId),
@@ -965,6 +972,22 @@ export function MessageList({
   const blockScrollInput = anyOverlayOpen === true;
   const showNewestMessagesButton =
     sortedDates.length > 0 && (!atBottom || manualScroll);
+  const attentionJumpExists =
+    activityJumpAttentionId != null &&
+    attentionRecords.some(
+      ({ attention_id }) => attention_id === activityJumpAttentionId,
+    );
+  const updateAttentionDraft = useCallback(
+    (attentionId: string, update: CodexAttentionDraftUpdater) => {
+      setAttentionDrafts((current) => ({
+        ...current,
+        [attentionId]: update(
+          current[attentionId] ?? { selected: {}, other: {} },
+        ),
+      }));
+    },
+    [],
+  );
   const {
     expanded: expandedCodexActivityByMessageId,
     explicit: explicitCodexActivityByMessageId,
@@ -1568,7 +1591,13 @@ export function MessageList({
                 <div style={{ padding: "8px 12px 25px" }}>
                   {attentionRecords.map((record) => (
                     <div key={record.attention_id} style={{ marginTop: 8 }}>
-                      <CodexAttentionCard initialRecord={record} />
+                      <CodexAttentionCard
+                        initialRecord={record}
+                        draft={attentionDrafts[record.attention_id]}
+                        onDraftChange={(update) =>
+                          updateAttentionDraft(record.attention_id, update)
+                        }
+                      />
                     </div>
                   ))}
                 </div>
@@ -1636,6 +1665,52 @@ export function MessageList({
       endRef.current?.scrollIntoView({ block: "end" });
     };
   }, [scrollToBottomRef, useVirtuoso]);
+
+  useEffect(() => {
+    if (!activityJumpAttentionId || !attentionJumpExists) {
+      return;
+    }
+    if (useVirtuoso) {
+      listVirtuosoRef.current?.scrollToIndex({
+        index: sortedDates.length,
+        align: "center",
+        behavior: INSTANT_SCROLL_BEHAVIOR,
+      });
+    }
+    let canceled = false;
+    let frame: number | undefined;
+    let attempts = 0;
+    const focusCard = () => {
+      if (canceled) return;
+      const nodes =
+        listContainerRef.current?.querySelectorAll<HTMLElement>(
+          "[data-codex-attention-id]",
+        ) ?? [];
+      const node = [...nodes].find(
+        ({ dataset }) => dataset.codexAttentionId === activityJumpAttentionId,
+      );
+      if (node) {
+        node.scrollIntoView({ block: "nearest" });
+        node.focus({ preventScroll: true });
+        return;
+      }
+      if (++attempts < 8) {
+        frame = requestAnimationFrame(focusCard);
+      }
+    };
+    frame = requestAnimationFrame(focusCard);
+    return () => {
+      canceled = true;
+      if (frame != null) cancelAnimationFrame(frame);
+    };
+  }, [
+    activityJumpAttentionId,
+    attentionJumpExists,
+    activityJumpToken,
+    listVirtuosoRef,
+    sortedDates.length,
+    useVirtuoso,
+  ]);
 
   useEffect(() => {
     if (!useVirtuoso) return;
@@ -1741,6 +1816,7 @@ export function MessageList({
   if (!useVirtuoso) {
     return (
       <div
+        ref={listContainerRef}
         style={MESSAGE_LIST_CONTAINER_STYLE}
         onWheelCapture={maybeBlockScrollEvent}
         onTouchMoveCapture={maybeBlockScrollEvent}
@@ -1751,7 +1827,13 @@ export function MessageList({
         <div ref={endRef} style={{ padding: "8px 12px 25px" }}>
           {attentionRecords.map((record) => (
             <div key={record.attention_id} style={{ marginTop: 8 }}>
-              <CodexAttentionCard initialRecord={record} />
+              <CodexAttentionCard
+                initialRecord={record}
+                draft={attentionDrafts[record.attention_id]}
+                onDraftChange={(update) =>
+                  updateAttentionDraft(record.attention_id, update)
+                }
+              />
             </div>
           ))}
         </div>

@@ -22,6 +22,7 @@ const mockScrollToIndex = jest.fn();
 let activeTopTab = "project-2";
 let activeProjectTab = "editor-some-other.chat";
 let latestVirtuosoProps: any;
+let visibleVirtuosoIndexes: number[] | undefined;
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (arg1: any, arg2?: string) => {
@@ -54,11 +55,14 @@ jest.mock("@cocalc/frontend/components/stateful-virtuoso", () => {
       scrollIntoView: jest.fn(),
       getState: jest.fn(),
     }));
-    const items = Array.from({ length: props.totalCount ?? 0 }, (_, index) => (
-      <div key={index} data-item-index={index}>
-        {props.itemContent?.(index, props.data?.[index], props.context)}
-      </div>
-    ));
+    const items = Array.from({ length: props.totalCount ?? 0 }, (_, index) =>
+      visibleVirtuosoIndexes == null ||
+      visibleVirtuosoIndexes.includes(index) ? (
+        <div key={index} data-item-index={index}>
+          {props.itemContent?.(index, props.data?.[index], props.context)}
+        </div>
+      ) : null,
+    );
     return (
       <div data-testid="virtuoso">
         <div data-virtuoso-scroller>{items}</div>
@@ -92,9 +96,30 @@ jest.mock("../composing", () => ({
 }));
 
 jest.mock("../codex-attention-card", () => ({
-  CodexAttentionCard: ({ initialRecord }: any) => (
-    <section aria-label={`attention ${initialRecord.attention_id}`} />
-  ),
+  CodexAttentionCard: ({ initialRecord, draft, onDraftChange }: any) => {
+    const questionId = "question-1";
+    return (
+      <section
+        aria-label={`attention ${initialRecord.attention_id}`}
+        data-codex-attention-id={initialRecord.attention_id}
+        tabIndex={-1}
+      >
+        <input
+          aria-label={`answer ${initialRecord.attention_id}`}
+          value={draft?.other?.[questionId] ?? ""}
+          onChange={(event) =>
+            onDraftChange?.((current: any) => ({
+              ...current,
+              other: {
+                ...current.other,
+                [questionId]: event.target.value,
+              },
+            }))
+          }
+        />
+      </section>
+    );
+  },
 }));
 
 describe("ChatLog sidechat search jumps", () => {
@@ -131,6 +156,67 @@ describe("ChatLog sidechat search jumps", () => {
     expect(rows[0]).toHaveTextContent("message 0");
     expect(rows[1]).toContainElement(
       screen.getByRole("region", { name: "attention attention-1" }),
+    );
+  });
+
+  it("preserves a Codex answer draft when Virtuoso unmounts the row", () => {
+    const attentionRecord = {
+      attention_id: "attention-draft",
+    } as AcpAttentionRecord;
+    const props = {
+      messages: new Map([
+        ["1000", { date: 1000, history: [{ content: "context" }] }],
+      ]) as any,
+      account_id: "acct-1",
+      user_map: undefined,
+      mode: "standalone" as const,
+      sortedDates: ["1000"],
+      attentionRecords: [attentionRecord],
+    };
+    const view = render(<MessageList {...props} />);
+    fireEvent.change(screen.getByRole("textbox", { name: /answer/i }), {
+      target: { value: "unfinished markdown" },
+    });
+
+    visibleVirtuosoIndexes = [0];
+    view.rerender(<MessageList {...props} />);
+    expect(screen.queryByRole("textbox", { name: /answer/i })).toBeNull();
+
+    visibleVirtuosoIndexes = [0, 1];
+    view.rerender(<MessageList {...props} />);
+    expect(screen.getByRole("textbox", { name: /answer/i })).toHaveValue(
+      "unfinished markdown",
+    );
+  });
+
+  it("scrolls the terminal row into view before focusing an attention card", async () => {
+    const attentionRecord = {
+      attention_id: "attention-jump",
+    } as AcpAttentionRecord;
+    render(
+      <MessageList
+        messages={new Map() as any}
+        account_id="acct-1"
+        user_map={undefined}
+        mode="standalone"
+        sortedDates={[]}
+        attentionRecords={[attentionRecord]}
+        activityJumpAttentionId="attention-jump"
+        activityJumpToken={1}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(mockScrollToIndex).toHaveBeenCalledWith({
+        index: 0,
+        align: "center",
+        behavior: "auto",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("region", { name: "attention attention-jump" }),
+      ).toHaveFocus(),
     );
   });
 
@@ -230,6 +316,8 @@ describe("ChatLog sidechat search jumps", () => {
     latestVirtuosoProps = undefined;
     activeTopTab = "project-2";
     activeProjectTab = "editor-some-other.chat";
+    visibleVirtuosoIndexes = undefined;
+    HTMLElement.prototype.scrollIntoView = jest.fn();
   });
 
   it("quantizes Virtuoso item measurements to stable CSS pixels", () => {

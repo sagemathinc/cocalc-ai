@@ -2817,7 +2817,7 @@ function ChatPanelContent({
           activityJumpAttentionId ? undefined : activityJumpDate
         }
         activityJumpToken={activityJumpToken}
-        activityJumpAttentionId={undefined}
+        activityJumpAttentionId={activityJumpAttentionId}
         attentionRecords={selectedAttentionRecords}
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}
