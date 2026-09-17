@@ -13,9 +13,9 @@ Prepared September 17, 2026. This packet requests independent re-review. It is
 - Previously reviewed deficient heads:
   `d38f3399be308a92721e40fdcb56244de3d1974e` and
   `2a0ff08783cda555e772c18f17481516f6ba53c7`, with the latest rereview
-  performed at `1eef5408272f2b20944b453089ae9dc113ef3e9f`.
-- Current private handoff head before this documentation update: `8bf2244870`.
-- Latest application remediation commit: `8bf2244870`.
+  performed at `491a02a66c2844e9ac8b297d73cb2791c8265675`.
+- Current private handoff head before this documentation update: `455f2f9d21`.
+- Latest application remediation commit: `455f2f9d21`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -72,6 +72,7 @@ Review the full base-to-head diff. Important fix commits after the deficient hea
 | `4b75bde488` | Preserve distinct frontend restart intents before RPC submission     |
 | `3ffeb8d759` | Keep concurrent frontend restart status ordered by latest intent     |
 | `8bf2244870` | Preserve the pre-overlap optimistic rollback baseline                |
+| `455f2f9d21` | Capture rollback baseline only after lazy runtime load succeeds      |
 
 The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
@@ -113,7 +114,9 @@ latest token, tracked LRO, error, optimistic lifecycle state, projection repair,
 delayed reconciliation. Projection diagnostics are also request-scoped.
 The first request in an overlapping restart burst captures a stable lifecycle
 baseline. A newer failed request restores that baseline rather than another
-request's optimistic `starting` state.
+request's optimistic `starting` state. Baseline capture occurs only after lazy
+project-runtime loading succeeds; a rejected load clears request bookkeeping so a
+later retry observes current state.
 
 ACP restart fencing now selects only strict executable matches backed by live
 host-owned worker registrations. New registrations include the kernel PID start
@@ -211,6 +214,12 @@ It launches independent Node processes. It passed cross-process permit reads and
 release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
+
+At application commit `455f2f9d21`, the mutable-store frontend project-actions
+suite passed 32 tests. New regressions hold lazy runtime loading while lifecycle
+state changes and exercise loader rejection followed by retry; both prove rollback
+uses state captured after successful loading. Frontend package typecheck and
+repository frontend lint passed. No deployment was performed.
 
 At application commit `8bf2244870`, the production-faithful mutable-store frontend
 project-actions suite passed 30 tests. It covers an older pending restart followed

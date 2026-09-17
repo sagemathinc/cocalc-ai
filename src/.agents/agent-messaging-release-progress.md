@@ -12,10 +12,10 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
-- Latest independently reviewed head: `1eef540827`.
-- Latest application remediation commit: `8bf2244870`.
+- Latest independently reviewed head: `491a02a66c`.
+- Latest application remediation commit: `455f2f9d21`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `8bf2244870`.
+  `455f2f9d21`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -45,6 +45,9 @@ and private repository before relying on this packet.
 - An overlapping restart burst retains the lifecycle state from before its first
   optimistic update. If the newest restart fails, rollback restores that stable
   baseline instead of another request's optimistic `starting` state.
+- Restart baseline capture occurs after lazy project-runtime loading succeeds and
+  immediately before optimistic mutation. Loader failure clears request and
+  baseline bookkeeping, so a later retry cannot restore stale pre-load state.
 - Project collaborator-map changes now advance a monotonic authority revision in
   PostgreSQL. Explicit restarts coalesce only when that revision is unchanged, so
   a restart requested after a committed removal or downgrade cannot join an active
@@ -132,6 +135,10 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- At `455f2f9d21`, the mutable-store frontend project-actions suite passed 32 tests.
+  The added cases cover state changes during delayed lazy loading and loader failure
+  followed by retry. Frontend package typecheck and repository frontend lint passed.
+  No deployment was performed.
 - At `8bf2244870`, the production-faithful mutable-store frontend project-actions
   suite passed 30 tests. The required newer-failure/older-failure and
   newer-failure/older-success cases both restore the pre-overlap `running` state.
@@ -236,8 +243,8 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must assess `8bf2244870`, including the optimistic rollback
-  baseline finding reported against `1eef540827`. Live
+- Independent re-review must assess `455f2f9d21`, including the lazy-load baseline
+  finding reported against `491a02a66c`. Live
   qualification must then deliberately overlap a stale restart with a real
   second-human downgrade/removal or execution-mode change and the subsequent
   successful restart on a matched build. Earlier live evidence predates this
