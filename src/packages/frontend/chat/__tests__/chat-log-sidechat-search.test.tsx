@@ -16,6 +16,7 @@ import {
   measureChatVirtuosoItemHeight,
   MessageList,
 } from "../chat-log";
+import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 
 const mockScrollToIndex = jest.fn();
 let activeTopTab = "project-2";
@@ -90,7 +91,49 @@ jest.mock("../composing", () => ({
   default: () => null,
 }));
 
+jest.mock("../codex-attention-card", () => ({
+  CodexAttentionCard: ({ initialRecord }: any) => (
+    <section aria-label={`attention ${initialRecord.attention_id}`} />
+  ),
+}));
+
 describe("ChatLog sidechat search jumps", () => {
+  it("renders pending Codex questions in the scrollable row after the transcript", () => {
+    const attentionRecord = {
+      attention_id: "attention-1",
+    } as AcpAttentionRecord;
+    render(
+      <MessageList
+        messages={
+          new Map([
+            [
+              "1000",
+              {
+                date: 1000,
+                sender_id: "acct-1",
+                history: [{ content: "context needed for the answer" }],
+              },
+            ],
+          ]) as any
+        }
+        account_id="acct-1"
+        user_map={undefined}
+        mode="standalone"
+        sortedDates={["1000"]}
+        attentionRecords={[attentionRecord]}
+      />,
+    );
+
+    const rows = screen
+      .getByTestId("virtuoso")
+      .querySelectorAll("[data-item-index]");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("message 0");
+    expect(rows[1]).toContainElement(
+      screen.getByRole("region", { name: "attention attention-1" }),
+    );
+  });
+
   it("does not carry bottom retries across a thread switch after explicit navigation", () => {
     jest.useFakeTimers();
     const scrollToBottomRef = { current: undefined as any };

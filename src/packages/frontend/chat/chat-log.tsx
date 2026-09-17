@@ -25,6 +25,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "antd";
+import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { VirtuosoHandle } from "react-virtuoso";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -60,6 +61,7 @@ import {
 import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
+import { CodexAttentionCard } from "./codex-attention-card";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -479,6 +481,7 @@ interface Props {
     commitHash: string;
   }) => void;
   suppressInlineCodexStatusDate?: string;
+  attentionRecords?: readonly AcpAttentionRecord[];
   readOnly?: boolean;
 }
 
@@ -509,6 +512,7 @@ export function ChatLog({
   activityJumpAttentionId,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
+  attentionRecords = [],
   readOnly = false,
 }: Props) {
   const singleThreadView = selectedThread != null;
@@ -742,6 +746,7 @@ export function ChatLog({
             anyOverlayOpen,
             onOpenGitBrowser,
             suppressInlineCodexStatusDate,
+            attentionRecords,
             readOnly,
           }}
         />
@@ -889,6 +894,7 @@ export function MessageList({
   anyOverlayOpen = false,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
+  attentionRecords = [],
   readOnly = false,
   virtualized = true,
 }: {
@@ -931,6 +937,7 @@ export function MessageList({
     commitHash: string;
   }) => void;
   suppressInlineCodexStatusDate?: string;
+  attentionRecords?: readonly AcpAttentionRecord[];
   readOnly?: boolean;
   virtualized?: boolean;
 }) {
@@ -1557,7 +1564,15 @@ export function MessageList({
         key: date == null ? "end" : steerRowKey(date),
         render:
           index === sortedDates.length
-            ? () => <div style={{ height: "25px" }} />
+            ? () => (
+                <div style={{ padding: "8px 12px 25px" }}>
+                  {attentionRecords.map((record) => (
+                    <div key={record.attention_id} style={{ marginTop: 8 }}>
+                      <CodexAttentionCard initialRecord={record} />
+                    </div>
+                  ))}
+                </div>
+              )
             : () => renderMessage(index),
       };
     },
@@ -1733,7 +1748,13 @@ export function MessageList({
         onPointerDownCapture={markUserScrollIntent}
       >
         {sortedDates.map((_, index) => renderMessage(index))}
-        <div ref={endRef} style={{ height: "25px" }} />
+        <div ref={endRef} style={{ padding: "8px 12px 25px" }}>
+          {attentionRecords.map((record) => (
+            <div key={record.attention_id} style={{ marginTop: 8 }}>
+              <CodexAttentionCard initialRecord={record} />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
