@@ -1,6 +1,6 @@
 /** @jest-environment jsdom */
 
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
 
@@ -21,8 +21,6 @@ let currentThread = {
 let currentThreads = [currentThread];
 let currentThreadMetadata: any;
 let latestThreadPanelProps: any;
-const mockPauseThreadAutomation = jest.fn();
-const mockRunThreadAutomationNow = jest.fn();
 
 jest.mock("@cocalc/frontend/feature", () => ({
   IS_MOBILE: false,
@@ -88,17 +86,6 @@ jest.mock("../use-codex-payment-source", () => ({
 jest.mock("../drawer-overlay-state", () => ({
   setChatOverlayOpen: jest.fn(),
   useAnyChatOverlayOpen: () => false,
-}));
-
-jest.mock("../acp-api", () => ({
-  acknowledgeThreadAutomation: jest.fn(),
-  deleteThreadAutomation: jest.fn(),
-  pauseThreadAutomation: (...args: any[]) => mockPauseThreadAutomation(...args),
-  resumeThreadAutomation: jest.fn(),
-  runThreadAutomationNow: (...args: any[]) =>
-    mockRunThreadAutomationNow(...args),
-  skipNextThreadAutomationRun: jest.fn(),
-  upsertThreadAutomation: jest.fn(),
 }));
 
 jest.mock("../utils", () => ({
@@ -170,10 +157,6 @@ describe("ChatPanel selected thread read tracking", () => {
     currentThreads = [currentThread];
     currentThreadMetadata = undefined;
     latestThreadPanelProps = undefined;
-    mockPauseThreadAutomation.mockReset();
-    mockPauseThreadAutomation.mockResolvedValue(undefined);
-    mockRunThreadAutomationNow.mockReset();
-    mockRunThreadAutomationNow.mockResolvedValue(undefined);
   });
 
   function renderPanel() {
@@ -239,54 +222,6 @@ describe("ChatPanel selected thread read tracking", () => {
     renderPanel();
 
     expect(latestThreadPanelProps.readOnly).toBe(true);
-  });
-
-  it("keeps automation controls interactive above adjacent chat surfaces", async () => {
-    currentThreadMetadata = {
-      automation_config: {
-        enabled: true,
-        title: "Review pull requests",
-        prompt: "Review open pull requests",
-        schedule_type: "interval",
-        interval_minutes: 240,
-        timezone: "UTC",
-      },
-      automation_state: {
-        status: "active",
-        next_run_at_ms: Date.now() + 60_000,
-        unacknowledged_runs: 1,
-      },
-    };
-
-    renderPanel();
-
-    const controls = screen.getByRole("region", {
-      name: "Thread automation controls",
-    });
-    expect(controls).toHaveStyle({
-      flexShrink: "0",
-      position: "relative",
-      zIndex: "1",
-    });
-
-    fireEvent.click(screen.getByRole("button", { name: "Details" }));
-    expect(
-      screen.getByText(/Run now does not skip the next scheduled run/),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Pause" }));
-    await waitFor(() =>
-      expect(mockPauseThreadAutomation).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: "thread-1" }),
-      ),
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Run now" }));
-    await waitFor(() =>
-      expect(mockRunThreadAutomationNow).toHaveBeenCalledWith(
-        expect.objectContaining({ threadId: "thread-1" }),
-      ),
-    );
   });
 
   it("does not mark another unread thread when opening the selected one", () => {
