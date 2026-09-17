@@ -3234,9 +3234,11 @@ export class CodexAppServerAgent implements AcpAgent {
               state:
                 item.kind === "interrupted"
                   ? "interrupted"
-                  : item.kind === "started"
-                    ? "pending"
-                    : "running",
+                  : item.kind === "completed"
+                    ? "completed"
+                    : item.kind === "started"
+                      ? "pending"
+                      : "running",
               tool: "activity",
               agentPath:
                 typeof item.agentPath === "string" ? item.agentPath : undefined,

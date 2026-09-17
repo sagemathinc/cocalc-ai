@@ -691,6 +691,98 @@ describe("CodexAppServerAgent", () => {
     ).toEqual(["pending", "completed"]);
   });
 
+  it("counts working subagents during a long manager turn, including reused agents", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "initialize":
+          fake.sendResponse(message.id, { ok: true });
+          break;
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "thr-manager" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-manager" } });
+          setImmediate(() => {
+            const activity = (id: string, child: number, kind: string) => {
+              const params = {
+                threadId: "thr-manager",
+                turnId: "turn-manager",
+                item: {
+                  type: "subAgentActivity",
+                  id,
+                  kind,
+                  agentThreadId: `child-${child}`,
+                  agentPath: `/root/worker-${child}`,
+                },
+              };
+              fake.sendNotification("item/started", params);
+              fake.sendNotification("item/completed", params);
+            };
+            for (let i = 0; i < 38; i++) {
+              activity(`start-${i}`, i, "started");
+              if (i < 31) activity(`finish-${i}`, i, "completed");
+            }
+            activity("reuse", 0, "interacted");
+            activity("finish-reuse", 0, "completed");
+          });
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected codex exec spawn");
+      },
+      spawnCodexAppServer: async () => ({
+        proc: proc as any,
+        cmd: "fake-codex",
+        args: ["app-server"],
+        cwd: "/tmp/project",
+      }),
+    });
+
+    const latest = new Map<string, string>();
+    const counts: number[] = [];
+    const milestones = new Set([
+      "start-37",
+      "finish-30",
+      "reuse",
+      "finish-reuse",
+    ]);
+    const agent = new CodexAppServerAgent();
+    try {
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        prompt: "delegate work",
+        config: { workingDirectory: "/tmp/project" },
+        stream: async (payload) => {
+          if (payload?.type !== "event" || payload.event.type !== "subagent")
+            return;
+          const event = payload.event;
+          latest.set(event.threadId, event.state);
+          if (milestones.has(event.operationId)) {
+            counts.push(
+              [...latest.values()].filter(
+                (state) => state === "pending" || state === "running",
+              ).length,
+            );
+          }
+          // Capture all counts before end-of-turn reconciliation can mask errors.
+          if (event.operationId === "finish-reuse") {
+            proc.sendNotification("turn/completed", {
+              turn: { id: "turn-manager", status: "completed" },
+            });
+          }
+        },
+      });
+      expect(counts).toEqual([0, 7, 8, 7]);
+    } finally {
+      await agent.dispose();
+    }
+  });
+
   it("streams completed app-server agent messages when no delta was emitted", async () => {
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
