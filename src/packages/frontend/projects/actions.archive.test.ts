@@ -1004,6 +1004,7 @@ describe("ProjectsActions archive flow", () => {
         mockedWebappClient.conat_client.hub.projects.restart,
       ).toHaveBeenCalledWith({
         project_id,
+        restart_request_id: expect.any(String),
         wait: false,
       });
       expect(trackStartOp).toHaveBeenCalledWith(
@@ -1027,6 +1028,68 @@ describe("ProjectsActions archive flow", () => {
 
       jest.advanceTimersByTime(8_000);
       expect(setState).toHaveBeenCalledWith({ restart_request: undefined });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("submits a distinct restart intent while an earlier restart is pending", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+
+      let resolveFirstRestart!: (value: any) => void;
+      const firstRestartStarted = new Promise<void>((resolve) => {
+        mockedWebappClient.conat_client.hub.projects.restart
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolveRestart) => {
+                resolveFirstRestart = resolveRestart;
+                resolve();
+              }),
+          )
+          .mockResolvedValueOnce({
+            op_id: "restart-op-2",
+            scope_type: "project",
+            scope_id: project_id,
+          } as any);
+      });
+
+      const first = actions.restart_project(project_id);
+      await firstRestartStarted;
+      const second = actions.restart_project(project_id);
+      await second;
+
+      expect(
+        mockedWebappClient.conat_client.hub.projects.restart,
+      ).toHaveBeenCalledTimes(2);
+      const firstRequest =
+        mockedWebappClient.conat_client.hub.projects.restart.mock.calls[0][0];
+      const secondRequest =
+        mockedWebappClient.conat_client.hub.projects.restart.mock.calls[1][0];
+      expect(firstRequest.restart_request_id).toEqual(expect.any(String));
+      expect(secondRequest.restart_request_id).toEqual(expect.any(String));
+      expect(secondRequest.restart_request_id).not.toBe(
+        firstRequest.restart_request_id,
+      );
+
+      resolveFirstRestart({
+        op_id: "restart-op-1",
+        scope_type: "project",
+        scope_id: project_id,
+      });
+      await first;
     } finally {
       jest.useRealTimers();
     }

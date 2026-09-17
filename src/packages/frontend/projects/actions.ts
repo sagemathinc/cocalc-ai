@@ -5591,81 +5591,81 @@ export class ProjectsActions extends Actions<ProjectsState> {
     },
   );
 
-  restart_project = reuseInFlight(
-    async (project_id: string, _options?): Promise<void> => {
-      await ensureProjectReduxRuntime();
-      if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
-        const message = projectHardDeletingMessage();
-        redux.getProjectActions(project_id)?.setState({
-          control_error: message,
-        });
-        alert_message({ type: "warning", message, timeout: 12 });
-        return;
-      }
-      this.project_log(project_id, {
-        event: "project_restart_requested",
+  restart_project = async (project_id: string, _options?): Promise<void> => {
+    // Each invocation is a distinct user intent; the server deduplicates retries
+    // of this invocation using the UUID captured below.
+    await ensureProjectReduxRuntime();
+    if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
+      const message = projectHardDeletingMessage();
+      redux.getProjectActions(project_id)?.setState({
+        control_error: message,
       });
-      const actions = redux.getProjectActions(project_id);
-      const previousLifecycleState = store.getIn([
-        "project_map",
+      alert_message({ type: "warning", message, timeout: 12 });
+      return;
+    }
+    this.project_log(project_id, {
+      event: "project_restart_requested",
+    });
+    const actions = redux.getProjectActions(project_id);
+    const previousLifecycleState = store.getIn([
+      "project_map",
+      project_id,
+      "state",
+      "state",
+    ]) as string | undefined;
+    const restartRequestId = uuid();
+    actions?.setState({
+      restart_request: Map({
+        token: restartRequestId,
+        requested_at: new Date().toISOString(),
+      }),
+    });
+    const clearRestartRequest = () =>
+      actions?.setState({ restart_request: undefined });
+    try {
+      this.optimisticProjectStateUpdate(project_id, "starting");
+      const resp = await writeAndWaitForProjection({
+        consumer: "projects",
+        id: `project:${project_id}:restart`,
+        name: "project.restart",
+        write: () =>
+          webapp_client.conat_client.hub.projects.restart({
+            project_id,
+            restart_request_id: restartRequestId,
+            wait: false,
+          }),
+        matchesProjection: () =>
+          this.projectedProjectStateMatches({
+            project_id,
+            states: ["starting", "running"],
+          }),
+        repair: () =>
+          this.repairProjectProjection({
+            kind: "project-ids",
+            project_ids: [project_id],
+            reason: "project-start",
+          }),
+      });
+      actions.trackStartOp(resp);
+      setTimeout(clearRestartRequest, PROJECT_RESTART_REQUEST_VISIBLE_MS);
+      this.scheduleProjectLifecycleReconcile({
         project_id,
-        "state",
-        "state",
-      ]) as string | undefined;
-      const restartRequestId = uuid();
-      actions?.setState({
-        restart_request: Map({
-          token: restartRequestId,
-          requested_at: new Date().toISOString(),
-        }),
+        optimisticState: "starting",
+        reason: "restart_project",
       });
-      const clearRestartRequest = () =>
-        actions?.setState({ restart_request: undefined });
-      try {
-        this.optimisticProjectStateUpdate(project_id, "starting");
-        const resp = await writeAndWaitForProjection({
-          consumer: "projects",
-          id: `project:${project_id}:restart`,
-          name: "project.restart",
-          write: () =>
-            webapp_client.conat_client.hub.projects.restart({
-              project_id,
-              restart_request_id: restartRequestId,
-              wait: false,
-            }),
-          matchesProjection: () =>
-            this.projectedProjectStateMatches({
-              project_id,
-              states: ["starting", "running"],
-            }),
-          repair: () =>
-            this.repairProjectProjection({
-              kind: "project-ids",
-              project_ids: [project_id],
-              reason: "project-start",
-            }),
-        });
-        actions.trackStartOp(resp);
-        setTimeout(clearRestartRequest, PROJECT_RESTART_REQUEST_VISIBLE_MS);
-        this.scheduleProjectLifecycleReconcile({
-          project_id,
-          optimisticState: "starting",
-          reason: "restart_project",
-        });
-      } catch (err) {
-        clearRestartRequest();
-        this.optimisticProjectStateUpdate(
-          project_id,
-          previousLifecycleState ?? "running",
-        );
-        actions.setState({
-          control_error: `Error restarting project -- ${err}`,
-        });
-        throw err;
-      }
-      actions.setState({ control_error: "" });
-    },
-  );
+    } catch (err) {
+      clearRestartRequest();
+      this.optimisticProjectStateUpdate(
+        project_id,
+        previousLifecycleState ?? "running",
+      );
+      actions.setState({
+        control_error: `Error restarting project -- ${err}`,
+      });
+      throw err;
+    }
+    actions.setState({ control_error: "" });
+  };
 
   // Explicitly set whether or not project is hidden for the given account
   // (hide=true means hidden)
