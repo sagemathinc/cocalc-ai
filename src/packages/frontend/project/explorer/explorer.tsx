@@ -7,7 +7,6 @@ import * as _ from "lodash";
 import { UsersViewing } from "@cocalc/frontend/account/avatar/users-viewing";
 import { Alert, Button, Space } from "antd";
 import {
-  type CSSProperties,
   useCallback,
   useEffect,
   useMemo,
@@ -18,7 +17,6 @@ import {
 import { FormattedMessage, useIntl } from "react-intl";
 import {
   ActivityDisplay,
-  ErrorDisplay,
   HelpIcon,
   Loading,
 } from "@cocalc/frontend/components";
@@ -33,6 +31,7 @@ import AskNewFilename from "../ask-filename";
 import { useProjectContext } from "@cocalc/frontend/project/context";
 import { selectionForPathFollowThrough } from "@cocalc/frontend/project/workspaces/state";
 import { ActionBar } from "./action-bar";
+import { ExplorerError } from "./explorer-error";
 import FileOperationLros from "./file-operation-lros";
 import { FileListing } from "./file-listing";
 import type { DirectoryListingEntry } from "./types";
@@ -142,15 +141,6 @@ const FLEX_ROW_STYLE = {
   flexFlow: "row wrap",
   justifyContent: "space-between",
   alignItems: "stretch",
-} as const;
-
-const ERROR_STYLE: CSSProperties = {
-  marginRight: "1ex",
-  whiteSpace: "pre-line",
-  position: "absolute",
-  zIndex: 15,
-  right: "5px",
-  boxShadow: "5px 5px 5px grey",
 } as const;
 
 const LIFECYCLE_LISTING_REFRESH_DELAYS_MS = [0, 1000, 2000, 5000] as const;
@@ -941,9 +931,8 @@ Wait for this host to become available again, then refresh.`}
           }}
         >
           {!suppressProjectError && error && (
-            <ErrorDisplay
+            <ExplorerError
               error={error}
-              style={ERROR_STYLE}
               onClose={() => actions.setState({ error: "" })}
             />
           )}
