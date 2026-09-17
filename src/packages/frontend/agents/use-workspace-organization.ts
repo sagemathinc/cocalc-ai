@@ -8,8 +8,11 @@ import {
   redux,
   useEffect,
   useMemo,
+  useRef,
+  useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
+import { getLogger } from "@cocalc/frontend/logger";
 import {
   markAgentOpened,
   moveAgent,
@@ -17,9 +20,12 @@ import {
   MY_AGENTS_ORGANIZATION_SETTING,
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
+  serializeAgentWorkspaceOrganization,
   setAgentPinned,
   type AgentWorkspaceOrganization,
 } from "./workspace-organization";
+
+const logger = getLogger("my-agents-workspace-organization");
 
 export function useAgentWorkspaceOrganization(
   agents: NamedAgent[],
@@ -27,13 +33,20 @@ export function useAgentWorkspaceOrganization(
 ) {
   const accountId = useTypedRedux("account", "account_id");
   const otherSettings = useTypedRedux("account", "other_settings");
-  const organization = useMemo(
+  const persisted = useMemo(
     () =>
       normalizeAgentWorkspaceOrganization(
         otherSettings?.get?.(MY_AGENTS_ORGANIZATION_SETTING),
       ),
     [otherSettings],
   );
+  const [optimistic, setOptimistic] = useState<AgentWorkspaceOrganization>();
+  const [saveError, setSaveError] = useState("");
+  const latestRef = useRef(persisted);
+  const queueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingRef = useRef(0);
+  const accountGenerationRef = useRef(0);
+  const organization = optimistic ?? persisted;
   const groups = useMemo(
     () => organizeAgents(agents, organization),
     [agents, organization],
@@ -43,26 +56,58 @@ export function useAgentWorkspaceOrganization(
     groups.pinned[0]?.endpoint.agent_id ??
     groups.unpinned[0]?.endpoint.agent_id;
 
-  function latest(): AgentWorkspaceOrganization {
-    return normalizeAgentWorkspaceOrganization(
-      redux
-        .getStore("account")
-        ?.get("other_settings")
-        ?.get?.(MY_AGENTS_ORGANIZATION_SETTING),
-    );
+  function save(value: AgentWorkspaceOrganization) {
+    const generation = accountGenerationRef.current;
+    latestRef.current = value;
+    pendingRef.current += 1;
+    setOptimistic(value);
+    setSaveError("");
+    queueRef.current = queueRef.current
+      .catch(() => {})
+      .then(async () => {
+        if (
+          generation !== accountGenerationRef.current ||
+          redux.getStore("account")?.get("account_id") !== accountId
+        ) {
+          throw new Error("Account changed before organization could be saved");
+        }
+        await redux
+          .getActions("account")
+          .set_other_settings_and_wait(
+            MY_AGENTS_ORGANIZATION_SETTING,
+            serializeAgentWorkspaceOrganization(value),
+          );
+      })
+      .catch((err) => {
+        logger.warn("unable to save My Agents organization", err);
+        if (generation === accountGenerationRef.current) {
+          setSaveError("Unable to save agent organization. Try again.");
+        }
+      })
+      .finally(() => {
+        if (generation !== accountGenerationRef.current) return;
+        pendingRef.current = Math.max(0, pendingRef.current - 1);
+        if (pendingRef.current === 0) setOptimistic(undefined);
+      });
   }
 
-  function save(value: AgentWorkspaceOrganization) {
-    redux
-      .getActions("account")
-      .set_other_settings(MY_AGENTS_ORGANIZATION_SETTING, value);
-  }
+  useEffect(() => {
+    if (pendingRef.current === 0) latestRef.current = persisted;
+  }, [persisted]);
+
+  useEffect(() => {
+    accountGenerationRef.current += 1;
+    pendingRef.current = 0;
+    latestRef.current = persisted;
+    setOptimistic(undefined);
+    setSaveError("");
+  }, [accountId]);
 
   useEffect(() => {
     if (!accountId || !openedAgentId) return;
     const timer = setTimeout(() => {
       if (redux.getStore("account")?.get("account_id") !== accountId) return;
-      save(markAgentOpened(latest(), openedAgentId));
+      save(markAgentOpened(latestRef.current, openedAgentId));
     }, 750);
     return () => clearTimeout(timer);
   }, [accountId, openedAgentId]);
@@ -70,17 +115,18 @@ export function useAgentWorkspaceOrganization(
   return {
     organization,
     groups,
+    saveError,
     setMode(mode: AgentWorkspaceOrganization["mode"]) {
-      save({ ...latest(), mode });
+      save({ ...latestRef.current, mode });
     },
     setPinned(agentId: string, pinned: boolean) {
-      save(setAgentPinned(agents, latest(), agentId, pinned));
+      save(setAgentPinned(agents, latestRef.current, agentId, pinned));
     },
     move(agentId: string, delta: -1 | 1) {
-      save(moveAgent(agents, latest(), agentId, delta));
+      save(moveAgent(agents, latestRef.current, agentId, delta));
     },
     moveBefore(agentId: string, beforeAgentId: string) {
-      save(moveAgentBefore(agents, latest(), agentId, beforeAgentId));
+      save(moveAgentBefore(agents, latestRef.current, agentId, beforeAgentId));
     },
   };
 }

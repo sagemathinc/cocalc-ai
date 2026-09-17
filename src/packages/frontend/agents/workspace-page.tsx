@@ -716,6 +716,14 @@ export function MyAgentsWorkspacePage() {
               agentOrganization.setMode(value as "recent" | "custom")
             }
           />
+          {agentOrganization.saveError && (
+            <Alert
+              role="alert"
+              type="error"
+              showIcon
+              title={agentOrganization.saveError}
+            />
+          )}
         </Space>
         <div
           role="list"

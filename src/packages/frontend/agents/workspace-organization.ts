@@ -28,11 +28,25 @@ export const DEFAULT_AGENT_WORKSPACE_ORGANIZATION: AgentWorkspaceOrganization =
   };
 
 function uniqueIds(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return [...new Set(value.filter((id) => typeof id === "string"))].slice(
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return [];
+    }
+  }
+  const values = Array.isArray(value)
+    ? value
+    : value && typeof value === "object"
+      ? Object.entries(value)
+          .filter(([key]) => /^\d+$/.test(key))
+          .sort(([a], [b]) => Number(a) - Number(b))
+          .map(([, id]) => id)
+      : [];
+  return [...new Set(values.filter((id) => typeof id === "string"))].slice(
     0,
     MAX_REMEMBERED_AGENTS,
-  );
+  ) as string[];
 }
 
 export function normalizeAgentWorkspaceOrganization(
@@ -46,11 +60,17 @@ export function normalizeAgentWorkspaceOrganization(
     return { ...DEFAULT_AGENT_WORKSPACE_ORGANIZATION };
   }
   const input = plain as Record<string, unknown>;
+  let rawLastOpened = input.lastOpened;
+  if (typeof rawLastOpened === "string") {
+    try {
+      rawLastOpened = JSON.parse(rawLastOpened);
+    } catch {
+      rawLastOpened = {};
+    }
+  }
   const lastOpened = Object.fromEntries(
     Object.entries(
-      input.lastOpened && typeof input.lastOpened === "object"
-        ? input.lastOpened
-        : {},
+      rawLastOpened && typeof rawLastOpened === "object" ? rawLastOpened : {},
     )
       .filter(
         ([id, at]) =>
@@ -68,6 +88,21 @@ export function normalizeAgentWorkspaceOrganization(
     pinned: uniqueIds(input.pinned),
     custom: uniqueIds(input.custom),
     lastOpened,
+  };
+}
+
+/** Nested account settings merge maps recursively, so encode replaceable
+ * collections as scalars. This makes unpin/removal reliable across clients. */
+export function serializeAgentWorkspaceOrganization(
+  value: AgentWorkspaceOrganization,
+) {
+  const normalized = normalizeAgentWorkspaceOrganization(value);
+  return {
+    version: 1 as const,
+    mode: normalized.mode,
+    pinned: JSON.stringify(normalized.pinned),
+    custom: JSON.stringify(normalized.custom),
+    lastOpened: JSON.stringify(normalized.lastOpened),
   };
 }
 

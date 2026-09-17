@@ -6,6 +6,7 @@ import {
   moveAgentBefore,
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
+  serializeAgentWorkspaceOrganization,
   setAgentPinned,
 } from "./workspace-organization";
 
@@ -36,6 +37,34 @@ it("normalizes malformed and oversized organization data", () => {
     pinned: ["b"],
     custom: [],
     lastOpened: { a: 20 },
+  });
+});
+
+it("accepts numeric-key maps produced by shallow account-setting storage", () => {
+  expect(
+    normalizeAgentWorkspaceOrganization({
+      pinned: { 1: "b", 0: "a" },
+      custom: { 0: "c" },
+    }),
+  ).toMatchObject({ pinned: ["a", "b"], custom: ["c"] });
+});
+
+it("serializes replaceable collections as account-setting scalars", () => {
+  const serialized = serializeAgentWorkspaceOrganization({
+    ...DEFAULT_AGENT_WORKSPACE_ORGANIZATION,
+    pinned: [],
+    custom: ["b"],
+    lastOpened: { b: 123 },
+  });
+  expect(serialized).toMatchObject({
+    pinned: "[]",
+    custom: '["b"]',
+    lastOpened: '{"b":123}',
+  });
+  expect(normalizeAgentWorkspaceOrganization(serialized)).toMatchObject({
+    pinned: [],
+    custom: ["b"],
+    lastOpened: { b: 123 },
   });
 });
 

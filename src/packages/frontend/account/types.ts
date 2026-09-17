@@ -90,9 +90,9 @@ export interface AccountState {
     experimental_my_agents_organization_v1?: {
       version: 1;
       mode: "recent" | "custom";
-      pinned: string[];
-      custom: string[];
-      lastOpened: Record<string, number>;
+      pinned: string;
+      custom: string;
+      lastOpened: string;
     };
     chat_speech_voice?: string;
     chat_speech_accent?: ChatSpeechAccent;
