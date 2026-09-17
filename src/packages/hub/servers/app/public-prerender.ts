@@ -67,7 +67,7 @@ function renderHome(basePath: string): string {
 <section>
   <h2>Agents work where your project lives.</h2>
   <p>Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use.</p>
-  <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare#agent-sandboxes", "Compare with agent sandboxes")}</p>
+  <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
 </section>
 <section>
   <h2>One project, many technical workflows.</h2>

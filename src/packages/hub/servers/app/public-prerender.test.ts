@@ -34,8 +34,9 @@ describe("core landing page initial HTML", () => {
         "A persistent shared computer for technical work.",
       );
       expect(home).toContain(
-        `href="${basePath === "/" ? "" : basePath}/features/compare#agent-sandboxes"`,
+        `href="${basePath === "/" ? "" : basePath}/features/compare"`,
       );
+      expect(home).not.toContain("features/compare#agent-sandboxes");
 
       const products = renderPublicRoutePrerender(
         { section: "products", route: { view: "products" } },

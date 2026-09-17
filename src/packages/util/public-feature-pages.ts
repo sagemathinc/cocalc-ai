@@ -333,7 +333,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
         links: [
           { href: "/features/terminal", label: "Use project terminals" },
           {
-            href: "/features/compare#agent-sandboxes",
+            href: "/features/compare",
             label: "Compare with agent sandboxes",
           },
         ],

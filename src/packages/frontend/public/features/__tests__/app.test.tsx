@@ -152,7 +152,7 @@ describe("PublicFeaturesApp", () => {
       screen.getAllByRole("link", {
         name: "Compare with agent sandboxes",
       })[0],
-    ).toHaveAttribute("href", "/features/compare#agent-sandboxes");
+    ).toHaveAttribute("href", "/features/compare");
     expect(
       screen.getByText(/Use TimeTravel to inspect or restore/),
     ).not.toBeNull();

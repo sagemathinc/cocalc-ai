@@ -618,7 +618,7 @@ function AgentDefinitionSection() {
       />
       <Flex gap={12} style={{ marginTop: 18 }} wrap>
         <Button href={appPath("features/ai")}>See agent workflows</Button>
-        <Button href={appPath("features/compare#agent-sandboxes")}>
+        <Button href={appPath("features/compare")}>
           Compare with agent sandboxes
         </Button>
       </Flex>

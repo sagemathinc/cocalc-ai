@@ -295,7 +295,7 @@ export default function AIFeaturePage({
             <Button href={appPath("features/terminal")}>
               Terminal workflows
             </Button>
-            <Button href={appPath("features/compare#agent-sandboxes")}>
+            <Button href={appPath("features/compare")}>
               Compare with agent sandboxes
             </Button>
           </Flex>
@@ -323,7 +323,7 @@ export default function AIFeaturePage({
                 ),
               },
               {
-                href: appPath("features/compare#agent-sandboxes"),
+                href: appPath("features/compare"),
                 label: (
                   <span className="feature-ai-related-link-label-separated">
                     Compare with agent sandboxes

@@ -213,7 +213,7 @@ describe("PublicHomeApp", () => {
       within(agents).getByRole("link", {
         name: "Compare with agent sandboxes",
       }),
-    ).toHaveAttribute("href", "/features/compare#agent-sandboxes");
+    ).toHaveAttribute("href", "/features/compare");
     for (const title of [
       "Runs where your work lives",
       "You stay in review",
