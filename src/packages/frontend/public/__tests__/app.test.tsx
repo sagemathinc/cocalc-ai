@@ -540,6 +540,7 @@ describe("PublicApp", () => {
           cocalc_product: "launchpad",
           is_authenticated: true,
           site_name: "Launchpad",
+          zendesk: true,
         }}
         initialRoute={pricingRoute}
       />,
@@ -673,6 +674,7 @@ describe("PublicApp", () => {
           cocalc_product: "launchpad",
           is_authenticated: false,
           site_name: "Launchpad",
+          zendesk: true,
         }}
         initialRoute={pricingRoute}
       />,
@@ -725,7 +727,11 @@ describe("PublicApp", () => {
 
     await renderPublicApp(
       <PublicApp
-        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        config={{
+          cocalc_product: "plus",
+          help_email: "help@example.com",
+          site_name: "CoCalc Plus",
+        }}
         initialRoute={pricingRoute}
       />,
     );
@@ -755,9 +761,51 @@ describe("PublicApp", () => {
         name: "Compare customer-operated options",
       }),
     ).toHaveAttribute("href", "/products");
+    const productQuoteHref = screen
+      .getByRole("link", { name: "Request a product quote" })
+      .getAttribute("href");
+    expect(productQuoteHref).not.toBeNull();
+    const productQuoteUrl = new URL(productQuoteHref!);
+    expect(productQuoteUrl.protocol).toBe("mailto:");
+    expect(productQuoteUrl.pathname).toBe("help@example.com");
+    expect(productQuoteUrl.searchParams.get("subject")).toBe(
+      "Customer-operated product quote",
+    );
+    expect(productQuoteUrl.searchParams.get("body")).toContain(
+      "product or operating model",
+    );
+  });
+
+  it("does not render an actionless host card for anonymous unknown product profiles", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({
+        tiers: [
+          {
+            features: { create_hosts: true },
+            id: "host-enabled",
+            label: "Host enabled",
+            price_monthly: 0,
+            price_yearly: 0,
+            priority: 10,
+            project_defaults: {},
+            store_description: "Synthetic test tier.",
+            store_visible: true,
+            usage_limits: {},
+          },
+        ],
+      }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ is_authenticated: false, site_name: "Private CoCalc" }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
     expect(
-      screen.getByRole("link", { name: "Request a product quote" }),
-    ).toHaveAttribute("href", expect.stringContaining("/support/new?"));
+      screen.queryByRole("heading", { name: "Dedicated project hosts" }),
+    ).toBeNull();
   });
 
   it("does not promise included AI when no funded tier is configured", async () => {

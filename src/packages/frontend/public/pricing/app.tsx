@@ -24,7 +24,9 @@ export default function PublicPricingApp({
     <PublicSectionShell active="pricing" config={config} title={title}>
       <PricingPage
         cocalcProduct={config?.cocalc_product}
+        helpEmail={config?.help_email}
         isAuthenticated={!!config?.is_authenticated}
+        zendesk={!!config?.zendesk}
       />
     </PublicSectionShell>
   );

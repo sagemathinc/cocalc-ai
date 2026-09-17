@@ -19,6 +19,7 @@ import {
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import { HELP_EMAIL } from "@cocalc/util/theme";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { PublicGrid, PublicSection } from "../layout/shell";
@@ -47,6 +48,23 @@ function supportPurchasePath(subject: string, body: string): string {
   return `${appPath("support/new")}?${params.toString()}`;
 }
 
+function purchaseContactHref({
+  body,
+  helpEmail,
+  subject,
+  zendesk,
+}: {
+  body: string;
+  helpEmail?: string;
+  subject: string;
+  zendesk: boolean;
+}): string {
+  if (zendesk) {
+    return supportPurchasePath(subject, body);
+  }
+  return `mailto:${helpEmail?.trim() || HELP_EMAIL}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
 async function loadMembershipTiers(): Promise<
   PublicMembershipTier[] | undefined
 > {
@@ -63,10 +81,14 @@ async function loadMembershipTiers(): Promise<
 
 export default function PricingPage({
   cocalcProduct,
+  helpEmail,
   isAuthenticated = false,
+  zendesk = false,
 }: {
   cocalcProduct?: string;
+  helpEmail?: string;
   isAuthenticated?: boolean;
+  zendesk?: boolean;
 }) {
   const [billingInterval, setBillingInterval] =
     useState<BillingInterval>("year");
@@ -108,7 +130,8 @@ export default function PricingPage({
       cocalc_product: cocalcProduct,
     }) != null;
   const showProjectHostPath =
-    !isPlusProduct && (canEvaluateResearchCompute || hasProjectHostTier);
+    !isPlusProduct &&
+    (canEvaluateResearchCompute || (isAuthenticated && hasProjectHostTier));
   const membershipHref = isAuthenticated
     ? appPath("settings/membership")
     : appPath("auth/sign-up");
@@ -255,12 +278,16 @@ export default function PricingPage({
                   purchasing workflow that does not fit self-service checkout.
                 </Paragraph>
                 <Button
-                  href={supportPurchasePath(
-                    "Organization licensing or billing",
-                    "I want to discuss CoCalc organization licensing, a quote, or a customized invoice. Helpful context: expected users or projects, workload, duration, product or operating model, procurement and billing requirements, and timeline.",
-                  )}
+                  href={purchaseContactHref({
+                    body: "I want to discuss CoCalc organization licensing, a quote, or a customized invoice. Helpful context: expected users or projects, workload, duration, product or operating model, procurement and billing requirements, and timeline.",
+                    helpEmail,
+                    subject: "Organization licensing or billing",
+                    zendesk,
+                  })}
                 >
-                  Discuss organization pricing
+                  {zendesk
+                    ? "Discuss organization pricing"
+                    : "Email CoCalc about pricing"}
                 </Button>
               </Space>
             </PublicSection>
@@ -320,10 +347,12 @@ export default function PricingPage({
                   product, operating environment, and timeline.
                 </Paragraph>
                 <Button
-                  href={supportPurchasePath(
-                    "Customer-operated product quote",
-                    "I want to request a quote or customized invoice for a customer-operated CoCalc product. Helpful context: expected users or projects, product or operating model, billing requirements, desired term, and timeline.",
-                  )}
+                  href={purchaseContactHref({
+                    body: "I want to request a quote or customized invoice for a customer-operated CoCalc product. Helpful context: expected users or projects, product or operating model, billing requirements, desired term, and timeline.",
+                    helpEmail,
+                    subject: "Customer-operated product quote",
+                    zendesk,
+                  })}
                 >
                   Request a product quote
                 </Button>

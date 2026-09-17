@@ -56,6 +56,7 @@ export interface PublicConfig {
   signup_email_domain_public_policy?: SignupEmailDomainPublicPolicy;
   strategies?: PassportStrategyFrontend[];
   terms_of_service_url?: string;
+  zendesk?: boolean;
 }
 
 const PublicConfigContext = createContext<PublicConfig | undefined>(undefined);
