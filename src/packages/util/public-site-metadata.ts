@@ -621,9 +621,9 @@ function featureRouteMetadata(
     return {
       canonicalPath: publicPath("features/compare", options),
       description:
-        "Compare CoCalc by workspace model across notebooks, terminals, files, documents, teaching workflows, AI agents, and deployment options.",
+        "Compare CoCalc's persistent shared projects with API-first AI agent sandboxes for research, engineering, collaboration, review, and deployment.",
       imagePath: publicPath(FEATURE_SOCIAL_IMAGE, options),
-      title: pageTitle("Compare CoCalc", siteName),
+      title: pageTitle("CoCalc vs AI Agent Sandboxes", siteName),
     };
   }
   if (route?.slug === "teaching") {

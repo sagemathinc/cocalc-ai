@@ -309,7 +309,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     metadataSummary:
       "Work with Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state.",
     image: "/public/features/chatgpt-fix-code.png",
-    docsUrl: "https://sagemathinc.github.io/cocalc-guides/codex-agent-chat/",
+    docsUrl: "/docs/ai/codex-chat",
     index: true,
     sections: [
       {
@@ -322,6 +322,20 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
           "Keep prompts, images, patches, and review notes in one durable thread",
           "Let Codex work with files, terminals, and live notebook state",
           "Run other command-line agents in project terminals as normal Linux tools",
+        ],
+        links: [{ href: "/docs/ai/codex-chat", label: "Set up Codex chat" }],
+      },
+      {
+        title: "Integrated chat or a terminal agent",
+        paragraphs: [
+          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code, OpenCode, and other shell-based agents run in project terminals as normal Linux tools; their interfaces, credentials, and capabilities are separate from Codex chat.",
+        ],
+        links: [
+          { href: "/features/terminal", label: "Use project terminals" },
+          {
+            href: "/features/compare#agent-sandboxes",
+            label: "Compare with agent sandboxes",
+          },
         ],
       },
     ],
@@ -581,14 +595,53 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
   },
   {
     slug: "compare",
-    title: "Compare CoCalc",
+    title: "CoCalc vs AI Agent Sandboxes",
     navLabel: "Compare",
-    tagline: "A concise view of what CoCalc bundles into one workspace.",
+    tagline: "Choose the execution model that matches the work.",
     summary:
-      "Compare when CoCalc's shared project model is a better fit than a single notebook, dashboard, or editor.",
+      "Compare CoCalc's persistent shared projects with API-first agent sandboxes, then choose based on who needs to use and review the environment.",
     metadataSummary:
-      "CoCalc combines notebooks, terminals, documents, AI agents, course tools, sharing, recovery, and collaborative editing in one web-based technical workspace.",
+      "Compare CoCalc's persistent shared projects with API-first AI agent sandboxes for research, engineering, collaboration, review, and deployment.",
     index: true,
+    sections: [
+      {
+        title: "Shared project or agent sandbox?",
+        paragraphs: [
+          "Agent sandboxes are built to launch isolated execution environments from an API or SDK. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc is built around a durable project that people and agents open and use together.",
+        ],
+      },
+      {
+        title: "Choose an agent sandbox when",
+        bullets: [
+          "You are embedding isolated code execution inside an agent product",
+          "Programmatic lifecycle, concurrency, and per-run environments are the main requirements",
+          "People will review results somewhere outside the execution environment",
+        ],
+      },
+      {
+        title: "Choose CoCalc when",
+        bullets: [
+          "Researchers or technical teams work directly in the notebooks, files, documents, terminals, and services",
+          "People need real-time collaboration, review context, history, and recovery beside the computation",
+          "The project should persist across sessions, collaborators, and agent-assisted work",
+          "You need a hosted service, a local or single-VM installation, or a customer-operated private deployment path",
+        ],
+      },
+      {
+        title: "Check the operating boundary",
+        paragraphs: [
+          "Use the product and compute guides to confirm what is available for your deployment, account, and workload. If your design requires automatic fleets of per-run environments, GPU autoscaling, or exclusive GPU capacity, evaluate infrastructure built for those requirements.",
+        ],
+        links: [
+          { href: "/features/ai", label: "Explore agent workflows" },
+          {
+            href: "/docs/hosts/choose-compute",
+            label: "Evaluate research compute",
+          },
+          { href: "/products", label: "Compare operating models" },
+        ],
+      },
+    ],
   },
   {
     slug: "icons",

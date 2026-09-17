@@ -24,6 +24,65 @@ describe("public feature initial HTML", () => {
   );
 });
 
+describe("core landing page initial HTML", () => {
+  it.each(["/", "/prefix"])(
+    "renders useful home, product, and pricing content on %s",
+    (basePath) => {
+      const home = renderPublicRoutePrerender({ section: "home" }, basePath);
+      expect(home).toContain('data-cocalc-public-prerender="home"');
+      expect(home).toContain(
+        "A persistent shared computer for technical work.",
+      );
+      expect(home).toContain(
+        `href="${basePath === "/" ? "" : basePath}/features/compare#agent-sandboxes"`,
+      );
+
+      const products = renderPublicRoutePrerender(
+        { section: "products", route: { view: "products" } },
+        basePath,
+      );
+      expect(products).toContain('data-cocalc-public-prerender="products"');
+      expect(products).toContain("Ways to Run CoCalc");
+      expect(products).toContain("CoCalc.ai");
+      expect(products).toContain("CoCalc Rocket");
+
+      const pricing = renderPublicRoutePrerender(
+        { section: "pricing" },
+        basePath,
+      );
+      expect(pricing).toContain('data-cocalc-public-prerender="pricing"');
+      expect(pricing).toContain("Hosted memberships");
+      expect(pricing).toContain("For teams and organizations");
+    },
+  );
+
+  it("uses route metadata for product detail pages", () => {
+    const html = renderPublicRoutePrerender(
+      {
+        section: "products",
+        route: { view: "products-cocalc-launchpad" },
+      },
+      "/",
+    );
+    expect(html).toContain("<h1>CoCalc Launchpad</h1>");
+    expect(html).toContain("customer-operated private deployment path");
+    expect(html).not.toContain("CoCalc Rocket");
+  });
+
+  it("renders the evidence-bounded sandbox comparison", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "features", route: { view: "detail", slug: "compare" } },
+      "/",
+    );
+    expect(html).toContain("Shared project or agent sandbox?");
+    expect(html).toContain(
+      "Some support persistent files, snapshots, pause and resume",
+    );
+    expect(html).toContain("If your design requires automatic fleets");
+    expect(html).not.toContain("sandboxes are disposable");
+  });
+});
+
 describe("feature initial HTML product availability", () => {
   it.each([
     undefined,
@@ -82,7 +141,7 @@ describe("feature initial HTML product availability", () => {
     },
   );
 
-  it("leaves other route rendering to its existing owner", () => {
+  it("leaves documentation rendering to its existing owner", () => {
     expect(
       renderPublicRoutePrerender(
         { section: "docs", route: { view: "index" } },

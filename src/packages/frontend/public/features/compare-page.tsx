@@ -14,6 +14,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import {
   LinkButton,
@@ -24,6 +25,16 @@ import {
 const { Paragraph, Text, Title } = Typography;
 
 const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
+const COMPARE_PAGE = getPublicFeaturePage("compare")!;
+const SANDBOX_OVERVIEW = COMPARE_PAGE.sections?.find(
+  ({ title }) => title === "Shared project or agent sandbox?",
+)!;
+const SANDBOX_CHOICES = COMPARE_PAGE.sections?.filter(({ title }) =>
+  title.startsWith("Choose "),
+)!;
+const SANDBOX_BOUNDARY = COMPARE_PAGE.sections?.find(
+  ({ title }) => title === "Check the operating boundary",
+)!;
 
 const DECISION_ROWS = [
   {
@@ -156,6 +167,20 @@ const COMPARE_PAGE_CSS = `
     border-radius: ${PUBLIC_RADIUS.panel}px;
     box-shadow: ${PANEL_SHADOW};
     overflow: hidden;
+  }
+
+  .cocalc-compare-sandbox-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cocalc-compare-sandbox-card {
+    background: ${PUBLIC_COLORS.surface};
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PUBLIC_RADIUS.panel}px;
+    box-shadow: ${PANEL_SHADOW};
+    padding: 20px;
   }
 
   .cocalc-compare-table {
@@ -293,6 +318,10 @@ const COMPARE_PAGE_CSS = `
       align-items: stretch;
       grid-template-columns: minmax(0, 1fr) !important;
     }
+
+    .cocalc-compare-sandbox-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 `;
 
@@ -378,6 +407,62 @@ export default function CompareFeaturePage({
             </ul>
           </div>
         </div>
+      </section>
+
+      <section
+        aria-label="CoCalc and AI agent sandbox comparison"
+        id="agent-sandboxes"
+      >
+        <Flex vertical gap={18}>
+          <Title level={3} style={{ margin: 0 }}>
+            {SANDBOX_OVERVIEW.title}
+          </Title>
+          {SANDBOX_OVERVIEW.paragraphs?.map((paragraph) => (
+            <Paragraph key={paragraph} style={{ margin: 0, maxWidth: "72ch" }}>
+              {paragraph}
+            </Paragraph>
+          ))}
+          <div className="cocalc-compare-sandbox-grid">
+            {SANDBOX_CHOICES.map((choice) => (
+              <article
+                className="cocalc-compare-sandbox-card"
+                key={choice.title}
+              >
+                <Title level={4} style={{ margin: 0 }}>
+                  {choice.title}
+                </Title>
+                <ul className="cocalc-compare-list">
+                  {choice.bullets?.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+          <div>
+            <Title level={4} style={{ margin: "0 0 8px" }}>
+              {SANDBOX_BOUNDARY.title}
+            </Title>
+            {SANDBOX_BOUNDARY.paragraphs?.map((paragraph) => (
+              <Paragraph
+                key={paragraph}
+                style={{ margin: 0, maxWidth: "72ch" }}
+              >
+                {paragraph}
+              </Paragraph>
+            ))}
+          </div>
+          <Flex gap={12} wrap>
+            {SANDBOX_BOUNDARY.links?.map((link) => (
+              <LinkButton
+                href={featureAppPath(link.href.replace(/^\/+/, ""))}
+                key={link.href}
+              >
+                {link.label}
+              </LinkButton>
+            ))}
+          </Flex>
+        </Flex>
       </section>
 
       <PublicSection ariaLabel="CoCalc compare decision checklist">

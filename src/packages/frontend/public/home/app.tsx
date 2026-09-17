@@ -612,10 +612,16 @@ function AgentDefinitionSection() {
       style={{ padding: "22px 0 24px" }}
     >
       <SectionIntro
-        body="Use Codex, Claude Code, or another shell-capable agent with the files, tools, and running services your collaborators already use."
+        body="Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use."
         eyebrow="Agent-ready by design"
         title="Agents work where your project lives."
       />
+      <Flex gap={12} style={{ marginTop: 18 }} wrap>
+        <Button href={appPath("features/ai")}>See agent workflows</Button>
+        <Button href={appPath("features/compare#agent-sandboxes")}>
+          Compare with agent sandboxes
+        </Button>
+      </Flex>
       <div
         className="cocalc-public-home-codex-grid"
         style={{

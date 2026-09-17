@@ -116,12 +116,21 @@ describe("public shell rendering", () => {
     expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
   });
 
-  it("removes the body placeholder from routes without a prerender", async () => {
-    const { html: body } = await renderPublicShell(request("/pricing"));
+  it.each([
+    ["/", "home", "A persistent shared computer for technical work."],
+    ["/products", "products", "Ways to Run CoCalc"],
+    ["/pricing", "pricing", "Hosted memberships"],
+  ])(
+    "renders crawler-visible landing content for %s",
+    async (path, section, expectedText) => {
+      const { html: body, status } = await renderPublicShell(request(path));
 
-    expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
-    expect(body).not.toContain("data-cocalc-public-prerender");
-  });
+      expect(status).toBe(200);
+      expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
+      expect(body).toContain(`data-cocalc-public-prerender="${section}"`);
+      expect(body).toContain(expectedText);
+    },
+  );
 
   it("renders docs inside the container replaced by the public React app", async () => {
     const { html, status } = await renderPublicShell(

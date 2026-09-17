@@ -204,8 +204,16 @@ describe("PublicHomeApp", () => {
       }),
     ).not.toBeNull();
     expect(agents.textContent ?? "").toMatch(
-      /Use Codex, Claude Code, or another shell-capable agent/i,
+      /Use integrated Codex, or run Claude Code and other shell-based agents in project terminals/i,
     );
+    expect(
+      within(agents).getByRole("link", { name: "See agent workflows" }),
+    ).toHaveAttribute("href", "/features/ai");
+    expect(
+      within(agents).getByRole("link", {
+        name: "Compare with agent sandboxes",
+      }),
+    ).toHaveAttribute("href", "/features/compare#agent-sandboxes");
     for (const title of [
       "Runs where your work lives",
       "You stay in review",

@@ -23,7 +23,6 @@ import { FEATURE_ACCENTS } from "./feature-accents";
 
 const { Paragraph, Text, Title } = Typography;
 
-const GUIDE_BASE = "https://sagemathinc.github.io/cocalc-guides";
 const AI_ACCENT = FEATURE_ACCENTS.ai;
 const AI_PAGE_CSS = `
 .feature-ai-hero-row {
@@ -265,10 +264,7 @@ export default function AIFeaturePage({
                   the project.
                 </Paragraph>
                 <Flex wrap gap={12}>
-                  <Button
-                    type="primary"
-                    href={`${GUIDE_BASE}/codex-agent-chat/`}
-                  >
+                  <Button type="primary" href={appPath("docs/ai/codex-chat")}>
                     Read the Codex guide
                   </Button>
                   <Button href={primaryHref}>{primaryLabel}</Button>
@@ -282,6 +278,28 @@ export default function AIFeaturePage({
         </PublicSection>
 
         <WorkflowStrip />
+
+        <PublicSection ariaLabel="Ways to use AI agents in CoCalc">
+          <Title level={3} style={{ margin: 0 }}>
+            Integrated chat or a terminal agent
+          </Title>
+          <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
+            Codex runs through project chat and can work with project files,
+            terminals, and live notebook state. Claude Code, OpenCode, and other
+            shell-based agents run in project terminals as normal Linux tools;
+            their interfaces, credentials, and capabilities are separate from
+            Codex chat.
+          </Paragraph>
+          <Flex gap={12} wrap>
+            <Button href={appPath("docs/ai/codex-chat")}>Codex setup</Button>
+            <Button href={appPath("features/terminal")}>
+              Terminal workflows
+            </Button>
+            <Button href={appPath("features/compare#agent-sandboxes")}>
+              Compare with agent sandboxes
+            </Button>
+          </Flex>
+        </PublicSection>
 
         <PublicSection>
           <FeatureFinalBand
@@ -305,10 +323,10 @@ export default function AIFeaturePage({
                 ),
               },
               {
-                href: appPath("products"),
+                href: appPath("features/compare#agent-sandboxes"),
                 label: (
                   <span className="feature-ai-related-link-label-separated">
-                    Compare operating models
+                    Compare with agent sandboxes
                   </span>
                 ),
               },
@@ -323,7 +341,7 @@ export default function AIFeaturePage({
                 "Bring Codex in when the turn depends on surrounding project context.",
                 "Keep review in CoCalc when people need context before accepting a change.",
                 "Use shell-based agents when command output belongs with the project.",
-                "Use TimeTravel when a teammate needs to inspect how an agent changed a file.",
+                "Use TimeTravel to inspect or restore earlier versions of files touched during agent-assisted work.",
               ]}
             />
           </FeatureFinalBand>

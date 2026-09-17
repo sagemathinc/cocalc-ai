@@ -11,7 +11,11 @@ import {
   type PublicFeaturePage,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
-import type { PublicMetadataRoute } from "@cocalc/util/public-site-metadata";
+import {
+  getPublicRouteMetadata,
+  type PublicMetadataRoute,
+  type PublicRouteMetadataConfig,
+} from "@cocalc/util/public-site-metadata";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 const ARTICLE_STYLE = [
@@ -23,6 +27,13 @@ const ARTICLE_STYLE = [
   "padding:48px 24px",
 ].join(";");
 
+const PRODUCT_ROUTES = [
+  { href: "cocalc-plus", view: "products-cocalc-plus" },
+  { href: "cocalc-star", view: "products-cocalc-star" },
+  { href: "cocalc-launchpad", view: "products-cocalc-launchpad" },
+  { href: "cocalc-rocket", view: "products-cocalc-rocket" },
+] as const;
+
 function htmlEscape(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -33,6 +44,105 @@ function htmlEscape(value: string): string {
 
 function featurePath(basePath: string, slug?: string): string {
   return joinUrlPath(basePath, slug ? `features/${slug}` : "features");
+}
+
+function publicPath(basePath: string, path: string): string {
+  return joinUrlPath(basePath, path);
+}
+
+function publicLink(basePath: string, path: string, label: string): string {
+  return `<a href="${htmlEscape(publicPath(basePath, path))}">${htmlEscape(
+    label,
+  )}</a>`;
+}
+
+function renderHome(basePath: string): string {
+  return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
+<header>
+  <p>Shared Linux workspace</p>
+  <h1>A persistent shared computer for technical work.</h1>
+  <p>People and AI agents work in the same Linux project with shared files, notebooks, terminals, services, and history. The computer is ready whenever the work continues.</p>
+  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, "products", "Ways to run CoCalc")}</p>
+</header>
+<section>
+  <h2>Agents work where your project lives.</h2>
+  <p>Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use.</p>
+  <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare#agent-sandboxes", "Compare with agent sandboxes")}</p>
+</section>
+<section>
+  <h2>One project, many technical workflows.</h2>
+  <p>Keep notebooks, terminals, code, documents, services, discussion, history, and recovery in one durable project.</p>
+  <p>${publicLink(basePath, "features", "Browse feature workflows")} ${publicLink(basePath, "docs", "Read the documentation")}</p>
+</section>
+<section>
+  <h2>Choose how CoCalc runs.</h2>
+  <p>Start with hosted CoCalc.ai, run CoCalc locally or on one VM, or evaluate a customer-operated private deployment.</p>
+  <p>${publicLink(basePath, "products", "Review product paths")} ${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "support", "Talk with CoCalc")}</p>
+</section>
+</main>`;
+}
+
+function renderProducts(
+  route: PublicMetadataRoute,
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
+  const current = getPublicRouteMetadata(route, config, { basePath });
+  const isIndex = route.route?.view === "products";
+  const productList = isIndex
+    ? `<section><h2>Choose who operates it and where it runs</h2><ul><li><h3>${publicLink(
+        basePath,
+        "pricing",
+        "CoCalc.ai",
+      )} — Start here</h3><p>Managed hosted projects for individuals and teams that do not want to operate infrastructure.</p></li>${PRODUCT_ROUTES.map(
+        ({ href, view }) => {
+          const metadata = getPublicRouteMetadata(
+            { section: "products", route: { view } },
+            config,
+            { basePath },
+          );
+          const title = metadata.title.split(" | ")[0];
+          return `<li><h3>${publicLink(
+            basePath,
+            href ? `products/${href}` : "products",
+            title,
+          )}</h3><p>${htmlEscape(metadata.description)}</p></li>`;
+        },
+      ).join("")}</ul></section>`
+    : "";
+  return `<main data-cocalc-public-prerender="products" style="${ARTICLE_STYLE}">
+<header>
+  <p>CoCalc product paths</p>
+  <h1>${htmlEscape(current.title.split(" | ")[0])}</h1>
+  <p>${htmlEscape(current.description)}</p>
+</header>
+${productList}
+<section>
+  <h2>One persistent project model</h2>
+  <p>Every path runs the same core model: a persistent computer where people and agents share a Linux project.</p>
+  <p>${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "features/compare", "Compare CoCalc fit")} ${publicLink(basePath, "support", "Talk with CoCalc")}</p>
+</section>
+</main>`;
+}
+
+function renderPricing(basePath: string): string {
+  return `<main data-cocalc-public-prerender="pricing" style="${ARTICLE_STYLE}">
+<header>
+  <p>CoCalc.ai pricing and licensing</p>
+  <h1>Find the right fit</h1>
+  <p>The right setup depends on where CoCalc runs and how your team buys. Compare the operating models first—hosted, local, or customer-operated—then choose a plan.</p>
+  <p>${publicLink(basePath, "products", "Compare operating models")}</p>
+</header>
+<section>
+  <h2>Hosted memberships</h2>
+  <p>Use CoCalc.ai without operating CoCalc yourself. Current membership tiers, limits, and billing choices appear on this page when it loads.</p>
+</section>
+<section>
+  <h2>For teams and organizations</h2>
+  <p>Choose team seats, organization licenses, dedicated project hosts, or a customer-operated product path according to your users, workload, procurement, and operating requirements.</p>
+  <p>${publicLink(basePath, "support", "Discuss pricing and licensing")}</p>
+</section>
+</main>`;
 }
 
 function renderSection(
@@ -65,7 +175,7 @@ function renderSection(
 function renderFeatureNavigation(
   basePath: string,
   activeSlug: string | undefined,
-  config: { cocalc_product?: string },
+  config: PublicRouteMetadataConfig,
 ): string {
   const links = PUBLIC_FEATURE_NAV_ITEMS.filter(
     ({ slug }) =>
@@ -84,7 +194,7 @@ function renderFeatureNavigation(
 function renderFeatureDetail(
   page: PublicFeaturePage,
   basePath: string,
-  config: { cocalc_product?: string },
+  config: PublicRouteMetadataConfig,
 ): string {
   const sections = (page.sections ?? [])
     .map((section) => renderSection(section, basePath))
@@ -108,7 +218,7 @@ ${renderFeatureNavigation(basePath, page.slug, config)}
 
 function renderFeatureIndex(
   basePath: string,
-  config: { cocalc_product?: string },
+  config: PublicRouteMetadataConfig,
 ): string {
   const pages = getPublicFeatureIndexPages(config)
     .map(
@@ -130,17 +240,29 @@ function renderFeatureIndex(
 export function renderPublicRoutePrerender(
   route: PublicMetadataRoute,
   basePath: string,
-  config?: { cocalc_product?: string },
+  config?: PublicRouteMetadataConfig,
 ): string {
+  const resolvedConfig = config ?? {};
+  if (route.section === "home") {
+    return renderHome(basePath);
+  }
+  if (route.section === "products") {
+    return renderProducts(route, basePath, resolvedConfig);
+  }
+  if (route.section === "pricing") {
+    return renderPricing(basePath);
+  }
   if (route.section !== "features") {
     return "";
   }
   if (route.route?.view === "index") {
-    return renderFeatureIndex(basePath, config ?? {});
+    return renderFeatureIndex(basePath, resolvedConfig);
   }
   if (route.route?.view !== "detail") {
     return "";
   }
-  const page = getPublicFeaturePage(route.route.slug, config ?? {});
-  return page == null ? "" : renderFeatureDetail(page, basePath, config ?? {});
+  const page = getPublicFeaturePage(route.route.slug, resolvedConfig);
+  return page == null
+    ? ""
+    : renderFeatureDetail(page, basePath, resolvedConfig);
 }

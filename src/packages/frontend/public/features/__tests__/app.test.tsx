@@ -140,6 +140,23 @@ describe("PublicFeaturesApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
     expect(screen.getByText("Run an agent turn in order.")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Integrated chat or a terminal agent",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Read the Codex guide" }),
+    ).toHaveAttribute("href", "/docs/ai/codex-chat");
+    expect(
+      screen.getAllByRole("link", {
+        name: "Compare with agent sandboxes",
+      })[0],
+    ).toHaveAttribute("href", "/features/compare#agent-sandboxes");
+    expect(
+      screen.getByText(/Use TimeTravel to inspect or restore/),
+    ).not.toBeNull();
+    expect(screen.queryByText(/how an agent changed a file/)).toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
   });
 
@@ -711,6 +728,24 @@ describe("PublicFeaturesApp", () => {
 
     expect(screen.getByText("When is CoCalc the right fit?")).not.toBeNull();
     expect(screen.getByText("Decision checklist")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Shared project or agent sandbox?",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("region", {
+          name: "CoCalc and AI agent sandbox comparison",
+        })
+        .getAttribute("id"),
+    ).toBe("agent-sandboxes");
+    expect(
+      screen.getByText(/Some support persistent files, snapshots/),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/If your design requires automatic fleets/),
+    ).not.toBeNull();
     expect(screen.getByText("Where to go next")).not.toBeNull();
     expect(
       screen.getByText("Hosted, local, single-VM, and private deployment."),
