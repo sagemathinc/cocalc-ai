@@ -8566,7 +8566,7 @@ async function handleAcpAutomationRequest(
   if (!project_id || !path || !thread_id) {
     throw new Error("ACP automation request is missing required fields");
   }
-  const existing = getAcpAutomationByThread({ project_id, path, thread_id });
+  let existing = getAcpAutomationByThread({ project_id, path, thread_id });
   if (request.action === "delete") {
     deleteAcpAutomationByThread({ project_id, path, thread_id });
     await patchThreadAutomationProjection({
@@ -8663,6 +8663,28 @@ async function handleAcpAutomationRequest(
       state: toAutomationState(row) ?? null,
       record: toAutomationRecord(row) ?? null,
     };
+  }
+  if (!existing) {
+    try {
+      await rehydrateAcpAutomationsForProject(project_id);
+    } catch (err) {
+      resetAutomationStoreCache(project_id);
+      logger.warn("failed to rehydrate ACP automation before recovery", {
+        project_id,
+        path,
+        thread_id,
+        err,
+      });
+    }
+    existing = getAcpAutomationByThread({ project_id, path, thread_id });
+  }
+  if (!existing) {
+    existing = await recoverAcpAutomationFromThreadProjection({
+      project_id,
+      path,
+      thread_id,
+      account_id: request.account_id,
+    });
   }
   if (!existing) {
     throw new Error("automation not found");
@@ -8806,7 +8828,15 @@ async function getAutomationStore(
   project_id: string,
 ): Promise<DKV<AcpAutomationRecord>> {
   const existing = automationStores.get(project_id);
-  if (existing) return await existing;
+  if (existing) {
+    try {
+      const store = await existing;
+      if (!store.isClosed()) return store;
+    } catch {
+      // Replace a rejected initialization promise below.
+    }
+    automationStores.delete(project_id);
+  }
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
@@ -8822,7 +8852,7 @@ function resetAutomationStoreCache(project_id: string): void {
   automationStores.delete(project_id);
 }
 
-function normalizeAcpAutomationRecord(
+export function normalizeAcpAutomationRecord(
   record?: AcpAutomationRecord,
 ): AcpAutomationRow | undefined {
   if (!record) return undefined;
@@ -8839,7 +8869,12 @@ function normalizeAcpAutomationRecord(
       enabled: record.enabled,
       automation_id,
       title: record.title,
+      run_kind: record.run_kind,
       prompt: record.prompt,
+      command: record.command,
+      command_cwd: record.command_cwd,
+      command_timeout_ms: record.command_timeout_ms,
+      command_max_output_bytes: record.command_max_output_bytes,
       schedule_type: record.schedule_type,
       days_of_week: record.days_of_week,
       local_time: record.local_time,
@@ -8895,7 +8930,12 @@ function normalizeAcpAutomationRecord(
     settings_revision: record.settings_revision,
     enabled,
     title: config.title ?? null,
+    run_kind: config.run_kind ?? "codex",
     prompt: config.prompt ?? null,
+    command: config.command ?? null,
+    command_cwd: config.command_cwd ?? null,
+    command_timeout_ms: config.command_timeout_ms ?? null,
+    command_max_output_bytes: config.command_max_output_bytes ?? null,
     schedule_type: config.schedule_type ?? "daily",
     days_of_week: config.days_of_week ?? null,
     local_time: config.local_time ?? null,
@@ -8919,6 +8959,122 @@ function normalizeAcpAutomationRecord(
       parseMs(record.created_at) ?? parseMs(record.updated_at) ?? Date.now(),
     updated_at: parseMs(record.updated_at) ?? Date.now(),
   };
+}
+
+export function automationRecordFromThreadProjection({
+  project_id,
+  path,
+  thread_id,
+  account_id,
+  automation_config,
+  automation_state,
+  updated_at,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+  automation_config?: ChatThreadAutomationConfig | null;
+  automation_state?: ChatThreadAutomationState | null;
+  updated_at?: string;
+}): AcpAutomationRecord | undefined {
+  const config = automation_config;
+  const state = automation_state;
+  const automation_id = `${
+    config?.automation_id ?? state?.automation_id ?? ""
+  }`.trim();
+  if (!automation_id || !config) return;
+  return {
+    automation_id,
+    project_id,
+    path,
+    thread_id,
+    account_id,
+    enabled: config.enabled,
+    title: config.title,
+    run_kind: config.run_kind,
+    prompt: config.prompt,
+    command: config.command,
+    command_cwd: config.command_cwd,
+    command_timeout_ms: config.command_timeout_ms,
+    command_max_output_bytes: config.command_max_output_bytes,
+    schedule_type: config.schedule_type,
+    days_of_week: config.days_of_week,
+    local_time: config.local_time,
+    interval_minutes: config.interval_minutes,
+    window_start_local_time: config.window_start_local_time,
+    window_end_local_time: config.window_end_local_time,
+    timezone: config.timezone,
+    pause_after_unacknowledged_runs: config.pause_after_unacknowledged_runs,
+    status: state?.status,
+    next_run_at_ms: state?.next_run_at_ms,
+    last_run_started_at_ms: state?.last_run_started_at_ms,
+    last_run_finished_at_ms: state?.last_run_finished_at_ms,
+    last_acknowledged_at_ms: state?.last_acknowledged_at_ms,
+    unacknowledged_runs: state?.unacknowledged_runs,
+    paused_reason: state?.paused_reason,
+    last_error: state?.last_error,
+    last_job_op_id: state?.last_job_op_id,
+    last_message_id: state?.last_message_id,
+    updated_at,
+  };
+}
+
+async function recoverAcpAutomationFromThreadProjection({
+  project_id,
+  path,
+  thread_id,
+  account_id,
+}: {
+  project_id: string;
+  path: string;
+  thread_id: string;
+  account_id: string;
+}): Promise<AcpAutomationRow | undefined> {
+  if (!conatClient) return;
+  const record = await withChatSyncDB({
+    client: conatClient,
+    project_id,
+    path,
+    readyTimeoutMs: ACP_AUTOMATION_SYNCDB_READY_TIMEOUT_MS,
+    fn: async (syncdb) => {
+      const threadConfig = preferredThreadConfigRow(syncdb, thread_id);
+      const toPlain = <T>(value: T): T =>
+        value && typeof (value as any).toJS === "function"
+          ? (value as any).toJS()
+          : value;
+      return automationRecordFromThreadProjection({
+        project_id,
+        path,
+        thread_id,
+        account_id,
+        automation_config: toPlain(
+          syncdbField<ChatThreadAutomationConfig>(
+            threadConfig,
+            "automation_config",
+          ),
+        ),
+        automation_state: toPlain(
+          syncdbField<ChatThreadAutomationState>(
+            threadConfig,
+            "automation_state",
+          ),
+        ),
+        updated_at: syncdbField<string>(threadConfig, "updated_at"),
+      });
+    },
+  });
+  const row = normalizeAcpAutomationRecord(record);
+  if (!row) return;
+  const restored = upsertAcpAutomation(row);
+  await publishAutomationRecordToProjectIndex(restored);
+  logger.warn("recovered ACP automation from thread projection", {
+    automation_id: restored.automation_id,
+    project_id,
+    path,
+    thread_id,
+  });
+  return restored;
 }
 
 export async function rehydrateAcpAutomationsForProject(
@@ -8968,7 +9124,8 @@ async function publishAutomationRecordToProjectIndex(
       toAutomationRecord(row)!,
     );
   } catch (err) {
-    logger.debug("failed to publish automation record", {
+    resetAutomationStoreCache(row.project_id);
+    logger.warn("failed to publish automation record", {
       automation_id: row.automation_id,
       err,
     });
@@ -8986,7 +9143,8 @@ async function deleteAutomationRecordFromProjectIndex(opts: {
       automationRecordKey({ path: opts.path, thread_id: opts.thread_id }),
     );
   } catch (err) {
-    logger.debug("failed to delete automation record", { ...opts, err });
+    resetAutomationStoreCache(opts.project_id);
+    logger.warn("failed to delete automation record", { ...opts, err });
   }
 }
 
