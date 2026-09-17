@@ -101,9 +101,7 @@ it("supports keyboard preview, isolated approval and focus restoration", async (
     ).toHaveFocus(),
   );
   expect(service.proposeCreditTransfer).not.toHaveBeenCalled();
-  await user.click(
-    screen.getByRole("button", { name: "Request authorization" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   const link = await screen.findByRole("link", {
     name: "Review transfer and authorize",
   });
@@ -125,13 +123,9 @@ it("retries an uncertain proposal with the same operation and terms", async () =
   render(<CreditTransfers api={service} />);
   const user = await fill();
   await user.click(screen.getByRole("button", { name: "Preview transfer" }));
-  await user.click(
-    await screen.findByRole("button", { name: "Request authorization" }),
-  );
+  await user.click(await screen.findByRole("button", { name: "Authorize" }));
   await screen.findByRole("alert");
-  await user.click(
-    screen.getByRole("button", { name: "Request authorization" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   await screen.findByRole("link", { name: "Review transfer and authorize" });
   expect(service.proposeCreditTransfer.mock.calls[0][0]).toEqual(
     service.proposeCreditTransfer.mock.calls[1][0],

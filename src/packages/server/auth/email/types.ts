@@ -63,6 +63,7 @@ export interface StartEmailAuthChallengeOptions {
   continuation_target?: string;
   onboarding_intent?: ProjectOnboardingIntent;
   expected_account_id?: string;
+  code_only?: boolean;
 }
 
 export interface GetEmailAuthChallengeStatusOptions {

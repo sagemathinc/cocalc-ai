@@ -14,6 +14,7 @@ import {
 } from "antd";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { FinancialApprovalLink } from "./financial-approval-link";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { uuid } from "@cocalc/util/misc";
 import { moneyToCurrency } from "@cocalc/util/money";
@@ -260,17 +261,13 @@ export default function CreditTransfers({
                 loading={busy}
                 icon={<Icon name="lock" />}
               >
-                Request authorization
+                Authorize
               </Button>
             )}
             {status?.state === "approval_required" && status.approval_url && (
-              <a
-                href={status.approval_url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
+              <FinancialApprovalLink approvalUrl={status.approval_url}>
                 Review transfer and authorize
-              </a>
+              </FinancialApprovalLink>
             )}
             {operation && !terminal && (
               <Button

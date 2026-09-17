@@ -1326,6 +1326,67 @@ export interface AccountLocalVerifyFreshAuthCredentialsResult {
   factor_level: "none" | "totp" | "recovery_code" | "passkey";
 }
 
+export type AccountLocalFinancialApprovalAuthRequest =
+  | {
+      action: "begin";
+      account_id: string;
+      approval_origin: string;
+      intent_id: string;
+      primary_auth_method: "password" | "email_code" | "email_link";
+      primary_verified_at: string;
+    }
+  | {
+      action: "verify-code";
+      account_id: string;
+      approval_origin: string;
+      intent_id: string;
+      challenge_id: string;
+      method: "totp" | "recovery_code";
+      code: string;
+    }
+  | {
+      action: "start-passkey";
+      account_id: string;
+      approval_origin: string;
+      intent_id: string;
+      challenge_id: string;
+      relying_party: {
+        origin: string;
+        rp_id: string;
+        rp_name: string;
+      };
+    }
+  | {
+      action: "finish-passkey";
+      account_id: string;
+      approval_origin: string;
+      intent_id: string;
+      challenge_id: string;
+      response: Record<string, unknown>;
+    };
+
+export type AccountLocalFinancialApprovalAuthResult =
+  | {
+      state: "ready";
+      account_id: string;
+      primary_auth_method: "password" | "email_code" | "email_link";
+      primary_verified_at: string;
+      password_verified_at?: string;
+      factor_level: "none" | "totp" | "recovery_code" | "passkey";
+      factor_verified_at?: string;
+    }
+  | {
+      state: "second_factor";
+      account_id: string;
+      challenge_id: string;
+      methods: Array<"totp" | "recovery_code" | "passkey">;
+    }
+  | {
+      state: "passkey";
+      challenge_id: string;
+      options: Record<string, unknown>;
+    };
+
 export interface AccountLocalGetAccountIdFromRememberMeRequest {
   hash: string;
 }
@@ -2853,6 +2914,7 @@ export type AccountLocalMethod =
   | "create-impersonation-grant"
   | "verify-sign-in-password"
   | "verify-fresh-auth-credentials"
+  | "financial-approval-auth"
   | "get-account-id-from-remember-me"
   | "save-blob"
   | "get-blob"
@@ -4508,6 +4570,9 @@ export interface InterBayAccountLocalApi
   verifyFreshAuthCredentials: (
     opts: AccountLocalVerifyFreshAuthCredentialsRequest,
   ) => Promise<AccountLocalVerifyFreshAuthCredentialsResult>;
+  financialApprovalAuth: (
+    opts: AccountLocalFinancialApprovalAuthRequest,
+  ) => Promise<AccountLocalFinancialApprovalAuthResult>;
   getAccountIdFromRememberMe: (
     opts: AccountLocalGetAccountIdFromRememberMeRequest,
   ) => Promise<AccountLocalGetAccountIdFromRememberMeResult>;
@@ -7083,6 +7148,15 @@ export function createInterBayAccountLocalClient({
       method: "verify-fresh-auth-credentials",
     }),
   });
+  const financialApprovalAuthClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "financialApprovalAuth">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "financial-approval-auth",
+    }),
+  });
   const saveBlobClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "saveBlob">
   >({
@@ -8448,6 +8522,8 @@ export function createInterBayAccountLocalClient({
       await createImpersonationGrantClient.createImpersonationGrant(opts),
     verifyFreshAuthCredentials: async (opts) =>
       await verifyFreshAuthCredentialsClient.verifyFreshAuthCredentials(opts),
+    financialApprovalAuth: async (opts) =>
+      await financialApprovalAuthClient.financialApprovalAuth(opts),
     getAccountIdFromRememberMe: async (opts) =>
       await getAccountIdFromRememberMeClient.getAccountIdFromRememberMe(opts),
     saveBlob: async (opts) => await saveBlobClient.saveBlob(opts),
@@ -9049,6 +9125,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         verifyFreshAuthCredentials: async (opts) =>
           await impl.verifyFreshAuthCredentials(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "financialApprovalAuth">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "financial-approval-auth",
+      }),
+      impl: {
+        financialApprovalAuth: async (opts) =>
+          await impl.financialApprovalAuth(opts),
       },
     }),
     createServiceHandler<Pick<InterBayAccountLocalApi, "saveBlob">>({

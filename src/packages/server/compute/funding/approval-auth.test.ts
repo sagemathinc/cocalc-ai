@@ -9,12 +9,10 @@ import {
   requireFreshAuthForSessionHash,
   recordNewAuthSession,
 } from "@cocalc/server/auth/auth-sessions";
-import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
-import { verifyFreshAuthCredentials } from "@cocalc/server/auth/two-factor";
 import {
   fundingSessionHash,
+  issueFundingApprovalSession,
   requireFundingApprovalSession,
-  signInFundingApprover,
 } from "./approval-auth";
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
@@ -22,15 +20,7 @@ jest.mock("@cocalc/server/auth/auth-sessions", () => ({
   requireFreshAuthForSessionHash: jest.fn(),
   recordNewAuthSession: jest.fn(),
 }));
-jest.mock("@cocalc/server/auth/verify-sign-in-password", () => ({
-  verifyLocalSignInPassword: jest.fn(),
-}));
-jest.mock("@cocalc/server/auth/two-factor", () => ({
-  verifyFreshAuthCredentials: jest.fn(),
-}));
-jest.mock("@cocalc/server/inter-bay/accounts", () => ({
-  getClusterAccountById: async () => ({ home_bay_id: "bay-0" }),
-}));
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({}));
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
@@ -42,48 +32,31 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 it("binds the independently verified session to origin, payer and intent", async () => {
-  (verifyLocalSignInPassword as jest.Mock).mockResolvedValue({ account_id });
-  (verifyFreshAuthCredentials as jest.Mock).mockResolvedValue("totp");
-  const result = await signInFundingApprover({
-    email_address: "payer@example.test",
-    password: "password",
-    method: "totp",
-    code: "123456",
+  const now = new Date().toISOString();
+  const result = await issueFundingApprovalSession({
+    auth: {
+      state: "ready",
+      account_id,
+      primary_auth_method: "email_code",
+      primary_verified_at: now,
+      factor_level: "passkey",
+      factor_verified_at: now,
+    },
     intent_id,
     origin,
-  });
-  expect(verifyFreshAuthCredentials).toHaveBeenCalledWith({
-    account_id,
-    current_password: "password",
-    method: "totp",
-    code: "123456",
   });
   expect(recordNewAuthSession).toHaveBeenCalledWith(
     expect.objectContaining({
       session_hash: fundingSessionHash(result.token),
       account_id,
-      factor_level: "totp",
+      primary_auth_method: "email_code",
+      factor_level: "passkey",
       metadata: {
         financial_approval_origin: origin,
         financial_intent_id: intent_id,
       },
     }),
   );
-});
-it("requires the enabled second factor even after successful password authentication", async () => {
-  (verifyLocalSignInPassword as jest.Mock).mockResolvedValue({ account_id });
-  (verifyFreshAuthCredentials as jest.Mock).mockRejectedValue(
-    new Error("second factor required"),
-  );
-  await expect(
-    signInFundingApprover({
-      email_address: "payer@example.test",
-      password: "password",
-      intent_id,
-      origin,
-    }),
-  ).rejects.toThrow("second factor");
-  expect(recordNewAuthSession).not.toHaveBeenCalled();
 });
 it("rejects ordinary, wrong-intent and wrong-origin sessions", async () => {
   for (const metadata of [

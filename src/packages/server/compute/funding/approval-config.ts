@@ -10,6 +10,7 @@ export interface FundingApprovalListenerConfig {
   // HTTPS terminates at a dedicated loopback proxy; never trust arbitrary XFF.
   trusted_proxy_ip?: "127.0.0.1" | "127.0.0.2";
   application_origins: string[];
+  webauthn_rp_id?: string;
 }
 
 export function validateFundingOrigin(origin: string): URL {
@@ -60,6 +61,19 @@ export function validateFundingListener(config: FundingApprovalListenerConfig) {
         "HTTPS financial approval requires a pinned loopback TLS proxy",
       );
     }
+    const rpId = `${config.webauthn_rp_id ?? ""}`.trim().toLowerCase();
+    if (
+      !rpId ||
+      url.hostname === rpId ||
+      !url.hostname.endsWith(`.${rpId}`) ||
+      !config.application_origins.some(
+        (origin) => new URL(origin).hostname === rpId,
+      )
+    ) {
+      throw new Error(
+        "HTTPS financial approval requires a WebAuthn RP ID matching an application origin and parent of the approval host",
+      );
+    }
   } else if (
     config.trusted_proxy_ip ||
     config.listen_port !== Number(url.port)
@@ -87,6 +101,7 @@ export function fundingApprovalConfigFromEnv():
       .split(",")
       .map((x) => x.trim())
       .filter(Boolean),
+    webauthn_rp_id: process.env.COCALC_FUNDING_APPROVAL_WEBAUTHN_RP_ID,
   };
   validateFundingListener(config);
   return config;

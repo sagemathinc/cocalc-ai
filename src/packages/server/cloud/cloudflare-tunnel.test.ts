@@ -536,4 +536,69 @@ describe("deleteCloudflareTunnel", () => {
       ]),
     );
   });
+
+  it("publishes an additional hostname on an existing hub tunnel", async () => {
+    getServerSettingsMock = jest.fn(async () => ({
+      cloudflare_mode: "self",
+      dns: "lite2b.cocalc.ai",
+      project_hosts_cloudflare_tunnel_account_id: "account-id",
+      project_hosts_cloudflare_tunnel_api_token: "token",
+    }));
+    const fetchMock = jest.fn(async (input: any, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/zones?")) {
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            result: [{ name: "cocalc.ai", id: "zone-id" }],
+          }),
+        };
+      }
+      if (init?.method === "GET" && url.includes("/dns_records?")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: [] }),
+        };
+      }
+      if (init?.method === "POST" && url.includes("/dns_records")) {
+        return {
+          ok: true,
+          json: async () => ({ success: true, result: { id: "approval-id" } }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, result: {} }),
+      };
+    });
+    (global as any).fetch = fetchMock;
+
+    const { ensureCloudflareTunnelHostname } =
+      await import("./cloudflare-tunnel");
+    await ensureCloudflareTunnelHostname({
+      tunnel: {
+        id: "tunnel-id",
+        name: "hub-lite2b",
+        hostname: "lite2b.cocalc.ai",
+        tunnel_secret: "secret",
+        account_id: "account-id",
+      },
+      hostname: "approve.lite2b.cocalc.ai",
+    });
+
+    const written = fetchMock.mock.calls
+      .map(([, init]) => init?.body)
+      .filter(Boolean)
+      .map((body) => JSON.parse(String(body)));
+    expect(written).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "approve.lite2b.cocalc.ai",
+          content: "tunnel-id.cfargotunnel.com",
+          proxied: true,
+        }),
+      ]),
+    );
+  });
 });

@@ -16,6 +16,7 @@ import type {
   CourseFundingPoolSummary,
 } from "@cocalc/conat/hub/api/compute-funding";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { uuid } from "@cocalc/util/misc";
 import {
@@ -255,13 +256,9 @@ export function ComputePoolManagement({
                   Expires {new Date(intent.expires_at).toLocaleString()}
                 </div>
                 {pending && intent.approval_url && (
-                  <a
-                    href={intent.approval_url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
+                  <FinancialApprovalLink approvalUrl={intent.approval_url}>
                     Review pool change and authorize
-                  </a>
+                  </FinancialApprovalLink>
                 )}
               </>
             }

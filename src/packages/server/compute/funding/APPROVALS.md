@@ -128,6 +128,7 @@ export COCALC_FUNDING_APPROVAL_ORIGIN=http://127.0.0.2:19212
 export COCALC_FUNDING_APPROVAL_PORT=19212
 export COCALC_FUNDING_APPROVAL_APPLICATION_ORIGINS=http://localhost:19200,http://127.0.0.1:19200
 unset COCALC_FUNDING_APPROVAL_PROXY_IP
+unset COCALC_FUNDING_APPROVAL_WEBAUTHN_RP_ID
 ```
 
 Build `src/packages/server` and restart the hub, not a separate approval process.
@@ -145,13 +146,17 @@ Example configuration, only after deployment/security review:
 
 ```sh
 export COCALC_FUNDING_APPROVAL_ENABLED=1
-export COCALC_FUNDING_APPROVAL_ORIGIN=https://approve-bay0.example.org
+export COCALC_FUNDING_APPROVAL_ORIGIN=https://approve.bay0.example.org
 export COCALC_FUNDING_APPROVAL_PORT=19202
 export COCALC_FUNDING_APPROVAL_PROXY_IP=127.0.0.1
-export COCALC_FUNDING_APPROVAL_APPLICATION_ORIGINS=https://app.example.org,https://bay0.example.org
+export COCALC_FUNDING_APPROVAL_APPLICATION_ORIGINS=https://bay0.example.org
+export COCALC_FUNDING_APPROVAL_WEBAUTHN_RP_ID=bay0.example.org
 ```
 
-Provision DNS and a TLS certificate for that dedicated origin. Route **all** its
+The approval hostname must be a subdomain of the application's WebAuthn RP ID;
+a sibling such as `approve-bay0.example.org` cannot use passkeys registered for
+`bay0.example.org` and is rejected at startup. Provision DNS and a TLS
+certificate for the dedicated origin. Route **all** its
 traffic to `http://127.0.0.2:19202` using a trusted, same-machine proxy connecting
 from the configured loopback IP. Preserve `Host: approve-bay0.example.org`, strip
 `Forwarded` and `X-Forwarded-Host`, and replace `X-Forwarded-Proto` with `https`.
@@ -159,7 +164,11 @@ Never preserve a client-supplied forwarding header. No user files, notebook
 output, general app routes, service workers, or application JS may be served on
 this origin. Do not expose the backend listener externally. Application-origin
 and approval-origin hostnames must differ, not merely their ports. Each payer
-home bay needs its own correctly routed approval origin/listener.
+home verifies its account authentication through the private inter-bay API; the
+central billing seed owns the one approval origin/listener. In Launchpad
+self-managed Cloudflare mode, the seed's cloudflared service automatically
+publishes this hostname on the existing hub tunnel and routes it to the isolated
+loopback listener. Other proxy deployments must configure this route explicitly.
 
 The HTTPS listener uses host-only `__Host-` Secure HttpOnly SameSite=Strict
 cookies. HTTP cookies are allowed only on the distinct development loopback IP
@@ -168,15 +177,24 @@ Fetch Metadata, and session/intent/action-bound CSRF. No CORS approval, reusable
 approval tokens, opener messaging, shared remember-me cookies, or normal-app
 fresh-auth fallback is supported.
 
-## Current Scope And Release Gates
+## Authentication And Release Gates
 
-Independent sign-in reuses `verifyLocalSignInPassword`,
-`verifyFreshAuthCredentials`, `recordNewAuthSession`, and
-`requireFreshAuthForSessionHash`. Password plus an enabled TOTP/recovery code
-works. Passwordless/SSO-only or passkey-only accounts fail closed; adding those
-requires trusted-origin passkey RP/OIDC setup and matching auth routes, not a
-fallback to the application's fresh session. The approval session is bound to
-one intent and origin and has no general remember-me row.
+Independent sign-in supports the same primary paths needed by CoCalc accounts:
+password or a six-digit email code. If the account has a second factor, its home
+bay supplies the actual available methods and verifies a passkey, authenticator
+code, or recovery code. This supports passwordless accounts and passkey-only
+second-factor configurations without trusting the application's existing
+session. Financial email challenges deliberately send a code without a link so
+the proof is entered on the isolated origin rather than redeemed on the normal
+application origin.
+
+The seed listener owns only the intent-bound approval browser session. Password
+and second-factor verification run on the account's authoritative home bay over
+the authenticated inter-bay service. The WebAuthn challenge uses the isolated
+origin and the parent application RP ID, allowing an existing application
+passkey while still requiring the browser to interact with the isolated host.
+The approval session is bound to one intent and origin, expires after 15 minutes,
+and has no general remember-me row.
 
 Terms, resolved account names/emails, and retention policy are snapshotted and
 hashed. Review includes payer, recipients, individual amounts, total commitment,
@@ -214,7 +232,7 @@ Legacy non-financial failure behavior is unchanged. SMTP delivery is at-least-on
 an ambiguous connection loss after server acceptance can duplicate email, but
 never the financial operation or its durable account receipt.
 
-External review must validate the deployed DNS/proxy/cookie boundary and the
+External review must validate the deployed DNS/proxy/RP-ID/cookie boundary and the
 complete section-9 financial workflow before release. In particular, downstream
 receipt delivery, supported passwordless auth methods, account portability,
 and policy/retention changes across outstanding intents require coordinated

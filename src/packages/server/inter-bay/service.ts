@@ -75,6 +75,7 @@ import {
   validateRegistrationTokenDirect,
 } from "@cocalc/server/auth/tokens/redeem";
 import { verifyLocalSignInPassword } from "@cocalc/server/auth/verify-sign-in-password";
+import { financialApprovalAuthOnHome } from "@cocalc/server/compute/funding/approval-auth-home";
 import { redeemVerifyEmailLocal } from "@cocalc/server/auth/redeem-verify-email";
 import {
   createResetLocal as createPasswordResetLocal,
@@ -1262,6 +1263,8 @@ async function startAccountLocalService(): Promise<void> {
         code,
       }),
     }),
+    financialApprovalAuth: async (opts) =>
+      await financialApprovalAuthOnHome(opts),
     getAccountIdFromRememberMe: async ({ hash }) => ({
       account_id: await getLocalAccountIdFromRememberMe(hash),
     }),

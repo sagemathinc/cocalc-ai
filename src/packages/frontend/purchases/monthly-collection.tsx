@@ -8,6 +8,7 @@ import type {
   MonthlyCollectionApi,
   MonthlyCollectionApproval,
 } from "@cocalc/util/monthly-collection";
+import { FinancialApprovalLink } from "./financial-approval-link";
 
 export default function MonthlyCollection({
   api = webapp_client.conat_client.hub.purchases,
@@ -139,14 +140,12 @@ export default function MonthlyCollection({
               </Button>
             )}
             {pending.map((p) => (
-              <a
+              <FinancialApprovalLink
                 key={p.intent_id}
-                href={p.approval_url}
-                target="_blank"
-                rel="noopener noreferrer"
+                approvalUrl={p.approval_url}
               >
                 Review monthly collection and authorize
-              </a>
+              </FinancialApprovalLink>
             ))}
             <Button
               style={{

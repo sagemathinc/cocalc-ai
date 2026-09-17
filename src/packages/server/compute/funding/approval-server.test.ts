@@ -14,8 +14,14 @@ import {
   fundingApprovalConfigFromEnv,
 } from "./approval-config";
 import {
+  beginFundingApprovalEmail,
+  beginFundingApprovalPassword,
+  completeFundingApprovalEmail,
+  finishFundingApprovalPasskey,
+  getFundingApprovalEmailStatus,
+  issueFundingApprovalSession,
   requireFundingApprovalSession,
-  signInFundingApprover,
+  startFundingApprovalPasskey,
 } from "./approval-auth";
 import type { CourseFundingDraft } from "@cocalc/util/compute-funding";
 import type { FundingIntent } from "./approvals";
@@ -24,8 +30,15 @@ import type { CourseFundingApprovalTerms } from "./approval-review";
 jest.mock("./approval-auth", () => ({
   fundingSessionHash: (token: string) =>
     require("node:crypto").createHash("sha256").update(token).digest("hex"),
+  beginFundingApprovalEmail: jest.fn(),
+  beginFundingApprovalPassword: jest.fn(),
+  completeFundingApprovalEmail: jest.fn(),
+  finishFundingApprovalPasskey: jest.fn(),
+  getFundingApprovalEmailStatus: jest.fn(),
+  issueFundingApprovalSession: jest.fn(),
   requireFundingApprovalSession: jest.fn(),
-  signInFundingApprover: jest.fn(),
+  startFundingApprovalPasskey: jest.fn(),
+  verifyFundingApprovalCode: jest.fn(),
 }));
 
 jest.setTimeout(60_000);
@@ -69,6 +82,28 @@ describe("approval listener configuration", () => {
         application_origins: ["https://app.example.test"],
       }),
     ).toThrow("pinned");
+  });
+  it("requires the approval host to be below the application's passkey RP ID", () => {
+    expect(() =>
+      validateFundingListener({
+        origin: "https://approve-lite.example.test",
+        listen_host: "127.0.0.2",
+        listen_port: 19202,
+        trusted_proxy_ip: "127.0.0.1",
+        application_origins: ["https://lite.example.test"],
+        webauthn_rp_id: "lite.example.test",
+      }),
+    ).toThrow("WebAuthn RP ID");
+    expect(() =>
+      validateFundingListener({
+        origin: "https://approve.lite.example.test",
+        listen_host: "127.0.0.2",
+        listen_port: 19202,
+        trusted_proxy_ip: "127.0.0.1",
+        application_origins: ["https://lite.example.test"],
+        webauthn_rp_id: "lite.example.test",
+      }),
+    ).not.toThrow();
   });
 });
 
@@ -172,19 +207,35 @@ describe("isolated financial browser approval", () => {
     apply.mockClear();
     approvals.retrieve.mockImplementation(async () => intent);
     sessions.clear();
-    (signInFundingApprover as jest.Mock).mockImplementation(async (opts) => {
-      if (
-        opts.email_address !== loginEmail ||
-        opts.password !== "test-password"
-      )
-        throw new Error("bad credentials");
-      const token = randomBytes(32).toString("hex");
-      sessions.set(
-        createHash("sha256").update(token).digest("hex"),
-        opts.intent_id,
-      );
-      return { account_id: payer, token };
-    });
+    (beginFundingApprovalPassword as jest.Mock).mockImplementation(
+      async (opts) => {
+        if (
+          opts.email_address !== loginEmail ||
+          opts.password !== "test-password"
+        )
+          throw new Error("bad credentials");
+        return {
+          state: "ready",
+          account_id: payer,
+          primary_auth_method: "password",
+          primary_verified_at: new Date().toISOString(),
+          password_verified_at: new Date().toISOString(),
+          factor_level: "none",
+        };
+      },
+    );
+    (issueFundingApprovalSession as jest.Mock).mockImplementation(
+      async (opts) => {
+        if (opts.auth.account_id !== payer || opts.intent_id !== id)
+          throw new Error("bad credentials");
+        const token = randomBytes(32).toString("hex");
+        sessions.set(
+          createHash("sha256").update(token).digest("hex"),
+          opts.intent_id,
+        );
+        return { account_id: payer, token };
+      },
+    );
     (requireFundingApprovalSession as jest.Mock).mockImplementation(
       async (opts) => {
         if (sessions.get(opts.session_hash) !== opts.intent_id)
@@ -207,10 +258,11 @@ describe("isolated financial browser approval", () => {
   async function login(heading = "Approve Course Funding") {
     await page.goto(`${origin}/funding/${id}`);
     const posted = page.waitForResponse((r) => r.request().method() === "POST");
-    await page.getByRole("textbox", { name: "Account email" }).fill(loginEmail);
+    await page.getByRole("link", { name: "Use a password instead" }).click();
+    await page.getByRole("textbox", { name: "Email address" }).fill(loginEmail);
     await page.getByLabel("Password", { exact: true }).fill("test-password");
     await page
-      .getByRole("button", { name: "Sign In", exact: true })
+      .getByRole("button", { name: "Sign in", exact: true })
       .press("Enter");
     const response = await posted;
     const requestHeaders = await response.request().allHeaders();
@@ -231,7 +283,6 @@ describe("isolated financial browser approval", () => {
   }
   it("renders escaped identities and financial terms, with keyboard approval", async () => {
     await page.goto(`${origin}/funding/${id}`);
-    await page.keyboard.press("Tab");
     expect(await page.locator(":focus").getAttribute("id")).toBe("email");
     await login();
     expect(await page.locator("body").innerText()).toContain(
@@ -256,6 +307,97 @@ describe("isolated financial browser approval", () => {
         payer_account_id: payer,
         intent_id: id,
         terms_hash: intent.terms_hash,
+      }),
+    );
+  });
+  it("supports passwordless email followed by a passkey", async () => {
+    await context.addInitScript(() => {
+      Object.defineProperty(navigator, "credentials", {
+        configurable: true,
+        value: {
+          get: async () => ({
+            id: "credential-id",
+            rawId: new Uint8Array([1, 2, 3]).buffer,
+            type: "public-key",
+            authenticatorAttachment: "platform",
+            getClientExtensionResults: () => ({}),
+            response: {
+              authenticatorData: new Uint8Array([4]).buffer,
+              clientDataJSON: new Uint8Array([5]).buffer,
+              signature: new Uint8Array([6]).buffer,
+              userHandle: null,
+            },
+          }),
+        },
+      });
+    });
+    const emailPending = {
+      account_id: payer,
+      email_address: loginEmail,
+      home_bay_id: "bay-1",
+      intent_id: id,
+      origin,
+      email_challenge_id: randomUUID(),
+      expires_at: Date.now() + 60_000,
+    };
+    const factorPending = {
+      ...emailPending,
+      second_factor_challenge_id: randomUUID(),
+      methods: ["passkey" as const],
+    };
+    (beginFundingApprovalEmail as jest.Mock).mockResolvedValue(emailPending);
+    (getFundingApprovalEmailStatus as jest.Mock).mockResolvedValue({
+      state: "pending",
+      masked_email: "p***@example.test",
+    });
+    (completeFundingApprovalEmail as jest.Mock).mockResolvedValue(
+      factorPending,
+    );
+    (startFundingApprovalPasskey as jest.Mock).mockResolvedValue({
+      state: "passkey",
+      challenge_id: factorPending.second_factor_challenge_id,
+      options: {
+        challenge: "AQID",
+        allowCredentials: [{ id: "BAUG", type: "public-key" }],
+        timeout: 60_000,
+        userVerification: "preferred",
+      },
+    });
+    (finishFundingApprovalPasskey as jest.Mock).mockResolvedValue({
+      state: "ready",
+      account_id: payer,
+      primary_auth_method: "email_code",
+      primary_verified_at: new Date().toISOString(),
+      factor_level: "passkey",
+      factor_verified_at: new Date().toISOString(),
+    });
+
+    await page.goto(`${origin}/funding/${id}`);
+    await page.getByRole("textbox", { name: "Email address" }).fill(loginEmail);
+    await page.getByRole("button", { name: "Continue with email" }).click();
+    await page.getByRole("heading", { name: "Check your email" }).waitFor();
+    await page
+      .getByRole("textbox", { name: "Six-digit email approval code" })
+      .fill("123456");
+    await page.getByRole("button", { name: "Verify code" }).click();
+    await page
+      .getByRole("heading", { name: "Verify your second factor" })
+      .waitFor();
+    await page.getByRole("button", { name: "Use passkey" }).click();
+    await page
+      .getByRole("heading", { name: "Approve Course Funding" })
+      .waitFor();
+    expect(startFundingApprovalPasskey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        auth: expect.objectContaining({ account_id: payer }),
+      }),
+    );
+    expect(finishFundingApprovalPasskey).toHaveBeenCalledWith(
+      expect.objectContaining({
+        response: expect.objectContaining({
+          id: "credential-id",
+          type: "public-key",
+        }),
       }),
     );
   });
@@ -646,7 +788,8 @@ it("uses host-only Secure __Host cookies behind the pinned HTTPS proxy", async (
       listen_host: "127.0.0.2",
       listen_port: port,
       trusted_proxy_ip: "127.0.0.1",
-      application_origins: ["https://app.example.test"],
+      application_origins: ["https://example.test"],
+      webauthn_rp_id: "example.test",
     },
   });
   const call = (localAddress: string, headers: Record<string, string>) =>

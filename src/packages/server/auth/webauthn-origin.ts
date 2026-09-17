@@ -18,6 +18,32 @@ export type WebAuthnRelyingParty = {
   rp_name: string;
 };
 
+export function validateWebAuthnRelyingParty({
+  origin,
+  rp_id,
+  rp_name,
+}: WebAuthnRelyingParty): WebAuthnRelyingParty {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    throw new Error("unable to determine public origin for passkeys");
+  }
+  assertWebAuthnOrigin(normalizedOrigin);
+  const hostname = normalizeHostname(normalizedOrigin);
+  const normalizedRpId = `${rp_id ?? ""}`.trim().toLowerCase();
+  if (
+    !hostname ||
+    !normalizedRpId ||
+    (hostname !== normalizedRpId && !hostname.endsWith(`.${normalizedRpId}`))
+  ) {
+    throw new Error("passkey relying party is not a parent of its origin");
+  }
+  return {
+    origin: normalizedOrigin,
+    rp_id: normalizedRpId,
+    rp_name: `${rp_name ?? ""}`.trim() || "CoCalc",
+  };
+}
+
 function isLocalhost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -51,9 +77,9 @@ export async function getWebAuthnRelyingPartyForRequest(
     throw new Error("unable to determine relying party id for passkeys");
   }
   const customize = await getCustomize(["siteName"]);
-  return {
+  return validateWebAuthnRelyingParty({
     origin,
     rp_id,
     rp_name: `${customize.siteName ?? "CoCalc"}`.trim() || "CoCalc",
-  };
+  });
 }

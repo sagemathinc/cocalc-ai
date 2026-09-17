@@ -10,14 +10,24 @@ import express from "express";
 import type { Request, Response } from "express";
 import { parse } from "cookie";
 import { getLogger } from "@cocalc/backend/logger";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import {
   appearanceStyleSheet,
   UI_COLORS,
 } from "@cocalc/util/appearance-palette";
 import {
+  beginFundingApprovalEmail,
+  beginFundingApprovalPassword,
+  completeFundingApprovalEmail,
+  finishFundingApprovalPasskey,
   fundingSessionHash,
+  getFundingApprovalEmailStatus,
+  issueFundingApprovalSession,
   requireFundingApprovalSession,
-  signInFundingApprover,
+  startFundingApprovalPasskey,
+  verifyFundingApprovalCode,
+  type FundingApprovalPendingAuth,
+  type FundingApprovalReadyAuth,
 } from "./approval-auth";
 import { validateFundingListener } from "./approval-config";
 import type { FundingApprovalListenerConfig } from "./approval-config";
@@ -40,16 +50,85 @@ function escapeHtml(value: string): string {
   );
 }
 
-function page(res: Response, title: string, content: string) {
+function page(
+  res: Response,
+  title: string,
+  content: string,
+  opts: { script?: string; siteName?: string } = {},
+) {
   const nonce = randomBytes(24).toString("base64");
+  const siteName = escapeHtml(opts.siteName ?? "CoCalc");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; style-src 'nonce-${nonce}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`,
+    `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; form-action 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`,
   );
   res.type("html")
-    .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)}</title>
-    <style nonce="${nonce}">${appearanceStyleSheet()}*{box-sizing:border-box}body{font:16px system-ui;margin:0;color:${UI_COLORS.text};background:${UI_COLORS.page}}main{max-width:760px;margin:auto;padding:24px}h1{font-size:24px}label{display:block;margin-top:16px}input,select,button{font:inherit;max-width:100%;padding:8px}input{display:block;width:100%}button{margin-top:20px}dt{font-weight:600;margin-top:12px}dd{margin:4px 0 0}pre,dd{white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;table-layout:fixed;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:8px;overflow-wrap:anywhere;border-bottom:1px solid ${UI_COLORS.border}}th:first-child{width:60%}a{overflow-wrap:anywhere;color:${UI_COLORS.link}}:focus-visible{outline:3px solid ${UI_COLORS.focus};outline-offset:3px}</style></head>
-    <body><main><h1>${escapeHtml(title)}</h1>${content}</main></body></html>`);
+    .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} - ${siteName}</title>
+    <style nonce="${nonce}">${appearanceStyleSheet()}*{box-sizing:border-box}body{font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:${UI_COLORS.text};background:${UI_COLORS.page};min-height:100vh}.top{height:64px;background:${UI_COLORS.surface};border-bottom:1px solid ${UI_COLORS.border};display:flex;align-items:center;padding:0 24px}.brand{font-size:21px;font-weight:700;color:${UI_COLORS.text};text-decoration:none}.secure{margin-left:auto;color:${UI_COLORS.secondary};font-size:14px}main{max-width:760px;margin:40px auto;padding:0 20px 40px}.card{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.border};border-radius:8px;box-shadow:0 12px 32px ${UI_COLORS.shadow};padding:32px}.auth-card{max-width:480px;margin:auto}h1{font-size:24px;line-height:1.25;margin:0 0 8px}h2{font-size:19px}.subtitle,.muted{color:${UI_COLORS.secondary};font-size:15px;line-height:1.5}.stack{display:flex;flex-direction:column;gap:16px;margin-top:20px}.field{display:flex;flex-direction:column;gap:6px}label{font-size:14px;font-weight:600}input,button{font:inherit;max-width:100%;border-radius:8px}input{display:block;width:100%;background:${UI_COLORS.surface};color:${UI_COLORS.text};border:1px solid ${UI_COLORS.border};padding:10px 12px;font-size:16px}button{border:0;background:${UI_COLORS.primary};color:${UI_COLORS.onPrimary};font-weight:600;padding:11px 16px;cursor:pointer}button.secondary{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.controlBorder};color:${UI_COLORS.text}}button:disabled{cursor:not-allowed;opacity:.65}.link-button{background:none!important;border:0!important;color:${UI_COLORS.link}!important;padding:0!important;font-weight:400!important}.center{text-align:center}.alert{border-radius:8px;padding:10px 12px;font-size:14px;line-height:1.45;background:${UI_COLORS.infoBg};border:1px solid ${UI_COLORS.info};color:${UI_COLORS.text}}.alert-error{background:${UI_COLORS.dangerBg};border-color:${UI_COLORS.danger}}.divider{display:flex;align-items:center;gap:12px;color:${UI_COLORS.secondary};font-size:13px}.divider:before,.divider:after{content:"";height:1px;background:${UI_COLORS.border};flex:1}.method-row{display:flex;gap:8px;flex-wrap:wrap}.method-row button{width:auto}dt{font-weight:600;margin-top:12px}dd{margin:4px 0 0}pre,dd{white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;table-layout:fixed;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:8px;overflow-wrap:anywhere;border-bottom:1px solid ${UI_COLORS.border}}th:first-child{width:60%}a{overflow-wrap:anywhere;color:${UI_COLORS.link}}:focus-visible{outline:3px solid ${UI_COLORS.focus};outline-offset:3px}@media(max-width:520px){.top{padding:0 16px}.secure{display:none}main{margin-top:20px;padding:0 12px 24px}.card{padding:22px 18px}}</style></head>
+    <body><header class="top"><span class="brand">${siteName}</span><span class="secure">Secure financial confirmation</span></header><main><section class="card${content.includes("data-auth-card") ? " auth-card" : ""}"><h1>${escapeHtml(title)}</h1>${content}</section></main>${opts.script ? `<script nonce="${nonce}">${opts.script}</script>` : ""}</body></html>`);
+}
+
+function passkeyScript(id: string, startCsrf: string, finishCsrf: string) {
+  return `(() => {
+  const button = document.getElementById("use-passkey");
+  const error = document.getElementById("passkey-error");
+  if (!button) return;
+  const decode = (value) => {
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
+    const binary = atob(base64);
+    return Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  };
+  const encode = (value) => {
+    const bytes = new Uint8Array(value);
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/[+]/g, "-").replace(/[/]/g, "_").replace(/=+$/, "");
+  };
+  async function post(path, body) {
+    const response = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Passkey verification failed.");
+    return result;
+  }
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    error.hidden = true;
+    try {
+      const started = await post("/funding/${id}/sign-in/passkey/start", { csrf: "${startCsrf}" });
+      const options = started.options;
+      options.challenge = decode(options.challenge);
+      options.allowCredentials = (options.allowCredentials || []).map((item) => ({ ...item, id: decode(item.id) }));
+      const credential = await navigator.credentials.get({ publicKey: options });
+      if (!credential) throw new Error("Passkey verification was canceled.");
+      const result = await post("/funding/${id}/sign-in/passkey/finish", {
+        csrf: "${finishCsrf}",
+        response: {
+          id: credential.id,
+          rawId: encode(credential.rawId),
+          type: credential.type,
+          authenticatorAttachment: credential.authenticatorAttachment,
+          clientExtensionResults: credential.getClientExtensionResults(),
+          response: {
+            authenticatorData: encode(credential.response.authenticatorData),
+            clientDataJSON: encode(credential.response.clientDataJSON),
+            signature: encode(credential.response.signature),
+            userHandle: credential.response.userHandle ? encode(credential.response.userHandle) : undefined,
+          },
+        },
+      });
+      window.location.assign(result.redirect);
+    } catch (err) {
+      error.textContent = err instanceof Error ? err.message : "Passkey verification failed.";
+      error.hidden = false;
+      button.disabled = false;
+    }
+  });
+})();`;
 }
 
 function cookie(req: Request, name: string): string {
@@ -213,12 +292,22 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   if (url.origin !== approvals.approval_origin)
     throw new Error("Approval origin mismatch");
   const secure = url.protocol === "https:";
+  let siteName = "CoCalc";
+  try {
+    const { site_name } = await getServerSettings();
+    siteName = `${site_name ?? "CoCalc"}`.trim() || "CoCalc";
+  } catch {
+    // Minimal fixtures may not install the settings table.
+  }
   const COOKIE = secure
     ? "__Host-cocalc-financial-session"
     : "cocalc_financial_dev_session";
   const CSRF_COOKIE = secure
     ? "__Host-cocalc-financial-csrf"
     : "cocalc_financial_dev_csrf";
+  const FLOW_COOKIE = secure
+    ? "__Host-cocalc-financial-flow"
+    : "cocalc_financial_dev_flow";
   const app = express();
   app.disable("x-powered-by");
   app.set("trust proxy", false);
@@ -227,11 +316,19 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   let windowStart = Date.now();
   let attempts = 0;
   const perEmail = new Map<string, number>();
+  const pendingAuth = new Map<string, FundingApprovalPendingAuth>();
+  function removeExpiredPendingAuth() {
+    const now = Date.now();
+    for (const [flow, auth] of pendingAuth) {
+      if (auth.expires_at <= now) pendingAuth.delete(flow);
+    }
+  }
   function rateLimit(email: string) {
     if (Date.now() - windowStart > 60_000) {
       windowStart = Date.now();
       attempts = 0;
       perEmail.clear();
+      removeExpiredPendingAuth();
     }
     const count = (perEmail.get(email) ?? 0) + 1;
     if (++attempts > 60 || count > 5)
@@ -275,12 +372,79 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     intent: string,
     purpose: string,
   ) {
+    return `<input type="hidden" name="csrf" value="${csrfToken(req, res, intent, purpose)}">`;
+  }
+  function csrfToken(
+    req: Request,
+    res: Response,
+    intent: string,
+    purpose: string,
+  ) {
     let secret = cookie(req, CSRF_COOKIE);
     if (!/^[a-f0-9]{64}$/.test(secret)) {
       secret = randomBytes(32).toString("hex");
       setCookie(res, CSRF_COOKIE, secret, secure);
     }
-    return `<input type="hidden" name="csrf" value="${csrf(req, intent, purpose, secret)}">`;
+    return csrf(req, intent, purpose, secret);
+  }
+  function getPendingAuth(req: Request, intent_id: string) {
+    const flow = cookie(req, FLOW_COOKIE);
+    const auth = /^[a-f0-9]{64}$/.test(flow)
+      ? pendingAuth.get(flow)
+      : undefined;
+    if (
+      !auth ||
+      auth.intent_id !== intent_id ||
+      auth.origin !== url.origin ||
+      auth.expires_at <= Date.now()
+    ) {
+      if (flow) pendingAuth.delete(flow);
+      return;
+    }
+    return auth;
+  }
+  function setPendingAuth(
+    req: Request,
+    res: Response,
+    auth: FundingApprovalPendingAuth,
+  ) {
+    removeExpiredPendingAuth();
+    const previousFlow = cookie(req, FLOW_COOKIE);
+    if (previousFlow) pendingAuth.delete(previousFlow);
+    if (pendingAuth.size >= 1_000)
+      throw new Error("Too many pending financial sign-in attempts");
+    const flow = randomBytes(32).toString("hex");
+    pendingAuth.set(flow, auth);
+    setCookie(res, FLOW_COOKIE, flow, secure);
+  }
+  function clearPendingAuth(req: Request, res: Response) {
+    const flow = cookie(req, FLOW_COOKIE);
+    if (flow) pendingAuth.delete(flow);
+    res.clearCookie(FLOW_COOKIE, {
+      secure,
+      httpOnly: true,
+      sameSite: "strict",
+      path: "/",
+    });
+  }
+  async function finishSignIn(
+    req: Request,
+    res: Response,
+    id: string,
+    auth: FundingApprovalReadyAuth,
+  ) {
+    const signedIn = await issueFundingApprovalSession({
+      auth,
+      intent_id: id,
+      origin: url.origin,
+    });
+    await approvals.retrieve({
+      intent_id: id,
+      payer_account_id: signedIn.account_id,
+    });
+    setCookie(res, COOKIE, signedIn.token, secure);
+    setCookie(res, CSRF_COOKIE, randomBytes(32).toString("hex"), secure);
+    clearPendingAuth(req, res);
   }
   function intentId(req: Request): string {
     const id = String(req.params.id);
@@ -338,6 +502,7 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     next();
   });
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
+  app.use(express.json({ limit: "32kb" }));
   app.param("id", (_req, res, next, value) => {
     if (/^[0-9a-f-]{36}$/i.test(String(value)))
       res.locals.fundingIntentId = value;
@@ -353,16 +518,63 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       /* Independent sign-in below. */
     }
     if (!actor) {
+      if (req.query.restart === "1") {
+        clearPendingAuth(req, res);
+      }
+      const auth = getPendingAuth(req, id);
+      if (auth?.email_challenge_id && !auth.second_factor_challenge_id) {
+        const status = await getFundingApprovalEmailStatus({
+          auth,
+          browser_binding: cookie(req, CSRF_COOKIE),
+        });
+        const proved = status.state === "email_proved";
+        page(
+          res,
+          "Check your email",
+          `<div data-auth-card></div><p class="subtitle">We sent a six-digit code to <strong>${escapeHtml(status.masked_email)}</strong>.</p>
+          <div class="stack"><div class="alert">${proved ? "Your email is verified. Continue to finish confirming this financial action." : "Enter the code from your email below."}</div>
+          <form class="stack" method="post" action="/funding/${id}/sign-in/email-code">${formToken(req, res, id, "email-code")}
+          <div class="field"><label for="email-code">Six-digit email approval code</label><input id="email-code" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" ${proved ? "" : "required"}></div>
+          <button type="submit">${proved ? "Continue" : "Verify code"}</button></form>
+          <div class="center"><a href="/funding/${id}?restart=1">Use a different sign-in method</a></div></div>`,
+          { siteName },
+        );
+        return;
+      }
+      if (auth?.second_factor_challenge_id && auth.methods?.length) {
+        const hasPasskey = auth.methods.includes("passkey");
+        const hasCode = auth.methods.some((method) => method !== "passkey");
+        const script = hasPasskey
+          ? passkeyScript(
+              id,
+              csrfToken(req, res, id, "passkey-start"),
+              csrfToken(req, res, id, "passkey-finish"),
+            )
+          : undefined;
+        page(
+          res,
+          "Verify your second factor",
+          `<div data-auth-card></div><p class="subtitle">Finish signing in to ${escapeHtml(siteName)} to confirm this financial action.</p><div class="stack">
+          ${hasPasskey ? `<button id="use-passkey" type="button">Use passkey</button><div id="passkey-error" class="alert alert-error" role="alert" hidden></div>` : ""}
+          ${hasPasskey && hasCode ? '<div class="divider">or</div>' : ""}
+          ${hasCode ? `<div class="alert">Enter either the 6-digit authenticator code or one of your recovery codes.</div><form class="stack" method="post" action="/funding/${id}/sign-in/code">${formToken(req, res, id, "second-factor-code")}<div class="field"><label for="second-factor-code">Second factor</label><input id="second-factor-code" name="code" autocomplete="one-time-code" required></div><button type="submit">Verify</button></form>` : ""}
+          <div class="center"><a href="/funding/${id}?restart=1">Use a different sign-in method</a></div></div>`,
+          { siteName, script },
+        );
+        return;
+      }
+      const usePassword = req.query.method === "password";
       page(
         res,
-        "Financial Sign-In",
-        `<form method="post" action="/funding/${id}/sign-in">
-        ${formToken(req, res, id, "sign-in")}
-        <label for="email">Account email</label><input id="email" name="email" type="email" autocomplete="username" required>
-        <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
-        <label for="method">Second factor</label><select id="method" name="method"><option value="totp">Authenticator code</option><option value="recovery_code">Recovery code</option></select>
-        <label for="code">Code (when enabled)</label><input id="code" name="code" autocomplete="one-time-code">
-        <button type="submit">Sign In</button></form>`,
+        `Sign in to ${siteName}`,
+        `<div data-auth-card></div><p class="subtitle">Sign in independently on this secure ${escapeHtml(siteName)} page before confirming the financial action.</p>
+        <form class="stack" method="post" action="/funding/${id}/sign-in/${usePassword ? "password" : "email"}">
+        ${formToken(req, res, id, usePassword ? "password-start" : "email-start")}
+        <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="username" placeholder="you@example.com" required autofocus></div>
+        ${usePassword ? '<div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" placeholder="Enter your password" required></div>' : ""}
+        <button type="submit">${usePassword ? "Sign in" : "Continue with email"}</button></form>
+        <div class="center" style="margin-top:16px"><a href="/funding/${id}${usePassword ? "" : "?method=password"}">${usePassword ? "Use email instead" : "Use a password instead"}</a></div>`,
+        { siteName },
       );
       return;
     }
@@ -388,38 +600,152 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
         <input type="hidden" name="terms_hash" value="${intent.terms_hash}"><button type="submit">Approve Funding</button></form>`
           : ""
       }`,
+      { siteName },
     );
   });
 
-  app.post("/funding/:id/sign-in", async (req, res) => {
+  app.post("/funding/:id/sign-in/email", async (req, res) => {
     const id = intentId(req);
-    checkCsrf(req, id, "sign-in");
+    checkCsrf(req, id, "email-start");
     const email_address = String(req.body.email ?? "")
       .trim()
       .toLowerCase();
     rateLimit(email_address);
-    let signedIn;
     try {
-      signedIn = await signInFundingApprover({
+      setPendingAuth(
+        req,
+        res,
+        await beginFundingApprovalEmail({
+          email_address,
+          browser_binding: cookie(req, CSRF_COOKIE),
+          intent_id: id,
+          origin: url.origin,
+        }),
+      );
+    } catch {
+      throw new Error("Financial sign-in failed. Verify the account email.");
+    }
+    res.redirect(303, `/funding/${id}`);
+  });
+
+  app.post("/funding/:id/sign-in/password", async (req, res) => {
+    const id = intentId(req);
+    checkCsrf(req, id, "password-start");
+    const email_address = String(req.body.email ?? "")
+      .trim()
+      .toLowerCase();
+    rateLimit(email_address);
+    try {
+      const result = await beginFundingApprovalPassword({
         email_address,
         password: String(req.body.password ?? ""),
-        method: String(req.body.method ?? ""),
-        code: String(req.body.code ?? ""),
         intent_id: id,
         origin: url.origin,
       });
-      await approvals.retrieve({
-        intent_id: id,
-        payer_account_id: signedIn.account_id,
-      });
+      if ("state" in result) await finishSignIn(req, res, id, result);
+      else setPendingAuth(req, res, result);
     } catch {
       throw new Error(
-        "Financial sign-in failed. Verify the payer account, password and enabled second factor.",
+        "Financial sign-in failed. Verify the account email and password.",
       );
     }
-    setCookie(res, COOKIE, signedIn.token, secure);
-    setCookie(res, CSRF_COOKIE, randomBytes(32).toString("hex"), secure);
     res.redirect(303, `/funding/${id}`);
+  });
+
+  app.post("/funding/:id/sign-in/email-code", async (req, res) => {
+    const id = intentId(req);
+    checkCsrf(req, id, "email-code");
+    const auth = getPendingAuth(req, id);
+    if (!auth) throw new Error("Financial sign-in expired");
+    try {
+      const code = String(req.body.code ?? "").trim();
+      const result = await completeFundingApprovalEmail({
+        auth,
+        ...(code ? { code } : {}),
+      });
+      if ("state" in result) await finishSignIn(req, res, id, result);
+      else setPendingAuth(req, res, result);
+    } catch {
+      throw new Error(
+        "Financial sign-in failed. Verify the email approval code.",
+      );
+    }
+    res.redirect(303, `/funding/${id}`);
+  });
+
+  app.post("/funding/:id/sign-in/code", async (req, res) => {
+    const id = intentId(req);
+    checkCsrf(req, id, "second-factor-code");
+    const auth = getPendingAuth(req, id);
+    if (!auth) throw new Error("Financial sign-in expired");
+    const code = String(req.body.code ?? "").trim();
+    const method = /^\d{6}$/.test(code) ? "totp" : "recovery_code";
+    if (!auth.methods?.includes(method)) {
+      throw new Error("Financial sign-in failed. Verify the second factor.");
+    }
+    try {
+      await finishSignIn(
+        req,
+        res,
+        id,
+        await verifyFundingApprovalCode({ auth, method, code }),
+      );
+    } catch {
+      throw new Error("Financial sign-in failed. Verify the second factor.");
+    }
+    res.redirect(303, `/funding/${id}`);
+  });
+
+  app.get("/funding/:id/sign-in/email-status", async (req, res) => {
+    const id = intentId(req);
+    const auth = getPendingAuth(req, id);
+    if (!auth) throw new Error("Financial sign-in expired");
+    const status = await getFundingApprovalEmailStatus({
+      auth,
+      browser_binding: cookie(req, CSRF_COOKIE),
+    });
+    res.json({ state: status.state });
+  });
+
+  app.post("/funding/:id/sign-in/passkey/start", async (req, res) => {
+    const id = intentId(req);
+    try {
+      checkCsrf(req, id, "passkey-start");
+      const auth = getPendingAuth(req, id);
+      if (!auth?.methods?.includes("passkey")) throw new Error();
+      const started = await startFundingApprovalPasskey({
+        auth,
+        relying_party: {
+          origin: url.origin,
+          rp_id: config.webauthn_rp_id ?? url.hostname,
+          rp_name: siteName,
+        },
+      });
+      res.json({ options: started.options });
+    } catch {
+      res.status(400).json({ error: "Passkey verification could not start." });
+    }
+  });
+
+  app.post("/funding/:id/sign-in/passkey/finish", async (req, res) => {
+    const id = intentId(req);
+    try {
+      checkCsrf(req, id, "passkey-finish");
+      const auth = getPendingAuth(req, id);
+      if (!auth?.methods?.includes("passkey")) throw new Error();
+      await finishSignIn(
+        req,
+        res,
+        id,
+        await finishFundingApprovalPasskey({
+          auth,
+          response: req.body.response as Record<string, unknown>,
+        }),
+      );
+      res.json({ redirect: `/funding/${id}` });
+    } catch {
+      res.status(400).json({ error: "Passkey verification failed." });
+    }
   });
 
   app.get("/funding/:id/status", async (req, res) => {
@@ -466,7 +792,8 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       page(
         res,
         "Financial Approval Unavailable",
-        `<p role="alert">${escapeHtml(err instanceof Error && err.message.startsWith("Financial sign-in failed") ? err.message : "The request could not be completed. Check the funding request status before retrying.")}</p>${retry ? `<a href="${retry}">Return to Funding Request</a>` : ""}`,
+        `<p class="alert alert-error" role="alert">${escapeHtml(err instanceof Error && (err.message.startsWith("Financial sign-in failed") || err.message === "Financial sign-in expired") ? err.message : "The request could not be completed. Check the funding request status before retrying.")}</p>${retry ? `<p><a href="${retry}">Return to funding request</a></p>` : ""}`,
+        { siteName },
       );
     },
   );

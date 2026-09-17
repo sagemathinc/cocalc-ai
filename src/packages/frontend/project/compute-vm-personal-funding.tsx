@@ -25,6 +25,7 @@ import type {
 import { uuid } from "@cocalc/util/misc";
 import { moneyToCurrency } from "@cocalc/util/money";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
 
 type Values = Pick<
   VmPersonalFundingTerms,
@@ -244,21 +245,20 @@ export default function VmPersonalFunding({
             </Descriptions.Item>
           </Descriptions>
           {consent.state === "pending" && consent.approval_url && (
-            <Button
-              type="primary"
-              style={{
-                whiteSpace: "normal",
-                height: "auto",
-                minHeight: 32,
-                maxWidth: "100%",
+            <FinancialApprovalLink
+              approvalUrl={consent.approval_url}
+              buttonProps={{
+                type: "primary",
+                style: {
+                  whiteSpace: "normal",
+                  height: "auto",
+                  minHeight: 32,
+                  maxWidth: "100%",
+                },
               }}
-              href={consent.approval_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              icon={<Icon name="external-link" />}
             >
               Review personal funding and authorize
-            </Button>
+            </FinancialApprovalLink>
           )}
           {outstanding && (
             <Button

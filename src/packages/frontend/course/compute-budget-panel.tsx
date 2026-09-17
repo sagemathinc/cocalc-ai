@@ -33,6 +33,7 @@ import {
 } from "./compute-budget-model";
 import { CourseVmRecommendationsEditor } from "./course-vm-recommendations";
 import { ComputePoolManagement } from "./compute-pool-management";
+import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
 
 type Summary = Awaited<ReturnType<ComputeFundingApi["getCourseSummary"]>>;
 type Preview = Awaited<ReturnType<ComputeFundingApi["previewAllocation"]>>;
@@ -402,13 +403,9 @@ export function ComputeBudget({
             title={`Allocation ${intent.status}`}
             description={
               pending && intent.approval_url ? (
-                <a
-                  href={intent.approval_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <FinancialApprovalLink approvalUrl={intent.approval_url}>
                   Review allocation and authorize
-                </a>
+                </FinancialApprovalLink>
               ) : undefined
             }
           />

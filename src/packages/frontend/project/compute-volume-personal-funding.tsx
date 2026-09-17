@@ -21,6 +21,7 @@ import type {
 import { moneyToCurrency } from "@cocalc/util/money";
 import { uuid } from "@cocalc/util/misc";
 import { Icon } from "@cocalc/frontend/components/icon";
+import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
 
 export default function VolumePersonalFunding({
   volumeId,
@@ -217,15 +218,18 @@ export default function VolumePersonalFunding({
           />
           <Space wrap style={{ maxWidth: "100%" }}>
             {consent.state === "pending" && consent.approval_url && (
-              <Button
-                style={{ whiteSpace: "normal", height: "auto", minHeight: 32 }}
-                href={consent.approval_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                icon={<Icon name="external-link" />}
+              <FinancialApprovalLink
+                approvalUrl={consent.approval_url}
+                buttonProps={{
+                  style: {
+                    whiteSpace: "normal",
+                    height: "auto",
+                    minHeight: 32,
+                  },
+                }}
               >
                 Review storage and authorize
-              </Button>
+              </FinancialApprovalLink>
             )}
             {consent.state === "approved" && (
               <Button
