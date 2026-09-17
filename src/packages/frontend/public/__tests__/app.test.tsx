@@ -1973,7 +1973,7 @@ describe("PublicApp", () => {
   it("renders the software overview page", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ site_name: "Launchpad" }}
+        config={{ cocalc_product: "launchpad", site_name: "Launchpad" }}
         initialRoute={productsRoute({ view: "products" })}
       />,
     );
@@ -1981,21 +1981,56 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
-    expect(screen.getByText("Which path fits?")).not.toBeNull();
     expect(
-      screen.getByText(/persistent Linux project that keeps files/i),
+      screen.getByRole("heading", {
+        name: "Choose who operates CoCalc and where it runs.",
+      }),
     ).not.toBeNull();
     expect(
-      screen.getByText(/agent features vary by product and deployment/i),
+      screen.getByText(
+        /Every path keeps files, notebooks, terminals, and services in a project workspace/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/agent features depend on the product and deployment/i),
     ).not.toBeNull();
     const productChooser = screen.getByRole("list", {
-      name: "CoCalc product path chooser",
+      name: "CoCalc operating model chooser",
     });
     expect(
+      within(productChooser).getByRole("heading", {
+        name: "Hosted by CoCalc",
+      }),
+    ).not.toBeNull();
+    expect(
       within(productChooser).getByRole("link", {
-        name: /CoCalc Launchpad.*customer-operated private environment/,
+        name: /CoCalc\.ai.*managed hosted projects/i,
+      }),
+    ).toHaveAttribute("href", "https://cocalc.ai/pricing");
+    expect(
+      within(productChooser).getByRole("heading", {
+        name: "Run it yourself",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(productChooser).getByRole("heading", {
+        name: "Customer-operated private deployment",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(productChooser).getByRole("link", {
+        name: /CoCalc Launchpad.*bounded private deployment/,
       }),
     ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expect(
+      screen.getByRole("link", { name: "Explore AI agent workflows" }),
+    ).toHaveAttribute("href", "/features/ai");
+    expect(
+      screen.getByRole("link", { name: "Plan research compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+    expect(
+      screen.getByRole("link", { name: "Compare with agent sandboxes" }),
+    ).toHaveAttribute("href", "/features/compare");
   });
 
   it("renders the cocalc launchpad page", async () => {
