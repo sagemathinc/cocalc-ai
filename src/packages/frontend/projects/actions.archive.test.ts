@@ -108,6 +108,7 @@ const selectHostForProjectStartMock =
 
 describe("ProjectsActions archive flow", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
+  let configuredProjectMap = ImmutableMap();
 
   function configureProject({
     state,
@@ -126,7 +127,7 @@ describe("ProjectsActions archive flow", () => {
       hostId != null && hostInfo != null
         ? ImmutableMap([[hostId, ImmutableMap(hostInfo)]])
         : undefined;
-    const projectMap = ImmutableMap([
+    configuredProjectMap = ImmutableMap([
       [
         project_id,
         ImmutableMap({
@@ -139,7 +140,7 @@ describe("ProjectsActions archive flow", () => {
     ]);
     mockedStore.get.mockImplementation((key) => {
       if (key === "project_map") {
-        return projectMap;
+        return configuredProjectMap;
       }
       if (key === "host_info") {
         return hostInfoMap;
@@ -150,14 +151,14 @@ describe("ProjectsActions archive flow", () => {
       if (path[0] !== "project_map") {
         return undefined;
       }
-      return projectMap.getIn(path.slice(1) as any);
+      return configuredProjectMap.getIn(path.slice(1) as any);
     });
     mockedStore.get_state.mockImplementation((id) =>
       id === project_id ? state : undefined,
     );
   }
 
-  function makeActions() {
+  function makeActions({ mutableProjectStore = false } = {}) {
     const log = jest.fn(async () => undefined);
     const setState = jest.fn();
     const clearFilesystemClient = jest.fn();
@@ -189,7 +190,12 @@ describe("ProjectsActions archive flow", () => {
         }
         return {};
       }),
-      _set_state: jest.fn(),
+      _set_state: jest.fn((state) => {
+        const nextProjectMap = state.projects?.project_map;
+        if (mutableProjectStore && nextProjectMap != null) {
+          configuredProjectMap = nextProjectMap;
+        }
+      }),
       removeActions: jest.fn(),
       getProjectActions: jest.fn(() => projectActions),
     } as any;
@@ -1041,7 +1047,9 @@ describe("ProjectsActions archive flow", () => {
         lastEdited: new Date("2026-04-25T15:55:00.000Z"),
         hostId: "host-1",
       });
-      const { actions, setState, trackStartOp } = makeActions();
+      const { actions, setState, trackStartOp } = makeActions({
+        mutableProjectStore: true,
+      });
       jest
         .spyOn(actions as any, "project_log")
         .mockImplementation(async () => {});
@@ -1114,7 +1122,9 @@ describe("ProjectsActions archive flow", () => {
         lastEdited: new Date("2026-04-25T15:55:00.000Z"),
         hostId: "host-1",
       });
-      const { actions, setState, trackStartOp } = makeActions();
+      const { actions, setState, trackStartOp } = makeActions({
+        mutableProjectStore: true,
+      });
       jest
         .spyOn(actions as any, "project_log")
         .mockImplementation(async () => {});
@@ -1154,6 +1164,61 @@ describe("ProjectsActions archive flow", () => {
           "Error restarting project -- Error: latest restart failed",
       });
       expect(setState).not.toHaveBeenCalledWith({ control_error: "" });
+      expect(
+        mockedStore.getIn(["project_map", project_id, "state", "state"]),
+      ).toBe("running");
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("restores the pre-overlap state when both restarts fail", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions, trackStartOp } = makeActions({
+        mutableProjectStore: true,
+      });
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+
+      let rejectFirstRestart!: (reason: Error) => void;
+      const firstRestartStarted = new Promise<void>((resolve) => {
+        mockedWebappClient.conat_client.hub.projects.restart
+          .mockImplementationOnce(
+            () =>
+              new Promise((_resolveRestart, rejectRestart) => {
+                rejectFirstRestart = rejectRestart;
+                resolve();
+              }),
+          )
+          .mockRejectedValueOnce(new Error("latest restart failed"));
+      });
+
+      const first = actions.restart_project(project_id);
+      await firstRestartStarted;
+      expect(
+        mockedStore.getIn(["project_map", project_id, "state", "state"]),
+      ).toBe("starting");
+
+      await expect(actions.restart_project(project_id)).rejects.toThrow(
+        "latest restart failed",
+      );
+      rejectFirstRestart(new Error("older restart failed"));
+      await expect(first).rejects.toThrow("older restart failed");
+
+      expect(trackStartOp).not.toHaveBeenCalled();
+      expect(
+        mockedStore.getIn(["project_map", project_id, "state", "state"]),
+      ).toBe("running");
     } finally {
       jest.useRealTimers();
     }

@@ -454,6 +454,10 @@ export class ProjectsActions extends Actions<ProjectsState> {
   private recentProjectMoveTransitionUntil: Record<string, number> =
     Object.create(null);
   private latestRestartRequestId = new globalThis.Map<string, string>();
+  private restartLifecycleBaseline = new globalThis.Map<
+    string,
+    string | undefined
+  >();
   private recentProjectMoveSummaries: Record<string, LroSummary> =
     Object.create(null);
   private recentHostInfoLookupFailureAt: Record<string, number> =
@@ -5596,6 +5600,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
     // Each invocation is a distinct user intent; the server deduplicates retries
     // of this invocation using the UUID captured below.
     const restartRequestId = uuid();
+    if (!this.restartLifecycleBaseline.has(project_id)) {
+      this.restartLifecycleBaseline.set(
+        project_id,
+        store.getIn(["project_map", project_id, "state", "state"]) as
+          | string
+          | undefined,
+      );
+    }
     this.latestRestartRequestId.set(project_id, restartRequestId);
     this.projectLifecycleReconcileTokens[project_id] =
       (this.projectLifecycleReconcileTokens[project_id] ?? 0) + 1;
@@ -5607,6 +5619,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
         return;
       }
       this.latestRestartRequestId.delete(project_id);
+      this.restartLifecycleBaseline.delete(project_id);
       const message = projectHardDeletingMessage();
       redux.getProjectActions(project_id)?.setState({
         control_error: message,
@@ -5618,12 +5631,8 @@ export class ProjectsActions extends Actions<ProjectsState> {
       event: "project_restart_requested",
     });
     const actions = redux.getProjectActions(project_id);
-    const previousLifecycleState = store.getIn([
-      "project_map",
-      project_id,
-      "state",
-      "state",
-    ]) as string | undefined;
+    const previousLifecycleState =
+      this.restartLifecycleBaseline.get(project_id);
     if (isLatestRequest()) {
       actions?.setState({
         restart_request: Map({
@@ -5638,6 +5647,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
       }
       actions?.setState({ restart_request: undefined });
       this.latestRestartRequestId.delete(project_id);
+      this.restartLifecycleBaseline.delete(project_id);
     };
     try {
       if (isLatestRequest()) {
@@ -5689,6 +5699,7 @@ export class ProjectsActions extends Actions<ProjectsState> {
           control_error: `Error restarting project -- ${err}`,
         });
         this.latestRestartRequestId.delete(project_id);
+        this.restartLifecycleBaseline.delete(project_id);
       }
       throw err;
     }
