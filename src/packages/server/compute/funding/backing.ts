@@ -20,7 +20,11 @@ import getBalance from "@cocalc/server/purchases/get-balance";
 import { ensureAccountUsageWindowSchema } from "@cocalc/server/membership/usage-windows";
 import { lockFundingAuthority, assertFundingAccountHome } from "./authority";
 import { assertAccountWriteOnHomeBay } from "@cocalc/database/postgres/account-rehome-fence";
-import { getDedicatedHostAdmissionSnapshotForAccount } from "@cocalc/server/project-host/admission";
+import {
+  getDedicatedHostAdmissionSnapshotForAccount,
+  getDedicatedHostProviderReadinessLocal,
+} from "@cocalc/server/project-host/admission";
+import type { DedicatedHostProviderReadiness } from "@cocalc/server/project-host/admission";
 import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 
 export interface AccountFundingBacking {
@@ -46,6 +50,7 @@ const fundingTransactions = new WeakMap<
     payer: string;
     epoch: string;
     policy?: AccountLocalDedicatedHostAdmissionSnapshot;
+    providerReadiness?: DedicatedHostProviderReadiness;
     policyError?: unknown;
   }
 >();
@@ -87,6 +92,23 @@ export function fundingAdmissionSnapshot(
   return state.policy;
 }
 
+export function fundingProviderReadinessSnapshot(
+  client: PoolClient,
+  payer: string,
+): DedicatedHostProviderReadiness {
+  requireFundingAccountTransaction(client, payer);
+  const state = fundingTransactions.get(client)!;
+  if (!state.providerReadiness)
+    throw (
+      state.policyError ??
+      new ComputeFundingError(
+        "funding_unavailable",
+        "Payment-provider readiness is unavailable.",
+      )
+    );
+  return state.providerReadiness;
+}
+
 /** Internal payer-home transaction; callers must separately authorize the actor.
  * Rehome fence -> funding account -> authority -> source (pool/grant or personal
  * hold) -> reservation -> purchase. Never hold these locks across provider calls.
@@ -107,9 +129,13 @@ export async function withFundingAccountTransaction<T>(
   // Policy failure blocks new authorization, not settlement or replay of work
   // already authorized. Provider and seed-bay calls finish before BEGIN.
   let policy: AccountLocalDedicatedHostAdmissionSnapshot | undefined;
+  let providerReadiness: DedicatedHostProviderReadiness | undefined;
   let policyError: unknown;
   try {
-    policy = await getDedicatedHostAdmissionSnapshotForAccount(account_id);
+    [policy, providerReadiness] = await Promise.all([
+      getDedicatedHostAdmissionSnapshotForAccount(account_id),
+      getDedicatedHostProviderReadinessLocal(account_id),
+    ]);
   } catch (error) {
     policyError = error;
   }
@@ -125,6 +151,7 @@ export async function withFundingAccountTransaction<T>(
       payer: account_id,
       epoch,
       policy,
+      providerReadiness,
       policyError,
     });
     const result = await fn(client);

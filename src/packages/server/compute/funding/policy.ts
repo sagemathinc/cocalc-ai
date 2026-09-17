@@ -27,6 +27,7 @@ import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import {
   getAccountFundingBacking,
   fundingAdmissionSnapshot,
+  fundingProviderReadinessSnapshot,
   requireFundingAccountTransaction,
 } from "./backing";
 import type { AccountFundingBacking } from "./backing";
@@ -246,6 +247,8 @@ export async function getComputeFundingPolicyInTransaction(
       opts.lane === "prepaid" ? "account-prepaid" : "account-postpaid",
     client,
     admission_snapshot: fundingAdmissionSnapshot(client, payer),
+    has_payment_method_override: fundingProviderReadinessSnapshot(client, payer)
+      .has_payment_method,
   });
   const backing = await getAccountFundingBacking(client, payer);
   const row = opts.for_service

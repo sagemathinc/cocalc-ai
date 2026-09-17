@@ -46,7 +46,9 @@ export async function runWithComputeWorkLease<T>(
 export function requireCurrentComputeWorkLease(): ComputeWorkLease | undefined {
   const lease = storage.getStore();
   if (lease?.lost) throw new ComputeWorkLeaseLostError();
-  if (lease?.completed) return undefined;
+  // Completion releases the queue generation; it must never disable fencing
+  // for later resource writes in the same async context.
+  if (lease?.completed) throw new ComputeWorkLeaseLostError();
   return lease;
 }
 

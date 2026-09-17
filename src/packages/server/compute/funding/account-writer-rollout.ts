@@ -13,6 +13,9 @@ import type {
 // path while passing attestation.
 export const FUNDING_AUTHORITY_TABLES = [
   "accounts",
+  "account_entitlement_overrides",
+  "account_second_factors",
+  "admin_assigned_memberships",
   "billing_accounts",
   "purchases",
   "subscriptions",
@@ -22,6 +25,10 @@ export const FUNDING_AUTHORITY_TABLES = [
   "subscription_renewal_attempts",
   "admin_membership_orders",
   "admin_membership_package_intents",
+  "membership_grants",
+  "membership_package_assignments",
+  "membership_packages",
+  "server_settings",
   "billing_authority_commands",
   "billing_authority_lease",
   "billing_authority_account_fences",

@@ -314,6 +314,19 @@ interface DedicatedHostFinancialSnapshot {
   dedicated_host_window_usage: AccountLocalDedicatedHostPolicySnapshot["dedicated_host_window_usage"];
 }
 
+export interface DedicatedHostProviderReadiness {
+  has_payment_method: boolean;
+}
+
+/** Stripe-backed readiness is deliberately fetched before account financial
+ * locks are acquired. Database-backed subscription and exposure state is still
+ * read under the transaction that makes the admission decision. */
+export async function getDedicatedHostProviderReadinessLocal(
+  account_id: string,
+): Promise<DedicatedHostProviderReadiness> {
+  return { has_payment_method: await hasPaymentMethod(account_id) };
+}
+
 export async function getDedicatedHostFinancialSnapshotLocal(
   account_id: string,
   {
@@ -364,10 +377,12 @@ export async function getDedicatedHostPolicySnapshotLocal(
     funding_mode_override,
     client,
     admission_snapshot,
+    has_payment_method_override,
   }: {
     funding_mode_override?: DedicatedHostFundingMode;
     client?: PoolClient;
     admission_snapshot?: AccountLocalDedicatedHostAdmissionSnapshot;
+    has_payment_method_override?: boolean;
   } = {},
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
   const admission =
@@ -415,6 +430,7 @@ export async function getDedicatedHostPolicySnapshotLocal(
       : await getDedicatedHostFinancialSnapshotLocal(account_id, {
           needs_postpaid_snapshot,
           client,
+          has_payment_method_override,
         });
 
   return {

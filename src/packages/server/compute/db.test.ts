@@ -43,6 +43,7 @@ import {
 } from "./volume-db";
 import {
   ComputeWorkLeaseLostError,
+  markCurrentComputeWorkLeaseCompleted,
   runWithComputeWorkLease,
 } from "./work-lease";
 import {
@@ -830,6 +831,20 @@ describe("compute VM durable state", () => {
       expect(currentResource?.state).toBe(resource.state);
     },
   );
+
+  it("never permits resource writes after a work generation is completed", async () => {
+    const vm = await insertComputeVm(vmInput());
+    await runWithComputeWorkLease(
+      { id: randomUUID(), worker_id: "worker-complete", attempt: 1 },
+      async () => {
+        markCurrentComputeWorkLeaseCompleted();
+        await expect(
+          updateComputeVm(vm.id, { state: "failed" }),
+        ).rejects.toBeInstanceOf(ComputeWorkLeaseLostError);
+      },
+    );
+    expect((await getComputeVmById(vm.id))?.state).toBe(vm.state);
+  });
 
   it("turns an expired lease into durable delete work", async () => {
     const vm = await insertComputeVm(

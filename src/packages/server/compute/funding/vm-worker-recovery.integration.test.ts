@@ -17,6 +17,7 @@ import {
 } from "./vm-worker-recovery";
 import { meterCourseVm } from "./vm-funding";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
+import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";
 
 jest.mock("@cocalc/server/bay-config", () => {
   const bay = `recovery-test-${require("node:crypto").randomUUID()}`;
@@ -43,11 +44,16 @@ jest.mock("./vm-funding", () => ({
 }));
 
 const resources = fundingResourceFixtures();
-beforeAll(async () => before({ noConat: true }), 60_000);
+let stopRollout: (() => void) | undefined;
+beforeAll(async () => {
+  await before({ noConat: true });
+  stopRollout = await enableTestSponsorshipRollout();
+}, 60_000);
 afterAll(async () => {
   try {
     await resources.cleanup();
   } finally {
+    stopRollout?.();
     await after();
   }
 });

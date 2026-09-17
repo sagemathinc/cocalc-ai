@@ -4,6 +4,10 @@
  */
 import { randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
+import {
+  computeWorkLeaseSql,
+  requireFencedResourceUpdate,
+} from "../work-lease";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type {
   ComputeVmFundingBinding,
@@ -188,13 +192,24 @@ export async function recordCourseVolumeGrowth(
     (s) => !s.started_at && s.binding && s.size_gb <= observedSize,
   );
   if (index < 0) return;
-  await getPool().query(
-    `UPDATE compute_volumes SET metadata=jsonb_set(metadata,$3::text[],to_jsonb(clock_timestamp()))
-    WHERE id=$1 AND metadata#>>'{billing,course_funding,funding_epoch}'=$2 AND metadata#>>$3::text[] IS NULL`,
+  const lease = computeWorkLeaseSql(4);
+  const { rows } = await getPool().query<{ id: string }>(
+    `${lease.cte} UPDATE compute_volumes
+        SET metadata=jsonb_set(metadata,$3::text[],to_jsonb(clock_timestamp()))
+      WHERE id=$1
+        AND metadata#>>'{billing,course_funding,funding_epoch}'=$2
+        AND metadata#>>$3::text[] IS NULL
+        AND desired_state<>'deleted'
+        AND deleted_at IS NULL
+        AND metadata#>>'{billing,course_funding,service_ended_at}' IS NULL
+        ${lease.clause}
+      RETURNING id`,
     [
       volume.id,
       volumeFunding(volume).funding_epoch,
       ["billing", "course_funding", "growth", `${index}`, "started_at"],
+      ...lease.values,
     ],
   );
+  requireFencedResourceUpdate(rows[0]);
 }

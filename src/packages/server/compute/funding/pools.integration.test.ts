@@ -12,7 +12,12 @@ import {
   withFundingAccountTransaction,
 } from "./backing";
 import { createCourseFundingPoolInTransaction } from "./pools";
-import { setPolicy, setPolicyFailure } from "./__tests__/policy-source";
+import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spending";
+import {
+  setPolicy,
+  setPolicyFailure,
+  setPolicyReadinessWaiter,
+} from "./__tests__/policy-source";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -58,6 +63,56 @@ async function create(f: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("course funding pool allocation storage", () => {
+  const postgresTest = process.env.COCALC_TEST_USE_PGLITE ? it.skip : it;
+
+  postgresTest(
+    "fetches payment-provider readiness before taking the account lock",
+    async () => {
+      const f = await fixture();
+      let providerStarted!: () => void;
+      let releaseProvider!: () => void;
+      const started = new Promise<void>((resolve) => {
+        providerStarted = resolve;
+      });
+      const release = new Promise<void>((resolve) => {
+        releaseProvider = resolve;
+      });
+      setPolicyReadinessWaiter(f.payer, async () => {
+        providerStarted();
+        await release;
+      });
+      const pending = create(f);
+      await started;
+      const client = await getPool().connect();
+      try {
+        await client.query("BEGIN");
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          await Promise.race([
+            lockAccountSpending(client, f.payer),
+            new Promise((_, reject) => {
+              timer = setTimeout(
+                () =>
+                  reject(
+                    new Error("account lock remained behind provider I/O"),
+                  ),
+                2_000,
+              );
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+        await client.query("ROLLBACK");
+      } finally {
+        client.release();
+        setPolicyReadinessWaiter(f.payer);
+        releaseProvider();
+      }
+      await expect(pending).resolves.toMatchObject({ created: true });
+    },
+  );
+
   it("fails closed on policy preflight loss without blocking an existing receipt or settlement", async () => {
     const f = await fixture();
     const first = await create(f);

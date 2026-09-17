@@ -32,7 +32,7 @@ postgresDescribe("funding account writer PostgreSQL census", () => {
     await after();
   });
 
-  it("rejects a login that can mutate billing_accounts", async () => {
+  it("rejects a login that can mutate financial or admission authority", async () => {
     const pool = getPool();
     const suffix = randomUUID().replaceAll("-", "");
     const staleRole = `funding_stale_${suffix}`;
@@ -81,22 +81,34 @@ postgresDescribe("funding account writer PostgreSQL census", () => {
       await pool.query(
         `GRANT CONNECT ON DATABASE "${identity.database}" TO "${staleRole}"`,
       );
-      await pool.query(
-        `GRANT UPDATE ON TABLE billing_accounts TO "${staleRole}"`,
-      );
-      await expect(listFundingAuthorityWriterRoles(pool)).resolves.toEqual(
-        expect.arrayContaining([expect.objectContaining({ role: staleRole })]),
-      );
-      await expect(verifyFundingAccountWriters(manifest, bay)).rejects.toThrow(
-        "writer coverage",
-      );
-
-      await pool.query(
-        `REVOKE UPDATE ON TABLE billing_accounts FROM "${staleRole}"`,
-      );
-      await expect(listFundingAuthorityWriterRoles(pool)).resolves.not.toEqual(
-        expect.arrayContaining([expect.objectContaining({ role: staleRole })]),
-      );
+      for (const table of [
+        "billing_accounts",
+        "account_entitlement_overrides",
+        "account_second_factors",
+        "admin_assigned_memberships",
+        "membership_grants",
+        "membership_package_assignments",
+        "membership_packages",
+        "server_settings",
+      ]) {
+        await pool.query(`GRANT UPDATE ON TABLE ${table} TO "${staleRole}"`);
+        await expect(listFundingAuthorityWriterRoles(pool)).resolves.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ role: staleRole }),
+          ]),
+        );
+        await expect(
+          verifyFundingAccountWriters(manifest, bay),
+        ).rejects.toThrow("writer coverage");
+        await pool.query(`REVOKE UPDATE ON TABLE ${table} FROM "${staleRole}"`);
+        await expect(
+          listFundingAuthorityWriterRoles(pool),
+        ).resolves.not.toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({ role: staleRole }),
+          ]),
+        );
+      }
     } finally {
       await pool.query(`DROP OWNED BY "${staleRole}"`);
       await pool.query(`DROP ROLE IF EXISTS "${staleRole}"`);

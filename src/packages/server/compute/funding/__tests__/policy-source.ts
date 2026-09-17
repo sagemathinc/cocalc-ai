@@ -23,6 +23,7 @@ type PolicySettings = Pick<
 
 const settings = new Map<string, Partial<PolicySettings>>();
 const failures = new Map<string, Error>();
+const readinessWaiters = new Map<string, () => Promise<void>>();
 
 export function setPolicyFailure(account: string, error?: Error) {
   if (error) failures.set(account, error);
@@ -33,10 +34,26 @@ export function setPolicy(account: string, value: Partial<PolicySettings>) {
   settings.set(account, value);
 }
 
+export function setPolicyReadinessWaiter(
+  account: string,
+  waiter?: () => Promise<void>,
+) {
+  if (waiter) readinessWaiters.set(account, waiter);
+  else readinessWaiters.delete(account);
+}
+
 // Only membership/payment configuration is faked. All financial quantities,
 // window identities and reservations still come from the real transaction.
 export function mockPolicySource() {
   return {
+    async getDedicatedHostProviderReadinessLocal(account_id: string) {
+      if (failures.has(account_id)) throw failures.get(account_id);
+      await readinessWaiters.get(account_id)?.();
+      return {
+        has_payment_method:
+          settings.get(account_id)?.has_payment_method ?? true,
+      };
+    },
     async getDedicatedHostAdmissionSnapshotForAccount(account_id: string) {
       if (failures.has(account_id)) throw failures.get(account_id);
       return {
@@ -60,6 +77,7 @@ export function mockPolicySource() {
         client: PoolClient;
         funding_mode_override: AccountLocalDedicatedHostPolicySnapshot["funding_mode"];
         admission_snapshot?: AccountLocalDedicatedHostPolicySnapshot;
+        has_payment_method_override?: boolean;
       },
     ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
       if (!opts.client)
@@ -70,7 +88,7 @@ export function mockPolicySource() {
         funding_mode: opts.funding_mode_override,
         can_create_hosts: true,
         has_active_second_factor: true,
-        has_payment_method: true,
+        has_payment_method: opts.has_payment_method_override ?? true,
         has_usage_subscription: true,
         effective_limits: {
           prepaid_host_usage_limit_5h_usd: 1000,

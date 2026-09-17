@@ -3156,17 +3156,6 @@ export function startComputeVmWorker(
         err,
       });
       if (err instanceof RetryableComputeWorkError) {
-        // Claim completion before applying terminal worker state. A worker
-        // whose lease was reclaimed must not overwrite its successor.
-        const finished = await finishComputeWork({
-          id: row.id,
-          worker_id: workerId,
-          attempt: row.attempt,
-          state: "failed",
-          error,
-        });
-        if (!finished) return;
-        markCurrentComputeWorkLeaseCompleted();
         const vm =
           row.resource_kind === "vm"
             ? await getComputeVmById(row.resource_id)
@@ -3190,6 +3179,18 @@ export function startComputeVmWorker(
             },
           });
         }
+        // Keep the work lease active until every resource write is complete.
+        // updateComputeVm is fenced by this exact work generation, so a
+        // reclaimed attempt cannot overwrite its successor.
+        const finished = await finishComputeWork({
+          id: row.id,
+          worker_id: workerId,
+          attempt: row.attempt,
+          state: "failed",
+          error,
+        });
+        if (!finished) return;
+        markCurrentComputeWorkLeaseCompleted();
         await enqueueComputeWork({
           resource_kind: row.resource_kind,
           resource_id: row.resource_id,
@@ -3200,15 +3201,6 @@ export function startComputeVmWorker(
         });
         return;
       }
-      const finished = await finishComputeWork({
-        id: row.id,
-        worker_id: workerId,
-        attempt: row.attempt,
-        state: "failed",
-        error,
-      });
-      if (!finished) return;
-      markCurrentComputeWorkLeaseCompleted();
       const vm =
         row.resource_kind === "vm"
           ? await getComputeVmById(row.resource_id)
@@ -3242,6 +3234,17 @@ export function startComputeVmWorker(
           });
         }
       }
+      // Resource failure is part of this attempt. Commit it while the lease is
+      // still active, then release the queue row so no successor can race it.
+      const finished = await finishComputeWork({
+        id: row.id,
+        worker_id: workerId,
+        attempt: row.attempt,
+        state: "failed",
+        error,
+      });
+      if (!finished) return;
+      markCurrentComputeWorkLeaseCompleted();
     } finally {
       clearInterval(heartbeat);
     }

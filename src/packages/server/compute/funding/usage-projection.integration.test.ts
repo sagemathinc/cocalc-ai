@@ -12,16 +12,22 @@ import { settleComputeVmFundingLocal } from "./vm-settlement";
 import { getCourseFundingUsageProjection } from "./usage-projection";
 import { setPolicy } from "./__tests__/policy-source";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
+import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
 );
-beforeAll(async () => await before({ noConat: true }), 60_000);
+let stopRollout: (() => void) | undefined;
+beforeAll(async () => {
+  await before({ noConat: true });
+  stopRollout = await enableTestSponsorshipRollout();
+}, 60_000);
 const resources = fundingResourceFixtures();
 afterAll(async () => {
   try {
     await resources.cleanup();
   } finally {
+    stopRollout?.();
     await after();
   }
 });
