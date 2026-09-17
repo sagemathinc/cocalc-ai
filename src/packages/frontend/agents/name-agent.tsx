@@ -25,6 +25,8 @@ function EnabledNameAgent({
   threadTitle,
   projectTitle,
   initiallyOpen = false,
+  triggerLabel,
+  modalTitle = "Name in your agents",
 }: {
   agent?: NamedAgent;
   projectId: string;
@@ -33,6 +35,8 @@ function EnabledNameAgent({
   threadTitle?: string;
   projectTitle?: string;
   initiallyOpen?: boolean;
+  triggerLabel?: string;
+  modalTitle?: string;
 }) {
   const id = useId();
   const boundAccount = useBoundAgentAccount();
@@ -115,11 +119,11 @@ function EnabledNameAgent({
           setOpen(true);
         }}
       >
-        {agent ? `@${agent.name} - Rename` : "Name agent"}
+        {triggerLabel ?? (agent ? `@${agent.name} - Rename` : "Name agent")}
       </Button>
       <Modal
         open={open}
-        title="Name in your agents"
+        title={modalTitle}
         okText="Save agent name"
         confirmLoading={busy}
         okButtonProps={{ disabled: !!problem || busy }}

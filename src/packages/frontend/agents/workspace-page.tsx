@@ -9,11 +9,13 @@ import {
 } from "@cocalc/conat/agents/personal";
 import {
   redux,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
   useTypedRedux,
+  useEditorRedux,
 } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { useAppContext } from "@cocalc/frontend/app/context";
@@ -57,6 +59,12 @@ import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
 import { AgentLoadingPreview } from "./loading-preview";
+import { NameAgent } from "./name-agent";
+import {
+  agentWorkspaceKey,
+  findWorkspaceAgentForThread,
+  selectedChatThreadFromLocalViewState,
+} from "./workspace-model";
 
 const { Text, Title } = Typography;
 
@@ -387,14 +395,24 @@ function AgentProjectContext({
   agent,
   active,
   accountId,
+  onSelectedThread,
 }: {
   agent: NamedAgent;
   active: boolean;
   accountId?: string;
+  onSelectedThread: (threadId: string) => void;
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
+  const initialThreadRef = useRef(agent.thread_id);
+  const requestedThreadRef = useRef<string | undefined>(undefined);
+  const useEditor = useEditorRedux<{ local_view_state: any }>({
+    project_id: agent.endpoint.project_id,
+    path: agent.path,
+  });
+  const localViewState = useEditor("local_view_state");
+  const selectedThread = selectedChatThreadFromLocalViewState(localViewState);
   const projectContext = useProjectContextProvider({
     project_id: agent.endpoint.project_id,
     is_active: active,
@@ -416,7 +434,7 @@ function AgentProjectContext({
         foreground_project: false,
         wait_for_ready: true,
         change_history: false,
-        fragmentId: { thread: agent.thread_id },
+        fragmentId: { thread: initialThreadRef.current },
       });
       if (!disposed) setReady(true);
     })().catch((err) => {
@@ -425,14 +443,32 @@ function AgentProjectContext({
     return () => {
       disposed = true;
     };
-  }, [agent.endpoint.project_id, agent.path, agent.thread_id, retry]);
+  }, [agent.endpoint.project_id, agent.path, retry]);
 
   useEffect(() => {
     if (!active || !ready) return;
-    redux
-      .getProjectActions(agent.endpoint.project_id)
-      ?.gotoFragment(agent.path, { thread: agent.thread_id });
+    requestedThreadRef.current = agent.thread_id;
+    const editorActions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    if (typeof editorActions?.gotoFragment === "function") {
+      void editorActions.gotoFragment({ thread: agent.thread_id });
+    } else {
+      redux
+        .getProjectActions(agent.endpoint.project_id)
+        ?.gotoFragment(agent.path, { thread: agent.thread_id });
+    }
   }, [active, agent.endpoint.project_id, agent.path, agent.thread_id, ready]);
+
+  useEffect(() => {
+    if (!active || !ready || !selectedThread) return;
+    if (requestedThreadRef.current) {
+      if (selectedThread !== requestedThreadRef.current) return;
+      requestedThreadRef.current = undefined;
+    }
+    onSelectedThread(selectedThread);
+  }, [active, onSelectedThread, ready, selectedThread]);
 
   if (error) {
     return (
@@ -472,19 +508,33 @@ function AgentProjectContext({
 }
 
 function AgentWorkspace({
+  workspaceKey,
   agent,
+  workspaceAgents,
   active,
   accountId,
   onShowList,
   onClose,
+  onRegisteredThreadSelected,
 }: {
+  workspaceKey: string;
   agent: NamedAgent;
+  workspaceAgents: NamedAgent[];
   active: boolean;
   accountId?: string;
   onShowList?: () => void;
   onClose: () => void;
+  onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const [selectedThread, setSelectedThread] = useState(agent.thread_id);
+  const selectedAgent = findWorkspaceAgentForThread(
+    workspaceAgents,
+    agent.endpoint.project_id,
+    agent.path,
+    selectedThread,
+  );
+  const displayedAgent = selectedAgent ?? agent;
   const projectUsers: any = useTypedRedux("projects", "project_map")?.getIn?.([
     agent.endpoint.project_id,
     "users",
@@ -505,6 +555,35 @@ function AgentWorkspace({
     if (active || !ref.current?.contains(document.activeElement)) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [active]);
+  const handleSelectedThread = useCallback(
+    (threadId: string) => {
+      setSelectedThread(threadId);
+      const registered = findWorkspaceAgentForThread(
+        workspaceAgents,
+        agent.endpoint.project_id,
+        agent.path,
+        threadId,
+      );
+      if (registered) {
+        onRegisteredThreadSelected(workspaceKey, registered);
+      }
+    },
+    [
+      agent.endpoint.project_id,
+      agent.path,
+      onRegisteredThreadSelected,
+      workspaceAgents,
+      workspaceKey,
+    ],
+  );
+  const unregistered = selectedThread && !selectedAgent;
+  const threadTitle = unregistered
+    ? cachedAgentNameContext({
+        project_id: agent.endpoint.project_id,
+        path: agent.path,
+        thread_id: selectedThread,
+      }).thread_title
+    : undefined;
   return (
     <div
       ref={ref}
@@ -539,21 +618,37 @@ function AgentWorkspace({
         )}
         <div style={{ minWidth: 0, flex: 1 }}>
           <Text strong ellipsis style={{ display: "block" }}>
-            {agent.thread_title || `@${agent.name}`}
+            {unregistered
+              ? threadTitle || "Unregistered thread"
+              : displayedAgent.thread_title || `@${displayedAgent.name}`}
           </Text>
           <Text type="secondary" ellipsis style={{ display: "block" }}>
-            @{agent.name} · {agent.project_title || agent.endpoint.project_id}
+            {unregistered ? "Not yet in My Agents" : `@${displayedAgent.name}`}{" "}
+            · {displayedAgent.project_title || agent.endpoint.project_id}
             {sharing ? ` · ${sharing}` : ""}
           </Text>
         </div>
-        {!agent.available && <Tag color="warning">Unavailable</Tag>}
+        {unregistered && (
+          <NameAgent
+            projectId={agent.endpoint.project_id}
+            path={agent.path}
+            threadId={selectedThread}
+            threadTitle={threadTitle}
+            projectTitle={agent.project_title}
+            triggerLabel="Add to My Agents"
+            modalTitle="Add thread to My Agents"
+          />
+        )}
+        {!unregistered && !displayedAgent.available && (
+          <Tag color="warning">Unavailable</Tag>
+        )}
         <Button
           icon={<Icon name="external-link" />}
           onClick={() =>
             void openAgentThread({
               project_id: agent.endpoint.project_id,
               path: agent.path,
-              thread_id: agent.thread_id,
+              thread_id: selectedThread || agent.thread_id,
             })
           }
         >
@@ -561,7 +656,7 @@ function AgentWorkspace({
         </Button>
         <Button
           icon={<Icon name="times" />}
-          aria-label={`Close workspace for @${agent.name}`}
+          aria-label={`Close workspace for ${agent.path}`}
           title="Close this mounted workspace view"
           onClick={onClose}
         />
@@ -571,6 +666,7 @@ function AgentWorkspace({
           agent={agent}
           active={active}
           accountId={accountId}
+          onSelectedThread={handleSelectedThread}
         />
       </div>
     </div>
@@ -590,7 +686,12 @@ export function MyAgentsWorkspacePage() {
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
   const [mobileList, setMobileList] = useState(true);
-  const [mountedIds, setMountedIds] = useState<Set<string>>(() => new Set());
+  const [mountedWorkspaces, setMountedWorkspaces] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
+    Map<string, string>
+  >(() => new Map());
   const [draggingId, setDraggingId] = useState<string>();
   const agents = directory?.agents ?? [];
   const agentOrganization = useAgentWorkspaceOrganization(
@@ -604,10 +705,17 @@ export function MyAgentsWorkspacePage() {
 
   useEffect(() => {
     if (!selected) return;
-    setMountedIds((old) => {
-      if (old.has(selected.endpoint.agent_id)) return old;
+    const workspace = agentWorkspaceKey(selected);
+    setMountedWorkspaces((old) => {
+      if (old.has(workspace)) return old;
       const next = new Set(old);
-      next.add(selected.endpoint.agent_id);
+      next.add(workspace);
+      return next;
+    });
+    setWorkspaceAgentIds((old) => {
+      if (old.get(workspace) === selected.endpoint.agent_id) return old;
+      const next = new Map(old);
+      next.set(workspace, selected.endpoint.agent_id);
       return next;
     });
   }, [selected?.endpoint.agent_id]);
@@ -625,17 +733,47 @@ export function MyAgentsWorkspacePage() {
     };
   }, [agentOrganization.groups, search]);
 
+  const handleRegisteredThreadSelected = useCallback(
+    (workspace: string, nextAgent: NamedAgent) => {
+      setWorkspaceAgentIds((old) => {
+        if (old.get(workspace) === nextAgent.endpoint.agent_id) return old;
+        const next = new Map(old);
+        next.set(workspace, nextAgent.endpoint.agent_id);
+        return next;
+      });
+      const currentAgentId = redux.getStore("page")?.get("active_agent_id");
+      if (currentAgentId === nextAgent.endpoint.agent_id) return;
+      redux.getActions("page").setState({
+        active_agent_id: nextAgent.endpoint.agent_id,
+      });
+      set_url(
+        getPageUrlPath({
+          page: "agents",
+          agent_id: nextAgent.endpoint.agent_id,
+        }),
+      );
+    },
+    [],
+  );
+
   function selectAgent(agent: NamedAgent) {
-    mountAgent(agent.endpoint.agent_id);
+    mountAgent(agent);
     selectAgentId(agent.endpoint.agent_id);
     setMobileList(false);
   }
 
-  function mountAgent(agentId: string) {
-    setMountedIds((old) => {
-      if (old.has(agentId)) return old;
+  function mountAgent(agent: NamedAgent) {
+    const workspace = agentWorkspaceKey(agent);
+    setMountedWorkspaces((old) => {
+      if (old.has(workspace)) return old;
       const next = new Set(old);
-      next.add(agentId);
+      next.add(workspace);
+      return next;
+    });
+    setWorkspaceAgentIds((old) => {
+      if (old.get(workspace) === agent.endpoint.agent_id) return old;
+      const next = new Map(old);
+      next.set(workspace, agent.endpoint.agent_id);
       return next;
     });
   }
@@ -852,7 +990,10 @@ export function MyAgentsWorkspacePage() {
               setMobileList(true);
             }}
             onCreated={(agentId) => {
-              mountAgent(agentId);
+              const agent = agents.find(
+                ({ endpoint }) => endpoint.agent_id === agentId,
+              );
+              if (agent) mountAgent(agent);
               selectAgentId(agentId);
               setCreating(false);
             }}
@@ -888,36 +1029,45 @@ export function MyAgentsWorkspacePage() {
           </Empty>
         ) : (
           <>
-            {agents
-              .filter((agent) => mountedIds.has(agent.endpoint.agent_id))
-              .map((agent) => (
+            {[...mountedWorkspaces].map((workspace) => {
+              const workspaceAgents = agents.filter(
+                (agent) => agentWorkspaceKey(agent) === workspace,
+              );
+              const agent =
+                workspaceAgents.find(
+                  ({ endpoint }) =>
+                    endpoint.agent_id === workspaceAgentIds.get(workspace),
+                ) ?? workspaceAgents[0];
+              if (!agent) return null;
+              return (
                 <AgentWorkspace
-                  key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+                  key={workspace}
+                  workspaceKey={workspace}
                   agent={agent}
+                  workspaceAgents={workspaceAgents}
                   accountId={accountId}
                   active={
-                    agent.endpoint.agent_id === selected?.endpoint.agent_id
+                    !!selected && agentWorkspaceKey(selected) === workspace
                   }
+                  onRegisteredThreadSelected={handleRegisteredThreadSelected}
                   onShowList={isNarrow ? () => setMobileList(true) : undefined}
                   onClose={() => {
-                    setMountedIds((old) => {
+                    setMountedWorkspaces((old) => {
                       const next = new Set(old);
-                      next.delete(agent.endpoint.agent_id);
+                      next.delete(workspace);
                       return next;
                     });
                     if (isNarrow) setMobileList(true);
                   }}
                 />
-              ))}
-            {!mountedIds.has(selected.endpoint.agent_id) && (
+              );
+            })}
+            {!mountedWorkspaces.has(agentWorkspaceKey(selected)) && (
               <Empty
                 style={{ marginTop: 80 }}
                 description={`Workspace for @${selected.name} is closed.`}
               >
-                <Button
-                  type="primary"
-                  onClick={() => mountAgent(selected.endpoint.agent_id)}
-                >
+                <Button type="primary" onClick={() => mountAgent(selected)}>
                   Open workspace
                 </Button>
               </Empty>
