@@ -371,6 +371,20 @@ describe("PublicApp", () => {
     ).not.toBeNull();
   });
 
+  it("does not link Plus users to hosted-only Codex documentation", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        initialRoute={{ section: "guides" }}
+      />,
+    );
+
+    expect(screen.getByText("Jupyter notebooks")).not.toBeNull();
+    expect(
+      screen.queryByRole("link", { name: /Codex agent chat/i }),
+    ).toBeNull();
+  });
+
   it("uses the stored home-bay origin for public auth bootstrap", async () => {
     setStoredControlPlaneOrigin("https://bay-1-lite.example.com");
     global.fetch = jest.fn(async (input: RequestInfo | URL, init?: any) => {

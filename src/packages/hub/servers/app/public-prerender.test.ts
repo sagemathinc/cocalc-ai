@@ -79,6 +79,105 @@ describe("core landing page initial HTML", () => {
     expect(html).not.toContain("CoCalc Rocket");
   });
 
+  it.each(["/", "/prefix"])(
+    "renders stable guide, company, and support discovery content on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const guides = renderPublicRoutePrerender(
+        { section: "guides", route: { view: "index" } },
+        basePath,
+        { cocalc_product: "launchpad" },
+      );
+      expect(guides).toContain('data-cocalc-public-prerender="guides"');
+      expect(guides).toContain("Codex agent chat");
+      expect(guides).toContain(`href="${prefix}/docs/ai/codex-chat"`);
+      expect(guides).toContain("Research and writing");
+      expect(guides).toContain("Durable collaborative projects");
+
+      const about = renderPublicRoutePrerender(
+        { section: "about", route: { view: "about" } },
+        basePath,
+      );
+      expect(about).toContain('data-cocalc-public-prerender="about"');
+      expect(about).toContain(
+        "Building the future of collaborative computation.",
+      );
+      expect(about).toContain("Make serious computational work easy");
+      expect(about).toContain(`href="${prefix}/about/team/william-stein"`);
+
+      const support = renderPublicRoutePrerender(
+        { section: "support", route: { view: "index" } },
+        basePath,
+      );
+      expect(support).toContain('data-cocalc-public-prerender="support"');
+      expect(support).toContain("Find the right next step");
+      expect(support).toContain(`href="${prefix}/support/community"`);
+    },
+  );
+
+  it("uses shared team and community records for detail discovery", () => {
+    const team = renderPublicRoutePrerender(
+      { section: "about", route: { view: "about-team" } },
+      "/",
+    );
+    expect(team).toContain('data-cocalc-public-prerender="about-team"');
+    expect(team).toContain("William Stein, Founder and CEO");
+    expect(team).toContain("Blaec Bejarano, CSO");
+
+    const profile = renderPublicRoutePrerender(
+      {
+        section: "about",
+        route: { view: "about-team-member", teamSlug: "harald-schilly" },
+      },
+      "/",
+    );
+    expect(profile).toContain(
+      'data-cocalc-public-prerender="about-team-member"',
+    );
+    expect(profile).toContain("<h1>Harald Schilly</h1>");
+    expect(profile).toContain("long-time SageMath contributor");
+
+    const community = renderPublicRoutePrerender(
+      { section: "support", route: { view: "community" } },
+      "/",
+    );
+    expect(community).toContain(
+      'data-cocalc-public-prerender="support-community"',
+    );
+    expect(community).toContain("GitHub source code");
+    expect(community).toContain(
+      "https://www.linkedin.com/company/sagemath-inc./",
+    );
+  });
+
+  it("does not invent stable bodies for dynamic or account-specific routes", () => {
+    for (const route of [
+      { section: "about", route: { view: "about-events" } },
+      { section: "support", route: { view: "new" } },
+      { section: "support", route: { view: "tickets" } },
+      {
+        section: "about",
+        route: { view: "about-team-member", teamSlug: "not-a-person" },
+      },
+      { section: "news" },
+      { section: "rootfs", route: { view: "index" } },
+    ]) {
+      expect(renderPublicRoutePrerender(route, "/")).toBe("");
+    }
+  });
+
+  it("filters hosted-only guide links from Plus initial HTML", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "guides", route: { view: "index" } },
+      "/prefix",
+      { cocalc_product: "plus" },
+    );
+    expect(html).toContain('data-cocalc-public-prerender="guides"');
+    expect(html).not.toContain("Codex agent chat");
+    expect(html).not.toContain('href="/prefix/docs/ai/codex-chat"');
+    expect(html).toContain("Jupyter notebooks");
+  });
+
   it("renders the evidence-bounded sandbox comparison", () => {
     const html = renderPublicRoutePrerender(
       { section: "features", route: { view: "detail", slug: "compare" } },

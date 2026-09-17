@@ -133,6 +133,60 @@ describe("public shell rendering", () => {
   );
 
   it.each([
+    ["/guides", "guides", "Durable collaborative projects"],
+    ["/about", "about", "Building the future of collaborative computation."],
+    ["/about/team", "about-team", "Blaec Bejarano, CSO"],
+    ["/about/team/william-stein", "about-team-member", "William Stein"],
+    ["/support", "support", "Find the right next step"],
+    ["/support/community", "support-community", "GitHub source code"],
+  ])(
+    "renders stable discovery content for %s",
+    async (path, section, expectedText) => {
+      const { html, status } = await renderPublicShell(request(path));
+
+      expect(status).toBe(200);
+      expect(html).not.toContain(PUBLIC_BODY_PLACEHOLDER);
+      expect(html).toContain(`data-cocalc-public-prerender="${section}"`);
+      expect(html).toContain(expectedText);
+    },
+  );
+
+  it("uses person-specific metadata and preserves unknown-team 404s", async () => {
+    const william = await renderPublicShell(
+      request("/about/team/william-stein"),
+    );
+    expect(william.status).toBe(200);
+    expect(william.html).toContain(
+      "<title>William Stein, Founder and CEO | CoCalc</title>",
+    );
+    expect(william.html).toContain("creator of CoCalc and SageMath");
+
+    const unknown = await renderPublicShell(
+      request("/about/team/not-a-person"),
+    );
+    expect(unknown.status).toBe(404);
+    expect(unknown.html).not.toContain(
+      'data-cocalc-public-prerender="about-team-member"',
+    );
+  });
+
+  it.each([
+    "/auth/sign-in",
+    "/auth/sign-up",
+    "/auth/password-reset",
+    "/invites/example-token",
+    "/sso",
+    "/support/new",
+    "/support/tickets",
+  ])("marks thin action route %s as noindex", async (path) => {
+    const { html, status } = await renderPublicShell(request(path));
+    expect(status).toBe(200);
+    expect(html).toContain(
+      'content="noindex" data-cocalc-public-route-meta="robots" name="robots"',
+    );
+  });
+
+  it.each([
     ["/", "project-notebook-20260916.jpg", "1050", "650"],
     ["/products/cocalc-star", "project-notebook-20260916.jpg", "1050", "650"],
     ["/features/teaching", "project-terminal-20260916.jpg", "800", "400"],

@@ -11,7 +11,25 @@ import {
   type PublicFeaturePage,
   type PublicFeatureSection,
 } from "@cocalc/util/public-feature-pages";
+import {
+  getPublicTeamMember,
+  PUBLIC_ABOUT_AUDIENCES,
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_INTRO,
+  PUBLIC_ABOUT_MISSION,
+  PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_REASON,
+  PUBLIC_TEAM_MEMBERS,
+} from "@cocalc/util/public-about-content";
+import {
+  PUBLIC_FEATURED_GUIDES,
+  PUBLIC_GUIDE_GROUPS,
+} from "@cocalc/util/public-guides";
 import { getDocsEntry } from "@cocalc/docs";
+import {
+  PUBLIC_COMMUNITY_INTRO,
+  PUBLIC_COMMUNITY_LINKS,
+} from "@cocalc/util/public-support-content";
 import {
   getPublicRouteMetadata,
   type PublicMetadataRoute,
@@ -53,6 +71,21 @@ function publicPath(basePath: string, path: string): string {
 
 function publicLink(basePath: string, path: string, label: string): string {
   return `<a href="${htmlEscape(publicPath(basePath, path))}">${htmlEscape(
+    label,
+  )}</a>`;
+}
+
+function publicOrExternalLink(
+  basePath: string,
+  href: string,
+  label: string,
+): string {
+  const external = /^https?:\/\//.test(href);
+  const resolved = external ? href : publicPath(basePath, href);
+  const externalAttributes = external
+    ? ' rel="noreferrer" target="_blank"'
+    : "";
+  return `<a href="${htmlEscape(resolved)}"${externalAttributes}>${htmlEscape(
     label,
   )}</a>`;
 }
@@ -246,6 +279,199 @@ function renderFeatureIndex(
 </main>`;
 }
 
+function guideVisible(
+  href: string,
+  config: PublicRouteMetadataConfig,
+): boolean {
+  if (!href.startsWith("/docs/")) return true;
+  return (
+    getDocsEntry(href, {
+      product: config.cocalc_product === "plus" ? "plus" : undefined,
+    }) != null
+  );
+}
+
+function renderGuides(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
+  const featured = PUBLIC_FEATURED_GUIDES.filter(({ href }) =>
+    guideVisible(href, config),
+  )
+    .map(
+      ({ body, href, title }) =>
+        `<li><h2>${publicOrExternalLink(
+          basePath,
+          href,
+          title,
+        )}</h2><p>${htmlEscape(body)}</p></li>`,
+    )
+    .join("");
+  const groups = PUBLIC_GUIDE_GROUPS.map(
+    ({ guides, intro, title }) => `<section>
+  <h2>${htmlEscape(title)}</h2>
+  <p>${htmlEscape(intro)}</p>
+  <ul>${guides
+    .filter(({ href }) => guideVisible(href, config))
+    .map(
+      ({ body, href, title }) =>
+        `<li><h3>${publicOrExternalLink(
+          basePath,
+          href,
+          title,
+        )}</h3><p>${htmlEscape(body)}</p></li>`,
+    )
+    .join("")}</ul>
+</section>`,
+  ).join("");
+  return `<main data-cocalc-public-prerender="guides" style="${ARTICLE_STYLE}">
+<header>
+  <p>CoCalc workflow guides</p>
+  <h1>Guides</h1>
+  <p>Plan setup, notebooks, terminals, code review, and deployment paths around durable CoCalc projects.</p>
+  <p>${publicLink(basePath, "docs", "Browse CoCalc documentation")}</p>
+</header>
+<section>
+  <h2>Featured workflows</h2>
+  <ul>${featured}</ul>
+</section>
+${groups}
+</main>`;
+}
+
+function renderAboutOverview(basePath: string): string {
+  const principles = PUBLIC_ABOUT_PRINCIPLES.map(
+    ({ body, title }) =>
+      `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
+  ).join("");
+  const audiences = PUBLIC_ABOUT_AUDIENCES.map(
+    ({ body, title }) =>
+      `<li><h3>${htmlEscape(title)}</h3><p>${htmlEscape(body)}</p></li>`,
+  ).join("");
+  const team = PUBLIC_TEAM_MEMBERS.map(
+    ({ name, slug, title }) =>
+      `<li>${publicLink(
+        basePath,
+        `about/team/${slug}`,
+        `${name}, ${title}`,
+      )}</li>`,
+  ).join("");
+  return `<main data-cocalc-public-prerender="about" style="${ARTICLE_STYLE}">
+<header>
+  <p>SageMath, Inc. · The company behind CoCalc</p>
+  <h1>${htmlEscape(PUBLIC_ABOUT_HEADLINE)}</h1>
+  <p>${htmlEscape(PUBLIC_ABOUT_INTRO)}</p>
+</header>
+<section>
+  <h2>Our mission</h2>
+  <p>${htmlEscape(PUBLIC_ABOUT_MISSION)}</p>
+  <p>${htmlEscape(PUBLIC_ABOUT_REASON)}</p>
+</section>
+<section><h2>How we build</h2><ul>${principles}</ul></section>
+<section><h2>Who we serve</h2><ul>${audiences}</ul></section>
+<section><h2>Meet the team</h2><ul>${team}</ul><p>${publicLink(
+    basePath,
+    "about/team",
+    "Team profiles",
+  )} ${publicLink(basePath, "about/events", "Events")}</p></section>
+</main>`;
+}
+
+function renderAboutTeam(basePath: string): string {
+  const members = PUBLIC_TEAM_MEMBERS.map(
+    ({ cardText, name, slug, title }) => `<li>
+  <h2>${publicLink(basePath, `about/team/${slug}`, `${name}, ${title}`)}</h2>
+  <p>${htmlEscape(cardText)}</p>
+</li>`,
+  ).join("");
+  return `<main data-cocalc-public-prerender="about-team" style="${ARTICLE_STYLE}">
+<header><p>SageMath, Inc.</p><h1>Meet the people behind CoCalc</h1></header>
+<ul>${members}</ul>
+<p>${publicLink(basePath, "about", "About CoCalc")}</p>
+</main>`;
+}
+
+function renderAboutTeamMember(basePath: string, slug?: string): string {
+  const member = getPublicTeamMember(slug);
+  if (member == null) return "";
+  return `<main data-cocalc-public-prerender="about-team-member" style="${ARTICLE_STYLE}">
+<header>
+  <p>SageMath, Inc. team</p>
+  <h1>${htmlEscape(member.name)}</h1>
+  <p>${htmlEscape(member.title)}</p>
+</header>
+<p>${htmlEscape(member.cardText)}</p>
+<p>${publicLink(basePath, "about/team", "Meet the full team")}</p>
+</main>`;
+}
+
+function renderAbout(route: PublicMetadataRoute, basePath: string): string {
+  switch (route.route?.view) {
+    case "about":
+      return renderAboutOverview(basePath);
+    case "about-team":
+      return renderAboutTeam(basePath);
+    case "about-team-member":
+      return renderAboutTeamMember(basePath, route.route.teamSlug);
+    // Events are database-backed. Do not render a static list that could
+    // disagree with the current event records loaded by the application.
+    case "about-events":
+    default:
+      return "";
+  }
+}
+
+function renderSupport(route: PublicMetadataRoute, basePath: string): string {
+  if (route.route?.view === "community") {
+    const links = PUBLIC_COMMUNITY_LINKS.map(
+      ({ description, href, title }) => `<li>
+  <h2>${publicOrExternalLink(basePath, href, title)}</h2>
+  <p>${htmlEscape(description)}</p>
+</li>`,
+    ).join("");
+    return `<main data-cocalc-public-prerender="support-community" style="${ARTICLE_STYLE}">
+<header><p>CoCalc support</p><h1>Community support</h1><p>${htmlEscape(
+      PUBLIC_COMMUNITY_INTRO,
+    )}</p></header>
+<ul>${links}</ul>
+<p>${publicLink(basePath, "support", "Direct support options")} ${publicLink(
+      basePath,
+      "docs",
+      "Documentation",
+    )}</p>
+</main>`;
+  }
+  if (route.route?.view !== "index") return "";
+  return `<main data-cocalc-public-prerender="support" style="${ARTICLE_STYLE}">
+<header>
+  <p>CoCalc help and evaluation</p>
+  <h1>Support</h1>
+  <p>Get help choosing a product path, discussing pricing or deployment, or resolving an account or project issue.</p>
+</header>
+<section>
+  <h2>Find the right next step</h2>
+  <ul>
+    <li><h3>${publicLink(
+      basePath,
+      "docs",
+      "Documentation",
+    )}</h3><p>Use task-focused product and workflow documentation.</p></li>
+    <li><h3>${publicLink(
+      basePath,
+      "support/community",
+      "Community channels",
+    )}</h3><p>Inspect the source, follow public updates, and join public discussions.</p></li>
+    <li><h3>${publicLink(
+      basePath,
+      "pricing",
+      "Pricing and licensing",
+    )}</h3><p>Review hosted memberships and paths for teams and organizations.</p></li>
+  </ul>
+</section>
+<p>Direct contact and ticket options appear on this page according to the current deployment configuration.</p>
+</main>`;
+}
+
 export function renderPublicRoutePrerender(
   route: PublicMetadataRoute,
   basePath: string,
@@ -260,6 +486,15 @@ export function renderPublicRoutePrerender(
   }
   if (route.section === "pricing") {
     return renderPricing(basePath);
+  }
+  if (route.section === "guides") {
+    return renderGuides(basePath, resolvedConfig);
+  }
+  if (route.section === "about") {
+    return renderAbout(route, basePath);
+  }
+  if (route.section === "support") {
+    return renderSupport(route, basePath);
   }
   if (route.section !== "features") {
     return "";

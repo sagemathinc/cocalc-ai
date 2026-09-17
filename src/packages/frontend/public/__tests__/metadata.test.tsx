@@ -226,6 +226,48 @@ describe("public route metadata", () => {
     }
   });
 
+  it("uses the public team registry for person-specific metadata", () => {
+    const william = getPublicRouteMetadata(
+      getPublicMetadataRouteFromPath("/about/team/william-stein"),
+      { site_name: "CoCalc" },
+    );
+    expect(william.title).toBe("William Stein, Founder and CEO | CoCalc");
+    expect(william.description).toContain("creator of CoCalc and SageMath");
+    expect(william.notFound).toBeFalsy();
+
+    const unknown = getPublicRouteMetadata(
+      getPublicMetadataRouteFromPath("/about/team/not-a-person"),
+      { site_name: "CoCalc" },
+    );
+    expect(unknown.notFound).toBe(true);
+    expect(unknown.title).toBe("CoCalc Team | CoCalc");
+  });
+
+  it("noindexes thin auth and account-specific support actions", () => {
+    for (const path of [
+      "/auth/sign-in",
+      "/auth/sign-up",
+      "/auth/password-reset",
+      "/invites/example-token",
+      "/sso",
+      "/support/new",
+      "/support/tickets",
+    ]) {
+      const metadata = getPublicRouteMetadata(
+        getPublicMetadataRouteFromPath(path),
+        { site_name: "CoCalc" },
+      );
+      expect(metadata.noindex).toBe(true);
+    }
+    for (const path of ["/support", "/support/community"]) {
+      const metadata = getPublicRouteMetadata(
+        getPublicMetadataRouteFromPath(path),
+        { site_name: "CoCalc" },
+      );
+      expect(metadata.noindex).toBeFalsy();
+    }
+  });
+
   it("only emits routable feature detail pages in the public metadata sitemap", () => {
     const featurePaths = PUBLIC_SITEMAP_PATHS.filter((path) =>
       path.startsWith("/features/"),

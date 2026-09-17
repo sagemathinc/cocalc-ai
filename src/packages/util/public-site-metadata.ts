@@ -9,6 +9,10 @@ import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
 } from "./public-feature-pages";
+import {
+  getPublicTeamMember,
+  PUBLIC_TEAM_MEMBERS,
+} from "./public-about-content";
 import { SITE_NAME } from "./theme";
 import {
   CANONICAL_PUBLIC_SITE_ORIGIN,
@@ -219,13 +223,6 @@ function hasConfiguredText(value?: string): boolean {
   return !!`${value ?? ""}`.trim();
 }
 
-const TEAM_MEMBER_SITEMAP_SLUGS = [
-  "william-stein",
-  "blaec-bejarano",
-  "harald-schilly",
-  "andrey-novoseltsev",
-] as const;
-
 function normalizeBasePath(basePath?: string): string {
   const trimmed = `${basePath ?? ""}`.trim();
   if (!trimmed || trimmed === "/") return "";
@@ -287,9 +284,7 @@ export function buildPublicSitemapPaths(
     publicPath("about"),
     publicPath("about/events"),
     publicPath("about/team"),
-    ...TEAM_MEMBER_SITEMAP_SLUGS.map((slug) =>
-      publicPath(`about/team/${slug}`),
-    ),
+    ...PUBLIC_TEAM_MEMBERS.map(({ slug }) => publicPath(`about/team/${slug}`)),
     publicPath("docs"),
     publicPath("features"),
     ...getPublicFeatureIndexPages(
@@ -766,17 +761,21 @@ function aboutRouteMetadata(
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
         title: pageTitle(`${siteName} Team`, siteName),
       };
-    case "about-team-member":
+    case "about-team-member": {
+      const member = getPublicTeamMember(route.teamSlug);
       return {
         canonicalPath: publicPath(`about/team/${route.teamSlug}`, options),
         description:
+          member?.metadataDescription ??
           "Meet a member of the SageMath, Inc. team building CoCalc.",
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
-        notFound: !(TEAM_MEMBER_SITEMAP_SLUGS as readonly string[]).includes(
-          route.teamSlug,
+        notFound: member == null,
+        title: pageTitle(
+          member ? `${member.name}, ${member.title}` : `${siteName} Team`,
+          siteName,
         ),
-        title: pageTitle(`${siteName} Team`, siteName),
       };
+    }
     case "about":
     default:
       return {
@@ -938,6 +937,7 @@ function authRouteMetadata(
       description:
         "Create a CoCalc account to start hosted projects on CoCalc.ai, explore product paths, and evaluate what fits your team.",
       imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
+      noindex: true,
       title: pageTitle(`Create your ${siteName} account`, siteName),
     };
   }
@@ -947,6 +947,7 @@ function authRouteMetadata(
       description:
         "Sign in to CoCalc to open projects, manage your account, and continue work in your collaborative workspace.",
       imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
+      noindex: true,
       title: pageTitle(`Sign in to ${siteName}`, siteName),
     };
   }
@@ -955,6 +956,7 @@ function authRouteMetadata(
     description:
       "Use your CoCalc account to access projects, collaborators, billing, support, and deployment tools.",
     imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
+    noindex: true,
     title: pageTitle(siteName, siteName),
   };
 }
@@ -971,6 +973,7 @@ function supportRouteMetadata(
         description:
           "Contact CoCalc about pricing, deployment, product paths, or an existing account or project issue.",
         imagePath: publicPath(WORKFLOW_SOCIAL_IMAGE, options),
+        noindex: true,
         title: pageTitle(`Contact ${siteName} Support`, siteName),
       };
     case "community":
@@ -987,6 +990,7 @@ function supportRouteMetadata(
         description:
           "Review recent CoCalc support tickets when ticket access is available for your account.",
         imagePath: publicPath(WORKFLOW_SOCIAL_IMAGE, options),
+        noindex: true,
         title: pageTitle(`${siteName} Support Tickets`, siteName),
       };
     case "index":

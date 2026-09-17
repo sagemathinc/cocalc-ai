@@ -7,6 +7,14 @@ import { Suspense, lazy, useEffect, useState } from "react";
 
 import { Button, Flex, Tag, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
+import {
+  PUBLIC_ABOUT_AUDIENCES,
+  PUBLIC_ABOUT_HEADLINE,
+  PUBLIC_ABOUT_INTRO,
+  PUBLIC_ABOUT_MISSION,
+  PUBLIC_ABOUT_PRINCIPLES,
+  PUBLIC_ABOUT_REASON,
+} from "@cocalc/util/public-about-content";
 import type { NewsItem } from "@cocalc/util/types/news";
 
 import {
@@ -179,55 +187,6 @@ const ABOUT_PAGE_CSS = `
   }
 `;
 
-const PRINCIPLES: Array<{
-  body: string;
-  icon: IconName;
-  title: string;
-}> = [
-  {
-    body: "Persistent Linux projects keep software, data, processes, and context available for the next person or agent.",
-    icon: "server",
-    title: "Durable environments",
-  },
-  {
-    body: "People and AI work with the same files, notebooks, terminals, documents, and project history.",
-    icon: "users",
-    title: "Shared context",
-  },
-  {
-    body: "Researchers use the languages and open-source software their work actually requires.",
-    icon: "linux",
-    title: "Open tools",
-  },
-];
-
-const AUDIENCES: Array<{
-  body: string;
-  icon: IconName;
-  title: string;
-}> = [
-  {
-    body: "Individual researchers and collaborative groups running experiments, papers, and long-lived computational projects.",
-    icon: "experiment",
-    title: "Research",
-  },
-  {
-    body: "Courses, workshops, departments, and instructors who need consistent environments and collaborative support.",
-    icon: "graduation-cap",
-    title: "Education",
-  },
-  {
-    body: "Engineering, data, and R&D groups that combine code, documents, compute, and AI-assisted work.",
-    icon: "users",
-    title: "Technical teams",
-  },
-  {
-    body: "Universities, laboratories, companies, and public-sector organizations with deployment and governance requirements.",
-    icon: "bank",
-    title: "Institutions",
-  },
-];
-
 const COMPANY_FACTS = [
   { detail: "Collaborative computing online", value: "Since 2013" },
   { detail: "SageMath, Inc.", value: "Incorporated 2016" },
@@ -337,7 +296,7 @@ function AboutOverview() {
                 maxWidth: 720,
               }}
             >
-              Building the future of collaborative computation.
+              {PUBLIC_ABOUT_HEADLINE}
             </Title>
             <Paragraph
               style={{
@@ -348,9 +307,7 @@ function AboutOverview() {
                 maxWidth: 700,
               }}
             >
-              Since 2013, CoCalc has given researchers, educators, technical
-              teams, and AI agents a persistent place to work together using the
-              open-source tools they trust.
+              {PUBLIC_ABOUT_INTRO}
             </Paragraph>
           </div>
           <Flex gap={12} wrap>
@@ -428,8 +385,7 @@ function AboutOverview() {
               margin: "14px 0 18px",
             }}
           >
-            Make serious computational work easy to share, reproduce, and
-            advance, by people and AI.
+            {PUBLIC_ABOUT_MISSION}
           </Title>
           <Paragraph
             style={{
@@ -462,10 +418,7 @@ function AboutOverview() {
               margin: 0,
             }}
           >
-            Important technical work should not depend on one laptop, one
-            installation, or context trapped in a chat window. The environment
-            itself should be durable, collaborative, inspectable, and ready for
-            whoever works next.
+            {PUBLIC_ABOUT_REASON}
           </Paragraph>
         </div>
       </section>
@@ -478,7 +431,7 @@ function AboutOverview() {
           </Title>
         </Flex>
         <div className="cocalc-about-principles">
-          {PRINCIPLES.map((principle) => (
+          {PUBLIC_ABOUT_PRINCIPLES.map((principle) => (
             <div
               key={principle.title}
               style={{
@@ -607,7 +560,7 @@ function AboutOverview() {
           </Title>
         </Flex>
         <div className="cocalc-about-audiences">
-          {AUDIENCES.map((audience) => (
+          {PUBLIC_ABOUT_AUDIENCES.map((audience) => (
             <div
               key={audience.title}
               style={{

@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { getPublicTeamMember } from "@cocalc/util/public-about-content";
+
 export interface TeamExperience {
   institution: string;
   position: string;
@@ -35,18 +37,12 @@ export interface TeamMemberProfile {
 
 export const TEAM_MEMBERS: TeamMemberProfile[] = [
   {
-    slug: "william-stein",
-    name: "William Stein",
-    title: "Founder and CEO",
+    ...getPublicTeamMember("william-stein")!,
     email: "wstein@sagemath.com",
-    imageSrc: "/public/about/william-stein.png",
-    imageAlt: "William Stein with his dog, Bella.",
     bioTopText: [
       "William is both the CEO and a lead software developer across the front and back end of CoCalc, with day-to-day involvement in product direction and engineering decisions.",
       "His long history with SageMath and his years as a professor of mathematics shape CoCalc's emphasis on technical computing, collaboration, open infrastructure, and teaching.",
     ],
-    cardText:
-      "William Stein is the founder of CoCalc and SageMath, Inc. A Berkeley-trained mathematician with over 15 years in teaching and research, his work in number theory and computational science led him from academia to building open tools for technical computing.",
     background: [
       'William\'s academic path began at the University of California, Berkeley, where he relied on closed-source software like Magma for analysis and research. An admirer of its underlying algorithms but wanting software that didn\'t operate as a "black box," he set out to understand "how things work under the hood" — which led him to develop SageMath while an Assistant Professor of Mathematics at Harvard.',
       "April 2013 marked another momentous chapter in William's professional life: he launched SageMathCloud, now known as CoCalc. Inspired by his experiences in the academic and computational fields, this web application was designed to enable the collaborative use of open-source software (while eliminating typical installation and package maintenance issues), thus enhancing the teaching and research process in mathematics and data science. CoCalc now operates under a corporate model, making it self-sufficient and capable of growth independent of grants or other external funding.",
@@ -103,19 +99,13 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     },
   },
   {
-    slug: "blaec-bejarano",
-    name: "Blaec Bejarano",
-    title: "CSO",
+    ...getPublicTeamMember("blaec-bejarano")!,
     email: "blaec@cocalc.ai",
-    imageSrc: "/public/about/blaec-bejarano.png",
-    imageAlt: "A portrait of Blaec Bejarano.",
     bioTopText: [
       "For partnerships, integrations, or questions about how CoCalc fits a research lab, technical team, or academic institution, Blaec is the person to talk to.",
       "He pairs a background in applied mathematics — numerical modeling of geophysical phenomena — with practical partnership work that helps technical evaluators connect CoCalc to their own workflows.",
       "He stays close to the applied-mathematics and open-source communities, including the Society for Industrial and Applied Mathematics, and represents CoCalc at conferences throughout the year.",
     ],
-    cardText:
-      "Blaec leads sales and partnerships at SageMath, Inc. He holds an M.S. in Mathematics from Oregon State University, where his work applied numerical analysis and partial differential equations to model physical phenomena — technical grounding he brings to how he helps teams evaluate and adopt CoCalc.",
     background: [
       "Blaec earned his M.S. in Mathematics from Oregon State University in 2021, applying numerical analysis and partial differential equations to model physical phenomena, after teaching there as a graduate assistant and instructor of record.",
       "As Chief Sales Officer at SageMath, Inc., he leads sales, partnerships, and go-to-market, using live demos at conferences such as the International Congress on Industrial and Applied Mathematics (ICIAM) and the International Conference on Machine Learning (ICML) to translate CoCalc's capabilities into concrete adoption paths.",
@@ -159,19 +149,13 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     },
   },
   {
-    slug: "harald-schilly",
-    name: "Harald Schilly",
-    title: "CTO",
+    ...getPublicTeamMember("harald-schilly")!,
     email: "hsy@sagemath.com",
-    imageSrc: "/public/about/harald-schilly.jpg",
-    imageAlt: "Harald Schilly with his dog.",
     bioTopText: [
       "As CTO of SageMath, Inc., Harald leads front-end development, design, UI work, Linux operations, deployment infrastructure, and technical evaluation across CoCalc.",
       "He has been a long-time SageMath contributor and focuses on the engineering details that keep CoCalc's browser UI and hosted infrastructure reliable.",
       "Reach out to talk about his projects or the engineering behind CoCalc.",
     ],
-    cardText:
-      "Harald is CoCalc's CTO and a long-time SageMath contributor. He works across front-end development, UI design, Linux operations, deployment infrastructure, and the large open-source software stack available in CoCalc projects.",
     background: [
       "Harald's long experience in software engineering has been central to CoCalc's operations and reliability.",
       "He started programming as a teenager with QBasic on MS-DOS, then moved on to Turbo Pascal, Visual Basic, Java, and C.",
@@ -221,18 +205,12 @@ export const TEAM_MEMBERS: TeamMemberProfile[] = [
     },
   },
   {
-    slug: "andrey-novoseltsev",
-    name: "Andrey Novoseltsev",
-    title: "COO",
+    ...getPublicTeamMember("andrey-novoseltsev")!,
     email: "andrey@cocalc.ai",
-    imageSrc: "/public/about/andrey-novoseltsev.jpeg",
-    imageAlt: "A portrait of Andrey Novoseltsev smiling.",
     bioTopText: [
       "As Chief Operating Officer, Andrey keeps a keen eye on financial aspects of the company to ensure everything is in order while looking for insights to drive the company's growth. If you need custom quotes and special care for your purchasing orders and invoices, Andrey is always happy to help you!",
       "Apart from his efforts in SageMath, Inc. Andrey is a dedicated father of two adorable daughters and strives to instill in them love for hiking in the mountains (and perhaps even backpacking!). He enjoys learning about global geopolitical perspectives and taking into account wood grain irregularities using hand tools.",
     ],
-    cardText:
-      "Andrey went through graduate school as a student and then an instructor in Russia, USA, and Canada. With an interest in software development starting with early childhood experience on Soviet ES EVM, he used SageMath extensively both in his Ph.D. research and teaching and now oversees day-to-day operations at SageMath, Inc.",
     background: [
       "Andrey went through graduate school as a student and then an instructor in Russia, USA, and Canada. With an interest in software development starting with early childhood experience on Soviet ES EVM, he used SageMath extensively both in his Ph.D. research and teaching.",
       "Together with Volker Braun (long term release manager of SageMath), Andrey has implemented a framework for computations with toric varieties and Calabi-Yau varieties in them, fixing various bugs and making improvements in other areas of SageMath along the way.",
