@@ -46,6 +46,12 @@ jest.mock("@cocalc/server/bay-directory", () => ({
   }),
 }));
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
+  getClusterAccountByEmail: async (email_address: string) =>
+    (
+      await require("@cocalc/database/pool")
+        .default()
+        .query("SELECT * FROM accounts WHERE email_address=$1", [email_address])
+    ).rows[0],
   getClusterAccountById: async (account_id: string) =>
     (
       await require("@cocalc/database/pool")
@@ -58,6 +64,10 @@ jest.mock("@cocalc/server/inter-bay/accounts", () => ({
         .default()
         .query("SELECT * FROM accounts WHERE account_id=ANY($1::uuid[])", [ids])
     ).rows,
+  verifyClusterAccountSignInPassword: async ({ email_address, password }) =>
+    await require("@cocalc/server/auth/verify-sign-in-password").verifyLocalSignInPassword(
+      { email_address, password },
+    ),
 }));
 
 const originalBay = process.env.COCALC_BAY_ID;
@@ -273,11 +283,14 @@ it("connects public proposal, real financial sign-in, re-verification and receip
     page.setDefaultTimeout(10000);
     await page.goto(proposal.approval_url);
     await page
-      .getByRole("textbox", { name: "Account email" })
+      .getByRole("link", { name: "Use a password instead", exact: true })
+      .click();
+    await page
+      .getByRole("textbox", { name: "Email address", exact: true })
       .fill(`${sender}@example.test`);
     await page.getByLabel("Password", { exact: true }).fill(password);
     await page
-      .getByRole("button", { name: "Sign In", exact: true })
+      .getByRole("button", { name: "Sign in", exact: true })
       .press("Enter");
     await page
       .getByRole("heading", { name: "Approve Credit Transfer", exact: true })
