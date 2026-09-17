@@ -12,10 +12,10 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
-- Latest independently reviewed head: `ad63f225d7`.
-- Latest application remediation commit: `3ffeb8d759`.
+- Latest independently reviewed head: `1eef540827`.
+- Latest application remediation commit: `8bf2244870`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `3ffeb8d759`.
+  `8bf2244870`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -42,6 +42,9 @@ and private repository before relying on this packet.
   replace the latest token, tracked LRO, error, optimistic lifecycle state,
   projection repair, or delayed reconciliation. Projection diagnostic identifiers
   include the action UUID.
+- An overlapping restart burst retains the lifecycle state from before its first
+  optimistic update. If the newest restart fails, rollback restores that stable
+  baseline instead of another request's optimistic `starting` state.
 - Project collaborator-map changes now advance a monotonic authority revision in
   PostgreSQL. Explicit restarts coalesce only when that revision is unchanged, so
   a restart requested after a committed removal or downgrade cannot join an active
@@ -129,6 +132,11 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- At `8bf2244870`, the production-faithful mutable-store frontend project-actions
+  suite passed 30 tests. The required newer-failure/older-failure and
+  newer-failure/older-success cases both restore the pre-overlap `running` state.
+  Frontend package typecheck and repository frontend lint passed. No deployment was
+  performed.
 - At `3ffeb8d759`, the focused frontend project-actions suite passed 29 tests. The
   overlap regressions cover all material older/newer success and failure orderings
   and assert that only the newest intent controls shared restart status. Frontend
@@ -228,8 +236,8 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must assess `3ffeb8d759`, including the out-of-order
-  frontend completion finding reported against `ad63f225d7`. Live
+- Independent re-review must assess `8bf2244870`, including the optimistic rollback
+  baseline finding reported against `1eef540827`. Live
   qualification must then deliberately overlap a stale restart with a real
   second-human downgrade/removal or execution-mode change and the subsequent
   successful restart on a matched build. Earlier live evidence predates this
