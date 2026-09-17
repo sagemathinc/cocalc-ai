@@ -11,7 +11,6 @@ import { FUNDING_ACCOUNT_WRITER_PROTOCOL_VERSION } from "@cocalc/server/purchase
 import { FUNDING_WRITER_PROTOCOL_VERSION } from "@cocalc/util/compute-funding-rollout";
 import type { FundingRolloutEvidence } from "@cocalc/util/compute-funding-rollout";
 import { computeDeploymentNamespace } from "../resource-names";
-import { getComputeVmConfig } from "../config";
 
 const STARTED_AT = Date.now() - process.uptime() * 1000;
 
@@ -27,6 +26,8 @@ export async function verifyIsolatedQaFundingWriter(): Promise<FundingRolloutEvi
   const pgSocket = process.env.COCALC_FUNDING_QA_PG_SOCKET?.trim();
   const deployment = process.env.COCALC_FUNDING_QA_DEPLOYMENT_ID?.trim();
   const bay = getConfiguredBayId();
+  const trustedDevCluster =
+    process.env.COCALC_FUNDING_QA_TRUSTED_DEV_CLUSTER === "yes";
   if (
     process.env.COCALC_FUNDING_ISOLATED_QA !== "yes" ||
     !database ||
@@ -38,15 +39,19 @@ export async function verifyIsolatedQaFundingWriter(): Promise<FundingRolloutEvi
     !isAbsolute(pgSocket) ||
     !deployment ||
     deployment !== process.env.COCALC_COMPUTE_DEPLOYMENT_ID?.trim() ||
-    isMultiBayCluster() ||
-    getConfiguredClusterBayCatalog().some((b) => b.bay_id !== bay)
+    (!trustedDevCluster &&
+      (isMultiBayCluster() ||
+        getConfiguredClusterBayCatalog().some((b) => b.bay_id !== bay)))
   )
     throw Error(
-      "Isolated funding QA requires explicit one-bay PG cluster, worktree, and deployment identities.",
+      "Funding QA requires explicit PostgreSQL, worktree, deployment, and trusted development topology identities.",
     );
-  const config = await getComputeVmConfig();
   const namespace = computeDeploymentNamespace();
-  if (config.environment !== "development" || !namespace)
+  if (
+    process.env.COCALC_COMPUTE_VM_ENVIRONMENT?.trim().toLowerCase() !==
+      "development" ||
+    !namespace
+  )
     throw Error(
       "Isolated funding QA requires a development compute namespace.",
     );

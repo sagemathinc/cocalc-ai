@@ -8,7 +8,6 @@ import { getLocalFundingRolloutCapabilities } from "./rollout";
 const mockQuery = jest.fn();
 const mockStat = jest.fn();
 const mockRealpath = jest.fn();
-const mockConfig = jest.fn();
 const mockReadFile = jest.fn();
 let mockProtocol = 1;
 let mockMulti = false;
@@ -24,13 +23,11 @@ jest.mock("@cocalc/database/pool", () => ({
 }));
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "home",
-  getConfiguredClusterBayCatalog: () => [{ bay_id: "home" }],
+  getConfiguredClusterBayCatalog: () =>
+    mockMulti ? [{ bay_id: "home" }, { bay_id: "peer" }] : [{ bay_id: "home" }],
 }));
 jest.mock("@cocalc/server/cluster-config", () => ({
   isMultiBayCluster: () => mockMulti,
-}));
-jest.mock("../config", () => ({
-  getComputeVmConfig: (...args) => mockConfig(...args),
 }));
 jest.mock("../worker", () => ({
   get SPONSORED_RESOURCE_WRITER_PROTOCOL_VERSION() {
@@ -52,8 +49,8 @@ beforeEach(() => {
     COCALC_FUNDING_QA_PG_SOCKET: "/qa/pg-f8e1c8e3/socket",
     COCALC_FUNDING_QA_DEPLOYMENT_ID: "isolated-19200",
     COCALC_COMPUTE_DEPLOYMENT_ID: "isolated-19200",
+    COCALC_COMPUTE_VM_ENVIRONMENT: "development",
   });
-  mockConfig.mockResolvedValue({ environment: "development" });
   mockRealpath.mockImplementation(async (path) =>
     path.endsWith(".ts") || path.endsWith(".js")
       ? `/qa/worktree/compiled/${path.split("/").at(-1).replace(/\.ts$/, ".js")}`
@@ -104,6 +101,14 @@ it("registers actual startup verifiers and accepts smc on its explicitly isolate
     mockReadFile.mock.calls.every(([path]) => !path.startsWith("/proc/")),
   ).toBe(true);
 });
+it("accepts an explicitly trusted development multibay topology", async () => {
+  mockMulti = true;
+  process.env.COCALC_FUNDING_QA_TRUSTED_DEV_CLUSTER = "yes";
+  await expect(verifyIsolatedQaFundingWriter()).resolves.toMatchObject({
+    enforced: true,
+    evidence_id: expect.stringContaining(`isolated-qa:home:${process.pid}:`),
+  });
+});
 it.each([
   "flag",
   "production",
@@ -117,7 +122,7 @@ it.each([
 ])("rejects %s", async (fault) => {
   if (fault === "flag") delete process.env.COCALC_FUNDING_ISOLATED_QA;
   if (fault === "production")
-    mockConfig.mockResolvedValue({ environment: "production" });
+    process.env.COCALC_COMPUTE_VM_ENVIRONMENT = "production";
   if (fault === "multibay") mockMulti = true;
   if (fault === "deployment")
     process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "original-hub";
