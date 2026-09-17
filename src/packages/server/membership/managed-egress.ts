@@ -911,7 +911,7 @@ export async function getManagedEgressAdminHistory(opts: {
           COALESCE(SUM(events.bytes), 0) AS bytes
         FROM ${ROLLUP_TABLE} AS events
         WHERE ${whereSql}
-        GROUP BY bucket_start, events.category
+        GROUP BY 1, events.category
         ORDER BY bucket_start ASC, events.category ASC
       `,
       params,
@@ -1030,7 +1030,8 @@ export async function getManagedEgressAdminHistory(opts: {
     const point = bucketData.get(bucketStart);
     if (!point) continue;
     const bytes = Math.max(0, Number(row.bytes) || 0);
-    point.categories_bytes[row.category] = bytes;
+    point.categories_bytes[row.category] =
+      (point.categories_bytes[row.category] ?? 0) + bytes;
     point.bytes += bytes;
   }
 
@@ -1151,7 +1152,7 @@ export async function getManagedEgressHistoryForAccount(opts: {
             COALESCE(SUM(events.bytes), 0) AS bytes
           FROM ${ROLLUP_TABLE} AS events
           WHERE ${whereSql}
-          GROUP BY bucket_start, events.category
+          GROUP BY 1, events.category
           ORDER BY bucket_start ASC, events.category ASC
         `,
       params,
@@ -1205,7 +1206,8 @@ export async function getManagedEgressHistoryForAccount(opts: {
     const point = bucketData.get(bucketStart);
     if (!point) continue;
     const bytes = Math.max(0, Number(row.bytes) || 0);
-    point.categories_bytes[row.category] = bytes;
+    point.categories_bytes[row.category] =
+      (point.categories_bytes[row.category] ?? 0) + bytes;
     point.bytes += bytes;
   }
 
