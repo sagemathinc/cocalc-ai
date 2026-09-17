@@ -110,8 +110,6 @@ export function useAgentMentions({
       );
     const connections = await api.listPersonalConnections({});
     if (epoch !== generation.current) return false;
-    if (!connections.enabled)
-      throw new Error("Personal agent messaging is not enabled on this site.");
     if (connections.controls?.paused)
       throw new Error(
         "Your agent communication is paused. Resume it in My Agents before sending.",

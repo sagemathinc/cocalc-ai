@@ -39,10 +39,10 @@ export function AgentMessagingPreference() {
         }}
       />
       <p id={`${id}-description`}>
-        Show agent naming, agent mentions and connection setup. Site
-        availability and existing permission checks still apply. Turning this
-        off only hides experimental controls; it does not pause communication or
-        revoke any connections or external credentials.
+        Show agent naming, agent mentions and connection setup. Existing
+        permission checks still apply. Turning this off only hides experimental
+        controls; it does not pause communication or revoke any connections or
+        external credentials.
       </p>
       <a href="/settings/my-agents">Inspect, pause or revoke in My Agents</a>
       {error && <Alert role="alert" type="error" title={error} />}

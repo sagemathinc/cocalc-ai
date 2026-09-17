@@ -17,19 +17,16 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
-import { AgentStore, agentStore, agentMessagingEnabled } from "./store";
+import { AgentStore, agentStore } from "./store";
 import { isRestrictiveAgentManagement } from "./management";
 import { getIdentity } from "./api";
 import { agentRpcControl } from "./rpc";
 import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 
-export const personalMessagingEnabled = () =>
-  process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED === "1";
+export const personalMessagingEnabled = () => true;
 function enabled(request: PersonalControlRequest) {
   if (isRestrictiveAgentManagement(request)) return;
-  if (!personalMessagingEnabled() || !agentMessagingEnabled())
-    throw new Error("personal agent messaging is not enabled on this bay");
 }
 function fresh(at?: number) {
   if (
@@ -120,7 +117,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
   switch (request.action) {
     case "listNamedAgents":
       return {
-        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
+        enabled: true,
         agents: await store.names(account),
         controls: await store.controls(account),
       };
@@ -128,7 +125,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       return store.name(account, request.options);
     case "listPersonalConnections":
       return {
-        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
+        enabled: true,
         connections: await store.connections(account),
         controls: await store.controls(account),
       };
@@ -169,7 +166,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       );
     case "listPersonalConnectionRequests":
       return {
-        enabled: personalMessagingEnabled() && agentMessagingEnabled(),
+        enabled: true,
         requests: await store.requests(account),
       };
     case "resolvePersonalConnectionRequest":

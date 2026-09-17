@@ -13,12 +13,10 @@ const mockEnroll = jest.fn(),
   mockStatus = jest.fn(),
   mockRemote = jest.fn();
 jest.mock("./external-store", () => ({
-  ExternalAgentStore: jest
-    .fn()
-    .mockImplementation(() => ({
-      enroll: (...args) => mockEnroll(...args),
-      enrollmentStatus: (...args) => mockStatus(...args),
-    })),
+  ExternalAgentStore: jest.fn().mockImplementation(() => ({
+    enroll: (...args) => mockEnroll(...args),
+    enrollmentStatus: (...args) => mockStatus(...args),
+  })),
 }));
 jest.mock("./store", () => ({ agentStore: jest.fn() }));
 jest.mock("./api", () => ({ getIdentity: jest.fn() }));
@@ -62,18 +60,8 @@ const opts = {
   targets,
   ttl_seconds: 3600,
 };
-const flags = [
-  "COCALC_AGENT_MESSAGING_ENABLED",
-  "COCALC_AGENT_MESSAGING_RPC_ENABLED",
-  "COCALC_AGENT_PERSONAL_MESSAGING_ENABLED",
-  "COCALC_AGENT_EXTERNAL_LOGIN_ENABLED",
-];
-const saved = flags.map((flag) => process.env[flag]);
 beforeEach(() => {
   jest.clearAllMocks();
-  flags.forEach((flag) => {
-    process.env[flag] = "1";
-  });
   jest
     .mocked(resolveAccountHomeBay)
     .mockResolvedValue({ home_bay_id: "home" } as any);
@@ -81,12 +69,6 @@ beforeEach(() => {
   mockRemote.mockResolvedValue({ challenge });
   mockEnroll.mockResolvedValue({ installation_id: challenge_id });
 });
-afterAll(() =>
-  flags.forEach((flag, index) => {
-    if (saved[index] === undefined) delete process.env[flag];
-    else process.env[flag] = saved[index];
-  }),
-);
 
 test("human approves at home; only a short attestation, never their credential, reaches origin", async () => {
   expect(await approveExternalAgentLogin(opts)).toEqual({
@@ -177,10 +159,7 @@ test("status routes to the home and does not enroll or start work", async () => 
   );
 });
 
-test("external login remains opt-in and cannot enroll after challenge expiry", async () => {
-  process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED = "0";
-  await expect(approveExternalAgentLogin(opts)).rejects.toThrow("not enabled");
-  process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED = "1";
+test("external login cannot enroll after challenge expiry", async () => {
   mockRemote.mockResolvedValueOnce({
     challenge: { ...challenge, expires_at: "2000-01-01" },
   });

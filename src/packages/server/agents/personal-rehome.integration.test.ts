@@ -19,7 +19,6 @@ describeDb("personal state rehome guard and canonical write fence", () => {
   const source = { project_id: randomUUID(), agent_id: randomUUID() };
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
   const previousBay = process.env.COCALC_BAY_ID;
-  const previousFlag = process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
   const identity = jest.fn(
     async (_a, e) =>
       ({
@@ -67,9 +66,6 @@ describeDb("personal state rehome guard and canonical write fence", () => {
   afterAll(() => {
     if (previousBay === undefined) delete process.env.COCALC_BAY_ID;
     else process.env.COCALC_BAY_ID = previousBay;
-    if (previousFlag === undefined)
-      delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-    else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = previousFlag;
   });
   beforeEach(async () => {
     for (const table of [
@@ -96,9 +92,8 @@ describeDb("personal state rehome guard and canonical write fence", () => {
   });
 
   test.each(PERSONAL_AGENT_STATE_TABLES)(
-    "retained %s state blocks rehome even with feature disabled",
+    "retained %s state blocks rehome",
     async (table) => {
-      process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "0";
       if (table === "agent_personal_names") {
         await store.name(account, { endpoint: source, name: "old-name" });
         await store.name(account, { endpoint: source, name: "new-name" });

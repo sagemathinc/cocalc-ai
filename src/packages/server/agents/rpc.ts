@@ -63,10 +63,7 @@ import {
 
 const logger = getLogger("agents:rpc");
 
-function enabled() {
-  if (process.env.COCALC_AGENT_MESSAGING_RPC_ENABLED !== "1")
-    throw new Error("agent RPC messaging is not enabled on this bay");
-}
+function enabled() {}
 
 async function owner(project_id: string) {
   requireUuid(project_id, "project_id");
@@ -232,12 +229,6 @@ async function submitAgentRpcOperation(
     true,
   );
   if (opts.request.snapshot_manifest || phase !== "send") {
-    if (process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1")
-      return rpcOutcome(opts.request, "rejected", {
-        code: "attachment_unavailable",
-        reason: "Binary attachments are not enabled on the recipient bay",
-        chat_effect: "none",
-      });
     if (phase === "send")
       validateAttachmentPayload(
         { kind: "snapshots", files: opts.request.snapshot_manifest! },
@@ -704,11 +695,6 @@ export const authorizeRpcAdmission: AgentApi["authorizeRpcAdmission"] = async (
   // admission; it does not retract saved messages or cancel running work.
   enabled();
   const e = opts.envelope;
-  if (
-    e.snapshot_manifest &&
-    process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1"
-  )
-    throw new Error("binary agent attachments disabled on recipient bay");
   const permit = await getAgentRpcAdmissionState({
     token_id: e.permit_id,
     kind: "permit",

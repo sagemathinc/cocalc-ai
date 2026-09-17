@@ -289,11 +289,7 @@ function AccountAgentsPage() {
         </p>
         <Space wrap>
           <Button
-            disabled={
-              busy ||
-              !connections ||
-              (!!connections.controls?.paused && !connections.enabled)
-            }
+            disabled={busy || !connections}
             onClick={() =>
               accountAction(connections?.controls?.paused ? "resume" : "pause")
             }

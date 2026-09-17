@@ -496,17 +496,6 @@ export function createLocalAgentRpcService(
           throw new Error("project startup adapter unavailable");
         }),
       authorize: async (envelope) => {
-        if (process.env.COCALC_AGENT_MESSAGING_RPC_ENABLED !== "1")
-          throw new Error("agent RPC messaging disabled on host");
-        if (
-          envelope.snapshot_manifest &&
-          process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED !== "1"
-        )
-          throw new PreparationFailure({
-            code: "attachment_unavailable",
-            reason:
-              "Binary agent attachments are disabled on the recipient host",
-          });
         await api.authorizeRpcAdmission({
           account_id: envelope.account_id,
           envelope,

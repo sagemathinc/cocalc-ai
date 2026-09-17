@@ -7,7 +7,6 @@ import { agentStore } from "./store";
 import {
   agentRpcControl,
   grantRpcLink,
-  revokeRpcLink,
   acceptAgentRpc,
   acceptExternalAgentRpc,
   authorizeRpcAdmission,
@@ -163,8 +162,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   const target = { project_id: targetProject, agent_id: randomUUID() };
   const run = randomUUID();
   beforeAll(async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
-    process.env.COCALC_AGENT_MESSAGING_RPC_ENABLED = "1";
     hostId = randomUUID();
     owners.set(sourceProject, "source-bay");
     owners.set(targetProject, "target-bay");
@@ -207,9 +204,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
   beforeEach(async () => {
     wireClient = undefined;
-    delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-    delete process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED;
-    delete process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED;
     offlineBay = undefined;
     fresh.mockReset().mockResolvedValue(undefined);
     collab.mockReset().mockResolvedValue(undefined);
@@ -251,8 +245,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     );
 
   test("external home-approved source sends across owners, with no native run; revocation after startup rejects", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
-    process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED = "1";
     const installation = await externalStore().enroll(
       account,
       "fresh-human-home",
@@ -311,7 +303,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("home human approval, scoped discovery and explicit cross-owner reverse reply", async () => {
-    await approve();
+    await personalApproval();
     const links = await context.run("source-bay", () =>
       acceptAgentRpc(agentMessagingSubject(source.agent_id, run), {
         version: 2,
@@ -321,7 +313,14 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     expect(links).toEqual([expect.objectContaining({ source, target })]);
     expect(await send()).toMatchObject({ outcome: "accepted" });
     expect(await send(target, source)).toMatchObject({ outcome: "rejected" });
-    await approve(target, source);
+    await grantPersonalConnection({
+      account_id: account,
+      session_hash: "home-only-secret",
+      source: target,
+      target: source,
+      approval_request_id: randomUUID(),
+      reason: "reverse reply",
+    });
     expect(await send(target, source)).toMatchObject({ outcome: "accepted" });
     expect(admitted).toHaveBeenCalledTimes(2);
     expect(admitted.mock.calls[0][0]).toMatchObject({
@@ -382,7 +381,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     ).rejects.toThrow("not recoverable");
   });
   test("stopped targets route to their host for authorized startup", async () => {
-    await approve();
+    await personalApproval();
     await agentStore().query(
       "UPDATE projects SET state='{}' WHERE project_id=$1",
       [targetProject],
@@ -398,23 +397,22 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     }
   });
   test("revocation and expiry stop new admissions", async () => {
-    const link = await approve();
-    await revokeRpcLink({
+    const [link] = await personalApproval();
+    await setPersonalConnectionState({
       account_id: account,
-      session_hash: "human-home-session",
-      source,
-      link_id: link.link_id,
+      direction_group_id: link.direction_group_id,
+      state: "revoked",
     });
     expect(await send()).toMatchObject({ outcome: "rejected" });
-    await approve();
+    await personalApproval();
     await agentStore().query(
-      "UPDATE agent_rpc_links SET expires_at=now()-interval '1 second'",
+      "UPDATE agent_personal_grants SET expires_at=now()-interval '1 second'",
     );
     expect(await send()).toMatchObject({ outcome: "rejected" });
     expect(admitted).not.toHaveBeenCalled();
   });
   test("lost host acknowledgment is unknown; read-only inspection does not resend", async () => {
-    await approve();
+    await personalApproval();
     admitted.mockRejectedValue(new Error("ack lost"));
     expect(await send()).toMatchObject({ outcome: "unknown" });
     await context.run("source-bay", () =>
@@ -447,7 +445,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     );
 
   test("personal denials and bounded binary sends survive real Conat home/source/target serialization", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const { init, ConatServer } = await import("@cocalc/conat/core/server");
     const { connect, Client } = await import("@cocalc/conat/core/client");
     const { once } = await import("node:events");
@@ -573,7 +570,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
 
       spy.mockRestore();
       spy = undefined;
-      process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED = "1";
       await personalApproval();
       const data = Buffer.alloc(32 * 1024 * 1024, 171);
       const metadata = {
@@ -636,7 +632,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   }, 60_000);
 
   test("personal dispatcher applies the home fence to reads, writes, and scoped authorization", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     homeFence.mockRejectedValue(new Error("account rehome is running"));
     await expect(listNamedAgents({ account_id: account })).rejects.toThrow(
       "account rehome is running",
@@ -656,7 +651,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("personal directory and grants are home authoritative; source/run and target owners remain routed", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     await context.run("target-bay", () =>
       nameAgent({ account_id: account, endpoint: target, name: "reviewer" }),
     );
@@ -688,7 +682,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("personal principal is not registration provenance; other humans cannot discover, send, inspect, or spoof it", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const otherRun = randomUUID();
     await agentStore().query(
       "INSERT INTO agent_identity_runs(agent_id,run_id,account_id,token_hash,expires_at) VALUES($1,$2,$3,$4,now()+interval '1 hour')",
@@ -735,7 +728,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     await approve();
     const legacy = (await agentStore().query("SELECT * FROM agent_rpc_links"))
       .rows;
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     expect(await send()).toMatchObject({
       outcome: "rejected",
       reason: "approval_required",
@@ -751,7 +743,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("account controls are rechecked after target startup wait before admission", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     await personalApproval();
     beforeAdmission.mockImplementationOnce(async () => {
       await setPersonalMessagingState({ account_id: account, action: "pause" });
@@ -767,7 +758,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("personal authorization is rechecked when an accepted RPC begins execution", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const [grant] = await personalApproval();
     const identity = await agentStore().get(target.agent_id);
     const authorization = {
@@ -795,7 +785,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("a pause does not claim to retract an already authorized in-flight admission", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     await personalApproval();
     admitted.mockImplementationOnce(async () => {
       await setPersonalMessagingState({ account_id: account, action: "pause" });
@@ -809,7 +798,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("fresh auth on restore, not restriction; stale home routes are rejected", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const [grant] = await personalApproval();
     fresh.mockRejectedValue(new Error("fresh required"));
     await setPersonalConnectionState({
@@ -857,7 +845,6 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
   });
 
   test("scoped connection requests return typed records, require P's fresh approval, and never send", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const request_id = randomUUID();
     expect(
       await scoped({
@@ -906,58 +893,33 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     expect(await send()).toMatchObject({ outcome: "accepted" });
   });
 
-  test("disabled personal mode keeps management reads but rejects new approvals", async () => {
-    expect(await listNamedAgents({ account_id: account })).toEqual({
-      enabled: false,
-      agents: [],
-      controls: { paused: false, generation: 0 },
-    });
-    expect(routedCalls).toEqual([]);
-    await expect(personalApproval()).rejects.toThrow("not enabled");
-  });
-
-  test("master and personal kill switches preserve home-routed revocation without resume", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
+  test("revocation remains home-routed", async () => {
     const [grant] = await personalApproval();
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "0";
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "0";
-    try {
-      const directory = await context.run("source-bay", () =>
-        listPersonalConnections({ account_id: account }),
-      );
-      expect(directory.enabled).toBe(false);
-      expect(directory.connections).toHaveLength(1);
-      await context.run("source-bay", () =>
-        setPersonalConnectionState({
-          account_id: account,
-          direction_group_id: grant.direction_group_id,
-          state: "revoked",
-        }),
-      );
-      expect(
-        (await listPersonalConnections({ account_id: account })).connections[0]
-          .status,
-      ).toBe("revoked");
-      await expect(
-        setPersonalMessagingState({
-          account_id: account,
-          action: "resume",
-          session_hash: "home-only-secret",
-        }),
-      ).rejects.toThrow("not enabled");
-      expect(
-        routedCalls.some(
-          (call) => call.bay === "home" && call.method === "personal",
-        ),
-      ).toBe(true);
-      expect(admitted).not.toHaveBeenCalled();
-    } finally {
-      process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
-    }
+    const directory = await context.run("source-bay", () =>
+      listPersonalConnections({ account_id: account }),
+    );
+    expect(directory.enabled).toBe(true);
+    expect(directory.connections).toHaveLength(1);
+    await context.run("source-bay", () =>
+      setPersonalConnectionState({
+        account_id: account,
+        direction_group_id: grant.direction_group_id,
+        state: "revoked",
+      }),
+    );
+    expect(
+      (await listPersonalConnections({ account_id: account })).connections[0]
+        .status,
+    ).toBe("revoked");
+    expect(
+      routedCalls.some(
+        (call) => call.bay === "home" && call.method === "personal",
+      ),
+    ).toBe(true);
+    expect(admitted).not.toHaveBeenCalled();
   });
 
   test("telemetry failure cannot change acceptance or trigger another submission", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     await personalApproval();
     const original = agentRpcControl.personal;
     const spy = jest
@@ -979,66 +941,7 @@ describeDb("RPC owner routing and authorization with PostgreSQL grants", () => {
     }
   });
 
-  test("a personal target never accepts legacy check authority from an unenrolled source bay", async () => {
-    await approve();
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
-    const original = agentRpcControl.check;
-    const spy = jest
-      .spyOn(agentRpcControl, "check")
-      .mockImplementation(async (opts) => {
-        delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-        try {
-          return await original(opts);
-        } finally {
-          process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
-        }
-      });
-    try {
-      expect(await send()).toMatchObject({ outcome: "rejected" });
-      await expect(
-        scoped({ action: "inspect", attempt_id: randomUUID(), target }),
-      ).rejects.toThrow("principal_mismatch");
-      expect(admitted).not.toHaveBeenCalled();
-      expect(inspected).not.toHaveBeenCalled();
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
-  test("pending approval invalidates if the source owner leaves personal mode", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
-    const request_id = randomUUID();
-    await scoped({
-      action: "request-connection",
-      request_id,
-      target,
-      reason: "review",
-    });
-    const original = agentRpcControl.principal;
-    const spy = jest
-      .spyOn(agentRpcControl, "principal")
-      .mockImplementation(async (opts) => ({
-        ...(await original(opts)),
-        personal_messaging: false,
-      }));
-    try {
-      expect(
-        await resolvePersonalConnectionRequest({
-          account_id: account,
-          request_id,
-          decision: "approve",
-        }),
-      ).toMatchObject({ state: "invalidated" });
-      expect(
-        (await agentStore().query("SELECT * FROM agent_personal_grants")).rows,
-      ).toEqual([]);
-    } finally {
-      spy.mockRestore();
-    }
-  });
-
   test("scoped inspection of a coalesced submitted ID preserves that ID after resolution", async () => {
-    process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "1";
     const request_id = randomUUID(),
       submitted_id = randomUUID();
     const opts = {
