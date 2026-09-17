@@ -20,6 +20,7 @@ export async function main(): Promise<void> {
       systemAccountPassword: "•".repeat(
         opts.systemAccountPassword?.length ?? 0,
       ),
+      clusterLinkPassword: "•".repeat(opts.clusterLinkPassword?.length ?? 0),
       hostId,
     };
     logger.debug("starting project-host conat router cluster node", logPayload);
