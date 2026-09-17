@@ -23,6 +23,7 @@ type PolicySettings = Pick<
 
 const settings = new Map<string, Partial<PolicySettings>>();
 const failures = new Map<string, Error>();
+const readinessFailures = new Map<string, Error>();
 const readinessWaiters = new Map<string, () => Promise<void>>();
 
 export function setPolicyFailure(account: string, error?: Error) {
@@ -32,6 +33,11 @@ export function setPolicyFailure(account: string, error?: Error) {
 
 export function setPolicy(account: string, value: Partial<PolicySettings>) {
   settings.set(account, value);
+}
+
+export function setPolicyReadinessFailure(account: string, error?: Error) {
+  if (error) readinessFailures.set(account, error);
+  else readinessFailures.delete(account);
 }
 
 export function setPolicyReadinessWaiter(
@@ -47,7 +53,8 @@ export function setPolicyReadinessWaiter(
 export function mockPolicySource() {
   return {
     async getDedicatedHostProviderReadinessLocal(account_id: string) {
-      if (failures.has(account_id)) throw failures.get(account_id);
+      if (readinessFailures.has(account_id))
+        throw readinessFailures.get(account_id);
       await readinessWaiters.get(account_id)?.();
       return {
         has_payment_method:

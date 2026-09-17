@@ -129,16 +129,30 @@ export async function withFundingAccountTransaction<T>(
   // Policy failure blocks new authorization, not settlement or replay of work
   // already authorized. Provider and seed-bay calls finish before BEGIN.
   let policy: AccountLocalDedicatedHostAdmissionSnapshot | undefined;
-  let providerReadiness: DedicatedHostProviderReadiness | undefined;
+  let providerReadiness: DedicatedHostProviderReadiness = {
+    has_payment_method: false,
+  };
   let policyError: unknown;
-  try {
-    [policy, providerReadiness] = await Promise.all([
-      getDedicatedHostAdmissionSnapshotForAccount(account_id),
-      getDedicatedHostProviderReadinessLocal(account_id),
-    ]);
-  } catch (error) {
-    policyError = error;
-  }
+  await Promise.all([
+    getDedicatedHostAdmissionSnapshotForAccount(account_id).then(
+      (value) => {
+        policy = value;
+      },
+      (error) => {
+        policyError = error;
+      },
+    ),
+    getDedicatedHostProviderReadinessLocal(account_id).then(
+      (value) => {
+        providerReadiness = value;
+      },
+      () => {
+        // Stripe readiness is relevant only to ordinary postpaid admission.
+        // Treat an outage as not ready without discarding prepaid policy.
+        providerReadiness = { has_payment_method: false };
+      },
+    ),
+  ]);
   // Schema initialization uses its own connection; finish it before BEGIN,
   // including in single-connection development databases.
   await ensureAccountUsageWindowSchema();

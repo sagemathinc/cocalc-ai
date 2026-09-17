@@ -16,6 +16,7 @@ import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spend
 import {
   setPolicy,
   setPolicyFailure,
+  setPolicyReadinessFailure,
   setPolicyReadinessWaiter,
 } from "./__tests__/policy-source";
 
@@ -129,6 +130,27 @@ describe("course funding pool allocation storage", () => {
       ).resolves.toMatchObject({ prepaid_held_usd: "1000.0000000000" });
     } finally {
       setPolicyFailure(f.payer);
+    }
+  });
+
+  it("keeps prepaid available during a payment-provider outage", async () => {
+    const f = await fixture();
+    setPolicyReadinessFailure(f.payer, new Error("stripe unavailable"));
+    try {
+      await expect(create(f)).resolves.toMatchObject({ created: true });
+    } finally {
+      setPolicyReadinessFailure(f.payer);
+    }
+  });
+
+  it("fails ordinary postpaid closed during a payment-provider outage", async () => {
+    const f = await fixture();
+    f.terms.lane = "postpaid";
+    setPolicyReadinessFailure(f.payer, new Error("stripe unavailable"));
+    try {
+      await expect(create(f)).rejects.toThrow(/automatic billing/);
+    } finally {
+      setPolicyReadinessFailure(f.payer);
     }
   });
   it("rejects ineligible payers without placing a hold", async () => {

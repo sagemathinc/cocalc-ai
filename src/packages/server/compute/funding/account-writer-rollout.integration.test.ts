@@ -89,6 +89,7 @@ postgresDescribe("funding account writer PostgreSQL census", () => {
         "membership_grants",
         "membership_package_assignments",
         "membership_packages",
+        "membership_tiers",
         "server_settings",
       ]) {
         await pool.query(`GRANT UPDATE ON TABLE ${table} TO "${staleRole}"`);

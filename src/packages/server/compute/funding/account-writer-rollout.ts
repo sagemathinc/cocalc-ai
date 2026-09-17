@@ -28,6 +28,7 @@ export const FUNDING_AUTHORITY_TABLES = [
   "membership_grants",
   "membership_package_assignments",
   "membership_packages",
+  "membership_tiers",
   "server_settings",
   "billing_authority_commands",
   "billing_authority_lease",
