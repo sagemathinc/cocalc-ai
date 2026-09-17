@@ -2,9 +2,12 @@
 
 Disabled unless `COCALC_FUNDING_APPROVAL_ENABLED=1`. This is a dedicated HTTP
 listener, not an Express router installed on the application origin.
-`server/conat/index.ts:initConatApi` awaits `initCourseFundingApprovalService`:
-the primary bay worker listens and every API worker registers the same
-payer-home, Postgres-backed proposal/status service in its own process.
+`server/conat/index.ts:initConatApi` awaits `initCourseFundingApprovalService`.
+With centralized billing enabled, only seed-bay API workers register the
+Postgres-backed proposal/status service and its primary worker listens;
+attached bays route financial commands to the seed. Without centralized
+billing, each payer-home bay registers the service and its primary worker
+listens.
 `stopCourseFundingApprovalService` closes the listener and unregisters the service;
 normal process exit also closes its sockets. Restart the hub after changing config.
 

@@ -78,6 +78,28 @@ it("does nothing when disabled", async () => {
   expect(registerCourseFundingApprovalService).not.toHaveBeenCalled();
 });
 
+it("leaves centralized approval to the seed bay", async () => {
+  const before = {
+    enabled: process.env.COCALC_BILLING_AUTHORITY_ENABLED,
+    role: process.env.COCALC_CLUSTER_ROLE,
+  };
+  process.env.COCALC_BILLING_AUTHORITY_ENABLED = "1";
+  process.env.COCALC_CLUSTER_ROLE = "attached";
+  try {
+    await initCourseFundingApprovalService();
+    expect(fundingApprovalConfigFromEnv).not.toHaveBeenCalled();
+    expect(ensureCourseFundingApprovalSchema).not.toHaveBeenCalled();
+    expect(startCourseFundingApprovalServer).not.toHaveBeenCalled();
+    expect(registerCourseFundingApprovalService).not.toHaveBeenCalled();
+  } finally {
+    if (before.enabled == null)
+      delete process.env.COCALC_BILLING_AUTHORITY_ENABLED;
+    else process.env.COCALC_BILLING_AUTHORITY_ENABLED = before.enabled;
+    if (before.role == null) delete process.env.COCALC_CLUSTER_ROLE;
+    else process.env.COCALC_CLUSTER_ROLE = before.role;
+  }
+});
+
 it("registers the same process service only after listening and cleans up on stop", async () => {
   (fundingApprovalConfigFromEnv as jest.Mock).mockReturnValue({
     origin: "http://127.0.0.2:19202",

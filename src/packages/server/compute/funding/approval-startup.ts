@@ -5,7 +5,9 @@
 
 import type { Server } from "node:http";
 import { getLogger } from "@cocalc/backend/logger";
+import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import {
   COURSE_COMPUTE_RETENTION_HOURS,
   normalizeCourseFundingDraft,
@@ -64,6 +66,14 @@ export function initCourseFundingApprovalService({
 }: { listen?: boolean } = {}): Promise<void> {
   if (starting) return starting;
   initFundingRolloutVerifiers();
+  // Central billing executes approval commands on the seed. Attached bays
+  // route there and must not register a competing listener from shared config.
+  if (
+    isBillingAuthorityEnabled() &&
+    getConfiguredClusterRole() === "attached"
+  ) {
+    return Promise.resolve();
+  }
   const config = fundingApprovalConfigFromEnv();
   if (!config) return Promise.resolve();
   starting = (async () => {

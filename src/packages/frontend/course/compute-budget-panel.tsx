@@ -585,7 +585,7 @@ export function ComputeBudget({
                     <p>
                       A sponsored VM cannot start unless the student's unused
                       allowance can cover its initial running cost and reserve
-                      the full cost of its boot disk for <strong>3 days</strong>
+                      the full cost of its boot disk for <strong>3 days</strong>{" "}
                       after compute stops.
                     </p>
                     <p>

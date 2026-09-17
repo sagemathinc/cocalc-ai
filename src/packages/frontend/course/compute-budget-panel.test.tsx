@@ -108,10 +108,13 @@ it("previews by keyboard, focuses the result and requests separate authorization
   const retentionPopover = await screen.findByRole("tooltip");
   expect(
     within(retentionPopover).getByText(
-      /reserve the full cost of its boot disk/i,
+      (_, element) =>
+        element?.tagName === "P" &&
+        element.textContent?.includes(
+          "reserve the full cost of its boot disk for 3 days after compute stops",
+        ) === true,
     ),
   ).toBeInTheDocument();
-  expect(within(retentionPopover).getByText(/3 days/)).toBeInTheDocument();
   await user.keyboard("{Escape}");
 
   expect(screen.getByText(/No credit is allocated yet/i)).toBeVisible();
