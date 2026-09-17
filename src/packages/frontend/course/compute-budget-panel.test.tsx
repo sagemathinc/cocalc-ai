@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComputeFundingApi } from "@cocalc/conat/hub/api/compute-funding";
 import { ComputeBudget } from "./compute-budget-panel";
@@ -93,9 +99,23 @@ it("previews by keyboard, focuses the result and requests separate authorization
   );
   expect(screen.getByText("Verified Alice")).toBeVisible();
   expect(service.proposeAllocation).not.toHaveBeenCalled();
-  await user.click(
-    screen.getByRole("button", { name: "Request authorization" }),
-  );
+
+  const retentionHelp = screen.getByRole("button", {
+    name: "What happens when the student runs out of money?",
+  });
+  retentionHelp.focus();
+  await user.keyboard("{Enter}");
+  const retentionPopover = await screen.findByRole("tooltip");
+  expect(
+    within(retentionPopover).getByText(
+      /reserve the full cost of its boot disk/i,
+    ),
+  ).toBeInTheDocument();
+  expect(within(retentionPopover).getByText(/3 days/)).toBeInTheDocument();
+  await user.keyboard("{Escape}");
+
+  expect(screen.getByText(/No credit is allocated yet/i)).toBeVisible();
+  await user.click(screen.getByRole("button", { name: "Authorize" }));
   const link = await screen.findByRole("link", {
     name: "Review allocation and authorize",
   });

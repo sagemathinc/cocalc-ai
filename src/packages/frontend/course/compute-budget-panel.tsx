@@ -11,6 +11,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Popover,
   Select,
   Space,
   Table,
@@ -575,9 +576,45 @@ export function ComputeBudget({
             type="warning"
             showIcon
             title="VM data is not backed up automatically."
-            description="Your students' project notebooks remain. VM-only software and data are deleted when retained storage expires. Up to 72 hours of stopped storage is reserved from each allowance."
+            description={
+              <Popover
+                trigger="click"
+                title="When a student's course credit runs out"
+                content={
+                  <div style={{ maxWidth: 440 }}>
+                    <p>
+                      A sponsored VM cannot start unless the student's unused
+                      allowance can cover its initial running cost and reserve
+                      the full cost of its boot disk for <strong>3 days</strong>
+                      after compute stops.
+                    </p>
+                    <p>
+                      CoCalc stops sponsored compute before it can spend the
+                      storage reserve. The stopped boot disk is then retained
+                      until its displayed deletion deadline, unless the student
+                      deletes it sooner or explicitly switches to their own
+                      funding.
+                    </p>
+                    <p style={{ marginBottom: 0 }}>
+                      When retention ends, the VM and its boot-disk software and
+                      data are permanently deleted. Notebooks and saved outputs
+                      in the CoCalc project remain. VM files are not backed up
+                      automatically.
+                    </p>
+                  </div>
+                }
+              >
+                <Button type="link" style={{ height: "auto", padding: 0 }}>
+                  What happens when the student runs out of money?
+                </Button>
+              </Popover>
+            }
             style={{ marginBottom: 12 }}
           />
+          <Typography.Paragraph>
+            No credit is allocated yet. Continue to a separate page to review
+            and authorize this allocation.
+          </Typography.Paragraph>
           <Button
             type="primary"
             icon={<Icon name="external-link" />}
@@ -585,7 +622,7 @@ export function ComputeBudget({
             disabled={summary?.sponsorship?.available !== true}
             onClick={() => void propose()}
           >
-            Request authorization
+            Authorize
           </Button>
         </section>
       )}
