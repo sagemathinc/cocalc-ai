@@ -273,6 +273,20 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     ).toContain("same_kind_nonterminal_duplicate");
   });
 
+  it("allows different kinds for one email but rejects a later same-kind duplicate", async () => {
+    const adoption = await createFixture({ kind: "adoption_pilot" });
+    const renewal = await createFixture({ kind: "renewal" });
+
+    const first = await worker.__test__.claimOneEffectful();
+    const second = await worker.__test__.claimOneEffectful();
+    expect(new Set([first?.delivery.id, second?.delivery.id])).toEqual(
+      new Set([adoption.deliveryId, renewal.deliveryId]),
+    );
+
+    const duplicate = await createFixture({ kind: "adoption_pilot" });
+    await expectFailed(duplicate.deliveryId, "same_kind_nonterminal_duplicate");
+  });
+
   it("revalidates a started claim before any provider request", async () => {
     const fixture = await createFixture();
     const claim = await worker.__test__.claimOneEffectful();
@@ -328,6 +342,66 @@ describePglite("CRM outreach initial-send claim revalidation", () => {
     expect(delivery.rows[0]).toMatchObject({
       state: "queued",
       provider_submitted_at: null,
+    });
+  });
+
+  it("requeues a started claim when its batch is paused", async () => {
+    const fixture = await createFixture();
+    const claim = await worker.__test__.claimOneEffectful();
+    expect(claim).toBeDefined();
+    await pool.query(
+      "UPDATE crm_outreach_batches SET state='paused' WHERE id=$1",
+      [fixture.batchId],
+    );
+
+    await expect(
+      worker.__test__.revalidateStartedCreateTicketClaim(claim!),
+    ).resolves.toBe(false);
+    const operation = await pool.query(
+      "SELECT state,provider_status FROM crm_outreach_provider_operations WHERE id=$1",
+      [claim!.operation_id],
+    );
+    expect(operation.rows[0]).toMatchObject({
+      state: "cancelled",
+      provider_status: "batch_paused",
+    });
+    const delivery = await pool.query(
+      "SELECT state,provider_submitted_at FROM crm_outreach_deliveries WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    expect(delivery.rows[0]).toMatchObject({
+      state: "queued",
+      provider_submitted_at: null,
+    });
+  });
+
+  it("cancels a started claim when its batch is cancelled", async () => {
+    const fixture = await createFixture();
+    const claim = await worker.__test__.claimOneEffectful();
+    expect(claim).toBeDefined();
+    await pool.query(
+      "UPDATE crm_outreach_batches SET state='cancelled' WHERE id=$1",
+      [fixture.batchId],
+    );
+
+    await expect(
+      worker.__test__.revalidateStartedCreateTicketClaim(claim!),
+    ).resolves.toBe(false);
+    const operation = await pool.query(
+      "SELECT state,provider_status FROM crm_outreach_provider_operations WHERE id=$1",
+      [claim!.operation_id],
+    );
+    expect(operation.rows[0]).toMatchObject({
+      state: "cancelled",
+      provider_status: "batch_cancelled",
+    });
+    const delivery = await pool.query(
+      "SELECT state,cancelled_at FROM crm_outreach_deliveries WHERE id=$1",
+      [fixture.deliveryId],
+    );
+    expect(delivery.rows[0]).toMatchObject({
+      state: "cancelled",
+      cancelled_at: expect.any(Date),
     });
   });
 });
