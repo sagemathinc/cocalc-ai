@@ -271,6 +271,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  acpTestInternals.setDetachedWorkerContextForTests(null);
   acpTestInternals.cancelDelayedAcpQueueWake();
   jest.restoreAllMocks();
   await disposeAllChatWritersForTests();
@@ -1660,6 +1661,32 @@ describe("recoverCurrentWorkerStuckAcpTurns", () => {
     expect(owner_instance_id).toBeTruthy();
     return { rows, syncdb, writer, owner_instance_id };
   }
+
+  it("records queue progress before releasing a completed turn lease", async () => {
+    acpTestInternals.setDetachedWorkerContextForTests({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "bundle-a",
+      bundle_path: "/bundle-a",
+      state: "active",
+      started_at: Date.now() - 60_000,
+      last_heartbeat_at: Date.now(),
+      last_queue_progress_at: Date.now() - 60_000,
+    });
+    const { writer } = await startWriterForRequest();
+
+    (writer as any).finalizeLease("completed");
+
+    const progressCall = (workers.heartbeatAcpWorker as jest.Mock).mock.calls
+      .map((args, index) => ({ args, index }))
+      .find(({ args }) => Number(args[0]?.last_queue_progress_at) > 0);
+    expect(progressCall).toBeDefined();
+    const progressOrder = (workers.heartbeatAcpWorker as jest.Mock).mock
+      .invocationCallOrder[progressCall!.index];
+    const finalizeOrder = (turns.finalizeAcpTurnLease as jest.Mock).mock
+      .invocationCallOrder[0];
+    expect(progressOrder).toBeLessThan(finalizeOrder);
+  });
 
   it("does not recover a current-worker turn while its writer is recently active", async () => {
     const request = makeRequest();

@@ -815,7 +815,7 @@ function noteDetachedWorkerQueueProgress(): void {
   });
 }
 
-function noteDetachedWorkerExecutionSettled(op_id: string): void {
+function noteDetachedWorkerExecutionSettled(op_id?: string): void {
   try {
     noteDetachedWorkerQueueProgress();
   } catch (err) {
@@ -2340,6 +2340,10 @@ export class ChatStreamWriter {
     }
     this.heartbeatLease.cancel();
     try {
+      // Publish worker progress before removing the live lease. Otherwise the
+      // host watchdog can observe stale backlog with no lease while this turn
+      // is still unwinding through terminal finalization.
+      noteDetachedWorkerExecutionSettled(this.metadata.message_id);
       finalizeAcpTurnLease({
         key: this.leaseKey(),
         state,
@@ -12240,6 +12244,11 @@ export const acpTestInternals = {
   hasOtherWorkerRunningAcpTurn,
   nextQueuedAcpJobForThread,
   noteDetachedWorkerQueuePoll,
+  setDetachedWorkerContextForTests: (
+    context: DetachedWorkerContext | null,
+  ): void => {
+    currentDetachedWorkerContext = context;
+  },
   kickQueuedAcpJobsForThread,
   scheduleQueuedAcpJobThreadRetry,
   queuedAcpJobThreadRetryCount: () => queuedAcpJobThreadRetryTimers.size,
