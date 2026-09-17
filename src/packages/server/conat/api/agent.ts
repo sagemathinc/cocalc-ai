@@ -4,6 +4,38 @@ import {
   type AgentActionResult,
   type AgentCapabilityManifestEntry,
 } from "@cocalc/ai/agent-sdk";
+import * as identities from "@cocalc/server/agents/api";
+import * as rpc from "@cocalc/server/agents/rpc";
+export {
+  listNamedAgents,
+  nameAgent,
+  listPersonalConnections,
+  grantPersonalConnection,
+  setPersonalConnectionState,
+  setPersonalMessagingState,
+  listPersonalConnectionRequests,
+  resolvePersonalConnectionRequest,
+} from "@cocalc/server/agents/personal";
+export const grantRpcLink = rpc.grantRpcLink;
+export const revokeRpcLink = rpc.revokeRpcLink;
+export const listRpcLinks = rpc.listRpcLinks;
+export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
+export const authorizeRpcExecution = rpc.authorizeRpcExecution;
+export const registerIdentity = identities.registerIdentity;
+export const listIdentities = identities.listIdentities;
+export const getIdentity = identities.getIdentity;
+export const resolveIdentity = identities.resolveIdentity;
+export const listGrants = identities.listGrants;
+export const listMessageReceipts = identities.listMessageReceipts;
+export const grantMessaging = identities.grantMessaging;
+export const revokeMessaging = identities.revokeMessaging;
+export const disableIdentity = identities.disableIdentity;
+export const recoverIdentity = identities.recoverIdentity;
+export const issueIdentity = identities.issueIdentity;
+export const getMentionIdentity = identities.getMentionIdentity;
+export const endIdentityRun = identities.endIdentityRun;
+export const authorizeDelivery = identities.authorizeDelivery;
+export const beginMessageAdmission = identities.beginMessageAdmission;
 import { CodexAppServerAgent, type AcpAgent } from "@cocalc/ai/acp";
 import type { AcpStreamPayload } from "@cocalc/conat/ai/acp/types";
 import { projectApiClient } from "@cocalc/conat/project/api";

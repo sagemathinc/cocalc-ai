@@ -35,6 +35,7 @@ import { getProjectSecretToken } from "./secret-token";
 import { client as projectRunnerClient } from "@cocalc/conat/project/runner/run";
 import { conat } from "@cocalc/backend/conat";
 import {
+  advanceProjectRuntimeLifecycleRevision,
   startProjectOnHost,
   stopProjectOnHost,
   updateProjectRunQuotaOnHost,
@@ -254,6 +255,8 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    ignore_recent_state_snapshot?: boolean;
+    runtime_lifecycle_revision?: number;
   }): Promise<void> => {
     await this.computeQuota(opts?.account_id);
     await startProjectOnHost(this.project_id, opts);
@@ -354,6 +357,8 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
     managed_egress_override?: ManagedProjectEgressOverride;
     restore_backup_id?: string;
+    ignore_recent_state_snapshot?: boolean;
+    runtime_lifecycle_revision?: number;
   }): Promise<void> => {
     await this.ensureLocalOwnership();
     if (isWorkspaceProjectRuntime()) {
@@ -402,7 +407,17 @@ export class BaseProject extends EventEmitter {
     // no-op
   };
 
-  stop = async ({ force }: { force?: boolean } = {}): Promise<void> => {
+  stop = async ({
+    force,
+    fence_inflight_start = false,
+    require_host_fence = false,
+    runtime_lifecycle_revision,
+  }: {
+    force?: boolean;
+    fence_inflight_start?: boolean;
+    require_host_fence?: boolean;
+    runtime_lifecycle_revision?: number;
+  } = {}): Promise<void> => {
     await this.ensureLocalOwnership();
     if (isWorkspaceProjectRuntime()) {
       await this.projectRunner().stop({
@@ -422,7 +437,13 @@ export class BaseProject extends EventEmitter {
       );
       return;
     }
-    if (!isActiveProjectState(state)) {
+    if (require_host_fence) {
+      await stopProjectOnHost(this.project_id, {
+        runtime_lifecycle_revision,
+      });
+      return;
+    }
+    if (!fence_inflight_start && !isActiveProjectState(state)) {
       logger.debug(
         `(project_id=${this.project_id}).stop: state=${state ?? "unknown"}; treating as already stopped`,
       );
@@ -438,7 +459,13 @@ export class BaseProject extends EventEmitter {
       );
       return;
     }
-    await stopProjectOnHost(this.project_id);
+    if (runtime_lifecycle_revision == null) {
+      await stopProjectOnHost(this.project_id);
+    } else {
+      await stopProjectOnHost(this.project_id, {
+        runtime_lifecycle_revision,
+      });
+    }
   };
 
   restart = async (opts?: {
@@ -446,8 +473,25 @@ export class BaseProject extends EventEmitter {
     account_id?: string;
   }): Promise<void> => {
     this.dbg("restart")();
-    await this.stop();
-    await this.start(opts);
+    // Restart is the documented immediate authority boundary. Send stop even
+    // when the last state snapshot is inactive, since an older start may not
+    // have reached the host or reported "starting" yet.
+    // Advance first even when placement has not completed. Every authority
+    // mutation prepared before this point remains on the older revision.
+    const runtime_lifecycle_revision =
+      await advanceProjectRuntimeLifecycleRevision(this.project_id);
+    await this.stop({
+      fence_inflight_start: true,
+      require_host_fence: true,
+      runtime_lifecycle_revision,
+    });
+    await this.start({
+      ...opts,
+      // The snapshot describes pre-fence execution and cannot prove that the
+      // replacement start already happened.
+      ignore_recent_state_snapshot: true,
+      runtime_lifecycle_revision,
+    });
   };
 
   wait = async (opts: {

@@ -4,6 +4,7 @@
  */
 
 import type { AccountProjectListWindowRow } from "@cocalc/conat/hub/api/projects";
+import { uuid } from "@cocalc/util/misc";
 import { useEffect, useState } from "react";
 import type { UltraliteSession } from "./session";
 import { InlineAlert, LoadingState, SurfaceHeader } from "./ui";
@@ -65,6 +66,7 @@ export default function SettingsSurface({
       } else {
         await session.hubApi.projects.restart({
           project_id: project.project_id,
+          restart_request_id: uuid(),
           wait: true,
         });
       }

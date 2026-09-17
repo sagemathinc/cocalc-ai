@@ -1,4 +1,5 @@
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { Command } from "commander";
@@ -592,6 +593,7 @@ export function registerDevCommand(
           if (project && opts.restartProject !== false) {
             const restart = await ctx.hub.projects.restart({
               project_id: project.project_id,
+              restart_request_id: randomUUID(),
               wait: false,
             });
             const restartSummary = await waitForLro(ctx, restart.op_id, {

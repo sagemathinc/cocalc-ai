@@ -1,6 +1,8 @@
 export {};
 
 const ORDINARY_PROJECT_START_CONTROL_TIMEOUT_MS = 10 * 60 * 1000;
+const RESTART_REQUEST_ID = "10000000-0000-4000-8000-000000000001";
+const NEXT_RESTART_REQUEST_ID = "10000000-0000-4000-8000-000000000002";
 
 let assertCollabMock: jest.Mock;
 let createLroMock: jest.Mock;
@@ -178,7 +180,10 @@ describe("projects.restart", () => {
       bay_id: "bay-1",
       epoch: 4,
     }));
-    interBayCheckStartAdmissionMock = jest.fn(async () => undefined);
+    interBayCheckStartAdmissionMock = jest.fn(async () => ({
+      storage_recovery_required: false,
+      runtime_authority_revision: "4",
+    }));
     interBayRestartMock = jest.fn(async () => undefined);
     projectControlBridgeMock = jest.fn(() => ({
       checkStartAdmission: (...args: any[]) =>
@@ -192,6 +197,7 @@ describe("projects.restart", () => {
     const response = await restart({
       account_id: "acct-1",
       project_id: "proj-1",
+      restart_request_id: RESTART_REQUEST_ID,
       wait: false,
     });
 
@@ -213,6 +219,7 @@ describe("projects.restart", () => {
     expect(interBayRestartMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       account_id: "acct-1",
+      runtime_authority_revision: "4",
       lro_op_id: "op-2",
       source_bay_id: "bay-0",
       epoch: 4,
@@ -222,13 +229,220 @@ describe("projects.restart", () => {
     });
     expect(createLroMock).toHaveBeenCalledWith(
       expect.objectContaining({
+        dedupe_key: `project-restart:4:${RESTART_REQUEST_ID}`,
         kind: "project-start",
-        input: { project_id: "proj-1", action: "restart" },
+        input: {
+          project_id: "proj-1",
+          action: "restart",
+          restart_request_id: RESTART_REQUEST_ID,
+        },
       }),
     );
     expect(supersedeOlderProjectStartLrosMock).toHaveBeenCalledWith({
       project_id: "proj-1",
       keep_op_id: "op-2",
     });
+  });
+
+  it("coalesces duplicate restart submissions without starting twice", async () => {
+    createLroDetailedMock = jest.fn(async () => ({
+      lro: {
+        op_id: "existing-restart",
+        kind: "project-start",
+        scope_type: "project",
+        scope_id: "proj-1",
+        status: "running",
+      },
+      created: false,
+    }));
+    const { restart } = await import("./projects");
+
+    const response = await restart({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      restart_request_id: RESTART_REQUEST_ID,
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+
+    expect(response.op_id).toBe("existing-restart");
+    expect(createLroDetailedMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dedupe_key: `project-restart:4:${RESTART_REQUEST_ID}`,
+      }),
+    );
+    expect(interBayRestartMock).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when an older owning bay omits the authority revision", async () => {
+    interBayCheckStartAdmissionMock.mockResolvedValueOnce({
+      storage_recovery_required: false,
+    });
+    const { restart } = await import("./projects");
+
+    await expect(
+      restart({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        restart_request_id: RESTART_REQUEST_ID,
+        wait: false,
+      }),
+    ).rejects.toThrow("did not provide a project runtime authority revision");
+    expect(createLroDetailedMock).not.toHaveBeenCalled();
+    expect(interBayRestartMock).not.toHaveBeenCalled();
+  });
+
+  it("does not coalesce a post-membership-change restart", async () => {
+    interBayCheckStartAdmissionMock
+      .mockResolvedValueOnce({
+        storage_recovery_required: false,
+        runtime_authority_revision: "4",
+      })
+      .mockResolvedValueOnce({
+        storage_recovery_required: false,
+        runtime_authority_revision: "5",
+      });
+    createLroDetailedMock
+      .mockResolvedValueOnce({
+        lro: {
+          op_id: "pre-change-restart",
+          kind: "project-start",
+          scope_type: "project",
+          scope_id: "proj-1",
+          status: "running",
+        },
+        created: true,
+      })
+      .mockResolvedValueOnce({
+        lro: {
+          op_id: "post-change-restart",
+          kind: "project-start",
+          scope_type: "project",
+          scope_id: "proj-1",
+          status: "queued",
+        },
+        created: true,
+      });
+    let releasePreChangeRestart: (() => void) | undefined;
+    interBayRestartMock
+      .mockImplementationOnce(
+        async () =>
+          await new Promise<void>((resolve) => {
+            releasePreChangeRestart = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { restart } = await import("./projects");
+
+    await restart({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      restart_request_id: RESTART_REQUEST_ID,
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+    expect(interBayRestartMock).toHaveBeenCalledTimes(1);
+
+    await restart({
+      account_id: "owner-2",
+      project_id: "proj-1",
+      restart_request_id: NEXT_RESTART_REQUEST_ID,
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+
+    expect(
+      createLroDetailedMock.mock.calls.map(([input]) => input.dedupe_key),
+    ).toEqual([
+      `project-restart:4:${RESTART_REQUEST_ID}`,
+      `project-restart:5:${NEXT_RESTART_REQUEST_ID}`,
+    ]);
+    expect(interBayRestartMock).toHaveBeenCalledTimes(2);
+    expect(interBayRestartMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        account_id: "owner-2",
+        lro_op_id: "post-change-restart",
+        runtime_authority_revision: "5",
+      }),
+    );
+
+    releasePreChangeRestart?.();
+    await flushBackgroundRestartTask();
+  });
+
+  it("does not coalesce a later restart after an execution-mode change", async () => {
+    createLroDetailedMock
+      .mockResolvedValueOnce({
+        lro: {
+          op_id: "pre-mode-change-restart",
+          kind: "project-start",
+          scope_type: "project",
+          scope_id: "proj-1",
+          status: "running",
+        },
+        created: true,
+      })
+      .mockResolvedValueOnce({
+        lro: {
+          op_id: "post-mode-change-restart",
+          kind: "project-start",
+          scope_type: "project",
+          scope_id: "proj-1",
+          status: "queued",
+        },
+        created: true,
+      });
+    let releaseFirstRestart: (() => void) | undefined;
+    interBayRestartMock
+      .mockImplementationOnce(
+        async () =>
+          await new Promise<void>((resolve) => {
+            releaseFirstRestart = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(undefined);
+    const { restart } = await import("./projects");
+
+    await restart({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      restart_request_id: RESTART_REQUEST_ID,
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+
+    // The collaborator revision remains 4; changing execution mode is
+    // represented by a new explicit restart action, not a membership change.
+    await restart({
+      account_id: "acct-1",
+      project_id: "proj-1",
+      restart_request_id: NEXT_RESTART_REQUEST_ID,
+      wait: false,
+    });
+    await flushBackgroundRestartTask();
+
+    expect(
+      createLroDetailedMock.mock.calls.map(([input]) => input.dedupe_key),
+    ).toEqual([
+      `project-restart:4:${RESTART_REQUEST_ID}`,
+      `project-restart:4:${NEXT_RESTART_REQUEST_ID}`,
+    ]);
+    expect(interBayRestartMock).toHaveBeenCalledTimes(2);
+
+    releaseFirstRestart?.();
+    await flushBackgroundRestartTask();
+  });
+
+  it("rejects malformed restart request ids", async () => {
+    const { restart } = await import("./projects");
+    await expect(
+      restart({
+        account_id: "acct-1",
+        project_id: "proj-1",
+        restart_request_id: "not-a-uuid",
+        wait: false,
+      }),
+    ).rejects.toThrow("restart_request_id must be a UUID");
+    expect(interBayCheckStartAdmissionMock).not.toHaveBeenCalled();
   });
 });

@@ -1,0 +1,666 @@
+import { randomUUID, createHash } from "node:crypto";
+import { encodeRuntimeSponsorDenial } from "@cocalc/util/runtime-sponsor-denial";
+import {
+  createAgentRpcService,
+  type AgentRpcExecutionAdapter,
+} from "../agent-rpc-service";
+import type { AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
+import { rpcOutcome } from "@cocalc/conat/agents/rpc";
+import { AgentRpcAttempts } from "@cocalc/conat/agents/rpc-attempts";
+import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
+
+function fixture() {
+  const e: AgentRpcEnvelope = {
+    version: 2,
+    attempt_id: randomUUID(),
+    permit_id: randomUUID(),
+    source: { project_id: randomUUID(), agent_id: randomUUID() },
+    target: { project_id: randomUUID(), agent_id: randomUUID() },
+    run_id: randomUUID(),
+    link_id: randomUUID(),
+    account_id: randomUUID(),
+    path: "/home/user/recv.chat",
+    thread_id: randomUUID(),
+    deadline: Date.now() + 30_000,
+    body: "review request",
+  };
+  const rows: any[] = [
+    {
+      event: "chat-thread-config",
+      thread_id: e.thread_id,
+      agent_kind: "acp",
+      agent_model: "gpt-5.4",
+    },
+  ];
+  const db = {
+    get: () => rows,
+    set: jest.fn((row) => rows.push(row)),
+    commit: jest.fn(),
+    save: jest.fn(async () => {}),
+    save_to_disk: jest.fn(async () => {}),
+  };
+  const deps: AgentRpcExecutionAdapter = {
+    authorize: jest.fn(async () => {}),
+    ensureRunning: jest.fn(async () => {}),
+    withChat: async (_e, fn) => fn(db as any),
+    admit: jest.fn(async () => {}),
+  };
+  return { e, db, deps, service: createAgentRpcService(deps) };
+}
+
+function attachmentFixture() {
+  const f = fixture();
+  const data = Buffer.from([0, 128, 255, 42]);
+  const metadata = {
+    name: "receipt.bin",
+    size: data.length,
+    sha256: createHash("sha256").update(data).digest("hex"),
+  };
+  f.e.snapshot_manifest = [metadata];
+  f.deps.stageAttachments = jest.fn(async () => ({
+    directory: "/tmp/staged",
+    manifest_path: "/tmp/staged/manifest.json",
+    files: [{ ...metadata, path: "/tmp/staged/0/receipt.bin" }],
+  }));
+  f.deps.discardAttachments = jest.fn(async () => {});
+  return { ...f, files: [{ ...metadata, data }] };
+}
+
+test("external snapshot send preserves attribution and target execution account without a fake run", async () => {
+  const { e, deps, service, db, files } = attachmentFixture();
+  e.source = {
+    kind: "external",
+    account_id: e.account_id,
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  delete e.run_id;
+  const ready = await service.prepareAttachments(e);
+  expect(ready.outcome).toBe("prepared");
+  if (ready.outcome !== "prepared") throw new Error("preparation failed");
+  e.attachment_reservation = ready.reservation_id;
+  expect(await service.submit(e, files)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+  });
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  const row = db.set.mock.calls[0][0];
+  expect(row.agent_rpc.source).toEqual(e.source);
+  expect(row.agent_rpc).not.toHaveProperty("source_run_id");
+  expect(JSON.stringify(row)).toContain("external agent");
+  expect(JSON.stringify(row)).toContain("cannot receive messages");
+});
+
+test("startup must not admit a thread changed away from ACP", async () => {
+  const { e, deps, service, db } = fixture();
+  (deps.ensureRunning as jest.Mock).mockImplementation(async () => {
+    Object.assign(db.get()[0], {
+      agent_kind: "none",
+      agent_model: undefined,
+      acp_config: null,
+    });
+  });
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "rejected",
+    chat_effect: "none",
+  });
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("startup uses current thread configuration and chat ancestry", async () => {
+  const { e, deps, service, db } = fixture();
+  const parent = randomUUID();
+  (deps.ensureRunning as jest.Mock).mockImplementation(async () => {
+    db.get()[0].name = "Updated during startup";
+    db.get().push({
+      event: "chat",
+      thread_id: e.thread_id,
+      message_id: parent,
+      date: new Date().toISOString(),
+    });
+  });
+  expect(await service.submit(e)).toMatchObject({ outcome: "accepted" });
+  expect(db.set.mock.calls[0][0].parent_message_id).toBe(parent);
+  const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+  expect(prepared.request.chat.thread_title).toBe("Updated during startup");
+  expect(prepared.request.account_id).toBe(e.account_id);
+  expect(prepared.request.chat.agent_message).toBe(true);
+});
+
+test("external source cannot use live paths or guidance", async () => {
+  const { e, deps, service, db } = fixture();
+  e.source = {
+    kind: "external",
+    account_id: e.account_id,
+    agent_id: randomUUID(),
+    installation_id: randomUUID(),
+  };
+  delete e.run_id;
+  e.guidance = true;
+  await expect(service.submit(e)).rejects.toThrow("external agents");
+  e.guidance = false;
+  e.file_references = [
+    { kind: "project-file", path: "/home/user/secret" } as any,
+  ];
+  await expect(service.submit(e)).rejects.toThrow("external agents");
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(db.set).not.toHaveBeenCalled();
+});
+
+test.each([
+  ["adapter", "attachment_unavailable"],
+  ["authorization", "execution_not_allowed"],
+  ["thread", "execution_not_allowed"],
+  ["startup", "autostart_disabled"],
+])(
+  "attachment preparation distinguishes %s failures",
+  async (failure, code) => {
+    const { e, deps, service, db } = attachmentFixture();
+    if (failure === "adapter") delete deps.stageAttachments;
+    if (failure === "authorization")
+      (deps.authorize as jest.Mock).mockRejectedValue(
+        new Error("grant revoked"),
+      );
+    if (failure === "thread") db.get().length = 0;
+    if (failure === "startup")
+      (deps.ensureRunning as jest.Mock).mockRejectedValue(
+        new Error("Automatic starts disabled"),
+      );
+    expect(await service.prepareAttachments(e)).toMatchObject({
+      outcome: "rejected",
+      code,
+      chat_effect: "none",
+    });
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+    if (failure !== "startup")
+      expect(deps.ensureRunning).not.toHaveBeenCalled();
+  },
+);
+
+test("cross-project snapshots prepare, stage and admit using target execution identity", async () => {
+  const { e, files, deps, service, db } = attachmentFixture();
+  const ready = await service.prepareAttachments(e);
+  expect(ready.outcome).toBe("prepared");
+  if (ready.outcome !== "prepared") throw new Error("not prepared");
+  expect(deps.stageAttachments).not.toHaveBeenCalled();
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+  const send = { ...e, attachment_reservation: ready.reservation_id };
+  expect(await service.submit(send, files)).toMatchObject({
+    outcome: "accepted",
+    chat_effect: "saved",
+  });
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
+  const request = (deps.admit as jest.Mock).mock.calls[0][0].request;
+  expect(request.account_id).toBe(e.account_id);
+  expect(request.prompt).toContain("/tmp/staged/0/receipt.bin");
+  expect(request.prompt).toContain("temporary");
+  expect(db.set.mock.calls[0][0].agent_rpc.attachments.files[0].path).toBe(
+    "/tmp/staged/0/receipt.bin",
+  );
+  expect(JSON.stringify(db.set.mock.calls[0][0])).not.toContain('"data"');
+  expect(deps.discardAttachments).not.toHaveBeenCalled();
+  expect(await service.submit(send, files)).toMatchObject({
+    outcome: "rejected",
+  });
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test.each(["quota", "hash", "revoked", "stopped"])(
+  "snapshot %s failure never falls back to a text-only message",
+  async (failure) => {
+    const { e, files, deps, service, db } = attachmentFixture();
+    const ready = await service.prepareAttachments(e);
+    if (ready.outcome !== "prepared") throw new Error("not prepared");
+    if (failure === "quota")
+      (deps.stageAttachments as jest.Mock).mockRejectedValue(
+        new Error("ENOSPC"),
+      );
+    if (failure === "hash") files[0].data[0] = 99;
+    if (failure === "revoked")
+      (deps.authorize as jest.Mock).mockRejectedValue(
+        new Error("grant_revoked"),
+      );
+    if (failure === "stopped")
+      (deps.ensureRunning as jest.Mock).mockRejectedValue(
+        new Error("Automatic starts disabled"),
+      );
+    expect(
+      await service.submit(
+        { ...e, attachment_reservation: ready.reservation_id },
+        files,
+      ),
+    ).toMatchObject({ outcome: "rejected", chat_effect: "none" });
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+  },
+);
+
+test("lost snapshot execution acknowledgment retains files and returns unknown", async () => {
+  const { e, files, deps, service } = attachmentFixture();
+  const ready = await service.prepareAttachments(e);
+  if (ready.outcome !== "prepared") throw new Error("not prepared");
+  (deps.admit as jest.Mock).mockRejectedValue(new Error("ack lost"));
+  expect(
+    await service.submit(
+      { ...e, attachment_reservation: ready.reservation_id },
+      files,
+    ),
+  ).toMatchObject({ outcome: "unknown", chat_effect: "saved" });
+  expect(deps.discardAttachments).not.toHaveBeenCalled();
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test("retained attempt evidence does not leak a newly staged duplicate attachment set", async () => {
+  const { e, files, deps, service } = attachmentFixture();
+  for (let i = 0; i < 2; i++) {
+    const ready = await service.prepareAttachments(e);
+    if (ready.outcome !== "prepared") throw new Error("not prepared");
+    expect(
+      await service.submit(
+        { ...e, attachment_reservation: ready.reservation_id },
+        files,
+      ),
+    ).toMatchObject({ outcome: "accepted" });
+  }
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  expect(deps.discardAttachments).toHaveBeenCalledTimes(1);
+});
+
+test("attachment preparations share capacity with ordinary text messages", async () => {
+  const { e, deps } = attachmentFixture();
+  const service = createAgentRpcService(
+    deps,
+    undefined,
+    new AgentRpcCapacity(1, 1),
+  );
+  const ready = await service.prepareAttachments(e);
+  if (ready.outcome !== "prepared") throw new Error("not prepared");
+  expect(
+    await service.submit({
+      ...e,
+      attempt_id: randomUUID(),
+      snapshot_manifest: undefined,
+    }),
+  ).toMatchObject({ outcome: "rejected", code: "host_overloaded" });
+  await service.cancelAttachments({
+    ...e,
+    attachment_reservation: ready.reservation_id,
+  });
+  expect(
+    await service.submit({
+      ...e,
+      attempt_id: randomUUID(),
+      snapshot_manifest: undefined,
+    }),
+  ).toMatchObject({ outcome: "accepted" });
+});
+
+test("idle wake and busy queue use one existing admission call with target identity", async () => {
+  const { e, deps, service, db } = fixture();
+  expect((await service.submit(e)).outcome).toBe("accepted");
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  expect(deps.ensureRunning).toHaveBeenCalledWith(e);
+  const prepared = (deps.admit as jest.Mock).mock.calls[0][0];
+  expect(prepared.request.account_id).toBe(e.account_id);
+  expect(prepared.request.project_id).toBe(e.target.project_id);
+  expect(prepared.request.chat.agent_delivery_id).toBeUndefined();
+  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set.mock.calls[0][0].agent_rpc).toEqual({
+    version: 2,
+    source: e.source,
+    target: e.target,
+    source_run_id: e.run_id,
+    link_id: e.link_id,
+    attempt_id: e.attempt_id,
+  });
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
+  await service.submit(e);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test("unavailable chat rejects before admission", async () => {
+  const { e, deps, service } = fixture();
+  deps.withChat = async () => {
+    throw new Error("offline");
+  };
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "rejected",
+    chat_effect: "none",
+  });
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("revocation after chat save rejects and preserves saved chat", async () => {
+  const { e, deps, db, service } = fixture();
+  db.save_to_disk.mockImplementation(async () => {
+    deps.authorize = async () => {
+      throw new Error("revoked");
+    };
+  });
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "rejected",
+    chat_effect: "saved",
+  });
+  expect(deps.admit).not.toHaveBeenCalled();
+  expect(db.set).toHaveBeenCalledTimes(1);
+});
+
+test("lost execution ack is unknown and cannot cause a recovery admission", async () => {
+  const { e, deps, service } = fixture();
+  deps.admit = jest.fn(async () => {
+    throw new Error("ack lost after queue admission");
+  });
+  expect((await service.submit(e)).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+  await service.submit(e);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  await service.submit({ ...e, attempt_id: randomUUID() });
+  expect(deps.admit).toHaveBeenCalledTimes(2);
+});
+
+test("expired deadline cannot start work even after delayed preparation", async () => {
+  const { e, deps, service } = fixture();
+  e.deadline = Date.now() - 1;
+  expect((await service.submit(e)).outcome).toBe("rejected");
+  expect(deps.admit).not.toHaveBeenCalled();
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+});
+
+test.each([
+  [
+    "Automatic starts are disabled for this project",
+    "automatic starts disabled",
+  ],
+  [
+    encodeRuntimeSponsorDenial({
+      code: "runtime_sponsor_slots_exhausted",
+      sponsor_account_id: randomUUID(),
+      limit: 1,
+      current: 1,
+      active_projects: [],
+    }),
+    "no available running-project slots",
+  ],
+  ["project move is in progress", "could not start under its runtime policy"],
+])(
+  "start refusal %s does not save or submit a message",
+  async (error, reason) => {
+    const { e, deps, service, db } = fixture();
+    deps.ensureRunning = jest.fn(async () => {
+      throw new Error(error);
+    });
+    expect(await service.submit(e)).toMatchObject({
+      outcome: "rejected",
+      chat_effect: "none",
+      reason: expect.stringContaining(reason),
+    });
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+  },
+);
+
+test("revocation during startup prevents save and execution", async () => {
+  const { e, deps, service, db } = fixture();
+  deps.ensureRunning = async () => {
+    deps.authorize = async () => {
+      throw new Error("link revoked");
+    };
+  };
+  expect((await service.submit(e)).outcome).toBe("rejected");
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("startup timeout is unknown and late completion cannot deliver", async () => {
+  jest.useFakeTimers();
+  try {
+    const { e, deps, service, db } = fixture();
+    let finish!: () => void;
+    deps.ensureRunning = jest.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    e.deadline = Date.now() + 30;
+    const submission = service.submit(e);
+    await jest.advanceTimersByTimeAsync(31);
+    const result = await submission;
+    expect(result).toMatchObject({
+      outcome: "unknown",
+      chat_effect: "none",
+      reason: expect.stringContaining("startup was not confirmed"),
+    });
+    finish();
+    await jest.advanceTimersByTimeAsync(1);
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+    expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+    expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+    await service.submit(e);
+    expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+    deps.ensureRunning = jest.fn(async () => {});
+    const retry = {
+      ...e,
+      attempt_id: randomUUID(),
+      deadline: Date.now() + 1000,
+    };
+    expect((await service.submit(retry)).outcome).toBe("accepted");
+    expect(deps.admit).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+test("archived thread and inspection never wake the project", async () => {
+  const { e, deps, service, db } = fixture();
+  db.get()[0].archived = true;
+  expect((await service.submit(e)).outcome).toBe("rejected");
+  service.inspect(e.source, { ...e, attempt_id: randomUUID() });
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+});
+
+test("archiving a thread during startup prevents submission", async () => {
+  const { e, deps, service, db } = fixture();
+  deps.ensureRunning = async () => {
+    db.get()[0].archived = true;
+  };
+  expect((await service.submit(e)).outcome).toBe("rejected");
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("concurrent calls for the same attempt share startup and admission", async () => {
+  const { e, deps, service } = fixture();
+  let finish!: () => void;
+  const starting = new Promise<void>((resolve) => {
+    deps.ensureRunning = jest.fn(
+      () =>
+        new Promise<void>((started) => {
+          finish = started;
+          resolve();
+        }),
+    );
+  });
+  const first = service.submit(e);
+  await starting;
+  const second = service.submit(e);
+  finish();
+  const outcomes = await Promise.all([first, second]);
+  expect(outcomes.map((r) => r.outcome)).toEqual(["accepted", "accepted"]);
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+});
+
+test.each([undefined, "0", "1"])(
+  "host evidence is principal scoped independently of personal flag %s",
+  async (flag) => {
+    const previous = process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+    if (flag == null)
+      delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+    else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = flag;
+    try {
+      const { e, deps, service } = fixture();
+      const q = { ...e, account_id: randomUUID(), run_id: randomUUID() };
+      expect((await service.submit(e)).outcome).toBe("accepted");
+      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
+        "accepted",
+      );
+      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
+        "unknown",
+      );
+      expect(service.inspect(e.source, e).outcome).toBe("unknown");
+      expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+      deps.admit = jest.fn(async () => {
+        throw new Error("lost Q acknowledgment");
+      });
+      expect((await service.submit(q)).outcome).toBe("unknown");
+      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
+        "accepted",
+      );
+      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
+        "unknown",
+      );
+      await service.submit(q);
+      expect(deps.admit).toHaveBeenCalledTimes(1);
+      expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
+    } finally {
+      if (previous == null)
+        delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
+      else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = previous;
+    }
+  },
+);
+
+test("inspection never falls back to legacy unscoped evidence", async () => {
+  const { e, deps } = fixture();
+  const attempts = new AgentRpcAttempts();
+  await attempts.send(e.source, e, async () => rpcOutcome(e, "accepted"));
+  const service = createAgentRpcService(deps, attempts);
+  expect(attempts.inspect(e.source, e).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("unknown");
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("host admission is shared across service facades and rejects before chat or startup", async () => {
+  const capacity = new AgentRpcCapacity(1, 1);
+  const first = fixture(),
+    second = fixture();
+  let finish!: () => void, entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  first.deps.ensureRunning = () =>
+    new Promise<void>((resolve) => {
+      finish = resolve;
+      entered();
+    });
+  const a = createAgentRpcService(first.deps, new AgentRpcAttempts(), capacity);
+  const b = createAgentRpcService(
+    second.deps,
+    new AgentRpcAttempts(),
+    capacity,
+  );
+  second.deps.withChat = jest.fn(second.deps.withChat);
+  const pending = a.submit(first.e);
+  await started;
+  try {
+    expect(await b.submit(second.e)).toMatchObject({
+      outcome: "rejected",
+      code: "host_overloaded",
+      chat_effect: "none",
+    });
+    expect(second.deps.withChat).not.toHaveBeenCalled();
+    expect(second.deps.ensureRunning).not.toHaveBeenCalled();
+    expect(second.deps.admit).not.toHaveBeenCalled();
+  } finally {
+    finish();
+  }
+  await pending;
+  expect(
+    (await b.submit({ ...second.e, attempt_id: randomUUID() })).outcome,
+  ).toBe("accepted");
+});
+
+test("same-project references are validated after startup and supplied with the prompt", async () => {
+  const { e, deps, service, db } = fixture();
+  e.target.project_id = e.source.project_id;
+  e.file_references = [{ kind: "project-file", path: "/tmp/report.pdf" }];
+  let running = false;
+  deps.ensureRunning = async () => {
+    running = true;
+  };
+  deps.validateFileReferences = jest.fn(async () => {
+    expect(running).toBe(true);
+  });
+  expect((await service.submit(e)).outcome).toBe("accepted");
+  expect(deps.validateFileReferences).toHaveBeenCalledWith(e);
+  expect(db.set.mock.calls[0][0].agent_rpc.file_references).toEqual(
+    e.file_references,
+  );
+  expect(JSON.stringify((deps.admit as jest.Mock).mock.calls[0][0])).toContain(
+    "/tmp/report.pdf",
+  );
+});
+
+test("missing attachment prevents chat insertion and execution without text-only fallback", async () => {
+  const { e, deps, service, db } = fixture();
+  e.target.project_id = e.source.project_id;
+  e.file_references = [{ kind: "project-file", path: "/tmp/missing" }];
+  deps.validateFileReferences = async () => {
+    throw new Error("ENOENT");
+  };
+  expect(await service.submit(e)).toMatchObject({
+    outcome: "rejected",
+    code: "attachment_unavailable",
+    chat_effect: "none",
+  });
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
+test("cross-project path references fail before any file/startup work", async () => {
+  const { e, deps, service, db } = fixture();
+  e.file_references = [{ kind: "project-file", path: "/home/user/secret" }];
+  await expect(service.submit(e)).rejects.toThrow("cannot cross projects");
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(db.set).not.toHaveBeenCalled();
+});
+
+test("startup timeout retains host capacity until the actual startup settles", async () => {
+  jest.useFakeTimers();
+  try {
+    const { e, deps, db } = fixture();
+    const capacity = new AgentRpcCapacity(1, 1);
+    let finish!: () => void;
+    deps.ensureRunning = () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+    const service = createAgentRpcService(
+      deps,
+      new AgentRpcAttempts(),
+      capacity,
+    );
+    e.deadline = Date.now() + 30;
+    const pending = service.submit(e);
+    await jest.advanceTimersByTimeAsync(31);
+    expect(await pending).toMatchObject({
+      code: "startup_deadline",
+      chat_effect: "none",
+    });
+    expect(capacity.acquire("other")).toEqual({ code: "host_overloaded" });
+    finish();
+    await jest.advanceTimersByTimeAsync(1);
+    expect("code" in capacity.acquire("other")).toBe(false);
+    expect(db.set).not.toHaveBeenCalled();
+    expect(deps.admit).not.toHaveBeenCalled();
+  } finally {
+    jest.useRealTimers();
+  }
+});

@@ -2859,6 +2859,34 @@ class BootstrapWrapperScriptTest(unittest.TestCase):
                 bootstrap.os.chown = original_chown
 
             script = captured["/usr/local/sbin/cocalc-runtime-storage"]
+            reconcile_pid = "reconcile_host_service_pid() {" + script.split(
+                "reconcile_host_service_pid() {", 1
+            )[1].split("\n}\n", 1)[0] + "\n}\n"
+            # Exercise churn after discovery, while preserving fail-closed
+            # behavior for live invalid processes and failed cgroup writes.
+            for valid, alive, writable, expected in [
+                (False, False, True, 0),
+                (False, True, True, 2),
+                (True, True, True, 0),
+                (True, False, False, 0),
+                (True, True, False, 2),
+            ]:
+                cgroup = Path(tmpdir) / ("cgroup" if writable else "absent")
+                if writable:
+                    cgroup.mkdir(exist_ok=True)
+                result = subprocess.run(
+                    ["bash", "-c", f"""
+set -e
+HOST_SERVICE_CGROUP_DEFAULT='{cgroup}'
+deny() {{ exit 2; }}
+require_host_service_pid() {{ {'return 0' if valid else 'deny invalid'}; }}
+kill() {{ return {0 if alive else 1}; }}
+{reconcile_pid}
+reconcile_host_service_pid 123
+"""],
+                    text=True, capture_output=True,
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
             subprocess.run(
                 ["bash", "-n"],
                 input=script,

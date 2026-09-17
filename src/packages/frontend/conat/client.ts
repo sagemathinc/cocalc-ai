@@ -3385,7 +3385,19 @@ export class ConatClient extends EventEmitter {
       }
     }
     try {
-      const data = { name, args };
+      // Match the CLI's session-bound hub calls. Fresh verification updates
+      // this session in place; browser_id is not a substitute for its identity.
+      // Do not forward the home session reference to a project-host service.
+      const user = cn.info?.user;
+      const auth_session_hash =
+        !routeToProjectHost && user?.account_id === account_id
+          ? user?.auth_session_hash
+          : undefined;
+      const data = {
+        name,
+        args,
+        ...(auth_session_hash ? { auth_session_hash } : {}),
+      };
       const resp = await cn.request(subject, data, { timeout });
       if (!routeToProjectHost) {
         this.noteHealthyHubResponse();

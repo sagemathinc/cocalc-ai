@@ -87,6 +87,31 @@ describe("ChatRoomComposer resize handle", () => {
     lastChatInputProps = undefined;
   });
 
+  it("prepares naming before the first turn using the latest private editor draft, without sending", async () => {
+    const user = userEvent.setup();
+    const prepare = jest.fn(async () => "prepared-thread");
+    const send = jest.fn();
+    renderComposer({
+      isNewThreadCodex: true,
+      input: "older debounced value",
+      hasInput: true,
+      onPrepareAgentThread: prepare,
+      on_send: send,
+    });
+    lastChatInputProps.inputControlRef.current = {
+      getValue: () => "latest private draft with the newly selected reference",
+      focus: () => true,
+      captureSelection: () => null,
+      insertText: () => true,
+    };
+    screen.getByRole("button", { name: "Name agent" }).focus();
+    await user.keyboard("{Enter}");
+    expect(prepare).toHaveBeenCalledWith(
+      "latest private draft with the newly selected reference",
+    );
+    expect(send).not.toHaveBeenCalled();
+  });
+
   it.each([false, true])(
     "shows the selected thread title without a custom appearance (AI: %s)",
     async (isAI) => {

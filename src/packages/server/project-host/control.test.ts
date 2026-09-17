@@ -76,6 +76,20 @@ describe("shouldSkipStartForSnapshot", () => {
     });
   });
 
+  it("does not let a pre-fence running snapshot suppress a replacement start", () => {
+    expect(
+      shouldSkipStartForSnapshot({
+        state: "running",
+        timeMs: nowMs - 30_000,
+        hasActiveStartLro: false,
+        ignoreRecentState: true,
+        nowMs,
+      }),
+    ).toEqual({
+      skip: false,
+    });
+  });
+
   it("does not skip a stale running state", () => {
     expect(
       shouldSkipStartForSnapshot({

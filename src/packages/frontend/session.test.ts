@@ -2,15 +2,42 @@ jest.mock("./app-framework/project-runtime", () => ({
   ensureProjectReduxRuntime: jest.fn(async () => {}),
 }));
 
+jest.mock("./history", () => ({ load_target: jest.fn() }));
+jest.mock("@cocalc/frontend/client/handle-target", () => ({
+  __esModule: true,
+  default: "projects/p1/files/a.chat",
+}));
+jest.mock("./misc/misc", () => ({
+  should_load_target_url: jest.fn(() => true),
+}));
+
+import { load_target } from "./history";
+import { should_load_target_url } from "./misc/misc";
+
 import { ensureProjectReduxRuntime } from "./app-framework/project-runtime";
 import {
   getOpenFilesForSessionClose,
   getSessionState,
   projectsReadyForSessionRestore,
   restoreSessionState,
+  loadSessionUrlTarget,
 } from "./session";
 
 const mockEnsureProjectReduxRuntime = jest.mocked(ensureProjectReduxRuntime);
+
+test("startup loads the existing URL without adding history", () => {
+  jest.mocked(load_target).mockClear();
+  loadSessionUrlTarget();
+  expect(load_target).toHaveBeenCalledWith(
+    "projects/p1/files/a.chat",
+    true,
+    false,
+  );
+  jest.mocked(load_target).mockClear();
+  jest.mocked(should_load_target_url).mockReturnValueOnce(false);
+  loadSessionUrlTarget();
+  expect(load_target).not.toHaveBeenCalled();
+});
 
 function makeStore(values: Record<string, unknown>) {
   return {

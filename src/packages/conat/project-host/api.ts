@@ -36,6 +36,7 @@ export interface HostCreateProjectRequest extends CreateProjectOptions {
   users?: any;
   authorized_keys?: string;
   run_quota?: any;
+  runtime_lifecycle_revision?: number;
   local_only?: boolean;
   exam_run_id?: string;
   usage_account_id?: string;
@@ -56,6 +57,7 @@ export interface HostProjectStartMetadata {
   authorized_keys?: string;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   env?: ProjectEnv;
   autostart_enabled?: boolean | null;
   project_secrets_cache?: ProjectSecretsRuntimeCache;
@@ -711,6 +713,22 @@ export interface ApplyHostExamRunRequest {
 }
 
 export interface HostControlApi {
+  prepareAgentRpcAttachments: (
+    envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+  ) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcPreparation>;
+  cancelAgentRpcAttachments: (
+    envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+  ) => Promise<void>;
+  submitAgentRpc: (
+    envelope: import("@cocalc/conat/agents/rpc").AgentRpcEnvelope,
+    files?: import("@cocalc/conat/agents/attachments").AgentSnapshot[],
+  ) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
+  inspectAgentRpc: (opts: {
+    /** Trusted run principal in personal mode, absent only for legacy RPC. */
+    account_id?: string;
+    source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
+    request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt;
+  }) => Promise<import("@cocalc/conat/agents/rpc").AgentRpcOutcome>;
   probePublicRouteOrigin: () => Promise<ProjectHostOriginHealth>;
   restartCloudflared: (opts: {
     reason: "public-route-probe";
@@ -769,6 +787,7 @@ export interface HostControlApi {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
     image?: string;
     restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
@@ -784,6 +803,7 @@ export interface HostControlApi {
     authorized_keys?: string;
     run_quota?: any;
     run_quota_revision?: number;
+    runtime_lifecycle_revision?: number;
     image?: string;
     restore?: "none" | "auto" | "recover" | "required";
     restore_backup_id?: string;
@@ -794,6 +814,7 @@ export interface HostControlApi {
   }) => Promise<HostCreateProjectResponse>;
   stopProject: (opts: {
     project_id: string;
+    runtime_lifecycle_revision?: number;
   }) => Promise<HostCreateProjectResponse>;
   getProjectStatus: (opts: {
     project_id: string;
@@ -801,10 +822,12 @@ export interface HostControlApi {
   updateAuthorizedKeys: (opts: {
     project_id: string;
     authorized_keys?: string;
+    runtime_lifecycle_revision?: number;
   }) => Promise<void>;
   updateProjectUsers: (opts: {
     project_id: string;
     users?: any;
+    runtime_lifecycle_revision?: number;
   }) => Promise<void>;
   updateProjectRunQuota: (opts: {
     project_id: string;
@@ -956,18 +979,23 @@ export function createHostControlClient({
   host_id,
   client,
   timeout,
+  noRetry,
 }: {
   host_id: string;
   client: Client;
   timeout?;
+  noRetry?: boolean;
 }): HostControlApi {
   return createServiceClient<HostControlApi>({
     service: "project-host",
     subject: subjectForHost(host_id),
     client,
     timeout,
+    noRetry,
     transport:
-      timeout != null && timeout > MAX_INTEREST_TIMEOUT ? "request" : undefined,
+      noRetry || (timeout != null && timeout > MAX_INTEREST_TIMEOUT)
+        ? "request"
+        : undefined,
   });
 }
 
@@ -1154,7 +1182,12 @@ export interface HostRegistryApi {
     since_ms?: number;
     limit?: number;
   }) => Promise<{
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    rows: Array<{
+      project_id: string;
+      users: any;
+      runtime_lifecycle_revision: number;
+      updated_ms: number;
+    }>;
     next_since_ms: number;
     has_more: boolean;
   }>;
@@ -1163,7 +1196,12 @@ export interface HostRegistryApi {
     limit?: number;
     recent_days?: number;
   }) => Promise<{
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>;
+    rows: Array<{
+      project_id: string;
+      users: any;
+      runtime_lifecycle_revision: number;
+      updated_ms: number;
+    }>;
     as_of_ms: number;
     has_more: boolean;
   }>;
@@ -1280,5 +1318,14 @@ export function createHostControlService({
     // timeout. Without parallel dispatch, unrelated starts serialize here.
     parallel: true,
     maxParallelHandlers: HOST_CONTROL_MAX_PARALLEL_HANDLERS,
+    // Preserve the existing <=64 MiB copy-archive path, with bounded request
+    // reassembly/queueing. Agent snapshots additionally need a host reservation.
+    receiveLimits: {
+      maxMessageBytes: 65 * 1024 * 1024,
+      maxInflightBytes: 260 * 1024 * 1024,
+      maxInflightMessages: 4,
+      maxFragmentsPerMessage: 8192,
+    },
+    maxQueue: 4,
   });
 }

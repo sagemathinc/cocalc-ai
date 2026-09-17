@@ -71,6 +71,7 @@ const invalidateProjectVolumeQuota = jest.fn();
 const listStoppedScratchVolumePreparationBatch = jest.fn();
 const currentProjectVolumeLifecycleGeneration = jest.fn(() => 0);
 const getRecordedProjectVolumeIdentity = jest.fn();
+const fenceProjectHostAcpWork = jest.fn(async () => undefined);
 
 jest.mock("@cocalc/lite/hub/api", () => ({ hubApi: { projects: {} as any } }));
 jest.mock("@cocalc/backend/data", () => ({
@@ -119,6 +120,9 @@ jest.mock("../sqlite/stop-policy", () => ({
 jest.mock("../browser-runtime", () => ({
   browserIdleTimeoutSeconds: (run_quota: any) =>
     Number(run_quota?.browser_idle_timeout) || 0,
+}));
+jest.mock("./acp/worker-manager", () => ({
+  fenceProjectHostAcpWork: (...args: any[]) => fenceProjectHostAcpWork(...args),
 }));
 jest.mock("../master-status", () => ({
   getMasterConatClient: (...args: any[]) => getMasterConatClient(...args),
@@ -288,6 +292,9 @@ describe("project host start ACP rehydrate ordering", () => {
 
   beforeEach(async () => {
     jest.clearAllMocks();
+    const { resetProjectRuntimeLifecycleForTesting } =
+      await import("../runtime-lifecycle");
+    resetProjectRuntimeLifecycleForTesting();
     const {
       resetCodexModelCatalogCacheForTesting,
       resetPortBindStateForTesting,
@@ -401,6 +408,48 @@ describe("project host start ACP rehydrate ordering", () => {
         ssh_port: 30123,
         http_port: 45123,
       });
+  });
+
+  it("rejects stale authority updates and registration after a restart fence", async () => {
+    const { resetProjectRuntimeLifecycleForTesting } =
+      await import("../runtime-lifecycle");
+    resetProjectRuntimeLifecycleForTesting();
+    getProject.mockReturnValue({
+      image: DEFAULT_PROJECT_IMAGE,
+      runtime_lifecycle_revision: 8,
+    });
+    const runnerApi = {
+      start: jest.fn(),
+      stop: jest.fn(),
+    } as any;
+    const { updateAuthorizedKeys, updateProjectUsers, wireProjectsApi } =
+      await import("./projects");
+    wireProjectsApi(runnerApi);
+
+    await expect(
+      updateProjectUsers({
+        project_id,
+        users: { stale: { group: "owner" } },
+        runtime_lifecycle_revision: 7,
+      }),
+    ).rejects.toThrow("stale runtime lifecycle");
+    await expect(
+      updateAuthorizedKeys({
+        project_id,
+        authorized_keys: "ssh-ed25519 stale",
+        runtime_lifecycle_revision: 7,
+      }),
+    ).rejects.toThrow("stale runtime lifecycle");
+    await expect(
+      hubApi.projects.createProject({
+        project_id,
+        users: { stale: { group: "owner" } },
+        runtime_lifecycle_revision: 7,
+      }),
+    ).rejects.toThrow("stale runtime lifecycle");
+
+    expect(writeManagedAuthorizedKeys).not.toHaveBeenCalled();
+    expect(upsertProject).not.toHaveBeenCalled();
   });
 
   it("avoids project ports occupied by non-listening TCP sockets", async () => {
@@ -814,6 +863,7 @@ describe("project host start ACP rehydrate ordering", () => {
 
     await expect(hubApi.projects.stop({ project_id })).resolves.toBeUndefined();
     expect(runnerApi.status).toHaveBeenCalledTimes(2);
+    expect(fenceProjectHostAcpWork).toHaveBeenCalledWith({ project_id });
     expect(upsertProject).toHaveBeenLastCalledWith(
       expect.objectContaining({
         project_id,
@@ -1129,6 +1179,7 @@ describe("project host start ACP rehydrate ordering", () => {
       "project stop did not converge",
     );
     expect(runnerApi.status).toHaveBeenCalledTimes(5);
+    expect(fenceProjectHostAcpWork).not.toHaveBeenCalled();
     expect(upsertProject).toHaveBeenLastCalledWith(
       expect.objectContaining({
         project_id,

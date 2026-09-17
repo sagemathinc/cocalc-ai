@@ -1,6 +1,6 @@
 import type { MembershipEntitlements } from "@cocalc/conat/hub/api/purchases";
 import { getEffectiveMembershipUsageLimits } from "./effective-limits";
-import { resolveMembershipForAccount } from "./resolve";
+import { resolveRuntimeMembership } from "./runtime-resolution";
 
 const SETTINGS_FIELDS = ["memory", "memory_request", "disk_quota"] as const;
 
@@ -71,7 +71,7 @@ export function normalizeMembershipProjectDefaults(
 export async function getMembershipProjectDefaultsFromUsers(users: unknown) {
   const owner = getProjectOwnerFromUsers(users);
   if (!owner) return {};
-  const resolution = await resolveMembershipForAccount(owner);
+  const resolution = await resolveRuntimeMembership(owner);
   return normalizeMembershipProjectDefaults(
     resolution.entitlements?.project_defaults,
   );
@@ -81,7 +81,7 @@ export async function getMembershipProjectDefaultsForAccount(
   account_id?: string,
 ): Promise<MembershipProjectDefaults> {
   if (!account_id) return {};
-  const resolution = await resolveMembershipForAccount(account_id);
+  const resolution = await resolveRuntimeMembership(account_id);
   return normalizeMembershipProjectDefaults(
     resolution.entitlements?.project_defaults,
   );
@@ -91,7 +91,7 @@ export async function getMembershipRuntimeSchedulingForAccount(
   account_id?: string,
 ): Promise<MembershipRuntimeScheduling> {
   if (!account_id) return runtimeSchedulingFromSharedComputePriority(0);
-  const resolution = await resolveMembershipForAccount(account_id);
+  const resolution = await resolveRuntimeMembership(account_id);
   return runtimeSchedulingFromSharedComputePriority(
     resolution.effective_limits?.shared_compute_priority ??
       resolution.entitlements?.usage_limits?.shared_compute_priority,
@@ -102,7 +102,7 @@ export async function getMembershipBrowserIdleTimeoutForAccount(
   account_id?: string,
 ): Promise<number> {
   if (!account_id) return 0;
-  const resolution = await resolveMembershipForAccount(account_id);
+  const resolution = await resolveRuntimeMembership(account_id);
   return (
     getEffectiveMembershipUsageLimits(resolution)
       .browser_idle_timeout_seconds ?? 0

@@ -4688,6 +4688,32 @@ describe("ConatClient routed project-host reconnect", () => {
       },
       expect.any(Object),
     );
+    // A browser that just completed fresh auth must identify the same
+    // authenticated session when retrying registration, as the CLI does.
+    const cn = client.conat();
+    cn.info = {
+      user: { account_id: "acct-1", auth_session_hash: "verified-session" },
+    };
+    await client.callHub({
+      name: "agent.registerIdentity",
+      args: [{ thread_id: "thread" }],
+    });
+    expect(hubRequest).toHaveBeenLastCalledWith(
+      "hub.account.acct-1.api",
+      {
+        name: "agent.registerIdentity",
+        args: [{ thread_id: "thread" }],
+        auth_session_hash: "verified-session",
+      },
+      expect.any(Object),
+    );
+    cn.info.user.account_id = "previous-account";
+    await client.callHub({ name: "agent.registerIdentity", args: [] });
+    expect(hubRequest).toHaveBeenLastCalledWith(
+      "hub.account.acct-1.api",
+      { name: "agent.registerIdentity", args: [] },
+      expect.any(Object),
+    );
   });
 
   it("does not fall back to the hub for chat-store APIs in launchpad mode when host routing is unavailable", async () => {

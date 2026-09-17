@@ -3986,6 +3986,12 @@ export async function createCollabInvite({
       read_policy,
     });
   }
+  // This account-authenticated handler runs at the inviter's home. The project
+  // owner may have no local row for that account and cannot repeat this check.
+  await assertAccountTrustedForProductAccess(
+    account_id!,
+    "invite collaborators",
+  );
   const result = await getInterBayBridge()
     .projectCollabInvite(ownership.bay_id)
     .create({
@@ -3995,6 +4001,7 @@ export async function createCollabInvite({
       message,
       direct,
       trusted_admin,
+      trusted_product_access_checked: true,
       invite_role,
       read_policy,
     });
@@ -5034,10 +5041,12 @@ export async function startFromHost({
 export async function restart({
   account_id,
   project_id,
+  restart_request_id,
   wait = true,
 }: {
   account_id: string;
   project_id: string;
+  restart_request_id: string;
   wait?: boolean;
 }): Promise<{
   op_id: string;
@@ -5046,10 +5055,14 @@ export async function restart({
   service: string;
   stream_name: string;
 }> {
+  if (!isValidUUID(restart_request_id)) {
+    throw new Error("restart_request_id must be a UUID");
+  }
   return await runProjectStartLikeAction({
     kind: "restart",
     account_id,
     project_id,
+    restart_request_id,
     wait,
   });
 }
@@ -5088,6 +5101,7 @@ async function runProjectStartLikeAction({
   kind,
   account_id,
   project_id,
+  restart_request_id,
   restore_backup_id,
   autostart,
   managed_egress_override,
@@ -5100,6 +5114,7 @@ async function runProjectStartLikeAction({
   kind: "start" | "restart";
   account_id: string;
   project_id: string;
+  restart_request_id?: string;
   restore_backup_id?: string;
   autostart?: boolean;
   managed_egress_override?: ManagedProjectEgressOverride;
@@ -5147,6 +5162,7 @@ async function runProjectStartLikeAction({
       ? project_move_id
       : undefined;
   let storageRecoveryRequired = false;
+  let runtimeAuthorityRevision: string | undefined;
   try {
     const ownership = await resolveProjectBay(project_id);
     if (ownership == null) {
@@ -5173,6 +5189,7 @@ async function runProjectStartLikeAction({
         epoch: ownership.epoch,
       });
     storageRecoveryRequired = admission?.storage_recovery_required === true;
+    runtimeAuthorityRevision = admission?.runtime_authority_revision;
   } catch (err) {
     const runtimeSponsorDenial = extractRuntimeSponsorDenial(err);
     if (runtimeSponsorDenial) {
@@ -5184,6 +5201,11 @@ async function runProjectStartLikeAction({
     }
     throw err;
   }
+  if (kind === "restart" && !/^\d+$/.test(runtimeAuthorityRevision ?? "")) {
+    throw new Error(
+      "owning bay did not provide a project runtime authority revision",
+    );
+  }
   const { lro: op, created } = await createLroDetailed({
     kind: "project-start",
     scope_type: "project",
@@ -5193,14 +5215,19 @@ async function runProjectStartLikeAction({
     input: {
       project_id,
       action: kind,
+      ...(restart_request_id ? { restart_request_id } : {}),
       ...(effectiveRestoreBackupId
         ? { restore_backup_id: effectiveRestoreBackupId }
         : {}),
       ...(autostart ? { autostart } : {}),
     },
-    // A project can have only one active start lifecycle. In particular, an
-    // ordinary autostart must join rather than supersede an in-flight restore.
-    dedupe_key: "project-start",
+    // Duplicate delivery of one logical restart shares a lifecycle. A later
+    // explicit restart uses a new request id and cannot join an older policy
+    // boundary, even when collaborator authority itself is unchanged.
+    dedupe_key:
+      kind === "restart"
+        ? `project-restart:${runtimeAuthorityRevision}:${restart_request_id}`
+        : "project-start",
     status: "queued",
   });
   const response = {
@@ -5320,6 +5347,7 @@ async function runProjectStartLikeAction({
         await projectControl.restart({
           project_id,
           account_id,
+          runtime_authority_revision: runtimeAuthorityRevision!,
           lro_op_id: op.op_id,
           source_bay_id: getConfiguredBayId(),
           epoch: ownership.epoch,

@@ -6,7 +6,7 @@
 import Decimal from "decimal.js-light";
 
 export const MICROUSD_PER_USD = 1_000_000;
-export const SITE_FUNDED_CODEX_POLICY_VERSION = 5;
+export const SITE_FUNDED_CODEX_POLICY_VERSION = 6;
 export const SITE_FUNDED_CODEX_PRICE_VERSION = "openai-2026-07-30";
 // Provider requests can contain base64 images, so HTTP bytes do not map to
 // context tokens. Keep an independent host-memory safety limit instead.
@@ -35,7 +35,7 @@ export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
   model: "gpt-5.6-luna",
   reasoning: "medium",
   serviceTier: "standard",
-  maxConcurrentTurnsPerAccount: 1,
+  maxConcurrentTurnsPerAccount: 2,
   maxTurnCostMicrousd: 250_000,
   maxTurnDurationMs: 60 * 60_000,
   contextWindowTokens: 128_000,

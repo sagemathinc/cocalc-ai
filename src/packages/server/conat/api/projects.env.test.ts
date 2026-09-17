@@ -20,6 +20,9 @@ let interBayProjectControlMock: {
   setProjectEntitlementOverride: jest.Mock;
   clearProjectEntitlementOverride: jest.Mock;
 };
+let assertAccountTrustedForProductAccessMock: jest.Mock;
+let interBayCreateCollabInviteMock: jest.Mock;
+let projectCollabInviteBayMock: jest.Mock;
 let interBayProjectSecretsMock: {
   list: jest.Mock;
   set: jest.Mock;
@@ -74,7 +77,14 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
   getInterBayBridge: () => ({
     projectControl: () => interBayProjectControlMock,
     projectSecrets: () => interBayProjectSecretsMock,
+    projectCollabInvite: (...args: any[]) =>
+      projectCollabInviteBayMock(...args),
   }),
+}));
+
+jest.mock("@cocalc/server/accounts/trusted-product-access", () => ({
+  assertAccountTrustedForProductAccess: (...args: any[]) =>
+    assertAccountTrustedForProductAccessMock(...args),
 }));
 
 jest.mock("@cocalc/server/projects/project-secrets", () => ({
@@ -120,6 +130,18 @@ describe("project env helpers", () => {
   } as const;
 
   beforeEach(() => {
+    assertAccountTrustedForProductAccessMock = jest.fn(async () => undefined);
+    interBayCreateCollabInviteMock = jest.fn(async () => ({
+      created: true,
+      invite: {
+        invite_id: "invite",
+        created: "2026-09-14T00:00:00Z",
+        updated: "2026-09-14T00:00:00Z",
+      },
+    }));
+    projectCollabInviteBayMock = jest.fn(() => ({
+      create: interBayCreateCollabInviteMock,
+    }));
     getLocalProjectCollaboratorAccessStatusMock = jest.fn(
       async () => "local-collaborator",
     );
@@ -823,4 +845,53 @@ describe("project env helpers", () => {
       ).not.toHaveBeenCalled();
     },
   );
+
+  it("checks inviter trust at home before routing a direct invite to the project owner", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 3 });
+    const { createCollabInvite } = await import("./projects");
+    await createCollabInvite({
+      account_id: ACCOUNT_ID,
+      session_hash: "session-1",
+      project_id: PROJECT_ID,
+      invitee_account_id: TARGET_PROJECT_ID,
+      direct: true,
+    });
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      "invite collaborators",
+    );
+    expect(projectCollabInviteBayMock).toHaveBeenCalledWith("bay-7");
+    expect(interBayCreateCollabInviteMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        trusted_admin: true,
+        trusted_product_access_checked: true,
+      }),
+    );
+    expect(
+      assertAccountTrustedForProductAccessMock.mock.invocationCallOrder[0],
+    ).toBeLessThan(interBayCreateCollabInviteMock.mock.invocationCallOrder[0]);
+    expect(requireDangerousProjectMutationAuthMock).toHaveBeenCalled();
+  });
+
+  it("does not trust a client-supplied trust attestation or forward when the home check fails", async () => {
+    isAdminMock.mockResolvedValue(true);
+    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 3 });
+    assertAccountTrustedForProductAccessMock.mockRejectedValue(
+      new Error("account trust denied"),
+    );
+    const { createCollabInvite } = await import("./projects");
+    await expect(
+      createCollabInvite({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+        invitee_account_id: TARGET_PROJECT_ID,
+        direct: true,
+        trusted_product_access_checked: true,
+      } as any),
+    ).rejects.toThrow("account trust denied");
+    expect(interBayCreateCollabInviteMock).not.toHaveBeenCalled();
+  });
 });
