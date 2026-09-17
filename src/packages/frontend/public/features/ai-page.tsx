@@ -6,6 +6,7 @@
 import { Button, Col, Flex, Row, Typography } from "antd";
 
 import { type IconName } from "@cocalc/frontend/components/icon";
+import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { PublicSection } from "@cocalc/frontend/public/layout/shell";
 import {
   alpha,
@@ -777,7 +778,9 @@ export default function AIFeaturePage({
     : featureSignUpPath("codex");
   const primaryLabel = isAuthenticated ? "Open projects" : "Create account";
   const showCodexDocs = product !== "plus";
-  const showResearchCompute = product !== "plus";
+  const showResearchCompute =
+    getPublicFeaturePage("research-compute", { cocalc_product: product }) !=
+    null;
 
   return (
     <>

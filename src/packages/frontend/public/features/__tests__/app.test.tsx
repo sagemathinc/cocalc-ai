@@ -127,7 +127,11 @@ describe("PublicFeaturesApp", () => {
   it("renders a detail page", () => {
     render(
       <PublicFeaturesApp
-        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        config={{
+          cocalc_product: "launchpad",
+          help_email: "help@example.com",
+          site_name: "Launchpad",
+        }}
         initialRoute={{ slug: "ai", view: "detail" }}
       />,
     );
@@ -175,6 +179,22 @@ describe("PublicFeaturesApp", () => {
     expect(screen.queryByText(/how an agent changed a file/)).toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
   });
+
+  it.each([undefined, "star"])(
+    "does not advertise unavailable research compute from the %s profile",
+    (product) => {
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ cocalc_product: product, site_name: "CoCalc" }}
+          initialRoute={{ slug: "ai", view: "detail" }}
+        />,
+      );
+
+      expect(
+        container.querySelector('a[href="/features/research-compute"]'),
+      ).toBeNull();
+    },
+  );
 
   it("does not link to hosted Codex docs from CoCalc Plus", () => {
     render(
