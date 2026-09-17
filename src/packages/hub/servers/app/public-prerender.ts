@@ -120,7 +120,7 @@ function renderProducts(
 ${productList}
 <section>
   <h2>One persistent project model</h2>
-  <p>Every path runs the same core model: a persistent computer where people and agents share a Linux project.</p>
+  <p>Every path uses the same core unit: a persistent Linux project that keeps files, tools, and services together. Collaboration, history, recovery, and agent features vary by product and deployment.</p>
   <p>${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "features/compare", "Compare CoCalc fit")} ${publicLink(basePath, "support", "Talk with CoCalc")}</p>
 </section>
 </main>`;
@@ -131,7 +131,7 @@ function renderPricing(basePath: string): string {
 <header>
   <p>CoCalc.ai pricing and licensing</p>
   <h1>Find the right fit</h1>
-  <p>The right setup depends on where CoCalc runs and how your team buys. Compare the operating models first—hosted, local, or customer-operated—then choose a plan.</p>
+  <p>The membership options on this page apply to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page.</p>
   <p>${publicLink(basePath, "products", "Compare operating models")}</p>
 </header>
 <section>

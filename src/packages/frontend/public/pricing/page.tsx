@@ -32,6 +32,10 @@ function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
 
+function isPositiveNumber(value: unknown): boolean {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
 function supportPurchasePath(subject: string, body: string): string {
   const params = new URLSearchParams({
     body,
@@ -83,6 +87,11 @@ export default function PricingPage({
   const publicTiers = sortMembershipTiersByDisplayOrder(
     (tiers ?? []).filter((tier) => tier.store_visible && !tier.disabled),
   );
+  const hasIncludedAi = publicTiers.some(
+    (tier) =>
+      isPositiveNumber(tier.ai_limits?.units_5h) ||
+      isPositiveNumber(tier.ai_limits?.units_7d),
+  );
   const visibleTiers = filterMembershipTiersForBillingInterval(
     publicTiers,
     billingInterval,
@@ -95,16 +104,19 @@ export default function PricingPage({
           Find the right fit
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          The right setup depends on two things: where CoCalc runs, and how your
-          team buys. Compare the operating models first — hosted, local, or
-          self-hosted — then choose a plan below.
+          The right setup depends on where CoCalc runs and how your team buys.
+          The membership grid below applies to the hosted service on this site.
+          For local, single-VM, and customer-operated paths, continue through
+          the relevant product or contact page.
         </Paragraph>
-        <Alert
-          showIcon
-          style={{ maxWidth: 720 }}
-          title="Codex with Luna Medium is included for everyone at no cost, with higher limits on paid plans. Connect your ChatGPT plan or API key to use additional models."
-          type="info"
-        />
+        {hasIncludedAi ? (
+          <Alert
+            showIcon
+            style={{ maxWidth: 720 }}
+            title="Some memberships on this site include AI usage. Compare the current tier limits below; availability and models depend on this site's configuration."
+            type="info"
+          />
+        ) : null}
         <Flex gap={12} wrap>
           <Button href={publicPath("products")}>
             Compare operating models

@@ -154,7 +154,7 @@ function maxBacktickRun(text: string): number {
 // "next step" is identical across the site.
 export function PublicNextStep({
   authenticated,
-  heading = "Ready to choose how CoCalc runs for your team?",
+  heading = "Ready to choose how CoCalc runs?",
 }: {
   authenticated?: boolean;
   heading?: ReactNode;

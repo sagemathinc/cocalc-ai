@@ -567,7 +567,7 @@ function productRouteMetadata(
       return {
         canonicalPath: publicPath("products/cocalc-plus", options),
         description:
-          "CoCalc Plus is the local, self-directed CoCalc path for evaluating the workspace model on a single machine before choosing hosted or shared deployment.",
+          "CoCalc Plus is the local, self-directed CoCalc path for evaluating the project model on a single machine before choosing hosted or shared deployment.",
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
         title: pageTitle("CoCalc Plus", siteName),
       };

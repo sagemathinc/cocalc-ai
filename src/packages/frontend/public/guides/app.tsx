@@ -89,7 +89,7 @@ function guidePath(slug: string): string {
 const FEATURED_GUIDES = [
   {
     body: "Use Codex agent chat beside project files, notebooks, terminals, screenshots, patches, and review notes.",
-    href: guidePath("codex-agent-chat"),
+    href: appPath("docs/ai/codex-chat"),
     icon: "robot",
     title: "Codex agent chat",
   },

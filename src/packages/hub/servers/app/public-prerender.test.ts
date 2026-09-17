@@ -46,6 +46,11 @@ describe("core landing page initial HTML", () => {
       expect(products).toContain("Ways to Run CoCalc");
       expect(products).toContain("CoCalc.ai");
       expect(products).toContain("CoCalc Rocket");
+      expect(products).toContain("persistent Linux project");
+      expect(products).toContain(
+        "agent features vary by product and deployment",
+      );
+      expect(products).not.toContain("persistent computer");
 
       const pricing = renderPublicRoutePrerender(
         { section: "pricing" },
@@ -54,6 +59,10 @@ describe("core landing page initial HTML", () => {
       expect(pricing).toContain('data-cocalc-public-prerender="pricing"');
       expect(pricing).toContain("Hosted memberships");
       expect(pricing).toContain("For teams and organizations");
+      expect(pricing).toContain(
+        "membership options on this page apply to the hosted service",
+      );
+      expect(pricing).not.toContain("then choose a plan");
     },
   );
 

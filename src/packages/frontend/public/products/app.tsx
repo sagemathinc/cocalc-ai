@@ -175,9 +175,10 @@ function ProductsOverviewPage({ config }: { config?: PublicConfig }) {
           </Popover>
         </Flex>
         <Paragraph style={{ fontSize: PUBLIC_TYPE.lead, margin: 0 }}>
-          Every path runs the same core model: a persistent computer where
-          people and agents share a Linux project. Choose who should operate it
-          and where it should run.
+          Every path uses the same core unit: a persistent Linux project that
+          keeps files, tools, and services together. Choose who should operate
+          the runtime and where it should run; collaboration, history, recovery,
+          and agent features vary by product and deployment.
         </Paragraph>
         <Flex gap={12} wrap>
           <LinkButton href={appPath("pricing")}>
@@ -378,12 +379,12 @@ function ProductSharedProjectNote() {
         padding: "2px 0 2px 14px",
       }}
     >
-      <Text strong>Same project, different operating path.</Text>{" "}
+      <Text strong>One project model, different operating paths.</Text>{" "}
       <Text style={{ color: PUBLIC_COLORS.mutedText }}>
-        The product path changes where CoCalc runs and who operates it; the
-        project remains the durable, reviewable working context for files,
-        notebooks, terminals, chats, TimeTravel recovery, real-time
-        collaboration, and AI/agent context.
+        The product path changes where CoCalc runs and who operates it. Files,
+        notebooks, and terminals stay organized around a project; collaboration,
+        history, recovery, and agent features depend on the product and
+        deployment configuration.
       </Text>
     </div>
   );
@@ -742,7 +743,7 @@ function CocalcPlusPage() {
     "curl -fsSL https://software.cocalc.ai/software/cocalc-plus/install.sh | bash";
   const detailItems = [
     {
-      body: "Individual users who want a local CoCalc workspace before choosing hosted collaboration or a shared deployment.",
+      body: "Individual users who want a local CoCalc project environment before choosing hosted collaboration or a shared deployment.",
       icon: "laptop",
       title: "Who it fits",
     },
@@ -752,7 +753,7 @@ function CocalcPlusPage() {
       title: "How it runs",
     },
     {
-      body: "Use Plus for local evaluation, demos, personal projects, and learning the CoCalc workspace model without creating a hosted account.",
+      body: "Use Plus for local evaluation, demos, personal projects, and learning the CoCalc project model without creating a hosted account.",
       icon: "star",
       title: "When to choose it",
     },
@@ -774,7 +775,7 @@ function CocalcPlusPage() {
           },
         ]}
         title="Need local CoCalc before choosing a shared path?"
-        body="Same durable project model on your machine — carry it forward, projects intact."
+        body="Use the same project-centered workflow on your own machine, with the runtime and local data under your control."
       />
       <ProductSharedProjectNote />
       <ProductDetailGrid items={detailItems} label="CoCalc Plus positioning" />

@@ -628,7 +628,7 @@ function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
                 margin: 0,
               }}
             >
-              One persistent computer for people, tools, and agents.
+              One persistent project for people, tools, and agents.
             </Title>
             <Paragraph
               style={{

@@ -361,6 +361,14 @@ describe("PublicApp", () => {
     expect(
       screen.getAllByRole("link", { name: "Browse docs" }).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("link", { name: /Codex agent chat/i }),
+    ).toHaveAttribute("href", "/docs/ai/codex-chat");
+    expect(
+      screen.getByRole("heading", {
+        name: "Ready to choose how CoCalc runs?",
+      }),
+    ).not.toBeNull();
   });
 
   it("uses the stored home-bay origin for public auth bootstrap", async () => {
@@ -525,10 +533,15 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
+      screen.getByText(/membership grid below applies to the hosted service/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/then choose a plan below/i)).toBeNull();
+    expect(
       screen.getByText(
-        "Codex with Luna Medium is included for everyone at no cost, with higher limits on paid plans. Connect your ChatGPT plan or API key to use additional models.",
+        "Some memberships on this site include AI usage. Compare the current tier limits below; availability and models depend on this site's configuration.",
       ),
     ).not.toBeNull();
+    expect(screen.queryByText(/included for everyone at no cost/i)).toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
       screen.getByText("A solid choice for everyday work."),
@@ -608,6 +621,29 @@ describe("PublicApp", () => {
         name: "Quotes and customized invoices",
       }),
     ).not.toBeNull();
+  });
+
+  it("does not promise included AI when no funded tier is configured", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({ tiers: [] }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "No public membership tiers are currently configured.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText(/memberships on this site include AI usage/i),
+    ).toBeNull();
+    expect(screen.queryByText(/included for everyone at no cost/i)).toBeNull();
   });
 
   it("hides the shared Policies nav item when public policies are disabled", async () => {
@@ -1740,6 +1776,13 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Need local CoCalc before choosing a shared path?"),
     ).not.toBeNull();
+    expect(
+      screen.getByText(/project-centered workflow on your own machine/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/projects intact/i)).toBeNull();
+    expect(
+      screen.getByText(/agent features depend on the product and deployment/i),
+    ).not.toBeNull();
   });
 
   it("renders the software overview page", async () => {
@@ -1754,6 +1797,12 @@ describe("PublicApp", () => {
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
     expect(screen.getByText("Which path fits?")).not.toBeNull();
+    expect(
+      screen.getByText(/persistent Linux project that keeps files/i),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/agent features vary by product and deployment/i),
+    ).not.toBeNull();
     const productChooser = screen.getByRole("list", {
       name: "CoCalc product path chooser",
     });
@@ -2097,7 +2146,7 @@ describe("feature configuration loading", () => {
   it.each([
     [
       { view: "index" as const },
-      "One persistent computer for people, tools, and agents.",
+      "One persistent project for people, tools, and agents.",
     ],
     [{ view: "detail" as const, slug: "terminal" }, "Linux Terminal"],
   ])(

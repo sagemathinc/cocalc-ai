@@ -60,6 +60,16 @@ describe("public route metadata", () => {
     expect(products.description).toContain("CoCalc Launchpad");
     expect(products.description).toContain("CoCalc Rocket");
 
+    const plus = getPublicRouteMetadata(
+      {
+        route: { view: "products-cocalc-plus" },
+        section: "products",
+      },
+      { site_name: "CoCalc" },
+    );
+    expect(plus.description).toContain("project model");
+    expect(plus.description).not.toContain("workspace model");
+
     const star = getPublicRouteMetadata(
       {
         route: { view: "products-cocalc-star" },
