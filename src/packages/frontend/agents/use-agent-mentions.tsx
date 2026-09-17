@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert } from "antd";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -269,7 +270,24 @@ export function useAgentMentions({
               title="Agent mention needs attention"
               description={
                 <>
-                  {error} <a href="/settings/my-agents">My Agents</a>
+                  {error}{" "}
+                  <a
+                    href="/settings/my-agents"
+                    onClick={(event) => {
+                      if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      )
+                        return;
+                      event.preventDefault();
+                      openAccountSettings({ page: "my-agents" });
+                    }}
+                  >
+                    My Agents
+                  </a>
                 </>
               }
             />
