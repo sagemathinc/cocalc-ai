@@ -2,9 +2,11 @@
 Do something somewhat friendly when a user signs in for the first time,
 either after creating an account or being signed out.
 
-Existing users open the most recent project they actively used. Accounts with
-no projects stay on the Projects page, where the first-run onboarding flow can
-ask what they actually want and choose an appropriate RootFS image.
+Users who enable the experimental My Agents workspace open it after normal
+sign-in. Other existing users open the most recent project they actively used.
+Accounts with no projects stay on the Projects page, where the first-run
+onboarding flow can ask what they actually want and choose an appropriate RootFS
+image. Explicit URL targets are loaded separately before this fallback action.
 
 That's it for now.
 */
@@ -14,6 +16,7 @@ import { redux } from "@cocalc/frontend/app-framework";
 import { once } from "@cocalc/util/async-utils";
 import { cmp } from "@cocalc/util/misc";
 import { QueryParams } from "@cocalc/frontend/misc/query-params";
+import { myAgentsUIEnabled } from "@cocalc/frontend/agents/workspace-ui-preference";
 
 export default async function signInAction() {
   const signIn = QueryParams.get("sign-in");
@@ -22,6 +25,14 @@ export default async function signInAction() {
   }
   QueryParams.remove("sign-in");
   await delay(1); // so projects store is created (not in sync initial load loop)
+  const account = redux.getStore("account");
+  while (account.get("created") == null) {
+    await once(account, "change");
+  }
+  if (myAgentsUIEnabled(account.get("other_settings"))) {
+    redux.getActions("page").set_active_tab("agents");
+    return;
+  }
   const project_id = await getProject();
   if (!project_id) {
     redux.getActions("page").set_active_tab("projects");
@@ -38,17 +49,12 @@ async function getProject(): Promise<string | undefined> {
   while (projects.get("project_map") == null) {
     await once(projects, "change");
   }
-  const account = redux.getStore("account");
-  while (account.get("created") == null) {
-    await once(account, "change");
-  }
-
   let project_map = projects.get("project_map")!;
   if (project_map.size == 0) {
     return undefined;
   }
 
-  const account_id = account.get("account_id");
+  const account_id = redux.getStore("account").get("account_id");
 
   // now there should be at least one project in project_map.
   // Is there a non-deleted non-hidden project?

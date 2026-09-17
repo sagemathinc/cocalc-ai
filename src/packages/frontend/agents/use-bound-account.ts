@@ -13,6 +13,7 @@ export function useBoundAgentAccount() {
     };
   }, []);
   return {
+    accountId: originalAccount.current,
     current: accountId === originalAccount.current,
     assertCurrent() {
       if (

@@ -87,6 +87,13 @@ export interface AccountState {
     };
     codex_max_concurrent_subagents?: number;
     experimental_my_agents_page?: boolean;
+    experimental_my_agents_organization_v1?: {
+      version: 1;
+      mode: "recent" | "custom";
+      pinned: string[];
+      custom: string[];
+      lastOpened: Record<string, number>;
+    };
     chat_speech_voice?: string;
     chat_speech_accent?: ChatSpeechAccent;
     chat_speech_speed?: number;

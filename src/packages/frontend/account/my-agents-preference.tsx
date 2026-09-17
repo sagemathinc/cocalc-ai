@@ -37,10 +37,11 @@ export function MyAgentsPreference() {
         }}
       />
       <p id={`${id}-description`}>
-        Show My Agents as a main workspace for your registered agents. This is a
-        rollout preference, not a permission boundary. Turning it off hides the
-        workspace but does not stop agents, revoke connections, or remove
-        project access.
+        Show My Agents as a main workspace for your registered agents and open
+        it after normal sign-in. Explicit links and document return URLs still
+        open their requested destination. This is a rollout preference, not a
+        permission boundary. Turning it off hides the workspace but does not
+        stop agents, revoke connections, or remove project access.
       </p>
       <a href="/docs/ai/my-agents">Learn about the experimental workspace</a>
       {error && <Alert role="alert" type="error" title={error} />}
