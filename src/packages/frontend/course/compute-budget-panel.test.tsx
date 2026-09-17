@@ -99,6 +99,10 @@ it("previews by keyboard, focuses the result and requests separate authorization
   );
   expect(screen.getByText("Verified Alice")).toBeVisible();
   expect(service.proposeAllocation).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("region", { name: "Allocation preview" })
+      .nextElementSibling,
+  ).toBe(screen.getByRole("region", { name: "Recommended VM templates" }));
 
   const retentionHelp = screen.getByRole("button", {
     name: "What happens when the student runs out of money?",

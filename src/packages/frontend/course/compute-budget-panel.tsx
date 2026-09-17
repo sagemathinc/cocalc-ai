@@ -539,12 +539,6 @@ export function ComputeBudget({
           Preview allocation
         </Button>
       </Form>
-      <CourseVmRecommendationsEditor
-        key={`${course_project_id}:${course_instance_id}`}
-        course_project_id={course_project_id}
-        course_instance_id={course_instance_id}
-        api={api}
-      />
       {error && (
         <Alert type="error" showIcon title={error} style={{ marginTop: 12 }} />
       )}
@@ -626,6 +620,12 @@ export function ComputeBudget({
           </Button>
         </section>
       )}
+      <CourseVmRecommendationsEditor
+        key={`${course_project_id}:${course_instance_id}`}
+        course_project_id={course_project_id}
+        course_instance_id={course_instance_id}
+        api={api}
+      />
     </div>
   );
 }
