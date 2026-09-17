@@ -192,6 +192,11 @@ test("applying a course RootFS mutates every managed project and restarts active
     ],
   });
 
+  const restartRequestId = calls[4]?.[1]?.restart_request_id;
+  assert.match(
+    restartRequestId,
+    /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+  );
   assert.deepEqual(calls, [
     ["state", "shared-project"],
     ["state", "student-project"],
@@ -211,7 +216,14 @@ test("applying a course RootFS mutates every managed project and restarts active
         image_id: "image-id",
       },
     ],
-    ["restart", { project_id: "student-project", wait: true }],
+    [
+      "restart",
+      {
+        project_id: "student-project",
+        restart_request_id: restartRequestId,
+        wait: true,
+      },
+    ],
   ]);
   assert.equal(result.project_count, 2);
   assert.equal(result.restarted_count, 1);

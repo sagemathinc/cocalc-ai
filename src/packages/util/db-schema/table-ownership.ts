@@ -308,26 +308,6 @@ export const TABLE_OWNERSHIP = {
       "Account-home onboarding continuation delivery state. Scheduling and delivery must route to the account home bay; account rehome is unsafe until this state has explicit migration support.",
   }),
 
-  ...entries(["purchases"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    secondary_reference_fields: {
-      project_id:
-        "Project reference for project-linked purchases, not placement authority.",
-    },
-    notes:
-      "Account-owned commercial ledger state and current balance source input. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable ledger state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
-  }),
-
-  ...entries(["statements"], {
-    ownership: "account-home",
-    authority: "account_id",
-    portability: "unsupported",
-    notes:
-      "Account-owned statement and balance snapshot state derived from purchases and tied to payment reconciliation. Current writes route through account-home billing paths, but the long-term target is likely seed-global immutable commercial statement state with account-home projections. This must never be dropped, reinitialized, or moved by generic rehome/drain tooling.",
-  }),
-
   ...entries(
     [
       "agent_personal_controls",

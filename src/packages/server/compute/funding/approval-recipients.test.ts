@@ -6,6 +6,7 @@ import {
   prepareFundingApprovalRecipients,
 } from "./approval-recipients";
 import type { FundingApprovalReview } from "./approval-review";
+import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -64,6 +65,7 @@ it("routes to current homes, not stored review homes, and holds local row checks
   });
   expect(db.query).toHaveBeenCalledWith(expect.stringContaining("FOR SHARE"), [
     [payer],
+    DEFAULT_BAY_ID,
   ]);
 });
 it.each([{ banned: true }, { deleted: true }, { home_bay_id: "moved" }])(
