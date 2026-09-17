@@ -49,6 +49,7 @@ import {
   closeEndedVolumePersonalConsents,
 } from "./volume-personal";
 import { settleComputeVmFundingLocal } from "./vm-settlement";
+import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";
 import { recoverTerminalCourseVmFunding } from "./vm-worker-recovery";
 import { getComputeVolumeById } from "../volume-db";
 import {
@@ -88,9 +89,11 @@ jest.mock("@cocalc/server/bay-directory", () => ({
 const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
 // PGlite does not expose independent backend lock waits in pg_stat_activity.
 const postgresIt = process.env.COCALC_TEST_USE_PGLITE === "1" ? it.skip : it;
+let stopRollout: (() => void) | undefined;
 beforeAll(async () => {
   process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "personal-volume-funding-test";
   await before({ noConat: true });
+  stopRollout = await enableTestSponsorshipRollout();
 }, 60_000);
 const fixtures = fundingResourceFixtures();
 const homeFixtureIds = new Set<string>();
@@ -110,6 +113,7 @@ afterAll(async () => {
   try {
     await fixtures.cleanup();
   } finally {
+    stopRollout?.();
     await after();
     if (deployment == null) delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
     else process.env.COCALC_COMPUTE_DEPLOYMENT_ID = deployment;
@@ -495,6 +499,9 @@ it("upgrades existing VM-only consents to permit exactly one standalone volume",
   await db.connect();
   try {
     await db.query("BEGIN");
+    await db.query(
+      "DELETE FROM compute_vm_personal_consents WHERE vm_id IS NULL",
+    );
     await db.query(
       "ALTER TABLE compute_vm_personal_consents ALTER COLUMN vm_id SET NOT NULL",
     );

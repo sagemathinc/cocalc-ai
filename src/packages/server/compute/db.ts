@@ -13,6 +13,13 @@ import type {
   ComputeVolumeRow,
   ComputeWorkRow,
 } from "./types";
+import {
+  ComputeWorkLeaseLostError,
+  computeWorkLeaseSql,
+  currentComputeWorkLease,
+  markCurrentComputeWorkLeaseLost,
+  requireFencedResourceUpdate,
+} from "./work-lease";
 
 const pool = () => getPool();
 const MAX_COMPUTE_VM_SSH_KEYS = 32;
@@ -443,8 +450,9 @@ export async function updateComputeVmProviderObservation(
   id: string,
   observation: Record<string, unknown>,
 ): Promise<ComputeVmRow | undefined> {
+  const lease = computeWorkLeaseSql(3);
   const { rows } = await pool().query<ComputeVmRow>(
-    `UPDATE compute_vms
+    `${lease.cte} UPDATE compute_vms
         SET metadata=jsonb_set(
               COALESCE(metadata, '{}'::jsonb),
               '{provider_observation}',
@@ -452,11 +460,11 @@ export async function updateComputeVmProviderObservation(
               true
             ),
             updated_at=NOW()
-      WHERE id=$1
+      WHERE id=$1${lease.clause}
       RETURNING *`,
-    [id, observation],
+    [id, observation, ...lease.values],
   );
-  return rows[0];
+  return requireFencedResourceUpdate(rows[0]);
 }
 
 export async function updateComputeVm(
@@ -502,12 +510,13 @@ export async function updateComputeVm(
   if (!entries.length) return await getComputeVmById(id);
   const values = entries.map(([, value]) => value);
   const assignments = entries.map(([key], index) => `${key}=$${index + 2}`);
+  const lease = computeWorkLeaseSql(values.length + 2);
   const { rows } = await pool().query<ComputeVmRow>(
-    `UPDATE compute_vms SET ${assignments.join(", ")}, updated_at=NOW()
-     WHERE id=$1 RETURNING *`,
-    [id, ...values],
+    `${lease.cte} UPDATE compute_vms SET ${assignments.join(", ")}, updated_at=NOW()
+     WHERE id=$1${lease.clause} RETURNING *`,
+    [id, ...values, ...lease.values],
   );
-  return rows[0];
+  return requireFencedResourceUpdate(rows[0]);
 }
 
 export async function addComputeVmSshPublicKey({
@@ -872,12 +881,29 @@ export async function heartbeatComputeWork(opts: {
   worker_id: string;
   attempt: number;
 }) {
-  await pool().query(
+  const result = await pool().query(
     `UPDATE compute_resource_work
      SET locked_at=NOW(), updated_at=NOW()
      WHERE id=$1 AND state='in_progress' AND locked_by=$2 AND attempt=$3`,
     [opts.id, opts.worker_id, opts.attempt],
   );
+  return result.rowCount === 1;
+}
+
+export async function renewCurrentComputeWorkLease(): Promise<void> {
+  const lease = currentComputeWorkLease();
+  if (!lease) return;
+  if (
+    lease.lost ||
+    !(await heartbeatComputeWork({
+      id: lease.id,
+      worker_id: lease.worker_id,
+      attempt: lease.attempt,
+    }))
+  ) {
+    markCurrentComputeWorkLeaseLost();
+    throw new ComputeWorkLeaseLostError();
+  }
 }
 
 export async function enqueueExpiredComputeVms(limit = 100) {

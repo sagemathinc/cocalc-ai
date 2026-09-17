@@ -8,6 +8,7 @@ import getPool from "@cocalc/database/pool";
 import { COMPUTE_VOLUME_V2_SQL } from "./contract";
 import { enqueueComputeWork } from "./db";
 import type { ComputeVolumeRow } from "./types";
+import { computeWorkLeaseSql, requireFencedResourceUpdate } from "./work-lease";
 
 const pool = () => getPool();
 
@@ -246,12 +247,13 @@ export async function updateComputeVolume(
         ? `ready_at=COALESCE(ready_at,$${index + 2})`
         : `${key}=$${index + 2}`,
   );
+  const lease = computeWorkLeaseSql(values.length + 2);
   const { rows } = await pool().query<ComputeVolumeRow>(
-    `UPDATE compute_volumes SET ${assignments.join(", ")}, updated_at=NOW()
-     WHERE id=$1 RETURNING *`,
-    [id, ...values],
+    `${lease.cte} UPDATE compute_volumes SET ${assignments.join(", ")}, updated_at=NOW()
+     WHERE id=$1${lease.clause} RETURNING *`,
+    [id, ...values, ...lease.values],
   );
-  return rows[0];
+  return requireFencedResourceUpdate(rows[0]);
 }
 
 export async function detachComputeVolumeFromVm(vmId: string) {

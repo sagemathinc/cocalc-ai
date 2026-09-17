@@ -4,6 +4,7 @@
  */
 
 import type {
+  AccountLocalDedicatedHostAdmissionSnapshot,
   AccountLocalDedicatedHostPolicySnapshot,
   AccountLocalGetDedicatedHostPolicySnapshotRequest,
 } from "@cocalc/conat/inter-bay/api";
@@ -17,7 +18,6 @@ import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { getActiveAccountEntitlementOverride } from "@cocalc/server/membership/entitlement-overrides";
 import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
-import { getSeedMembershipTierMap } from "@cocalc/server/membership/tiers";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
 import { executeBillingAuthorityCommand } from "@cocalc/server/purchases/billing-authority/client";
 import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
@@ -263,24 +263,46 @@ export function getDedicatedHostFundingModeFromSettings(
   }
 }
 
-/** Network/configuration inputs read before taking an account financial lock. */
-export async function prepareDedicatedHostPolicyInputsLocal(
+export async function getDedicatedHostAdmissionSnapshotLocal(
   account_id: string,
-) {
-  const tiers = await getSeedMembershipTierMap({ includeDisabled: true });
-  const settings = await getServerSettings();
-  const has_active_second_factor = await hasActiveSecondFactor(account_id);
-  // A provider outage must fail postpaid readiness closed without disabling
-  // prepaid funding or explicit trusted-admin manual collection.
-  const has_payment_method = await hasPaymentMethod(account_id).catch(
-    () => false,
-  );
-  return { tiers, settings, has_active_second_factor, has_payment_method };
+): Promise<AccountLocalDedicatedHostAdmissionSnapshot> {
+  const [membership, settings, admin_override, has_active_second_factor] =
+    await Promise.all([
+      resolveMembershipForAccount(account_id),
+      getServerSettings(),
+      getActiveAccountEntitlementOverride(account_id),
+      hasActiveSecondFactor(account_id),
+    ]);
+  return {
+    account_id,
+    membership_class: membership.class,
+    can_create_hosts: membership.entitlements?.features?.create_hosts === true,
+    funding_mode:
+      admin_override?.dedicated_hosts?.funding_mode?.value ??
+      getDedicatedHostFundingModeFromSettings(settings),
+    effective_limits: getEffectiveMembershipUsageLimits(membership),
+    has_active_second_factor,
+    admin_override,
+  };
 }
 
-export type DedicatedHostPolicyInputs = Awaited<
-  ReturnType<typeof prepareDedicatedHostPolicyInputsLocal>
->;
+export async function getDedicatedHostAdmissionSnapshotForAccount(
+  account_id: string,
+): Promise<AccountLocalDedicatedHostAdmissionSnapshot> {
+  const location = await resolveAccountHomeBay({
+    account_id,
+    user_account_id: account_id,
+  });
+  const home_bay_id =
+    `${location.home_bay_id ?? ""}`.trim() || getConfiguredBayId();
+  if (home_bay_id === getConfiguredBayId()) {
+    return await getDedicatedHostAdmissionSnapshotLocal(account_id);
+  }
+  return await createInterBayAccountLocalClient({
+    client: getInterBayFabricClient(),
+    dest_bay: home_bay_id,
+  }).getDedicatedHostAdmissionSnapshot({ account_id });
+}
 
 interface DedicatedHostFinancialSnapshot {
   has_payment_method: boolean;
@@ -341,43 +363,27 @@ export async function getDedicatedHostPolicySnapshotLocal(
   {
     funding_mode_override,
     client,
-    policy_inputs,
+    admission_snapshot,
   }: {
     funding_mode_override?: DedicatedHostFundingMode;
     client?: PoolClient;
-    policy_inputs?: DedicatedHostPolicyInputs;
+    admission_snapshot?: AccountLocalDedicatedHostAdmissionSnapshot;
   } = {},
 ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
-  const [membership, settings, admin_override] = await Promise.all([
-    resolveMembershipForAccount(
-      account_id,
-      client && policy_inputs
-        ? { client, tiers: policy_inputs.tiers }
-        : undefined,
-    ),
-    policy_inputs?.settings ?? getServerSettings(),
-    getActiveAccountEntitlementOverride(account_id, client),
-  ]);
-  const effective_limits = getEffectiveMembershipUsageLimits(membership);
-  const funding_mode =
-    admin_override?.dedicated_hosts?.funding_mode?.value ??
-    getDedicatedHostFundingModeFromSettings(settings);
-  const has_active_second_factor =
-    policy_inputs?.has_active_second_factor ??
-    (await hasActiveSecondFactor(account_id));
+  const admission =
+    admission_snapshot ??
+    (await getDedicatedHostAdmissionSnapshotLocal(account_id));
+  if (admission.account_id !== account_id) {
+    throw new Error("Dedicated-host admission snapshot account mismatch.");
+  }
+  const { funding_mode } = admission;
   const needs_account_billing_snapshot =
     funding_mode !== "site-funded" ||
     (funding_mode_override != null && funding_mode_override !== "site-funded");
 
   if (!needs_account_billing_snapshot) {
     return {
-      account_id,
-      membership_class: membership.class,
-      can_create_hosts:
-        membership.entitlements?.features?.create_hosts === true,
-      funding_mode,
-      effective_limits,
-      has_active_second_factor,
+      ...admission,
       has_payment_method: false,
       has_usage_subscription: false,
       balance: moneyToDbString(0),
@@ -389,7 +395,6 @@ export async function getDedicatedHostPolicySnapshotLocal(
         credit_5h_usd: moneyToDbString(0),
         credit_7d_usd: moneyToDbString(0),
       },
-      admin_override,
     };
   }
 
@@ -410,18 +415,11 @@ export async function getDedicatedHostPolicySnapshotLocal(
       : await getDedicatedHostFinancialSnapshotLocal(account_id, {
           needs_postpaid_snapshot,
           client,
-          has_payment_method_override: policy_inputs?.has_payment_method,
         });
 
   return {
-    account_id,
-    membership_class: membership.class,
-    can_create_hosts: membership.entitlements?.features?.create_hosts === true,
-    funding_mode,
-    effective_limits,
-    has_active_second_factor,
+    ...admission,
     ...financial,
-    admin_override,
   };
 }
 

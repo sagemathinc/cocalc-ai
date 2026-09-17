@@ -39,7 +39,12 @@ import {
   enqueueComputeVolumeReconciliation,
   listComputeVolumesForInventory,
   listOwnedComputeVolumes,
+  updateComputeVolume,
 } from "./volume-db";
+import {
+  ComputeWorkLeaseLostError,
+  runWithComputeWorkLease,
+} from "./work-lease";
 import {
   activeComputeVmProjectKeys,
   grantComputeVmProjectAccess,
@@ -772,6 +777,59 @@ describe("compute VM durable state", () => {
       attempt: current.attempt,
     });
   });
+
+  it.each([
+    ["vm", "reconcile"],
+    ["volume", "reconcile_volume"],
+  ] as const)(
+    "fences stale %s resource writes after lease reclamation",
+    async (resourceKind, action) => {
+      const resource =
+        resourceKind === "vm"
+          ? await insertComputeVm(vmInput())
+          : await insertComputeVolume(volumeInput(), 2);
+      await enqueueComputeWork({
+        resource_kind: resourceKind,
+        resource_id: resource.id,
+        action,
+        idempotency_key: `fence-${resourceKind}`,
+      });
+      const [stale] = await claimComputeWork({
+        worker_id: "worker-stale",
+        limit: 1,
+      });
+      await runWithComputeWorkLease(
+        {
+          id: stale.id,
+          worker_id: "worker-stale",
+          attempt: stale.attempt,
+        },
+        async () => {
+          await getPool().query(
+            "UPDATE compute_resource_work SET locked_at=NOW() - interval '20 minutes' WHERE id=$1",
+            [stale.id],
+          );
+          const [current] = await claimComputeWork({
+            worker_id: "worker-current",
+            limit: 1,
+          });
+          expect(current.attempt).toBeGreaterThan(stale.attempt);
+          const update =
+            resourceKind === "vm"
+              ? updateComputeVm(resource.id, { state: "failed" })
+              : updateComputeVolume(resource.id, { state: "failed" });
+          await expect(update).rejects.toBeInstanceOf(
+            ComputeWorkLeaseLostError,
+          );
+        },
+      );
+      const currentResource =
+        resourceKind === "vm"
+          ? await getComputeVmById(resource.id)
+          : await getComputeVolumeById(resource.id);
+      expect(currentResource?.state).toBe(resource.state);
+    },
+  );
 
   it("turns an expired lease into durable delete work", async () => {
     const vm = await insertComputeVm(

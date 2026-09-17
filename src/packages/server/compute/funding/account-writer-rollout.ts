@@ -6,6 +6,75 @@ import type {
   FundingRolloutBay,
 } from "./production-rollout-contract";
 
+// Every table whose mutation can change account money, financial policy,
+// sponsored-compute backing, or the durable record of those changes. The
+// rollout verifier intentionally over-includes adjacent journals and work
+// queues so an old credential cannot retain a financially meaningful write
+// path while passing attestation.
+export const FUNDING_AUTHORITY_TABLES = [
+  "accounts",
+  "billing_accounts",
+  "purchases",
+  "subscriptions",
+  "statements",
+  "payment_fulfillments",
+  "provider_refund_attempts",
+  "subscription_renewal_attempts",
+  "admin_membership_orders",
+  "admin_membership_package_intents",
+  "billing_authority_commands",
+  "billing_authority_lease",
+  "billing_authority_account_fences",
+  "billing_authority_migrations",
+  "credit_transfer_ledger_observations",
+  "credit_payment_roots",
+  "credit_transfers",
+  "credit_transfer_deliveries",
+  "credit_transfer_entries",
+  "account_usage_windows",
+  "account_usage_epochs",
+  "account_usage_epoch_resets",
+  "account_usage_counters",
+  "account_usage_counter_states",
+  "account_funding_holds",
+  "account_funding_authorities",
+  "compute_funding_exposure_policy",
+  "compute_funding_pools",
+  "compute_funding_grants",
+  "compute_funding_reservations",
+  "compute_funding_events",
+  "compute_funding_purchase_attributions",
+  "compute_vm_personal_consents",
+  "compute_vms",
+  "compute_volumes",
+  "compute_resource_work",
+  "compute_resource_events",
+  "compute_site_funded_usage",
+  "compute_egress_meter_intervals",
+] as const;
+
+export async function listFundingAuthorityWriterRoles(
+  db: Pick<ReturnType<typeof getPool>, "query"> = getPool(),
+): Promise<{ role: string; superuser: boolean; bypass_rls: boolean }[]> {
+  const { rows } = await db.query<{
+    role: string;
+    superuser: boolean;
+    bypass_rls: boolean;
+  }>(
+    `WITH tables AS (SELECT oid FROM pg_class WHERE relname=ANY($1::text[]) AND relnamespace='public'::regnamespace)
+     SELECT login.rolname AS role, login.rolsuper AS superuser, login.rolbypassrls AS bypass_rls
+     FROM pg_roles login
+     WHERE login.rolcanlogin AND has_database_privilege(login.oid,current_database(),'CONNECT')
+       AND (login.rolsuper OR EXISTS (
+         SELECT 1 FROM pg_roles reachable CROSS JOIN tables
+         WHERE pg_has_role(login.oid,reachable.oid,'MEMBER')
+           AND has_table_privilege(reachable.oid,tables.oid,'INSERT,UPDATE,DELETE,TRUNCATE')))
+     ORDER BY login.rolname`,
+    [FUNDING_AUTHORITY_TABLES],
+  );
+  return rows;
+}
+
 export function fundingWriterBuildId(): string | undefined {
   return (
     process.env.COCALC_FUNDING_WRITER_BUILD_ID ||
@@ -55,38 +124,7 @@ export async function verifyFundingAccountWriters(
   // Include inherited and SET ROLE reachable privileges, not just direct grants.
   // Operator roles are explicitly inventoried in the signed manifest; they are
   // trusted administrators, not unnamed application-worker exceptions.
-  const { rows: writers } = await pool.query<{
-    role: string;
-    superuser: boolean;
-    bypass_rls: boolean;
-  }>(
-    `WITH tables AS (SELECT oid FROM pg_class WHERE relname=ANY($1::text[]) AND relnamespace='public'::regnamespace)
-     SELECT login.rolname AS role, login.rolsuper AS superuser, login.rolbypassrls AS bypass_rls
-     FROM pg_roles login
-     WHERE login.rolcanlogin AND has_database_privilege(login.oid,current_database(),'CONNECT')
-       AND (login.rolsuper OR EXISTS (
-         SELECT 1 FROM pg_roles reachable CROSS JOIN tables
-         WHERE pg_has_role(login.oid,reachable.oid,'MEMBER')
-           AND has_table_privilege(reachable.oid,tables.oid,'INSERT,UPDATE,DELETE,TRUNCATE')))
-     ORDER BY login.rolname`,
-    [
-      [
-        "purchases",
-        "accounts",
-        "subscriptions",
-        "account_funding_holds",
-        "account_funding_authorities",
-        "compute_funding_pools",
-        "compute_funding_grants",
-        "compute_funding_reservations",
-        "compute_vms",
-        "compute_volumes",
-        "compute_resource_work",
-        "course_funding_approval_intents",
-        "course_funding_pool_changes",
-      ],
-    ],
-  );
+  const writers = await listFundingAuthorityWriterRoles(pool);
   const allowed = new Set([
     ...bay.database.writer_roles,
     ...bay.database.operator_roles,

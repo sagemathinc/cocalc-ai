@@ -35,6 +35,11 @@ import {
   recoverTerminalCourseVolumeFunding,
 } from "./volume-recovery";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
+import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";
+import {
+  ComputeWorkLeaseLostError,
+  runWithComputeWorkLease,
+} from "../work-lease";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -56,14 +61,17 @@ jest.mock("../provider", () => ({
 }));
 const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
 const fixtures = fundingResourceFixtures();
+let stopRollout: (() => void) | undefined;
 beforeAll(async () => {
   process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "volume-funding-test";
   await before({ noConat: true });
+  stopRollout = await enableTestSponsorshipRollout();
 }, 60_000);
 afterAll(async () => {
   try {
     await fixtures.cleanup();
   } finally {
+    stopRollout?.();
     await after();
     if (deployment == null) delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
     else process.env.COCALC_COMPUTE_DEPLOYMENT_ID = deployment;
@@ -268,6 +276,67 @@ it("reserves growth before resize, replays its operation, and starts incremental
     grant_id: f.source.grant_id,
   });
   expect(publicVolumeFundingStatus(grown)!.payer_account_id).toBeUndefined();
+});
+
+it("fences a stale resize after provider success and preserves the successor's deletion", async () => {
+  const f = await fixture();
+  await work(f.id, "provision_volume");
+  await reserveCourseVolumeGrowth((await getComputeVolumeById(f.id))!, {
+    operation_id: randomUUID(),
+    expected_funding_version: f.epoch,
+    size_gb: 20,
+    rate: { hourly_cost_usd: "0.02", pricing_snapshot: { provider: "gcp" } },
+  });
+  const workId = randomUUID();
+  await getPool().query(
+    `INSERT INTO compute_resource_work
+      (id,resource_kind,resource_id,action,idempotency_key,payload,state,attempt,locked_by,locked_at,created_at,updated_at)
+     VALUES ($1,'volume',$2,'resize_volume',$3,'{}','in_progress',1,'worker-stale',NOW(),NOW(),NOW())`,
+    [workId, f.id, `stale-resize:${f.id}`],
+  );
+  let providerStarted!: () => void;
+  let releaseProvider!: () => void;
+  const started = new Promise<void>((resolve) => (providerStarted = resolve));
+  const release = new Promise<void>((resolve) => (releaseProvider = resolve));
+  (resizeProviderComputeVolume as jest.Mock).mockImplementationOnce(
+    async () => {
+      providerStarted();
+      await release;
+    },
+  );
+  const stale = runWithComputeWorkLease(
+    { id: workId, worker_id: "worker-stale", attempt: 1 },
+    async () =>
+      await handleComputeWork({
+        id: workId,
+        resource_kind: "volume",
+        resource_id: f.id,
+        action: "resize_volume",
+        payload: {},
+        attempt: 1,
+      } as any),
+  );
+  await started;
+  await getPool().query(
+    `UPDATE compute_resource_work
+        SET locked_by='worker-current',attempt=2,locked_at=NOW(),updated_at=NOW()
+      WHERE id=$1`,
+    [workId],
+  );
+  await getPool().query(
+    `UPDATE compute_volumes
+        SET state='deleted',desired_state='deleted',deleted_at=NOW(),updated_at=NOW()
+      WHERE id=$1`,
+    [f.id],
+  );
+  releaseProvider();
+  await expect(stale).rejects.toBeInstanceOf(ComputeWorkLeaseLostError);
+  const volume = (await getComputeVolumeById(f.id))!;
+  expect(volume.state).toBe("deleted");
+  expect(volume.desired_state).toBe("deleted");
+  expect(
+    volume.metadata.billing.course_funding.growth[0].started_at,
+  ).toBeUndefined();
 });
 
 it.each([true, false])(

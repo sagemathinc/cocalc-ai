@@ -26,7 +26,7 @@ import type { ComputeFundingLane } from "@cocalc/util/compute-funding";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import {
   getAccountFundingBacking,
-  fundingPolicyInputs,
+  fundingAdmissionSnapshot,
   requireFundingAccountTransaction,
 } from "./backing";
 import type { AccountFundingBacking } from "./backing";
@@ -245,7 +245,7 @@ export async function getComputeFundingPolicyInTransaction(
     funding_mode_override:
       opts.lane === "prepaid" ? "account-prepaid" : "account-postpaid",
     client,
-    policy_inputs: fundingPolicyInputs(client, payer),
+    admission_snapshot: fundingAdmissionSnapshot(client, payer),
   });
   const backing = await getAccountFundingBacking(client, payer);
   const row = opts.for_service

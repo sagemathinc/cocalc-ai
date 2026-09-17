@@ -30,6 +30,7 @@ import {
   enqueueExpiredComputeVms,
   finishComputeWork,
   heartbeatComputeWork,
+  renewCurrentComputeWorkLease,
   getComputeVmById,
   insertComputeInstance,
   listComputeVmsForBillingEnforcement,
@@ -40,6 +41,11 @@ import {
   updateComputeVmEgressMetadata,
   updateComputeVm,
 } from "./db";
+import {
+  markCurrentComputeWorkLeaseCompleted,
+  markCurrentComputeWorkLeaseLost,
+  runWithComputeWorkLease,
+} from "./work-lease";
 import { getComputeVmConfig } from "./config";
 import { processVmPersonalFundingHandoffs } from "./funding/vm-personal";
 import { recoverTerminalCourseVmFunding } from "./funding/vm-worker-recovery";
@@ -176,8 +182,10 @@ async function observeVmPhase<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const startedAt = Date.now();
+  let result: T;
   try {
-    const result = await fn();
+    result = await fn();
+    await renewCurrentComputeWorkLease();
     logger.info("managed compute phase completed", {
       vm_id: vm.id,
       project_id: vm.project_id,
@@ -186,8 +194,8 @@ async function observeVmPhase<T>(
       outcome: "success",
       duration_ms: Date.now() - startedAt,
     });
-    return result;
   } catch (err) {
+    await renewCurrentComputeWorkLease();
     logger.warn("managed compute phase failed", {
       vm_id: vm.id,
       project_id: vm.project_id,
@@ -199,6 +207,7 @@ async function observeVmPhase<T>(
     });
     throw err;
   }
+  return result;
 }
 
 async function recordSiteFundedUsage(opts: {
@@ -2233,6 +2242,7 @@ async function start(vm: ComputeVmRow) {
   );
   vm = await ensureVmPublicAddress(vm);
   await ensureProviderComputePublicAddressAttached(vm);
+  await renewCurrentComputeWorkLease();
   vm = (await updateComputeVm(vm.id, {
     state: "starting",
     error: null,
@@ -2308,6 +2318,7 @@ async function switchToOnDemand(vm: ComputeVmRow) {
       Date.now() + policy.rapid_preemption_standard_hold_minutes * 60_000,
     ).toISOString();
   await setProviderComputePricing(vm, "on_demand");
+  await renewCurrentComputeWorkLease();
   const fallback = (await updateComputeVm(vm.id, {
     state: "starting",
     effective_pricing_model: "on_demand",
@@ -2331,6 +2342,7 @@ async function probeAndReturnToSpot(vm: ComputeVmRow) {
   denyCourseVmMutation(vm, "Spot pricing switch");
   if (spotStandardHoldIsActive(spotState(vm))) return;
   const available = await probeProviderComputeSpot(vm);
+  await renewCurrentComputeWorkLease();
   if (!available) {
     const nextProbe = new Date(
       Date.now() + spotProbeIntervalMs(vm.spot_recovery_policy),
@@ -2361,6 +2373,7 @@ async function probeAndReturnToSpot(vm: ComputeVmRow) {
     },
   });
   await setProviderComputePricing(vm, "spot");
+  await renewCurrentComputeWorkLease();
   const spot = (await updateComputeVm(vm.id, {
     state: "starting",
     effective_pricing_model: "spot",
@@ -2455,6 +2468,7 @@ async function remove(vm: ComputeVmRow) {
     desired_state: "deleted",
   });
   await stopProviderComputeVm(vm);
+  await renewCurrentComputeWorkLease();
   vm = await syncVmProjectAccess((await getComputeVmById(vm.id)) ?? vm, false);
   await observeVmPhase(vm, "provider_delete", async () =>
     deleteProviderComputeVm(vm),
@@ -2486,6 +2500,7 @@ async function remove(vm: ComputeVmRow) {
       }
     }
   }
+  await renewCurrentComputeWorkLease();
   await detachComputeVolumeFromVm(vm.id);
   const next = (await updateComputeVm(vm.id, {
     state: "deleted",
@@ -2519,6 +2534,7 @@ async function provisionVolume(volume: ComputeVolumeRow) {
   const disk = await ensureProviderComputeVolume(
     await refreshCourseVolumeForProvider(provisioning),
   );
+  await renewCurrentComputeWorkLease();
   const next = (await updateComputeVolume(volume.id, {
     state: "ready",
     size_gb: volume.desired_size_gb,
@@ -2548,6 +2564,7 @@ async function resizeVolume(volume: ComputeVolumeRow) {
   if (volume.desired_size_gb === volume.size_gb) return;
   await updateComputeVolume(volume.id, { state: "resizing", error: null });
   await resizeProviderComputeVolume(volume);
+  await renewCurrentComputeWorkLease();
   if (hasCourseVolumeFunding(volume)) {
     const disk = await inspectProviderComputeVolume(volume);
     if (
@@ -2606,7 +2623,9 @@ async function deleteVolume(volume: ComputeVolumeRow) {
           new Date(Date.now() + 5000),
         );
       await detachProviderComputeHomeVolume(vm, volume);
+      await renewCurrentComputeWorkLease();
       const disk = await inspectProviderComputeVolume(volume);
+      await renewCurrentComputeWorkLease();
       if (disk?.users.length)
         throw new Error("Volume detach is not confirmed by the provider");
       const client = await getPool().connect();
@@ -2660,6 +2679,7 @@ async function deleteVolume(volume: ComputeVolumeRow) {
   }
   await updateComputeVolume(volume.id, { state: "deleting", error: null });
   await deleteProviderComputeVolume(volume);
+  await renewCurrentComputeWorkLease();
   const next = (await updateComputeVolume(volume.id, {
     state: "deleted",
     desired_state: "deleted",
@@ -2685,6 +2705,7 @@ async function reconcileVolume(volume: ComputeVolumeRow) {
     volume = await refreshCourseVolumeForProvider(volume);
   }
   const observed = await inspectProviderComputeVolume(volume);
+  await renewCurrentComputeWorkLease();
   if (!observed) {
     if (!volume.ready_at) return await provisionVolume(volume);
     await updateComputeVolume(volume.id, {
@@ -2730,6 +2751,7 @@ async function reconcileRetainedVolume(volume: ComputeVolumeRow) {
   // Observation is allowed after service ends, but must never provision or
   // resize. Fence the result against a concurrent reauthorization or attach.
   const observed = await inspectProviderComputeVolume(volume);
+  await renewCurrentComputeWorkLease();
   const valid =
     observed &&
     observed.size_gb >=
@@ -3077,20 +3099,25 @@ export function startComputeVmWorker(
   let queueSchemaReady = false;
   const activeWork = new Set<Promise<void>>();
 
-  const processWork = async (row: ComputeWorkRow) => {
+  const processWorkWithLease = async (row: ComputeWorkRow) => {
     const startedAt = Date.now();
     const heartbeat = setInterval(() => {
       void heartbeatComputeWork({
         id: row.id,
         worker_id: workerId,
         attempt: row.attempt,
-      }).catch((err) =>
-        logger.warn("managed compute work heartbeat failed", {
-          id: row.id,
-          resource_id: row.resource_id,
-          err,
-        }),
-      );
+      })
+        .then((owned) => {
+          if (!owned) markCurrentComputeWorkLeaseLost();
+        })
+        .catch((err) => {
+          markCurrentComputeWorkLeaseLost();
+          logger.warn("managed compute work heartbeat failed", {
+            id: row.id,
+            resource_id: row.resource_id,
+            err,
+          });
+        });
     }, 60_000);
     heartbeat.unref();
     try {
@@ -3109,6 +3136,7 @@ export function startComputeVmWorker(
         });
         return;
       }
+      markCurrentComputeWorkLeaseCompleted();
       logger.info("managed compute work completed", {
         id: row.id,
         resource_kind: row.resource_kind,
@@ -3138,6 +3166,7 @@ export function startComputeVmWorker(
           error,
         });
         if (!finished) return;
+        markCurrentComputeWorkLeaseCompleted();
         const vm =
           row.resource_kind === "vm"
             ? await getComputeVmById(row.resource_id)
@@ -3179,6 +3208,7 @@ export function startComputeVmWorker(
         error,
       });
       if (!finished) return;
+      markCurrentComputeWorkLeaseCompleted();
       const vm =
         row.resource_kind === "vm"
           ? await getComputeVmById(row.resource_id)
@@ -3216,6 +3246,12 @@ export function startComputeVmWorker(
       clearInterval(heartbeat);
     }
   };
+
+  const processWork = async (row: ComputeWorkRow) =>
+    await runWithComputeWorkLease(
+      { id: row.id, worker_id: workerId, attempt: row.attempt },
+      async () => await processWorkWithLease(row),
+    );
 
   const launchWork = (row: ComputeWorkRow) => {
     let task!: Promise<void>;

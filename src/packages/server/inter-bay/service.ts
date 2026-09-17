@@ -327,7 +327,10 @@ import {
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
 import { refreshCodexSubscriptionAuth } from "@cocalc/server/external-credentials/codex-subscription-refresh";
-import { getDedicatedHostPolicySnapshotLocal } from "@cocalc/server/project-host/admission";
+import {
+  getDedicatedHostAdmissionSnapshotLocal,
+  getDedicatedHostPolicySnapshotLocal,
+} from "@cocalc/server/project-host/admission";
 import {
   closeDedicatedHostPurchaseSessionLocal,
   recordDedicatedHostMeteredUsageLocal,
@@ -1561,6 +1564,8 @@ async function startAccountLocalService(): Promise<void> {
       await getDedicatedHostPolicySnapshotLocal(account_id, {
         funding_mode_override,
       }),
+    getDedicatedHostAdmissionSnapshot: async ({ account_id }) =>
+      await getDedicatedHostAdmissionSnapshotLocal(account_id),
     getMembershipPackages: async ({ owner_account_id }) =>
       await listMembershipPackageDetailsForOwner({
         owner_account_id,

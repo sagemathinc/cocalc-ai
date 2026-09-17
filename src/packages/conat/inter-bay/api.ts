@@ -1164,6 +1164,21 @@ export interface AccountLocalDedicatedHostPolicySnapshot {
   admin_override?: AccountEntitlementOverride;
 }
 
+export type AccountLocalDedicatedHostAdmissionSnapshot = Pick<
+  AccountLocalDedicatedHostPolicySnapshot,
+  | "account_id"
+  | "membership_class"
+  | "can_create_hosts"
+  | "funding_mode"
+  | "effective_limits"
+  | "has_active_second_factor"
+  | "admin_override"
+>;
+
+export interface AccountLocalGetDedicatedHostAdmissionSnapshotRequest {
+  account_id: string;
+}
+
 export interface AccountLocalGetDedicatedHostPolicySnapshotRequest {
   account_id: string;
   funding_mode_override?:
@@ -2983,6 +2998,7 @@ export type AccountLocalMethod =
   | "set-account-entitlement-override"
   | "clear-account-entitlement-override"
   | "get-dedicated-host-policy-snapshot"
+  | "get-dedicated-host-admission-snapshot"
   | "get-membership-packages"
   | "get-team-license"
   | "get-team-license-quote"
@@ -4755,6 +4771,9 @@ export interface InterBayAccountLocalApi
   getDedicatedHostPolicySnapshot: (
     opts: AccountLocalGetDedicatedHostPolicySnapshotRequest,
   ) => Promise<AccountLocalDedicatedHostPolicySnapshot>;
+  getDedicatedHostAdmissionSnapshot: (
+    opts: AccountLocalGetDedicatedHostAdmissionSnapshotRequest,
+  ) => Promise<AccountLocalDedicatedHostAdmissionSnapshot>;
   getMembershipPackages: (
     opts: AccountLocalGetMembershipPackagesRequest,
   ) => Promise<MembershipPackageDetails[]>;
@@ -7679,6 +7698,15 @@ export function createInterBayAccountLocalClient({
       method: "get-dedicated-host-policy-snapshot",
     }),
   });
+  const getDedicatedHostAdmissionSnapshotClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "getDedicatedHostAdmissionSnapshot">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: accountLocalSubject({
+      dest_bay,
+      method: "get-dedicated-host-admission-snapshot",
+    }),
+  });
   const getMembershipPackagesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getMembershipPackages">
   >({
@@ -8698,6 +8726,10 @@ export function createInterBayAccountLocalClient({
       ),
     getDedicatedHostPolicySnapshot: async (opts) =>
       await getDedicatedHostPolicySnapshotClient.getDedicatedHostPolicySnapshot(
+        opts,
+      ),
+    getDedicatedHostAdmissionSnapshot: async (opts) =>
+      await getDedicatedHostAdmissionSnapshotClient.getDedicatedHostAdmissionSnapshot(
         opts,
       ),
     getMembershipPackages: async (opts) =>
@@ -9916,6 +9948,20 @@ export function createInterBayAccountLocalHandler({
       impl: {
         getDedicatedHostPolicySnapshot: async (opts) =>
           await impl.getDedicatedHostPolicySnapshot(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayAccountLocalApi, "getDedicatedHostAdmissionSnapshot">
+    >({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({
+        dest_bay: bay_id,
+        method: "get-dedicated-host-admission-snapshot",
+      }),
+      impl: {
+        getDedicatedHostAdmissionSnapshot: async (opts) =>
+          await impl.getDedicatedHostAdmissionSnapshot(opts),
       },
     }),
     createServiceHandler<

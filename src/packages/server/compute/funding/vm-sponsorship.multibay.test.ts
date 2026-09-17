@@ -127,9 +127,25 @@ jest.mock("@cocalc/server/bay-registry", () => {
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => require("@cocalc/server/test").client,
 }));
-jest.mock("@cocalc/server/project-host/admission", () =>
-  require("./__tests__/policy-source").mockPolicySource(),
-);
+jest.mock("@cocalc/server/project-host/admission", () => {
+  const mocked = require("./__tests__/policy-source").mockPolicySource();
+  const actual = jest.requireActual("@cocalc/server/project-host/admission");
+  return {
+    ...mocked,
+    getDedicatedHostAdmissionSnapshotForAccount: async (account_id: string) => {
+      const home = mockHomes.get(account_id);
+      const current = require("./__tests__/multibay-postgres").currentBay();
+      if (!home || home === current) {
+        return await mocked.getDedicatedHostAdmissionSnapshotForAccount(
+          account_id,
+        );
+      }
+      return await actual.getDedicatedHostAdmissionSnapshotForAccount(
+        account_id,
+      );
+    },
+  };
+});
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({
     compute_vm_course_funding_enabled: true,
@@ -217,6 +233,25 @@ describePg(
         }),
       );
       for (const bay of bays) {
+        handlers.push(
+          createServiceHandler({
+            client: fabric,
+            service: "inter-bay-account-local",
+            subject: accountLocalSubject({
+              dest_bay: bay,
+              method: "get-dedicated-host-admission-snapshot",
+            }),
+            impl: {
+              getDedicatedHostAdmissionSnapshot: ({ account_id }) =>
+                onBay(bay, async () => {
+                  calls.push({ bay, method: "admission-policy" });
+                  return await require("./__tests__/policy-source")
+                    .mockPolicySource()
+                    .getDedicatedHostAdmissionSnapshotForAccount(account_id);
+                }),
+            },
+          }),
+        );
         handlers.push(
           createInterBayProjectReferenceHandler({
             client: fabric,
@@ -553,6 +588,32 @@ describePg(
       );
       return { payer, student, project, request, allocation, vm: vm! };
     }
+
+    it("loads attached-bay admission policy through real Conat routing", async () => {
+      const account = randomUUID();
+      mockHomes.set(account, resourceBay);
+      setPolicy(account, {
+        can_create_hosts: false,
+        has_active_second_factor: false,
+      });
+      const { getDedicatedHostAdmissionSnapshotForAccount } = jest.requireMock(
+        "@cocalc/server/project-host/admission",
+      );
+
+      await expect(
+        onBay(payerBay, () =>
+          getDedicatedHostAdmissionSnapshotForAccount(account),
+        ),
+      ).resolves.toMatchObject({
+        account_id: account,
+        can_create_hosts: false,
+        has_active_second_factor: false,
+      });
+      expect(calls).toContainEqual({
+        bay: resourceBay,
+        method: "admission-policy",
+      });
+    });
 
     async function row(bay: string, sql: string, params: unknown[] = []) {
       return (await pools.get(bay)!.query(sql, params)).rows[0];

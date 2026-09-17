@@ -4,6 +4,7 @@
  */
 
 import { randomUUID } from "node:crypto";
+import type { AccountLocalDedicatedHostAdmissionSnapshot } from "@cocalc/conat/inter-bay/api";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spending";
@@ -19,8 +20,7 @@ import getBalance from "@cocalc/server/purchases/get-balance";
 import { ensureAccountUsageWindowSchema } from "@cocalc/server/membership/usage-windows";
 import { lockFundingAuthority, assertFundingAccountHome } from "./authority";
 import { assertAccountWriteOnHomeBay } from "@cocalc/database/postgres/account-rehome-fence";
-import { prepareDedicatedHostPolicyInputsLocal } from "@cocalc/server/project-host/admission";
-import type { DedicatedHostPolicyInputs } from "@cocalc/server/project-host/admission";
+import { getDedicatedHostAdmissionSnapshotForAccount } from "@cocalc/server/project-host/admission";
 import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 
 export interface AccountFundingBacking {
@@ -45,7 +45,7 @@ const fundingTransactions = new WeakMap<
   {
     payer: string;
     epoch: string;
-    policy?: DedicatedHostPolicyInputs;
+    policy?: AccountLocalDedicatedHostAdmissionSnapshot;
     policyError?: unknown;
   }
 >();
@@ -70,10 +70,10 @@ export function fundingAuthorityEpoch(
   return fundingTransactions.get(client)!.epoch;
 }
 
-export function fundingPolicyInputs(
+export function fundingAdmissionSnapshot(
   client: PoolClient,
   payer: string,
-): DedicatedHostPolicyInputs {
+): AccountLocalDedicatedHostAdmissionSnapshot {
   requireFundingAccountTransaction(client, payer);
   const state = fundingTransactions.get(client)!;
   if (!state.policy)
@@ -106,10 +106,10 @@ export async function withFundingAccountTransaction<T>(
   }
   // Policy failure blocks new authorization, not settlement or replay of work
   // already authorized. Provider and seed-bay calls finish before BEGIN.
-  let policy: DedicatedHostPolicyInputs | undefined;
+  let policy: AccountLocalDedicatedHostAdmissionSnapshot | undefined;
   let policyError: unknown;
   try {
-    policy = await prepareDedicatedHostPolicyInputsLocal(account_id);
+    policy = await getDedicatedHostAdmissionSnapshotForAccount(account_id);
   } catch (error) {
     policyError = error;
   }

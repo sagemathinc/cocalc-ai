@@ -31,6 +31,7 @@ import { getComputeVmById } from "../db";
 import { fundingResourceFixtures } from "./__tests__/resource-fixtures";
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import { getComputeFundingPolicyInTransaction } from "./policy";
+import { enableTestSponsorshipRollout } from "./__tests__/rollout-fixture";
 
 jest.mock("@cocalc/server/project-host/admission", () =>
   require("./__tests__/policy-source").mockPolicySource(),
@@ -45,11 +46,16 @@ jest.mock("@cocalc/database/settings/server-settings", () => ({
 }));
 
 const resources = fundingResourceFixtures();
-beforeAll(async () => await before({ noConat: true }), 60_000);
+let stopRollout: (() => void) | undefined;
+beforeAll(async () => {
+  await before({ noConat: true });
+  stopRollout = await enableTestSponsorshipRollout();
+}, 60_000);
 afterAll(async () => {
   try {
     await resources.cleanup();
   } finally {
+    stopRollout?.();
     await after();
   }
 });

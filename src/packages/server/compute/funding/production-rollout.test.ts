@@ -21,6 +21,7 @@ import {
   loadFundingExposureBudget,
   assertFundingExposureAvailable,
 } from "./exposure";
+import { FUNDING_AUTHORITY_TABLES } from "./account-writer-rollout";
 
 const mockQuery = jest.fn();
 const mockOpen = jest.fn();
@@ -375,6 +376,10 @@ it("connects actual production startup, signed file reader and observed database
     });
   expect(mockQuery).toHaveBeenCalledWith(
     expect.stringContaining("pg_control_system()"),
+  );
+  expect(mockQuery).toHaveBeenCalledWith(
+    expect.stringContaining("WITH tables"),
+    [FUNDING_AUTHORITY_TABLES],
   );
 });
 it.each([

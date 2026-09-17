@@ -37,15 +37,29 @@ export function setPolicy(account: string, value: Partial<PolicySettings>) {
 // window identities and reservations still come from the real transaction.
 export function mockPolicySource() {
   return {
-    async prepareDedicatedHostPolicyInputsLocal(account_id: string) {
+    async getDedicatedHostAdmissionSnapshotForAccount(account_id: string) {
       if (failures.has(account_id)) throw failures.get(account_id);
-      return {};
+      return {
+        account_id,
+        membership_class: "member",
+        funding_mode: "account-prepaid",
+        can_create_hosts: true,
+        has_active_second_factor: true,
+        effective_limits: {
+          prepaid_host_usage_limit_5h_usd: 1000,
+          prepaid_host_usage_limit_7d_usd: 10000,
+          credit_spend_limit_5h_usd: 1000,
+          credit_spend_limit_7d_usd: 10000,
+        },
+        ...settings.get(account_id),
+      };
     },
     async getDedicatedHostPolicySnapshotLocal(
       account_id: string,
       opts: {
         client: PoolClient;
         funding_mode_override: AccountLocalDedicatedHostPolicySnapshot["funding_mode"];
+        admission_snapshot?: AccountLocalDedicatedHostPolicySnapshot;
       },
     ): Promise<AccountLocalDedicatedHostPolicySnapshot> {
       if (!opts.client)
