@@ -110,6 +110,12 @@ function NewAgentPanel({
   onCreated: (agentId: string) => void;
 }) {
   const projectMap = useTypedRedux("projects", "project_map");
+  const activeTopTab = useTypedRedux("page", "active_top_tab") as
+    | string
+    | undefined;
+  const lastProjectTab = useTypedRedux("page", "last_project_tab") as
+    | string
+    | undefined;
   const [projectId, setProjectId] = useState<string>();
   const [directory, setDirectory] = useState("");
   const [name, setName] = useState(() => suggestedAgentName(agents));
@@ -132,6 +138,24 @@ function NewAgentPanel({
         }
       : undefined,
   );
+
+  useEffect(() => {
+    if (projectId || !projectMap) return;
+    const projectStore: any = redux.getStore("projects");
+    const ids = [
+      lastProjectTab,
+      activeTopTab,
+      ...(projectMap.keySeq?.().toArray?.() ?? []),
+    ];
+    const preferred = ids.find(
+      (id) =>
+        typeof id === "string" &&
+        projectMap.has?.(id) &&
+        !projectMap.getIn?.([id, "deleted"]) &&
+        projectStore?.get_my_group?.(id) !== "viewer",
+    );
+    if (preferred) setProjectId(preferred);
+  }, [activeTopTab, lastProjectTab, projectId, projectMap]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -247,6 +271,15 @@ function NewAgentPanel({
         size={14}
         style={{ marginTop: 24, width: "100%" }}
       >
+        {projectMap?.size === 0 && (
+          <Alert
+            type="info"
+            showIcon
+            title="Create a project first"
+            description="Agents need an existing project for files and compute."
+            action={<a href="/projects">Open Projects</a>}
+          />
+        )}
         <label>Project</label>
         <SelectProject
           fullCollaboratorOnly
@@ -446,6 +479,22 @@ function AgentWorkspace({
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const projectUsers: any = useTypedRedux("projects", "project_map")?.getIn?.([
+    agent.endpoint.project_id,
+    "users",
+  ]);
+  const collaboratorCount =
+    typeof projectUsers?.size === "number"
+      ? projectUsers.size
+      : projectUsers && typeof projectUsers === "object"
+        ? Object.keys(projectUsers).length
+        : undefined;
+  const sharing =
+    collaboratorCount == null
+      ? undefined
+      : collaboratorCount <= 1
+        ? "Only you"
+        : `${collaboratorCount} collaborators`;
   useEffect(() => {
     if (active || !ref.current?.contains(document.activeElement)) return;
     (document.activeElement as HTMLElement | null)?.blur?.();
@@ -488,6 +537,7 @@ function AgentWorkspace({
           </Text>
           <Text type="secondary" ellipsis style={{ display: "block" }}>
             @{agent.name} · {agent.project_title || agent.endpoint.project_id}
+            {sharing ? ` · ${sharing}` : ""}
           </Text>
         </div>
         {!agent.available && <Tag color="warning">Unavailable</Tag>}
