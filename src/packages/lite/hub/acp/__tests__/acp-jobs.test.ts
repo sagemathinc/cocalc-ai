@@ -283,6 +283,11 @@ describe("acp job queue ordering", () => {
         assistantDate: "2026-09-16T00:00:01.000Z",
       }) as any,
     );
+    const setCreatedAt = getAcpDatabase().prepare(
+      "UPDATE acp_jobs SET created_at = ?, updated_at = ? WHERE op_id = ?",
+    );
+    setCreatedAt.run(10_000, 10_000, queued.op_id);
+    setCreatedAt.run(20_000, 20_000, running.op_id);
     claimNextQueuedAcpJobForThread({
       project_id: running.project_id,
       path: running.path,

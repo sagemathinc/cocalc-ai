@@ -4455,6 +4455,14 @@ export async function respondCollabInvite({
     if (ownership == null || ownership.bay_id === getConfiguredBayId()) {
       throw err;
     }
+    if (action === "accept") {
+      // The owning bay cannot inspect account-home verification state. Only
+      // attest after checking it here; the inter-bay service trusts this bit.
+      await assertAccountTrustedForProductAccess(
+        account_id,
+        "accept collaboration invites",
+      );
+    }
     const include_email = await isAdmin(account_id);
     const result = await getInterBayBridge()
       .projectCollabInvite(ownership.bay_id)

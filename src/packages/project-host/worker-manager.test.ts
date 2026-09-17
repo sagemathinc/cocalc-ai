@@ -1268,6 +1268,11 @@ describe("queue-stalled ACP workers", () => {
         if (String(filename).endsWith("/cmdline")) {
           return [process.execPath, entryPoint].join("\0");
         }
+        if (String(filename).endsWith("/stat")) {
+          return `${pid} (node) ${["S", ...Array(18).fill("0"), `${pid}`].join(
+            " ",
+          )}`;
+        }
         throw new Error(`Unexpected read: ${filename}`);
       });
       jest.spyOn(fs, "writeFileSync").mockImplementation(() => {});

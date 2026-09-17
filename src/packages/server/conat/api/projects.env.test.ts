@@ -22,6 +22,7 @@ let interBayProjectControlMock: {
 };
 let assertAccountTrustedForProductAccessMock: jest.Mock;
 let interBayCreateCollabInviteMock: jest.Mock;
+let interBayRespondCollabInviteMock: jest.Mock;
 let projectCollabInviteBayMock: jest.Mock;
 let interBayProjectSecretsMock: {
   list: jest.Mock;
@@ -139,8 +140,14 @@ describe("project env helpers", () => {
         updated: "2026-09-14T00:00:00Z",
       },
     }));
+    interBayRespondCollabInviteMock = jest.fn(async () => ({
+      invite_id: "invite",
+      project_id: PROJECT_ID,
+      status: "accepted",
+    }));
     projectCollabInviteBayMock = jest.fn(() => ({
       create: interBayCreateCollabInviteMock,
+      respond: interBayRespondCollabInviteMock,
     }));
     getLocalProjectCollaboratorAccessStatusMock = jest.fn(
       async () => "local-collaborator",
@@ -893,5 +900,32 @@ describe("project env helpers", () => {
       } as any),
     ).rejects.toThrow("account trust denied");
     expect(interBayCreateCollabInviteMock).not.toHaveBeenCalled();
+  });
+
+  it("checks recipient trust at home before forwarding a remote invite acceptance", async () => {
+    const collaborators = await import("@cocalc/server/projects/collaborators");
+    const localResponse = jest
+      .spyOn(collaborators, "respondCollabInvite")
+      .mockRejectedValueOnce(new Error("invite 'invite' not found"));
+    resolveProjectBayMock.mockResolvedValue({ bay_id: "bay-7", epoch: 3 });
+    assertAccountTrustedForProductAccessMock.mockRejectedValueOnce(
+      new Error("account trust denied"),
+    );
+    const { respondCollabInvite } = await import("./projects");
+
+    await expect(
+      respondCollabInvite({
+        account_id: ACCOUNT_ID,
+        invite_id: "invite",
+        project_id: PROJECT_ID,
+        action: "accept",
+      }),
+    ).rejects.toThrow("account trust denied");
+    expect(assertAccountTrustedForProductAccessMock).toHaveBeenCalledWith(
+      ACCOUNT_ID,
+      "accept collaboration invites",
+    );
+    expect(interBayRespondCollabInviteMock).not.toHaveBeenCalled();
+    localResponse.mockRestore();
   });
 });
