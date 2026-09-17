@@ -474,6 +474,7 @@ function AgentProjectContext({
       if (!actions) throw new Error("Unable to load this agent's project");
       await actions.open_file({
         path: agent.path,
+        embedded: true,
         foreground: false,
         foreground_project: false,
         wait_for_ready: true,
@@ -717,7 +718,7 @@ function AgentWorkspace({
   );
 }
 
-export function MyAgentsWorkspacePage() {
+export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -740,6 +741,12 @@ export function MyAgentsWorkspacePage() {
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
+  const rootRef = useRef<HTMLElement>(null);
+
+  useEffect(() => {
+    if (active || !rootRef.current?.contains(document.activeElement)) return;
+    (document.activeElement as HTMLElement | null)?.blur?.();
+  }, [active]);
   const agents = directory?.agents ?? [];
   const agentOrganization = useAgentWorkspaceOrganization(
     agents,
@@ -984,6 +991,8 @@ export function MyAgentsWorkspacePage() {
         flex: 1,
         flexDirection: "column",
         height: "100%",
+        boxSizing: "border-box",
+        overflow: "hidden",
         minWidth: 0,
         padding: 12,
         ...(isNarrow && !mobileList ? { display: "none" } : {}),
@@ -1089,17 +1098,27 @@ export function MyAgentsWorkspacePage() {
           </div>
         )}
       </div>
-      <Button
-        type="link"
-        style={{ padding: "10px 0 0", textAlign: "left" }}
-        onClick={() => openAccountSettings({ page: "my-agents" })}
+      <div
+        style={{
+          borderTop: `1px solid ${UI_COLORS.border}`,
+          flex: "0 0 auto",
+          paddingTop: 8,
+        }}
       >
-        Manage agents and connections
-      </Button>
+        <Button
+          type="text"
+          block
+          style={{ height: "auto", textAlign: "left", whiteSpace: "normal" }}
+          onClick={() => openAccountSettings({ page: "my-agents" })}
+        >
+          Manage agents and connections
+        </Button>
+      </div>
     </aside>
   );
   return (
     <main
+      ref={rootRef}
       aria-label="Agents workspace"
       style={{
         background: UI_COLORS.page,
@@ -1234,7 +1253,9 @@ export function MyAgentsWorkspacePage() {
                   workspaceAgents={workspaceAgents}
                   accountId={accountId}
                   active={
-                    !!selected && agentWorkspaceKey(selected) === workspace
+                    active &&
+                    !!selected &&
+                    agentWorkspaceKey(selected) === workspace
                   }
                   onRegisteredThreadSelected={handleRegisteredThreadSelected}
                   onShowList={isNarrow ? () => setMobileList(true) : undefined}
