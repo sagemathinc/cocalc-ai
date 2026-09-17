@@ -66,6 +66,10 @@ import {
 } from "./packages";
 import { listActiveMembershipGrantsForAccount } from "./grants";
 import {
+  assertMembershipRecipientNotDeleting,
+  beginMembershipRecipientDeletion,
+} from "./recipient-deletion";
+import {
   completeMembershipGrantRevocationsForAccount,
   queueMembershipClaimIdentitySyncEffect,
   queueMembershipGrantSyncEffect,
@@ -3003,6 +3007,7 @@ export async function cleanupSiteLicenseAccessForAccountDeletionOnSeed({
   canceled_request_ids: string[];
 }> {
   const accountId = normalizeAccountId(account_id);
+  await beginMembershipRecipientDeletion(accountId);
   const cleanupWithClient = async (dbClient: PoolClient) => {
     await ensureSiteLicenseSchema(dbClient);
     const { rows: assignmentRows } = await dbClient.query<{
@@ -4065,46 +4070,60 @@ export async function requestSiteLicensePool({
   package_id,
   requester_note,
   accepted_terms,
-  client,
 }: {
   account_id: string;
   package_id: string;
   requester_note?: string | null;
   accepted_terms?: boolean;
-  client?: PoolClient;
 }): Promise<SiteLicensePoolRequest> {
   const accountId = normalizeAccountId(account_id);
   const packageId = normalizePackageId(package_id);
-  const verifiedEmailAddresses = await getVerifiedEmailAddressesForAccount(
-    accountId,
-    client,
-  );
+  const verifiedEmailAddresses =
+    await getVerifiedEmailAddressesForAccount(accountId);
   return await requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     account_id: accountId,
     package_id: packageId,
     verified_email_addresses: verifiedEmailAddresses,
     requester_note,
     accepted_terms,
-    client,
   });
 }
 
-export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
+type SiteLicensePoolRequestInput = {
+  account_id: string;
+  package_id: string;
+  verified_email_addresses: string[];
+  requester_note?: string | null;
+  accepted_terms?: boolean;
+};
+
+export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay(
+  opts: SiteLicensePoolRequestInput,
+): Promise<SiteLicensePoolRequest> {
+  const { request, notification } = await withLocalSiteLicenseTransaction(
+    (client) => createSiteLicensePoolRequestWithClient({ ...opts, client }),
+  );
+  if (notification) {
+    await notifySiteLicensePoolRequestCreatedBestEffort(notification);
+  }
+  return request;
+}
+
+async function createSiteLicensePoolRequestWithClient({
   account_id,
   package_id,
   verified_email_addresses,
   requester_note,
   accepted_terms,
   client,
-}: {
-  account_id: string;
-  package_id: string;
-  verified_email_addresses: string[];
-  requester_note?: string | null;
-  accepted_terms?: boolean;
-  client?: PoolClient;
-}): Promise<SiteLicensePoolRequest> {
+}: SiteLicensePoolRequestInput & { client: PoolClient }): Promise<{
+  request: SiteLicensePoolRequest;
+  notification?: Parameters<
+    typeof notifySiteLicensePoolRequestCreatedBestEffort
+  >[0];
+}> {
   const accountId = normalizeAccountId(account_id);
+  await assertMembershipRecipientNotDeleting(accountId, client);
   const packageId = normalizePackageId(package_id);
   const { siteLicense, pkg } = await getSiteLicenseForPackage(
     packageId,
@@ -4129,6 +4148,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
   const activeClaim = await getMembershipClaimIdentity({
     scope_key: scopeKey,
     canonical_identity: canonicalIdentity,
+    client,
   });
   if (activeClaim != null && activeClaim.account_id !== accountId) {
     throw Error("site-license pool already claimed for this identity");
@@ -4162,7 +4182,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     existingSamePackageRequestRows.rows[0],
   );
   if (existingSamePackageRequest) {
-    return existingSamePackageRequest;
+    return { request: existingSamePackageRequest };
   }
   const exclusivePackageIds = await listSiteLicensePackageIdsByExclusiveGroup({
     site_license_id: siteLicense.id,
@@ -4256,12 +4276,7 @@ export async function requestSiteLicensePoolWithVerifiedEmailsOnLocalBay({
     client: pool,
   });
   const request = normalizeSiteLicensePoolRequestRow(rows[0])!;
-  await notifySiteLicensePoolRequestCreatedBestEffort({
-    siteLicense,
-    pkg,
-    request,
-  });
-  return request;
+  return { request, notification: { siteLicense, pkg, request } };
 }
 
 export async function reviewSiteLicensePoolRequest({

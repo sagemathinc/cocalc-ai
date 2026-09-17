@@ -4,6 +4,7 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { assertMembershipRecipientNotDeleting } from "./recipient-deletion";
 import {
   createInterBayAccountDirectoryClient,
   type MembershipClaimIdentityActivateRequest,
@@ -355,21 +356,22 @@ async function withClaimDirectoryTransaction<T>(
 }
 
 export async function getMembershipClaimIdentityDirect(
-  opts: MembershipClaimIdentityGetRequest,
+  opts: WithClient<MembershipClaimIdentityGetRequest>,
 ): Promise<MembershipClaimIdentityEntry | null> {
   const record = await getMembershipClaimIdentityRow(opts);
   return isCurrentBlockingRecord(record) ? record : null;
 }
 
 export async function getMembershipClaimIdentity(
-  opts: MembershipClaimIdentityGetRequest,
+  opts: WithClient<MembershipClaimIdentityGetRequest>,
 ): Promise<MembershipClaimIdentityEntry | null> {
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     return await getMembershipClaimIdentityDirect(opts);
   }
+  const { client: _client, ...request } = opts;
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
-  }).getMembershipClaimIdentity(opts);
+  }).getMembershipClaimIdentity(request);
 }
 
 async function reserveMembershipClaimIdentityWithClient({
@@ -386,6 +388,7 @@ async function reserveMembershipClaimIdentityWithClient({
 }: MembershipClaimIdentityReserveRequest & {
   client: PoolClient;
 }): Promise<MembershipClaimIdentityReserveResult> {
+  await assertMembershipRecipientNotDeleting(account_id, client);
   const normalizedScopeKey = normalizeScopeKey(scope_key);
   const normalizedScopeKind = normalizeScopeKind(scope_kind);
   const normalizedCanonicalIdentity = normalizeEmailAddress(canonical_identity);
@@ -586,6 +589,7 @@ export async function activateMembershipClaimIdentityDirect({
   metadata,
 }: MembershipClaimIdentityActivateRequest): Promise<void> {
   await withClaimDirectoryTransaction(async (client) => {
+    await assertMembershipRecipientNotDeleting(account_id, client);
     const normalizedScopeKey = normalizeScopeKey(scope_key);
     const normalizedScopeKind = normalizeScopeKind(scope_kind);
     const normalizedCanonicalIdentity =

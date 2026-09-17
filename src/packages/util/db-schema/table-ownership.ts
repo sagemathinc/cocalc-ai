@@ -474,6 +474,7 @@ export const TABLE_OWNERSHIP = {
       "site_license_managers",
       "site_license_pool_requests",
       "site_licenses",
+      "membership_recipient_deletions",
       "software_license_events",
       "software_license_tiers",
       "software_licenses",

@@ -132,6 +132,8 @@ export async function createMembershipGrant(
     });
   }
   await assertAccountGrantWriteAllowed({ account_id, client });
+  // Grant IDs are never reused after revocation. Populate a tombstone's
+  // descriptive fields if activation arrives late, but keep it revoked.
   await getQueryClient(client).query(
     `
       INSERT INTO membership_grants
@@ -148,7 +150,7 @@ export async function createMembershipGrant(
         granted_by_account_id = EXCLUDED.granted_by_account_id,
         starts_at = EXCLUDED.starts_at,
         expires_at = EXCLUDED.expires_at,
-        revoked_at = NULL,
+        revoked_at = membership_grants.revoked_at,
         metadata = EXCLUDED.metadata,
         updated = NOW()
     `,
@@ -193,13 +195,16 @@ export async function revokeMembershipGrantById(
     return;
   }
   await assertAccountGrantWriteAllowed({ account_id, client });
+  // Revocation may arrive before the first activation RPC reaches this bay.
+  // Store the terminal state even when the grant does not exist yet.
   await getQueryClient(client).query(
     `
-      UPDATE membership_grants
-      SET revoked_at = COALESCE($3, NOW()),
+      INSERT INTO membership_grants (id, account_id, source, revoked_at, created, updated)
+      VALUES ($1, $2, 'revocation-tombstone', COALESCE($3, NOW()), NOW(), NOW())
+      ON CONFLICT (id) DO UPDATE
+      SET revoked_at = COALESCE(membership_grants.revoked_at, EXCLUDED.revoked_at),
           updated = NOW()
-      WHERE id = $1
-        AND account_id = $2
+      WHERE membership_grants.account_id = EXCLUDED.account_id
     `,
     [grant_id, account_id, revoked_at ?? null],
   );

@@ -12,12 +12,14 @@ import {
 import dayjs from "dayjs";
 import { uuid } from "@cocalc/util/misc";
 import {
+  assignMembershipPackageSeat,
   claimMembershipPackageSeat,
   claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay,
   listClaimableMembershipPackagesForAccount,
   listMembershipPackageAssignments,
 } from "./packages";
 import { resolveMembershipForAccount } from "./resolve";
+import { activateMembershipClaimIdentityDirect } from "./claim-directory";
 import { runMembershipSideEffectsPass } from "./side-effects";
 import { runSiteLicenseAffiliationReleaseMaintenancePass } from "./site-license-affiliation-maintenance";
 import {
@@ -2280,6 +2282,35 @@ describe("site license seat pools", () => {
       [assignment.id],
     );
     expect(pendingRevocations.rows).toEqual([]);
+    await expect(
+      activateMembershipClaimIdentityDirect({
+        scope_key: `${assignment.metadata?.claim_scope_key}`,
+        scope_kind: "site-license",
+        canonical_identity: email,
+        account_id,
+        reservation_id: `${assignment.metadata?.claim_reservation_id}`,
+        package_id: studentPool.id,
+        assignment_id: assignment.id,
+        matched_email_address: email,
+        claimed_domain: domain,
+      }),
+    ).rejects.toThrow("account deletion has started");
+    await expect(
+      assignMembershipPackageSeat({
+        package_id: studentPool.id,
+        account_id,
+        assigned_by_account_id: owner_account_id,
+      }),
+    ).rejects.toThrow("account deletion has started");
+    await expect(
+      requestSiteLicensePool({ account_id, package_id: instructorPool.id }),
+    ).rejects.toThrow("account deletion has started");
+    await expect(
+      cleanupSiteLicenseAccessForAccountDeletionOnSeed({ account_id }),
+    ).resolves.toEqual({
+      revoked_assignment_ids: [],
+      canceled_request_ids: [],
+    });
     const requestState = await getPool().query(
       `SELECT state, review_note
          FROM site_license_pool_requests

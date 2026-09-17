@@ -38,6 +38,7 @@ import {
   revokeMembershipClaimIdentity,
 } from "./claim-directory";
 import { createMembershipGrant, revokeMembershipGrantById } from "./grants";
+import { assertMembershipRecipientNotDeleting } from "./recipient-deletion";
 import { setProjectUsageAccountId } from "./project-usage";
 import {
   queueMembershipClaimIdentitySyncEffect,
@@ -2552,6 +2553,12 @@ export async function assignMembershipPackageSeat(
     fn: async ({ client: dbClient, pkg }) => {
       const pool = getQueryClient(dbClient);
       const normalizedAccountId = `${account_id ?? ""}`.trim() || undefined;
+      if (normalizedAccountId && isSeedAuthoritativeSitePackage(pkg)) {
+        await assertMembershipRecipientNotDeleting(
+          normalizedAccountId,
+          dbClient,
+        );
+      }
       const normalizedEmailAddress = normalizeEmailAddress(email_address);
       if (!normalizedAccountId && !normalizedEmailAddress) {
         throw Error("account_id or email_address required");
@@ -3352,6 +3359,9 @@ export async function claimMembershipPackageSeatWithVerifiedEmailsOnLocalBay({
       client,
       fn: async ({ client: dbClient, pkg }) => {
         const pool = getQueryClient(dbClient);
+        if (isSeedAuthoritativeSitePackage(pkg)) {
+          await assertMembershipRecipientNotDeleting(account_id, dbClient);
+        }
         if (pkg.expires_at && pkg.expires_at <= new Date()) {
           throw Error("membership package has expired");
         }

@@ -4,7 +4,7 @@
  */
 
 import getLogger from "@cocalc/backend/logger";
-import getPool, { type PoolClient } from "@cocalc/database/pool";
+import getPool, { getClient, type PoolClient } from "@cocalc/database/pool";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   activateMembershipClaimIdentity,
@@ -508,10 +508,12 @@ async function deliverMembershipSideEffect(
   effect_key: string,
   client?: PoolClient,
 ): Promise<void> {
-  const db = client ?? (await getPool().connect());
+  const lockClient = getClient();
+  await lockClient.connect();
+  const db = getQueryClient(client);
   const lockKey = `membership-side-effect:${effect_key}`;
   try {
-    await db.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
+    await lockClient.query("SELECT pg_advisory_lock(hashtext($1))", [lockKey]);
     const { rows } = await db.query<MembershipSideEffectRow>(
       `SELECT * FROM membership_side_effects_outbox
        WHERE effect_key=$1`,
@@ -523,14 +525,16 @@ async function deliverMembershipSideEffect(
       await markMembershipSideEffectApplied({
         effect_key,
         applied_revision: row.desired_revision,
-        client: db,
+        client,
       });
     }
   } finally {
     try {
-      await db.query("SELECT pg_advisory_unlock(hashtext($1))", [lockKey]);
+      await lockClient.query("SELECT pg_advisory_unlock(hashtext($1))", [
+        lockKey,
+      ]);
     } finally {
-      if (!client) db.release();
+      await lockClient.end();
     }
   }
 }
