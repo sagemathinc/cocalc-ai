@@ -587,6 +587,30 @@ describe("deleteCloudflareTunnel", () => {
       hostname: "approve.lite2b.cocalc.ai",
     });
 
+    await expect(
+      ensureCloudflareTunnelHostname({
+        tunnel: {
+          id: "tunnel-id",
+          name: "hub-lite2b",
+          hostname: "lite2b.cocalc.ai",
+          tunnel_secret: "secret",
+          account_id: "account-id",
+        },
+        hostname: "approve-lite2b.cocalc.ai",
+      }),
+    ).rejects.toThrow("must be within 'lite2b.cocalc.ai'");
+    await ensureCloudflareTunnelHostname({
+      tunnel: {
+        id: "tunnel-id",
+        name: "hub-lite2b",
+        hostname: "lite2b.cocalc.ai",
+        tunnel_secret: "secret",
+        account_id: "account-id",
+      },
+      hostname: "approve-lite2b.cocalc.ai",
+      allowOutsideConfiguredDns: true,
+    });
+
     const written = fetchMock.mock.calls
       .map(([, init]) => init?.body)
       .filter(Boolean)
@@ -595,6 +619,11 @@ describe("deleteCloudflareTunnel", () => {
       expect.arrayContaining([
         expect.objectContaining({
           name: "approve.lite2b.cocalc.ai",
+          content: "tunnel-id.cfargotunnel.com",
+          proxied: true,
+        }),
+        expect.objectContaining({
+          name: "approve-lite2b.cocalc.ai",
           content: "tunnel-id.cfargotunnel.com",
           proxied: true,
         }),

@@ -754,14 +754,17 @@ export async function ensureCloudflareTunnelForHub(opts?: {
 export async function ensureCloudflareTunnelHostname({
   tunnel,
   hostname,
+  allowOutsideConfiguredDns = false,
 }: {
   tunnel: CloudflareTunnel;
   hostname: string;
+  allowOutsideConfiguredDns?: boolean;
 }): Promise<void> {
   const config = await getHubConfig();
   const normalizedHostname = normalizeCloudflareHostname(hostname);
   if (!config || !normalizedHostname) return;
   if (
+    !allowOutsideConfiguredDns &&
     normalizedHostname !== config.zone &&
     !normalizedHostname.endsWith(`.${config.zone}`)
   ) {

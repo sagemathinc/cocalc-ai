@@ -536,6 +536,7 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
       await ensureCloudflareTunnelHostname({
         tunnel,
         hostname: approvalUrl.hostname,
+        allowOutsideConfiguredDns: true,
       });
     }
   }
