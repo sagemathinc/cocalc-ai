@@ -10,6 +10,7 @@ import { readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { startCourseFundingApprovalServer } from "./approval-server";
 import {
+  fundingApprovalRelatedOrigin,
   validateFundingListener,
   fundingApprovalConfigFromEnv,
 } from "./approval-config";
@@ -83,27 +84,31 @@ describe("approval listener configuration", () => {
       }),
     ).toThrow("pinned");
   });
-  it("requires the approval host to be below the application's passkey RP ID", () => {
+  it("supports child and explicitly published related approval origins", () => {
+    const related = {
+      origin: "https://approve-lite.example.test",
+      listen_host: "127.0.0.2" as const,
+      listen_port: 19202,
+      trusted_proxy_ip: "127.0.0.1" as const,
+      application_origins: ["https://lite.example.test"],
+      webauthn_rp_id: "lite.example.test",
+    };
+    expect(() => validateFundingListener(related)).not.toThrow();
+    expect(fundingApprovalRelatedOrigin(related)).toBe(related.origin);
+
+    const child = {
+      ...related,
+      origin: "https://approve.lite.example.test",
+    };
+    expect(() => validateFundingListener(child)).not.toThrow();
+    expect(fundingApprovalRelatedOrigin(child)).toBeUndefined();
+
     expect(() =>
       validateFundingListener({
-        origin: "https://approve-lite.example.test",
-        listen_host: "127.0.0.2",
-        listen_port: 19202,
-        trusted_proxy_ip: "127.0.0.1",
-        application_origins: ["https://lite.example.test"],
-        webauthn_rp_id: "lite.example.test",
+        ...related,
+        application_origins: ["https://other.example.test"],
       }),
     ).toThrow("WebAuthn RP ID");
-    expect(() =>
-      validateFundingListener({
-        origin: "https://approve.lite.example.test",
-        listen_host: "127.0.0.2",
-        listen_port: 19202,
-        trusted_proxy_ip: "127.0.0.1",
-        application_origins: ["https://lite.example.test"],
-        webauthn_rp_id: "lite.example.test",
-      }),
-    ).not.toThrow();
   });
 });
 

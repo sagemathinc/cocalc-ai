@@ -13,6 +13,16 @@ export interface FundingApprovalListenerConfig {
   webauthn_rp_id?: string;
 }
 
+export function fundingApprovalRelatedOrigin(
+  config: FundingApprovalListenerConfig,
+): string | undefined {
+  const approval = validateFundingOrigin(config.origin);
+  if (approval.protocol !== "https:") return;
+  const rpId = `${config.webauthn_rp_id ?? ""}`.trim().toLowerCase();
+  if (!rpId || approval.hostname.endsWith(`.${rpId}`)) return;
+  return approval.origin;
+}
+
 export function validateFundingOrigin(origin: string): URL {
   const url = new URL(origin);
   const dev =
@@ -65,13 +75,12 @@ export function validateFundingListener(config: FundingApprovalListenerConfig) {
     if (
       !rpId ||
       url.hostname === rpId ||
-      !url.hostname.endsWith(`.${rpId}`) ||
       !config.application_origins.some(
         (origin) => new URL(origin).hostname === rpId,
       )
     ) {
       throw new Error(
-        "HTTPS financial approval requires a WebAuthn RP ID matching an application origin and parent of the approval host",
+        "HTTPS financial approval requires a WebAuthn RP ID matching an application origin and distinct from the approval host",
       );
     }
   } else if (

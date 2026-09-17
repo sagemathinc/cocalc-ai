@@ -146,17 +146,22 @@ Example configuration, only after deployment/security review:
 
 ```sh
 export COCALC_FUNDING_APPROVAL_ENABLED=1
-export COCALC_FUNDING_APPROVAL_ORIGIN=https://approve.bay0.example.org
+export COCALC_FUNDING_APPROVAL_ORIGIN=https://approve-bay0.example.org
 export COCALC_FUNDING_APPROVAL_PORT=19202
 export COCALC_FUNDING_APPROVAL_PROXY_IP=127.0.0.1
 export COCALC_FUNDING_APPROVAL_APPLICATION_ORIGINS=https://bay0.example.org
 export COCALC_FUNDING_APPROVAL_WEBAUTHN_RP_ID=bay0.example.org
 ```
 
-The approval hostname must be a subdomain of the application's WebAuthn RP ID;
-a sibling such as `approve-bay0.example.org` cannot use passkeys registered for
-`bay0.example.org` and is rejected at startup. Provision DNS and a TLS
-certificate for the dedicated origin. Route **all** its
+An approval hostname below the application's WebAuthn RP ID can use existing
+passkeys directly. A sibling or otherwise related approval hostname uses the
+WebAuthn Related Origin Requests standard: the application serves only the
+configured approval origin from `https://<rp-id>/.well-known/webauthn`, and the
+browser verifies that allowlist before using an existing passkey. This permits
+certificate-compatible sibling hostnames without weakening server-side RP ID
+or origin verification. Older browsers without Related Origin Requests can use
+password, email code, authenticator code, or recovery code instead. Provision
+DNS and a TLS certificate for the dedicated origin. Route **all** its
 traffic to `http://127.0.0.2:19202` using a trusted, same-machine proxy connecting
 from the configured loopback IP. Preserve `Host: approve-bay0.example.org`, strip
 `Forwarded` and `X-Forwarded-Host`, and replace `X-Forwarded-Proto` with `https`.
