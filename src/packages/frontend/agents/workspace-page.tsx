@@ -56,6 +56,7 @@ import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
+import { AgentLoadingPreview } from "./loading-preview";
 
 const { Text, Title } = Typography;
 
@@ -385,9 +386,11 @@ function NewAgentPanel({
 function AgentProjectContext({
   agent,
   active,
+  accountId,
 }: {
   agent: NamedAgent;
   active: boolean;
+  accountId?: string;
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -459,7 +462,8 @@ function AgentProjectContext({
       />
     );
   }
-  if (!ready) return <Loading theme="medium" />;
+  if (!ready)
+    return <AgentLoadingPreview accountId={accountId} agent={agent} />;
   return (
     <ProjectContext.Provider value={projectContext}>
       <EmbeddedProjectFile path={agent.path} isVisible={active} />
@@ -470,11 +474,13 @@ function AgentProjectContext({
 function AgentWorkspace({
   agent,
   active,
+  accountId,
   onShowList,
   onClose,
 }: {
   agent: NamedAgent;
   active: boolean;
+  accountId?: string;
   onShowList?: () => void;
   onClose: () => void;
 }) {
@@ -561,7 +567,11 @@ function AgentWorkspace({
         />
       </header>
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
-        <AgentProjectContext agent={agent} active={active} />
+        <AgentProjectContext
+          agent={agent}
+          active={active}
+          accountId={accountId}
+        />
       </div>
     </div>
   );
@@ -571,6 +581,9 @@ export function MyAgentsWorkspacePage() {
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
+  const accountId = useTypedRedux("account", "account_id") as
+    | string
+    | undefined;
   const activeAgentId = useTypedRedux("page", "active_agent_id") as
     | string
     | undefined;
@@ -881,6 +894,7 @@ export function MyAgentsWorkspacePage() {
                 <AgentWorkspace
                   key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
                   agent={agent}
+                  accountId={accountId}
                   active={
                     agent.endpoint.agent_id === selected?.endpoint.agent_id
                   }
