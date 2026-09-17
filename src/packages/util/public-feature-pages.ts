@@ -52,7 +52,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       "Run larger research workloads in CoCalc, or connect a remote Jupyter kernel to an existing machine and its datasets.",
     metadataSummary:
       "Explore research compute in CoCalc: CPU and RAM requirements, GPU workloads, remote Jupyter kernels, storage, and CLI inspection. Follow the documented setup and operating limits.",
-    docsUrl: "/docs/hosts/project-hosts",
+    docsUrl: "/docs/hosts/choose-compute",
     index: true,
     sections: [
       {

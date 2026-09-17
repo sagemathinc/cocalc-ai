@@ -915,6 +915,23 @@ describe("research compute product visibility", () => {
       expect(
         screen.getByRole("link", { name: "Understand project hosts" }),
       ).toHaveAttribute("href", "/docs/hosts/project-hosts");
+      expect(
+        screen.getByRole("heading", {
+          name: "Put the right compute behind the research.",
+          level: 2,
+        }),
+      ).not.toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Choose a compute path" }),
+      ).toHaveAttribute("href", "/docs/hosts/choose-compute");
+      expect(
+        screen.getByText(
+          /Selecting a machine does not reserve provider capacity/,
+        ),
+      ).not.toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Compare operating models" }),
+      ).toHaveAttribute("href", "/products");
       rerender(
         <PublicFeaturesApp
           config={{ cocalc_product: "plus" }}

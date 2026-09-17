@@ -49,6 +49,7 @@ import { featurePath } from "./routes";
 import SageFeaturePage from "./sage-page";
 import SoftwareEnvironmentFeaturePage from "./software-environment-page";
 import PythonFeaturePage from "./python-page";
+import ResearchComputeFeaturePage from "./research-compute-page";
 import SlidesFeaturePage from "./slides-page";
 import TeachingFeaturePage from "./teaching-page";
 import TerminalFeaturePage from "./terminal-page";
@@ -710,6 +711,14 @@ function FeatureDetail({
   if (slug === "jupyter-notebook") {
     return (
       <JupyterNotebookFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "research-compute") {
+    return (
+      <ResearchComputeFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />
