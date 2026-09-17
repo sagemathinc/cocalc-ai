@@ -15,6 +15,7 @@ const cancelEverythingMock = jest.fn();
 const executeBillingAuthorityCommandMock = jest.fn();
 const setBillingAccountFrozenMock = jest.fn();
 const deleteClusterAccountDirectoryEntryMock = jest.fn();
+const cleanupSiteLicenseAccessForAccountDeletionMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -42,6 +43,12 @@ jest.mock("@cocalc/server/membership/blob-limits", () => ({
   __esModule: true,
   deleteBlobsForAccountDeletion: (...args: any[]) =>
     deleteBlobsForAccountDeletionMock(...args),
+}));
+
+jest.mock("@cocalc/server/membership/account-deletion", () => ({
+  __esModule: true,
+  cleanupSiteLicenseAccessForAccountDeletion: (...args: any[]) =>
+    cleanupSiteLicenseAccessForAccountDeletionMock(...args),
 }));
 
 jest.mock("@cocalc/server/auth/auth-sessions", () => ({
@@ -96,6 +103,7 @@ describe("delete account", () => {
     withAccountRehomeWriteFenceMock.mockReset();
     cancelEverythingMock.mockReset();
     deleteClusterAccountDirectoryEntryMock.mockReset();
+    cleanupSiteLicenseAccessForAccountDeletionMock.mockReset();
     cancelEverythingMock.mockResolvedValue(undefined);
     executeBillingAuthorityCommandMock
       .mockReset()
@@ -112,6 +120,7 @@ describe("delete account", () => {
       generation: 1,
     });
     deleteClusterAccountDirectoryEntryMock.mockResolvedValue(undefined);
+    cleanupSiteLicenseAccessForAccountDeletionMock.mockResolvedValue(undefined);
     deleteAllRememberMeMock.mockResolvedValue(undefined);
     revokeAllAuthSessionsMock.mockResolvedValue(undefined);
     recordAccountRevocationMock.mockResolvedValue(undefined);
@@ -129,6 +138,24 @@ describe("delete account", () => {
         query: jest.fn(async () => ({ rows: [], rowCount: 1 })),
       });
     });
+  });
+
+  it("does not freeze or delete the account until cleanup succeeds on retry", async () => {
+    const { default: deleteAccount } = await import("./delete");
+    cleanupSiteLicenseAccessForAccountDeletionMock.mockRejectedValueOnce(
+      new Error("home bay unavailable"),
+    );
+    await expect(deleteAccount(ACCOUNT_ID)).rejects.toThrow(
+      "home bay unavailable",
+    );
+    expect(setBillingAccountFrozenMock).not.toHaveBeenCalled();
+    expect(withAccountRehomeWriteFenceMock).not.toHaveBeenCalled();
+    expect(deleteClusterAccountDirectoryEntryMock).not.toHaveBeenCalled();
+    await deleteAccount(ACCOUNT_ID);
+    expect(
+      cleanupSiteLicenseAccessForAccountDeletionMock,
+    ).toHaveBeenCalledTimes(2);
+    expect(deleteClusterAccountDirectoryEntryMock).toHaveBeenCalledTimes(1);
   });
 
   it("disposes owned projects before marking the account deleted", async () => {
@@ -161,6 +188,13 @@ describe("delete account", () => {
       cause: "deletion",
       reason: "account deletion",
     });
+    expect(
+      cleanupSiteLicenseAccessForAccountDeletionMock.mock
+        .invocationCallOrder[0],
+    ).toBeLessThan(setBillingAccountFrozenMock.mock.invocationCallOrder[0]);
+    expect(cleanupSiteLicenseAccessForAccountDeletionMock).toHaveBeenCalledWith(
+      { account_id: ACCOUNT_ID },
+    );
     expect(
       setBillingAccountFrozenMock.mock.invocationCallOrder[0],
     ).toBeLessThan(

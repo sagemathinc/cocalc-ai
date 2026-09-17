@@ -384,13 +384,14 @@ export async function open_file(
     return;
   }
 
-  // For foreground opens, ensure the project is opened so startup UI appears.
-  // For background opens, do not call open_project here since it can alter
-  // the current file listing target.
+  // Initialize the project without a competing navigation to its default
+  // directory. File activation below owns foregrounding and history, including
+  // change_history=false for browser Back/Forward and fragment navigation.
   if (opts.foreground_project) {
     redux.getActions("projects").open_project({
       project_id: actions.project_id,
-      switch_to: true,
+      switch_to: false,
+      change_history: false,
     });
   }
 

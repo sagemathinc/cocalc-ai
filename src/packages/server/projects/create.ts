@@ -469,13 +469,13 @@ async function createProjectImpl(
       [host_id],
     );
     const row = rows[0];
-    if (!row) {
-      const hostBay = await resolveHostBay(host_id);
-      if (!hostBay || hostBay.bay_id === getConfiguredBayId()) {
-        throw Error(`host ${host_id} not found`);
-      }
+    // Rehomed hosts retain a local tombstone. Its heartbeat and placement
+    // permissions are not authoritative; route even when that row exists.
+    const hostBay = await resolveHostBay(host_id);
+    const hostBayId = hostBay?.bay_id ?? row?.bay_id ?? getConfiguredBayId();
+    if (hostBayId !== getConfiguredBayId()) {
       const remote = await getInterBayBridge()
-        .hostConnection(hostBay.bay_id, {
+        .hostConnection(hostBayId, {
           timeout_ms: 15_000,
         })
         .get({ account_id, host_id });
@@ -492,10 +492,11 @@ async function createProjectImpl(
       return {
         host_id,
         hostRegion,
-        hostBayId: `${remote.bay_id ?? ""}`.trim() || hostBay.bay_id,
+        hostBayId: `${remote.bay_id ?? ""}`.trim() || hostBayId,
         hostStatus: remote.status as string | null | undefined,
       };
     }
+    if (!row) throw Error(`host ${host_id} not found`);
     const availability = isHostRunningAndOnline(row);
     if (!availability.ok) {
       throw Error(
@@ -790,6 +791,9 @@ async function createProjectImpl(
             users,
             image: projectRootfsImage,
             start: false,
+            // This row was just created at generation zero. A concurrent
+            // restart advances the durable fence and rejects this registration.
+            runtime_lifecycle_revision: 0,
           };
           if (assignedHostBayId !== getConfiguredBayId()) {
             await getInterBayBridge()

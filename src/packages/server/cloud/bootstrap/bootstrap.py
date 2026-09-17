@@ -5790,7 +5790,7 @@ is_trusted_conmon_executable() {
 
 host_service_process_title() {
   local title=""
-  IFS= read -r -d '' title < "/proc/$1/cmdline" 2>/dev/null || true
+  IFS= read -r -d '' title 2>/dev/null < "/proc/$1/cmdline" || true
   printf '%s\n' "$title"
 }
 
@@ -6211,6 +6211,18 @@ remove_backup_browser_cgroup() {
   rmdir "$leaf" 2>/dev/null || true
 }
 
+reconcile_host_service_pid() {
+  local pid="$1"
+  # Discovery is a snapshot: a managed process may exit during an upgrade.
+  # Keep validation fatal for live processes and ignore only departed ones.
+  if (require_host_service_pid "$pid" &&
+      printf '%s\n' "$pid" > "${HOST_SERVICE_CGROUP_DEFAULT}/cgroup.procs"); then
+    return 0
+  fi
+  kill -0 "$pid" 2>/dev/null || return 0
+  deny "host-service-reconcile-failed" "pid=${pid}"
+}
+
 reconcile_host_service_cgroup() {
   local pid_file pid title runtime_uid actual_uid
   configure_host_service_cgroup
@@ -6232,8 +6244,7 @@ reconcile_host_service_cgroup() {
     [ "$actual_uid" = "$runtime_uid" ] || continue
     title="$(host_service_process_title "$pid")"
     grep -Eq '^project-host:(app|host-agent(:[0-9]+)?|conat-router|conat-persist|acp-worker|conat-router-cluster-node)$' <<< "$title" || continue
-    require_host_service_pid "$pid"
-    printf '%s\n' "$pid" > "${HOST_SERVICE_CGROUP_DEFAULT}/cgroup.procs"
+    reconcile_host_service_pid "$pid"
   done
 }
 

@@ -7,6 +7,8 @@ import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 import { upsertAcpSessionFromJob } from "./acp-sessions";
 
 const TABLE = "acp_jobs";
+export const ACP_PROJECT_RESTART_FENCE_REASON =
+  "project restart security fence";
 const THREAD_QUEUE_ORDER = `
 priority DESC,
 CASE WHEN priority > 0 THEN updated_at END DESC,
@@ -946,11 +948,8 @@ export function setAcpJobState({
             updated_at = ?,
             finished_at = ?
         WHERE op_id = ?
-          AND (
-            state != 'running'
-            OR worker_id IS NULL
-            OR worker_id = ?
-          )`,
+          AND state = 'running'
+          AND (worker_id IS NULL OR worker_id = ?)`,
     ).run(
       state,
       error ?? null,
@@ -1373,6 +1372,48 @@ export function markRunningAcpJobsInterrupted(reason = "server restart"): void {
   for (const row of rows) {
     mirrorAcpJobSession(getAcpJobByOpId(row.op_id));
   }
+}
+
+export function fenceAcpJobsForProject({
+  project_id,
+  reason,
+}: {
+  project_id: string;
+  reason: string;
+}): { queued: number; running: number } {
+  ensureInit();
+  const db = getAcpDatabase();
+  const now = Date.now();
+  const queued = db
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'canceled',
+           error = ?,
+           recovery_code = NULL,
+           recovery_detail = NULL,
+           updated_at = ?,
+           finished_at = ?
+       WHERE project_id = ? AND state = 'queued'`,
+    )
+    .run(reason, now, now, project_id).changes;
+  const running = db
+    .prepare(
+      `UPDATE ${TABLE}
+       SET state = 'interrupted',
+           error = ?,
+           recovery_code = NULL,
+           recovery_detail = NULL,
+           updated_at = ?,
+           finished_at = ?
+       WHERE project_id = ? AND state = 'running'`,
+    )
+    .run(reason, now, now, project_id).changes;
+  for (const row of db
+    .prepare(`SELECT * FROM ${TABLE} WHERE project_id = ?`)
+    .all(project_id) as AcpJobRow[]) {
+    mirrorAcpJobSession(row);
+  }
+  return { queued, running };
 }
 
 export function decodeAcpJobRequest(row: AcpJobRow): AcpJobRequest {

@@ -9,6 +9,19 @@ let publishLroSummaryMock: jest.Mock;
 let cancelCopiesByOpIdMock: jest.Mock;
 let cancelCourseCollectChildrenMock: jest.Mock;
 let cancelStaleProjectStartLrosMock: jest.Mock;
+let resolveHostBayMock: jest.Mock;
+let listHostOperationsMock: jest.Mock;
+
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  resolveHostBay: (...args: any[]) => resolveHostBayMock(...args),
+}));
+jest.mock("@cocalc/server/inter-bay/bridge", () => ({
+  getInterBayBridge: () => ({
+    hostConnection: (bay_id: string) => ({
+      listHostOperations: (opts: any) => listHostOperationsMock(bay_id, opts),
+    }),
+  }),
+}));
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
@@ -55,6 +68,8 @@ describe("lro host authorization", () => {
   beforeEach(() => {
     jest.resetModules();
     process.env.COCALC_BAY_ID = "bay-0";
+    resolveHostBayMock = jest.fn(async () => ({ bay_id: "bay-0" }));
+    listHostOperationsMock = jest.fn(async () => [{ op_id: "remote-op" }]);
     getLroMock = jest.fn(async () => ({
       op_id: "op-1",
       kind: "host-upgrade-software",
@@ -126,6 +141,40 @@ describe("lro host authorization", () => {
       include_completed: true,
     });
     expect(cancelStaleProjectStartLrosMock).not.toHaveBeenCalled();
+  });
+
+  it("reads remote host history from the owning bay, not local replicas", async () => {
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-1" });
+    const { list } = await import("./lro");
+    await expect(
+      list({
+        account_id: "project-user",
+        scope_type: "host",
+        scope_id: "host-1",
+        include_completed: true,
+      }),
+    ).resolves.toEqual([{ op_id: "remote-op" }]);
+    expect(listHostOperationsMock).toHaveBeenCalledWith("bay-1", {
+      account_id: "project-user",
+      host_id: "host-1",
+      include_completed: true,
+    });
+    expect(listLroMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("does not substitute stale local history when the owner is unavailable", async () => {
+    resolveHostBayMock.mockResolvedValue({ bay_id: "bay-1" });
+    listHostOperationsMock.mockRejectedValue(new Error("owner unavailable"));
+    const { list } = await import("./lro");
+    await expect(
+      list({
+        account_id: "project-user",
+        scope_type: "host",
+        scope_id: "host-1",
+      }),
+    ).rejects.toThrow("owner unavailable");
+    expect(listLroMock).not.toHaveBeenCalled();
   });
 
   it("cleans orphaned project-start operations before listing project lros", async () => {

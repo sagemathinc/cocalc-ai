@@ -48,7 +48,8 @@ function handleTarget(): string {
       joinUrlPath(appBasePath, encode_path(target)) +
       url.search +
       u.hash;
-    history.pushState({}, "", fullUrl);
+    // Restore the requested URL after the app redirect, not a new navigation.
+    history.replaceState(history.state, "", fullUrl);
   }
   return target;
 }

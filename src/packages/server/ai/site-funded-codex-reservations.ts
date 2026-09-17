@@ -562,7 +562,7 @@ export async function reserveSiteFundedCodexTurn(
       await client.query("ROLLBACK");
       return denied(
         "account_concurrency",
-        "Another site-funded Codex turn is already active for this account.",
+        "This account has reached its concurrent site-funded Codex turn limit.",
       );
     }
     if (int(active.rows[0]?.global_active) >= opts.globalConcurrency) {

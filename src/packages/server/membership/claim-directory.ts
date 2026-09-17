@@ -4,6 +4,7 @@
  */
 
 import getPool, { type PoolClient } from "@cocalc/database/pool";
+import { assertMembershipRecipientNotDeleting } from "./recipient-deletion";
 import {
   createInterBayAccountDirectoryClient,
   type MembershipClaimIdentityActivateRequest,
@@ -338,10 +339,14 @@ async function getMembershipClaimIdentityRow({
 
 async function withClaimDirectoryTransaction<T>(
   fn: (client: PoolClient) => Promise<T>,
+  recipient_account_id?: string,
 ): Promise<T> {
   const client = await getPool().connect();
   try {
     await client.query("BEGIN");
+    if (recipient_account_id) {
+      await assertMembershipRecipientNotDeleting(recipient_account_id, client);
+    }
     await ensureMembershipClaimDirectorySchema(client);
     const result = await fn(client);
     await client.query("COMMIT");
@@ -355,21 +360,22 @@ async function withClaimDirectoryTransaction<T>(
 }
 
 export async function getMembershipClaimIdentityDirect(
-  opts: MembershipClaimIdentityGetRequest,
+  opts: WithClient<MembershipClaimIdentityGetRequest>,
 ): Promise<MembershipClaimIdentityEntry | null> {
   const record = await getMembershipClaimIdentityRow(opts);
   return isCurrentBlockingRecord(record) ? record : null;
 }
 
 export async function getMembershipClaimIdentity(
-  opts: MembershipClaimIdentityGetRequest,
+  opts: WithClient<MembershipClaimIdentityGetRequest>,
 ): Promise<MembershipClaimIdentityEntry | null> {
   if (!isMultiBayCluster() || getConfiguredClusterRole() === "seed") {
     return await getMembershipClaimIdentityDirect(opts);
   }
+  const { client: _client, ...request } = opts;
   return await createInterBayAccountDirectoryClient({
     client: getInterBayFabricClient(),
-  }).getMembershipClaimIdentity(opts);
+  }).getMembershipClaimIdentity(request);
 }
 
 async function reserveMembershipClaimIdentityWithClient({
@@ -386,6 +392,7 @@ async function reserveMembershipClaimIdentityWithClient({
 }: MembershipClaimIdentityReserveRequest & {
   client: PoolClient;
 }): Promise<MembershipClaimIdentityReserveResult> {
+  await assertMembershipRecipientNotDeleting(account_id, client);
   const normalizedScopeKey = normalizeScopeKey(scope_key);
   const normalizedScopeKind = normalizeScopeKind(scope_kind);
   const normalizedCanonicalIdentity = normalizeEmailAddress(canonical_identity);
@@ -546,6 +553,7 @@ export async function reserveMembershipClaimIdentityDirect(
   opts: WithClient<MembershipClaimIdentityReserveRequest>,
 ): Promise<MembershipClaimIdentityReserveResult> {
   if (opts.client != null) {
+    await assertMembershipRecipientNotDeleting(opts.account_id, opts.client);
     await ensureMembershipClaimDirectorySchema(opts.client);
     return await reserveMembershipClaimIdentityWithClient({
       ...opts,
@@ -557,7 +565,7 @@ export async function reserveMembershipClaimIdentityDirect(
       ...opts,
       client,
     });
-  });
+  }, opts.account_id);
 }
 
 export async function reserveMembershipClaimIdentity(
@@ -717,7 +725,7 @@ export async function activateMembershipClaimIdentityDirect({
         normalizeMetadata(metadata),
       ],
     );
-  });
+  }, account_id);
 }
 
 export async function activateMembershipClaimIdentity(

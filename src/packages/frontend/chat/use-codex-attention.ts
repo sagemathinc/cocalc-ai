@@ -12,6 +12,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { showCodexNotificationBestEffort } from "@cocalc/frontend/notifications/codex-turn-toast";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { loadMessagingAttention } from "@cocalc/frontend/agents/messaging-attention";
 
 const REFRESH_MS = 5_000;
 
@@ -54,6 +55,7 @@ export function pendingAttentionByThread(
 
 export function useCodexAttentionSummary(opts: {
   active: boolean;
+  account_id?: string;
   project_id: string;
   path: string;
 }): {
@@ -63,6 +65,8 @@ export function useCodexAttentionSummary(opts: {
   targetByThread: ReadonlyMap<string, string>;
 } {
   const [records, setRecords] = useState<AcpAttentionRecord[]>([]);
+  const context = JSON.stringify([opts.account_id, opts.project_id, opts.path]);
+  const [recordsContext, setRecordsContext] = useState(context);
   const recordsRef = useRef<AcpAttentionRecord[]>([]);
 
   useEffect(() => {
@@ -72,6 +76,7 @@ export function useCodexAttentionSummary(opts: {
       return;
     }
     setRecords([]);
+    setRecordsContext(context);
     recordsRef.current = [];
     let disposed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -80,14 +85,36 @@ export function useCodexAttentionSummary(opts: {
       if (disposed || refreshing) return;
       refreshing = true;
       try {
-        const result = await webapp_client.conat_client.attentionAcp({
-          action: "list",
-          project_id: opts.project_id,
-          path: opts.path,
-          state: "pending",
-        });
-        if (!disposed && result.ok) {
-          const next = result.records ?? [];
+        const [runtime, messaging] = await Promise.allSettled([
+          webapp_client.conat_client.attentionAcp({
+            action: "list",
+            project_id: opts.project_id,
+            path: opts.path,
+            state: "pending",
+          }),
+          opts.account_id
+            ? loadMessagingAttention({
+                account_id: opts.account_id,
+                project_id: opts.project_id,
+                path: opts.path,
+              })
+            : Promise.resolve([]),
+        ]);
+        if (!disposed) {
+          const isMessaging = (record: AcpAttentionRecord) =>
+            record.action?.kind === "agent_messaging";
+          const next = [
+            ...(runtime.status === "fulfilled" && runtime.value.ok
+              ? (runtime.value.records ?? [])
+              : recordsRef.current.filter((record) => !isMessaging(record))),
+            ...(messaging.status === "fulfilled"
+              ? messaging.value
+              : recordsRef.current.filter(isMessaging)),
+          ].filter(
+            (record) =>
+              (!opts.account_id || record.account_id === opts.account_id) &&
+              (!record.expires_at || record.expires_at > Date.now()),
+          );
           const nextIds = new Set(next.map(({ attention_id }) => attention_id));
           for (const previous of recordsRef.current) {
             if (!nextIds.has(previous.attention_id)) {
@@ -120,24 +147,28 @@ export function useCodexAttentionSummary(opts: {
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       window.removeEventListener("focus", refreshWhenVisible);
     };
-  }, [opts.active, opts.path, opts.project_id]);
+  }, [opts.active, opts.account_id, opts.path, opts.project_id, context]);
 
-  const byThread = useMemo(() => pendingAttentionByThread(records), [records]);
+  const visibleRecords = recordsContext === context ? records : [];
+  const byThread = useMemo(
+    () => pendingAttentionByThread(visibleRecords),
+    [visibleRecords],
+  );
   const targetByThread = useMemo(() => {
     const targets = new Map<string, string>();
-    for (const record of records) {
+    for (const record of visibleRecords) {
       if (record.state !== "pending" || targets.has(record.thread_id)) continue;
       targets.set(record.thread_id, record.attention_id);
     }
     return targets;
-  }, [records]);
+  }, [visibleRecords]);
   return useMemo(
     () => ({
       count: [...byThread.values()].reduce((sum, value) => sum + value, 0),
-      records,
+      records: visibleRecords,
       byThread,
       targetByThread,
     }),
-    [byThread, records, targetByThread],
+    [byThread, visibleRecords, targetByThread],
   );
 }

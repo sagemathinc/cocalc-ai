@@ -26,6 +26,7 @@
   ],
   "references": [
     { "path": "../backend" },
+    { "path": "../chat" },
     { "path": "../conat" },
     { "path": "../database" },
     { "path": "../cloud" },
