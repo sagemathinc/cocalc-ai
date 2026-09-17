@@ -1,6 +1,6 @@
 # Private agent messaging remediation review handoff
 
-Prepared September 16, 2026. This packet requests independent re-review. It is
+Prepared September 17, 2026. This packet requests independent re-review. It is
 **not merge or production approval**. Keep findings and fixes private under
 `SECURITY.md`; do not post them to public PR #558 or another public channel.
 
@@ -13,9 +13,9 @@ Prepared September 16, 2026. This packet requests independent re-review. It is
 - Previously reviewed deficient heads:
   `d38f3399be308a92721e40fdcb56244de3d1974e` and
   `2a0ff08783cda555e772c18f17481516f6ba53c7`, with the latest rereview
-  performed at `7c521dc5cfdc4ff99dc942f738df72bb0407453d`.
-- Current private handoff head before this documentation update: `439417a928`.
-- Latest application remediation commit: `439417a928`.
+  performed at `0f705b40e732a153957996bc85616a3a8e1e2145`.
+- Current private handoff head before this documentation update: `4b75bde488`.
+- Latest application remediation commit: `4b75bde488`.
 - Normative contract: `src/.agents/agent-messaging-release-contract.md`, approved
   by William for review.
 
@@ -69,6 +69,7 @@ Review the full base-to-head diff. Important fix commits after the deficient hea
 | `af3ea3d06a` | Separate restart dedupe, acknowledged stop, forced replacement start |
 | `cb1b45960f` | Membership-generation restart dedupe and owner-side revision check   |
 | `439417a928` | Atomic trigger install and intent-scoped restart idempotency         |
+| `4b75bde488` | Preserve distinct frontend restart intents before RPC submission     |
 
 The lifecycle remediation uses a monotonic owning-bay runtime lifecycle revision.
 Stop advances it durably; starts carry it in metadata they already load; and the
@@ -86,8 +87,10 @@ occurs only on stop/restart.
 
 Explicit restart uses a distinct deduplication lane, a monotonic collaborator
 authority revision, and a caller-generated idempotency ID for one logical restart
-action. Retries carrying the same ID and revision share one operation. A later
-explicit restart has a new ID and cannot join pre-change work, including an
+action. Transport retries carrying the same ID and revision share one operation.
+Every primary-frontend action invocation assigns its ID before entering the RPC
+workflow, so a later invocation reaches the server even while an earlier one is
+pending. A later explicit restart therefore has a new ID and cannot join pre-change work, including an
 execution-mode change that does not alter collaborator membership. Missing or
 malformed IDs fail closed. The revision is returned by the owning bay's existing
 admission query, so ordinary project start gains no query or RPC. The owning bay
@@ -198,6 +201,11 @@ It launches independent Node processes. It passed cross-process permit reads and
 release, and an atomic two-process race with exactly one preparation winner.
 
 ## Evidence and open verification
+
+At application commit `4b75bde488`, the focused frontend project-actions suite
+passed 27 tests, including an overlap regression that holds one restart RPC open
+and proves a second action submits a distinct UUID and RPC. Frontend package
+typecheck and repository frontend lint passed. No deployment was performed.
 
 At application commit `439417a928`, eight expanded server suites passed 99 tests;
 the final restart-only rerun passed six tests. Three schema suites passed 20 tests

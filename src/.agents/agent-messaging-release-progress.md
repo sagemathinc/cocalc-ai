@@ -1,6 +1,6 @@
 # Agent messaging controlled release progress
 
-Updated September 16, 2026. Status: **private remediation candidate; not approved
+Updated September 17, 2026. Status: **private remediation candidate; not approved
 for merge or production**. No production deployment or production flag change has
 been performed.
 
@@ -12,10 +12,10 @@ been performed.
 - Remediation branch: `fix/agent-messaging-review-20260916`.
 - Application and test checkpoint before this documentation update:
   `4590eac669`.
-- Latest independently reviewed head: `7c521dc5cf`.
-- Latest application remediation commit: `439417a928`.
+- Latest independently reviewed head: `0f705b40e7`.
+- Latest application remediation commit: `4b75bde488`.
 - Current private reviewer/deployment handoff before this documentation update:
-  `439417a928`.
+  `4b75bde488`.
 - Normative requirements: `agent-messaging-release-contract.md`, approved for
   review. William's successful-project-restart boundary remains release blocking.
 
@@ -29,9 +29,11 @@ and private repository before relying on this packet.
   trigger. It atomically replaces the attached function. First installation briefly
   blocks project-row writers and creates the function and trigger in one transaction;
   an error rolls back both, so no committed trigger-free interval is exposed.
-- Every logical restart action now carries a required idempotency UUID. Retries of
-  that action coalesce, preserving protection against duplicate frontend submits.
-  A later explicit restart uses a new UUID and cannot join an earlier restart even
+- Every logical restart action now carries a required idempotency UUID. Transport
+  retries of that action coalesce under the same UUID. Each primary-frontend action
+  invocation assigns a new UUID before entering its RPC workflow, so a later
+  explicit restart cannot be absorbed while an earlier frontend action remains
+  pending. A later explicit restart cannot join an earlier restart even
   when collaborator membership is unchanged, so execution-mode changes receive a
   new host stop boundary. Missing or malformed IDs fail closed, and all first-party
   frontend, essential-frontend, CLI, development, and course callers supply them.
@@ -43,7 +45,8 @@ and private repository before relying on this packet.
   revision in its existing project-row query, so normal project start adds no query
   or RPC. The trigger covers ABA collaborator changes.
 - Explicit restarts no longer share the ordinary `project-start` deduplication
-  lane. Concurrent duplicate restart submissions still coalesce, but a restart
+  lane. Retries carrying one logical action UUID still coalesce, but separate action
+  invocations remain distinct. A restart
   cannot be swallowed by an active start or restore. Assigned-host restarts now
   require the host to acknowledge the stop fence and fail honestly if routing or
   host contact fails. The replacement start ignores a stale pre-fence running or
@@ -121,6 +124,10 @@ and private repository before relying on this packet.
 
 ## Verification completed
 
+- At `4b75bde488`, the focused frontend project-actions suite passed 27 tests. Its
+  overlap regression holds the first restart RPC unresolved, invokes restart again,
+  and verifies two RPCs with distinct request UUIDs. Frontend package typecheck and
+  repository frontend lint passed. No deployment was performed.
 - At `439417a928`, eight expanded server suites passed 99 tests, followed by a
   six-test restart-only rerun. Three schema suites passed 20 tests plus one skipped
   PostgreSQL-only concurrency case on PGlite, and all 21 tests on an isolated
@@ -211,8 +218,8 @@ and private repository before relying on this packet.
 
 - Independent re-review of the private remediation head is required. This work is
   not self-certified secure or releasable.
-- Independent re-review must assess `439417a928`, including the trigger-installation
-  and execution-mode restart findings reported against `7c521dc5cf`. Live
+- Independent re-review must assess `4b75bde488`, including the frontend action
+  coalescing finding reported against `0f705b40e7`. Live
   qualification must then deliberately overlap a stale restart with a real
   second-human downgrade/removal or execution-mode change and the subsequent
   successful restart on a matched build. Earlier live evidence predates this
