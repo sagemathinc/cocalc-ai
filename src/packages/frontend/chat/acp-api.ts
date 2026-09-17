@@ -337,8 +337,9 @@ export async function processAcpLLM({
     project_id,
     send_mode: sendMode,
   });
+  const threadConfig = actions.getCodexConfig?.(thread_id);
   const config = {
-    ...(actions.getCodexConfig?.(thread_id) ?? {}),
+    ...(threadConfig ?? {}),
     ...(acpConfigOverride ?? {}),
   };
   const maxConcurrentSubagents = normalizeCodexMaxConcurrentSubagents(
@@ -447,6 +448,8 @@ export async function processAcpLLM({
   chatMetadata.thread_title = actions.getThreadMetadata?.(thread_id, {
     threadId: thread_id,
   })?.name;
+  chatMetadata.workbench =
+    actions.workbenchEnabled === true && threadConfig?.workbench === true;
   let acknowledged = false;
   try {
     await ensureChatStatePersisted();

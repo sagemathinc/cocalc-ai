@@ -158,6 +158,7 @@ interface UseChatComposerDraftOptions {
 }
 
 interface UseChatComposerDraftResult {
+  ready: boolean;
   input: string;
   setInput: (value: string) => void;
   clearInput: () => Promise<void>;
@@ -173,6 +174,7 @@ export function useChatComposerDraft({
   suffix,
 }: UseChatComposerDraftOptions): UseChatComposerDraftResult {
   const [input, setInputState] = useState("");
+  const [ready, setReady] = useState(false);
   const controllerRef = useRef<DraftController | null>(null);
   const pendingLocalWriteRef = useRef<{
     timer?: ReturnType<typeof setTimeout>;
@@ -209,6 +211,7 @@ export function useChatComposerDraft({
 
   useEffect(() => {
     let closed = false;
+    setReady(false);
     if (!adapter) {
       setInputState("");
       return;
@@ -244,7 +247,9 @@ export function useChatComposerDraft({
         setInputState(snapshot.text);
       }
     });
-    void controller.init();
+    void controller.init().finally(() => {
+      if (!closed) setReady(true);
+    });
     return () => {
       closed = true;
       unsub();
@@ -396,7 +401,7 @@ export function useChatComposerDraft({
     ],
   );
 
-  return { input, setInput, clearInput, clearComposerDraft };
+  return { input, setInput, clearInput, clearComposerDraft, ready };
 }
 
 export function writeChatComposerAcpPromptDraft(

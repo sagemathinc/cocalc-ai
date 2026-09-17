@@ -2409,6 +2409,7 @@ const {
 const {
   projectChatSendData,
   projectChatThreadCreateData,
+  projectChatArtifactData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,
@@ -2998,6 +2999,7 @@ const projectCommandDeps = {
   resolveProjectConatClient,
   projectChatThreadCreateData,
   projectChatSendData,
+  projectChatArtifactData,
   projectChatThreadStatusData,
   projectChatAutomationData,
   projectChatActivityData,
@@ -3258,6 +3260,7 @@ const workspacesApi = createWorkspacesApi<
 });
 
 const execCommandDeps = {
+  projectChatArtifactData,
   withContext,
   tasksApi,
   textApi,
