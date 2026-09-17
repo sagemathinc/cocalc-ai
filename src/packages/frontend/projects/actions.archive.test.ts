@@ -1041,7 +1041,7 @@ describe("ProjectsActions archive flow", () => {
         lastEdited: new Date("2026-04-25T15:55:00.000Z"),
         hostId: "host-1",
       });
-      const { actions } = makeActions();
+      const { actions, setState, trackStartOp } = makeActions();
       jest
         .spyOn(actions as any, "project_log")
         .mockImplementation(async () => {});
@@ -1090,6 +1090,124 @@ describe("ProjectsActions archive flow", () => {
         scope_id: project_id,
       });
       await first;
+
+      expect(trackStartOp).toHaveBeenCalledTimes(1);
+      expect(trackStartOp).toHaveBeenCalledWith(
+        expect.objectContaining({ op_id: "restart-op-2" }),
+      );
+      const visibleRestartRequests = setState.mock.calls
+        .map(([state]) => state.restart_request)
+        .filter((request) => request?.get != null);
+      expect(visibleRestartRequests.at(-1)?.get("token")).toBe(
+        secondRequest.restart_request_id,
+      );
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not let an older restart success hide the latest failure", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions, setState, trackStartOp } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+
+      let resolveFirstRestart!: (value: any) => void;
+      const firstRestartStarted = new Promise<void>((resolve) => {
+        mockedWebappClient.conat_client.hub.projects.restart
+          .mockImplementationOnce(
+            () =>
+              new Promise((resolveRestart) => {
+                resolveFirstRestart = resolveRestart;
+                resolve();
+              }),
+          )
+          .mockRejectedValueOnce(new Error("latest restart failed"));
+      });
+
+      const first = actions.restart_project(project_id);
+      await firstRestartStarted;
+      await expect(actions.restart_project(project_id)).rejects.toThrow(
+        "latest restart failed",
+      );
+
+      resolveFirstRestart({
+        op_id: "restart-op-1",
+        scope_type: "project",
+        scope_id: project_id,
+      });
+      await first;
+
+      expect(trackStartOp).not.toHaveBeenCalled();
+      expect(setState).toHaveBeenCalledWith({
+        control_error:
+          "Error restarting project -- Error: latest restart failed",
+      });
+      expect(setState).not.toHaveBeenCalledWith({ control_error: "" });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("does not let an older restart failure replace the latest success", async () => {
+    jest.useFakeTimers();
+    try {
+      configureProject({
+        state: "running",
+        lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+        hostId: "host-1",
+      });
+      const { actions, setState, trackStartOp } = makeActions();
+      jest
+        .spyOn(actions as any, "project_log")
+        .mockImplementation(async () => {});
+      mockedWebappClient.async_query.mockResolvedValue(
+        projectedState("running"),
+      );
+
+      let rejectFirstRestart!: (reason: Error) => void;
+      const firstRestartStarted = new Promise<void>((resolve) => {
+        mockedWebappClient.conat_client.hub.projects.restart
+          .mockImplementationOnce(
+            () =>
+              new Promise((_resolveRestart, rejectRestart) => {
+                rejectFirstRestart = rejectRestart;
+                resolve();
+              }),
+          )
+          .mockResolvedValueOnce({
+            op_id: "restart-op-2",
+            scope_type: "project",
+            scope_id: project_id,
+          } as any);
+      });
+
+      const first = actions.restart_project(project_id);
+      await firstRestartStarted;
+      await actions.restart_project(project_id);
+
+      rejectFirstRestart(new Error("older restart failed"));
+      await expect(first).rejects.toThrow("older restart failed");
+
+      expect(trackStartOp).toHaveBeenCalledTimes(1);
+      expect(trackStartOp).toHaveBeenCalledWith(
+        expect.objectContaining({ op_id: "restart-op-2" }),
+      );
+      expect(setState).not.toHaveBeenCalledWith({
+        control_error:
+          "Error restarting project -- Error: older restart failed",
+      });
+      expect(setState).toHaveBeenCalledWith({ control_error: "" });
     } finally {
       jest.useRealTimers();
     }
