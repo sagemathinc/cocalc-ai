@@ -358,6 +358,7 @@ function AgentProjectContext({
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
   const projectContext = useProjectContextProvider({
     project_id: agent.endpoint.project_id,
     is_active: active,
@@ -388,7 +389,7 @@ function AgentProjectContext({
     return () => {
       disposed = true;
     };
-  }, [agent.endpoint.project_id, agent.path, agent.thread_id]);
+  }, [agent.endpoint.project_id, agent.path, agent.thread_id, retry]);
 
   useEffect(() => {
     if (!active || !ready) return;
@@ -405,17 +406,22 @@ function AgentProjectContext({
         title="Unable to open this agent"
         description={error}
         action={
-          <Button
-            onClick={() =>
-              void openAgentThread({
-                project_id: agent.endpoint.project_id,
-                path: agent.path,
-                thread_id: agent.thread_id,
-              })
-            }
-          >
-            Open in project
-          </Button>
+          <Space>
+            <Button onClick={() => setRetry((value) => value + 1)}>
+              Retry
+            </Button>
+            <Button
+              onClick={() =>
+                void openAgentThread({
+                  project_id: agent.endpoint.project_id,
+                  path: agent.path,
+                  thread_id: agent.thread_id,
+                })
+              }
+            >
+              Open in project
+            </Button>
+          </Space>
         }
       />
     );
@@ -432,10 +438,12 @@ function AgentWorkspace({
   agent,
   active,
   onShowList,
+  onClose,
 }: {
   agent: NamedAgent;
   active: boolean;
   onShowList?: () => void;
+  onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -495,6 +503,12 @@ function AgentWorkspace({
         >
           Open in project
         </Button>
+        <Button
+          icon={<Icon name="times" />}
+          aria-label={`Close workspace for @${agent.name}`}
+          title="Close this mounted workspace view"
+          onClick={onClose}
+        />
       </header>
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext agent={agent} active={active} />
@@ -549,8 +563,18 @@ export function MyAgentsWorkspacePage() {
   }, [agentOrganization.groups, search]);
 
   function selectAgent(agent: NamedAgent) {
+    mountAgent(agent.endpoint.agent_id);
     selectAgentId(agent.endpoint.agent_id);
     setMobileList(false);
+  }
+
+  function mountAgent(agentId: string) {
+    setMountedIds((old) => {
+      if (old.has(agentId)) return old;
+      const next = new Set(old);
+      next.add(agentId);
+      return next;
+    });
   }
 
   function selectAgentId(agentId: string) {
@@ -765,6 +789,7 @@ export function MyAgentsWorkspacePage() {
               setMobileList(true);
             }}
             onCreated={(agentId) => {
+              mountAgent(agentId);
               selectAgentId(agentId);
               setCreating(false);
             }}
@@ -775,6 +800,9 @@ export function MyAgentsWorkspacePage() {
             showIcon
             title="Unable to load agents"
             description={error}
+            action={
+              <Button onClick={refreshNamedAgents}>Retry directory</Button>
+            }
           />
         ) : agents.length === 0 ? (
           <Empty
@@ -788,19 +816,49 @@ export function MyAgentsWorkspacePage() {
             style={{ marginTop: 80 }}
             description="This registered agent is not available in your directory."
           >
-            <Button onClick={() => setMobileList(true)}>Choose an agent</Button>
+            <Space>
+              <Button onClick={refreshNamedAgents}>Refresh directory</Button>
+              <Button onClick={() => setMobileList(true)}>
+                Choose an agent
+              </Button>
+            </Space>
           </Empty>
         ) : (
-          agents
-            .filter((agent) => mountedIds.has(agent.endpoint.agent_id))
-            .map((agent) => (
-              <AgentWorkspace
-                key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
-                agent={agent}
-                active={agent.endpoint.agent_id === selected?.endpoint.agent_id}
-                onShowList={isNarrow ? () => setMobileList(true) : undefined}
-              />
-            ))
+          <>
+            {agents
+              .filter((agent) => mountedIds.has(agent.endpoint.agent_id))
+              .map((agent) => (
+                <AgentWorkspace
+                  key={`${agent.endpoint.project_id}:${agent.endpoint.agent_id}`}
+                  agent={agent}
+                  active={
+                    agent.endpoint.agent_id === selected?.endpoint.agent_id
+                  }
+                  onShowList={isNarrow ? () => setMobileList(true) : undefined}
+                  onClose={() => {
+                    setMountedIds((old) => {
+                      const next = new Set(old);
+                      next.delete(agent.endpoint.agent_id);
+                      return next;
+                    });
+                    if (isNarrow) setMobileList(true);
+                  }}
+                />
+              ))}
+            {!mountedIds.has(selected.endpoint.agent_id) && (
+              <Empty
+                style={{ marginTop: 80 }}
+                description={`Workspace for @${selected.name} is closed.`}
+              >
+                <Button
+                  type="primary"
+                  onClick={() => mountAgent(selected.endpoint.agent_id)}
+                >
+                  Open workspace
+                </Button>
+              </Empty>
+            )}
+          </>
         )}
       </section>
     </main>
