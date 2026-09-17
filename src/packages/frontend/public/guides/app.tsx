@@ -6,10 +6,12 @@
 import { useEffect } from "react";
 
 import { Button, Col, Flex, Row, Typography } from "antd";
+import { getDocsEntry } from "@cocalc/docs";
 
 import type { IconName } from "@cocalc/frontend/components/icon";
 import {
   appPath,
+  getPublicDocsAccess,
   getPublicMarketingSiteName,
   PublicNextStep,
   type PublicConfig,
@@ -20,12 +22,14 @@ import {
   PublicHero,
   PublicSection,
 } from "@cocalc/frontend/public/layout/shell";
+import {
+  PUBLIC_FEATURED_GUIDES,
+  PUBLIC_GUIDE_GROUPS,
+} from "@cocalc/util/public-guides";
 import { PUBLIC_COLORS, PUBLIC_ELEVATION } from "@cocalc/frontend/public/theme";
 import { FIELD_GUIDES_URL } from "@cocalc/util/theme";
 
 const { Paragraph, Text, Title } = Typography;
-
-const GUIDE_BASE = FIELD_GUIDES_URL.replace(/\/$/, "");
 
 const GUIDES_PAGE_CSS = `
 .cocalc-guide-link {
@@ -82,137 +86,6 @@ interface GuideCardSpec {
   title: string;
 }
 
-function guidePath(slug: string): string {
-  return `${GUIDE_BASE}/${slug}/`;
-}
-
-const FEATURED_GUIDES = [
-  {
-    body: "Use Codex agent chat beside project files, notebooks, terminals, screenshots, patches, and review notes.",
-    href: guidePath("codex-agent-chat"),
-    icon: "robot",
-    title: "Codex agent chat",
-  },
-  {
-    body: "Keep durable execution, output, collaboration, TimeTravel, and review close to the notebook.",
-    href: guidePath("jupyter-notebooks"),
-    icon: "jupyter",
-    title: "Jupyter notebooks",
-  },
-  {
-    body: "Use .term files, shared terminal streams, side chat, Linux tools, and agent-aware command-line work.",
-    href: guidePath("terminal"),
-    icon: "terminal",
-    title: "Terminal workflows",
-  },
-] satisfies GuideCardSpec[];
-
-const GUIDE_GROUPS = [
-  {
-    guides: [
-      {
-        body: "Polish a paper with LaTeX, notebooks, figures, collaborators, Codex, and project history.",
-        href: guidePath("paper-polishing"),
-        icon: "file-pdf",
-        title: "From notebook to paper",
-      },
-      {
-        body: "Choose and use CoCalc for LaTeX projects that depend on figures, code, review, and collaborators.",
-        href: guidePath("cocalc-for-latex"),
-        icon: "tex",
-        title: "LaTeX projects",
-      },
-      {
-        body: "Move from notebook exploration to scripts, packages, debugging, and figures in papers.",
-        href: guidePath("python-workflow"),
-        icon: "python",
-        title: "Python in CoCalc",
-      },
-      {
-        body: "Manage messy computation with logs, retries, partial outputs, summaries, and recovery.",
-        href: guidePath("research-computation"),
-        icon: "line-chart",
-        title: "Research runs",
-      },
-    ],
-    intro:
-      "Papers, notebooks, code-backed figures, and long-running research work.",
-    title: "Research and writing",
-  },
-  {
-    guides: [
-      {
-        body: "Install packages and make a project environment work from the terminal.",
-        href: guidePath("software-install"),
-        icon: "download",
-        title: "Installing software",
-      },
-      {
-        body: "Use GitHub issues, pull requests, releases, and reviews from a CoCalc project.",
-        href: guidePath("github-workflow"),
-        icon: "github",
-        title: "GitHub workflow",
-      },
-      {
-        body: "Inspect agent commits, ask line-level questions, and keep code review accountable.",
-        href: guidePath("git-review-workflow"),
-        icon: "git",
-        title: "Reviewing agent commits",
-      },
-      {
-        body: "Prepare reusable software environments for courses, teams, sites, and demonstrations.",
-        href: guidePath("rootfs-management"),
-        icon: "servers",
-        title: "Reusable runtime images",
-      },
-    ],
-    intro:
-      "Software setup, Git workflows, agent review, and repeatable project environments.",
-    title: "Runtime and code",
-  },
-  {
-    guides: [
-      {
-        body: "Install a self-contained one-user CoCalc for a laptop, workstation, or SSH machine.",
-        href: guidePath("cocalc-plus"),
-        icon: "laptop",
-        title: "CoCalc Plus",
-      },
-      {
-        body: "Understand the small-team self-hosting path and when a larger private deployment is a better fit.",
-        href: guidePath("self-hosting"),
-        icon: "server",
-        title: "Self-hosting CoCalc",
-      },
-      {
-        body: "Use a durable CoCalc project where people and agents work together over time.",
-        href: guidePath("agent-sandbox-cloud"),
-        icon: "robot",
-        title: "Durable collaborative projects",
-      },
-      {
-        body: "Learn how project workspaces, compute hosts, and storage fit together.",
-        href: guidePath("how-cocalc-works"),
-        icon: "sitemap",
-        title: "How CoCalc works",
-      },
-      {
-        body: "Use live student projects, assignments, grading workflows, TimeTravel, and shared environments.",
-        href: guidePath("teaching"),
-        icon: "graduation-cap",
-        title: "Teaching with CoCalc",
-      },
-    ],
-    intro:
-      "Self-hosting, local evaluation, durable collaborative projects, and architecture.",
-    title: "Operating paths",
-  },
-] satisfies {
-  guides: GuideCardSpec[];
-  intro: string;
-  title: string;
-}[];
-
 function GuideLink({
   body,
   featured,
@@ -221,13 +94,14 @@ function GuideLink({
   title,
 }: GuideCardSpec & { featured?: boolean }) {
   const external = /^https?:\/\//.test(href);
+  const resolvedHref = external ? href : appPath(href);
 
   return (
     <a
       className={`cocalc-guide-link ${
         featured ? "cocalc-guide-link-featured" : "cocalc-guide-link-compact"
       }`}
-      href={href}
+      href={resolvedHref}
       rel={external ? "noreferrer" : undefined}
       target={external ? "_blank" : undefined}
     >
@@ -244,7 +118,11 @@ function GuideLink({
   );
 }
 
-function GuideDirectory() {
+function GuideDirectory({ config }: { config?: PublicConfig }) {
+  const docsAccess = getPublicDocsAccess(config);
+  const visible = ({ href }: { href: string }) =>
+    !href.startsWith("/docs/") || getDocsEntry(href, docsAccess) != null;
+
   return (
     <PublicSection>
       <div
@@ -282,7 +160,7 @@ function GuideDirectory() {
             </Col>
             <Col xs={24} lg={17}>
               <Row gutter={[12, 12]}>
-                {FEATURED_GUIDES.map((guide) => (
+                {PUBLIC_FEATURED_GUIDES.filter(visible).map((guide) => (
                   <Col key={guide.href} xs={24} md={8}>
                     <GuideLink {...guide} featured />
                   </Col>
@@ -298,7 +176,7 @@ function GuideDirectory() {
             }}
           >
             <Flex vertical gap={24}>
-              {GUIDE_GROUPS.map((group) => (
+              {PUBLIC_GUIDE_GROUPS.map((group) => (
                 <section key={group.title}>
                   <Row gutter={[18, 14]}>
                     <Col xs={24} lg={7}>
@@ -316,7 +194,7 @@ function GuideDirectory() {
                     </Col>
                     <Col xs={24} lg={17}>
                       <Row gutter={[12, 12]}>
-                        {group.guides.map((guide) => (
+                        {group.guides.filter(visible).map((guide) => (
                           <Col key={guide.href} xs={24} md={12}>
                             <GuideLink {...guide} />
                           </Col>
@@ -368,7 +246,7 @@ export default function PublicGuidesApp({ config }: { config?: PublicConfig }) {
           }
           title="Guides"
         />
-        <GuideDirectory />
+        <GuideDirectory config={config} />
         <PublicNextStep authenticated={!!config?.is_authenticated} />
       </PublicSectionShell>
     </>

@@ -361,6 +361,28 @@ describe("PublicApp", () => {
     expect(
       screen.getAllByRole("link", { name: "Browse docs" }).length,
     ).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("link", { name: /Codex agent chat/i }),
+    ).toHaveAttribute("href", "/docs/ai/codex-chat");
+    expect(
+      screen.getByRole("heading", {
+        name: "Ready to choose how CoCalc runs?",
+      }),
+    ).not.toBeNull();
+  });
+
+  it("does not link Plus users to hosted-only Codex documentation", async () => {
+    await renderPublicApp(
+      <PublicApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        initialRoute={{ section: "guides" }}
+      />,
+    );
+
+    expect(screen.getByText("Jupyter notebooks")).not.toBeNull();
+    expect(
+      screen.queryByRole("link", { name: /Codex agent chat/i }),
+    ).toBeNull();
   });
 
   it("uses the stored home-bay origin for public auth bootstrap", async () => {
@@ -514,7 +536,12 @@ describe("PublicApp", () => {
     }) as typeof fetch;
     await renderPublicApp(
       <PublicApp
-        config={{ is_authenticated: true, site_name: "Launchpad" }}
+        config={{
+          cocalc_product: "launchpad",
+          is_authenticated: true,
+          site_name: "Launchpad",
+          zendesk: true,
+        }}
         initialRoute={pricingRoute}
       />,
     );
@@ -525,10 +552,15 @@ describe("PublicApp", () => {
       }),
     ).not.toBeNull();
     expect(
+      screen.getByText(/membership grid below applies to the hosted service/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/then choose a plan below/i)).toBeNull();
+    expect(
       screen.getByText(
-        "Codex with Luna Medium is included for everyone at no cost, with higher limits on paid plans. Connect your ChatGPT plan or API key to use additional models.",
+        "Some memberships on this site include AI usage. Compare the current tier limits below; availability and models depend on this site's configuration.",
       ),
     ).not.toBeNull();
+    expect(screen.queryByText(/included for everyone at no cost/i)).toBeNull();
     expect(screen.getAllByText("Member").length).toBeGreaterThan(0);
     expect(
       screen.getByText("A solid choice for everyday work."),
@@ -598,16 +630,205 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
-      screen.getByRole("heading", { name: "Organization licenses" }),
+      screen.getByRole("heading", {
+        name: "Organization licensing and billing",
+      }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Dedicated project hosts" }),
     ).not.toBeNull();
     expect(
-      screen.getByRole("heading", {
+      screen.queryByRole("heading", {
         name: "Quotes and customized invoices",
       }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Manage hosted membership" }),
+    ).toHaveAttribute("href", "/settings/membership");
+    expect(
+      screen.getByRole("link", { name: "Manage team seats" }),
+    ).toHaveAttribute("href", "/settings/team-licenses");
+    expect(
+      screen.getByRole("link", { name: "Evaluate research compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+    expect(
+      screen.getByRole("link", { name: "Open project hosts" }),
+    ).toHaveAttribute("href", "/hosts");
+    expect(
+      screen.getByRole("link", {
+        name: "Compare customer-operated options",
+      }),
+    ).toHaveAttribute("href", "/products");
+    expect(screen.getByText(/eligible membership or grant/i)).not.toBeNull();
+    expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
+  });
+
+  it("gives anonymous pricing readers public evaluation paths before account-only actions", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({ tiers: [] }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "launchpad",
+          is_authenticated: false,
+          site_name: "Launchpad",
+          zendesk: true,
+        }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      screen.getByRole("link", {
+        name: "Create account for hosted CoCalc",
+      }),
+    ).toHaveAttribute("href", "/auth/sign-up");
+    expect(
+      screen.getByRole("link", { name: "Create account for team seats" }),
+    ).toHaveAttribute("href", "/auth/sign-up");
+    expect(
+      screen.getByRole("link", { name: "Evaluate research compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+    const organizationPricingHref = screen
+      .getByRole("link", { name: "Discuss organization pricing" })
+      .getAttribute("href");
+    expect(organizationPricingHref).not.toBeNull();
+    const organizationPricingUrl = new URL(
+      organizationPricingHref!,
+      "https://example.test",
+    );
+    expect(organizationPricingUrl.pathname).toBe("/support/new");
+    expect(organizationPricingUrl.searchParams.get("type")).toBe("purchase");
+    expect(organizationPricingUrl.searchParams.get("title")).toBe("Ask Sales");
+    expect(organizationPricingUrl.searchParams.get("subject")).toBe(
+      "Organization licensing or billing",
+    );
+    expect(organizationPricingUrl.searchParams.get("body")).toContain(
+      "expected users or projects",
+    );
+    expect(
+      screen.queryByRole("link", { name: "Open project hosts" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("link", {
+        name: "Compare customer-operated options",
+      }),
+    ).toHaveAttribute("href", "/products");
+    expect(screen.getByText(/purchaser must sign in/i)).not.toBeNull();
+    expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
+  });
+
+  it("does not expose hosted research-compute evaluation on CoCalc Plus pricing", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({ tiers: [] }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{
+          cocalc_product: "plus",
+          help_email: "help@example.com",
+          site_name: "CoCalc Plus",
+        }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: "Evaluate research compute" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", {
+        name: "Create account for hosted CoCalc",
+      }),
+    ).toBeNull();
+    expect(screen.queryByRole("heading", { name: "Team seats" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", {
+        name: "Organization licensing and billing",
+      }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Dedicated project hosts" }),
+    ).toBeNull();
+    expect(
+      screen.getByText(/CoCalc Plus is the local, one-user runtime/i),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", {
+        name: "Compare customer-operated options",
+      }),
+    ).toHaveAttribute("href", "/products");
+    const productQuoteHref = screen
+      .getByRole("link", { name: "Request a product quote" })
+      .getAttribute("href");
+    expect(productQuoteHref).not.toBeNull();
+    const productQuoteUrl = new URL(productQuoteHref!);
+    expect(productQuoteUrl.protocol).toBe("mailto:");
+    expect(productQuoteUrl.pathname).toBe("help@example.com");
+    expect(productQuoteUrl.searchParams.get("subject")).toBe(
+      "Customer-operated product quote",
+    );
+    expect(productQuoteUrl.searchParams.get("body")).toContain(
+      "product or operating model",
+    );
+  });
+
+  it("does not render an actionless host card for anonymous unknown product profiles", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({
+        tiers: [
+          {
+            features: { create_hosts: true },
+            id: "host-enabled",
+            label: "Host enabled",
+            price_monthly: 0,
+            price_yearly: 0,
+            priority: 10,
+            project_defaults: {},
+            store_description: "Synthetic test tier.",
+            store_visible: true,
+            usage_limits: {},
+          },
+        ],
+      }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ is_authenticated: false, site_name: "Private CoCalc" }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("heading", { name: "Dedicated project hosts" }),
+    ).toBeNull();
+  });
+
+  it("does not promise included AI when no funded tier is configured", async () => {
+    global.fetch = jest.fn().mockResolvedValue({
+      json: async () => ({ tiers: [] }),
+    }) as typeof fetch;
+
+    await renderPublicApp(
+      <PublicApp
+        config={{ site_name: "Launchpad" }}
+        initialRoute={pricingRoute}
+      />,
+    );
+
+    expect(
+      await screen.findByText(
+        "No public membership tiers are currently configured.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.queryByText(/memberships on this site include AI usage/i),
+    ).toBeNull();
+    expect(screen.queryByText(/included for everyone at no cost/i)).toBeNull();
   });
 
   it("hides the shared Policies nav item when public policies are disabled", async () => {
@@ -1740,12 +1961,19 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Need local CoCalc before choosing a shared path?"),
     ).not.toBeNull();
+    expect(
+      screen.getByText(/project-centered workflow on your own machine/i),
+    ).not.toBeNull();
+    expect(screen.queryByText(/projects intact/i)).toBeNull();
+    expect(
+      screen.getByText(/agent features depend on the product and deployment/i),
+    ).not.toBeNull();
   });
 
   it("renders the software overview page", async () => {
     await renderPublicApp(
       <PublicApp
-        config={{ site_name: "Launchpad" }}
+        config={{ cocalc_product: "launchpad", site_name: "Launchpad" }}
         initialRoute={productsRoute({ view: "products" })}
       />,
     );
@@ -1753,15 +1981,56 @@ describe("PublicApp", () => {
     expect(
       screen.getByRole("heading", { name: "Ways to Run CoCalc" }),
     ).not.toBeNull();
-    expect(screen.getByText("Which path fits?")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Choose who operates CoCalc and where it runs.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(
+        /Every path keeps files, notebooks, terminals, and services in a project workspace/i,
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/agent features depend on the product and deployment/i),
+    ).not.toBeNull();
     const productChooser = screen.getByRole("list", {
-      name: "CoCalc product path chooser",
+      name: "CoCalc operating model chooser",
     });
     expect(
+      within(productChooser).getByRole("heading", {
+        name: "Hosted by CoCalc",
+      }),
+    ).not.toBeNull();
+    expect(
       within(productChooser).getByRole("link", {
-        name: /CoCalc Launchpad.*customer-operated private environment/,
+        name: /CoCalc\.ai.*managed hosted projects/i,
+      }),
+    ).toHaveAttribute("href", "https://cocalc.ai/pricing");
+    expect(
+      within(productChooser).getByRole("heading", {
+        name: "Run it yourself",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(productChooser).getByRole("heading", {
+        name: "Customer-operated private deployment",
+      }),
+    ).not.toBeNull();
+    expect(
+      within(productChooser).getByRole("link", {
+        name: /CoCalc Launchpad.*bounded private deployment/,
       }),
     ).toHaveAttribute("href", "/products/cocalc-launchpad");
+    expect(
+      screen.getByRole("link", { name: "Explore AI agent workflows" }),
+    ).toHaveAttribute("href", "/features/ai");
+    expect(
+      screen.getByRole("link", { name: "Plan research compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+    expect(
+      screen.getByRole("link", { name: "Compare with agent sandboxes" }),
+    ).toHaveAttribute("href", "/features/compare");
   });
 
   it("renders the cocalc launchpad page", async () => {
@@ -1776,6 +2045,9 @@ describe("PublicApp", () => {
     expect(
       screen.getByText("Need a bounded private CoCalc deployment?"),
     ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Review Launchpad installer" }),
+    ).toHaveAttribute("href", "#install-cocalc-launchpad");
   });
 
   it("renders the cocalc star page", async () => {
@@ -2097,7 +2369,7 @@ describe("feature configuration loading", () => {
   it.each([
     [
       { view: "index" as const },
-      "One persistent computer for people, tools, and agents.",
+      "One persistent project for people, tools, and agents.",
     ],
     [{ view: "detail" as const, slug: "terminal" }, "Linux Terminal"],
   ])(

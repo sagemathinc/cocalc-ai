@@ -49,6 +49,7 @@ import { featurePath } from "./routes";
 import SageFeaturePage from "./sage-page";
 import SoftwareEnvironmentFeaturePage from "./software-environment-page";
 import PythonFeaturePage from "./python-page";
+import ResearchComputeFeaturePage from "./research-compute-page";
 import SlidesFeaturePage from "./slides-page";
 import TeachingFeaturePage from "./teaching-page";
 import TerminalFeaturePage from "./terminal-page";
@@ -628,7 +629,7 @@ function FeaturesIndex({ config }: { config?: FeaturesConfig }) {
                 margin: 0,
               }}
             >
-              One persistent computer for people, tools, and agents.
+              One persistent project for people, tools, and agents.
             </Title>
             <Paragraph
               style={{
@@ -700,12 +701,24 @@ function FeatureDetail({
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
   if (slug === "ai") {
     return (
-      <AIFeaturePage helpEmail={helpEmail} isAuthenticated={isAuthenticated} />
+      <AIFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+        product={config?.cocalc_product}
+      />
     );
   }
   if (slug === "jupyter-notebook") {
     return (
       <JupyterNotebookFeaturePage
+        helpEmail={helpEmail}
+        isAuthenticated={isAuthenticated}
+      />
+    );
+  }
+  if (slug === "research-compute") {
+    return (
+      <ResearchComputeFeaturePage
         helpEmail={helpEmail}
         isAuthenticated={isAuthenticated}
       />

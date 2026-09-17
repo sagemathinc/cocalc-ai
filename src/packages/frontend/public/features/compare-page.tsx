@@ -14,6 +14,7 @@ import {
   PUBLIC_RADIUS,
   PUBLIC_TYPE,
 } from "@cocalc/frontend/public/theme";
+import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { builtinPolicyPath, type PublicConfig } from "../common";
 import {
   LinkButton,
@@ -24,35 +25,49 @@ import {
 const { Paragraph, Text, Title } = Typography;
 
 const PANEL_SHADOW = `0 14px 34px ${alpha(PUBLIC_COLORS.heading, 0.07)}`;
+const COMPARE_PAGE = getPublicFeaturePage("compare")!;
+const SANDBOX_OVERVIEW = COMPARE_PAGE.sections?.find(
+  ({ title }) => title === "Shared project or agent sandbox?",
+)!;
+const SANDBOX_CHOICES = COMPARE_PAGE.sections?.filter(({ title }) =>
+  title.startsWith("Choose "),
+)!;
+const SANDBOX_BOUNDARY = COMPARE_PAGE.sections?.find(
+  ({ title }) => title === "Check the operating boundary",
+)!;
 
 const DECISION_ROWS = [
   {
     cocalc:
-      "R&D teams need files, notebooks, terminals, output, discussion, and TimeTravel in one reviewable project.",
-    other: "Those artifacts already live somewhere stable.",
+      "People and agents need files, notebooks, terminals, output, discussion, and review history in one shared project.",
+    other:
+      "The source of truth and review already live outside the execution environment.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
-      "Data scientists, engineers, researchers, and AI agents need shared kernels, terminals, and visible cursors during live work.",
-    other: "Collaboration stays on one surface.",
+      "Collaborators and AI agents need to inspect the same files, notebooks, terminals, and running services.",
+    other:
+      "People collaborate and review somewhere outside the execution environment.",
     question: "Who needs to inspect the work?",
   },
   {
     cocalc: "Review and handoff happen while the work is still active.",
-    other: "Review waits until the end.",
+    other: "Each run produces a result for later review.",
     question: "When does collaboration happen?",
   },
   {
     cocalc:
       "Courses, labs, or workshops need the same environment as the computation.",
-    other: "Administration and computation can stay separate.",
+    other:
+      "The execution environment does not need course management or live help.",
     question: "Is teaching part of the workflow?",
   },
   {
     cocalc:
       "Teams need hosted, local, single-VM, and private deployment choices.",
-    other: "Hosting and operations are already decided.",
+    other:
+      "Your product already owns the runtime lifecycle and infrastructure.",
     question: "Who operates it?",
   },
 ] as const;
@@ -95,7 +110,7 @@ function DecisionRow({
       <td data-label="Choose CoCalc when">
         <Paragraph style={{ margin: 0 }}>{cocalc}</Paragraph>
       </td>
-      <td data-label="Choose a lighter tool when">
+      <td data-label="Choose an agent sandbox when">
         <Paragraph style={{ margin: 0 }}>{other}</Paragraph>
       </td>
     </tr>
@@ -156,6 +171,20 @@ const COMPARE_PAGE_CSS = `
     border-radius: ${PUBLIC_RADIUS.panel}px;
     box-shadow: ${PANEL_SHADOW};
     overflow: hidden;
+  }
+
+  .cocalc-compare-sandbox-grid {
+    display: grid;
+    gap: 16px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cocalc-compare-sandbox-card {
+    background: ${PUBLIC_COLORS.surface};
+    border: 1px solid ${PUBLIC_COLORS.border};
+    border-radius: ${PUBLIC_RADIUS.panel}px;
+    box-shadow: ${PANEL_SHADOW};
+    padding: 20px;
   }
 
   .cocalc-compare-table {
@@ -293,6 +322,10 @@ const COMPARE_PAGE_CSS = `
       align-items: stretch;
       grid-template-columns: minmax(0, 1fr) !important;
     }
+
+    .cocalc-compare-sandbox-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 `;
 
@@ -313,6 +346,10 @@ export default function CompareFeaturePage({
     title: "Talk with CoCalc about fit",
   });
   const hasBuiltinTrustPage = !!builtinPolicyPath(config, "trust");
+  const boundaryLinks = SANDBOX_BOUNDARY.links?.filter(
+    ({ href }) =>
+      config?.cocalc_product !== "plus" || !href.startsWith("/docs/"),
+  );
   const nextRoutes = hasBuiltinTrustPage
     ? [
         ...NEXT_ROUTES,
@@ -343,7 +380,7 @@ export default function CompareFeaturePage({
               Evaluation guide
             </Text>
             <Title level={2} style={{ margin: 0 }}>
-              When is CoCalc the right fit?
+              Persistent workspace or isolated execution?
             </Title>
             <Paragraph
               style={{
@@ -352,8 +389,9 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              Start with the shape of the work before pricing, procurement, or
-              deployment takes over.
+              Decide what must persist, who needs to inspect the work, and
+              whether the environment is a shared workspace or an API-managed
+              execution runtime.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -368,16 +406,72 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Best fit: ongoing work that needs shared execution, review, and
-                handoff.
+                Choose CoCalc when people and agents need to keep using the same
+                files, notebooks, terminals, services, and review history.
               </li>
               <li>
-                Better elsewhere: one-off notebooks, dashboards, editors, or
-                isolated reports.
+                Choose an agent sandbox when your product mainly needs
+                API-created execution environments for individual runs.
               </li>
             </ul>
           </div>
         </div>
+      </section>
+
+      <section
+        aria-label="CoCalc and AI agent sandbox comparison"
+        id="agent-sandboxes"
+      >
+        <Flex vertical gap={18}>
+          <Title level={3} style={{ margin: 0 }}>
+            {SANDBOX_OVERVIEW.title}
+          </Title>
+          {SANDBOX_OVERVIEW.paragraphs?.map((paragraph) => (
+            <Paragraph key={paragraph} style={{ margin: 0, maxWidth: "72ch" }}>
+              {paragraph}
+            </Paragraph>
+          ))}
+          <div className="cocalc-compare-sandbox-grid">
+            {SANDBOX_CHOICES.map((choice) => (
+              <article
+                className="cocalc-compare-sandbox-card"
+                key={choice.title}
+              >
+                <Title level={4} style={{ margin: 0 }}>
+                  {choice.title}
+                </Title>
+                <ul className="cocalc-compare-list">
+                  {choice.bullets?.map((bullet) => (
+                    <li key={bullet}>{bullet}</li>
+                  ))}
+                </ul>
+              </article>
+            ))}
+          </div>
+          <div>
+            <Title level={4} style={{ margin: "0 0 8px" }}>
+              {SANDBOX_BOUNDARY.title}
+            </Title>
+            {SANDBOX_BOUNDARY.paragraphs?.map((paragraph) => (
+              <Paragraph
+                key={paragraph}
+                style={{ margin: 0, maxWidth: "72ch" }}
+              >
+                {paragraph}
+              </Paragraph>
+            ))}
+          </div>
+          <Flex gap={12} wrap>
+            {boundaryLinks?.map((link) => (
+              <LinkButton
+                href={featureAppPath(link.href.replace(/^\/+/, ""))}
+                key={link.href}
+              >
+                {link.label}
+              </LinkButton>
+            ))}
+          </Flex>
+        </Flex>
       </section>
 
       <PublicSection ariaLabel="CoCalc compare decision checklist">
@@ -398,14 +492,14 @@ export default function CompareFeaturePage({
             id="cocalc-compare-table-caption"
           >
             Each row compares the decision question, when to choose CoCalc, and
-            when a lighter tool is enough. On narrow screens, each row is shown
-            as labelled stacked fields with the same column meaning.
+            when an agent sandbox is enough. On narrow screens, each row is
+            shown as labelled stacked fields with the same column meaning.
           </caption>
           <thead>
             <tr>
               <th scope="col">Decision question</th>
               <th scope="col">Choose CoCalc when</th>
-              <th scope="col">Choose a lighter tool when</th>
+              <th scope="col">Choose an agent sandbox when</th>
             </tr>
           </thead>
           <tbody>

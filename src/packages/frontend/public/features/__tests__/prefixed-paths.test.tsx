@@ -65,17 +65,14 @@ it.each(["/prefix", "/docs"])(
     );
 
     expect(
-      screen
-        .getAllByRole("link", { name: "Documentation", exact: true })
-        .map((link) => link.getAttribute("href")),
-    ).toContain(`${basePath}${page.docsUrl}`);
-    for (const section of page.sections ?? []) {
-      for (const link of section.links ?? []) {
-        expect(
-          screen.getByRole("link", { name: link.label, exact: true }),
-        ).toHaveAttribute("href", `${basePath}${link.href}`);
-      }
-    }
+      screen.getByRole("link", { name: "Choose a compute path" }),
+    ).toHaveAttribute("href", `${basePath}${page.docsUrl}`);
+    expect(
+      screen.getByRole("link", { name: "Understand project hosts" }),
+    ).toHaveAttribute("href", `${basePath}/docs/hosts/project-hosts`);
+    expect(
+      screen.getByRole("link", { name: "Connect a remote Jupyter kernel" }),
+    ).toHaveAttribute("href", `${basePath}/docs/jupyter/remote-kernels`);
     expect(container.querySelector('a[href^="/docs/hosts/"]')).toBeNull();
   },
 );
