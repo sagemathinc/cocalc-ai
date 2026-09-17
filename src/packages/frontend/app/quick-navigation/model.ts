@@ -44,7 +44,12 @@ export type Destination =
   | { kind: "docs"; projectId?: string }
   // Pages of the top navigation bar.
   | { kind: "app-page"; page: AppPage };
-export type AppPage = "projects" | "hosts" | "admin" | "notifications";
+export type AppPage =
+  | "agents"
+  | "projects"
+  | "hosts"
+  | "admin"
+  | "notifications";
 export interface Candidate {
   id: string;
   title: string;

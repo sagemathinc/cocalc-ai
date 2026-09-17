@@ -32,6 +32,7 @@ import {
   DocsPage,
   FileUsePage,
   HostsPage,
+  MyAgentsWorkspacePage,
   NotificationPage,
   ProjectPage,
   ProjectsPage,
@@ -281,6 +282,15 @@ export const ActiveContent: React.FC = React.memo(() => {
     overlay = renderLayer("kiosk", true, <KioskModeBanner />);
   } else {
     switch (active_top_tab) {
+      case "agents":
+        overlay = renderLayer(
+          "agents",
+          true,
+          <RouteChunk route="agents">
+            <MyAgentsWorkspacePage />
+          </RouteChunk>,
+        );
+        break;
       case "projects":
         overlay = renderLayer(
           "projects",

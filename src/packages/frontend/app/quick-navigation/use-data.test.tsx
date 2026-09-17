@@ -306,6 +306,12 @@ it("offers the top navigation pages, with Admin only for admins", async () => {
   ]);
   const [hosts] = searchCandidates(result.current.items, "hosts");
   expect(hosts.item.id).toBe("app:hosts");
+  account = account.setIn(
+    ["other_settings", "experimental_my_agents_page"],
+    true,
+  );
+  const { result: agentsEnabled } = renderHook(() => useNavigationData());
+  expect(appPages(agentsEnabled.current.items)).toContain("app:agents");
   account = account.set("groups", fromJS(["admin"]));
   const { result: admin } = renderHook(() => useNavigationData());
   expect(appPages(admin.current.items)).toContain("app:admin");

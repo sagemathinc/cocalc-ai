@@ -132,7 +132,7 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
-  it.each(["account", "admin", "docs", "projects", "notifications"])(
+  it.each(["account", "admin", "docs", "agents", "projects", "notifications"])(
     "remembers the selected project while opening %s",
     async (route) => {
       await actions.set_active_tab(B);
@@ -146,6 +146,12 @@ describe("project context across global navigation", () => {
       if (route === "admin") expect(set_url).toHaveBeenLastCalledWith("/admin");
     },
   );
+
+  it("opens the selected agent's stable workspace URL", async () => {
+    actions.setState({ active_agent_id: "agent-123" });
+    await actions.set_active_tab("agents");
+    expect(set_url).toHaveBeenLastCalledWith("/agents/agent-123");
+  });
 
   it("retains context across repeated Account/Admin visits and updates on explicit project navigation", async () => {
     await actions.set_active_tab(B);

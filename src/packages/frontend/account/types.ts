@@ -86,6 +86,7 @@ export interface AccountState {
       sessionMode: CodexSessionMode;
     };
     codex_max_concurrent_subagents?: number;
+    experimental_my_agents_page?: boolean;
     chat_speech_voice?: string;
     chat_speech_accent?: ChatSpeechAccent;
     chat_speech_speed?: number;

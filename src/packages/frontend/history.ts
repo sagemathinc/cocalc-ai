@@ -185,6 +185,11 @@ export function load_target(
     return;
   }
   switch (parsed.page) {
+    case "agents":
+      redux.getActions("page").setState({ active_agent_id: parsed.agent_id });
+      redux.getActions("page").set_active_tab("agents", change_history);
+      break;
+
     case "project": {
       const privateApp = parsePrivateProjectAppHandoffTarget(parsed.target);
       if (privateApp != null) {

@@ -20,6 +20,7 @@ import type { SettingsPageType } from "@cocalc/util/types/settings";
 
 export type PageTopTab =
   | "account"
+  | "agents"
   | "auth"
   | "claim"
   | "admin"
@@ -34,6 +35,7 @@ export type PageTopTab =
 
 export type ParsedPageTarget =
   | { page: "projects" }
+  | { page: "agents"; agent_id?: string }
   | { page: "project"; target: string }
   | {
       page: "account";
@@ -78,6 +80,11 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
+    case "agents":
+      return {
+        page: "agents",
+        agent_id: segments.slice(1).filter(Boolean).join("/") || undefined,
+      };
     case "projects":
       if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {
         return { page: "projects" };
@@ -160,6 +167,10 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
 
 export function getPageTargetPath(parsed: ParsedPageTarget): string {
   switch (parsed.page) {
+    case "agents":
+      return parsed.agent_id
+        ? `agents/${encodeURIComponent(parsed.agent_id)}`
+        : "agents";
     case "projects":
       return "projects";
     case "project":

@@ -32,6 +32,7 @@ import { recentActivity } from "./recent-activity";
 import type { AppPage, Candidate, Editor } from "./model";
 import { settingsKeywords } from "./settings-keywords";
 import { frameLayout } from "./frames";
+import { myAgentsUIEnabled } from "@cocalc/frontend/agents/workspace-ui-preference";
 
 const logger = getLogger("quick-navigation");
 const plain = (value: any) => value?.toJS?.() ?? value;
@@ -80,6 +81,8 @@ export function useNavigationData() {
     useTypedRedux("customize", "compute_vm_enabled") === true;
   const runtime = useProjectRuntimeCapabilities();
   const accountId = useTypedRedux("account", "account_id");
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const showMyAgents = myAgentsUIEnabled(accountOtherSettings);
   // CoCalc-ai has public/signed-in users, but no upstream anonymous-account
   // state. Treat the legacy noAnonymous metadata as requiring sign-in here.
   const signedIn =
@@ -320,6 +323,12 @@ export function useNavigationData() {
     keywords: string;
     show: boolean;
   }[] = [
+    {
+      page: "agents",
+      title: "My Agents",
+      keywords: "named registered agents chats artifacts terminals",
+      show: signedIn && !lite && showMyAgents,
+    },
     {
       page: "projects",
       title: intl.formatMessage(labels.projects),
