@@ -376,9 +376,6 @@ importers:
       '@cocalc/chat':
         specifier: workspace:*
         version: link:../chat
-      '@cocalc/chat-client':
-        specifier: workspace:*
-        version: link:../chat-client
       '@cocalc/comm':
         specifier: workspace:*
         version: link:../comm
@@ -836,6 +833,9 @@ importers:
       '@cocalc/chat':
         specifier: workspace:*
         version: link:../chat
+      '@cocalc/chat-client':
+        specifier: workspace:*
+        version: link:../chat-client
       '@cocalc/comm':
         specifier: workspace:*
         version: link:../comm
