@@ -94,7 +94,6 @@ import {
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { useCodexLiveActivityStatus } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
-import { CodexAttentionCard } from "./codex-attention-card";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
 import {
   clearCachedCodexModelCatalog,
@@ -2895,25 +2894,6 @@ export function ChatRoomThreadPanel({
           paddingTop: contentTopInset,
         }}
       >
-        {attentionRecords.length > 0 ? (
-          <section
-            aria-label="Pending Codex requests"
-            style={{
-              maxHeight: "45vh",
-              overflowY: "auto",
-              padding: "8px 12px 0",
-            }}
-          >
-            <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-              {attentionRecords.map((record) => (
-                <CodexAttentionCard
-                  key={record.attention_id}
-                  initialRecord={record}
-                />
-              ))}
-            </Space>
-          </section>
-        ) : null}
         {showArchivedBanner ? (
           <div
             style={{
@@ -3023,6 +3003,7 @@ export function ChatRoomThreadPanel({
               ? `${selectedRunningCodexDate}`
               : undefined
           }
+          attentionRecords={attentionRecords}
           readOnly={readOnly}
         />
       </div>
