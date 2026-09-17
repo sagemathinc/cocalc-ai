@@ -12,7 +12,11 @@ import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { cachedAgentNameContext } from "./name-context";
 import type { AgentNameContext } from "./name-context";
-import { namedAgentLimitReached, NamedAgentLimitAlert } from "./agent-limit";
+import {
+  namedAgentLimitReached,
+  NamedAgentLimitAlert,
+  NamedAgentUsage,
+} from "./agent-limit";
 
 /** Name metadata is saved only inside the explicitly approved action, before its grant. */
 export function useSourceAgentName(
@@ -53,6 +57,7 @@ export function useSourceAgentName(
             in your account.
           </p>
           <NamedAgentLimitAlert directory={directory} />
+          <NamedAgentUsage directory={directory} />
           <AgentNameInput
             id={`${id}-source-name`}
             label="Source agent name"

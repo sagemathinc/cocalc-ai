@@ -24,10 +24,11 @@ interface Props {
   type: "notifications";
   active: boolean;
   pageStyle: PageStyle;
+  hideWhenEmpty?: boolean;
 }
 
 export const Notification: React.FC<Props> = React.memo((props: Props) => {
-  const { active, type, pageStyle } = props;
+  const { active, hideWhenEmpty = false, type, pageStyle } = props;
   const { topPaddingIcons, sidePaddingIcons, fontSizeIcons } = pageStyle;
   const page_actions = useActions("page");
 
@@ -46,6 +47,8 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
   }, [count, invite_unread, news_unread]);
 
   const outer_style: CSS = {
+    background: "transparent",
+    border: "none",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -104,9 +107,19 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
 
   const className = TOP_BAR_ELEMENT_CLASS + (active ? " active" : "");
 
+  if (hideWhenEmpty && count === 0) {
+    return null;
+  }
+
   return (
-    <div style={outer_style} onClick={onClick} className={className}>
+    <button
+      type="button"
+      aria-label={`${count} unread notification${count === 1 ? "" : "s"}`}
+      style={outer_style}
+      onClick={onClick}
+      className={className}
+    >
       <div style={inner_style}>{renderBadge()}</div>
-    </div>
+    </button>
   );
 });

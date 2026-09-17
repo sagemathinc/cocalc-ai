@@ -6,6 +6,7 @@
 import { Alert, Button } from "antd";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export const NAMED_AGENT_LIMIT_ERROR = "named_agent_limit_reached";
 
@@ -47,5 +48,19 @@ export function NamedAgentLimitAlert({
         </Button>
       }
     />
+  );
+}
+
+export function NamedAgentUsage({
+  directory,
+}: {
+  directory: NamedAgentDirectory | undefined;
+}) {
+  const usage = directory?.usage;
+  if (!usage || usage.active >= usage.limit) return null;
+  return (
+    <div style={{ color: UI_COLORS.muted }}>
+      {usage.active} of {usage.limit} named-agent slots used
+    </div>
   );
 }

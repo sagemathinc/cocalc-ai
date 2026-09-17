@@ -81,6 +81,12 @@ const PostSurfaceProjectsNav = lazyWithRetry(
   }),
   "post-surface project navigation",
 );
+const CompactAgentsTopNav = lazyWithRetry(
+  async () => ({
+    default: (await import("./compact-agents-top-nav")).CompactAgentsTopNav,
+  }),
+  "compact Agents navigation",
+);
 const PostSurfaceBanners = lazyWithRetry(
   async () => ({
     default: (await import("./post-surface-banners")).PostSurfaceBanners,
@@ -219,6 +225,7 @@ export const Page: React.FC = () => {
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
   const showMyAgents = useMyAgentsUI();
+  const compactAgentsNavigation = showMyAgents && active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
   const show_connection = useTypedRedux("page", "show_connection");
@@ -543,9 +550,21 @@ export const Page: React.FC = () => {
         <nav className="smc-top-bar" style={topBarStyle}>
           <AppLogo size={pageStyle.height} />
           {is_logged_in && render_agents_nav_button()}
-          {is_logged_in && render_project_nav_button()}
-          {render_hosts_tab()}
-          {!isNarrow ? (
+          {!compactAgentsNavigation &&
+            is_logged_in &&
+            render_project_nav_button()}
+          {!compactAgentsNavigation && render_hosts_tab()}
+          {compactAgentsNavigation ? (
+            <>
+              <div style={{ flex: "1 1 auto" }} />
+              <PostSurfaceSlot scope="app.compact-agents-top-nav">
+                <CompactAgentsTopNav
+                  isLoggedIn={is_logged_in}
+                  pageStyle={pageStyle}
+                />
+              </PostSurfaceSlot>
+            </>
+          ) : !isNarrow ? (
             showPostSurfaceNavigation ? (
               <PostSurfaceSlot scope="app.post-surface-project-navigation">
                 <PostSurfaceProjectsNav
@@ -561,25 +580,29 @@ export const Page: React.FC = () => {
             // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
             <div style={{ flex: "1 1 auto" }} />
           )}
-          {render_right_nav()}
+          {!compactAgentsNavigation && render_right_nav()}
         </nav>
       )}
       {fullscreen && !isAuthView && render_fullscreen()}
-      {!lite && !examMode && isNarrow && !isAuthView && (
-        <>
-          {showPostSurfaceNavigation ? (
-            <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
-              <PostSurfaceProjectsNav
-                height={pageStyle.height}
-                onModeChange={setProjectsNavMode}
-                style={projectsNavStyle}
-              />
-            </PostSurfaceSlot>
-          ) : (
-            <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
-          )}
-        </>
-      )}
+      {!lite &&
+        !examMode &&
+        isNarrow &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <>
+            {showPostSurfaceNavigation ? (
+              <PostSurfaceSlot scope="app.post-surface-project-navigation-narrow">
+                <PostSurfaceProjectsNav
+                  height={pageStyle.height}
+                  onModeChange={setProjectsNavMode}
+                  style={projectsNavStyle}
+                />
+              </PostSurfaceSlot>
+            ) : (
+              <div style={{ ...projectsNavStyle, height: pageStyle.height }} />
+            )}
+          </>
+        )}
       {examMode && !isAuthView && (
         <ScratchpadSessionControls deleteAt={scratchpadDeleteAt} />
       )}

@@ -16,6 +16,7 @@ import {
   isNamedAgentLimitError,
   namedAgentLimitReached,
   NamedAgentLimitAlert,
+  NamedAgentUsage,
 } from "./agent-limit";
 
 export function NameAgent(props: Parameters<typeof EnabledNameAgent>[0]) {
@@ -150,6 +151,7 @@ function EnabledNameAgent({
             work, grant communication, or make shared chat history private.
           </p>
           <NamedAgentLimitAlert directory={agent ? undefined : directory} />
+          {!agent && <NamedAgentUsage directory={directory} />}
           <AgentNameInput
             id={`${id}-name`}
             value={name}

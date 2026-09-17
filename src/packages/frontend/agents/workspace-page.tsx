@@ -81,6 +81,7 @@ import {
   isNamedAgentLimitError,
   namedAgentLimitReached,
   NamedAgentLimitAlert,
+  NamedAgentUsage,
 } from "./agent-limit";
 
 const { Text, Title } = Typography;
@@ -325,6 +326,7 @@ function NewAgentPanel({
         style={{ marginTop: 24, width: "100%" }}
       >
         <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        <NamedAgentUsage directory={namedAgentDirectory} />
         {projectMap?.size === 0 && (
           <Alert
             type="info"
@@ -1032,11 +1034,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         <Title level={3} style={{ margin: 0 }}>
           Agents
         </Title>
-        {directory?.usage && (
-          <Text type="secondary">
-            {directory.usage.active} of {directory.usage.limit} named agents
-          </Text>
-        )}
         <Button
           type="primary"
           block
