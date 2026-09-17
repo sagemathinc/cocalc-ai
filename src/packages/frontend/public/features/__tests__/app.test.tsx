@@ -139,17 +139,19 @@ describe("PublicFeaturesApp", () => {
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText("A shared workspace for people and AI agents."),
+      screen.getByText(
+        "Run AI agents where files, notebooks, compute, and teams stay together.",
+      ),
     ).not.toBeNull();
     expect(
-      screen.getByText("Direct, inspect, and continue agent work."),
+      screen.getByText("Direct, inspect, and continue agent work"),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", { name: "Start with the project" }),
     ).not.toBeNull();
     expect(
       screen.getByRole("heading", {
-        name: "Choose the interface without moving the work",
+        name: "Use the agent interface that fits the task.",
       }),
     ).not.toBeNull();
     expect(
@@ -160,6 +162,12 @@ describe("PublicFeaturesApp", () => {
         name: "Compare with agent sandboxes",
       })[0],
     ).toHaveAttribute("href", "/features/compare");
+    expect(
+      screen.getByRole("link", { name: "Plan research compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+    expect(
+      screen.getByRole("link", { name: "Compare ways to run CoCalc" }),
+    ).toHaveAttribute("href", "/products");
     expect(screen.getByText(/Review Codex activity and diffs/)).not.toBeNull();
     expect(
       screen.queryByText(/files touched during agent-assisted work/),
@@ -180,6 +188,9 @@ describe("PublicFeaturesApp", () => {
       screen.queryByRole("link", { name: "Read the Codex guide" }),
     ).toBeNull();
     expect(screen.queryByRole("link", { name: "Codex setup" })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Plan research compute" }),
+    ).toBeNull();
     const accountLinks = screen.getAllByRole("link", {
       name: "Create account",
     });
