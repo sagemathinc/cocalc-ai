@@ -111,7 +111,7 @@ function renderHome(basePath: string): string {
 <section>
   <h2>Choose how CoCalc runs.</h2>
   <p>Start with hosted CoCalc.ai, run CoCalc locally or on one VM, or evaluate a customer-operated private deployment.</p>
-  <p>${publicLink(basePath, "products", "Review product paths")} ${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "support", "Talk with CoCalc")}</p>
+  <p>${publicLink(basePath, "products", "Review product paths")} ${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "support", "Review support and sales")}</p>
 </section>
 </main>`;
 }
@@ -154,27 +154,57 @@ ${productList}
 <section>
   <h2>One persistent project model</h2>
   <p>Every path uses the same core unit: a persistent Linux project that keeps files, tools, and services together. Collaboration, history, recovery, and agent features vary by product and deployment.</p>
-  <p>${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "features/compare", "Compare CoCalc fit")} ${publicLink(basePath, "support", "Talk with CoCalc")}</p>
+  <p>${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "features/compare", "Compare CoCalc fit")} ${publicLink(basePath, "support", "Review support and sales")}</p>
 </section>
 </main>`;
 }
 
-function renderPricing(basePath: string): string {
+function renderPricing(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
+  const isPlusProduct = config.cocalc_product === "plus";
+  const researchCompute =
+    getPublicFeaturePage("research-compute", config) != null
+      ? `<li><h3>${publicLink(
+          basePath,
+          "features/research-compute",
+          "Evaluate research compute",
+        )}</h3><p>Compare CPU, RAM, GPU, storage, software, and remote-kernel requirements before opening the authenticated host console. Host creation also depends on account eligibility, catalog availability, and authorization.</p></li>`
+      : "";
+  const introduction = isPlusProduct
+    ? "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration, a shared VM, or a customer-operated private deployment."
+    : "The membership options on this page apply to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page.";
+  const hostedAction = isPlusProduct
+    ? ""
+    : publicLink(basePath, "auth/sign-up", "Create account for hosted CoCalc");
+  const hostedSection = isPlusProduct
+    ? ""
+    : `<section>
+  <h2>Hosted memberships</h2>
+  <p>Use CoCalc.ai without operating CoCalc yourself. Current membership tiers, limits, and billing choices appear on this page when it loads.</p>
+</section>`;
   return `<main data-cocalc-public-prerender="pricing" style="${ARTICLE_STYLE}">
 <header>
   <p>CoCalc.ai pricing and licensing</p>
   <h1>Find the right fit</h1>
-  <p>The membership options on this page apply to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page.</p>
-  <p>${publicLink(basePath, "products", "Compare operating models")}</p>
+  <p>${htmlEscape(introduction)}</p>
+  <p>${hostedAction} ${publicLink(basePath, "products", "Compare operating models")}</p>
 </header>
+${hostedSection}
 <section>
-  <h2>Hosted memberships</h2>
-  <p>Use CoCalc.ai without operating CoCalc yourself. Current membership tiers, limits, and billing choices appear on this page when it loads.</p>
-</section>
-<section>
-  <h2>For teams and organizations</h2>
-  <p>Choose team seats, organization licenses, dedicated project hosts, or a customer-operated product path according to your users, workload, procurement, and operating requirements.</p>
-  <p>${publicLink(basePath, "support", "Discuss pricing and licensing")}</p>
+  <h2>${isPlusProduct ? "Licensing and deployment" : "For teams and organizations"}</h2>
+  ${
+    isPlusProduct
+      ? ""
+      : "<p>Choose team seats, organization licenses, dedicated project hosts, or a customer-operated product path according to your users, workload, procurement, and operating requirements. Account actions require sign-in, and host creation also depends on membership or grant eligibility.</p>"
+  }
+  <ul>${researchCompute}<li><h3>${publicLink(
+    basePath,
+    "products",
+    "Compare customer-operated options",
+  )}</h3><p>Compare local, one-VM, and private-deployment paths, including who owns infrastructure, recovery, and ongoing operations.</p></li></ul>
+  <p>${publicLink(basePath, "support", "Pricing and licensing support options")}</p>
 </section>
 </main>`;
 }
@@ -485,7 +515,7 @@ export function renderPublicRoutePrerender(
     return renderProducts(route, basePath, resolvedConfig);
   }
   if (route.section === "pricing") {
-    return renderPricing(basePath);
+    return renderPricing(basePath, resolvedConfig);
   }
   if (route.section === "guides") {
     return renderGuides(basePath, resolvedConfig);

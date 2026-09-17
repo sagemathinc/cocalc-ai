@@ -685,6 +685,10 @@ function CocalcLaunchpadPage() {
             label: "Talk with CoCalc about Launchpad",
             primary: true,
           },
+          {
+            href: "#install-cocalc-launchpad",
+            label: "Review Launchpad installer",
+          },
           { href: appPath("pricing"), label: "Pricing and licensing" },
           {
             href: publicPath("products/cocalc-star"),

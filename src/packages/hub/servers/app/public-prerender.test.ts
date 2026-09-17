@@ -28,6 +28,7 @@ describe("core landing page initial HTML", () => {
   it.each(["/", "/prefix"])(
     "renders useful home, product, and pricing content on %s",
     (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
       const home = renderPublicRoutePrerender({ section: "home" }, basePath);
       expect(home).toContain('data-cocalc-public-prerender="home"');
       expect(home).toContain(
@@ -62,7 +63,41 @@ describe("core landing page initial HTML", () => {
       expect(pricing).toContain(
         "membership options on this page apply to the hosted service",
       );
+      expect(pricing).toContain(
+        `href="${prefix}/auth/sign-up">Create account for hosted CoCalc`,
+      );
+      expect(pricing).toContain("Compare customer-operated options");
+      expect(pricing).toContain(
+        "Account actions require sign-in, and host creation also depends on membership or grant eligibility.",
+      );
       expect(pricing).not.toContain("then choose a plan");
+    },
+  );
+
+  it.each(["/", "/prefix"])(
+    "keeps pricing compute evaluation inside supported product profiles on %s",
+    (basePath) => {
+      const prefix = basePath === "/" ? "" : basePath;
+      const launchpad = renderPublicRoutePrerender(
+        { section: "pricing" },
+        basePath,
+        { cocalc_product: "launchpad" },
+      );
+      expect(launchpad).toContain(
+        `href="${prefix}/features/research-compute">Evaluate research compute`,
+      );
+      expect(launchpad).toContain("catalog availability, and authorization");
+
+      const plus = renderPublicRoutePrerender(
+        { section: "pricing" },
+        basePath,
+        { cocalc_product: "plus" },
+      );
+      expect(plus).not.toContain("features/research-compute");
+      expect(plus).not.toContain("Evaluate research compute");
+      expect(plus).not.toContain("Create account for hosted CoCalc");
+      expect(plus).not.toContain("Hosted memberships");
+      expect(plus).toContain("CoCalc Plus is the local, one-user runtime");
     },
   );
 

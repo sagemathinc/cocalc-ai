@@ -22,7 +22,10 @@ export default function PublicPricingApp({
 
   return (
     <PublicSectionShell active="pricing" config={config} title={title}>
-      <PricingPage isAuthenticated={!!config?.is_authenticated} />
+      <PricingPage
+        cocalcProduct={config?.cocalc_product}
+        isAuthenticated={!!config?.is_authenticated}
+      />
     </PublicSectionShell>
   );
 }

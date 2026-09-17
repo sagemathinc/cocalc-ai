@@ -1158,9 +1158,9 @@ function PathSection({
             Ready to choose how CoCalc fits?
           </Title>
           <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            Start with CoCalc.ai, review the product paths, or contact CoCalc
-            when licensing, procurement, support, or private deployment are part
-            of the decision.
+            Start with CoCalc.ai, review the product paths, or open support and
+            sales options when licensing, procurement, support, or private
+            deployment are part of the decision.
           </Paragraph>
           {trustHref ? (
             <Paragraph
@@ -1190,7 +1190,7 @@ function PathSection({
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
           <Button href={appPath("products")}>Review product paths</Button>
-          <Button href={appPath("support")}>Talk with CoCalc</Button>
+          <Button href={appPath("support")}>Review support and sales</Button>
         </div>
       </div>
     </section>

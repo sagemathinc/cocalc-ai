@@ -18,6 +18,7 @@ import {
 } from "@cocalc/frontend/account/membership-pricing-chooser";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { sortMembershipTiersByDisplayOrder } from "@cocalc/util/membership-tier-order";
+import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { joinUrlPath } from "@cocalc/util/url-path";
 
 import { PublicGrid, PublicSection } from "../layout/shell";
@@ -61,8 +62,10 @@ async function loadMembershipTiers(): Promise<
 }
 
 export default function PricingPage({
+  cocalcProduct,
   isAuthenticated = false,
 }: {
+  cocalcProduct?: string;
   isAuthenticated?: boolean;
 }) {
   const [billingInterval, setBillingInterval] =
@@ -96,6 +99,19 @@ export default function PricingPage({
     publicTiers,
     billingInterval,
   );
+  const isPlusProduct = cocalcProduct === "plus";
+  const hasProjectHostTier = publicTiers.some(
+    (tier) => tier.features?.create_hosts === true,
+  );
+  const canEvaluateResearchCompute =
+    getPublicFeaturePage("research-compute", {
+      cocalc_product: cocalcProduct,
+    }) != null;
+  const showProjectHostPath =
+    !isPlusProduct && (canEvaluateResearchCompute || hasProjectHostTier);
+  const membershipHref = isAuthenticated
+    ? appPath("settings/membership")
+    : appPath("auth/sign-up");
 
   return (
     <>
@@ -104,12 +120,11 @@ export default function PricingPage({
           Find the right fit
         </Title>
         <Paragraph style={{ margin: 0 }}>
-          The right setup depends on where CoCalc runs and how your team buys.
-          The membership grid below applies to the hosted service on this site.
-          For local, single-VM, and customer-operated paths, continue through
-          the relevant product or contact page.
+          {isPlusProduct
+            ? "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration, a shared VM, or a customer-operated private deployment."
+            : "The right setup depends on where CoCalc runs and how your team buys. The membership grid below applies to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page."}
         </Paragraph>
-        {hasIncludedAi ? (
+        {!isPlusProduct && hasIncludedAi ? (
           <Alert
             showIcon
             style={{ maxWidth: 720 }}
@@ -118,13 +133,20 @@ export default function PricingPage({
           />
         ) : null}
         <Flex gap={12} wrap>
+          {!isPlusProduct ? (
+            <Button href={membershipHref} type="primary">
+              {isAuthenticated
+                ? "Manage hosted membership"
+                : "Create account for hosted CoCalc"}
+            </Button>
+          ) : null}
           <Button href={publicPath("products")}>
             Compare operating models
           </Button>
         </Flex>
       </PublicSection>
 
-      {publicTiers.length > 0 ? (
+      {!isPlusProduct && publicTiers.length > 0 ? (
         <Flex vertical gap="large">
           <MembershipBillingSelector
             billingInterval={billingInterval}
@@ -176,7 +198,7 @@ export default function PricingPage({
             </PublicSection>
           )}
         </Flex>
-      ) : loaded ? (
+      ) : !isPlusProduct && loaded ? (
         <PublicSection>
           <Alert
             title="No public membership tiers are currently configured."
@@ -188,79 +210,126 @@ export default function PricingPage({
 
       <PublicSection>
         <Title level={2} style={{ margin: 0 }}>
-          For Teams and Organizations
+          {isPlusProduct
+            ? "Licensing and Deployment"
+            : "For Teams and Organizations"}
         </Title>
         <PublicGrid columns={2}>
-          <PublicSection>
-            <Space orientation="vertical" size="middle">
-              <Title level={3} style={{ margin: 0 }}>
-                Team seats
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Buy membership seats for a group, then assign them to the people
-                who need access. One account manages payment while each person
-                works from their own CoCalc account.
-              </Paragraph>
-              <Button href={appPath("settings/team-licenses")}>
-                Manage team seats
-              </Button>
-            </Space>
-          </PublicSection>
+          {!isPlusProduct ? (
+            <PublicSection>
+              <Space orientation="vertical" size="middle">
+                <Title level={3} style={{ margin: 0 }}>
+                  Team seats
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Buy membership seats for a group, then assign them to the
+                  people who need access. One account manages payment while each
+                  person works from their own CoCalc account. The purchaser must
+                  sign in before buying or managing seats.
+                </Paragraph>
+                <Button
+                  href={
+                    isAuthenticated
+                      ? appPath("settings/team-licenses")
+                      : appPath("auth/sign-up")
+                  }
+                >
+                  {isAuthenticated
+                    ? "Manage team seats"
+                    : "Create account for team seats"}
+                </Button>
+              </Space>
+            </PublicSection>
+          ) : null}
+
+          {!isPlusProduct ? (
+            <PublicSection>
+              <Space orientation="vertical" size="middle">
+                <Title level={3} style={{ margin: 0 }}>
+                  Organization licensing and billing
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  Departments, universities, labs, companies, and research
+                  groups can arrange access for many people under one license.
+                  Contact CoCalc when you need a quote, customized invoice, or
+                  purchasing workflow that does not fit self-service checkout.
+                </Paragraph>
+                <Button
+                  href={supportPurchasePath(
+                    "Organization licensing or billing",
+                    "I want to discuss CoCalc organization licensing, a quote, or a customized invoice. Helpful context: expected users or projects, workload, duration, product or operating model, procurement and billing requirements, and timeline.",
+                  )}
+                >
+                  Discuss organization pricing
+                </Button>
+              </Space>
+            </PublicSection>
+          ) : null}
+
+          {showProjectHostPath ? (
+            <PublicSection>
+              <Space orientation="vertical" size="middle">
+                <Title level={3} style={{ margin: 0 }}>
+                  Dedicated project hosts
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  First compare CPU, RAM, GPU, storage, and software needs.
+                  Creating a host then requires a signed-in account with an
+                  eligible membership or grant; available models, capacity, and
+                  authorization vary by site and account.
+                </Paragraph>
+                <Flex gap={8} wrap>
+                  {canEvaluateResearchCompute ? (
+                    <Button href={publicPath("features/research-compute")}>
+                      Evaluate research compute
+                    </Button>
+                  ) : null}
+                  {isAuthenticated ? (
+                    <Button href={appPath("hosts")}>Open project hosts</Button>
+                  ) : null}
+                </Flex>
+              </Space>
+            </PublicSection>
+          ) : null}
 
           <PublicSection>
             <Space orientation="vertical" size="middle">
               <Title level={3} style={{ margin: 0 }}>
-                Organization licenses
+                Customer-operated deployments
               </Title>
               <Paragraph style={{ margin: 0 }}>
-                Departments, universities, labs, companies, and research groups
-                can arrange access for many people under one license.
+                Compare local CoCalc Plus, one-VM CoCalc Star, and the Launchpad
+                and Rocket private-deployment paths. You or your organization
+                operate the infrastructure, recovery, and ongoing service.
               </Paragraph>
-              <Button
-                href={supportPurchasePath(
-                  "Organization license",
-                  "I want to discuss a CoCalc organization license.",
-                )}
-              >
-                Contact sales
+              <Button href={publicPath("products")}>
+                Compare customer-operated options
               </Button>
             </Space>
           </PublicSection>
 
-          <PublicSection>
-            <Space orientation="vertical" size="middle">
-              <Title level={3} style={{ margin: 0 }}>
-                Dedicated project hosts
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                Run projects on dedicated compute when shared resources are not
-                enough. Memberships determine which dedicated host options are
-                available to your account.
-              </Paragraph>
-              <Button href={appPath("hosts")}>Open project hosts</Button>
-            </Space>
-          </PublicSection>
-
-          <PublicSection>
-            <Space orientation="vertical" size="middle">
-              <Title level={3} style={{ margin: 0 }}>
-                Quotes and customized invoices
-              </Title>
-              <Paragraph style={{ margin: 0 }}>
-                For purchases above $100 or billing workflows that do not fit
-                self-service checkout, contact us for a quote or customized
-                invoice.
-              </Paragraph>
-              <Button
-                href={supportPurchasePath(
-                  "Quote or customized invoice",
-                  "I want to request a quote or customized invoice for CoCalc.",
-                )}
-              >
-                Request a quote
-              </Button>
-            </Space>
-          </PublicSection>
+          {isPlusProduct ? (
+            <PublicSection>
+              <Space orientation="vertical" size="middle">
+                <Title level={3} style={{ margin: 0 }}>
+                  Quotes and customized invoices
+                </Title>
+                <Paragraph style={{ margin: 0 }}>
+                  For a customer-operated product purchase or billing workflow
+                  that does not fit self-service, contact CoCalc with the
+                  product, operating environment, and timeline.
+                </Paragraph>
+                <Button
+                  href={supportPurchasePath(
+                    "Customer-operated product quote",
+                    "I want to request a quote or customized invoice for a customer-operated CoCalc product. Helpful context: expected users or projects, product or operating model, billing requirements, desired term, and timeline.",
+                  )}
+                >
+                  Request a product quote
+                </Button>
+              </Space>
+            </PublicSection>
+          ) : null}
         </PublicGrid>
       </PublicSection>
     </>

@@ -567,7 +567,9 @@ describe("PublicHomeApp", () => {
       within(path).getByRole("link", { name: "Review product paths" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(path).getByRole("link", { name: "Talk with CoCalc" }),
+      within(path).getByRole("link", {
+        name: "Review support and sales",
+      }),
     ).toHaveAttribute("href", "/support");
     expect(
       within(path).queryByRole("link", {

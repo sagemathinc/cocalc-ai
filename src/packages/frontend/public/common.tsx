@@ -169,7 +169,7 @@ export function PublicNextStep({
           {authenticated ? "Open projects" : "Start on CoCalc.ai"}
         </Button>
         <Button href={appPath("products")}>Compare operating models</Button>
-        <Button href={appPath("support")}>Talk with CoCalc</Button>
+        <Button href={appPath("support")}>Review support and sales</Button>
       </Flex>
     </PublicSection>
   );
