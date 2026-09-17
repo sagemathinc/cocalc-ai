@@ -45,6 +45,7 @@ import {
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
+import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { COLORS } from "@cocalc/util/theme";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
@@ -457,6 +458,17 @@ function AgentProjectContext({
     path: agent.path,
   });
   const localViewState = useEditor("local_view_state");
+  const openFiles = useTypedRedux(
+    { project_id: agent.endpoint.project_id },
+    "open_files",
+  );
+  const component = openFiles?.getIn?.([agent.path, "component"]);
+  const runtimeIsUsable = openFileComponentRuntimeIsUsable({
+    info: component,
+    isViewer: false,
+    getActions: (name) => redux.getActions(name),
+    getStore: (name) => redux.getStore(name),
+  });
   const selectedThread = selectedChatThreadFromLocalViewState(localViewState);
   const projectContext = useProjectContextProvider({
     project_id: agent.endpoint.project_id,
@@ -499,8 +511,14 @@ function AgentProjectContext({
     const becameActive = active && !wasActiveRef.current;
     wasActiveRef.current = active;
     if (!becameActive || !ready) return;
-    void openEmbeddedFile().catch((err) => setError(`${err}`));
-  }, [active, openEmbeddedFile, ready]);
+    if (runtimeIsUsable) return;
+
+    // Closing this file in its project destroys the shared editor runtime.
+    // Unmount the stale editor before open_file creates its replacement so
+    // hooks subscribe to the new store/actions rather than the closed ones.
+    setReady(false);
+    setRetry((value) => value + 1);
+  }, [active, ready, runtimeIsUsable]);
 
   useEffect(() => {
     if (!active || !ready) return;
