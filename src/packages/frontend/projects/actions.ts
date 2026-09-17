@@ -5600,20 +5600,20 @@ export class ProjectsActions extends Actions<ProjectsState> {
     // Each invocation is a distinct user intent; the server deduplicates retries
     // of this invocation using the UUID captured below.
     const restartRequestId = uuid();
-    if (!this.restartLifecycleBaseline.has(project_id)) {
-      this.restartLifecycleBaseline.set(
-        project_id,
-        store.getIn(["project_map", project_id, "state", "state"]) as
-          | string
-          | undefined,
-      );
-    }
     this.latestRestartRequestId.set(project_id, restartRequestId);
-    this.projectLifecycleReconcileTokens[project_id] =
-      (this.projectLifecycleReconcileTokens[project_id] ?? 0) + 1;
     const isLatestRequest = () =>
       this.latestRestartRequestId.get(project_id) === restartRequestId;
-    await ensureProjectReduxRuntime();
+    try {
+      await ensureProjectReduxRuntime();
+    } catch (err) {
+      if (isLatestRequest()) {
+        this.latestRestartRequestId.delete(project_id);
+        this.restartLifecycleBaseline.delete(project_id);
+      }
+      throw err;
+    }
+    this.projectLifecycleReconcileTokens[project_id] =
+      (this.projectLifecycleReconcileTokens[project_id] ?? 0) + 1;
     if (isProjectHardDeleting(store.getIn(["project_map", project_id]))) {
       if (!isLatestRequest()) {
         return;
@@ -5626,6 +5626,14 @@ export class ProjectsActions extends Actions<ProjectsState> {
       });
       alert_message({ type: "warning", message, timeout: 12 });
       return;
+    }
+    if (!this.restartLifecycleBaseline.has(project_id)) {
+      this.restartLifecycleBaseline.set(
+        project_id,
+        store.getIn(["project_map", project_id, "state", "state"]) as
+          | string
+          | undefined,
+      );
     }
     this.project_log(project_id, {
       event: "project_restart_requested",

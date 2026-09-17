@@ -7,6 +7,7 @@ import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { getBackups } from "@cocalc/frontend/project/archive-info";
 import { alert_message } from "@cocalc/frontend/alerts";
 import { selectHostForProjectStart } from "@cocalc/frontend/hosts/select-host-for-project-start";
+import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 
 const mockRecordUxLatencyEvent = jest.fn();
 
@@ -29,6 +30,10 @@ jest.mock("@cocalc/frontend/alerts", () => ({
 
 jest.mock("@cocalc/frontend/hosts/select-host-for-project-start", () => ({
   selectHostForProjectStart: jest.fn(),
+}));
+
+jest.mock("@cocalc/frontend/app-framework/project-runtime", () => ({
+  ensureProjectReduxRuntime: jest.fn(async () => undefined),
 }));
 
 jest.mock("@cocalc/frontend/monitoring/ux-latency", () => ({
@@ -105,6 +110,7 @@ const selectHostForProjectStartMock =
   selectHostForProjectStart as jest.MockedFunction<
     typeof selectHostForProjectStart
   >;
+const ensureProjectReduxRuntimeMock = jest.mocked(ensureProjectReduxRuntime);
 
 describe("ProjectsActions archive flow", () => {
   const project_id = "11111111-1111-4111-8111-111111111111";
@@ -219,6 +225,7 @@ describe("ProjectsActions archive flow", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    ensureProjectReduxRuntimeMock.mockResolvedValue(undefined);
     mockRecordUxLatencyEvent.mockClear();
     mockedWebappClient.async_query.mockResolvedValue({
       query: {
@@ -1222,6 +1229,78 @@ describe("ProjectsActions archive flow", () => {
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it("captures the restart baseline after delayed runtime loading", async () => {
+    configureProject({
+      state: "running",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+      hostId: "host-1",
+    });
+    const { actions } = makeActions({ mutableProjectStore: true });
+    jest
+      .spyOn(actions as any, "project_log")
+      .mockImplementation(async () => {});
+
+    let finishRuntimeLoad!: () => void;
+    ensureProjectReduxRuntimeMock.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishRuntimeLoad = resolve;
+        }),
+    );
+    mockedWebappClient.conat_client.hub.projects.restart.mockRejectedValueOnce(
+      new Error("restart failed after runtime load"),
+    );
+
+    const restart = actions.restart_project(project_id);
+    configuredProjectMap = configuredProjectMap.setIn(
+      [project_id, "state", "state"],
+      "opened",
+    );
+    finishRuntimeLoad();
+
+    await expect(restart).rejects.toThrow("restart failed after runtime load");
+    expect(
+      mockedStore.getIn(["project_map", project_id, "state", "state"]),
+    ).toBe("opened");
+  });
+
+  it("discards restart bookkeeping after runtime loading fails", async () => {
+    configureProject({
+      state: "running",
+      lastEdited: new Date("2026-04-25T15:55:00.000Z"),
+      hostId: "host-1",
+    });
+    const { actions } = makeActions({ mutableProjectStore: true });
+    jest
+      .spyOn(actions as any, "project_log")
+      .mockImplementation(async () => {});
+    ensureProjectReduxRuntimeMock.mockRejectedValueOnce(
+      new Error("runtime load failed"),
+    );
+
+    await expect(actions.restart_project(project_id)).rejects.toThrow(
+      "runtime load failed",
+    );
+    expect(
+      mockedWebappClient.conat_client.hub.projects.restart,
+    ).not.toHaveBeenCalled();
+
+    configuredProjectMap = configuredProjectMap.setIn(
+      [project_id, "state", "state"],
+      "opened",
+    );
+    mockedWebappClient.conat_client.hub.projects.restart.mockRejectedValueOnce(
+      new Error("retry restart failed"),
+    );
+
+    await expect(actions.restart_project(project_id)).rejects.toThrow(
+      "retry restart failed",
+    );
+    expect(
+      mockedStore.getIn(["project_map", project_id, "state", "state"]),
+    ).toBe("opened");
   });
 
   it("does not let an older restart failure replace the latest success", async () => {
