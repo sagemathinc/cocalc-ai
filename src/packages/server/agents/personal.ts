@@ -23,6 +23,16 @@ import { getIdentity } from "./api";
 import { agentRpcControl } from "./rpc";
 import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+
+const DEFAULT_MAX_NAMED_AGENTS = 5;
+
+async function namedAgentLimit(account_id: string): Promise<number> {
+  const membership = await resolveMembershipForAccount(account_id);
+  return (
+    membership.effective_limits?.max_named_agents ?? DEFAULT_MAX_NAMED_AGENTS
+  );
+}
 
 export const personalMessagingEnabled = () => true;
 function enabled(request: PersonalControlRequest) {
@@ -115,14 +125,26 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
   // transaction fence after any remote endpoint validation has completed.
   await store.assertHome(account);
   switch (request.action) {
-    case "listNamedAgents":
+    case "listNamedAgents": {
+      const agents = await store.names(account);
       return {
         enabled: true,
-        agents: await store.names(account),
+        agents,
+        usage: {
+          active: agents.length,
+          limit: await namedAgentLimit(account),
+        },
         controls: await store.controls(account),
       };
+    }
     case "nameAgent":
-      return store.name(account, request.options);
+      return store.name(
+        account,
+        request.options,
+        await namedAgentLimit(account),
+      );
+    case "retireNamedAgent":
+      return store.retire(account, request.options);
     case "listPersonalConnections":
       return {
         enabled: true,
@@ -197,6 +219,7 @@ async function human<K extends PersonalHumanMethod>(
       "project_title",
       "thread_title",
     ],
+    retireNamedAgent: ["endpoint"],
     grantPersonalConnection: [
       "source",
       "target",
@@ -237,6 +260,8 @@ export const listNamedAgents: AgentApi["listNamedAgents"] = (opts) =>
   human("listNamedAgents", opts);
 export const nameAgent: AgentApi["nameAgent"] = (opts) =>
   human("nameAgent", opts);
+export const retireNamedAgent: AgentApi["retireNamedAgent"] = (opts) =>
+  human("retireNamedAgent", opts);
 export const listPersonalConnections: AgentApi["listPersonalConnections"] = (
   opts,
 ) => human("listPersonalConnections", opts);

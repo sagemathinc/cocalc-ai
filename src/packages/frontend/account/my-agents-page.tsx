@@ -34,6 +34,7 @@ import {
   latestConnectionObservation,
   summarizeConnectionPair,
 } from "@cocalc/frontend/agents/connection-groups";
+import { NamedAgentLimitAlert } from "@cocalc/frontend/agents/agent-limit";
 
 export function MyAgentsPage() {
   const accountId = useTypedRedux("account", "account_id");
@@ -80,24 +81,32 @@ function AccountAgentsPage() {
       disposed = true;
     };
   }, [revision]);
-  async function mutate(action: () => Promise<unknown>, message: string) {
+  async function mutate(
+    action: () => Promise<unknown>,
+    message: string,
+    requireFresh = true,
+  ) {
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
     setError("");
     setNotice("");
     try {
-      const completed = await runFreshAuthAction(async () => {
+      const perform = async () => {
         boundAccount.assertCurrent();
         if (!alive.current)
           throw new Error(
             "The account changed. Review this action in the current session.",
           );
         await action();
-      });
+      };
+      const completed = requireFresh
+        ? await runFreshAuthAction(perform)
+        : await perform().then(() => true);
       if (completed) {
         setNotice(message);
         setRevision((n) => n + 1);
+        refreshNamedAgents();
         setRevokeAll(false);
       }
     } catch (err) {
@@ -199,6 +208,12 @@ function AccountAgentsPage() {
       {directory && !directory.enabled && (
         <Alert type="info" title="Named agents are not enabled on this site" />
       )}
+      {directory?.usage && (
+        <div role="status">
+          {directory.usage.active} of {directory.usage.limit} named agents
+        </div>
+      )}
+      <NamedAgentLimitAlert directory={directory} />
       {!loading && directory?.enabled && !agents.length && (
         <p>
           No matching agents. Use Name agent beside an agent thread title to add
@@ -263,6 +278,31 @@ function AccountAgentsPage() {
                 }}
               >
                 Connections
+              </Button>
+              <Button
+                danger
+                disabled={busy}
+                aria-label={`Remove @${agent.name} from Agents`}
+                onClick={() =>
+                  Modal.confirm({
+                    title: `Remove @${agent.name} from Agents?`,
+                    content:
+                      "This frees a named-agent slot. It does not delete the chat, disable the agent identity, or revoke messaging connections.",
+                    okText: "Remove from Agents",
+                    okButtonProps: { danger: true },
+                    onOk: () =>
+                      mutate(
+                        () =>
+                          personalAgentApi().retireNamedAgent({
+                            endpoint: agent.endpoint,
+                          }),
+                        `@${agent.name} was removed from Agents. Its chat and connections were not deleted.`,
+                        false,
+                      ),
+                  })
+                }
+              >
+                Remove from Agents
               </Button>
             </Space>
             <details>

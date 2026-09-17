@@ -12,6 +12,11 @@ import { useBoundAgentAccount } from "./use-bound-account";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
 import { useAgentMessagingUI } from "./use-ui-preference";
+import {
+  isNamedAgentLimitError,
+  namedAgentLimitReached,
+  NamedAgentLimitAlert,
+} from "./agent-limit";
 
 export function NameAgent(props: Parameters<typeof EnabledNameAgent>[0]) {
   return useAgentMessagingUI() ? <EnabledNameAgent {...props} /> : null;
@@ -57,8 +62,9 @@ function EnabledNameAgent({
       thread_id: threadId,
     },
   );
+  const atLimit = !agent && namedAgentLimitReached(directory);
   async function save() {
-    if (lock.current || problem) return;
+    if (lock.current || problem || atLimit) return;
     lock.current = true;
     setBusy(true);
     setError("");
@@ -100,7 +106,12 @@ function EnabledNameAgent({
       refreshNamedAgents();
       setOpen(false);
     } catch (err) {
-      setError(`${err}`);
+      setError(
+        isNamedAgentLimitError(err)
+          ? "Your membership's named-agent limit was reached."
+          : `${err}`,
+      );
+      if (isNamedAgentLimitError(err)) refreshNamedAgents();
     } finally {
       lock.current = false;
       setBusy(false);
@@ -126,7 +137,7 @@ function EnabledNameAgent({
         title={modalTitle}
         okText="Save agent name"
         confirmLoading={busy}
-        okButtonProps={{ disabled: !!problem || busy }}
+        okButtonProps={{ disabled: !!problem || busy || atLimit }}
         onOk={() => void save()}
         onCancel={() => {
           if (!busy) setOpen(false);
@@ -138,6 +149,7 @@ function EnabledNameAgent({
             This name is in your account across projects. Naming does not start
             work, grant communication, or make shared chat history private.
           </p>
+          <NamedAgentLimitAlert directory={agent ? undefined : directory} />
           <AgentNameInput
             id={`${id}-name`}
             value={name}

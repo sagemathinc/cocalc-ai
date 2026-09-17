@@ -6,6 +6,7 @@
 import {
   normalizeAgentName,
   type NamedAgent,
+  type NamedAgentDirectory,
 } from "@cocalc/conat/agents/personal";
 import {
   redux,
@@ -75,6 +76,11 @@ import {
   findWorkspaceAgentForThread,
   selectedChatThreadFromLocalViewState,
 } from "./workspace-model";
+import {
+  isNamedAgentLimitError,
+  namedAgentLimitReached,
+  NamedAgentLimitAlert,
+} from "./agent-limit";
 
 const { Text, Title } = Typography;
 
@@ -140,10 +146,12 @@ async function waitForChatReady(actions: any): Promise<void> {
 
 function NewAgentPanel({
   agents,
+  namedAgentDirectory,
   onCancel,
   onCreated,
 }: {
   agents: NamedAgent[];
+  namedAgentDirectory?: NamedAgentDirectory;
   onCancel: () => void;
   onCreated: (agentId: string) => void;
 }) {
@@ -176,6 +184,7 @@ function NewAgentPanel({
         }
       : undefined,
   );
+  const atLimit = namedAgentLimitReached(namedAgentDirectory);
 
   useEffect(() => {
     if (projectId || !projectMap) return;
@@ -244,7 +253,7 @@ function NewAgentPanel({
   }
 
   async function create() {
-    if (busy || problem) return;
+    if (busy || problem || atLimit) return;
     setBusy(true);
     setError("");
     try {
@@ -291,7 +300,12 @@ function NewAgentPanel({
       refreshNamedAgents();
       onCreated(identity.agent_id);
     } catch (err) {
-      setError(`${err}`);
+      setError(
+        isNamedAgentLimitError(err)
+          ? "Your membership's named-agent limit was reached."
+          : `${err}`,
+      );
+      if (isNamedAgentLimitError(err)) refreshNamedAgents();
     } finally {
       setBusy(false);
     }
@@ -309,6 +323,7 @@ function NewAgentPanel({
         size={14}
         style={{ marginTop: 24, width: "100%" }}
       >
+        <NamedAgentLimitAlert directory={namedAgentDirectory} />
         {projectMap?.size === 0 && (
           <Alert
             type="info"
@@ -385,7 +400,7 @@ function NewAgentPanel({
           <Button
             type="primary"
             loading={busy}
-            disabled={!!problem || !projectId}
+            disabled={!!problem || !projectId || atLimit}
             onClick={() => void create()}
           >
             {firstRequest.trim() ? "Create agent with draft" : "Create agent"}
@@ -978,6 +993,11 @@ export function MyAgentsWorkspacePage() {
         <Title level={3} style={{ margin: 0 }}>
           Agents
         </Title>
+        {directory?.usage && (
+          <Text type="secondary">
+            {directory.usage.active} of {directory.usage.limit} named agents
+          </Text>
+        )}
         <Button
           type="primary"
           block
@@ -1146,6 +1166,7 @@ export function MyAgentsWorkspacePage() {
         {creating ? (
           <NewAgentPanel
             agents={agents}
+            namedAgentDirectory={directory}
             onCancel={() => {
               setCreating(false);
               setMobileList(true);

@@ -13,6 +13,7 @@ import {
 import type {
   NamedAgent,
   NameAgentOptions,
+  RetireNamedAgentOptions,
   PersonalConnection,
   PersonalMessagingControls,
   GrantPersonalConnectionOptions,
@@ -141,7 +142,11 @@ export class PersonalAgentStore {
     return result;
   }
 
-  async name(account: string, opts: NameAgentOptions): Promise<NamedAgent> {
+  async name(
+    account: string,
+    opts: NameAgentOptions,
+    maxActive = Number.POSITIVE_INFINITY,
+  ): Promise<NamedAgent> {
     const name = normalizeAgentName(opts.name);
     const identity = await this.endpoint(account, opts.endpoint);
     for (const key of ["description", "project_title", "thread_title"] as const)
@@ -158,6 +163,12 @@ export class PersonalAgentStore {
       thread_title: opts.thread_title,
     };
     return this.locked(account, async (db) => {
+      const currentForEndpoint = (
+        await db.query(
+          "SELECT name FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+          [account, opts.endpoint.project_id, opts.endpoint.agent_id],
+        )
+      ).rows[0];
       const previous = (
         await db.query(
           "SELECT * FROM agent_personal_names WHERE account_id=$1 AND name=$2",
@@ -170,6 +181,17 @@ export class PersonalAgentStore {
           previous.agent_id !== opts.endpoint.agent_id)
       )
         throw new Error("name_reserved");
+      if (!currentForEndpoint) {
+        const active = +(
+          await db.query(
+            "SELECT count(*) AS count FROM agent_personal_names WHERE account_id=$1 AND retired_at IS NULL",
+            [account],
+          )
+        ).rows[0].count;
+        if (active >= maxActive) {
+          throw new Error(`named_agent_limit_reached:${active}:${maxActive}`);
+        }
+      }
       if (!previous) {
         const count = (
           await db.query(
@@ -197,6 +219,16 @@ export class PersonalAgentStore {
         )
       ).rows[0];
       return this.named(row);
+    });
+  }
+
+  async retire(account: string, opts: RetireNamedAgentOptions): Promise<void> {
+    validateAgentEndpoint(opts.endpoint);
+    await this.locked(account, async (db) => {
+      await db.query(
+        "UPDATE agent_personal_names SET retired_at=now(),updated_at=now() WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+        [account, opts.endpoint.project_id, opts.endpoint.agent_id],
+      );
     });
   }
 

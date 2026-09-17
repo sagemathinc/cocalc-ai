@@ -8,6 +8,7 @@ export function isRestrictiveAgentManagement(
     case "listNamedAgents":
     case "listPersonalConnections":
     case "listPersonalConnectionRequests":
+    case "retireNamedAgent":
       return true;
     case "setPersonalConnectionState":
       return (
