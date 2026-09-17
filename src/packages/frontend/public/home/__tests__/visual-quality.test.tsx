@@ -244,11 +244,13 @@ describe("PublicHomeApp visual quality contract", () => {
     const heroImage = within(
       screen.getByRole("region", { name: "CoCalc hero" }),
     ).getByRole("img", {
-      name: "A persistent CoCalc project shared by people and AI agents",
+      name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
     });
-    expect(heroImage.getAttribute("src")).toBe("/public/landing/home-hero.jpg");
+    expect(heroImage.getAttribute("src")).toBe(
+      "/public/landing/project-notebook-20260916.jpg",
+    );
     expect(heroImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 1672 / 941;",
+      "aspect-ratio: 1050 / 650;",
     );
     expect(heroImage.getAttribute("style") ?? "").toContain(
       "object-fit: contain;",
@@ -257,13 +259,13 @@ describe("PublicHomeApp visual quality contract", () => {
     const workflowImage = within(
       screen.getByRole("region", { name: "Core workflows" }),
     ).getByRole("img", {
-      name: "One CoCalc workspace containing many workflows",
+      name: "A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average",
     });
     expect(workflowImage.getAttribute("src")).toBe(
-      "/public/landing/project-workflows.jpg",
+      "/public/landing/project-terminal-20260916.jpg",
     );
     expect(workflowImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 16 / 9;",
+      "aspect-ratio: 2 / 1;",
     );
     expect(workflowImage.getAttribute("style") ?? "").toContain(
       "object-fit: contain;",

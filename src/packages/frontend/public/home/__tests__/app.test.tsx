@@ -166,10 +166,15 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero)
         .getByRole("img", {
-          name: "A persistent CoCalc project shared by people and AI agents",
+          name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
         })
         .getAttribute("src"),
-    ).toBe("/public/landing/home-hero.jpg");
+    ).toBe("/public/landing/project-notebook-20260916.jpg");
+    expect(
+      within(hero).getByText(
+        /saved Jupyter notebook in a fresh CoCalc\.ai project/i,
+      ),
+    ).not.toBeNull();
     expect(
       within(hero)
         .getByRole("link", { name: "Start on CoCalc.ai" })
@@ -275,10 +280,15 @@ describe("PublicHomeApp", () => {
     expect(
       within(workflows)
         .getByRole("img", {
-          name: "One CoCalc workspace containing many workflows",
+          name: "A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average",
         })
         .getAttribute("src"),
-    ).toBe("/public/landing/project-workflows.jpg");
+    ).toBe("/public/landing/project-terminal-20260916.jpg");
+    expect(
+      within(workflows).getByText(
+        /project terminal reruns the same synthetic analysis/i,
+      ),
+    ).not.toBeNull();
     const workflowCards = within(workflows).getByRole("group", {
       name: "CoCalc workflow feature cards",
     });

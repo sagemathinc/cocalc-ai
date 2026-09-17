@@ -166,7 +166,9 @@ describe("public route metadata", () => {
     );
 
     expect(metadata.canonicalPath).toBe("/base/products/cocalc-star");
-    expect(metadata.imagePath).toBe("/base/public/landing/product-options.jpg");
+    expect(metadata.imagePath).toBe(
+      "/base/public/landing/project-notebook-20260916.jpg",
+    );
   });
 
   it("canonicalizes duplicated marketing routes to cocalc.ai on branded hosts", () => {
@@ -268,7 +270,7 @@ describe("public route metadata", () => {
     );
     expect(headMeta('meta[name="twitter:card"]')).toBe("summary_large_image");
     expect(headMeta('meta[property="og:image"]')).toBe(
-      "http://localhost/public/landing/product-options.jpg",
+      "http://localhost/public/landing/project-notebook-20260916.jpg",
     );
     expect(canonicalHref()).toBe("https://cocalc.ai/products/cocalc-star");
   });

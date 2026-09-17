@@ -132,6 +132,28 @@ describe("public shell rendering", () => {
     },
   );
 
+  it.each([
+    ["/", "project-notebook-20260916.jpg", "1050", "650"],
+    ["/products/cocalc-star", "project-notebook-20260916.jpg", "1050", "650"],
+    ["/features/teaching", "project-terminal-20260916.jpg", "800", "400"],
+  ])(
+    "emits current product evidence and dimensions for %s",
+    async (path, image, width, height) => {
+      const { html, status } = await renderPublicShell(request(path));
+
+      expect(status).toBe(200);
+      expect(html).toContain(
+        `content="https://cocalc.ai/public/landing/${image}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        `content="${width}" data-cocalc-public-route-meta="og:image:width"`,
+      );
+      expect(html).toContain(
+        `content="${height}" data-cocalc-public-route-meta="og:image:height"`,
+      );
+    },
+  );
+
   it("renders docs inside the container replaced by the public React app", async () => {
     const { html, status } = await renderPublicShell(
       request("/docs/projects/project-secrets", { tracking: "example" }),

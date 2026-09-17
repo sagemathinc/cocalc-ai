@@ -31,8 +31,8 @@ interface HomeConfig extends PublicConfig {
   site_description?: string;
 }
 
-const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
-const WORKFLOW_IMAGE_URL = "/public/landing/project-workflows.jpg";
+const HERO_IMAGE_URL = "/public/landing/project-notebook-20260916.jpg";
+const WORKFLOW_IMAGE_URL = "/public/landing/project-terminal-20260916.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
 const CARD_TITLE_STYLE = {
@@ -82,7 +82,7 @@ const HOME_PAGE_CSS = `
       line-height: 1.08 !important;
     }
 
-    .cocalc-public-home-hero-image {
+    .cocalc-public-home-hero-visual {
       order: 2;
     }
 
@@ -588,18 +588,34 @@ function Hero({
           </Button>
         </Flex>
       </Flex>
-      <img
-        alt="A persistent CoCalc project shared by people and AI agents"
-        className="cocalc-public-home-hero-image"
-        decoding="async"
-        src={HERO_IMAGE_URL}
-        style={{
-          aspectRatio: "1672 / 941",
-          display: "block",
-          objectFit: "contain",
-          width: "100%",
-        }}
-      />
+      <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
+        <img
+          alt="A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls"
+          className="cocalc-public-home-hero-image"
+          decoding="async"
+          src={HERO_IMAGE_URL}
+          style={{
+            aspectRatio: "1050 / 650",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.08)}`,
+            display: "block",
+            objectFit: "contain",
+            width: "100%",
+          }}
+        />
+        <figcaption
+          style={{
+            color: PUBLIC_COLORS.mutedText,
+            fontSize: 13,
+            lineHeight: 1.45,
+            marginTop: 8,
+          }}
+        >
+          A saved Jupyter notebook in a fresh CoCalc.ai project, using only
+          synthetic data.
+        </figcaption>
+      </figure>
     </section>
   );
 }
@@ -742,22 +758,35 @@ function WorkflowsSection() {
         }}
       >
         <Flex vertical gap={16}>
-          <img
-            alt="One CoCalc workspace containing many workflows"
-            className="cocalc-public-home-workflow-image"
-            decoding="async"
-            loading="eager"
-            src={WORKFLOW_IMAGE_URL}
-            style={{
-              aspectRatio: "16 / 9",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.06)}`,
-              display: "block",
-              objectFit: "contain",
-              width: "100%",
-            }}
-          />
+          <figure style={{ margin: 0 }}>
+            <img
+              alt="A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average"
+              className="cocalc-public-home-workflow-image"
+              decoding="async"
+              loading="eager"
+              src={WORKFLOW_IMAGE_URL}
+              style={{
+                aspectRatio: "2 / 1",
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.06)}`,
+                display: "block",
+                objectFit: "contain",
+                width: "100%",
+              }}
+            />
+            <figcaption
+              style={{
+                color: PUBLIC_COLORS.mutedText,
+                fontSize: 13,
+                lineHeight: 1.45,
+                marginTop: 8,
+              }}
+            >
+              A project terminal reruns the same synthetic analysis from saved
+              files.
+            </figcaption>
+          </figure>
           <aside
             aria-label="One CoCalc project model"
             style={{

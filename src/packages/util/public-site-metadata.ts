@@ -115,10 +115,10 @@ function docsPath(slug?: string): string {
   return slug ? `/docs/${slug.replace(/^\/+/, "")}` : "/docs";
 }
 
-const DEFAULT_SOCIAL_IMAGE = "public/landing/home-hero.jpg";
-const PRODUCT_SOCIAL_IMAGE = "public/landing/product-options.jpg";
-const WORKFLOW_SOCIAL_IMAGE = "public/landing/project-workflows.jpg";
-const FEATURE_SOCIAL_IMAGE = "public/landing/feature-map.jpg";
+const DEFAULT_SOCIAL_IMAGE = "public/landing/project-notebook-20260916.jpg";
+const PRODUCT_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
+const WORKFLOW_SOCIAL_IMAGE = "public/landing/project-terminal-20260916.jpg";
+const FEATURE_SOCIAL_IMAGE = DEFAULT_SOCIAL_IMAGE;
 
 const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/features/api-screenshot.png": { height: 1066, width: 1400 },
@@ -151,10 +151,14 @@ const PUBLIC_IMAGE_DIMENSIONS: Record<string, PublicImageDimensions> = {
   "/public/features/sagemath-jupyter.png": { height: 858, width: 1508 },
   "/public/features/terminal.png": { height: 607, width: 1362 },
   "/public/features/whiteboard-sage.png": { height: 1734, width: 3024 },
-  "/public/landing/feature-map.jpg": { height: 1024, width: 1536 },
-  "/public/landing/home-hero.jpg": { height: 941, width: 1672 },
-  "/public/landing/product-options.jpg": { height: 930, width: 1691 },
-  "/public/landing/project-workflows.jpg": { height: 1024, width: 1536 },
+  "/public/landing/project-notebook-20260916.jpg": {
+    height: 650,
+    width: 1050,
+  },
+  "/public/landing/project-terminal-20260916.jpg": {
+    height: 400,
+    width: 800,
+  },
 };
 
 export const PUBLIC_SITE_DESCRIPTION =
