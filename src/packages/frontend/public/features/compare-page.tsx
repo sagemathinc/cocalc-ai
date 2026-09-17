@@ -40,30 +40,34 @@ const DECISION_ROWS = [
   {
     cocalc:
       "People and agents need files, notebooks, terminals, output, discussion, and review history in one shared project.",
-    other: "Those artifacts already live somewhere stable.",
+    other:
+      "The source of truth and review already live outside the execution environment.",
     question: "What needs to stay together?",
   },
   {
     cocalc:
       "Collaborators and AI agents need to inspect the same files, notebooks, terminals, and running services.",
-    other: "Collaboration stays on one surface.",
+    other:
+      "People collaborate and review somewhere outside the execution environment.",
     question: "Who needs to inspect the work?",
   },
   {
     cocalc: "Review and handoff happen while the work is still active.",
-    other: "Review waits until the end.",
+    other: "Each run produces a result for later review.",
     question: "When does collaboration happen?",
   },
   {
     cocalc:
       "Courses, labs, or workshops need the same environment as the computation.",
-    other: "Administration and computation can stay separate.",
+    other:
+      "The execution environment does not need course management or live help.",
     question: "Is teaching part of the workflow?",
   },
   {
     cocalc:
       "Teams need hosted, local, single-VM, and private deployment choices.",
-    other: "Hosting and operations are already decided.",
+    other:
+      "Your product already owns the runtime lifecycle and infrastructure.",
     question: "Who operates it?",
   },
 ] as const;
@@ -106,7 +110,7 @@ function DecisionRow({
       <td data-label="Choose CoCalc when">
         <Paragraph style={{ margin: 0 }}>{cocalc}</Paragraph>
       </td>
-      <td data-label="Choose a lighter tool when">
+      <td data-label="Choose an agent sandbox when">
         <Paragraph style={{ margin: 0 }}>{other}</Paragraph>
       </td>
     </tr>
@@ -376,7 +380,7 @@ export default function CompareFeaturePage({
               Evaluation guide
             </Text>
             <Title level={2} style={{ margin: 0 }}>
-              When is CoCalc the right fit?
+              Persistent workspace or isolated execution?
             </Title>
             <Paragraph
               style={{
@@ -385,8 +389,9 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              Start with the shape of the work before pricing, procurement, or
-              deployment takes over.
+              Decide what must persist, who needs to inspect the work, and
+              whether the environment is a shared workspace or an API-managed
+              execution runtime.
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -401,12 +406,12 @@ export default function CompareFeaturePage({
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Best fit: ongoing work that people and agents need to execute,
-                review, and hand off in one context.
+                Choose CoCalc when people and agents need to keep using the same
+                files, notebooks, terminals, services, and review history.
               </li>
               <li>
-                A sandbox or lighter tool may fit when each run is isolated and
-                people review the results somewhere else.
+                Choose an agent sandbox when your product mainly needs
+                API-created execution environments for individual runs.
               </li>
             </ul>
           </div>
@@ -487,14 +492,14 @@ export default function CompareFeaturePage({
             id="cocalc-compare-table-caption"
           >
             Each row compares the decision question, when to choose CoCalc, and
-            when a lighter tool is enough. On narrow screens, each row is shown
-            as labelled stacked fields with the same column meaning.
+            when an agent sandbox is enough. On narrow screens, each row is
+            shown as labelled stacked fields with the same column meaning.
           </caption>
           <thead>
             <tr>
               <th scope="col">Decision question</th>
               <th scope="col">Choose CoCalc when</th>
-              <th scope="col">Choose a lighter tool when</th>
+              <th scope="col">Choose an agent sandbox when</th>
             </tr>
           </thead>
           <tbody>

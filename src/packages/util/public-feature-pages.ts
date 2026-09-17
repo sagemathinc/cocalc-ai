@@ -607,7 +607,7 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
       {
         title: "Shared project or agent sandbox?",
         paragraphs: [
-          "Agent sandboxes are built to launch isolated execution environments from an API or SDK. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc is built around a durable project that people and agents open and use together.",
+          "Agent sandboxes are built to launch isolated execution environments from an API or SDK. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc is built around a persistent shared project that people and agents open and use together.",
         ],
       },
       {

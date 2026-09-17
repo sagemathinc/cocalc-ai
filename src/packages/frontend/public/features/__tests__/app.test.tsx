@@ -766,7 +766,9 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(screen.getByText("When is CoCalc the right fit?")).not.toBeNull();
+    expect(
+      screen.getByText("Persistent workspace or isolated execution?"),
+    ).not.toBeNull();
     expect(screen.getByText("Decision checklist")).not.toBeNull();
     expect(
       screen.getByRole("heading", {
@@ -782,6 +784,14 @@ describe("PublicFeaturesApp", () => {
     ).toBe("agent-sandboxes");
     expect(
       screen.getByText(/Some support persistent files, snapshots/),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/persistent shared project that people and agents/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("columnheader", {
+        name: "Choose an agent sandbox when",
+      }),
     ).not.toBeNull();
     expect(
       screen.getByText(/If your design requires automatic fleets/),
