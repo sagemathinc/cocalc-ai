@@ -413,3 +413,60 @@ it.each([undefined, "plus", "launchpad", "rocket", "star"])(
     }
   },
 );
+
+describe("professional AI project initial HTML", () => {
+  it.each(["/", "/prefix", "/docs"])(
+    "renders the same professional project briefs across product profiles on %s",
+    (basePath) => {
+      const { getPublicAIContent } = require("@cocalc/util/public-ai-content");
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const product of [
+        undefined,
+        "star",
+        "plus",
+        "launchpad",
+        "rocket",
+      ]) {
+        for (const slug of ["ai", "openai-chatgpt"]) {
+          const content = getPublicAIContent(product);
+          const html = renderPublicRoutePrerender(
+            { section: "features", route: { view: "detail", slug } },
+            basePath,
+            { cocalc_product: product },
+          )!;
+          expect(html).toContain(content.hero.title);
+          expect(html.split(content.hero.description)).toHaveLength(2);
+          for (const card of content.projects.cards) {
+            expect(html).toContain(card.title);
+            expect(html).toContain(card.description);
+            expect(html).toContain(`href="${prefix}${card.link.href}"`);
+          }
+          for (const step of content.workflow.steps) {
+            expect(html).toContain(step.title);
+            expect(html).toContain(step.description);
+          }
+          expect(html).toContain(content.review.description);
+          expect(html).toContain(content.setup.description);
+          expect(html).not.toContain("Teams and teaching");
+          expect(html).not.toContain("3 checks complete");
+          if (product === "plus") {
+            expect(html).toContain(
+              `href="${prefix}/products/cocalc-plus#install-cocalc-plus"`,
+            );
+            expect(html).not.toContain("auth/sign-up");
+            expect(html).not.toContain("invite others");
+            expect(html).not.toContain("docs/research/");
+            expect(html).not.toContain("docs/ai/codex-chat");
+          } else {
+            expect(html).toContain(
+              `href="${prefix}/auth/sign-up?intent=codex"`,
+            );
+          }
+          expect(
+            html.includes(`href="${prefix}/features/research-compute"`),
+          ).toBe(product === "launchpad" || product === "rocket");
+        }
+      }
+    },
+  );
+});

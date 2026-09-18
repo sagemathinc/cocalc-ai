@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  getPublicAIContent,
+  getPublicAISections,
+} from "@cocalc/util/public-ai-content";
+
 export interface PublicFeatureSection {
   bullets?: string[];
   links?: Array<{ href: string; label: string }>;
@@ -303,42 +308,14 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     title: "AI Agents in CoCalc",
     navLabel: "AI Agents",
     metadataTitle: "AI Agents",
-    tagline: "Use AI agents where the work already lives.",
+    tagline: getPublicAIContent().hero.title,
     summary:
-      "Use integrated Codex or terminal-based agents alongside your files, notebooks, terminals, review notes, and collaborators.",
+      "Build dashboards, compare scenarios and investigate data with AI. Keep inputs, code and saved results together for inspection and further work.",
     metadataSummary:
-      "Use integrated Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state, or run other agents as terminal tools.",
-    image: "/public/features/chatgpt-fix-code.png",
+      "Develop business dashboards, engineering comparisons and portfolio research with AI in CoCalc. Inspect the inputs, code and saved results.",
     docsUrl: "/docs/ai/codex-chat",
     index: true,
-    sections: [
-      {
-        title: "Codex in project threads",
-        paragraphs: [
-          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
-        ],
-        bullets: [
-          "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
-          "Keep prompts, images, patches, and review notes in one durable thread",
-          "Let Codex work with files, terminals, and live notebook state",
-          "Run other command-line agents in project terminals as normal Linux tools",
-        ],
-        links: [{ href: "/docs/ai/codex-chat", label: "Set up Codex chat" }],
-      },
-      {
-        title: "Integrated chat or a terminal agent",
-        paragraphs: [
-          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code, OpenCode, and other shell-based agents run in project terminals as normal Linux tools; their interfaces, credentials, and capabilities are separate from Codex chat.",
-        ],
-        links: [
-          { href: "/features/terminal", label: "Use project terminals" },
-          {
-            href: "/features/compare",
-            label: "Compare with agent sandboxes",
-          },
-        ],
-      },
-    ],
+    sections: getPublicAISections(),
   },
   {
     slug: "whiteboard",

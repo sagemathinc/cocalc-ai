@@ -4,6 +4,11 @@
  */
 
 import {
+  getPublicAIContent,
+  getPublicAISections,
+} from "@cocalc/util/public-ai-content";
+
+import {
   getPublicFeatureIndexPages,
   getPublicFeaturePage,
   PUBLIC_FEATURE_NAV_ITEMS,
@@ -319,11 +324,39 @@ function renderFeatureNavigation(
   return `<nav aria-label="Related CoCalc features"><h2>Explore CoCalc features</h2><ul>${links}</ul></nav>`;
 }
 
+function renderAIPage(
+  page: PublicFeaturePage,
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
+  const content = getPublicAIContent(config.cocalc_product);
+  const plus = config.cocalc_product === "plus";
+  const sections = getPublicAISections(config.cocalc_product)
+    .map((section) => renderSection(section, basePath, config))
+    .join("");
+  const action = plus
+    ? {
+        href: "products/cocalc-plus#install-cocalc-plus",
+        label: "Explore CoCalc Plus",
+      }
+    : { href: "auth/sign-up?intent=codex", label: "Create account" };
+  return `<article data-cocalc-public-prerender="feature" style="${ARTICLE_STYLE}">
+<header><p>${htmlEscape(content.hero.eyebrow)}</p>
+<h1>${htmlEscape(page.title)}</h1>
+<h2>${htmlEscape(content.hero.title)}</h2>
+<p>${htmlEscape(content.hero.description)}</p></header>
+${sections}
+${renderFeatureNavigation(basePath, page.slug, config)}
+<p>${publicLink(basePath, action.href, action.label)}</p>
+</article>`;
+}
+
 function renderFeatureDetail(
   page: PublicFeaturePage,
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
+  if (page.slug === "ai") return renderAIPage(page, basePath, config);
   const sections = (page.sections ?? [])
     .map((section) => renderSection(section, basePath, config))
     .join("");

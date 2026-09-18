@@ -699,7 +699,7 @@ function FeatureDetail({
 
   const CustomPage =
     FEATURE_DETAIL_COMPONENTS[slug as keyof typeof FEATURE_DETAIL_COMPONENTS];
-  if (slug === "ai") {
+  if (page.slug === "ai") {
     return (
       <AIFeaturePage
         helpEmail={helpEmail}
@@ -932,12 +932,14 @@ export default function PublicFeaturesApp({
         <FeatureSubNav
           config={config}
           active={
-            initialRoute.view === "detail" ? initialRoute.slug : undefined
+            initialRoute.view === "detail"
+              ? (feature?.slug ?? initialRoute.slug)
+              : undefined
           }
         />
       }
       config={config}
-      hideTitleVisually={initialRoute.slug === "ai"}
+      hideTitleVisually={feature?.slug === "ai"}
       title={
         initialRoute.view === "index"
           ? undefined
