@@ -90,7 +90,7 @@ describe("PublicHomeApp", () => {
     ]);
     expectHomepageSectionsLabeled(container);
     expect(
-      screen.getByText("Shared Linux Workspace").closest(".ant-typography"),
+      screen.getByText("Persistent shared projects").closest(".ant-typography"),
     ).toHaveStyle({ color: PUBLIC_COLORS.linkHover });
 
     // Section identity + order are canaried by the aria-label array above.
@@ -108,7 +108,7 @@ describe("PublicHomeApp", () => {
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
     expect(heroHeadings[0]).toHaveTextContent(
-      "A persistent shared computer for technical work.",
+      "Keep people, AI agents, and project work together.",
     );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
     expect(
@@ -150,11 +150,10 @@ describe("PublicHomeApp", () => {
     const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");
     expect(heroLead).not.toBeNull();
     expect(textLength(heroLead as Element)).toBeLessThanOrEqual(210);
-    expect(hero.textContent ?? "").toMatch(/Shared Linux Workspace/i);
-    expect(hero.textContent ?? "").toMatch(/People and AI agents work/i);
-    expect(hero.textContent ?? "").toMatch(/same Linux project/i);
+    expect(hero.textContent ?? "").toMatch(/Persistent shared projects/i);
+    expect(hero.textContent ?? "").toMatch(/shared Linux project/i);
     expect(hero.textContent ?? "").toMatch(
-      /ready whenever the work continues/i,
+      /work can continue, be reviewed, and be handed off/i,
     );
     expect(hero.textContent ?? "").not.toMatch(
       /collaborative technical computing online since 2013/i,
@@ -167,10 +166,15 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero)
         .getByRole("img", {
-          name: "A persistent CoCalc project shared by people and AI agents",
+          name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
         })
         .getAttribute("src"),
-    ).toBe("/public/landing/home-hero.jpg");
+    ).toBe("/public/landing/project-notebook-20260916.jpg");
+    expect(
+      within(hero).getByText(
+        /saved Jupyter notebook in a fresh CoCalc\.ai project/i,
+      ),
+    ).not.toBeNull();
     expect(
       within(hero)
         .getByRole("link", { name: "Start on CoCalc.ai" })
@@ -200,16 +204,24 @@ describe("PublicHomeApp", () => {
     expect(
       within(agents).getByRole("heading", {
         level: 2,
-        name: "Agents work where your project lives.",
+        name: "Give AI agents the files and tools they need.",
       }),
     ).not.toBeNull();
     expect(agents.textContent ?? "").toMatch(
-      /Use Codex, Claude Code, or another shell-capable agent/i,
+      /Use integrated Codex, or run Claude Code and other shell-based agents in project terminals/i,
     );
+    expect(
+      within(agents).getByRole("link", { name: "See agent workflows" }),
+    ).toHaveAttribute("href", "/features/ai");
+    expect(
+      within(agents).getByRole("link", {
+        name: "Compare with agent sandboxes",
+      }),
+    ).toHaveAttribute("href", "/features/compare");
     for (const title of [
-      "Runs where your work lives",
-      "You stay in review",
-      "Bring the agent you use",
+      "Work with files and services",
+      "Review agent changes",
+      "Integrated chat or terminal",
     ]) {
       expect(
         within(agents).getByRole("heading", { level: 3, name: title }),
@@ -226,7 +238,7 @@ describe("PublicHomeApp", () => {
     expect(
       within(audiences).getByRole("heading", {
         level: 2,
-        name: "Built for research, technical teams, and teaching.",
+        name: "For work that must persist across people and agents.",
       }),
     ).not.toBeNull();
     expect(
@@ -234,23 +246,23 @@ describe("PublicHomeApp", () => {
     ).toBeNull();
     expect(
       within(audiences).getByRole("link", {
-        name: /Research and engineering teams/i,
+        name: /Researchers, analysts, and builders/i,
       }),
-    ).toHaveAttribute("href", "/features/compare");
+    ).toHaveAttribute("href", "/docs/hosts/choose-compute");
     expect(
       within(audiences).getByRole("link", {
-        name: /Technical courses and workshops/i,
+        name: /Educators and learners/i,
       }),
     ).toHaveAttribute("href", "/features/teaching");
     expect(
       within(audiences).getByRole("link", {
-        name: /IT and platform teams/i,
+        name: /Organizations and platform teams/i,
       }),
     ).toHaveAttribute("href", "/products");
     for (const title of [
-      "Research and engineering teams",
-      "IT and platform teams",
-      "Technical courses and workshops",
+      "Researchers, analysts, and builders",
+      "Organizations and platform teams",
+      "Educators and learners",
     ]) {
       expect(
         within(audiences).getByRole("heading", { level: 3, name: title }),
@@ -268,10 +280,15 @@ describe("PublicHomeApp", () => {
     expect(
       within(workflows)
         .getByRole("img", {
-          name: "One CoCalc workspace containing many workflows",
+          name: "A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average",
         })
         .getAttribute("src"),
-    ).toBe("/public/landing/project-workflows.jpg");
+    ).toBe("/public/landing/project-terminal-20260916.jpg");
+    expect(
+      within(workflows).getByText(
+        /project terminal reruns the same synthetic analysis/i,
+      ),
+    ).not.toBeNull();
     const workflowCards = within(workflows).getByRole("group", {
       name: "CoCalc workflow feature cards",
     });
@@ -287,7 +304,7 @@ describe("PublicHomeApp", () => {
       "Jupyter Notebooks",
       "LaTeX Editor",
       "Linux Terminal",
-      "Codex Agent Chat",
+      "AI Agents",
       "Teaching a Course",
       "Whiteboard",
     ]) {
@@ -550,7 +567,9 @@ describe("PublicHomeApp", () => {
       within(path).getByRole("link", { name: "Review product paths" }),
     ).toHaveAttribute("href", "/products");
     expect(
-      within(path).getByRole("link", { name: "Talk with CoCalc" }),
+      within(path).getByRole("link", {
+        name: "Review support and sales",
+      }),
     ).toHaveAttribute("href", "/support");
     expect(
       within(path).queryByRole("link", {

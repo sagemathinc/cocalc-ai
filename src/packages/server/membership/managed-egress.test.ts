@@ -103,13 +103,18 @@ describe("managed egress history", () => {
           ],
         };
       }
-      if (sql.includes("GROUP BY bucket_start, events.category")) {
+      if (sql.includes("GROUP BY 1, events.category")) {
         return {
           rows: [
             {
               bucket_start: "2026-04-28T10:00:00.000Z",
               category: "file-download",
-              bytes: "200",
+              bytes: "75",
+            },
+            {
+              bucket_start: "2026-04-28T10:00:00.000Z",
+              category: "file-download",
+              bytes: "125",
             },
             {
               bucket_start: "2026-04-28T11:00:00.000Z",
@@ -547,13 +552,18 @@ describe("managed egress history", () => {
           ],
         };
       }
-      if (sql.includes("GROUP BY bucket_start, events.category")) {
+      if (sql.includes("GROUP BY 1, events.category")) {
         return {
           rows: [
             {
               bucket_start: "2026-04-28T10:00:00.000Z",
               category: "file-download",
-              bytes: "200",
+              bytes: "75",
+            },
+            {
+              bucket_start: "2026-04-28T10:00:00.000Z",
+              category: "file-download",
+              bytes: "125",
             },
             {
               bucket_start: "2026-04-28T11:00:00.000Z",

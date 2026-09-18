@@ -94,7 +94,9 @@ export function saveExternalAgentCredential(
     } catch (cleanupError) {
       if ((cleanupError as NodeJS.ErrnoException).code !== "ENOENT") {
         throw Object.assign(
-          new Error("failed to save and clean up external agent credential"),
+          new Error(
+            "Failed to save external agent credential and remove temporary file",
+          ),
           { cause: error, cleanupError },
         );
       }

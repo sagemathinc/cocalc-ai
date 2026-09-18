@@ -7,27 +7,31 @@ let renderedMessages: any[] = [];
 let latestVirtuosoProps: any;
 let freezeVirtuosoRows = false;
 
-jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: (arg1: any, arg2?: string) => {
-    if (arg1 === "page" && arg2 === "active_top_tab") {
-      return "project-1";
-    }
-    if (
-      typeof arg1 === "object" &&
-      arg1?.project_id === "project-1" &&
-      arg2 === "active_project_tab"
-    ) {
-      return "editor-thread.chat";
-    }
-    if (arg1 === "account" && arg2 === "account_id") {
-      return "acct-1";
-    }
-    if (arg1 === "users" && arg2 === "user_map") {
+jest.mock("@cocalc/frontend/app-framework", () => {
+  const actual = jest.requireActual("@cocalc/frontend/app-framework");
+  return {
+    ...actual,
+    useTypedRedux: (arg1: any, arg2?: string) => {
+      if (arg1 === "page" && arg2 === "active_top_tab") {
+        return "project-1";
+      }
+      if (
+        typeof arg1 === "object" &&
+        arg1?.project_id === "project-1" &&
+        arg2 === "active_project_tab"
+      ) {
+        return "editor-thread.chat";
+      }
+      if (arg1 === "account" && arg2 === "account_id") {
+        return "acct-1";
+      }
+      if (arg1 === "users" && arg2 === "user_map") {
+        return undefined;
+      }
       return undefined;
-    }
-    return undefined;
-  },
-}));
+    },
+  };
+});
 
 jest.mock("@cocalc/frontend/components/stateful-virtuoso", () => {
   const React = require("react");

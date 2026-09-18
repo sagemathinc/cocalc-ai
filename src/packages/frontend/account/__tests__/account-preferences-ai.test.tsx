@@ -27,6 +27,10 @@ jest.mock("../other-settings", () => ({
   OtherSettings: () => <div>OtherSettings</div>,
 }));
 
+jest.mock("../agent-messaging-preference", () => ({
+  AgentMessagingPreference: () => <div>AgentMessagingPreference</div>,
+}));
+
 jest.mock("../codex-credentials-panel", () => ({
   CodexCredentialsPanel: () => <div>CodexCredentialsPanel</div>,
 }));
@@ -84,5 +88,6 @@ describe("AccountPreferencesAI", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("AIUsageStatus")).toBeTruthy();
+    expect(screen.getByText("AgentMessagingPreference")).toBeTruthy();
   });
 });

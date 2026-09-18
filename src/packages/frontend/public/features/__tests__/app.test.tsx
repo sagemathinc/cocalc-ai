@@ -56,7 +56,7 @@ describe("PublicFeaturesApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "One persistent computer for people, tools, and agents.",
+        name: "One persistent project for people, tools, and agents.",
       }),
     ).not.toBeNull();
     expect(screen.queryByText("Durable collaborative projects")).toBeNull();
@@ -127,20 +127,97 @@ describe("PublicFeaturesApp", () => {
   it("renders a detail page", () => {
     render(
       <PublicFeaturesApp
-        config={{ help_email: "help@example.com", site_name: "Launchpad" }}
+        config={{
+          cocalc_product: "launchpad",
+          help_email: "help@example.com",
+          site_name: "Launchpad",
+        }}
         initialRoute={{ slug: "ai", view: "detail" }}
       />,
     );
 
     expect(
       screen.getByRole("heading", {
-        name: "Codex Agent Chat",
+        name: "AI Agents in CoCalc",
         level: 1,
       }),
     ).not.toBeNull();
-    expect(screen.getByText("Codex where the work happens.")).not.toBeNull();
-    expect(screen.getByText("Run an agent turn in order.")).not.toBeNull();
+    expect(
+      screen.getByText(
+        "Run AI agents where files, notebooks, compute, and teams stay together.",
+      ),
+    ).not.toBeNull();
+    expect(
+      screen.getByText("Direct, inspect, and continue agent work"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", { name: "Start with the project" }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Use the agent interface that fits the task.",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Read the Codex guide" }),
+    ).toHaveAttribute("href", "/docs/ai/codex-chat");
+    expect(
+      screen.getAllByRole("link", {
+        name: "Compare with agent sandboxes",
+      })[0],
+    ).toHaveAttribute("href", "/features/compare");
+    expect(
+      screen.getByRole("link", { name: "Plan research compute" }),
+    ).toHaveAttribute("href", "/features/research-compute");
+    expect(
+      screen.getByRole("link", { name: "Compare ways to run CoCalc" }),
+    ).toHaveAttribute("href", "/products");
+    expect(screen.getByText(/Review Codex activity and diffs/)).not.toBeNull();
+    expect(
+      screen.queryByText(/files touched during agent-assisted work/),
+    ).toBeNull();
+    expect(screen.queryByText(/how an agent changed a file/)).toBeNull();
     expect(screen.getAllByText("Create account").length).toBeGreaterThan(0);
+  });
+
+  it.each([undefined, "star"])(
+    "does not advertise unavailable research compute from the %s profile",
+    (product) => {
+      const { container } = render(
+        <PublicFeaturesApp
+          config={{ cocalc_product: product, site_name: "CoCalc" }}
+          initialRoute={{ slug: "ai", view: "detail" }}
+        />,
+      );
+
+      expect(
+        container.querySelector('a[href="/features/research-compute"]'),
+      ).toBeNull();
+    },
+  );
+
+  it("does not link to hosted Codex docs from CoCalc Plus", () => {
+    render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        initialRoute={{ slug: "ai", view: "detail" }}
+      />,
+    );
+
+    expect(
+      screen.queryByRole("link", { name: "Read the Codex guide" }),
+    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "Codex setup" })).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Plan research compute" }),
+    ).toBeNull();
+    const accountLinks = screen.getAllByRole("link", {
+      name: "Create account",
+    });
+    expect(accountLinks.length).toBeGreaterThan(0);
+    for (const link of accountLinks) {
+      expect(link).toHaveAttribute("href", "/auth/sign-up?intent=codex");
+    }
   });
 
   it("uses projects as the ai CTA for authenticated users", () => {
@@ -709,8 +786,36 @@ describe("PublicFeaturesApp", () => {
       />,
     );
 
-    expect(screen.getByText("When is CoCalc the right fit?")).not.toBeNull();
+    expect(
+      screen.getByText("Persistent workspace or isolated execution?"),
+    ).not.toBeNull();
     expect(screen.getByText("Decision checklist")).not.toBeNull();
+    expect(
+      screen.getByRole("heading", {
+        name: "Shared project or agent sandbox?",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("region", {
+          name: "CoCalc and AI agent sandbox comparison",
+        })
+        .getAttribute("id"),
+    ).toBe("agent-sandboxes");
+    expect(
+      screen.getByText(/Some support persistent files, snapshots/),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/persistent shared project that people and agents/),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("columnheader", {
+        name: "Choose an agent sandbox when",
+      }),
+    ).not.toBeNull();
+    expect(
+      screen.getByText(/If your design requires automatic fleets/),
+    ).not.toBeNull();
     expect(screen.getByText("Where to go next")).not.toBeNull();
     expect(
       screen.getByText("Hosted, local, single-VM, and private deployment."),
@@ -830,6 +935,23 @@ describe("research compute product visibility", () => {
       expect(
         screen.getByRole("link", { name: "Understand project hosts" }),
       ).toHaveAttribute("href", "/docs/hosts/project-hosts");
+      expect(
+        screen.getByRole("heading", {
+          name: "Put the right compute behind the research.",
+          level: 2,
+        }),
+      ).not.toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Choose a compute path" }),
+      ).toHaveAttribute("href", "/docs/hosts/choose-compute");
+      expect(
+        screen.getByText(
+          /Selecting a machine does not reserve provider capacity/,
+        ),
+      ).not.toBeNull();
+      expect(
+        screen.getByRole("link", { name: "Compare operating models" }),
+      ).toHaveAttribute("href", "/products");
       rerender(
         <PublicFeaturesApp
           config={{ cocalc_product: "plus" }}

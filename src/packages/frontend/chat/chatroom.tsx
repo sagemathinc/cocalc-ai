@@ -1447,6 +1447,8 @@ function ChatPanelContent({
     setAutomationActionBusy("pause");
     try {
       await pauseThreadAutomation({ actions, threadId: selectedThreadId });
+    } catch (err) {
+      antdMessage.error(`Unable to pause automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "pause" ? "" : current,
@@ -1466,6 +1468,8 @@ function ChatPanelContent({
         project_id: actions.store?.get("project_id") ?? "",
         response,
       });
+    } catch (err) {
+      antdMessage.error(`Unable to resume automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "resume" ? "" : current,
@@ -1478,6 +1482,8 @@ function ChatPanelContent({
     setAutomationActionBusy("run_now");
     try {
       await runThreadAutomationNow({ actions, threadId: selectedThreadId });
+    } catch (err) {
+      antdMessage.error(`Unable to run automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "run_now" ? "" : current,
@@ -1493,6 +1499,8 @@ function ChatPanelContent({
         actions,
         threadId: selectedThreadId,
       });
+    } catch (err) {
+      antdMessage.error(`Unable to skip automation run: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "skip_next" ? "" : current,
@@ -1508,6 +1516,8 @@ function ChatPanelContent({
         actions,
         threadId: selectedThreadId,
       });
+    } catch (err) {
+      antdMessage.error(`Unable to acknowledge automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "acknowledge" ? "" : current,
@@ -1520,6 +1530,8 @@ function ChatPanelContent({
     setAutomationActionBusy("delete");
     try {
       await deleteThreadAutomation({ actions, threadId: selectedThreadId });
+    } catch (err) {
+      antdMessage.error(`Unable to delete automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "delete" ? "" : current,
@@ -2826,7 +2838,7 @@ function ChatPanelContent({
           activityJumpAttentionId ? undefined : activityJumpDate
         }
         activityJumpToken={activityJumpToken}
-        activityJumpAttentionId={undefined}
+        activityJumpAttentionId={activityJumpAttentionId}
         attentionRecords={selectedAttentionRecords}
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}

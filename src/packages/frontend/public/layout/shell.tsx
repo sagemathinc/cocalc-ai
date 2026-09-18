@@ -326,7 +326,7 @@ function FooterBrand({ config }: { config?: PublicConfig }) {
           maxWidth: "34ch",
         }}
       >
-        Persistent shared computers for research, teaching, and technical teams.
+        Persistent shared projects where people and AI agents work together.
       </Paragraph>
       {defaultBrand ? (
         <Text style={{ color: PUBLIC_COLORS.footerText }}>
