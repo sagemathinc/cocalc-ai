@@ -28,6 +28,7 @@ const DEFAULT_INTERVAL_MS = 15 * 60 * 1000;
 const MIN_INTERVAL_MS = 60 * 1000;
 const DEFAULT_BATCH_LIMIT = 200;
 const MAX_BATCH_LIMIT = 1000;
+const DEFAULT_MAX_BATCHES_PER_TICK = 5;
 const MAX_STORED_JSON_BYTES = 1024 * 1024;
 const MAX_STORED_PHYSICAL_BYTES = 256 * 1024;
 const MAX_EVIDENCE_VALUES = 200;
@@ -927,7 +928,8 @@ export async function getHostIntrusionReviewReport({
                 COUNT(*) FILTER (
                   WHERE CASE
                     WHEN pg_column_size(collector_evidence) > $2 THEN TRUE
-                    ELSE collector_evidence->'truncated' <> '[]'::jsonb
+                    ELSE collector_evidence->'truncated' NOT IN
+                           ('{}'::jsonb, '[]'::jsonb, 'null'::jsonb)
                       OR collector_evidence->>'persistence_truncated' = 'true'
                   END
                 )::integer AS truncated
@@ -1006,9 +1008,40 @@ export async function getHostIntrusionReviewReport({
 }
 
 async function runLockedPass(): Promise<void> {
+  const maxBatches = boundedInteger(
+    "COCALC_HOST_INTRUSION_REVIEW_MAX_BATCHES_PER_TICK",
+    DEFAULT_MAX_BATCHES_PER_TICK,
+    1,
+    20,
+  );
+  const batchLimit = boundedInteger(
+    "COCALC_HOST_INTRUSION_REVIEW_BATCH_LIMIT",
+    DEFAULT_BATCH_LIMIT,
+    1,
+    MAX_BATCH_LIMIT,
+  );
   const result = await withSessionAdvisoryLock({
     lockKey: `${LOCK_KEY}:${getConfiguredBayId()}`,
-    fn: runHostIntrusionReviewerPass,
+    fn: async () => {
+      const total: HostIntrusionReviewerResult = {
+        processed: 0,
+        findings: 0,
+        opened: 0,
+        reopened: 0,
+        resolved: 0,
+        suppressed: 0,
+        notifications_delivered: 0,
+        notifications_failed: 0,
+      };
+      for (let batch = 0; batch < maxBatches; batch++) {
+        const current = await runHostIntrusionReviewerPass({ batchLimit });
+        for (const key of Object.keys(total) as Array<keyof typeof total>) {
+          total[key] += current[key];
+        }
+        if (current.processed < batchLimit) break;
+      }
+      return total;
+    },
   });
   if (result) logger.info("host intrusion review pass complete", result);
 }

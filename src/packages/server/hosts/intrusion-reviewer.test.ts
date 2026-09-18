@@ -139,6 +139,9 @@ describe("project-host intrusion reviewer", () => {
       cursor_id: expect.any(String),
       last_success_at: expect.any(String),
     });
+    expect(report.observations_24h).toEqual([
+      expect.objectContaining({ truncated: 0 }),
+    ]);
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
 
