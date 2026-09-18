@@ -2,7 +2,7 @@ import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
   DEFAULT_AGENT_WORKSPACE_ORGANIZATION,
   groupAgentsByRecency,
-  markAgentOpened,
+  markAgentActive,
   moveAgent,
   moveAgentBefore,
   moveAgentToIndex,
@@ -132,10 +132,15 @@ it("moves agents to an exact sortable-list index", () => {
   ).toEqual(["b", "a"]);
 });
 
-it("records last-opened timestamps", () => {
+it("records activity timestamps without regressing to stale activity", () => {
   expect(
-    markAgentOpened(DEFAULT_AGENT_WORKSPACE_ORGANIZATION, "a", 123).lastOpened,
+    markAgentActive(DEFAULT_AGENT_WORKSPACE_ORGANIZATION, "a", 123).lastOpened,
   ).toEqual({ a: 123 });
+  const current = {
+    ...DEFAULT_AGENT_WORKSPACE_ORGANIZATION,
+    lastOpened: { a: 123 },
+  };
+  expect(markAgentActive(current, "a", 100)).toBe(current);
 });
 
 it("groups recent agents into the workspace time buckets", () => {

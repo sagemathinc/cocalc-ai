@@ -48,7 +48,6 @@ import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
 import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
-import { COLORS } from "@cocalc/util/theme";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid } from "@cocalc/util/misc";
 import { Resizable } from "re-resizable";
@@ -453,14 +452,18 @@ function NewAgentPanel({
 
 function AgentProjectContext({
   agent,
+  workspaceAgents,
   active,
   accountId,
   onSelectedThread,
+  onAgentActivity,
 }: {
   agent: NamedAgent;
+  workspaceAgents: NamedAgent[];
   active: boolean;
   accountId?: string;
   onSelectedThread: (threadId: string) => void;
+  onAgentActivity: (agentId: string, at: number) => void;
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -468,11 +471,18 @@ function AgentProjectContext({
   const initialThreadRef = useRef(agent.thread_id);
   const requestedThreadRef = useRef<string | undefined>(undefined);
   const wasActiveRef = useRef(active);
-  const useEditor = useEditorRedux<{ local_view_state: any }>({
+  const useEditor = useEditorRedux<{ activity: any; local_view_state: any }>({
     project_id: agent.endpoint.project_id,
     path: agent.path,
   });
   const localViewState = useEditor("local_view_state");
+  const activity = useEditor("activity");
+  const onAgentActivityRef = useRef(onAgentActivity);
+  const workspaceAgentsRef = useRef(workspaceAgents);
+  const reportedActivityRef = useRef<Map<string, number>>(new Map());
+  const workspaceAgentKey = workspaceAgents
+    .map(({ endpoint, thread_id }) => `${endpoint.agent_id}:${thread_id}`)
+    .join("\0");
   const openFiles = useTypedRedux(
     { project_id: agent.endpoint.project_id },
     "open_files",
@@ -491,6 +501,34 @@ function AgentProjectContext({
     mainWidthPx: 900,
     manageWorkspaceSelection: false,
   });
+
+  useEffect(() => {
+    onAgentActivityRef.current = onAgentActivity;
+  }, [onAgentActivity]);
+
+  useEffect(() => {
+    workspaceAgentsRef.current = workspaceAgents;
+  }, [workspaceAgentKey]);
+
+  useEffect(() => {
+    const updates = workspaceAgentsRef.current.flatMap(
+      ({ endpoint, thread_id }) => {
+        const at = activity?.get?.(thread_id);
+        return typeof at === "number" &&
+          at > (reportedActivityRef.current.get(endpoint.agent_id) ?? 0)
+          ? [{ agentId: endpoint.agent_id, at }]
+          : [];
+      },
+    );
+    if (updates.length === 0) return;
+    const timer = setTimeout(() => {
+      for (const { agentId, at } of updates) {
+        reportedActivityRef.current.set(agentId, at);
+        onAgentActivityRef.current(agentId, at);
+      }
+    }, 750);
+    return () => clearTimeout(timer);
+  }, [activity, workspaceAgentKey]);
 
   const openEmbeddedFile = useCallback(async () => {
     await ensureProjectReduxRuntime();
@@ -622,6 +660,7 @@ function AgentWorkspace({
   onShowList,
   agentSidebarHidden,
   onToggleAgentSidebar,
+  onAgentActivity,
   onClose,
   onRegisteredThreadSelected,
 }: {
@@ -633,6 +672,7 @@ function AgentWorkspace({
   onShowList?: () => void;
   agentSidebarHidden?: boolean;
   onToggleAgentSidebar?: () => void;
+  onAgentActivity: (agentId: string, at: number) => void;
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
 }) {
@@ -779,9 +819,11 @@ function AgentWorkspace({
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
           agent={agent}
+          workspaceAgents={workspaceAgents}
           active={active}
           accountId={accountId}
           onSelectedThread={handleSelectedThread}
+          onAgentActivity={onAgentActivity}
         />
       </div>
     </div>
@@ -829,10 +871,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [active]);
   const agents = directory?.agents ?? [];
-  const agentOrganization = useAgentWorkspaceOrganization(
-    agents,
-    activeAgentId,
-  );
+  const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected = activeAgentId
     ? agents.find((agent) => agent.endpoint.agent_id === activeAgentId)
     : (agentOrganization.groups.pinned[0] ??
@@ -989,8 +1028,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             size="small"
             icon={
               <Icon
-                name={pinned ? "star-filled" : "star"}
-                style={{ color: pinned ? COLORS.STAR : UI_COLORS.secondary }}
+                name={pinned ? "pushpin-filled" : "pushpin"}
+                style={{
+                  color: pinned ? UI_COLORS.link : UI_COLORS.secondary,
+                }}
               />
             }
             aria-label={`${pinned ? "Unpin" : "Pin"} @${agent.name}`}
@@ -1366,6 +1407,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   onToggleAgentSidebar={
                     isNarrow ? undefined : toggleAgentSidebar
                   }
+                  onAgentActivity={agentOrganization.recordActivity}
                   onClose={() => {
                     setMountedWorkspaces((old) => {
                       const next = new Set(old);

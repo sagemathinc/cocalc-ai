@@ -14,7 +14,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { getLogger } from "@cocalc/frontend/logger";
 import {
-  markAgentOpened,
+  markAgentActive,
   moveAgent,
   moveAgentBefore,
   moveAgentToIndex,
@@ -29,10 +29,7 @@ import {
 
 const logger = getLogger("my-agents-workspace-organization");
 
-export function useAgentWorkspaceOrganization(
-  agents: NamedAgent[],
-  activeAgentId?: string,
-) {
+export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
   const accountId = useTypedRedux("account", "account_id");
   const otherSettings = useTypedRedux("account", "other_settings");
   const persisted = useMemo(
@@ -53,11 +50,6 @@ export function useAgentWorkspaceOrganization(
     () => organizeAgents(agents, organization),
     [agents, organization],
   );
-  const openedAgentId =
-    activeAgentId ??
-    groups.pinned[0]?.endpoint.agent_id ??
-    groups.unpinned[0]?.endpoint.agent_id;
-
   function save(value: AgentWorkspaceOrganization) {
     const generation = accountGenerationRef.current;
     latestRef.current = value;
@@ -105,15 +97,6 @@ export function useAgentWorkspaceOrganization(
     setSaveError("");
   }, [accountId]);
 
-  useEffect(() => {
-    if (!accountId || !openedAgentId) return;
-    const timer = setTimeout(() => {
-      if (redux.getStore("account")?.get("account_id") !== accountId) return;
-      save(markAgentOpened(latestRef.current, openedAgentId));
-    }, 750);
-    return () => clearTimeout(timer);
-  }, [accountId, openedAgentId]);
-
   return {
     organization,
     groups,
@@ -126,6 +109,10 @@ export function useAgentWorkspaceOrganization(
     },
     setHidden(agentId: string, hidden: boolean) {
       save(setAgentHidden(agents, latestRef.current, agentId, hidden));
+    },
+    recordActivity(agentId: string, at: number) {
+      const next = markAgentActive(latestRef.current, agentId, at);
+      if (next !== latestRef.current) save(next);
     },
     move(agentId: string, delta: -1 | 1) {
       save(moveAgent(agents, latestRef.current, agentId, delta));

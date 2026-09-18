@@ -95,3 +95,23 @@ it("persists hiding as personal workspace organization", async () => {
   save.resolve();
   await act(async () => await save.promise);
 });
+
+it("persists message activity without writing merely because an agent exists", async () => {
+  const save = deferred();
+  mockSave.mockReturnValue(save.promise);
+  const { result } = renderHook(() =>
+    useAgentWorkspaceOrganization([agent("a"), agent("b")]),
+  );
+
+  await act(async () => {});
+  expect(mockSave).not.toHaveBeenCalled();
+
+  act(() => result.current.recordActivity("b", 123));
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+  expect(mockSave.mock.calls[0][1]).toMatchObject({
+    lastOpened: '{"b":123}',
+  });
+
+  save.resolve();
+  await act(async () => await save.promise);
+});

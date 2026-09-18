@@ -305,11 +305,12 @@ export function moveAgentBefore(
   };
 }
 
-export function markAgentOpened(
+export function markAgentActive(
   organization: AgentWorkspaceOrganization,
   agentId: string,
   at = Date.now(),
 ): AgentWorkspaceOrganization {
+  if ((organization.lastOpened[agentId] ?? 0) >= at) return organization;
   return normalizeAgentWorkspaceOrganization({
     ...organization,
     lastOpened: { ...organization.lastOpened, [agentId]: at },
