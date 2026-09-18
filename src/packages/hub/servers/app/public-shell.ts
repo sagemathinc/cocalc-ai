@@ -47,6 +47,11 @@ import { renderPublicDocsPrerender } from "./public-docs-prerender";
 
 const logger = getLogger("hub:servers:public-shell");
 
+// The public bundle replaces the crawler fallback rather than hydrating it.
+// Hide only that fallback while JavaScript starts so runtime-injected styles
+// cannot arrive after visibly unstyled markup. Fail open if startup breaks.
+const PUBLIC_PRERENDER_GUARD = `<style id="cocalc-public-prerender-guard">html.cocalc-public-starting [data-cocalc-public-prerender]{visibility:hidden}</style><script>(function(){var c="cocalc-public-starting",e=document.documentElement;e.classList.add(c);setTimeout(function(){e.classList.remove(c)},30000)})()</script>`;
+
 // Docs route metadata (per-entry titles, noindex, 404 detection) needs the
 // docs registry, which is only wired in on demand; on the server that is
 // simply at startup.
@@ -432,7 +437,7 @@ async function buildHead(req: Request): Promise<{
       renderPublicRoutePrerender(route, basePath, config),
     head: `${basePathMetaTag()}\n  <title>${htmlEscape(
       metadata.title,
-    )}</title>\n  ${socialTags}`,
+    )}</title>\n  ${PUBLIC_PRERENDER_GUARD}\n  ${socialTags}`,
     notFound: !!metadata.notFound,
     ...(redirectPath ? { redirectTo: `${redirectPath}${search}` } : {}),
     serviceUnavailable: !!metadata.serviceUnavailable,
