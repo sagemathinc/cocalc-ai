@@ -2851,15 +2851,7 @@ export async function upsertExternalCredential({
       metadata: safeMetadata,
       maxActive: max_active ?? 10,
       deduplicateMetadata: deduplicate_metadata,
-    });
-    await updateExternalCredentialByIdRouted({
-      id: created.id,
-      selector: routedSelector,
-      payload,
-      metadata: {
-        ...safeMetadata,
-        [CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY]: true,
-      },
+      defaultMetadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
     });
     await ensureDefaultExternalCredentialRouted({
       selector: routedSelector,

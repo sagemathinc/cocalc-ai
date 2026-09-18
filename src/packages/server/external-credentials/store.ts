@@ -295,12 +295,14 @@ export async function createExternalCredential({
   metadata = {},
   maxActive,
   deduplicateMetadata,
+  defaultMetadataKey,
 }: {
   selector: ExternalCredentialSelector;
   payload: string;
   metadata?: Record<string, any>;
   maxActive?: number;
   deduplicateMetadata?: { key: string; value: string };
+  defaultMetadataKey?: string;
 }): Promise<{ id: string; created: boolean }> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
@@ -360,6 +362,27 @@ WHERE ${ownershipClause(1)} AND revoked IS NULL
         throw new Error(`at most ${limit} active credentials are allowed`);
       }
     }
+    let insertedMetadata = metadata;
+    if (defaultMetadataKey) {
+      const { rows } = await client.query<{ id: string }>(
+        `
+SELECT id
+FROM external_credentials
+WHERE ${ownershipClause(1)}
+  AND revoked IS NULL
+  AND metadata->>$7 = 'true'
+LIMIT 1
+FOR UPDATE
+        `,
+        [...selectorValues(normalized), defaultMetadataKey],
+      );
+      if (!rows[0]) {
+        insertedMetadata = {
+          ...metadata,
+          [defaultMetadataKey]: true,
+        };
+      }
+    }
     await client.query(
       `
 INSERT INTO external_credentials (
@@ -367,7 +390,7 @@ INSERT INTO external_credentials (
   organization_id, encrypted_payload, metadata, created, updated
 ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW(),NOW())
       `,
-      [id, ...selectorValues(normalized), encryptedPayload, metadata],
+      [id, ...selectorValues(normalized), encryptedPayload, insertedMetadata],
     );
     await client.query("COMMIT");
     return { id, created: true };

@@ -2288,6 +2288,7 @@ async function startExternalCredentialsService(): Promise<void> {
       metadata,
       max_active,
       deduplicate_metadata,
+      default_metadata_key,
     }) =>
       await createExternalCredential({
         selector,
@@ -2295,6 +2296,7 @@ async function startExternalCredentialsService(): Promise<void> {
         metadata,
         maxActive: max_active,
         deduplicateMetadata: deduplicate_metadata,
+        defaultMetadataKey: default_metadata_key,
       }),
     updateById: async ({ id, selector, payload, metadata }) =>
       await updateExternalCredentialById({

@@ -3395,6 +3395,7 @@ export interface InterBayExternalCredentialsApi {
     metadata?: Record<string, any>;
     max_active?: number;
     deduplicate_metadata?: { key: string; value: string };
+    default_metadata_key?: string;
   }) => Promise<{ id: string; created: boolean }>;
   updateById: (opts: {
     id: string;
