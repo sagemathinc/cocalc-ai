@@ -147,15 +147,18 @@ export function TextDocument(props: TextDocumentProps) {
     const cm = cmRef.current;
     if (cm == null) return;
     const next = readValue(value);
-    const top = scrollPosition?.current ?? cm.getScrollInfo().top;
+    const top = scrollPosition?.current;
     if (cm.getValue() !== next) {
       // Apply live updates without resetting the viewport or selection.
       cm.setValueNoJump(next);
     }
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
       refresh();
-      cm.scrollTo(null, top);
+      if (top != null) {
+        cm.scrollTo(null, top);
+      }
     });
+    return () => cancelAnimationFrame(frame);
   }, [value, scrollPosition]);
 
   useEffect(() => {

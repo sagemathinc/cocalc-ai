@@ -194,7 +194,8 @@ export async function restoreNotebookScroll({
     if (
       elt != null &&
       (elt.scrollHeight !== scrollHeight ||
-        Math.abs(elt.scrollTop - nextScrollTop) > 1)
+        (getTargetScrollTop != null &&
+          Math.abs(elt.scrollTop - nextScrollTop) > 1))
     ) {
       // dynamically rendering actually changed something
       elt.scrollTop = nextScrollTop;
@@ -316,6 +317,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
   const frameActions = useNotebookFrameActions();
   const restoreScrollActiveRef = useRef<boolean>(false);
   const restoreScrollCancelledRef = useRef<boolean>(false);
+  const restoreScrollTargetRef = useRef<number | null>(null);
 
   useLayoutEffect(() => {
     return () => {
@@ -550,17 +552,22 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     if (!Number.isFinite(targetScrollTop)) return;
     restoreScrollCancelledRef.current = false;
     restoreScrollActiveRef.current = true;
+    restoreScrollTargetRef.current =
+      scrollPosition == null ? targetScrollTop : null;
     try {
       await restoreNotebookScroll({
         scrollTop: targetScrollTop,
         getElement: () => cellListDivRef.current,
         isMounted: () => is_mounted.current,
         shouldCancel: () => restoreScrollCancelledRef.current,
-        getTargetScrollTop: (element) =>
-          notebookScrollTarget(element, targetPosition),
+        getTargetScrollTop:
+          scrollPosition == null
+            ? undefined
+            : (element) => notebookScrollTarget(element, targetPosition),
       });
     } finally {
       restoreScrollActiveRef.current = false;
+      restoreScrollTargetRef.current = null;
       const element = cellListDivRef.current as HTMLElement | null;
       if (element != null && scrollPosition != null) {
         captureNotebookScrollPosition(element, scrollPosition);
@@ -570,6 +577,19 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
 
   function cancelScrollRestore(): void {
     if (restoreScrollActiveRef.current) {
+      restoreScrollCancelledRef.current = true;
+    }
+  }
+
+  function cancelLiveNotebookRestoreIfScrolled(): void {
+    if (!restoreScrollActiveRef.current || scrollPosition != null) return;
+    const element = cellListDivRef.current as HTMLElement | null;
+    const targetScrollTop = restoreScrollTargetRef.current;
+    if (
+      element != null &&
+      targetScrollTop != null &&
+      Math.abs(element.scrollTop - targetScrollTop) > 1
+    ) {
       restoreScrollCancelledRef.current = true;
     }
   }
@@ -1156,6 +1176,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
           onTouchStart={cancelScrollRestore}
           onWheel={cancelScrollRestore}
           onScroll={() => {
+            cancelLiveNotebookRestoreIfScrolled();
             const element = cellListDivRef.current as HTMLElement | null;
             if (
               element != null &&

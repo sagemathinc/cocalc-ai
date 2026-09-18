@@ -71,6 +71,48 @@ describe("restoreNotebookScroll", () => {
     expect(scroller.scrollTop).toBe(180);
   });
 
+  it("does not pull a live notebook back when its height is unchanged", async () => {
+    const scroller = makeScroller({
+      scrollTop: 0,
+      getScrollHeight: () => 100,
+    });
+
+    await restoreNotebookScroll({
+      scrollTop: 25,
+      getElement: () => scroller,
+      isMounted: () => true,
+      wait: async (ms) => {
+        if (ms === 0) {
+          scroller.scrollTop = 180;
+        }
+      },
+    });
+
+    expect(scroller.scrollTop).toBe(180);
+  });
+
+  it("follows an anchored history target while heights settle", async () => {
+    const scroller = makeScroller({
+      scrollTop: 0,
+      getScrollHeight: () => 100,
+    });
+    let target = 25;
+
+    await restoreNotebookScroll({
+      scrollTop: target,
+      getElement: () => scroller,
+      getTargetScrollTop: () => target,
+      isMounted: () => true,
+      wait: async (ms) => {
+        if (ms === 0) {
+          target = 180;
+        }
+      },
+    });
+
+    expect(scroller.scrollTop).toBe(180);
+  });
+
   it("captures and restores a visible cell anchor when content above changes", () => {
     const scroller = makeScroller({
       scrollTop: 300,
