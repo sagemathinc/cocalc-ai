@@ -2533,20 +2533,18 @@ describe("public pricing catalog recovery", () => {
   });
 
   it("accepts numeric-string course prices without exposing course-only tiers", async () => {
-    global.fetch = jest
-      .fn()
-      .mockResolvedValue(
-        response([
-          tier,
-          {
-            id: "synthetic-course",
-            label: "Synthetic course",
-            course_store_visible: true,
-            store_visible: false,
-            course_price: "25.0000000000",
-          },
-        ]),
-      );
+    global.fetch = jest.fn().mockResolvedValue(
+      response([
+        tier,
+        {
+          id: "synthetic-course",
+          label: "Synthetic course",
+          course_store_visible: true,
+          store_visible: false,
+          course_price: "25.0000000000",
+        },
+      ]),
+    );
     render(<PricingPage />);
     expect(
       await screen.findByRole("heading", { name: "Synthetic plan" }),
