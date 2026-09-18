@@ -29,9 +29,11 @@ import type { PageStyle } from "./top-nav-consts";
 export function CompactAgentsTopNav({
   isLoggedIn,
   pageStyle,
+  onOpenInProject,
 }: {
   isLoggedIn: boolean;
   pageStyle: PageStyle;
+  onOpenInProject?: () => void;
 }) {
   const pageActions = useActions("page");
   const groups = useTypedRedux("account", "groups");
@@ -56,6 +58,16 @@ export function CompactAgentsTopNav({
   }, [menuOpen]);
 
   const items: MenuProps["items"] = [
+    ...(onOpenInProject
+      ? [
+          {
+            key: "open-in-project",
+            icon: <Icon name="external-link" />,
+            label: "Open in project",
+          },
+          { type: "divider" as const },
+        ]
+      : []),
     { key: "projects", icon: <Icon name="edit" />, label: "Projects" },
     { key: "hosts", icon: <Icon name="server" />, label: "Compute" },
     {
@@ -88,6 +100,9 @@ export function CompactAgentsTopNav({
   function onMenuClick({ key }: { key: string }) {
     setMenuOpen(false);
     switch (key) {
+      case "open-in-project":
+        onOpenInProject?.();
+        return;
       case "agents-settings":
         openAccountSettings({ page: "my-agents" });
         return;

@@ -597,10 +597,20 @@ function AgentProjectContext({
   );
 }
 
-function AgentsWorkspaceNavigation() {
+function AgentsWorkspaceNavigation({
+  onOpenInProject,
+}: {
+  onOpenInProject?: () => void;
+} = {}) {
   const { pageStyle } = useAppContext();
   const accountId = useTypedRedux("account", "account_id");
-  return <CompactAgentsTopNav isLoggedIn={!!accountId} pageStyle={pageStyle} />;
+  return (
+    <CompactAgentsTopNav
+      isLoggedIn={!!accountId}
+      pageStyle={pageStyle}
+      onOpenInProject={onOpenInProject}
+    />
+  );
 }
 
 function AgentWorkspace({
@@ -748,19 +758,17 @@ function AgentWorkspace({
         {!unregistered && !displayedAgent.available && (
           <Tag color="warning">Unavailable</Tag>
         )}
-        <Button
-          icon={<Icon name="external-link" />}
-          onClick={() =>
-            void openAgentThread({
-              project_id: agent.endpoint.project_id,
-              path: agent.path,
-              thread_id: selectedThread || agent.thread_id,
-            })
-          }
-        >
-          Open in project
-        </Button>
-        {active && <AgentsWorkspaceNavigation />}
+        {active && (
+          <AgentsWorkspaceNavigation
+            onOpenInProject={() =>
+              void openAgentThread({
+                project_id: agent.endpoint.project_id,
+                path: agent.path,
+                thread_id: selectedThread || agent.thread_id,
+              })
+            }
+          />
+        )}
         <Button
           icon={<Icon name="times" />}
           aria-label={`Close workspace for ${agent.path}`}

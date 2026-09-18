@@ -132,6 +132,22 @@ describe("compact Agents navigation", () => {
     expect(openAccountSettings).toHaveBeenCalledWith({ page: "my-agents" });
   });
 
+  it("runs the contextual Open in project command from the menu", () => {
+    const onOpenInProject = jest.fn();
+    render(
+      <CompactAgentsTopNav
+        isLoggedIn
+        pageStyle={pageStyle}
+        onOpenInProject={onOpenInProject}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open in project" }));
+
+    expect(onOpenInProject).toHaveBeenCalledTimes(1);
+  });
+
   it("closes on Escape and restores focus to the trigger", async () => {
     render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
     const trigger = screen.getByRole("button", { name: "More navigation" });
