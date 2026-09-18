@@ -78,10 +78,15 @@ Table({
       "map",
       "Canonical approval parameters for duplicate approval conflict detection.",
     ),
-    agent_session_id: required(
-      "uuid",
-      "Exact two-way Agent Session approved for this installation.",
-    ),
+    agent_session_id: {
+      ...required(
+        "uuid",
+        "Exact two-way Agent Session approved for this installation.",
+      ),
+      // Legacy send-only installations deliberately receive an unresolvable
+      // session id, so the hard cutover fails closed without blocking startup.
+      pg_null_backfill: "gen_random_uuid()",
+    },
     created_at: created,
     expires_at: {
       ...time("Finite credential expiry, at most 30 days after approval."),
