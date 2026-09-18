@@ -555,12 +555,11 @@ function AgentProjectContext({
 
   useEffect(() => {
     if (!ready) return;
-    const actions: any = getChatActions(
-      agent.endpoint.project_id,
-      chatMetaFile(agent.path),
-    );
-    if (!actions?.getThreadMetadata) return;
-    const update = () => {
+    let disposed = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let actions: any;
+    let cleanupListeners = () => {};
+    const update = (chatActions: any) => {
       const threadIds = new Set(
         workspaceAgentsRef.current.map(({ thread_id }) => thread_id),
       );
@@ -568,16 +567,34 @@ function AgentProjectContext({
       for (const threadId of threadIds) {
         onThreadAppearanceRef.current(
           threadId,
-          readAgentThreadAppearance(actions, threadId),
+          readAgentThreadAppearance(chatActions, threadId),
         );
       }
     };
-    update();
-    actions.syncdb?.on?.("change", update);
-    actions.messageCache?.on?.("version", update);
+    const attach = () => {
+      if (disposed) return;
+      actions = getChatActions(
+        agent.endpoint.project_id,
+        chatMetaFile(agent.path),
+      );
+      if (!actions?.getThreadMetadata) {
+        retryTimer = setTimeout(attach, 50);
+        return;
+      }
+      const refresh = () => update(actions);
+      update(actions);
+      actions.syncdb?.on?.("change", refresh);
+      actions.messageCache?.on?.("version", refresh);
+      cleanupListeners = () => {
+        actions.syncdb?.removeListener?.("change", refresh);
+        actions.messageCache?.removeListener?.("version", refresh);
+      };
+    };
+    attach();
     return () => {
-      actions.syncdb?.removeListener?.("change", update);
-      actions.messageCache?.removeListener?.("version", update);
+      disposed = true;
+      if (retryTimer) clearTimeout(retryTimer);
+      cleanupListeners();
     };
   }, [
     agent.endpoint.project_id,
