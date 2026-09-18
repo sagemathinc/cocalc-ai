@@ -13,11 +13,16 @@ import {
   type CodexSubscriptionAuthRefreshResult,
 } from "./codex-subscription-refresh";
 import {
+  createExternalCredential,
+  ensureDefaultExternalCredential,
   getExternalCredential,
+  getExternalCredentialById,
   hasExternalCredential,
   listExternalCredentials,
   revokeExternalCredential,
   touchExternalCredential,
+  updateExternalCredentialById,
+  updateExternalCredentialLabelById,
   upsertExternalCredential,
   type ExternalCredentialRecord,
   type ExternalCredentialScope,
@@ -112,6 +117,92 @@ export async function upsertExternalCredentialRouted({
   });
 }
 
+export async function createExternalCredentialRouted({
+  selector,
+  payload,
+  metadata,
+  maxActive,
+  deduplicateMetadata,
+}: {
+  selector: ExternalCredentialSelector;
+  payload: string;
+  metadata?: Record<string, any>;
+  maxActive?: number;
+  deduplicateMetadata?: { key: string; value: string };
+}): Promise<{ id: string; created: boolean }> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await createExternalCredential({
+        selector,
+        payload,
+        metadata,
+        maxActive,
+        deduplicateMetadata,
+      }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).create({
+        selector,
+        payload,
+        metadata,
+        max_active: maxActive,
+        deduplicate_metadata: deduplicateMetadata,
+      }),
+  });
+}
+
+export async function updateExternalCredentialByIdRouted({
+  id,
+  selector,
+  payload,
+  metadata,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  payload: string;
+  metadata?: Record<string, any>;
+}): Promise<boolean> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await updateExternalCredentialById({
+        id,
+        selector,
+        payload,
+        metadata: metadata ?? {},
+      }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).updateById({
+        id,
+        selector,
+        payload,
+        metadata,
+      }),
+  });
+}
+
+export async function updateExternalCredentialLabelByIdRouted({
+  id,
+  selector,
+  label,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  label?: string;
+}): Promise<boolean> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await updateExternalCredentialLabelById({ id, selector, label }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).updateLabelById({
+        id,
+        selector,
+        label,
+      }),
+  });
+}
+
 export async function getExternalCredentialRouted({
   selector,
   touchLastUsed = true,
@@ -126,6 +217,47 @@ export async function getExternalCredentialRouted({
       await remoteCredentialsClient(dest_bay).get({
         selector,
         touch_last_used: touchLastUsed,
+      }),
+  });
+}
+
+export async function getExternalCredentialByIdRouted({
+  id,
+  selector,
+  touchLastUsed = true,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+  touchLastUsed?: boolean;
+}): Promise<ExternalCredentialRecord | undefined> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await getExternalCredentialById({ id, selector, touchLastUsed }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).getById({
+        id,
+        selector,
+        touch_last_used: touchLastUsed,
+      }),
+  });
+}
+
+export async function ensureDefaultExternalCredentialRouted({
+  selector,
+  metadataKey,
+}: {
+  selector: ExternalCredentialSelector;
+  metadataKey: string;
+}): Promise<ExternalCredentialSummary | undefined> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () =>
+      await ensureDefaultExternalCredential({ selector, metadataKey }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).ensureDefault({
+        selector,
+        metadata_key: metadataKey,
       }),
   });
 }
@@ -156,11 +288,28 @@ export async function touchExternalCredentialRouted({
   });
 }
 
+export async function touchExternalCredentialByIdRouted({
+  id,
+  selector,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+}): Promise<boolean> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () => await touchExternalCredential({ selector, id }),
+    remote: async (dest_bay) =>
+      await remoteCredentialsClient(dest_bay).touchById({ id, selector }),
+  });
+}
+
 export async function refreshCodexSubscriptionAuthRouted({
   owner_account_id,
+  credential_id,
   previous_access_token_hash,
 }: {
   owner_account_id: string;
+  credential_id?: string;
   previous_access_token_hash: string;
 }): Promise<CodexSubscriptionAuthRefreshResult> {
   const selector: ExternalCredentialSelector = {
@@ -174,11 +323,13 @@ export async function refreshCodexSubscriptionAuthRouted({
     local: async () =>
       await refreshCodexSubscriptionAuth({
         ownerAccountId: owner_account_id,
+        credentialId: credential_id,
         previousAccessTokenHash: previous_access_token_hash,
       }),
     remote: async (dest_bay) =>
       await remoteCredentialsClient(dest_bay).refreshCodexSubscription({
         owner_account_id,
+        credential_id,
         previous_access_token_hash,
       }),
   });

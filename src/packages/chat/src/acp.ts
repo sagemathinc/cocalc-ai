@@ -55,7 +55,7 @@ export function buildCodexAcpConfig({
   maxConcurrentSubagents,
 }: {
   path?: string;
-  config?: CodexThreadConfig;
+  config?: CodexThreadConfig & { credentialId?: string };
   model?: string;
   maxConcurrentSubagents?: number;
 }): CodexSessionConfig {
@@ -95,6 +95,7 @@ export function buildCodexAcpConfig({
     opts.codexPathOverride = config.codexPathOverride;
   }
   if (config?.paymentSource) opts.paymentSource = config.paymentSource;
+  if (config?.credentialId) opts.credentialId = config.credentialId;
   const sessionId = normalizeCodexSessionId(config?.sessionId);
   if (sessionId) opts.sessionId = sessionId;
   return opts;

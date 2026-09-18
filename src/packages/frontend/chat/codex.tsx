@@ -85,6 +85,10 @@ import {
   getCodexPaymentSourceOptions,
   getCodexPaymentSourceTooltip,
 } from "./use-codex-payment-source";
+import {
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "./codex-subscription-selection";
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODEL_NAME;
@@ -517,6 +521,14 @@ export function CodexConfigButton({
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [form] = Form.useForm();
+  const [selectedCredentialId, setSelectedCredentialId] = useState<
+    string | undefined
+  >();
+  useEffect(() => {
+    setSelectedCredentialId(
+      readCodexSubscriptionSelection({ accountId, projectId, threadKey }),
+    );
+  }, [accountId, projectId, threadKey]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
   const [controlsCollapsed, setControlsCollapsed] = useState(
@@ -693,9 +705,14 @@ export function CodexConfigButton({
       })) ?? []
     );
   }, [models, selectedModelValue]);
+  const selectedSubscription = paymentSource?.subscriptions?.find(
+    ({ id }) => id === (selectedCredentialId ?? paymentSource.credentialId),
+  );
   const sourceShortLabel = paymentSourceLoading
     ? "Checking…"
-    : getCodexPaymentSourceShortLabel(paymentSource?.source);
+    : paymentSource?.source === "subscription" && selectedSubscription
+      ? `ChatGPT: ${selectedSubscription.label ?? selectedSubscription.email ?? selectedSubscription.plan ?? "Plan"}`
+      : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
   const membershipNeedsNewThread =
     hasEstablishedSession &&
@@ -835,6 +852,7 @@ export function CodexConfigButton({
       projectId,
       includeModels,
       refreshModels: forceModels,
+      credentialId: paymentSource.credentialId,
     })
       .then((status: CodexUsageStatusInfo) => {
         if (cancelled) return;
@@ -1116,20 +1134,56 @@ export function CodexConfigButton({
     ({ value }) => value !== "auto",
   );
   const showPaymentSourceSelector =
-    !lite && configuredPaymentSources.length > 1;
+    !lite &&
+    (configuredPaymentSources.length > 1 ||
+      (paymentSource?.subscriptions?.length ?? 0) > 1);
   const paymentSourceMenu: MenuProps = {
-    selectedKeys: [selectedPaymentSource],
-    items: paymentSourceOptions.map((option) => ({
-      key: option.value,
-      label: option.label,
-      disabled:
-        option.value === "site-api-key" && membershipNeedsNewThread
-          ? false
-          : option.disabled,
-      title: option.description,
-    })),
+    selectedKeys: [
+      selectedPaymentSource === "subscription" && selectedSubscription
+        ? `subscription:${selectedSubscription.id}`
+        : selectedPaymentSource,
+    ],
+    items: paymentSourceOptions.flatMap((option) =>
+      option.value === "subscription"
+        ? (paymentSource?.subscriptions ?? []).map((credential) => ({
+            key: `subscription:${credential.id}`,
+            label:
+              credential.label ??
+              credential.email ??
+              `${credential.plan ?? "ChatGPT plan"} (${credential.id.slice(0, 8)})`,
+            title: credential.plan
+              ? `${credential.email ?? "ChatGPT subscription"} - ${credential.plan}`
+              : credential.email,
+          }))
+        : [
+            {
+              key: option.value,
+              label: option.label,
+              disabled:
+                option.value === "site-api-key" && membershipNeedsNewThread
+                  ? false
+                  : option.disabled,
+              title: option.description,
+            },
+          ],
+    ),
     onClick: ({ domEvent, key }) => {
       domEvent.stopPropagation();
+      if (key.startsWith("subscription:")) {
+        const credentialId = key.slice("subscription:".length);
+        if (accountId && projectId) {
+          writeCodexSubscriptionSelection({
+            accountId,
+            projectId,
+            threadKey,
+            credentialId,
+          });
+          setSelectedCredentialId(credentialId);
+          applyQuickConfigPatch(paymentSourcePatch("subscription"));
+          refreshPaymentSource?.();
+        }
+        return;
+      }
       const next = key as CodexPaymentSourcePreference;
       if (next === "site-api-key" && membershipNeedsNewThread) {
         setMembershipHelpOpen(true);

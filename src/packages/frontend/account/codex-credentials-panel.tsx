@@ -251,6 +251,8 @@ type DeviceAuthStatus = {
   error?: string;
   syncedToRegistry?: boolean;
   syncError?: string;
+  credentialId?: string;
+  create?: boolean;
 };
 
 const DEVICE_AUTH_ALERT_TYPE: Record<
@@ -289,6 +291,8 @@ function CodexCredentialsPanelBody({
   const [apiKeyStatus, setApiKeyStatus] = useState<any>(undefined);
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
   const [revokingId, setRevokingId] = useState<string>("");
+  const [savingLabelId, setSavingLabelId] = useState<string>("");
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
   const [accountApiKey, setAccountApiKey] = useState<string>("");
   const [projectApiKey, setProjectApiKey] = useState<string>("");
   const [savingScope, setSavingScope] = useState<"" | "account" | "project">(
@@ -470,12 +474,120 @@ function CodexCredentialsPanelBody({
     [authProjectId, paymentSource?.source, usageRefreshToken],
   );
 
+  const startDeviceAuth = useCallback(
+    async (credentialId?: string, create = false) => {
+      if (!embedded) openSubscriptionAuthPanel();
+      if (!authProjectId) {
+        setDeviceAuthError(
+          "No project available. Create or open a project, then retry.",
+        );
+        return;
+      }
+      setDeviceAuthActionPending(true);
+      setDeviceAuthError("");
+      try {
+        const status =
+          await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
+            project_id: authProjectId,
+            ...(credentialId ? { credential_id: credentialId } : {}),
+            ...(create ? { create: true } : {}),
+          });
+        setDeviceAuth(status as DeviceAuthStatus);
+        refresh();
+      } catch (err) {
+        const error = err instanceof Error ? err.message : `${err}`;
+        setDeviceAuthError(
+          /\b(?:timed? out|timeout)\b/i.test(error)
+            ? "Starting ChatGPT sign-in timed out. Codex may still be starting in the selected project. Wait a few seconds, then click Sign in again; CoCalc will not retry automatically because that could start a duplicate login."
+            : error,
+        );
+      } finally {
+        setDeviceAuthActionPending(false);
+      }
+    },
+    [authProjectId, embedded, openSubscriptionAuthPanel, refresh],
+  );
+
+  const saveCredentialLabel = useCallback(
+    async (row: ExternalCredentialInfo, value: string) => {
+      const label = value.trim();
+      if (label === `${row.metadata?.label ?? ""}`.trim()) return;
+      setSavingLabelId(row.id);
+      try {
+        const result =
+          await webapp_client.conat_client.hub.system.updateCodexSubscriptionLabel(
+            { id: row.id, label: label || undefined },
+          );
+        if (!result.updated) {
+          throw Error("ChatGPT subscription is no longer available");
+        }
+        setCredentials((items) =>
+          items.map((item) => {
+            if (item.id !== row.id) return item;
+            const metadata = { ...item.metadata };
+            if (label) metadata.label = label;
+            else delete metadata.label;
+            return { ...item, metadata };
+          }),
+        );
+        setLabelDrafts((drafts) => {
+          const next = { ...drafts };
+          delete next[row.id];
+          return next;
+        });
+        refreshAfterPaymentSourceChange();
+      } catch (err) {
+        setError(`${err}`);
+        setLabelDrafts((drafts) => ({
+          ...drafts,
+          [row.id]: `${row.metadata?.label ?? ""}`,
+        }));
+      } finally {
+        setSavingLabelId("");
+      }
+    },
+    [refreshAfterPaymentSourceChange],
+  );
+
   const columns = useMemo(
     () => [
       {
         title: "Credential",
         key: "credential",
-        render: () => <Tag color="blue">ChatGPT subscription</Tag>,
+        render: (_: any, row: ExternalCredentialInfo) => (
+          <Space orientation="vertical" size={0}>
+            <Text strong>
+              {row.metadata?.label ||
+                row.metadata?.email ||
+                "ChatGPT subscription"}
+            </Text>
+            <Text type="secondary">
+              {formatPlanType(row.metadata?.plan_type) ??
+                row.metadata?.provider_account_id?.slice?.(0, 12) ??
+                "Connected plan"}
+              {row.metadata?.cocalc_default ? " (default)" : ""}
+            </Text>
+            <Input
+              size="small"
+              aria-label={`Label for ${row.metadata?.email || "ChatGPT subscription"}`}
+              placeholder="Optional label"
+              maxLength={60}
+              value={labelDrafts[row.id] ?? row.metadata?.label ?? ""}
+              disabled={savingLabelId === row.id}
+              onChange={(event) =>
+                setLabelDrafts((drafts) => ({
+                  ...drafts,
+                  [row.id]: event.target.value,
+                }))
+              }
+              onBlur={(event) =>
+                void saveCredentialLabel(row, event.target.value)
+              }
+              onPressEnter={(event) => event.currentTarget.blur()}
+              style={{ width: 180, marginTop: 4 }}
+            />
+          </Space>
+        ),
       },
       {
         title: "Updated",
@@ -498,59 +610,68 @@ function CodexCredentialsPanelBody({
         title: "Action",
         key: "action",
         render: (_: any, row: ExternalCredentialInfo) => (
-          <Popconfirm
-            title="Delete external credential?"
-            description="This revokes it for future Codex turns."
-            okText="Delete"
-            okButtonProps={{ danger: true }}
-            onConfirm={async () => {
-              setRevokingId(row.id);
-              try {
-                const completed = await runFreshAuthAction(async () => {
-                  await webapp_client.conat_client.hub.system.revokeExternalCredential(
-                    {
-                      id: row.id,
-                      browser_id: webapp_client.browser_id,
-                    },
-                  );
-                });
-                if (!completed) {
-                  return;
-                }
-                refreshAfterPaymentSourceChange();
-              } catch (err) {
-                setError(`${err}`);
-              } finally {
-                setRevokingId("");
-              }
-            }}
-          >
+          <Space>
             <Button
               size="small"
-              danger
-              loading={revokingId === row.id}
-              disabled={!!row.revoked}
+              onClick={() => void startDeviceAuth(row.id)}
+              disabled={deviceAuth?.state === "pending"}
             >
-              Delete
+              Reconnect
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="Delete external credential?"
+              description="This revokes it for future Codex turns."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={async () => {
+                setRevokingId(row.id);
+                try {
+                  const completed = await runFreshAuthAction(async () => {
+                    await webapp_client.conat_client.hub.system.revokeExternalCredential(
+                      {
+                        id: row.id,
+                        browser_id: webapp_client.browser_id,
+                      },
+                    );
+                  });
+                  if (!completed) {
+                    return;
+                  }
+                  refreshAfterPaymentSourceChange();
+                } catch (err) {
+                  setError(`${err}`);
+                } finally {
+                  setRevokingId("");
+                }
+              }}
+            >
+              <Button
+                size="small"
+                danger
+                loading={revokingId === row.id}
+                disabled={!!row.revoked}
+              >
+                Delete
+              </Button>
+            </Popconfirm>
+          </Space>
         ),
       },
     ],
-    [refreshAfterPaymentSourceChange, revokingId],
+    [
+      deviceAuth?.state,
+      refreshAfterPaymentSourceChange,
+      revokingId,
+      labelDrafts,
+      saveCredentialLabel,
+      savingLabelId,
+      startDeviceAuth,
+    ],
   );
 
   const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
     return `${err}`;
-  };
-
-  const getDeviceAuthStartError = (err: unknown): string => {
-    const error = getErrorMessage(err);
-    if (/\b(?:timed? out|timeout)\b/i.test(error)) {
-      return "Starting ChatGPT sign-in timed out. Codex may still be starting in the selected project. Wait a few seconds, then click Sign in again; CoCalc will not retry automatically because that could start a duplicate login.";
-    }
-    return error;
   };
 
   const copyText = async (text: string, label: string): Promise<void> => {
@@ -592,32 +713,6 @@ function CodexCredentialsPanelBody({
       }
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
-    }
-  };
-
-  const startDeviceAuth = async () => {
-    if (!embedded) {
-      openSubscriptionAuthPanel();
-    }
-    if (!authProjectId) {
-      setDeviceAuthError(
-        "No project available. Create or open a project, then retry.",
-      );
-      return;
-    }
-    setDeviceAuthActionPending(true);
-    setDeviceAuthError("");
-    try {
-      const status =
-        await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
-          project_id: authProjectId,
-        });
-      setDeviceAuth(status as DeviceAuthStatus);
-      refresh();
-    } catch (err) {
-      setDeviceAuthError(getDeviceAuthStartError(err));
-    } finally {
-      setDeviceAuthActionPending(false);
     }
   };
 
@@ -964,6 +1059,13 @@ function CodexCredentialsPanelBody({
                   {deviceAuthActionPending
                     ? "Getting sign-in code..."
                     : "Sign in again with ChatGPT"}
+                </Button>
+                <Button
+                  onClick={() => void startDeviceAuth(undefined, true)}
+                  loading={deviceAuthActionPending}
+                  disabled={deviceAuth?.state === "pending"}
+                >
+                  Add ChatGPT subscription
                 </Button>
                 <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
                   {CODEX_USAGE_LABEL}

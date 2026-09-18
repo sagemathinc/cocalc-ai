@@ -42,6 +42,7 @@ import {
   normalizeNotificationPreferencesV2,
   resolveCodexCompletionNotificationEnabled,
 } from "@cocalc/util/notification-preferences";
+import { readCodexSubscriptionSelection } from "./codex-subscription-selection";
 
 let lastGeneratedAcpMessageMs = 0;
 const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
@@ -337,10 +338,18 @@ export async function processAcpLLM({
     project_id,
     send_mode: sendMode,
   });
-  const config = {
+  const config: Partial<CodexThreadConfig> & { credentialId?: string } = {
     ...(actions.getCodexConfig?.(thread_id) ?? {}),
     ...(acpConfigOverride ?? {}),
   };
+  const selectedCredentialId = readCodexSubscriptionSelection({
+    accountId: redux.getStore("account")?.get("account_id"),
+    projectId: project_id,
+    threadKey: thread_id,
+  });
+  if (selectedCredentialId && config.paymentSource === "subscription") {
+    config.credentialId = selectedCredentialId;
+  }
   const maxConcurrentSubagents = normalizeCodexMaxConcurrentSubagents(
     redux
       .getStore("account")

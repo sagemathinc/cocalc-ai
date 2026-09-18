@@ -17,6 +17,7 @@ const OPENAI_API_KEY_KIND = "openai-api-key";
 
 type PullResult = {
   pulled: boolean;
+  credentialId?: string;
   source?: "registry";
   missing?: boolean;
   skipped?: "local-newer";
@@ -194,20 +195,31 @@ async function writeLocalAuth({
 export async function pushSubscriptionAuthToRegistry({
   projectId,
   accountId,
+  credentialId,
+  create,
   codexHome,
   content,
+  descriptorMetadata,
 }: {
   projectId: string;
   accountId: string;
+  credentialId?: string;
+  create?: boolean;
   codexHome: string;
   content?: string;
+  descriptorMetadata?: { email?: string; label?: string };
 }): Promise<{ ok: boolean; id?: string }> {
   const caller = getHubCaller();
   if (!caller) {
     return { ok: false };
   }
   const payload = content ?? (await readLocalAuth(codexHome));
-  if (!payload || !codexAuthJsonToAppServerLogin(payload)) {
+  const login = payload ? codexAuthJsonToAppServerLogin(payload) : undefined;
+  if (
+    !payload ||
+    login?.type !== "chatgptAuthTokens" ||
+    !login.chatgptAccountId
+  ) {
     logger.warn("refusing to sync unusable subscription auth", {
       projectId,
       accountId,
@@ -229,7 +241,24 @@ export async function pushSubscriptionAuthToRegistry({
           metadata: {
             format: "auth.json",
             source: "project-host",
+            provider_account_id: login.chatgptAccountId,
+            plan_type: login.chatgptPlanType,
+            ...(descriptorMetadata?.email
+              ? { email: descriptorMetadata.email }
+              : {}),
+            ...(descriptorMetadata?.label
+              ? { label: descriptorMetadata.label }
+              : {}),
           },
+          credential_id: credentialId,
+          create,
+          max_active: create ? 10 : undefined,
+          deduplicate_metadata: create
+            ? {
+                key: "provider_account_id",
+                value: login.chatgptAccountId,
+              }
+            : undefined,
         },
       ],
       timeout: 15000,
@@ -248,11 +277,13 @@ export async function pushSubscriptionAuthToRegistry({
 export async function syncSubscriptionAuthToRegistryIfChanged({
   projectId,
   accountId,
+  credentialId,
   codexHome,
   force = false,
 }: {
   projectId: string;
   accountId: string;
+  credentialId?: string;
   codexHome: string;
   force?: boolean;
 }): Promise<{ ok: boolean; id?: string; skipped?: boolean }> {
@@ -281,6 +312,7 @@ export async function syncSubscriptionAuthToRegistryIfChanged({
               ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
               owner_account_id: accountId,
             },
+            credential_id: credentialId,
           },
         ],
         timeout: 15_000,
@@ -313,6 +345,7 @@ export async function syncSubscriptionAuthToRegistryIfChanged({
   const result = await pushSubscriptionAuthToRegistry({
     projectId,
     accountId,
+    credentialId,
     codexHome,
     content: payload,
   });
@@ -328,11 +361,13 @@ export async function syncSubscriptionAuthToRegistryIfChanged({
 export async function hasSubscriptionAuthInRegistry({
   projectId,
   accountId,
+  credentialId,
 }: {
   projectId: string;
   accountId: string;
+  credentialId?: string;
 }): Promise<boolean | undefined> {
-  const key = `${projectId}:${accountId}`;
+  const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
   const now = Date.now();
   const cached = existenceCache.get(key);
   if (cached && cached.expires > now) {
@@ -353,6 +388,7 @@ export async function hasSubscriptionAuthInRegistry({
             ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
+          credential_id: credentialId,
         },
       ],
       timeout: 10000,
@@ -376,9 +412,11 @@ export async function hasSubscriptionAuthInRegistry({
 export async function touchSubscriptionAuthInRegistry({
   projectId,
   accountId,
+  credentialId,
 }: {
   projectId: string;
   accountId: string;
+  credentialId?: string;
 }): Promise<boolean> {
   const caller = getHubCaller();
   if (!caller) {
@@ -395,13 +433,14 @@ export async function touchSubscriptionAuthInRegistry({
             ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
+          credential_id: credentialId,
         },
       ],
       timeout: 10_000,
     });
     const has = !!touched;
     if (has) {
-      const key = `${projectId}:${accountId}`;
+      const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
       existenceCache.set(key, {
         has: true,
         expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
@@ -421,11 +460,13 @@ export async function touchSubscriptionAuthInRegistry({
 export async function pullSubscriptionAuthFromRegistry({
   projectId,
   accountId,
+  credentialId,
   codexHome,
   onlyIfNewer = false,
 }: {
   projectId: string;
   accountId: string;
+  credentialId?: string;
   codexHome: string;
   onlyIfNewer?: boolean;
 }): Promise<PullResult> {
@@ -444,6 +485,7 @@ export async function pullSubscriptionAuthFromRegistry({
             ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
             owner_account_id: accountId,
           },
+          credential_id: credentialId,
         },
       ],
       timeout: 15000,
@@ -454,14 +496,14 @@ export async function pullSubscriptionAuthFromRegistry({
         ? new Date(result.updated).toISOString()
         : undefined;
     if (typeof payload !== "string" || !payload.trim()) {
-      const key = `${projectId}:${accountId}`;
+      const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
       existenceCache.set(key, {
         has: false,
         expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
       });
       return { pulled: false, missing: true };
     }
-    const key = `${projectId}:${accountId}`;
+    const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
     existenceCache.set(key, {
       has: true,
       expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
@@ -478,11 +520,17 @@ export async function pullSubscriptionAuthFromRegistry({
           pulled: false,
           skipped: "local-newer",
           registryUpdatedAt,
+          credentialId: result.id,
         };
       }
     }
     await writeLocalAuth({ codexHome, payload });
-    return { pulled: true, source: "registry", registryUpdatedAt };
+    return {
+      pulled: true,
+      source: "registry",
+      registryUpdatedAt,
+      credentialId: result.id,
+    };
   } catch (err) {
     logger.debug("pullSubscriptionAuthFromRegistry failed", {
       projectId,
@@ -496,11 +544,13 @@ export async function pullSubscriptionAuthFromRegistry({
 export async function refreshSubscriptionAuthFromRegistry({
   projectId,
   accountId,
+  credentialId,
   codexHome,
   previousAccessTokenHash,
 }: {
   projectId: string;
   accountId: string;
+  credentialId?: string;
   codexHome: string;
   previousAccessTokenHash: string;
 }): Promise<{ refreshed: boolean; updated?: string }> {
@@ -517,6 +567,7 @@ export async function refreshSubscriptionAuthFromRegistry({
       {
         project_id: projectId,
         owner_account_id: accountId,
+        credential_id: credentialId,
         previous_access_token_hash: previousAccessTokenHash,
       },
     ],

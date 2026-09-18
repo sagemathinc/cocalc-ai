@@ -384,11 +384,13 @@ async function loadCodexModelCatalogStatus({
   projectId,
   accountId,
   timeoutMs,
+  credentialId,
 }: {
   dedupeKey?: string;
   projectId: string;
   accountId: string;
   timeoutMs: number;
+  credentialId?: string;
 }): Promise<CodexAppServerAccountStatus> {
   const pending = dedupeKey
     ? codexModelCatalogInflight.get(dedupeKey)
@@ -400,6 +402,7 @@ async function loadCodexModelCatalogStatus({
     isolatedCodexHome: true,
     includeModels: true,
     timeoutMs,
+    credentialId,
   });
   if (!dedupeKey) return await load;
   codexModelCatalogInflight.set(dedupeKey, load);
@@ -2848,9 +2851,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   async function codexDeviceAuthStart({
     account_id,
     project_id,
+    credential_id,
+    create,
   }: {
     account_id?: string;
     project_id: string;
+    credential_id?: string;
+    create?: boolean;
   }) {
     if (!account_id) {
       throw Error("user must be signed in");
@@ -2865,23 +2872,43 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       project_id,
       account_id,
       verifyCodexSubscriptionAuth,
+      { credentialId: credential_id, create },
     );
   }
 
   async function verifyCodexSubscriptionAuth({
     projectId,
     accountId,
+    credentialId,
+    codexHome,
   }: {
     projectId: string;
     accountId: string;
     codexHome: string;
+    credentialId?: string;
   }): Promise<void> {
     const status = await getCodexAppServerAccountStatus({
       projectId,
       accountId,
+      credentialId,
       timeoutMs: CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS,
     });
-    if (status.rateLimits) return;
+    if (status.rateLimits) {
+      const account = status.account as any;
+      const email = String(
+        account?.email ?? account?.account?.email ?? account?.user?.email ?? "",
+      ).trim();
+      if (credentialId && email) {
+        await pushSubscriptionAuthToRegistry({
+          projectId,
+          accountId,
+          credentialId,
+          codexHome,
+          descriptorMetadata: { email },
+        });
+      }
+      return;
+    }
     throw Error(
       status.errors?.rateLimits ??
         status.errors?.account ??
@@ -3018,12 +3045,14 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     include_models,
     refresh_models,
     timeout,
+    credential_id,
   }: {
     account_id?: string;
     project_id: string;
     include_models?: boolean;
     refresh_models?: boolean;
     timeout?: number;
+    credential_id?: string;
   }): Promise<CodexUsageStatusInfo> {
     assertHostedProjectAccess({ account_id, project_id });
     const accountId = account_id!;
@@ -3034,6 +3063,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       authRuntime = await resolveCodexAuthRuntime({
         projectId: project_id,
         accountId,
+        preference: credential_id ? "subscription" : "auto",
+        credentialId: credential_id,
       });
       source = authRuntime.source;
     } catch (err) {
@@ -3064,6 +3095,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       hasSiteApiKey: source === "site-api-key",
       sharedHomeMode: source === "shared-home" ? "always" : "disabled",
       project_id,
+      credentialId: authRuntime.credentialId,
     } satisfies CodexUsageStatusInfo["paymentSource"];
     if (paymentSource.source !== "subscription") {
       return {
@@ -3107,6 +3139,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               projectId: project_id,
               accountId,
               timeoutMs,
+              credentialId: authRuntime.credentialId,
             })
           : await getCodexAppServerAccountStatus({
               projectId: project_id,
@@ -3114,6 +3147,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               isolatedCodexHome: true,
               includeModels: include_models && !cachedCatalog,
               timeoutMs,
+              credentialId: authRuntime.credentialId,
             });
       const liveModels = status.models?.length ? status.models : undefined;
       if (

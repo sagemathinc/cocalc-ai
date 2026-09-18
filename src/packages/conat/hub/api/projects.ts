@@ -2413,6 +2413,8 @@ export interface Projects {
   codexDeviceAuthStart: (opts: {
     account_id?: string;
     project_id: string;
+    credential_id?: string;
+    create?: boolean;
   }) => Promise<{
     id: string;
     accountId: string;
@@ -2427,6 +2429,8 @@ export interface Projects {
     error?: string;
     syncedToRegistry?: boolean;
     syncError?: string;
+    credentialId?: string;
+    create?: boolean;
   }>;
 
   codexDeviceAuthStatus: (opts: {
@@ -2447,6 +2451,8 @@ export interface Projects {
     error?: string;
     syncedToRegistry?: boolean;
     syncError?: string;
+    credentialId?: string;
+    create?: boolean;
   }>;
 
   codexDeviceAuthCancel: (opts: {
@@ -2468,6 +2474,7 @@ export interface Projects {
     include_models?: boolean;
     refresh_models?: boolean;
     timeout?: number;
+    credential_id?: string;
   }) => Promise<CodexUsageStatusInfo>;
 
   chatStoreStats: (opts: {

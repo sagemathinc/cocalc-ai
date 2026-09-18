@@ -588,6 +588,8 @@ type SessionStoreEntry = {
 
 type RunningTurn = {
   executionAccountId: string;
+  paymentSource: CodexSessionConfig["paymentSource"];
+  credentialId?: string;
   proc: ReturnType<typeof spawn>;
   client: AppServerClient;
   stop: () => Promise<void>;
@@ -602,6 +604,7 @@ type CodexAppServerRuntime = {
   accountId: string;
   cwd: string;
   paymentSource: CodexSessionConfig["paymentSource"];
+  credentialId?: string;
   maxConcurrentSubagents?: number;
   spawned: SpawnedCodexAppServer;
   client: AppServerClient;
@@ -2039,6 +2042,7 @@ export async function getCodexAppServerAccountStatus(opts: {
   includeTokenUsage?: boolean;
   includeModels?: boolean;
   timeoutMs?: number;
+  credentialId?: string;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
@@ -2059,6 +2063,8 @@ export async function getCodexAppServerAccountStatus(opts: {
           env: opts.env,
           isolatedCodexHome: opts.isolatedCodexHome,
           touchReason: false,
+          paymentSource: opts.credentialId ? "subscription" : undefined,
+          credentialId: opts.credentialId,
         })
       : await spawnStandaloneAppServer(
           {
@@ -2474,7 +2480,8 @@ export class CodexAppServerAgent implements AcpAgent {
       !runtime.spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE &&
       runtime.cwd === cwd &&
       (runtime.paymentSource ?? "auto") ===
-        (request.config?.paymentSource ?? "auto")
+        (request.config?.paymentSource ?? "auto") &&
+      runtime.credentialId === request.config?.credentialId
     );
   }
 
@@ -2559,6 +2566,7 @@ export class CodexAppServerAgent implements AcpAgent {
         path: request.chat?.path,
       },
       paymentSource: request.config?.paymentSource,
+      credentialId: request.config?.credentialId,
     });
     const client = new AppServerClient(
       spawned.proc,
@@ -2597,6 +2605,7 @@ export class CodexAppServerAgent implements AcpAgent {
       accountId: request.account_id,
       cwd,
       paymentSource: request.config?.paymentSource,
+      credentialId: request.config?.credentialId,
       maxConcurrentSubagents: normalizeMaxConcurrentSubagents(
         request.config?.maxConcurrentSubagents,
       ),
@@ -2931,6 +2940,8 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       runningEntry = {
         executionAccountId: request.account_id,
+        paymentSource: request.config?.paymentSource,
+        credentialId: request.config?.credentialId,
         proc: spawned.proc,
         client,
         stop: async () => {
@@ -4273,6 +4284,16 @@ export class CodexAppServerAgent implements AcpAgent {
       return { state: "missing" };
     }
     assertSameTurnPrincipal(running.executionAccountId, request.account_id);
+    if (
+      (request.config?.paymentSource ?? running.paymentSource ?? "auto") !==
+        (running.paymentSource ?? "auto") ||
+      (request.config?.credentialId ?? running.credentialId) !==
+        running.credentialId
+    ) {
+      throw new Error(
+        "Send Immediately cannot change the active turn's credential. Queue a new turn or wait for the current turn to finish.",
+      );
+    }
     const runtimeEnv = Object.fromEntries(
       Object.entries({
         ...(this.opts.env ?? {}),
@@ -4382,6 +4403,7 @@ export class CodexAppServerAgent implements AcpAgent {
     env,
     siteFundedTurn,
     paymentSource,
+    credentialId,
   }: {
     projectId: string;
     accountId?: string;
@@ -4390,6 +4412,7 @@ export class CodexAppServerAgent implements AcpAgent {
     env?: NodeJS.ProcessEnv;
     siteFundedTurn?: CodexSiteFundedTurnRequest;
     paymentSource?: CodexSessionConfig["paymentSource"];
+    credentialId?: string;
   }): Promise<SpawnedCodexAppServer> {
     const projectSpawner = getCodexProjectSpawner();
     if (projectSpawner && projectId && projectSpawner.spawnCodexAppServer) {
@@ -4401,6 +4424,7 @@ export class CodexAppServerAgent implements AcpAgent {
         env,
         siteFundedTurn,
         paymentSource,
+        credentialId,
       });
       logger.debug("codex app-server: spawning via project container", {
         cmd: spawned.cmd,

@@ -30,6 +30,7 @@ export type CodexAuthSource =
 export type CodexAuthRuntime = {
   source: CodexAuthSource;
   contextId: string;
+  credentialId?: string;
   codexHome?: string;
   env: Record<string, string>;
 };
@@ -129,25 +130,35 @@ function sharedHomeRuntime({
   };
 }
 
-export function resolveSubscriptionCodexHome(accountId: string): string {
+export function resolveSubscriptionCodexHome(
+  accountId: string,
+  credentialId?: string,
+): string {
   const subscriptionRoot =
     process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT ??
     codexSubscriptionsPath;
-  return join(subscriptionRoot, accountId);
+  return credentialId
+    ? join(subscriptionRoot, accountId, credentialId)
+    : join(subscriptionRoot, accountId);
 }
 
 export function subscriptionRuntime({
   projectId,
   accountId,
   codexHome,
+  credentialId,
 }: {
   projectId: string;
   accountId: string;
   codexHome?: string;
+  credentialId?: string;
 }): CodexAuthRuntime {
   return {
     source: "subscription",
-    contextId: hashText(`subscription:${projectId}:${accountId}`).slice(0, 16),
+    contextId: hashText(
+      `subscription:${projectId}:${accountId}:${credentialId ?? "default"}`,
+    ).slice(0, 16),
+    credentialId,
     codexHome,
     env: {},
   };
@@ -237,12 +248,17 @@ export async function resolveCodexAuthRuntime({
   accountId,
   forceRefreshSiteKey = false,
   preference = "auto",
+  credentialId,
 }: {
   projectId: string;
   accountId?: string;
   forceRefreshSiteKey?: boolean;
   preference?: CodexPaymentSourcePreference;
+  credentialId?: string;
 }): Promise<CodexAuthRuntime> {
+  if (credentialId && preference !== "subscription") {
+    throw Error("credentialId requires the subscription payment source");
+  }
   const sharedHome = resolveSharedCodexHome();
   const sharedHomeMode = resolveSharedHomeMode();
   const hasSharedHomeAuth =
@@ -262,12 +278,14 @@ export async function resolveCodexAuthRuntime({
   }
 
   if (accountId && (preference === "auto" || preference === "subscription")) {
-    const codexHome = resolveSubscriptionCodexHome(accountId);
+    let resolvedCredentialId = credentialId;
+    const codexHome = resolveSubscriptionCodexHome(accountId, credentialId);
     const authFile = join(codexHome, "auth.json");
     if (await pathExists(authFile)) {
       const hasInRegistry = await hasSubscriptionAuthInRegistry({
         projectId,
         accountId,
+        credentialId,
       });
       if (hasInRegistry === false) {
         try {
@@ -284,8 +302,10 @@ export async function resolveCodexAuthRuntime({
       const pulled = await pullSubscriptionAuthFromRegistry({
         projectId,
         accountId,
+        credentialId,
         codexHome,
       });
+      resolvedCredentialId = pulled.credentialId ?? resolvedCredentialId;
       if (pulled.pulled) {
         logger.debug("loaded subscription auth from central registry", {
           projectId,
@@ -297,9 +317,11 @@ export async function resolveCodexAuthRuntime({
       const pulled = await pullSubscriptionAuthFromRegistry({
         projectId,
         accountId,
+        credentialId,
         codexHome,
         onlyIfNewer: true,
       });
+      resolvedCredentialId = pulled.credentialId ?? resolvedCredentialId;
       if (pulled.pulled) {
         logger.debug("refreshed local subscription auth from newer registry", {
           projectId,
@@ -311,7 +333,11 @@ export async function resolveCodexAuthRuntime({
     }
     if (await pathExists(authFile)) {
       // Best-effort usage signal so account settings can show recent activity.
-      void touchSubscriptionAuthInRegistry({ projectId, accountId });
+      void touchSubscriptionAuthInRegistry({
+        projectId,
+        accountId,
+        credentialId: resolvedCredentialId,
+      });
       try {
         await ensureCodexCredentialsStoreFile(codexHome);
         await touchSubscriptionCacheUsage(codexHome);
@@ -321,6 +347,7 @@ export async function resolveCodexAuthRuntime({
         void syncSubscriptionAuthToRegistryIfChanged({
           projectId,
           accountId,
+          credentialId: resolvedCredentialId,
           codexHome,
         });
       } catch (err) {
@@ -331,7 +358,12 @@ export async function resolveCodexAuthRuntime({
           err: `${err}`,
         });
       }
-      return subscriptionRuntime({ projectId, accountId, codexHome });
+      return subscriptionRuntime({
+        projectId,
+        accountId,
+        codexHome,
+        credentialId: resolvedCredentialId,
+      });
     }
   }
   if (preference === "subscription") {

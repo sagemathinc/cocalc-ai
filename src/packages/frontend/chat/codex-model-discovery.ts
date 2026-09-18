@@ -76,11 +76,16 @@ export async function discoverAccountCodexModels(
       projectId,
       includeModels: true,
       refreshModels: force,
+      credentialId: source.credentialId,
     });
     // Project-host usage responses do not currently include the credential
     // revision. Recheck it through the authoritative payment-source endpoint
     // rather than trusting an in-flight catalog after a credential change.
-    const currentSource = await fetchCodexPaymentSourceForSubmit({ projectId });
+    const currentSource = await fetchCodexPaymentSourceForSubmit({
+      projectId,
+      preference: "subscription",
+      credentialId: source.credentialId,
+    });
     if (
       generations.get(scopeKey) !== generation ||
       scope(projectId, source).accountId !== cacheScope.accountId ||

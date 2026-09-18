@@ -969,6 +969,7 @@ function createAppServerRequestHandler({
           await refreshSubscriptionAuthFromRegistry({
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
             previousAccessTokenHash: createHash("sha256")
               .update(lastAccessToken)
@@ -1630,6 +1631,7 @@ export type SpawnCodexInProjectContainerOptions = {
   touchReason?: string | false;
   forceRefreshSiteKey?: boolean;
   paymentSource?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credentialId?: string;
 };
 
 export type SpawnCodexInProjectContainerResult = {
@@ -1654,6 +1656,7 @@ export async function spawnCodexInProjectContainer({
   touchReason = "codex",
   forceRefreshSiteKey = false,
   paymentSource = "auto",
+  credentialId,
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
   const authRuntime =
     explicitAuthRuntime ??
@@ -1662,6 +1665,7 @@ export async function spawnCodexInProjectContainer({
       accountId,
       forceRefreshSiteKey,
       preference: paymentSource,
+      credentialId,
     }));
   let codexArgs = args;
   const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
@@ -1777,12 +1781,14 @@ export async function spawnCodexInProjectContainer({
           await syncSubscriptionAuthToRegistryIfChanged({
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
           });
         } catch (err) {
           logger.debug("codex project: failed syncing subscription auth", {
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
             err: `${err}`,
           });
@@ -1818,6 +1824,7 @@ type SpawnCodexAppServerInProjectRuntimeOptions = {
   touchReason?: string | false;
   siteFundedTurn?: CodexSiteFundedTurnRequest;
   paymentSource?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credentialId?: string;
 };
 
 type SpawnCodexAppServerInProjectRuntimeResult = {
@@ -1847,12 +1854,14 @@ async function spawnCodexAppServerInProjectRuntime({
   touchReason = "codex",
   siteFundedTurn: siteFundedTurnRequest,
   paymentSource = "auto",
+  credentialId,
 }: SpawnCodexAppServerInProjectRuntimeOptions): Promise<SpawnCodexAppServerInProjectRuntimeResult> {
   const authRuntime = await resolveCodexAuthRuntime({
     projectId,
     accountId,
     forceRefreshSiteKey,
     preference: paymentSource,
+    credentialId,
   });
   logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
   await ensureProjectContainerRunning({ projectId, accountId });
@@ -2184,6 +2193,7 @@ export function initCodexProjectRunner(): void {
       touchReason,
       siteFundedTurn,
       paymentSource,
+      credentialId,
     }) {
       const spawned = await spawnCodexAppServerInProjectRuntime({
         projectId,
@@ -2195,6 +2205,7 @@ export function initCodexProjectRunner(): void {
         touchReason: touchReason ?? "codex",
         siteFundedTurn,
         paymentSource,
+        credentialId,
       });
       return {
         proc: spawned.proc,

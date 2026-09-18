@@ -150,10 +150,15 @@ import {
   createPairingTokenForHost,
 } from "@cocalc/server/self-host/connector-tokens";
 import {
+  createExternalCredentialRouted,
+  ensureDefaultExternalCredentialRouted,
+  getExternalCredentialByIdRouted,
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   refreshCodexSubscriptionAuthRouted,
+  touchExternalCredentialByIdRouted,
   touchExternalCredentialRouted,
+  updateExternalCredentialByIdRouted,
   upsertExternalCredentialRouted,
 } from "@cocalc/server/external-credentials/routing";
 import { type ExternalCredentialScope } from "@cocalc/server/external-credentials/store";
@@ -396,6 +401,8 @@ function pool() {
   return getPool();
 }
 
+const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
+const CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY = "cocalc_default";
 const HOST_CONNECTION_CACHE_TTL_MS = 5_000;
 const HOST_CONNECTION_CACHE_MAX_ENTRIES = 5_000;
 
@@ -2714,6 +2721,10 @@ export async function upsertExternalCredential({
   selector,
   payload,
   metadata,
+  credential_id,
+  create,
+  max_active,
+  deduplicate_metadata,
 }: {
   host_id?: string;
   project_id: string;
@@ -2727,6 +2738,10 @@ export async function upsertExternalCredential({
   };
   payload: string;
   metadata?: Record<string, any>;
+  credential_id?: string;
+  create?: boolean;
+  max_active?: number;
+  deduplicate_metadata?: { key: string; value: string };
 }): Promise<{ id: string; created: boolean }> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -2765,24 +2780,106 @@ export async function upsertExternalCredential({
     });
   }
 
-  return await upsertExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  const isAccountSubscription =
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account";
+  const safeMetadata = { ...(metadata ?? {}) };
+  if (isAccountSubscription) {
+    delete safeMetadata[CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY];
+  }
+  if (credential_id) {
+    const existing = await getExternalCredentialByIdRouted({
+      id: credential_id,
+      selector: routedSelector,
+      touchLastUsed: false,
+    });
+    if (!existing) throw new Error("credential is unavailable");
+    if (
+      isAccountSubscription &&
+      existing.metadata?.provider_account_id &&
+      safeMetadata.provider_account_id !== existing.metadata.provider_account_id
+    ) {
+      throw new Error(
+        "reconnect must use the same ChatGPT account; add a new subscription instead",
+      );
+    }
+    const updated = await updateExternalCredentialByIdRouted({
+      id: credential_id,
+      selector: routedSelector,
+      payload,
+      metadata: safeMetadata,
+    });
+    if (!updated) throw new Error("credential is unavailable");
+    return { id: credential_id, created: false };
+  }
+  if (create) {
+    return await createExternalCredentialRouted({
+      selector: routedSelector,
+      payload,
+      metadata: safeMetadata,
+      maxActive: max_active,
+      deduplicateMetadata: deduplicate_metadata,
+    });
+  }
+  if (isAccountSubscription) {
+    const currentDefault = await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    if (currentDefault) {
+      const updated = await updateExternalCredentialByIdRouted({
+        id: currentDefault.id,
+        selector: routedSelector,
+        payload,
+        metadata: safeMetadata,
+      });
+      if (!updated) throw new Error("credential is unavailable");
+      return { id: currentDefault.id, created: false };
+    }
+    const created = await createExternalCredentialRouted({
+      selector: routedSelector,
+      payload,
+      metadata: safeMetadata,
+      maxActive: max_active ?? 10,
+      deduplicateMetadata: deduplicate_metadata,
+    });
+    await updateExternalCredentialByIdRouted({
+      id: created.id,
+      selector: routedSelector,
+      payload,
+      metadata: {
+        ...safeMetadata,
+        [CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY]: true,
+      },
+    });
+    await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    return created;
+  }
+  const result = await upsertExternalCredentialRouted({
+    selector: routedSelector,
     payload,
-    metadata: metadata ?? {},
+    metadata: safeMetadata,
   });
+  return result;
 }
 
 export async function getExternalCredential({
   host_id,
   project_id,
   selector,
+  credential_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -2794,6 +2891,7 @@ export async function getExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
+  credential_id?: string;
 }): Promise<
   | {
       id: string;
@@ -2843,16 +2941,34 @@ export async function getExternalCredential({
     });
   }
 
-  const result = await getExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
-  });
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  let resolvedCredentialId = credential_id;
+  if (
+    !resolvedCredentialId &&
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account"
+  ) {
+    resolvedCredentialId = (
+      await ensureDefaultExternalCredentialRouted({
+        selector: routedSelector,
+        metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+      })
+    )?.id;
+  }
+  const result = resolvedCredentialId
+    ? await getExternalCredentialByIdRouted({
+        id: resolvedCredentialId,
+        selector: routedSelector,
+      })
+    : await getExternalCredentialRouted({ selector: routedSelector });
   if (!result) {
     return undefined;
   }
@@ -2871,11 +2987,13 @@ export async function refreshCodexSubscriptionAuth({
   host_id,
   project_id,
   owner_account_id,
+  credential_id,
   previous_access_token_hash,
 }: {
   host_id?: string;
   project_id: string;
   owner_account_id: string;
+  credential_id?: string;
   previous_access_token_hash: string;
 }): Promise<{
   payload: string;
@@ -2897,6 +3015,7 @@ export async function refreshCodexSubscriptionAuth({
   });
   return await refreshCodexSubscriptionAuthRouted({
     owner_account_id,
+    credential_id,
     previous_access_token_hash,
   });
 }
@@ -2905,6 +3024,7 @@ export async function hasExternalCredential({
   host_id,
   project_id,
   selector,
+  credential_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -2916,6 +3036,7 @@ export async function hasExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
+  credential_id?: string;
 }): Promise<boolean> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -2954,22 +3075,29 @@ export async function hasExternalCredential({
     });
   }
 
-  return await hasExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
-  });
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  if (credential_id) {
+    return !!(await getExternalCredentialByIdRouted({
+      id: credential_id,
+      selector: routedSelector,
+      touchLastUsed: false,
+    }));
+  }
+  return await hasExternalCredentialRouted({ selector: routedSelector });
 }
 
 export async function touchExternalCredential({
   host_id,
   project_id,
   selector,
+  credential_id,
 }: {
   host_id?: string;
   project_id: string;
@@ -2981,6 +3109,7 @@ export async function touchExternalCredential({
     project_id?: string;
     organization_id?: string;
   };
+  credential_id?: string;
 }): Promise<boolean> {
   if (!host_id) {
     throw new Error("host_id must be specified");
@@ -3019,16 +3148,20 @@ export async function touchExternalCredential({
     });
   }
 
-  return await touchExternalCredentialRouted({
-    selector: {
-      provider: normalized.provider,
-      kind: normalized.kind,
-      scope: normalized.scope,
-      owner_account_id: normalized.owner_account_id,
-      project_id: selectorProjectId,
-      organization_id: normalized.organization_id,
-    },
-  });
+  const routedSelector = {
+    provider: normalized.provider,
+    kind: normalized.kind,
+    scope: normalized.scope,
+    owner_account_id: normalized.owner_account_id,
+    project_id: selectorProjectId,
+    organization_id: normalized.organization_id,
+  };
+  return credential_id
+    ? await touchExternalCredentialByIdRouted({
+        id: credential_id,
+        selector: routedSelector,
+      })
+    : await touchExternalCredentialRouted({ selector: routedSelector });
 }
 
 export async function getSiteOpenAiApiKey({
