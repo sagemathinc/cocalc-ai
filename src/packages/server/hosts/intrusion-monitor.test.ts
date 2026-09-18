@@ -601,6 +601,96 @@ describe("project-host intrusion monitor normalization", () => {
     }
   });
 
+  it("does not advance the comparison baseline when persistence fails", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    await ensureProjectHostsTestTable();
+    const baselineId = "cb068acb-6e14-474b-b9da-c0cda997e32d";
+    const hostId = "f11ab0f8-4309-453f-90a8-3d920dc7b9d9";
+    const constraint = "intrusion_monitor_test_persist_failure";
+    const pool = getPool();
+    const before = snapshot();
+    const current = snapshot();
+    current.services.enabled.push("unexpected.service enabled");
+    mockAdminAlert.mockReset();
+    mockGetIntrusionSnapshot.mockReset();
+    mockGetIntrusionSnapshot.mockResolvedValue(current);
+    await pool.query(
+      `INSERT INTO project_hosts
+         (id, name, bay_id, status, last_seen, created, updated)
+       VALUES ($1, 'persist-failure', 'intrusion-monitor-test', 'running',
+               NOW(), NOW(), NOW())`,
+      [hostId],
+    );
+    await pool.query(
+      `INSERT INTO project_host_intrusion_snapshots
+         (id, host_id, bay_id, captured_at, duration_ms, coverage,
+          normalization_version, normalized)
+       VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+               2, $3::jsonb)`,
+      [
+        baselineId,
+        hostId,
+        JSON.stringify(normalizeHostIntrusionSnapshot(before)),
+      ],
+    );
+    try {
+      await pool.query(
+        `ALTER TABLE project_host_intrusion_snapshots
+         ADD CONSTRAINT ${constraint}
+         CHECK (host_id <> '${hostId}'::uuid OR fingerprint IS NULL)`,
+      );
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        checked: 1,
+        changed: 0,
+        failed: 1,
+      });
+      await expect(
+        pool.query(
+          `SELECT id FROM project_host_intrusion_snapshots
+            WHERE host_id=$1 ORDER BY created_at`,
+          [hostId],
+        ),
+      ).resolves.toMatchObject({ rows: [{ id: baselineId }] });
+
+      await pool.query(
+        `ALTER TABLE project_host_intrusion_snapshots
+         DROP CONSTRAINT ${constraint}`,
+      );
+      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
+        changed: 1,
+      });
+      const { rows } = await pool.query(
+        `SELECT baseline, decision
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1 AND id<>$2`,
+        [hostId, baselineId],
+      );
+      expect(rows).toEqual([
+        {
+          baseline: { kind: "host", snapshot_ids: [baselineId] },
+          decision: expect.objectContaining({
+            classification: "actionable",
+            reason_codes: ["actionable_selector_match"],
+          }),
+        },
+      ]);
+    } finally {
+      await pool
+        .query(
+          `ALTER TABLE project_host_intrusion_snapshots
+           DROP CONSTRAINT IF EXISTS ${constraint}`,
+        )
+        .catch(() => undefined);
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+        [hostId],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
+      mockAdminAlert.mockReset();
+      mockGetIntrusionSnapshot.mockReset();
+    }
+  });
+
   it("persists snap evidence and resolves a refresh after mount attestation", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
