@@ -627,10 +627,47 @@ export interface HostIntrusionReviewReport {
   observations_24h: Array<{
     coverage: string;
     classification: string;
+    collector_version: number | null;
     normalization_version: number;
     decision_policy_version: number;
     count: number;
     truncated: number;
+  }>;
+  observations_truncated: boolean;
+  hosts_24h: Array<{
+    host_id: string;
+    latest_coverage: string;
+    collector_version: number | null;
+    normalization_version: number;
+    decision_policy_version: number;
+    latest_observed_at: string;
+    observations: number;
+    truncated: number;
+  }>;
+  hosts_truncated: boolean;
+  findings_24h: Array<{
+    rule_id: string;
+    rule_version: number;
+    classification: string;
+    severity: string;
+    count: number;
+    host_count: number;
+  }>;
+  findings_truncated: boolean;
+  retention: {
+    observations: number;
+    oldest_observation_at: string | null;
+    oldest_observation_age_ms: number | null;
+  };
+  rules: Array<{
+    id: string;
+    version: number;
+    owner: string;
+    severity: string;
+    required_coverage: string;
+    correlation_window_ms: number;
+    notification_enabled: boolean;
+    runbook_ref: string;
   }>;
   incidents: Array<{
     id: string;

@@ -140,7 +140,40 @@ describe("project-host intrusion reviewer", () => {
       last_success_at: expect.any(String),
     });
     expect(report.observations_24h).toEqual([
-      expect.objectContaining({ truncated: 0 }),
+      expect.objectContaining({ collector_version: null, truncated: 0 }),
+    ]);
+    expect(report.hosts_24h).toEqual([
+      expect.objectContaining({
+        host_id: HOST_ID,
+        latest_coverage: "complete",
+        observations: 1,
+        truncated: 0,
+      }),
+    ]);
+    expect(report.hosts_truncated).toBe(false);
+    expect(report.findings_24h).toEqual([
+      expect.objectContaining({
+        rule_id: "observation-classification",
+        classification: "inventory",
+        count: 1,
+        host_count: 1,
+      }),
+    ]);
+    expect(report.findings_truncated).toBe(false);
+    expect(report.retention).toMatchObject({
+      observations: 1,
+      oldest_observation_at: expect.any(String),
+      oldest_observation_age_ms: expect.any(Number),
+    });
+    expect(report.rules).toEqual([
+      expect.objectContaining({
+        id: "persistent-host-state",
+        notification_enabled: false,
+      }),
+      expect.objectContaining({
+        id: "coverage-loss",
+        notification_enabled: false,
+      }),
     ]);
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
@@ -339,6 +372,39 @@ describe("project-host intrusion reviewer", () => {
     });
   });
 
+  it("aggregates repeated coverage loss and resolves it on recovery", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES = "coverage-loss";
+    for (let i = 0; i < 2; i++) {
+      await insertObservation({
+        coverage: "partial",
+        classification: "coverage_loss",
+        reasonCodes: ["coverage_failure_threshold_reached"],
+        state: { ...normalized(), coverage: "partial" },
+        createdAt: new Date(Date.now() + i),
+      });
+    }
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      opened: 1,
+      notifications_delivered: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT state, occurrence_count FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ state: "open", occurrence_count: 2 }],
+    });
+
+    await insertObservation({ state: normalized() });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      resolved: 1,
+    });
+    await expect(
+      getPool().query("SELECT state FROM project_host_intrusion_incidents"),
+    ).resolves.toMatchObject({ rows: [{ state: "resolved" }] });
+    expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+  });
+
   it("resolves and reopens the same persistent-state incident", async () => {
     process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
       "persistent-host-state";
@@ -448,6 +514,7 @@ describe("project-host intrusion reviewer", () => {
         starts_at: new Date(Date.now() - 60_000).toISOString(),
         expires_at: new Date(Date.now() + 60_000).toISOString(),
         reason: "staging fixture",
+        actor: "staging-operator",
       },
     ]);
     const delta = { added: { "services.enabled": [ADDED_VALUE] } };
@@ -465,10 +532,65 @@ describe("project-host intrusion reviewer", () => {
     });
     await expect(
       getPool().query(
-        "SELECT state, suppression_ref FROM project_host_intrusion_incidents",
+        "SELECT state, suppression_ref, evidence FROM project_host_intrusion_incidents",
       ),
     ).resolves.toMatchObject({
-      rows: [{ state: "suppressed", suppression_ref: "maintenance-1" }],
+      rows: [
+        {
+          state: "suppressed",
+          suppression_ref: "maintenance-1",
+          evidence: {
+            expected_change: {
+              id: "maintenance-1",
+              reason: "staging fixture",
+              actor: "staging-operator",
+            },
+          },
+        },
+      ],
+    });
+    expect(mockAdminAlert).not.toHaveBeenCalled();
+  });
+
+  it("retains a bay-wide expected change for multiple hosts without notification", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
+      "persistent-host-state";
+    process.env.COCALC_HOST_INTRUSION_EXPECTED_CHANGES = JSON.stringify([
+      {
+        id: "fleet-maintenance-1",
+        bay_id: BAY_ID,
+        host_ids: [],
+        categories: ["services.enabled"],
+        starts_at: new Date(Date.now() - 60_000).toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        reason: "staging fleet rollout",
+      },
+    ]);
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    for (const hostId of [HOST_ID, randomUUID()]) {
+      await insertObservation({
+        hostId,
+        classification: "actionable",
+        reasonCodes: ["actionable_selector_match"],
+        actionableDelta: delta,
+        state: changed,
+        createdAt: new Date(Date.now() - 1000),
+      });
+      await insertObservation({ hostId, state: changed });
+    }
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      suppressed: 2,
+    });
+    await expect(
+      getPool().query(
+        "SELECT state, suppression_ref FROM project_host_intrusion_incidents ORDER BY host_id",
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        { state: "suppressed", suppression_ref: "fleet-maintenance-1" },
+        { state: "suppressed", suppression_ref: "fleet-maintenance-1" },
+      ],
     });
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
@@ -621,6 +743,38 @@ describe("project-host intrusion reviewer", () => {
     ).rejects.toThrow("not authoritative");
   });
 
+  it("bounds high-volume replay and per-host report output", async () => {
+    const observedAt = Date.now();
+    for (let i = 0; i < 101; i++) {
+      await insertObservation({
+        hostId: randomUUID(),
+        classification: `inventory-${i}`,
+        createdAt: new Date(observedAt + i),
+      });
+    }
+
+    await expect(
+      runHostIntrusionReviewerPass({ batchLimit: 40 }),
+    ).resolves.toMatchObject({ processed: 40 });
+    await expect(getHostIntrusionReviewReport()).resolves.toMatchObject({
+      reviewer: { backlog: 61 },
+      observations_truncated: true,
+      hosts_truncated: true,
+    });
+    await expect(
+      runHostIntrusionReviewerPass({ batchLimit: 40 }),
+    ).resolves.toMatchObject({ processed: 40 });
+    await expect(
+      runHostIntrusionReviewerPass({ batchLimit: 40 }),
+    ).resolves.toMatchObject({ processed: 21 });
+    await expect(getHostIntrusionReviewReport()).resolves.toMatchObject({
+      reviewer: { backlog: 0 },
+      hosts_24h: expect.any(Array),
+      observations_truncated: true,
+      hosts_truncated: true,
+    });
+  });
+
   it("does not advance the cursor when finding persistence rolls back", async () => {
     await insertObservation();
     await getPool().query(
@@ -671,5 +825,19 @@ describe("project-host intrusion reviewer", () => {
         evidence: { reason: "stored_evidence_oversized_or_unreadable" },
       },
     ]);
+  });
+
+  it("bounds report metadata from malformed collector evidence", async () => {
+    const id = await insertObservation();
+    await getPool().query(
+      `UPDATE project_host_intrusion_snapshots
+          SET collector_evidence='{"collector_version":"not-a-number"}'::jsonb
+        WHERE id=$1`,
+      [id],
+    );
+    await expect(getHostIntrusionReviewReport()).resolves.toMatchObject({
+      observations_24h: [{ collector_version: null }],
+      hosts_24h: [{ collector_version: null }],
+    });
   });
 });

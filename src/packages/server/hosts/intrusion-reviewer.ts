@@ -33,7 +33,32 @@ const MAX_STORED_JSON_BYTES = 1024 * 1024;
 const MAX_STORED_PHYSICAL_BYTES = 256 * 1024;
 const MAX_EVIDENCE_VALUES = 200;
 const MAX_REPORT_INCIDENTS = 50;
+const MAX_REPORT_HOSTS = 100;
+const MAX_REPORT_OBSERVATION_GROUPS = 100;
+const MAX_REPORT_FINDING_GROUPS = 50;
 const PERSISTENCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const RULE_CATALOG = [
+  {
+    id: "persistent-host-state",
+    version: RULE_VERSION,
+    owner: "security-operations",
+    severity: "warning-or-critical",
+    required_coverage: "two-complete-observations",
+    correlation_window_ms: PERSISTENCE_WINDOW_MS,
+    runbook_ref:
+      "project-host-intrusion-observation-and-triage-two-pr-plan#persistent-host-state",
+  },
+  {
+    id: "coverage-loss",
+    version: RULE_VERSION,
+    owner: "security-operations",
+    severity: "warning",
+    required_coverage: "collector-threshold-evidence",
+    correlation_window_ms: PERSISTENCE_WINDOW_MS,
+    runbook_ref:
+      "project-host-intrusion-observation-and-triage-two-pr-plan#coverage-loss",
+  },
+] as const;
 
 type JsonObject = Record<string, unknown>;
 type Delta = {
@@ -72,6 +97,7 @@ type ExpectedChange = {
   starts_at: string;
   expires_at: string;
   reason: string;
+  actor?: string;
 };
 
 export type HostIntrusionReviewerResult = {
@@ -240,8 +266,21 @@ function expectedChanges(): ExpectedChange[] {
         starts_at: `${value.starts_at ?? ""}`,
         expires_at: `${value.expires_at ?? ""}`,
         reason: `${value.reason ?? ""}`.slice(0, 500),
+        actor:
+          typeof value.actor === "string"
+            ? value.actor.trim().slice(0, 200)
+            : undefined,
       };
-      return result.id && result.bay_id && result.expires_at ? [result] : [];
+      const starts = Date.parse(result.starts_at);
+      const expires = Date.parse(result.expires_at);
+      return result.id &&
+        result.bay_id &&
+        result.reason &&
+        Number.isFinite(starts) &&
+        Number.isFinite(expires) &&
+        expires >= starts
+        ? [result]
+        : [];
     });
   } catch (err) {
     logger.warn("invalid host intrusion expected-change configuration", {
@@ -462,6 +501,16 @@ async function openIncident(
   const now = new Date();
   const suppressed =
     expected != null && Date.parse(expected.expires_at) >= now.getTime();
+  const storedEvidence = expected
+    ? {
+        ...evidence,
+        expected_change: {
+          id: expected.id,
+          reason: expected.reason,
+          ...(expected.actor ? { actor: expected.actor } : {}),
+        },
+      }
+    : evidence;
   if (!existing) {
     await client.query(
       `INSERT INTO ${INCIDENTS}
@@ -481,7 +530,7 @@ async function openIncident(
         observation.created_at,
         suppressed ? null : observation.created_at,
         [observation.id],
-        JSON.stringify(evidence),
+        JSON.stringify(storedEvidence),
         expected?.id ?? null,
         expected?.expires_at ?? null,
       ],
@@ -525,7 +574,7 @@ async function openIncident(
       suppressed ? "suppressed" : reopens ? "open" : existing.state,
       observation.created_at,
       [observation.id],
-      JSON.stringify(evidence),
+      JSON.stringify(storedEvidence),
       expected?.id ?? null,
       expected?.expires_at ?? null,
       nextSeverity,
@@ -945,30 +994,44 @@ export async function getHostIntrusionReviewReport({
       client.release();
     }
   };
-  const [state, backlog, observations, incidents, notifications] =
-    await Promise.all([
-      boundedQuery(
-        `SELECT cursor_created_at, cursor_id, last_started_at, last_success_at,
+  const [
+    state,
+    backlog,
+    observations,
+    hosts,
+    findings,
+    retention,
+    incidents,
+    notifications,
+  ] = await Promise.all([
+    boundedQuery(
+      `SELECT cursor_created_at, cursor_id, last_started_at, last_success_at,
                 last_error_at, last_error
            FROM ${STATE} WHERE bay_id=$1`,
-        [bayId],
-      ),
-      boundedQuery(
-        `SELECT COUNT(*)::integer AS count, MIN(observations.created_at) AS oldest
+      [bayId],
+    ),
+    boundedQuery(
+      `SELECT COUNT(*)::integer AS count, MIN(observations.created_at) AS oldest
            FROM ${OBSERVATIONS} AS observations
            LEFT JOIN ${STATE} AS state ON state.bay_id=$1
           WHERE observations.bay_id=$1
             AND (state.cursor_created_at IS NULL OR
                  (observations.created_at, observations.id) >
                  (state.cursor_created_at, state.cursor_id))`,
-        [bayId],
-      ),
-      boundedQuery(
-        `SELECT coverage,
+      [bayId],
+    ),
+    boundedQuery(
+      `SELECT coverage,
                 CASE
                   WHEN pg_column_size(decision) > $2 THEN 'oversized'
                   ELSE COALESCE(NULLIF(decision->>'classification',''), 'legacy')
                 END AS classification,
+                CASE
+                  WHEN pg_column_size(collector_evidence) > $2 OR
+                       COALESCE(collector_evidence->>'collector_version','') !~ '^[0-9]{1,9}$'
+                    THEN NULL
+                  ELSE (collector_evidence->>'collector_version')::integer
+                END AS collector_version,
                 normalization_version,
                 decision_policy_version,
                 COUNT(*)::integer AS count,
@@ -982,35 +1045,91 @@ export async function getHostIntrusionReviewReport({
                 )::integer AS truncated
            FROM ${OBSERVATIONS}
           WHERE bay_id=$1 AND created_at >= NOW() - INTERVAL '24 hours'
-          GROUP BY coverage, classification, normalization_version, decision_policy_version
-          ORDER BY coverage, classification, normalization_version, decision_policy_version`,
-        [bayId, MAX_STORED_PHYSICAL_BYTES],
-      ),
-      boundedQuery(
-        `SELECT id, host_id, rule_id, rule_version, severity, confidence, state,
+          GROUP BY coverage, classification, collector_version,
+                   normalization_version, decision_policy_version
+          ORDER BY coverage, classification, collector_version,
+                   normalization_version, decision_policy_version
+          LIMIT $3`,
+      [bayId, MAX_STORED_PHYSICAL_BYTES, MAX_REPORT_OBSERVATION_GROUPS + 1],
+    ),
+    boundedQuery(
+      `SELECT * FROM (
+           SELECT DISTINCT ON (host_id)
+                  host_id,
+                  coverage AS latest_coverage,
+                  CASE
+                    WHEN pg_column_size(collector_evidence) > $2 OR
+                         COALESCE(collector_evidence->>'collector_version','') !~ '^[0-9]{1,9}$'
+                      THEN NULL
+                    ELSE (collector_evidence->>'collector_version')::integer
+                  END AS collector_version,
+                  normalization_version,
+                  decision_policy_version,
+                  created_at AS latest_observed_at,
+                  COUNT(*) OVER (PARTITION BY host_id)::integer AS observations,
+                  COUNT(*) FILTER (
+                    WHERE CASE
+                      WHEN pg_column_size(collector_evidence) > $2 THEN TRUE
+                      ELSE collector_evidence->'truncated' NOT IN
+                             ('{}'::jsonb, '[]'::jsonb, 'null'::jsonb)
+                        OR collector_evidence->>'persistence_truncated' = 'true'
+                    END
+                  ) OVER (PARTITION BY host_id)::integer AS truncated
+             FROM ${OBSERVATIONS}
+            WHERE bay_id=$1 AND created_at >= NOW() - INTERVAL '24 hours'
+            ORDER BY host_id, created_at DESC, id DESC
+         ) AS latest
+         ORDER BY latest_observed_at DESC
+         LIMIT $3`,
+      [bayId, MAX_STORED_PHYSICAL_BYTES, MAX_REPORT_HOSTS + 1],
+    ),
+    boundedQuery(
+      `SELECT rule_id, rule_version, classification, severity,
+                COUNT(*)::integer AS count,
+                COUNT(DISTINCT host_id)::integer AS host_count
+           FROM ${FINDINGS}
+          WHERE bay_id=$1 AND created_at >= NOW() - INTERVAL '24 hours'
+          GROUP BY rule_id, rule_version, classification, severity
+          ORDER BY count DESC, rule_id, rule_version, classification, severity
+          LIMIT $2`,
+      [bayId, MAX_REPORT_FINDING_GROUPS + 1],
+    ),
+    boundedQuery(
+      `SELECT COUNT(*)::integer AS observations,
+                MIN(created_at) AS oldest_observation_at
+           FROM ${OBSERVATIONS}
+          WHERE bay_id=$1`,
+      [bayId],
+    ),
+    boundedQuery(
+      `SELECT id, host_id, rule_id, rule_version, severity, confidence, state,
                 first_seen_at, last_seen_at, updated_at, occurrence_count,
                 suppression_ref, suppression_expires_at, last_notification_transition
            FROM ${INCIDENTS}
           WHERE bay_id=$1 AND state IN ('open','acknowledged','suppressed')
           ORDER BY updated_at DESC LIMIT $2`,
-        [bayId, MAX_REPORT_INCIDENTS],
-      ),
-      boundedQuery(
-        `SELECT COUNT(*) FILTER (WHERE outbox.state='pending')::integer AS pending,
+      [bayId, MAX_REPORT_INCIDENTS + 1],
+    ),
+    boundedQuery(
+      `SELECT COUNT(*) FILTER (WHERE outbox.state='pending')::integer AS pending,
                 COUNT(*) FILTER (WHERE outbox.state='pending' AND outbox.attempts>0)::integer AS failed,
                 MIN(outbox.created_at) FILTER (WHERE outbox.state='pending') AS oldest_pending
            FROM ${OUTBOX} AS outbox
            JOIN ${INCIDENTS} AS incidents ON incidents.id=outbox.incident_id
           WHERE incidents.bay_id=$1`,
-        [bayId],
-      ),
-    ]);
+      [bayId],
+    ),
+  ]);
   const reviewer = state.rows[0] ?? {};
   const pending = backlog.rows[0] ?? { count: 0, oldest: null };
   const delivery = notifications.rows[0] ?? {
     pending: 0,
     failed: 0,
     oldest_pending: null,
+  };
+  const retained = retention.rows[0] ?? {
+    observations: 0,
+    oldest_observation_at: null,
   };
   const now = Date.now();
   const age = (value: unknown): number | null => {
@@ -1036,15 +1155,35 @@ export async function getHostIntrusionReviewReport({
       oldest_unreviewed_age_ms: age(pending.oldest),
       last_success_age_ms: age(reviewer.last_success_at),
     },
-    observations_24h: observations.rows,
-    incidents: incidents.rows.map((incident) => ({
-      ...incident,
-      first_seen_at: iso(incident.first_seen_at)!,
-      last_seen_at: iso(incident.last_seen_at)!,
-      updated_at: iso(incident.updated_at)!,
-      suppression_expires_at: iso(incident.suppression_expires_at),
+    observations_24h: observations.rows.slice(0, MAX_REPORT_OBSERVATION_GROUPS),
+    observations_truncated:
+      observations.rows.length > MAX_REPORT_OBSERVATION_GROUPS,
+    hosts_24h: hosts.rows.slice(0, MAX_REPORT_HOSTS).map((host) => ({
+      ...host,
+      latest_observed_at: iso(host.latest_observed_at)!,
     })),
-    incidents_truncated: incidents.rows.length >= MAX_REPORT_INCIDENTS,
+    hosts_truncated: hosts.rows.length > MAX_REPORT_HOSTS,
+    findings_24h: findings.rows.slice(0, MAX_REPORT_FINDING_GROUPS),
+    findings_truncated: findings.rows.length > MAX_REPORT_FINDING_GROUPS,
+    retention: {
+      observations: Number(retained.observations ?? 0),
+      oldest_observation_at: iso(retained.oldest_observation_at),
+      oldest_observation_age_ms: age(retained.oldest_observation_at),
+    },
+    rules: RULE_CATALOG.map((rule) => ({
+      ...rule,
+      notification_enabled: notificationRules().has(rule.id),
+    })),
+    incidents: incidents.rows
+      .slice(0, MAX_REPORT_INCIDENTS)
+      .map((incident) => ({
+        ...incident,
+        first_seen_at: iso(incident.first_seen_at)!,
+        last_seen_at: iso(incident.last_seen_at)!,
+        updated_at: iso(incident.updated_at)!,
+        suppression_expires_at: iso(incident.suppression_expires_at),
+      })),
+    incidents_truncated: incidents.rows.length > MAX_REPORT_INCIDENTS,
     notifications: {
       pending: Number(delivery.pending ?? 0),
       failed: Number(delivery.failed ?? 0),
