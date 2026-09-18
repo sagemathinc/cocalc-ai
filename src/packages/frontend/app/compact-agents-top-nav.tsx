@@ -30,10 +30,12 @@ export function CompactAgentsTopNav({
   isLoggedIn,
   pageStyle,
   onOpenInProject,
+  foregroundColor,
 }: {
   isLoggedIn: boolean;
   pageStyle: PageStyle;
   onOpenInProject?: () => void;
+  foregroundColor?: string;
 }) {
   const pageActions = useActions("page");
   const groups = useTypedRedux("account", "groups");
@@ -158,7 +160,7 @@ export function CompactAgentsTopNav({
             aria-label="More navigation"
             type="text"
             style={{
-              color: UI_COLORS.text,
+              color: foregroundColor ?? UI_COLORS.text,
               height: pageStyle.height,
               width: pageStyle.height,
             }}

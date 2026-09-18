@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
 import { initChat } from "@cocalc/frontend/chat/register";
+import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
@@ -77,6 +78,11 @@ import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
 } from "./workspace-sidebar-toggle";
+import {
+  resolveAgentHeaderTheme,
+  sameAgentHeaderAppearance,
+  type AgentHeaderAppearance,
+} from "./workspace-header-theme";
 import {
   agentWorkspaceKey,
   findWorkspaceAgentForThread,
@@ -457,6 +463,7 @@ function AgentProjectContext({
   accountId,
   onSelectedThread,
   onAgentActivity,
+  onThreadAppearance,
 }: {
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -464,6 +471,10 @@ function AgentProjectContext({
   accountId?: string;
   onSelectedThread: (threadId: string) => void;
   onAgentActivity: (agentId: string, at: number) => void;
+  onThreadAppearance: (
+    threadId: string,
+    appearance: AgentHeaderAppearance,
+  ) => void;
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -478,6 +489,7 @@ function AgentProjectContext({
   const localViewState = useEditor("local_view_state");
   const activity = useEditor("activity");
   const onAgentActivityRef = useRef(onAgentActivity);
+  const onThreadAppearanceRef = useRef(onThreadAppearance);
   const workspaceAgentsRef = useRef(workspaceAgents);
   const reportedActivityRef = useRef<Map<string, number>>(new Map());
   const workspaceAgentKey = workspaceAgents
@@ -507,6 +519,10 @@ function AgentProjectContext({
   }, [onAgentActivity]);
 
   useEffect(() => {
+    onThreadAppearanceRef.current = onThreadAppearance;
+  }, [onThreadAppearance]);
+
+  useEffect(() => {
     workspaceAgentsRef.current = workspaceAgents;
   }, [workspaceAgentKey]);
 
@@ -529,6 +545,30 @@ function AgentProjectContext({
     }, 750);
     return () => clearTimeout(timer);
   }, [activity, workspaceAgentKey]);
+
+  useEffect(() => {
+    if (!ready || !selectedThread) return;
+    const actions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    if (!actions?.getThreadMetadata) return;
+    const update = () => {
+      const metadata = actions.getThreadMetadata(selectedThread, {
+        threadId: selectedThread,
+      });
+      onThreadAppearanceRef.current(selectedThread, {
+        name: metadata?.name,
+        thread_color: metadata?.thread_color,
+        thread_accent_color: metadata?.thread_accent_color,
+        thread_icon: metadata?.thread_icon,
+        thread_image: metadata?.thread_image,
+      });
+    };
+    update();
+    actions.syncdb?.on?.("change", update);
+    return () => actions.syncdb?.removeListener?.("change", update);
+  }, [agent.endpoint.project_id, agent.path, ready, selectedThread]);
 
   const openEmbeddedFile = useCallback(async () => {
     await ensureProjectReduxRuntime();
@@ -637,8 +677,10 @@ function AgentProjectContext({
 
 function AgentsWorkspaceNavigation({
   onOpenInProject,
+  foregroundColor,
 }: {
   onOpenInProject?: () => void;
+  foregroundColor?: string;
 } = {}) {
   const { pageStyle } = useAppContext();
   const accountId = useTypedRedux("account", "account_id");
@@ -647,6 +689,7 @@ function AgentsWorkspaceNavigation({
       isLoggedIn={!!accountId}
       pageStyle={pageStyle}
       onOpenInProject={onOpenInProject}
+      foregroundColor={foregroundColor}
     />
   );
 }
@@ -678,6 +721,10 @@ function AgentWorkspace({
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selectedThread, setSelectedThread] = useState(agent.thread_id);
+  const [headerAppearance, setHeaderAppearance] = useState<{
+    threadId: string;
+    value: AgentHeaderAppearance;
+  }>();
   const selectedAgent = findWorkspaceAgentForThread(
     workspaceAgents,
     agent.endpoint.project_id,
@@ -734,6 +781,19 @@ function AgentWorkspace({
         thread_id: selectedThread,
       }).thread_title
     : undefined;
+  const appearance =
+    headerAppearance?.threadId === selectedThread
+      ? headerAppearance.value
+      : undefined;
+  const fallbackTitle = unregistered
+    ? threadTitle || "Unregistered thread"
+    : displayedAgent.thread_title || `@${displayedAgent.name}`;
+  const {
+    accentColor,
+    primaryColor,
+    textColor: headerTextColor,
+    title,
+  } = resolveAgentHeaderTheme({ appearance, fallbackTitle });
   return (
     <div
       ref={ref}
@@ -752,11 +812,14 @@ function AgentWorkspace({
       <header
         style={{
           alignItems: "center",
-          borderBottom: `1px solid ${UI_COLORS.border}`,
+          background: accentColor ?? UI_COLORS.surface,
+          borderBottom: `2px solid ${primaryColor ?? UI_COLORS.border}`,
+          boxShadow: primaryColor ? `inset 4px 0 0 ${primaryColor}` : undefined,
+          color: headerTextColor,
           display: "flex",
           gap: 12,
-          minHeight: 48,
-          padding: "6px 12px",
+          minHeight: 58,
+          padding: "8px 12px",
         }}
       >
         {onShowList && (
@@ -770,15 +833,29 @@ function AgentWorkspace({
           <AgentsSidebarToggle
             hidden={agentSidebarHidden}
             onToggle={onToggleAgentSidebar}
+            color={headerTextColor}
           />
         )}
+        <ThreadBadge
+          icon={appearance?.thread_icon}
+          color={primaryColor}
+          accentColor={accentColor}
+          image={appearance?.thread_image}
+          fallbackIcon="robot"
+          size={36}
+        />
         <div style={{ minWidth: 0, flex: 1 }}>
-          <Text strong ellipsis style={{ display: "block" }}>
-            {unregistered
-              ? threadTitle || "Unregistered thread"
-              : displayedAgent.thread_title || `@${displayedAgent.name}`}
+          <Text
+            strong
+            ellipsis
+            style={{ color: headerTextColor, display: "block", fontSize: 16 }}
+          >
+            {title}
           </Text>
-          <Text type="secondary" ellipsis style={{ display: "block" }}>
+          <Text
+            ellipsis
+            style={{ color: headerTextColor, display: "block", opacity: 0.72 }}
+          >
             {unregistered ? "Not yet registered" : `@${displayedAgent.name}`} ·{" "}
             {displayedAgent.project_title || agent.endpoint.project_id}
             {sharing ? ` · ${sharing}` : ""}
@@ -800,6 +877,7 @@ function AgentWorkspace({
         )}
         {active && (
           <AgentsWorkspaceNavigation
+            foregroundColor={headerTextColor}
             onOpenInProject={() =>
               void openAgentThread({
                 project_id: agent.endpoint.project_id,
@@ -814,6 +892,7 @@ function AgentWorkspace({
           aria-label={`Close workspace for ${agent.path}`}
           title="Close this mounted workspace view"
           onClick={onClose}
+          style={{ color: headerTextColor }}
         />
       </header>
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
@@ -824,6 +903,14 @@ function AgentWorkspace({
           accountId={accountId}
           onSelectedThread={handleSelectedThread}
           onAgentActivity={onAgentActivity}
+          onThreadAppearance={(threadId, value) => {
+            setHeaderAppearance((current) =>
+              current?.threadId === threadId &&
+              sameAgentHeaderAppearance(current.value, value)
+                ? current
+                : { threadId, value },
+            );
+          }}
         />
       </div>
     </div>

@@ -11,9 +11,11 @@ export const AGENT_SIDEBAR_ID = "agents-workspace-sidebar";
 export function AgentsSidebarToggle({
   hidden,
   onToggle,
+  color,
 }: {
   hidden: boolean;
   onToggle: () => void;
+  color?: string;
 }) {
   const label = hidden ? "Show Agents sidebar" : "Hide Agents sidebar";
   return (
@@ -25,6 +27,7 @@ export function AgentsSidebarToggle({
         aria-label={label}
         icon={<Icon name={hidden ? "chevron-right" : "chevron-left"} />}
         onClick={onToggle}
+        style={{ color }}
       />
     </Tooltip>
   );
