@@ -6,7 +6,6 @@
 import type { MenuProps } from "antd";
 import { Button, Dropdown } from "antd";
 
-import MembershipBadge from "@cocalc/frontend/account/membership-badge";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   useActions,
@@ -65,19 +64,16 @@ export function CompactAgentsTopNav({
       label: "Notifications",
     },
     { type: "divider" },
-    { key: "account", icon: <Icon name="cog" />, label: "Account settings" },
-    { key: "membership", icon: <Icon name="star" />, label: "Membership" },
-    { key: "balance", icon: <Icon name="credit-card" />, label: "Balance" },
+    {
+      key: "agents-settings",
+      icon: <Icon name="users" />,
+      label: "Manage agents and connections",
+    },
     ...(groups?.includes("admin")
       ? [{ key: "admin", icon: <Icon name="users" />, label: "Admin" }]
       : []),
     { type: "divider" },
     { key: "docs", icon: <Icon name="book" />, label: "Documentation" },
-    {
-      key: "appearance",
-      icon: <Icon name="sun" />,
-      label: "Appearance",
-    },
     ...(zendesk
       ? [{ key: "support", icon: <Icon name="support" />, label: "Help" }]
       : []),
@@ -92,17 +88,8 @@ export function CompactAgentsTopNav({
   function onMenuClick({ key }: { key: string }) {
     setMenuOpen(false);
     switch (key) {
-      case "account":
-        openAccountSettings({ page: "index" });
-        return;
-      case "membership":
-        openAccountSettings({ page: "membership" });
-        return;
-      case "balance":
-        openAccountSettings({ page: "balance" });
-        return;
-      case "appearance":
-        openAccountSettings({ page: "appearance" });
+      case "agents-settings":
+        openAccountSettings({ page: "my-agents" });
         return;
       case "support":
         openSupportTab();
@@ -131,7 +118,6 @@ export function CompactAgentsTopNav({
       <AccountCpuWarning pageStyle={pageStyle} />
       <AccountStorageWarning pageStyle={pageStyle} />
       <ManagedEgressWarning pageStyle={pageStyle} />
-      {isLoggedIn ? <MembershipBadge alwaysShowFree /> : null}
       {isLoggedIn ? (
         <Notification
           active={false}

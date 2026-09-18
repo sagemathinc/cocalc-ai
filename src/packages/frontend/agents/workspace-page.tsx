@@ -73,6 +73,7 @@ import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
 import { groupAgentsByRecency } from "./workspace-organization";
 import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
+import { AgentsAccountMenu } from "./account-menu";
 import {
   agentWorkspaceKey,
   findWorkspaceAgentForThread,
@@ -1137,14 +1138,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           paddingTop: 8,
         }}
       >
-        <Button
-          type="text"
-          block
-          style={{ height: "auto", textAlign: "left", whiteSpace: "normal" }}
-          onClick={() => openAccountSettings({ page: "my-agents" })}
-        >
-          Manage agents and connections
-        </Button>
+        <AgentsAccountMenu />
       </div>
     </aside>
   );

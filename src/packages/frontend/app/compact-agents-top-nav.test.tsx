@@ -65,9 +65,6 @@ jest.mock("@cocalc/frontend/components", () => ({
   Icon: ({ name }: { name: string }) => <span data-icon={name} />,
 }));
 
-jest.mock("@cocalc/frontend/account/membership-badge", () => () => (
-  <span>Free</span>
-));
 jest.mock("@cocalc/frontend/account/settings-routing", () => ({
   openAccountSettings: (...args: any[]) => openAccountSettings(...args),
 }));
@@ -119,7 +116,7 @@ describe("compact Agents navigation", () => {
     expect(screen.getByRole("menuitem", { name: "Admin" })).toBeTruthy();
   });
 
-  it("routes project and account destinations without a page reload", () => {
+  it("routes project and agent-management destinations without a reload", () => {
     render(<CompactAgentsTopNav isLoggedIn pageStyle={pageStyle} />);
 
     fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
@@ -127,8 +124,12 @@ describe("compact Agents navigation", () => {
     expect(setActiveTab).toHaveBeenCalledWith("projects");
 
     fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Membership" }));
-    expect(openAccountSettings).toHaveBeenCalledWith({ page: "membership" });
+    fireEvent.click(
+      screen.getByRole("menuitem", {
+        name: "Manage agents and connections",
+      }),
+    );
+    expect(openAccountSettings).toHaveBeenCalledWith({ page: "my-agents" });
   });
 
   it("closes on Escape and restores focus to the trigger", async () => {
