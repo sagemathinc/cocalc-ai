@@ -533,6 +533,36 @@ describe("project-host intrusion reviewer", () => {
     ).resolves.toMatchObject({ rows: [{ state: "open" }] });
   });
 
+  it("does not resolve a newer incident from an older late observation", async () => {
+    const base = Date.now();
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(base),
+    });
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(base + 1000),
+    });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({
+      state: normalized(),
+      createdAt: new Date(base - 1000),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 1,
+      resolved: 0,
+    });
+    await expect(
+      getPool().query("SELECT state FROM project_host_intrusion_incidents"),
+    ).resolves.toMatchObject({ rows: [{ state: "open" }] });
+  });
+
   it("keeps a multi-signal incident open until every signal recovers", async () => {
     const second = '["another.service","enabled"]';
     const delta = {

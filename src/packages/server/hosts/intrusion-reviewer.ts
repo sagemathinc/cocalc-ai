@@ -629,8 +629,9 @@ async function resolveIncidents(
        FROM ${INCIDENTS}
       WHERE bay_id=$1 AND host_id=$2
         AND state IN ('open','acknowledged','suppressed')
+        AND last_seen_at <= $3
       ORDER BY updated_at DESC LIMIT 50 FOR UPDATE`,
-    [getConfiguredBayId(), observation.host_id],
+    [getConfiguredBayId(), observation.host_id, observation.created_at],
   );
   for (const incident of rows as Array<{
     id: string;
