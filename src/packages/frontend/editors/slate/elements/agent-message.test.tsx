@@ -1,0 +1,100 @@
+/** @jest-environment jsdom */
+
+import React from "react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  AgentMessageElement,
+  agentMessageFromMarkdownFence,
+} from "./agent-message";
+
+jest.mock("../markdown-to-slate", () => ({
+  markdown_to_slate: (value: string) => [{ text: value }],
+}));
+
+const inspectAgentSessionAttempt = jest.fn();
+jest.mock("@cocalc/frontend/agents/api", () => ({
+  personalAgentApi: () => ({ inspectAgentSessionAttempt }),
+}));
+
+const agent_session_id = "11111111-1111-4111-8111-111111111111";
+const attempt_id = "22222222-2222-4222-8222-222222222222";
+
+test("parses exact correlation metadata but keeps uncorrelated quotes readable", () => {
+  expect(
+    agentMessageFromMarkdownFence({
+      info: `agent-message ${agent_session_id} ${attempt_id}`,
+      value: "Peer result",
+    }),
+  ).toMatchObject({ type: "agent-message", agent_session_id, attempt_id });
+  expect(
+    agentMessageFromMarkdownFence({
+      info: "agent-message forged metadata",
+      value: "Peer result",
+    }),
+  ).toBeUndefined();
+  expect(
+    agentMessageFromMarkdownFence({
+      info: "agent-message",
+      value: "Editable historical quote",
+    }),
+  ).toMatchObject({ type: "agent-message" });
+});
+
+test("shows retained evidence without claiming that editable content is verified", async () => {
+  inspectAgentSessionAttempt.mockResolvedValue({
+    agent_session_id,
+    attempt_id,
+    session_generation: "33333333-3333-4333-8333-333333333333",
+    source_member_id: "44444444-4444-4444-8444-444444444444",
+    target_member_id: "55555555-5555-4555-8555-555555555555",
+    configured_delivery: "live",
+    effective_delivery: "live-guidance",
+    outcome: "accepted",
+    observed_at: "2026-09-18T12:00:00.000Z",
+  });
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={
+        {
+          type: "agent-message",
+          agent_session_id,
+          attempt_id,
+          children: [{ text: "Edited peer result" }],
+        } as any
+      }
+    >
+      Edited peer result
+    </AgentMessageElement>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /inspect/i }));
+  expect(
+    screen.getByText(/content is editable project data/i),
+  ).toBeInTheDocument();
+  await waitFor(() => expect(screen.getByText("accepted")).toBeVisible());
+  expect(screen.getByText(agent_session_id)).toBeVisible();
+  expect(screen.getByText(attempt_id)).toBeVisible();
+});
+
+test("missing evidence degrades to an explicit unavailable state", async () => {
+  inspectAgentSessionAttempt.mockResolvedValue(undefined);
+  render(
+    <AgentMessageElement
+      attributes={{} as any}
+      element={
+        {
+          type: "agent-message",
+          agent_session_id,
+          attempt_id,
+          children: [{ text: "Historical quote" }],
+        } as any
+      }
+    >
+      Historical quote
+    </AgentMessageElement>,
+  );
+  fireEvent.click(screen.getByRole("button", { name: /inspect/i }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "No retained operational evidence is available",
+  );
+});

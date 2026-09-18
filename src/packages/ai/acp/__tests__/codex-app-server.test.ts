@@ -4233,27 +4233,16 @@ describe("CodexAppServerAgent", () => {
     expect(text).toContain("Do not publish artifacts by default");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
-    expect(text).toContain("project chat agent rpc destinations --json");
     expect(text).toContain("project chat agent destinations --json");
-    expect(text).toContain("project chat send --to NAME --stdin --json");
-    expect(text).toContain(
-      "project chat agent request-connection --to NAME --reason TEXT",
-    );
-    expect(text).toContain("project chat agent connection-request REQUEST_ID");
-    expect(text).toContain("Legacy grants do not authorize personal sends");
-    expect(text).toContain("the approval handler never replays one");
+    expect(text).toContain("--agent-session SESSION_ID --stdin --json");
+    expect(text).toContain("explicit two-way Agent Session");
+    expect(text).toContain("cannot create authority themselves");
+    expect(text).toContain("subagents remain internal");
     expect(text).toContain(
       "protocol_version describes identity authentication",
     );
-    expect(text).toContain("project chat send --rpc --to-agent ID");
-    expect(text).toContain(
-      "supply it with a pipe or heredoc in the same shell invocation",
-    );
-    expect(text).toContain("A timeout is unknown, never proof of rejection");
-    expect(text).toContain("Do not automatically retry");
-    expect(text).toContain(
-      "Replies require a separately approved reverse link",
-    );
+    expect(text).not.toContain("request-connection");
+    expect(text).not.toContain("reverse link");
     expect(text).not.toContain("COCALC_BROWSER_ID");
     expect(text).not.toContain("browser files --project-id");
     expect(text).not.toContain("browser workspace-state");

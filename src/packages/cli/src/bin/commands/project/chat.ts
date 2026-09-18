@@ -14,13 +14,16 @@ import { resolveRuntimeAgentName } from "../../core/agent-destination";
 import { registerChatAgentCommands } from "./chat-agents";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import type {
-  AgentEndpoint,
-  AgentRpcLink,
   AgentRpcOutcome,
   AgentRpcPreparation,
   AgentRpcSend,
+  AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
-import { validateAgentRpcPreparation } from "@cocalc/conat/agents/rpc";
+import type { AgentSessionDiscovery } from "@cocalc/conat/agents/personal";
+import {
+  isExternalAgentSource,
+  validateAgentRpcPreparation,
+} from "@cocalc/conat/agents/rpc";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { execFile } from "node:child_process";
@@ -317,14 +320,18 @@ export function registerProjectChatCommands(
       (value: string, paths: string[]) => [...paths, value],
       [],
     )
-    .option("--rpc", "opt in to V2 single-attempt RPC (no delivery retries)")
+    .option("--rpc", "send one session-authorized attempt (no retries)")
     .option(
       "--external-agent <profile>",
-      "use only this browser-approved external send profile",
+      "use only this session-enrolled external agent profile",
     )
     .option(
       "--attempt-id <uuid>",
-      "V2 attempt identifier; deliberate retries require a NEW identifier",
+      "attempt identifier; deliberate retries require a NEW identifier",
+    )
+    .option(
+      "--agent-session <uuid>",
+      "exact Agent Session authorizing the send",
     )
     .option(
       "--guidance",
@@ -345,6 +352,7 @@ export function registerProjectChatCommands(
           rpc?: boolean;
           externalAgent?: string;
           attemptId?: string;
+          agentSession?: string;
           attach?: string[];
         },
         command: Command,
@@ -354,8 +362,10 @@ export function registerProjectChatCommands(
         const prompt = opts.stdin ? await readAllStdin() : message.join(" ");
         if (!prompt.trim()) throw new Error("message must not be empty");
         if (opts.rpc || opts.to || opts.externalAgent) {
-          if (opts.externalAgent && opts.guidance)
-            throw new Error("External agents cannot steer turns");
+          if (opts.guidance)
+            throw new Error(
+              "Agent delivery is determined by --agent-session; --guidance is not accepted",
+            );
           if (
             (!opts.toAgent && !opts.to) ||
             (opts.toAgent && opts.to) ||
@@ -368,6 +378,7 @@ export function registerProjectChatCommands(
               "Use --to name or --rpc --to-agent ID, not both; cannot use legacy --request-id or project/path/thread options",
             );
           if (opts.toAgent) requireUuid(opts.toAgent, "to-agent");
+          requireUuid(opts.agentSession, "agent-session");
           const attempt_id = opts.attemptId || randomUUID();
           requireUuid(attempt_id, "attempt-id");
           const globals = deps.globalsFrom(command);
@@ -377,26 +388,40 @@ export function registerProjectChatCommands(
             opts.externalAgent
               ? sendExternalAgentMessage(opts.externalAgent, request)
               : sendIdentityMessage(request, globals.api);
-          let target: AgentEndpoint;
+          let target: AgentRpcTarget;
+          let agent_session_id = opts.agentSession!;
           if (opts.to) {
-            target = opts.externalAgent
-              ? await resolveExternalAgentName(opts.externalAgent, opts.to)
-              : await resolveRuntimeAgentName(opts.to, globals.api);
+            const resolved = opts.externalAgent
+              ? await resolveExternalAgentName(
+                  opts.externalAgent,
+                  opts.to,
+                  agent_session_id,
+                )
+              : await resolveRuntimeAgentName(
+                  opts.to,
+                  globals.api,
+                  agent_session_id,
+                );
+            target = resolved.target;
+            agent_session_id = resolved.agent_session_id;
           } else {
             const destinations = (await send({
-              version: 2,
+              version: 3,
               action: "destinations",
-            })) as AgentRpcLink[];
-            const destination = destinations.find(
-              (link) =>
-                link.target.agent_id === opts.toAgent &&
-                (!opts.guidance || link.allow_guidance),
+            })) as AgentSessionDiscovery;
+            const destination = destinations.peers.find(
+              ({ member, sessions }) =>
+                member.kind === "registered" &&
+                member.endpoint.agent_id === opts.toAgent &&
+                sessions.some(
+                  (session) => session.agent_session_id === agent_session_id,
+                ),
             );
-            if (!destination)
+            if (!destination || destination.member.kind !== "registered")
               throw new Error(
-                "No approved RPC destination; no submission attempted",
+                "Target is not a registered member of the exact Agent Session; no submission attempted",
               );
-            target = destination.target;
+            target = destination.member.endpoint;
           }
           process.stderr.write(
             `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
@@ -406,6 +431,10 @@ export function registerProjectChatCommands(
             | Awaited<ReturnType<typeof readAgentAttachmentSnapshots>>
             | undefined;
           if (opts.attach?.length) {
+            if (isExternalAgentSource(target))
+              throw new Error(
+                "Attachments to external session members are not supported",
+              );
             const self = opts.externalAgent
               ? undefined
               : ((await sendIdentityMessage(
@@ -422,11 +451,11 @@ export function registerProjectChatCommands(
             }
           }
           const request: AgentRpcSend = {
-            version: 2,
+            version: 3,
             attempt_id,
+            agent_session_id,
             target,
             body: prompt,
-            guidance: opts.guidance,
             ...(file_references ? { file_references } : {}),
           };
           if (snapshots) {

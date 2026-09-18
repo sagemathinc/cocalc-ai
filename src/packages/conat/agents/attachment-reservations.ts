@@ -61,7 +61,10 @@ function binding({ envelope: e, files }: AttachmentReservationRequest): string {
         e.source.agent_id,
         e.run_id,
         e.account_id,
-        e.link_id,
+        e.agent_session_id,
+        e.session_generation,
+        e.account_generation,
+        e.configured_delivery,
         e.target.project_id,
         e.target.agent_id,
         e.path,
@@ -85,7 +88,8 @@ function snapshot(
   validateAgentRpcSource(e.source, e.run_id);
   for (const key of [
     "account_id",
-    "link_id",
+    "agent_session_id",
+    "session_generation",
     "permit_id",
     "thread_id",
   ] as const)
@@ -107,8 +111,8 @@ function snapshot(
     action: "send",
     target: e.target,
     attempt_id: e.attempt_id,
+    agent_session_id: e.agent_session_id,
     body: e.body,
-    guidance: e.guidance,
   });
   if (e.file_references !== undefined)
     throw new AgentAttachmentError(
@@ -124,7 +128,10 @@ function snapshot(
       target: { project_id: e.target.project_id, agent_id: e.target.agent_id },
       ...(e.run_id ? { run_id: e.run_id } : {}),
       account_id: e.account_id,
-      link_id: e.link_id,
+      agent_session_id: e.agent_session_id,
+      session_generation: e.session_generation,
+      account_generation: e.account_generation,
+      configured_delivery: e.configured_delivery,
       permit_id: e.permit_id,
       attempt_id: e.attempt_id,
       thread_id: e.thread_id,

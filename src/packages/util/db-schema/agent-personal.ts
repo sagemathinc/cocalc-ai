@@ -1,6 +1,6 @@
 /*
- *  This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
- *  License: MS-RSL - see LICENSE.md for details
+ * This file is part of CoCalc: Copyright (c) 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
  */
 import { Table } from "./types";
 import type { FieldSpec } from "./types";
@@ -20,25 +20,26 @@ const created = {
   not_null: true,
   pg_default: "now()",
 };
-const paused = {
-  ...field("boolean", "Restrictive pause independent of expiry."),
-  pg_default: "false",
-};
 const generation = {
-  ...field("integer", "Account revocation generation."),
+  ...field("integer", "Account-wide messaging revocation generation."),
   pg_default: "0",
 };
 
-// Account-home authoritative records. Endpoints deliberately have no local FK.
+// Account-home authoritative records. Remote project IDs deliberately have no
+// local FK because their owning bay is authoritative for project state.
 Table({
   name: "agent_personal_controls",
   rules: { primary_key: "account_id" },
   fields: {
     account_id: field("uuid", "Account authority."),
-    paused,
+    paused: {
+      ...field("boolean", "Restrictive account-wide messaging pause."),
+      pg_default: "false",
+    },
     generation,
   },
 });
+
 Table({
   name: "agent_personal_names",
   rules: {
@@ -65,111 +66,226 @@ Table({
     updated_at: created,
   },
 });
+
 Table({
-  name: "agent_personal_grants",
+  name: "agent_sessions",
   rules: {
-    primary_key: "link_id",
-    pg_custom_indexes: [
-      {
-        name: "agent_personal_grant_source",
-        query: "(account_id,source_project_id,source_agent_id)",
-      },
-      {
-        name: "agent_personal_approval_direction",
-        unique: true,
-        query:
-          "(account_id,approval_request_id,source_project_id,source_agent_id)",
-      },
-      {
-        name: "agent_personal_grant_group",
-        query: "(account_id,direction_group_id)",
-      },
-    ],
-  },
-  fields: {
-    link_id: field("uuid", "Immutable directional grant."),
-    account_id: field(
-      "uuid",
-      "Approver and execution principal at both endpoints.",
-    ),
-    source_project_id: field("uuid", "Source project."),
-    source_agent_id: field("uuid", "Source identity."),
-    target_project_id: field("uuid", "Target project."),
-    target_agent_id: field("uuid", "Target identity."),
-    direction_group_id: field(
-      "uuid",
-      "Atomic one-way or two-way connection group.",
-    ),
-    approval_request_id: field(
-      "uuid",
-      "Idempotent approval ID; never a send ID.",
-    ),
-    approval: field(
-      "map",
-      "Canonical approval parameters for conflict detection.",
-    ),
-    reason: field("string", "Approval reason."),
-    allow_guidance: {
-      ...field("boolean", "Explicit steering permission."),
-      pg_default: "false",
-    },
-    generation,
-    paused,
-    created_at: created,
-    expires_at: time("Null means never expires, not immunity to controls."),
-    revoked_at: time("Permanent revocation of this grant."),
-    last_attempt_at: time(
-      "Best-effort last observed attempt; missing means unknown.",
-    ),
-    last_accepted_at: time("Best-effort acceptance, not completion."),
-  },
-});
-Table({
-  name: "agent_personal_requests",
-  rules: {
-    primary_key: "request_id",
+    primary_key: "agent_session_id",
     pg_constraints: [
       {
-        name: "agent_personal_request_canonical_fkey",
-        type: "foreign-key",
-        columns: ["canonical_request_id"],
-        references: {
-          table: "agent_personal_requests",
-          columns: ["request_id"],
-        },
+        name: "agent_sessions_state_check",
+        type: "check",
+        expression: "state IN ('active','paused','closed')",
+      },
+      {
+        name: "agent_sessions_delivery_check",
+        type: "check",
+        expression: "delivery_mode IN ('queued','live')",
       },
     ],
     pg_custom_indexes: [
-      { name: "agent_personal_pending", query: "(account_id,created_at DESC)" },
+      {
+        name: "agent_sessions_account_updated",
+        query: "(account_id,updated_at DESC,agent_session_id)",
+      },
     ],
   },
   fields: {
-    request_id: field("uuid", "Request identifier, not a capability."),
-    canonical_request_id: {
-      type: "uuid",
-      desc: "Coalesced submitted ID points to one canonical request on this account home; never independent approval state.",
+    agent_session_id: field("uuid", "Stable Agent Session identifier."),
+    account_id: field("uuid", "Account-home authority and human principal."),
+    title: { type: "string", desc: "Optional human title, at most 120 chars." },
+    state: {
+      ...field("string", "active, paused, or closed."),
+      pg_default: "'active'::character varying",
     },
-    account_id: field(
-      "uuid",
-      "Derived run principal; only this human can resolve.",
-    ),
-    source_project_id: field("uuid", "Source project."),
-    source_agent_id: field("uuid", "Source identity."),
-    run_id: field("uuid", "Bound original run; approval revalidates it."),
-    generation,
-    request: field(
-      "map",
-      "Exact endpoint/duration/direction/reason, no credential or message.",
-    ),
-    state: field(
-      "string",
-      "pending, approved, denied, expired, or invalidated.",
-    ),
-    direction_group_id: { type: "uuid", desc: "Approved grant group, if any." },
+    delivery_mode: {
+      ...field("string", "queued or live."),
+      pg_default: "'queued'::character varying",
+    },
+    generation: field("uuid", "Changes on every authority mutation."),
+    created_by: field("uuid", "Human account that created the session."),
+    created_at: created,
+    updated_at: created,
+    closed_at: time("Terminal close time."),
+  },
+});
+
+Table({
+  name: "agent_session_members",
+  rules: {
+    primary_key: ["agent_session_id", "member_kind", "member_id"],
+    pg_constraints: [
+      {
+        name: "agent_session_member_kind_check",
+        type: "check",
+        expression: "member_kind IN ('registered','external')",
+      },
+      {
+        name: "agent_session_member_identity_check",
+        type: "check",
+        expression:
+          "(member_kind='registered' AND registered_agent_id IS NOT NULL AND project_id IS NOT NULL AND external_agent_id IS NULL AND installation_id IS NULL) OR (member_kind='external' AND external_agent_id IS NOT NULL AND installation_id IS NOT NULL AND registered_agent_id IS NULL AND project_id IS NULL)",
+      },
+      {
+        name: "agent_session_members_session_fkey",
+        type: "foreign-key",
+        columns: ["agent_session_id"],
+        references: { table: "agent_sessions", columns: ["agent_session_id"] },
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_session_registered_member",
+        query:
+          "(registered_agent_id,agent_session_id) WHERE removed_at IS NULL AND member_kind='registered'",
+      },
+      {
+        name: "agent_session_external_member",
+        query:
+          "(external_agent_id,agent_session_id) WHERE removed_at IS NULL AND member_kind='external'",
+      },
+    ],
+  },
+  fields: {
+    agent_session_id: field("uuid", "Containing Agent Session."),
+    member_kind: field("string", "registered or external."),
+    member_id: field("uuid", "Stable member identity within the account."),
+    registered_agent_id: { type: "uuid", desc: "Registered agent identity." },
+    project_id: { type: "uuid", desc: "Registered agent project locator." },
+    external_agent_id: { type: "uuid", desc: "External agent identity." },
+    installation_id: { type: "uuid", desc: "Approved external installation." },
+    added_by: field("uuid", "Human account that approved membership."),
+    added_at: created,
+    removed_at: time("Membership revocation time."),
+  },
+});
+
+Table({
+  name: "agent_session_mutations",
+  rules: {
+    primary_key: ["account_id", "request_id"],
+    pg_custom_indexes: [
+      {
+        name: "agent_session_mutations_retention",
+        query: "(account_id,created_at DESC)",
+      },
+    ],
+  },
+  fields: {
+    account_id: field("uuid", "Account authority."),
+    request_id: field("uuid", "Human mutation idempotency key."),
+    binding_hash: field("string", "Canonical mutation binding hash."),
+    agent_session_id: field("uuid", "Resulting or mutated session."),
+    created_at: created,
+  },
+});
+
+Table({
+  name: "agent_session_activity",
+  rules: {
+    primary_key: "attempt_id",
+    pg_constraints: [
+      {
+        name: "agent_session_activity_outcome_check",
+        type: "check",
+        expression:
+          "outcome IS NULL OR outcome IN ('accepted','rejected','unknown')",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_session_activity_recent",
+        query: "(account_id,agent_session_id,observed_at DESC)",
+      },
+    ],
+  },
+  fields: {
+    attempt_id: field("uuid", "Exact send attempt correlation ID."),
+    account_id: field("uuid", "Session account principal."),
+    agent_session_id: field("uuid", "Authorizing session."),
+    session_generation: field("uuid", "Generation checked for this attempt."),
+    source_member_id: field("uuid", "Authenticated source member."),
+    target_member_id: field("uuid", "Exact target member."),
+    configured_delivery: field("string", "queued or live."),
+    effective_delivery: { type: "string", desc: "Observed delivery path." },
+    outcome: { type: "string", desc: "accepted, rejected, or unknown." },
+    observed_at: created,
+  },
+});
+
+Table({
+  name: "agent_session_proposals",
+  rules: {
+    primary_key: "proposal_id",
+    pg_constraints: [
+      {
+        name: "agent_session_proposals_state_check",
+        type: "check",
+        expression: "state IN ('pending','approved','rejected','expired')",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_session_proposals_pending",
+        query: "(account_id,created_at DESC) WHERE state='pending'",
+      },
+    ],
+  },
+  fields: {
+    proposal_id: field("uuid", "Agent-supplied idempotency key."),
+    account_id: field("uuid", "Human account that may resolve this proposal."),
+    source: {
+      ...field("map", "Authenticated registered or external source."),
+      pg_type: "JSONB",
+    },
+    title: { type: "string", desc: "Optional proposed session title." },
+    delivery_mode: field("string", "queued or live."),
+    members: {
+      ...field("map", "Bounded explicit proposed member locators."),
+      pg_type: "JSONB",
+    },
+    reason: { type: "string", desc: "Optional agent-provided reason." },
+    state: {
+      ...field("string", "pending, approved, rejected, or expired."),
+      pg_default: "'pending'::character varying",
+    },
+    binding_hash: field("string", "Canonical proposal idempotency binding."),
     created_at: created,
     expires_at: {
-      ...time("Pending request expires after 15 minutes."),
+      ...time("Automatic proposal expiry."),
       not_null: true,
     },
+    resolved_at: time("Human resolution time."),
+    agent_session_id: { type: "uuid", desc: "Approved resulting session." },
+  },
+});
+
+Table({
+  name: "agent_session_broadcasts",
+  rules: {
+    primary_key: ["account_id", "broadcast_id"],
+    pg_custom_indexes: [
+      {
+        name: "agent_session_broadcasts_retention",
+        query: "(account_id,created_at DESC)",
+      },
+    ],
+  },
+  fields: {
+    account_id: field("uuid", "Session authority account."),
+    broadcast_id: field("uuid", "Parent broadcast idempotency key."),
+    agent_session_id: field("uuid", "Exact authorizing session."),
+    source: {
+      ...field("map", "Authenticated source principal."),
+      pg_type: "JSONB",
+    },
+    binding_hash: field(
+      "string",
+      "Canonical source/session/targets/body hash.",
+    ),
+    state: field("string", "pending or complete."),
+    outcome: { type: "map", pg_type: "JSONB", desc: "Bounded child outcomes." },
+    created_at: created,
+    updated_at: created,
   },
 });

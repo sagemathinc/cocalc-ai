@@ -18,15 +18,15 @@ CLI_ROOT="$(pwd)/src/packages/cli"
 ```
 
 Upload the resulting `index.cjs` to a disposable source project through the
-normal authorized file API. Create an explicit, short-lived personal permission
-to the intended QA receiver. Do not revive unrelated revoked permissions or
+normal authorized file API. Create an explicit Agent Session containing the
+source and intended QA receiver. Do not revive unrelated closed sessions or
 copy a human credential into the source turn.
 
 Ask the actual source agent to execute this command exactly once, using its
 existing runtime environment:
 
 ```text
-/opt/cocalc/bin/node <uploaded-index.cjs> <source-agent-uuid> <target-project-uuid> <target-agent-uuid> <new-attempt-uuid> <new-evidence-file>
+/opt/cocalc/bin/node <uploaded-index.cjs> <source-agent-uuid> <agent-session-uuid> <target-project-uuid> <target-agent-uuid> <new-attempt-uuid> <new-evidence-file>
 ```
 
 The agent should report stdout and stop, without inspecting the evidence file,
@@ -42,8 +42,8 @@ Verify independently:
   `sender-outcome` with `sends: 1` and `dropped: true`.
 - The receiver contains the matching attempt and authenticated attribution.
   Check execution separately; acceptance does not prove completion.
-- No new approval request or follow-up send appeared. Revoke the QA permission
-  after observation; do not interrupt admitted work just to clean up the grant.
+- No new proposal or follow-up send appeared. Close the QA session after
+  observation; do not interrupt admitted work just to clean up the session.
 
 Exit 0 means the intended accepted-to-unknown transformation was observed.
 Exit 2 means the probe ran but that condition was not met (for example, the

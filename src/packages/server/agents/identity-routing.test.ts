@@ -6,8 +6,6 @@ import {
   getIdentity,
   getMentionIdentity,
   recoverIdentity,
-  listGrants,
-  listMessageReceipts,
 } from "./api";
 import { agentIdentityControl } from "./identity-control";
 
@@ -19,7 +17,6 @@ const owner = jest.fn(),
 const query = jest.fn(),
   find = jest.fn(),
   get = jest.fn(),
-  receipts = jest.fn(),
   fabric = jest.fn();
 const transaction = jest.fn(async (fn) => fn({ query }));
 const remote = {
@@ -28,8 +25,6 @@ const remote = {
   register: jest.fn(),
   recover: jest.fn(),
   get: jest.fn(),
-  listGrants: jest.fn(),
-  listMessageReceipts: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
 const sourceHostAccess = jest.fn();
@@ -58,10 +53,6 @@ jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
 jest.mock("./store", () => ({
   agentStore: () => ({ query, find, get, transaction }),
   normalizeAgentPath: (s) => s,
-}));
-jest.mock("./inspection", () => ({
-  ...jest.requireActual("./inspection"),
-  ownMessageReceipts: (...a) => receipts(...a),
 }));
 jest.mock("./chat", () => ({
   withAgentChat: async (a, fn) => {
@@ -95,10 +86,7 @@ beforeEach(() => {
     agent_id: request.thread_id,
     created_by: account_id,
   });
-  receipts.mockReset().mockResolvedValue({ items: [] });
   remote.get.mockReset().mockResolvedValue({ agent_id: "remote" });
-  remote.listGrants.mockReset().mockResolvedValue({ items: [] });
-  remote.listMessageReceipts.mockReset().mockResolvedValue({ items: [] });
   remote.list.mockReset().mockResolvedValue([]);
   remote.resolve.mockReset().mockResolvedValue({ agent_id: "remote" });
   remote.register
@@ -109,11 +97,7 @@ beforeEach(() => {
     .mockResolvedValue({ agent_id: "recovered-remote" });
 });
 
-const inspections = [
-  { read: getIdentity, method: "get" as const },
-  { read: listGrants, method: "listGrants" as const },
-  { read: listMessageReceipts, method: "listMessageReceipts" as const },
-];
+const inspections = [{ read: getIdentity, method: "get" as const }];
 
 test("host mention lookup validates source and routes target under the human, not embedded fields", async () => {
   const sourceProject = randomUUID();
@@ -198,7 +182,6 @@ test.each(inspections)(
       }),
     ).rejects.toThrow("does not belong");
     expect(query).not.toHaveBeenCalled();
-    expect(receipts).not.toHaveBeenCalled();
     expect(fabric).not.toHaveBeenCalled();
   },
 );
@@ -214,41 +197,8 @@ test.each(inspections)(
   },
 );
 
-test.each(["listGrants", "listMessageReceipts"] as const)(
-  "%s retains pagination and endpoint registrant checks",
-  async (method) => {
-    const read = method === "listGrants" ? listGrants : listMessageReceipts;
-    const opts = {
-      account_id,
-      project_id,
-      agent_id: request.thread_id,
-      limit: 1,
-      cursor: randomUUID(),
-    };
-    await read(opts);
-    expect(remote[method]).toHaveBeenCalledWith({
-      ...opts,
-      route: { bay_id: "owner", epoch: 3 },
-    });
-    bay = "owner";
-    get.mockResolvedValue({ project_id, created_by: randomUUID() });
-    await expect(
-      agentIdentityControl[method]({
-        ...opts,
-        route: { bay_id: "owner", epoch: 3 },
-      }),
-    ).rejects.toThrow("registrant");
-    expect(query).not.toHaveBeenCalled();
-    expect(receipts).not.toHaveBeenCalled();
-  },
-);
-
 test("malformed pagination or locator fails before fabric lookup", async () => {
   const opts = { account_id, project_id, agent_id: request.thread_id };
-  await expect(listGrants({ ...opts, limit: 101 })).rejects.toThrow();
-  await expect(
-    listMessageReceipts({ ...opts, cursor: "bad" }),
-  ).rejects.toThrow();
   await expect(getIdentity({ ...opts, project_id: "bad" })).rejects.toThrow();
   expect(fabric).not.toHaveBeenCalled();
   expect(get).not.toHaveBeenCalled();

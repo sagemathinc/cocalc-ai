@@ -17,6 +17,7 @@ export interface AgentEndpoint {
 }
 
 export type AgentRpcSource = AgentEndpoint | ExternalAgentSource;
+export type AgentRpcTarget = AgentRpcSource;
 
 export function isExternalAgentSource(
   source: AgentRpcSource,
@@ -39,6 +40,11 @@ export function validateAgentRpcSource(
   }
 }
 
+export function validateAgentRpcTarget(target: AgentRpcTarget): void {
+  if (isExternalAgentSource(target)) validateExternalAgentSource(target);
+  else validateAgentEndpoint(target);
+}
+
 export function agentRpcSourceKey(source: AgentRpcSource): string {
   return isExternalAgentSource(source)
     ? `external/${source.account_id}/${source.agent_id}/${source.installation_id}`
@@ -46,14 +52,14 @@ export function agentRpcSourceKey(source: AgentRpcSource): string {
 }
 
 export interface AgentRpcAttempt {
-  version: 2;
+  version: 3;
   attempt_id: string;
-  target: AgentEndpoint;
+  agent_session_id: string;
+  target: AgentRpcTarget;
 }
 
 export interface AgentRpcSend extends AgentRpcAttempt {
   body: string;
-  guidance?: boolean;
   file_references?: AgentFileReference[];
   snapshot_manifest?: AgentSnapshotMetadata[];
   attachment_reservation?: string;
@@ -75,6 +81,24 @@ export interface AgentRpcOutcome extends AgentRpcAttempt {
   operation?: { id: string; disposition: "queued" | "running" | "steered" };
 }
 
+export interface AgentRpcBroadcast {
+  version: 3;
+  action: "broadcast";
+  broadcast_id: string;
+  agent_session_id: string;
+  targets: AgentRpcTarget[];
+  body: string;
+}
+
+export interface AgentRpcBroadcastOutcome {
+  version: 3;
+  broadcast_id: string;
+  agent_session_id: string;
+  outcome: "accepted" | "rejected" | "unknown";
+  observed_at: number;
+  children: AgentRpcOutcome[];
+}
+
 export const AGENT_RPC_FAILURE_CODES = [
   "host_overloaded",
   "project_overloaded",
@@ -90,37 +114,24 @@ export const AGENT_RPC_FAILURE_CODES = [
   "attachment_preparation_unavailable",
   "attachment_invalid",
   "attachment_limit_exceeded",
+  "session_unavailable",
+  "session_stale",
+  "principal_mismatch",
 ] as const;
 export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
 
-export interface AgentRpcLink {
-  /** Present only on an account-home authoritative personal grant. */
-  principal_account_id?: string;
-  link_id: string;
-  source: AgentEndpoint;
-  target: AgentEndpoint;
-  approved_by: string;
-  reason: string;
-  expires_at: string | null;
-  source_name?: string;
-  target_name?: string;
-  target_retired_names?: string[];
-  source_named_agent?: import("./personal").NamedAgent;
-  target_named_agent?: import("./personal").NamedAgent;
-  revoked_at?: string | null;
-  allow_guidance: boolean;
-}
-
 export type AgentRpcRequest =
-  | ({
-      version: 2;
-      action: "request-connection";
-    } & import("./personal").PersonalConnectionRequestOptions)
-  | { version: 2; action: "connection-request"; request_id: string }
   | (AgentRpcSend & { action: "send"; snapshot_payload?: AgentSnapshot[] })
   | (AgentRpcSend & { action: "prepare-attachments" | "cancel-attachments" })
   | (AgentRpcAttempt & { action: "inspect" })
-  | { version: 2; action: "destinations" };
+  | { version: 3; action: "destinations" }
+  | { version: 3; action: "inbox"; limit?: number }
+  | { version: 3; action: "ack-inbox"; message_id: string }
+  | AgentRpcBroadcast
+  | ({
+      version: 3;
+      action: "propose-session";
+    } & import("./personal").ProposeAgentSessionOptions);
 
 export function validateAgentEndpoint(value: AgentEndpoint): void {
   requireUuid(value?.project_id, "project_id");
@@ -135,7 +146,7 @@ export function validateAgentRpcRequest(
   value: AgentRpcRequest,
   metadataOnly = false,
 ): void {
-  if (value?.version !== 2) throw new Error("agent RPC version 2 required");
+  if (value?.version !== 3) throw new Error("agent RPC version 3 required");
   const keys = ["version", "action"];
   if (
     ["send", "inspect", "prepare-attachments", "cancel-attachments"].includes(
@@ -143,13 +154,13 @@ export function validateAgentRpcRequest(
     )
   ) {
     if (!("attempt_id" in value)) throw new Error("attempt required");
-    keys.push("attempt_id", "target");
+    keys.push("attempt_id", "agent_session_id", "target");
     requireUuid(value.attempt_id, "attempt_id");
-    validateAgentEndpoint(value.target);
+    requireUuid(value.agent_session_id, "agent_session_id");
+    validateAgentRpcTarget(value.target);
     if (value.action !== "inspect") {
       keys.push(
         "body",
-        "guidance",
         "file_references",
         "snapshot_manifest",
         "attachment_reservation",
@@ -192,24 +203,58 @@ export function validateAgentRpcRequest(
         new TextEncoder().encode(value.body).length > 32768
       )
         throw new Error("message must contain 1 to 32768 UTF-8 bytes");
-      if (value.guidance !== undefined && typeof value.guidance !== "boolean")
-        throw new Error("guidance must be boolean");
     }
-  } else if (value.action === "request-connection") {
-    keys.push(
-      "request_id",
-      "target",
-      "reason",
-      "ttl_seconds",
-      "both_directions",
-      "allow_guidance",
-    );
-    requireUuid(value.request_id, "request_id");
-    validateAgentEndpoint(value.target);
-    validatePersonalApproval(value);
-  } else if (value.action === "connection-request") {
-    keys.push("request_id");
-    requireUuid(value.request_id, "request_id");
+  } else if (value.action === "inbox") {
+    keys.push("limit");
+    if (
+      value.limit !== undefined &&
+      (!Number.isInteger(value.limit) || value.limit < 1 || value.limit > 100)
+    )
+      throw new Error("inbox limit must be an integer from 1 to 100");
+  } else if (value.action === "ack-inbox") {
+    keys.push("message_id");
+    requireUuid(value.message_id, "message_id");
+  } else if (value.action === "propose-session") {
+    keys.push("proposal_id", "title", "delivery_mode", "members", "reason");
+    requireUuid(value.proposal_id, "proposal_id");
+    if (value.title !== undefined && value.title.length > 120)
+      throw new Error("proposal title is too long");
+    if (
+      value.delivery_mode !== undefined &&
+      !["queued", "live"].includes(value.delivery_mode)
+    )
+      throw new Error("invalid proposed delivery mode");
+    if (
+      !Array.isArray(value.members) ||
+      value.members.length < 2 ||
+      value.members.length > 64
+    )
+      throw new Error("proposal requires 2 to 64 members");
+    if (value.reason !== undefined && value.reason.length > 500)
+      throw new Error("proposal reason is too long");
+  } else if (value.action === "broadcast") {
+    keys.push("broadcast_id", "agent_session_id", "targets", "body");
+    requireUuid(value.broadcast_id, "broadcast_id");
+    requireUuid(value.agent_session_id, "agent_session_id");
+    if (
+      !Array.isArray(value.targets) ||
+      value.targets.length < 1 ||
+      value.targets.length > 32
+    )
+      throw new Error("broadcast requires 1 to 32 targets");
+    const targets = new Set<string>();
+    for (const target of value.targets) {
+      validateAgentRpcTarget(target);
+      const key = agentRpcSourceKey(target);
+      if (targets.has(key)) throw new Error("duplicate broadcast target");
+      targets.add(key);
+    }
+    if (
+      typeof value.body !== "string" ||
+      !value.body.trim() ||
+      new TextEncoder().encode(value.body).length > 32768
+    )
+      throw new Error("broadcast body must contain 1 to 32768 UTF-8 bytes");
   } else if (value.action !== "destinations") {
     throw new Error("unsupported agent RPC operation");
   }
@@ -225,39 +270,15 @@ export function validateAgentRpcPreparation(
     return validateAgentRpcOutcome(value as AgentRpcOutcome, request);
   requireUuid(value.reservation_id, "reservation_id");
   if (
-    value.version !== 2 ||
+    value.version !== 3 ||
     value.attempt_id !== request.attempt_id ||
-    value.target?.project_id !== request.target.project_id ||
-    value.target?.agent_id !== request.target.agent_id ||
+    value.agent_session_id !== request.agent_session_id ||
+    agentRpcSourceKey(value.target) !== agentRpcSourceKey(request.target) ||
     !Number.isFinite(value.expires_at)
   )
     throw new Error(
       "Attachment preparation acknowledgment is invalid or mismatched",
     );
-}
-
-export function validatePersonalApproval(value: {
-  reason: string;
-  ttl_seconds?: number | null;
-  both_directions?: boolean;
-  allow_guidance?: boolean;
-}): void {
-  if (
-    typeof value.reason !== "string" ||
-    !value.reason.trim() ||
-    value.reason.length > 2000
-  )
-    throw new Error("approval reason required (maximum 2000 characters)");
-  if (
-    value.ttl_seconds != null &&
-    (!Number.isInteger(value.ttl_seconds) ||
-      value.ttl_seconds < 1 ||
-      value.ttl_seconds > 30 * 86400)
-  )
-    throw new Error("invalid approval duration");
-  for (const key of ["both_directions", "allow_guidance"] as const)
-    if (value[key] !== undefined && typeof value[key] !== "boolean")
-      throw new Error(`invalid ${key}`);
 }
 
 export function rpcOutcome(
@@ -268,8 +289,9 @@ export function rpcOutcome(
   > = {},
 ): AgentRpcOutcome {
   return {
-    version: 2,
+    version: 3,
     target: attempt.target,
+    agent_session_id: attempt.agent_session_id,
     attempt_id: attempt.attempt_id,
     outcome,
     observed_at: Date.now(),
@@ -283,10 +305,10 @@ export function validateAgentRpcOutcome(
   attempt: AgentRpcAttempt,
 ): void {
   if (
-    value?.version !== 2 ||
+    value?.version !== 3 ||
     value.attempt_id !== attempt.attempt_id ||
-    value.target?.project_id !== attempt.target.project_id ||
-    value.target?.agent_id !== attempt.target.agent_id ||
+    value.agent_session_id !== attempt.agent_session_id ||
+    agentRpcSourceKey(value.target) !== agentRpcSourceKey(attempt.target) ||
     !["accepted", "rejected", "unknown"].includes(value.outcome) ||
     !Number.isFinite(value.observed_at) ||
     (value.reason !== undefined && typeof value.reason !== "string") ||
@@ -303,13 +325,41 @@ export function validateAgentRpcOutcome(
     throw new Error("Recipient acknowledgment is invalid or mismatched");
 }
 
+export function validateAgentRpcBroadcastOutcome(
+  value: AgentRpcBroadcastOutcome,
+  request: AgentRpcBroadcast,
+): void {
+  if (
+    value?.version !== 3 ||
+    value.broadcast_id !== request.broadcast_id ||
+    value.agent_session_id !== request.agent_session_id ||
+    !["accepted", "rejected", "unknown"].includes(value.outcome) ||
+    !Number.isFinite(value.observed_at) ||
+    !Array.isArray(value.children) ||
+    value.children.length > request.targets.length
+  )
+    throw new Error("Broadcast acknowledgment is invalid or mismatched");
+  for (const child of value.children) {
+    const target = request.targets.find(
+      (candidate) =>
+        agentRpcSourceKey(candidate) === agentRpcSourceKey(child.target),
+    );
+    if (!target || child.agent_session_id !== request.agent_session_id)
+      throw new Error("Broadcast child acknowledgment is mismatched");
+  }
+}
+
 /** Trusted owner-to-host envelope, not an agent-supplied authority claim. */
-export interface AgentRpcEnvelope extends AgentRpcSend {
+export interface AgentRpcEnvelope extends Omit<AgentRpcSend, "target"> {
+  target: AgentEndpoint;
   permit_id: string;
   source: AgentRpcSource;
   run_id?: string;
-  link_id: string;
   account_id: string;
+  session_generation: string;
+  account_generation: number;
+  configured_delivery: import("./personal").AgentSessionDeliveryMode;
+  guidance: boolean;
   path: string;
   thread_id: string;
   deadline: number;
@@ -326,7 +376,10 @@ export function agentRpcEnvelopeKey(e: AgentRpcEnvelope): string {
     e.target.project_id,
     e.target.agent_id,
     e.run_id,
-    e.link_id,
+    e.agent_session_id,
+    e.session_generation,
+    e.account_generation,
+    e.configured_delivery,
     e.account_id,
     e.path,
     e.thread_id,

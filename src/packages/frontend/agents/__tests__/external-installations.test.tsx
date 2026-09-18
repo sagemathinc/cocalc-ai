@@ -15,10 +15,13 @@ jest.mock("../use-bound-account", () => ({
 
 const installation = {
   installation_id: "test-installation",
+  account_id: "test-account",
+  agent_id: "test-agent",
+  agent_session_id: "test-session",
   label: "Security assistant",
   state: "active",
+  created_at: new Date().toISOString(),
   expires_at: new Date(Date.now() + 86400000).toISOString(),
-  destinations: [],
 };
 beforeAll(() => {
   Object.defineProperty(window, "matchMedia", {

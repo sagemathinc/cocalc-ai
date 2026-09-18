@@ -1,11 +1,9 @@
 import { requireUuid } from "./protocol";
-import { validateAgentEndpoint, type AgentEndpoint } from "./rpc";
 
 export const EXTERNAL_AGENT_TOKEN_PREFIX = "cocalc_external_agent_v1.";
 export const EXTERNAL_AGENT_MAX_LIFETIME_SECONDS = 30 * 86400;
-export const EXTERNAL_AGENT_MAX_DESTINATIONS = 32;
 
-/** External identities have no project locator and cannot receive messages. */
+/** External identities have no project locator and use a bounded session inbox. */
 export interface ExternalAgentSource {
   kind: "external";
   project_id?: never;
@@ -27,11 +25,6 @@ export function validateExternalAgentSource(source: ExternalAgentSource): void {
     requireUuid(source[key], key);
 }
 
-export interface ExternalAgentDestination {
-  link_id: string;
-  target: AgentEndpoint;
-}
-
 export interface ExternalAgentInstallation {
   installation_id: string;
   account_id: string;
@@ -40,17 +33,20 @@ export interface ExternalAgentInstallation {
   state: "active" | "revoked";
   expires_at: string;
   created_at: string;
-  destinations: ExternalAgentDestination[];
+  agent_session_id: string;
+}
+
+export interface ExternalAgentInboxMessage {
+  message_id: string;
+  attempt_id: string;
+  agent_session_id: string;
+  source: import("./rpc").AgentRpcSource;
+  body: string;
+  created_at: string;
+  expires_at: string;
 }
 
 export type ExternalAgentControlRequest =
-  | {
-      action: "check-send";
-      account_id: string;
-      home_bay_id: string;
-      source: ExternalAgentSource;
-      target: AgentEndpoint;
-    }
   | {
       action: "claim-enrollment";
       account_id: string;
@@ -67,13 +63,8 @@ export type ExternalAgentControlRequest =
     };
 export type ExternalAgentControlResult =
   | {
-      proof: {
-        source: ExternalAgentSource;
-        destination: ExternalAgentDestination;
-        expires_at: string;
-      };
+      challenge: { label: string; secret_hash: string; expires_at: string };
     }
-  | { challenge: { label: string; secret_hash: string; expires_at: string } }
   | { installation: ExternalAgentInstallation | null };
 
 export function externalAgentSubject(
@@ -144,7 +135,7 @@ export function validateExternalAgentLabel(label: string): void {
 export function validateExternalAgentApproval(options: {
   installation_id: string;
   agent_id?: string;
-  targets: AgentEndpoint[];
+  agent_session_id: string;
   ttl_seconds: number;
 }): void {
   if (
@@ -153,7 +144,7 @@ export function validateExternalAgentApproval(options: {
         ![
           "installation_id",
           "agent_id",
-          "targets",
+          "agent_session_id",
           "ttl_seconds",
           "label",
           "secret_hash",
@@ -162,6 +153,7 @@ export function validateExternalAgentApproval(options: {
   )
     throw new Error("unexpected external approval field");
   requireUuid(options.installation_id, "installation_id");
+  requireUuid(options.agent_session_id, "agent_session_id");
   if (options.agent_id !== undefined) requireUuid(options.agent_id, "agent_id");
   if (
     !Number.isInteger(options.ttl_seconds) ||
@@ -169,17 +161,4 @@ export function validateExternalAgentApproval(options: {
     options.ttl_seconds > EXTERNAL_AGENT_MAX_LIFETIME_SECONDS
   )
     throw new Error("external credentials require an expiry within 30 days");
-  if (
-    !Array.isArray(options.targets) ||
-    options.targets.length < 1 ||
-    options.targets.length > EXTERNAL_AGENT_MAX_DESTINATIONS
-  )
-    throw new Error("approve between 1 and 32 explicit destinations");
-  const seen = new Set<string>();
-  for (const target of options.targets) {
-    validateAgentEndpoint(target);
-    const key = `${target.project_id}/${target.agent_id}`;
-    if (seen.has(key)) throw new Error("duplicate external agent destination");
-    seen.add(key);
-  }
 }

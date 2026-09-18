@@ -21,7 +21,11 @@ jest.mock("@cocalc/database/pool", () => ({
   }),
 }));
 
-const tables = ["agent_external_installations", "agent_external_identities"];
+const tables = [
+  "agent_external_installations",
+  "agent_external_identities",
+  "agent_external_inbox",
+];
 const schema = Object.fromEntries(tables.map((name) => [name, SCHEMA[name]]));
 async function snapshot() {
   return {
@@ -61,7 +65,7 @@ describe("external agent schema persistence", () => {
     for (const state of ["active", "revoked"]) {
       await db.query(
         `INSERT INTO agent_external_installations
-        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,destinations,expires_at)
+        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_session_id,expires_at)
         VALUES($1,$2,$3,'QA installation','fixture-only-hash',$4,3,$5,$6,now()-interval '1 hour')`,
         [
           randomUUID(),
@@ -69,19 +73,13 @@ describe("external agent schema persistence", () => {
           agent,
           state,
           { ttl_seconds: 3600, label: "QA installation" },
-          JSON.stringify([
-            {
-              project_id: randomUUID(),
-              agent_id: randomUUID(),
-              link_id: randomUUID(),
-            },
-          ]),
+          randomUUID(),
         ],
       );
     }
   }
 
-  test("fresh and repeated sync preserve expiry, state, destinations and object identity", async () => {
+  test("fresh and repeated sync preserve expiry, session binding and object identity", async () => {
     expect(await schemaNeedsSync(schema)).toBe(true);
     await syncSchema(schema);
     await seed();
@@ -98,7 +96,7 @@ describe("external agent schema persistence", () => {
     expect(await snapshot()).toEqual(before);
     expect(await objects()).toEqual(ids);
     expect(before.installations).toHaveLength(2);
-    expect(before.installations[0].destinations).toHaveLength(1);
+    expect(before.installations[0].agent_session_id).toBeTruthy();
   });
 
   test("repairs index and default drift without rewriting existing installations", async () => {

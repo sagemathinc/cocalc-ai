@@ -1,11 +1,9 @@
 import React from "react";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ConnectionApproval } from "./connection-approval";
-import { NameAgent } from "./name-agent";
-import { AgentMessagingRequests } from "./messaging-requests";
-import { agentNameProblem } from "./agent-name-input";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
+import { NameAgent } from "./name-agent";
+import { SessionApproval } from "./session-approval";
 import { cachedAgentNameContext } from "./name-context";
 
 jest.mock("./name-context", () => ({ cachedAgentNameContext: jest.fn() }));
@@ -29,18 +27,18 @@ const reviewer = {
   available: true,
   updated_at: "2026-09-14T00:00:00Z",
 } as NamedAgent;
+
 let mockAgents: NamedAgent[];
 const mockApi = {
   nameAgent: jest.fn(),
   getIdentity: jest.fn(),
-  grantPersonalConnection: jest.fn(),
-  listPersonalConnectionRequests: jest.fn(),
-  resolvePersonalConnectionRequest: jest.fn(),
+  createAgentSession: jest.fn(),
 };
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
-  useTypedRedux: () => "11111111-1111-4111-8111-111111111111",
+  useTypedRedux: () => account,
   redux: {
-    getStore: () => ({ get: () => "11111111-1111-4111-8111-111111111111" }),
+    getStore: () => ({ get: () => account }),
     getActions: () => ({ set_active_key_handler: jest.fn() }),
   },
 }));
@@ -54,127 +52,100 @@ jest.mock("./api", () => ({
     loading: false,
   }),
 }));
-jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
-  FreshAuthModal: () => null,
-  useFreshAuthAction: () => ({
-    freshAuthModalProps: {},
-    runFreshAuthAction: async (fn) => {
-      await fn();
-      return true;
-    },
-  }),
-}));
+
 beforeEach(() => {
   jest.resetAllMocks();
   jest.mocked(cachedAgentNameContext).mockReturnValue({});
+  mockAgents = [reviewer];
   mockApi.getIdentity.mockResolvedValue({
     ...source,
     path: "/a.chat",
     thread_id: "a",
   });
-  mockAgents = [reviewer];
   mockApi.nameAgent.mockImplementation(async ({ name, endpoint }) => ({
     ...reviewer,
     name,
     endpoint,
   }));
-  mockApi.grantPersonalConnection.mockResolvedValue([]);
-  mockApi.listPersonalConnectionRequests.mockResolvedValue({
-    enabled: true,
-    requests: [],
-  });
+  mockApi.createAgentSession.mockResolvedValue({});
 });
-const approval = {
-  source,
-  target,
-  sourceLabel: "This agent",
-  targetLabel: "@reviewer",
-};
 
-test("unnamed source requires a valid unused name with immediate feedback before approval", async () => {
+test("an unnamed source is named before its two-way session is created", async () => {
   const user = userEvent.setup();
-  render(<ConnectionApproval value={approval} onClose={jest.fn()} />);
-  const approve = screen.getByRole("button", { name: "Approve connection" });
-  expect(approve).toBeDisabled();
+  render(
+    <SessionApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "This agent",
+        targetLabel: "@reviewer",
+        targetName: reviewer,
+      }}
+      onClose={jest.fn()}
+    />,
+  );
+  const create = screen.getByRole("button", { name: "Create session" });
+  expect(create).toBeDisabled();
   const input = screen.getByRole("textbox", { name: "Source agent name" });
   await user.type(input, "reviewer");
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(screen.getByRole("status")).toHaveTextContent("already used");
-  expect(approve).toBeDisabled();
-  expect(mockApi.nameAgent).not.toHaveBeenCalled();
+  expect(create).toBeDisabled();
   await user.clear(input);
   await user.type(input, "builder");
-  expect(approve).toBeEnabled();
-  await user.click(
-    screen.getByRole("checkbox", {
-      name: "Allow communication in both directions",
-    }),
-  );
-  await user.click(approve);
-  await waitFor(() =>
-    expect(mockApi.grantPersonalConnection).toHaveBeenCalled(),
-  );
+  await user.click(create);
+  await waitFor(() => expect(mockApi.createAgentSession).toHaveBeenCalled());
   expect(mockApi.nameAgent).toHaveBeenCalledWith({
     endpoint: source,
     name: "builder",
   });
   expect(mockApi.nameAgent.mock.invocationCallOrder[0]).toBeLessThan(
-    mockApi.grantPersonalConnection.mock.invocationCallOrder[0],
+    mockApi.createAgentSession.mock.invocationCallOrder[0],
   );
-  expect(mockApi.grantPersonalConnection).toHaveBeenCalledWith(
-    expect.objectContaining({
-      source,
-      target,
-      both_directions: true,
-      ttl_seconds: 86400,
-    }),
-  );
+  expect(mockApi.createAgentSession).toHaveBeenCalledWith({
+    request_id: expect.any(String),
+    title: "This agent and reviewer",
+    delivery_mode: "queued",
+    members: [
+      { kind: "registered", endpoint: source },
+      { kind: "registered", endpoint: target },
+    ],
+  });
 });
 
-test("server-side name conflict prevents the grant and retains the user's name", async () => {
-  mockApi.nameAgent.mockRejectedValue(new Error("name already taken"));
-  const user = userEvent.setup();
-  render(<ConnectionApproval value={approval} onClose={jest.fn()} />);
-  const input = screen.getByRole("textbox", { name: "Source agent name" });
-  await user.type(input, "builder");
-  await user.click(screen.getByRole("button", { name: "Approve connection" }));
-  expect(await screen.findByText("Error: name already taken")).toBeVisible();
-  expect(input).toHaveValue("builder");
-  expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
-});
-
-test("composer approval shows and saves cached source context without another identity lookup", async () => {
-  const context = {
-    project_id: source.project_id,
-    path: "/a.chat",
-    thread_id: "a",
-    thread_title: "Current draft thread",
-  };
+test("session creation preserves cached source context while naming", async () => {
   jest.mocked(cachedAgentNameContext).mockReturnValue({
     project_title: "Build project",
     thread_title: "Current draft thread",
   });
   const user = userEvent.setup();
   render(
-    <ConnectionApproval
-      value={{ ...approval, sourceContext: context }}
+    <SessionApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "This agent",
+        targetLabel: "@reviewer",
+        targetName: reviewer,
+        sourceContext: {
+          project_id: source.project_id,
+          path: "/a.chat",
+          thread_id: "a",
+          thread_title: "Current draft thread",
+        },
+      }}
       onClose={jest.fn()}
     />,
   );
-  await waitFor(() =>
-    expect(
-      screen.getByText("From: Current draft thread / Build project"),
-    ).toBeVisible(),
+  expect(
+    screen.getByText("From: Current draft thread / Build project"),
+  ).toBeInTheDocument();
+  await user.type(
+    screen.getByRole("textbox", { name: "Source agent name" }),
+    "builder",
   );
-  const input = screen.getByRole("textbox", { name: "Source agent name" });
-  await user.type(input, "builder");
-  screen.getByRole("button", { name: "Approve connection" }).focus();
-  await user.keyboard("{Enter}");
-  await waitFor(() =>
-    expect(mockApi.grantPersonalConnection).toHaveBeenCalledTimes(1),
-  );
+  await user.click(screen.getByRole("button", { name: "Create session" }));
+  await waitFor(() => expect(mockApi.createAgentSession).toHaveBeenCalled());
   expect(mockApi.getIdentity).not.toHaveBeenCalled();
-  expect(cachedAgentNameContext).toHaveBeenCalledWith(context);
   expect(mockApi.nameAgent).toHaveBeenCalledWith({
     endpoint: source,
     name: "builder",
@@ -183,69 +154,32 @@ test("composer approval shows and saves cached source context without another id
   });
 });
 
-test("explicit naming preserves supplied titles and fills missing project context from the cache", async () => {
-  jest.mocked(cachedAgentNameContext).mockReturnValue({
-    project_title: "Build project",
-    thread_title: "Cached title",
-  });
-  const user = userEvent.setup();
-  render(
-    <NameAgent
-      agent={{ ...reviewer, name: "builder", endpoint: source }}
-      projectId={source.project_id}
-      path="/a.chat"
-      threadId="a"
-      threadTitle="Visible title"
-      initiallyOpen
-    />,
-  );
-  await user.click(screen.getByRole("button", { name: "Save agent name" }));
-  await waitFor(() =>
-    expect(mockApi.nameAgent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        name: "builder",
-        project_title: "Build project",
-        thread_title: "Visible title",
-      }),
-    ),
-  );
-  expect(cachedAgentNameContext).toHaveBeenCalledWith({
-    project_id: source.project_id,
-    path: "/a.chat",
-    thread_id: "a",
-    thread_title: "Visible title",
-  });
-});
-
-test("canceling does not name the source or create permission", async () => {
-  const close = jest.fn();
-  const user = userEvent.setup();
-  render(<ConnectionApproval value={approval} onClose={close} />);
-  await user.type(
-    screen.getByRole("textbox", { name: "Source agent name" }),
-    "builder",
-  );
-  await user.click(screen.getByRole("button", { name: "Cancel" }));
-  expect(close).toHaveBeenCalledWith(false);
-  expect(mockApi.nameAgent).not.toHaveBeenCalled();
-  expect(mockApi.grantPersonalConnection).not.toHaveBeenCalled();
-});
-
-test("an already named source needs no extra naming step", async () => {
+test("an already named source creates a session without renaming", async () => {
   mockAgents.push({ ...reviewer, name: "builder", endpoint: source });
   const user = userEvent.setup();
-  render(<ConnectionApproval value={approval} onClose={jest.fn()} />);
+  render(
+    <SessionApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "@builder",
+        targetLabel: "@reviewer",
+        targetName: reviewer,
+      }}
+      onClose={jest.fn()}
+    />,
+  );
   expect(
     screen.queryByRole("textbox", { name: "Source agent name" }),
   ).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Approve connection" }));
+  await user.click(screen.getByRole("button", { name: "Create session" }));
   await waitFor(() =>
-    expect(mockApi.grantPersonalConnection).toHaveBeenCalledTimes(1),
+    expect(mockApi.createAgentSession).toHaveBeenCalledTimes(1),
   );
   expect(mockApi.nameAgent).not.toHaveBeenCalled();
 });
 
-test("rename dialog checks other current names without submitting", async () => {
+test("rename dialog checks current names without submitting", async () => {
   const builder = { ...reviewer, name: "builder", endpoint: source };
   mockAgents.push(builder);
   const user = userEvent.setup();
@@ -258,7 +192,6 @@ test("rename dialog checks other current names without submitting", async () => 
       initiallyOpen
     />,
   );
-  expect(screen.getByRole("button", { name: "Save agent name" })).toBeEnabled();
   const input = screen.getByRole("textbox", { name: "Agent name" });
   await user.clear(input);
   await user.type(input, "REVIEWER");
@@ -269,153 +202,4 @@ test("rename dialog checks other current names without submitting", async () => 
     "@reviewer is already used",
   );
   expect(mockApi.nameAgent).not.toHaveBeenCalled();
-  await user.keyboard("{Enter}");
-  expect(mockApi.nameAgent).not.toHaveBeenCalled();
-});
-
-async function openUnnamedRequest(keyboard = false) {
-  mockApi.listPersonalConnectionRequests.mockResolvedValue({
-    enabled: true,
-    requests: [
-      {
-        source,
-        target,
-        account_id: account,
-        request_id: "request",
-        run_id: "run",
-        reason: "Review",
-        state: "pending",
-        expires_at: "2099-01-01T00:00:00Z",
-        ttl_seconds: 3600,
-      },
-    ],
-  });
-  const user = userEvent.setup();
-  render(<AgentMessagingRequests />);
-  const review = await screen.findByRole("button", {
-    name: /^Review messaging request:/,
-  });
-  if (keyboard) {
-    await user.tab();
-    expect(review).toHaveFocus();
-    await user.keyboard("{Enter}");
-  } else await user.click(review);
-  expect(
-    screen.getByRole("button", { name: "Approve requested connection" }),
-  ).toBeDisabled();
-  await waitFor(() =>
-    expect(
-      screen.getByRole("textbox", { name: "Source agent name" }),
-    ).toBeVisible(),
-  );
-  return user;
-}
-
-test("request review uses a compact button with full accessible context and keyboard focus return", async () => {
-  const user = await openUnnamedRequest(true);
-  const review = screen.getByRole("button", {
-    name: /^Review messaging request:/,
-  });
-  expect(review).toHaveTextContent(/^Review messaging request$/);
-  expect(review).toHaveAccessibleName(expect.stringContaining("@reviewer"));
-  expect(review).toHaveAccessibleName(expect.stringContaining(source.agent_id));
-  expect(review).toHaveStyle({ maxWidth: "100%", whiteSpace: "normal" });
-  expect(
-    screen.getByRole("region", { name: "Agent messaging approvals" }),
-  ).toHaveStyle({ overflowWrap: "anywhere" });
-  await user.keyboard("{Escape}");
-  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-  await waitFor(() => expect(review).toHaveFocus());
-  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
-});
-
-test("typed in-turn request requires a source name to approve but can still be denied", async () => {
-  const user = await openUnnamedRequest();
-  await user.click(screen.getByRole("button", { name: "Deny request" }));
-  await waitFor(() =>
-    expect(mockApi.resolvePersonalConnectionRequest).toHaveBeenCalledWith({
-      request_id: "request",
-      decision: "deny",
-    }),
-  );
-  expect(mockApi.nameAgent).not.toHaveBeenCalled();
-});
-
-test("typed request names the source before approving its exact request", async () => {
-  jest.mocked(cachedAgentNameContext).mockReturnValue({
-    project_title: "Build project",
-    thread_title: "Build the PR",
-  });
-  const user = await openUnnamedRequest();
-  await user.type(
-    screen.getByRole("textbox", { name: "Source agent name" }),
-    "builder",
-  );
-  await user.click(
-    screen.getByRole("button", { name: "Approve requested connection" }),
-  );
-  await waitFor(() =>
-    expect(mockApi.resolvePersonalConnectionRequest).toHaveBeenCalledWith({
-      request_id: "request",
-      decision: "approve",
-    }),
-  );
-  expect(mockApi.nameAgent).toHaveBeenCalledWith({
-    endpoint: source,
-    name: "builder",
-    project_title: "Build project",
-    thread_title: "Build the PR",
-  });
-  expect(mockApi.getIdentity).toHaveBeenCalledWith(source);
-  expect(cachedAgentNameContext).toHaveBeenCalledWith(
-    expect.objectContaining({
-      project_id: source.project_id,
-      path: "/a.chat",
-      thread_id: "a",
-    }),
-  );
-  expect(mockApi.nameAgent.mock.invocationCallOrder[0]).toBeLessThan(
-    mockApi.resolvePersonalConnectionRequest.mock.invocationCallOrder[0],
-  );
-});
-
-test("typed request shows a naming failure inside its modal and never grants", async () => {
-  const intervals = jest.spyOn(global, "setInterval");
-  const user = await openUnnamedRequest();
-  mockApi.nameAgent.mockRejectedValue(new Error("name already taken"));
-  await user.type(
-    screen.getByRole("textbox", { name: "Source agent name" }),
-    "builder",
-  );
-  await user.click(
-    screen.getByRole("button", { name: "Approve requested connection" }),
-  );
-  expect(await screen.findByText("Error: name already taken")).toBeVisible();
-  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
-  const refresh = intervals.mock.calls.find(([, ms]) => ms === 15000)?.[0];
-  expect(typeof refresh).toBe("function");
-  await act(async () => {
-    (refresh as () => void)();
-  });
-  expect(screen.getByText("Error: name already taken")).toBeVisible();
-  expect(
-    screen.getByRole("textbox", { name: "Source agent name" }),
-  ).toHaveValue("builder");
-  expect(mockApi.nameAgent).toHaveBeenCalledTimes(1);
-  expect(mockApi.resolvePersonalConnectionRequest).not.toHaveBeenCalled();
-  await user.click(screen.getByRole("button", { name: "Later" }));
-  await user.click(
-    screen.getByRole("button", { name: /^Review messaging request:/ }),
-  );
-  expect(screen.queryByText("Error: name already taken")).toBeNull();
-  intervals.mockRestore();
-});
-
-test("validation normalizes names, permits the same endpoint, and checks syntax", () => {
-  expect(agentNameProblem(" REVIEWER ", [reviewer], target)).toBeUndefined();
-  expect(agentNameProblem("reviewer", [reviewer], source)).toMatch(
-    /already used/,
-  );
-  expect(agentNameProblem("-bad", [reviewer])).toBeTruthy();
-  expect(agentNameProblem("", [reviewer])).toBeTruthy();
 });

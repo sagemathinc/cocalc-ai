@@ -17,27 +17,35 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
+import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 import { AgentStore, agentStore } from "./store";
 import { isRestrictiveAgentManagement } from "./management";
 import { getIdentity } from "./api";
 import { agentRpcControl } from "./rpc";
 import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
-import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
 
 const DEFAULT_MAX_NAMED_AGENTS = 5;
+const DEFAULT_MAX_SESSION_MEMBERS = 3;
+const MAX_SESSIONS = 100;
 
-async function namedAgentLimit(account_id: string): Promise<number> {
+export async function personalAgentLimits(account_id: string) {
   const membership = await resolveMembershipForAccount(account_id);
-  return (
-    membership.effective_limits?.max_named_agents ?? DEFAULT_MAX_NAMED_AGENTS
-  );
+  return {
+    named:
+      membership.effective_limits?.max_named_agents ?? DEFAULT_MAX_NAMED_AGENTS,
+    members:
+      membership.effective_limits?.max_agent_session_members ??
+      DEFAULT_MAX_SESSION_MEMBERS,
+  };
 }
 
 export const personalMessagingEnabled = () => true;
+
 function enabled(request: PersonalControlRequest) {
   if (isRestrictiveAgentManagement(request)) return;
 }
+
 function fresh(at?: number) {
   if (
     at === undefined ||
@@ -47,20 +55,7 @@ function fresh(at?: number) {
   )
     throw new Error("fresh human approval attestation expired");
 }
-function requiresFresh(request: PersonalControlRequest): boolean {
-  switch (request.action) {
-    case "grantPersonalConnection":
-      return true;
-    case "setPersonalConnectionState":
-      return request.options.state === "active";
-    case "setPersonalMessagingState":
-      return request.options.action === "resume";
-    case "resolvePersonalConnectionRequest":
-      return request.options.decision === "approve";
-    default:
-      return false;
-  }
-}
+
 async function principal(source: AgentEndpoint, run_id: string) {
   const route = await resolveProjectBay(source.project_id);
   if (!route) throw new Error("source owner unavailable");
@@ -78,6 +73,7 @@ async function principal(source: AgentEndpoint, run_id: string) {
     throw new Error("personal source mode changed");
   return proof.account_id;
 }
+
 export function personalStore(db = agentStore()) {
   return new PersonalAgentStore(
     db,
@@ -113,16 +109,15 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
     throw new Error("stale personal account home route");
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(opts.account_id))
-    if (opts.request.action === "check") return { denied: "account_disabled" };
+    if (opts.request.action === "checkSession")
+      return { denied: "account_disabled" };
     else throw new PersonalAgentAuthorizationError("account_disabled");
+
   const request = opts.request;
-  if (requiresFresh(request)) fresh(opts.fresh_auth_at);
   const store = personalStore(
-      isRestrictiveAgentManagement(request) ? new AgentStore() : agentStore(),
-    ),
-    account = opts.account_id;
-  // Reads reject stale routing too; writes/checks recheck under their own
-  // transaction fence after any remote endpoint validation has completed.
+    isRestrictiveAgentManagement(request) ? new AgentStore() : agentStore(),
+  );
+  const account = opts.account_id;
   await store.assertHome(account);
   switch (request.action) {
     case "listNamedAgents": {
@@ -132,7 +127,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
         agents,
         usage: {
           active: agents.length,
-          limit: await namedAgentLimit(account),
+          limit: (await personalAgentLimits(account)).named,
         },
         controls: await store.controls(account),
       };
@@ -141,138 +136,202 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       return store.name(
         account,
         request.options,
-        await namedAgentLimit(account),
+        (await personalAgentLimits(account)).named,
       );
     case "retireNamedAgent":
       return store.retire(account, request.options);
-    case "listPersonalConnections":
+    case "listAgentSessions": {
+      const result = await store.sessions(
+        account,
+        request.options.limit,
+        request.options.cursor,
+      );
       return {
         enabled: true,
-        connections: await store.connections(account),
+        ...result,
+        usage: {
+          active_sessions: result.active_count,
+          session_limit: MAX_SESSIONS,
+          member_limit: (await personalAgentLimits(account)).members,
+        },
         controls: await store.controls(account),
       };
-    case "grantPersonalConnection":
-      return store.grant(account, request.options);
-    case "setPersonalConnectionState":
-      return store.setConnection(account, request.options);
+    }
+    case "createAgentSession":
+      return store.createSession(
+        account,
+        request.options,
+        (await personalAgentLimits(account)).members,
+        opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
+      );
+    case "updateAgentSession":
+      return store.updateSession(
+        account,
+        request.options as import("@cocalc/conat/agents/personal").UpdateAgentSessionOptions,
+        (await personalAgentLimits(account)).members,
+        opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
+      );
+    case "listAgentSessionActivity":
+      return store.activity(
+        account,
+        request.options.agent_session_id,
+        request.options.limit,
+      );
+    case "inspectAgentSessionAttempt":
+      return store.inspectActivity(
+        account,
+        request.options.agent_session_id,
+        request.options.attempt_id,
+      );
+    case "listAgentSessionProposals":
+      return store.proposals(account, request.options.limit);
+    case "resolveAgentSessionProposal": {
+      const proposal = await store.getProposal(
+        account,
+        request.options.proposal_id,
+      );
+      if (request.options.action === "reject")
+        return store.finishProposal(account, proposal.proposal_id, "rejected");
+      const session = await store.createSession(
+        account,
+        {
+          request_id: request.options.request_id,
+          title: proposal.title ?? undefined,
+          delivery_mode: proposal.delivery_mode,
+          members: proposal.members,
+        },
+        (await personalAgentLimits(account)).members,
+        opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
+      );
+      return store.finishProposal(
+        account,
+        proposal.proposal_id,
+        "approved",
+        session.agent_session_id,
+      );
+    }
     case "setPersonalMessagingState":
+      if (request.options.action === "resume") fresh(opts.fresh_auth_at);
       return store.setControls(account, request.options);
-    case "links":
-      return store.links(account, request.options.source);
-    case "check":
+    case "checkSession":
       try {
-        return await store.check(
+        return await store.checkSession(
           account,
+          request.options.agent_session_id,
           request.options.source,
+          request.options.run_id,
           request.options.target,
-          request.options.guidance,
         );
       } catch (error) {
         if (error instanceof PersonalAgentAuthorizationError)
           return { denied: error.denial };
         throw error;
       }
-    case "request":
-      return store.request(account, request.options);
-    case "requestRead":
-      return store.readRequest(
+    case "discoverSessions":
+      return store.discover(
         account,
-        request.options.request_id,
-        request.options,
+        request.options.source,
+        request.options.run_id,
       );
-    case "observe":
-      return store.observe(
+    case "proposeSession":
+      return store.proposeSession(
         account,
-        request.options.link_id,
-        request.options.accepted,
+        request.options.source,
+        request.options.run_id,
+        request.options.proposal,
+        (await personalAgentLimits(account)).members,
       );
-    case "listPersonalConnectionRequests":
-      return {
-        enabled: true,
-        requests: await store.requests(account),
-      };
-    case "resolvePersonalConnectionRequest":
-      return store.resolveRequest(
+    case "beginBroadcast":
+      return store.beginBroadcast(
         account,
-        request.options.request_id,
-        request.options.decision,
+        request.options.source,
+        request.options.run_id,
+        request.options.broadcast,
       );
+    case "finishBroadcast":
+      return store.finishBroadcast(
+        account,
+        request.options.broadcast_id,
+        request.options.binding_hash,
+        request.options.outcome,
+      );
+    case "observeSessionActivity":
+      return store.observeActivity(account, request.options);
     default:
       throw new Error("unsupported personal agent operation");
   }
 };
+
+async function freshHuman(account_id: string, session_hash: string) {
+  await requireDangerousSessionAuth({
+    account_id,
+    session_hash,
+    require_second_factor: "if_enabled",
+    allow_actor_impersonation: false,
+  });
+  return Date.now();
+}
 
 async function human<K extends PersonalHumanMethod>(
   action: K,
   opts: Parameters<AgentApi[K]>[0],
 ): Promise<Awaited<ReturnType<AgentApi[K]>>> {
   requireUuid(opts.account_id, "account_id");
-  const { account_id, session_hash } = opts as AgentHumanAuth;
-  const fields: Record<PersonalHumanMethod, string[]> = {
-    listNamedAgents: [],
-    listPersonalConnections: [],
-    listPersonalConnectionRequests: [],
-    nameAgent: [
-      "endpoint",
-      "name",
-      "description",
-      "project_title",
-      "thread_title",
-    ],
-    retireNamedAgent: ["endpoint"],
-    grantPersonalConnection: [
-      "source",
-      "target",
-      "approval_request_id",
-      "ttl_seconds",
-      "both_directions",
-      "allow_guidance",
-      "reason",
-    ],
-    setPersonalConnectionState: ["direction_group_id", "state"],
-    setPersonalMessagingState: ["action"],
-    resolvePersonalConnectionRequest: ["request_id", "decision"],
-  };
-  const options = Object.fromEntries(
-    fields[action]
-      .filter((key) => opts[key] !== undefined)
-      .map((key) => [key, opts[key]]),
-  );
+  const { account_id, session_hash, ...options } = opts as AgentHumanAuth &
+    Record<string, unknown>;
   const request = { action, options } as PersonalControlRequest;
   enabled(request);
   let fresh_auth_at: number | undefined;
-  if (requiresFresh(request)) {
-    await requireDangerousSessionAuth({
-      account_id,
-      session_hash,
-      require_second_factor: "if_enabled",
-      allow_actor_impersonation: false,
-    });
-    fresh_auth_at = Date.now();
+  if (
+    action === "setPersonalMessagingState" &&
+    (options as any).action === "resume"
+  )
+    fresh_auth_at = await freshHuman(account_id!, session_hash!);
+  try {
+    return (await withPersonalHome(
+      account_id!,
+      request,
+      fresh_auth_at,
+    )) as Awaited<ReturnType<AgentApi[K]>>;
+  } catch (error) {
+    if (
+      ![
+        "createAgentSession",
+        "updateAgentSession",
+        "resolveAgentSessionProposal",
+      ].includes(action) ||
+      !`${error}`.includes("fresh_auth_required")
+    )
+      throw error;
+    fresh_auth_at = await freshHuman(account_id!, session_hash!);
+    return (await withPersonalHome(
+      account_id!,
+      request,
+      fresh_auth_at,
+    )) as Awaited<ReturnType<AgentApi[K]>>;
   }
-  return (await withPersonalHome(
-    account_id!,
-    request,
-    fresh_auth_at,
-  )) as Awaited<ReturnType<AgentApi[K]>>;
 }
+
 export const listNamedAgents: AgentApi["listNamedAgents"] = (opts) =>
   human("listNamedAgents", opts);
 export const nameAgent: AgentApi["nameAgent"] = (opts) =>
   human("nameAgent", opts);
 export const retireNamedAgent: AgentApi["retireNamedAgent"] = (opts) =>
   human("retireNamedAgent", opts);
-export const listPersonalConnections: AgentApi["listPersonalConnections"] = (
+export const listAgentSessions: AgentApi["listAgentSessions"] = (opts) =>
+  human("listAgentSessions", opts);
+export const createAgentSession: AgentApi["createAgentSession"] = (opts) =>
+  human("createAgentSession", opts);
+export const updateAgentSession: AgentApi["updateAgentSession"] = (opts) =>
+  human("updateAgentSession", opts);
+export const listAgentSessionActivity: AgentApi["listAgentSessionActivity"] = (
   opts,
-) => human("listPersonalConnections", opts);
-export const grantPersonalConnection: AgentApi["grantPersonalConnection"] = (
-  opts,
-) => human("grantPersonalConnection", opts);
-export const setPersonalConnectionState: AgentApi["setPersonalConnectionState"] =
-  (opts) => human("setPersonalConnectionState", opts);
+) => human("listAgentSessionActivity", opts);
+export const inspectAgentSessionAttempt: AgentApi["inspectAgentSessionAttempt"] =
+  (opts) => human("inspectAgentSessionAttempt", opts);
+export const listAgentSessionProposals: AgentApi["listAgentSessionProposals"] =
+  (opts) => human("listAgentSessionProposals", opts);
+export const resolveAgentSessionProposal: AgentApi["resolveAgentSessionProposal"] =
+  (opts) => human("resolveAgentSessionProposal", opts);
 export const setPersonalMessagingState: AgentApi["setPersonalMessagingState"] =
   (opts) => human("setPersonalMessagingState", opts);
-export const listPersonalConnectionRequests: AgentApi["listPersonalConnectionRequests"] =
-  (opts) => human("listPersonalConnectionRequests", opts);
-export const resolvePersonalConnectionRequest: AgentApi["resolvePersonalConnectionRequest"] =
-  (opts) => human("resolvePersonalConnectionRequest", opts);

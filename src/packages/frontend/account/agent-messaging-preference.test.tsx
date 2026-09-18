@@ -20,12 +20,12 @@ test("default off is keyboard accessible and does not write a preference on moun
   const user = userEvent.setup();
   render(<AgentMessagingPreference />);
   const toggle = screen.getByRole("switch", {
-    name: "Enable experimental agent messaging",
+    name: "Enable Agent Sessions",
   });
   expect(toggle).toHaveAttribute("aria-checked", "false");
   expect(mockSave).not.toHaveBeenCalled();
   expect(
-    screen.getByRole("link", { name: /Inspect, pause or revoke/ }),
+    screen.getByRole("link", { name: /Inspect, pause, or close/ }),
   ).toHaveAttribute("href", "/settings/my-agents");
   await user.tab();
   expect(toggle).toHaveFocus();
@@ -56,9 +56,7 @@ test("disabling only writes the UI preference and keeps management accessible", 
     ),
   );
   expect(
-    screen.getByRole("link", { name: /Inspect, pause or revoke/ }),
+    screen.getByRole("link", { name: /Inspect, pause, or close/ }),
   ).toBeVisible();
-  expect(
-    screen.getByText(/does not pause communication or revoke/),
-  ).toBeVisible();
+  expect(screen.getByText(/does not pause or close sessions/)).toBeVisible();
 });

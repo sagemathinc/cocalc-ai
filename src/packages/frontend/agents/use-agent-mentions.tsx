@@ -13,8 +13,8 @@ import {
 } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
-import { ConnectionApproval } from "./connection-approval";
-import type { ApprovalTarget } from "./connection-approval";
+import { SessionApproval } from "./session-approval";
+import type { SessionApprovalTarget } from "./session-approval";
 import { hasUnboundAgentName } from "./unbound-mentions";
 import { useAgentMessagingUI } from "./use-ui-preference";
 
@@ -36,7 +36,7 @@ export function useAgentMentions({
   const accountId = useTypedRedux("account", "account_id");
   const enabled = useAgentMessagingUI();
   const { directory } = useNamedAgents(enabled);
-  const [approval, setApproval] = useState<ApprovalTarget>();
+  const [approval, setApproval] = useState<SessionApprovalTarget>();
   const [error, setError] = useState("");
   const [states, setStates] = useState<Record<string, string>>({});
   const pending = useRef<((approved: boolean) => void) | undefined>(undefined);
@@ -109,38 +109,49 @@ export function useAgentMentions({
       throw new Error(
         `@${reference.name} is unavailable. Remove or replace its reference before sending.`,
       );
-    const connections = await api.listPersonalConnections({});
+    const sessions = await api.listAgentSessions({ limit: 100 });
     if (epoch !== generation.current) return false;
-    if (connections.controls?.paused)
+    if (sessions.controls.paused)
       throw new Error(
         "Your agent communication is paused. Resume it in Agents before sending.",
       );
-    const links = connections.connections.filter(
-      (connection) =>
-        sameEndpoint(connection.source, source) &&
-        sameEndpoint(connection.target, reference.target),
-    );
-    const active = links.some(
-      (link) =>
-        link.status === "active" &&
-        !link.paused &&
-        !link.revoked_at &&
-        (!link.expires_at || Date.parse(link.expires_at) > Date.now()),
+    const active = sessions.sessions.some(
+      (session) =>
+        session.state === "active" &&
+        session.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, source),
+        ) &&
+        session.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, reference.target),
+        ),
     );
     const stateKey = reference.target.agent_id;
     if (active) {
-      setStates((states) => ({ ...states, [stateKey]: "Connected" }));
+      setStates((states) => ({ ...states, [stateKey]: "Session active" }));
       return true;
     }
-    if (
-      links.some(
-        (link) => link.status === "paused" || link.status === "revoked",
-      )
-    )
+    const inactive = sessions.sessions.some(
+      (session) =>
+        session.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, source),
+        ) &&
+        session.members.some(
+          (member) =>
+            member.kind === "registered" &&
+            sameEndpoint(member.endpoint, reference.target),
+        ),
+    );
+    if (inactive)
       throw new Error(
-        `Communication with @${reference.name} was paused or revoked. Explicitly re-enable it in Agents; your draft has not been sent.`,
+        `The shared Agent Session with @${reference.name} is paused or closed. Review it in Agents; your draft has not been sent.`,
       );
-    setStates((states) => ({ ...states, [stateKey]: "Needs approval" }));
+    setStates((states) => ({ ...states, [stateKey]: "Needs session" }));
     if (pending.current) return false;
     const approved = await new Promise<boolean>((resolve) => {
       pending.current = resolve;
@@ -169,24 +180,28 @@ export function useAgentMentions({
       });
     });
     if (!approved || epoch !== generation.current) return false;
-    // Approval does not snapshot permission. Confirm the resulting state before sending.
-    const refreshed = await api.listPersonalConnections({});
+    const refreshed = await api.listAgentSessions({ limit: 100 });
     const connected =
-      !refreshed.controls?.paused &&
-      refreshed.connections.some(
-        (link) =>
-          sameEndpoint(link.source, source) &&
-          sameEndpoint(link.target, reference.target) &&
-          link.status === "active" &&
-          !link.paused &&
-          !link.revoked_at &&
-          (!link.expires_at || Date.parse(link.expires_at) > Date.now()),
+      !refreshed.controls.paused &&
+      refreshed.sessions.some(
+        (session) =>
+          session.state === "active" &&
+          session.members.some(
+            (member) =>
+              member.kind === "registered" &&
+              sameEndpoint(member.endpoint, source),
+          ) &&
+          session.members.some(
+            (member) =>
+              member.kind === "registered" &&
+              sameEndpoint(member.endpoint, reference.target),
+          ),
       );
     if (!connected)
       throw new Error(
-        "The connection is not active. Your draft has not been sent.",
+        "The Agent Session is not active. Your draft has not been sent.",
       );
-    setStates((states) => ({ ...states, [stateKey]: "Connected" }));
+    setStates((states) => ({ ...states, [stateKey]: "Session active" }));
     return true;
   }
 
@@ -294,15 +309,15 @@ export function useAgentMentions({
           </div>
         )}
         {Object.entries(states).some(
-          ([, state]) => state === "Needs approval",
+          ([, state]) => state === "Needs session",
         ) && (
           <div role="status">
-            Agent reference needs approval. Your draft is preserved; Send will
-            check again.
+            Agent reference needs an Agent Session. Your draft is preserved;
+            Send will check again.
           </div>
         )}
         {approval && (
-          <ConnectionApproval value={approval} onClose={closeApproval} />
+          <SessionApproval value={approval} onClose={closeApproval} />
         )}
         <FreshAuthModal {...freshAuthModalProps} />
       </>

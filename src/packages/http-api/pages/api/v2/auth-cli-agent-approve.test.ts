@@ -20,6 +20,11 @@ jest.mock("@cocalc/http-api/lib/api/get-params", () => ({
 jest.mock("@cocalc/server/auth/remember-me", () => ({
   getRememberMeHash: (...args) => mockSession(...args),
 }));
+jest.mock("@cocalc/server/agents/store", () => ({ AgentStore: class {} }));
+jest.mock("@cocalc/http-api/lib/api/assert-same-origin-mutation", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 jest.mock("@cocalc/server/agents/external", () => ({
   approveExternalAgentLogin: (...args) => mockApprove(...args),
   assertExternalAgentLoginEnabled: jest.fn(),
@@ -34,7 +39,7 @@ beforeEach(() => {
     session_hash: "forged-session",
     origin_bay_id: "origin",
     challenge_id: "challenge",
-    targets: [],
+    agent_session_id: "session",
     ttl_seconds: 3600,
   });
   mockApprove
@@ -71,7 +76,7 @@ test("external approval takes principal and bound session only from authenticate
     session_hash: "real-session",
     origin_bay_id: "origin",
     challenge_id: "challenge",
-    targets: [],
+    agent_session_id: "session",
     ttl_seconds: 3600,
     agent_id: undefined,
   });

@@ -10,8 +10,6 @@ import {
   resolveIdentityLocal,
   registerIdentityLocal,
   getIdentityLocal,
-  listGrantsLocal,
-  listMessageReceiptsLocal,
   recoverIdentityLocal,
 } from "./api";
 
@@ -37,26 +35,6 @@ export const agentIdentityControl: InterBayAgentIdentityApi = {
       account_id: opts.account_id,
       project_id: opts.project_id,
       agent_id: opts.agent_id,
-    });
-  },
-  listGrants: async (opts) => {
-    await assertOwner(opts);
-    return listGrantsLocal({
-      account_id: opts.account_id,
-      project_id: opts.project_id,
-      agent_id: opts.agent_id,
-      limit: opts.limit,
-      cursor: opts.cursor,
-    });
-  },
-  listMessageReceipts: async (opts) => {
-    await assertOwner(opts);
-    return listMessageReceiptsLocal({
-      account_id: opts.account_id,
-      project_id: opts.project_id,
-      agent_id: opts.agent_id,
-      limit: opts.limit,
-      cursor: opts.cursor,
     });
   },
   list: async (opts) => {

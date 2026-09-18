@@ -11,13 +11,6 @@ import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { CodexAttentionCard, codexFreshAuthUrl } from "../codex-attention-card";
 
 const mockMarkdownInput = jest.fn();
-const mockMessagingRequests = jest.fn();
-jest.mock("@cocalc/frontend/agents/messaging-requests", () => ({
-  AgentMessagingRequests: (props: any) => {
-    mockMessagingRequests(props);
-    return <button>Review typed connection request</button>;
-  },
-}));
 jest.mock("@cocalc/frontend/editors/markdown-input/multimode", () => ({
   __esModule: true,
   default: (props: any) => {
@@ -94,36 +87,6 @@ describe("Codex fresh-auth attention", () => {
         "https://cocalc.test",
       ),
     ).toBeUndefined();
-  });
-
-  it("routes messaging attention to the typed approval renderer, never generic responses", () => {
-    render(
-      <CodexAttentionCard
-        initialRecord={{
-          ...record,
-          attention_kind: "approval",
-          action: {
-            kind: "agent_messaging",
-            reference,
-            expires_at: Date.now() + 60000,
-          },
-        }}
-      />,
-    );
-    expect(
-      screen.getByRole("region", { name: "Codex needs attention" }),
-    ).toBeVisible();
-    expect(
-      screen.getByRole("button", { name: "Review typed connection request" }),
-    ).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Send response" })).toBeNull();
-    expect(mockMessagingRequests).toHaveBeenCalledWith({
-      projectId: record.project_id,
-      path: record.path,
-      threadId: record.thread_id,
-      requestId: reference,
-    });
-    expect(webapp_client.conat_client.attentionAcp).not.toHaveBeenCalled();
   });
 
   it("renders an accessible action instead of question controls", async () => {

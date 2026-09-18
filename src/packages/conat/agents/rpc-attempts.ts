@@ -40,7 +40,7 @@ export class AgentRpcAttempts {
     attempt: AgentRpcAttempt,
     accountId?: string,
   ) {
-    return `${JSON.stringify(accountId ?? null)}/${agentRpcSourceKey(source)}/${attempt.target.project_id}/${attempt.target.agent_id}/${attempt.attempt_id}`;
+    return `${JSON.stringify(accountId ?? null)}/${agentRpcSourceKey(source)}/${attempt.agent_session_id}/${attempt.target.project_id}/${attempt.target.agent_id}/${attempt.attempt_id}`;
   }
   private prune() {
     for (const [key, entry] of this.entries)
@@ -75,8 +75,8 @@ export class AgentRpcAttempts {
     const hash = createHash("sha256")
       .update(
         JSON.stringify([
+          request.agent_session_id,
           request.body,
-          request.guidance === true,
           request.file_references ?? null,
           request.snapshot_manifest ?? null,
         ]),

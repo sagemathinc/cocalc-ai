@@ -72,9 +72,9 @@ export function ExternalAgentInstallations({
         External Agent Installations
       </h3>
       <p>
-        Separate send-only credentials for agents on other computers or sites.
-        Account pause and revoke-all also apply. No access to browse your
-        projects.
+        Session-scoped credentials for agents on other computers or sites. Each
+        installation sends and receives only within its approved Agent Session.
+        Account pause and revoke-all also apply.
       </p>
       {error && <Alert type="error" role="alert" title={error} />}
       {notice && <p role="status">{notice}</p>}
@@ -96,7 +96,7 @@ export function ExternalAgentInstallations({
                 . Expires {new Date(item.expires_at).toLocaleString()}.
               </p>
               <p>
-                {item.destinations.length} approved destination(s). Installation{" "}
+                Agent Session <code>{item.agent_session_id}</code>. Installation{" "}
                 <code style={{ overflowWrap: "anywhere" }}>
                   {item.installation_id}
                 </code>

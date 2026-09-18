@@ -11,9 +11,9 @@ export function AgentMessagingPreference() {
   const [error, setError] = useState("");
   return (
     <section aria-labelledby={`${id}-title`} style={{ marginBlock: 24 }}>
-      <h3 id={`${id}-title`}>Experimental agent messaging</h3>
+      <h3 id={`${id}-title`}>Agent Sessions</h3>
       <label id={`${id}-label`} htmlFor={id}>
-        Enable experimental agent messaging
+        Enable Agent Sessions
       </label>{" "}
       <Switch
         id={id}
@@ -39,12 +39,11 @@ export function AgentMessagingPreference() {
         }}
       />
       <p id={`${id}-description`}>
-        Show agent naming, agent mentions and connection setup. Existing
-        permission checks still apply. Turning this off only hides experimental
-        controls; it does not pause communication or revoke any connections or
-        external credentials.
+        Show agent naming, agent mentions, and two-way Agent Session setup.
+        Turning this off hides these controls; it does not pause or close
+        sessions and does not revoke external credentials.
       </p>
-      <a href="/settings/my-agents">Inspect, pause or revoke in Agents</a>
+      <a href="/settings/my-agents">Inspect, pause, or close in Agents</a>
       {error && <Alert role="alert" type="error" title={error} />}
     </section>
   );

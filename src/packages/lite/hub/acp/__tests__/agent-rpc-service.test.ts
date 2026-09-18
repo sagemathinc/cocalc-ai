@@ -11,13 +11,17 @@ import { AgentRpcCapacity } from "@cocalc/conat/agents/rpc-capacity";
 
 function fixture() {
   const e: AgentRpcEnvelope = {
-    version: 2,
+    version: 3,
     attempt_id: randomUUID(),
     permit_id: randomUUID(),
     source: { project_id: randomUUID(), agent_id: randomUUID() },
     target: { project_id: randomUUID(), agent_id: randomUUID() },
     run_id: randomUUID(),
-    link_id: randomUUID(),
+    agent_session_id: randomUUID(),
+    session_generation: randomUUID(),
+    account_generation: 0,
+    configured_delivery: "queued",
+    guidance: false,
     account_id: randomUUID(),
     path: "/home/user/recv.chat",
     thread_id: randomUUID(),
@@ -88,7 +92,7 @@ test("external snapshot send preserves attribution and target execution account 
   expect(row.agent_rpc.source).toEqual(e.source);
   expect(row.agent_rpc).not.toHaveProperty("source_run_id");
   expect(JSON.stringify(row)).toContain("external agent");
-  expect(JSON.stringify(row)).toContain("cannot receive messages");
+  expect(JSON.stringify(row)).toContain("Replies require current membership");
 });
 
 test("startup must not admit a thread changed away from ACP", async () => {
@@ -128,7 +132,7 @@ test("startup uses current thread configuration and chat ancestry", async () => 
   expect(prepared.request.chat.agent_message).toBe(true);
 });
 
-test("external source cannot use live paths or guidance", async () => {
+test("external source may use session delivery but not live project paths", async () => {
   const { e, deps, service, db } = fixture();
   e.source = {
     kind: "external",
@@ -138,14 +142,16 @@ test("external source cannot use live paths or guidance", async () => {
   };
   delete e.run_id;
   e.guidance = true;
-  await expect(service.submit(e)).rejects.toThrow("external agents");
+  await expect(service.submit(e)).resolves.toMatchObject({
+    outcome: "accepted",
+  });
   e.guidance = false;
+  e.attempt_id = randomUUID();
   e.file_references = [
     { kind: "project-file", path: "/home/user/secret" } as any,
   ];
   await expect(service.submit(e)).rejects.toThrow("external agents");
-  expect(deps.ensureRunning).not.toHaveBeenCalled();
-  expect(db.set).not.toHaveBeenCalled();
+  expect(db.set).toHaveBeenCalledTimes(1);
 });
 
 test.each([
@@ -309,11 +315,14 @@ test("idle wake and busy queue use one existing admission call with target ident
   expect(prepared.request.chat.agent_delivery_id).toBeUndefined();
   expect(db.set).toHaveBeenCalledTimes(1);
   expect(db.set.mock.calls[0][0].agent_rpc).toEqual({
-    version: 2,
+    version: 3,
     source: e.source,
     target: e.target,
     source_run_id: e.run_id,
-    link_id: e.link_id,
+    agent_session_id: e.agent_session_id,
+    agent_session_generation: e.session_generation,
+    configured_delivery: e.configured_delivery,
+    effective_delivery: "queued",
     attempt_id: e.attempt_id,
   });
   expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");

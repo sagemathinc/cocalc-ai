@@ -10,6 +10,7 @@ import {
 test("artifact writes require opt-in before opening a live document", async () => {
   let opened = false;
   const ops = createProjectChatOps({
+    readAccountSettings: async () => ({}),
     resolveProjectConatClient: async () => {
       opened = true;
       throw Error("unexpected project connection");

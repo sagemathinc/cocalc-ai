@@ -100,6 +100,13 @@ export const MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS = {
       userDescription:
         "Maximum number of active named agents in this account across all projects.",
     },
+    max_agent_session_members: {
+      label: "Agent Session members",
+      unit: "agents",
+      adminDescription:
+        "Maximum active members in one Agent Session. This does not create or name agents.",
+      userDescription: "Maximum members in one Agent Session.",
+    },
     max_sponsored_running_projects: {
       label: "Sponsored running projects",
       unit: "projects",

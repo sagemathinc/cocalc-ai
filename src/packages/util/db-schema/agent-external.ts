@@ -78,17 +78,72 @@ Table({
       "map",
       "Canonical approval parameters for duplicate approval conflict detection.",
     ),
-    destinations: {
-      ...required(
-        "array",
-        "At most 32 explicit send-only native endpoints and link IDs.",
-      ),
-      pg_type: "JSONB",
-    },
+    agent_session_id: required(
+      "uuid",
+      "Exact two-way Agent Session approved for this installation.",
+    ),
     created_at: created,
     expires_at: {
       ...time("Finite credential expiry, at most 30 days after approval."),
       not_null: true,
     },
+  },
+});
+
+Table({
+  name: "agent_external_inbox",
+  rules: {
+    primary_key: "message_id",
+    pg_constraints: [
+      {
+        name: "agent_external_inbox_attempt_key",
+        type: "unique",
+        columns: ["account_id", "attempt_id"],
+      },
+      {
+        name: "agent_external_inbox_body_check",
+        type: "check",
+        expression: "octet_length(body) BETWEEN 1 AND 32768",
+      },
+      {
+        name: "agent_external_inbox_state_check",
+        type: "check",
+        expression: "state IN ('pending','acknowledged')",
+      },
+    ],
+    pg_custom_indexes: [
+      {
+        name: "agent_external_inbox_pending",
+        query:
+          "(account_id,installation_id,created_at,message_id) WHERE state='pending'",
+      },
+      {
+        name: "agent_external_inbox_expiry",
+        query: "(expires_at)",
+      },
+    ],
+  },
+  fields: {
+    message_id: required("uuid", "Stable external inbox message."),
+    attempt_id: required("uuid", "Exact sender attempt and idempotency key."),
+    account_id: required("uuid", "Account-home authority."),
+    installation_id: required("uuid", "Exact external installation inbox."),
+    agent_session_id: required("uuid", "Authorizing Agent Session."),
+    session_generation: required("uuid", "Session generation at admission."),
+    source: {
+      ...required("map", "Discriminated authenticated source member."),
+      pg_type: "JSONB",
+    },
+    body: required("string", "Explicit agent-provided message body."),
+    state: {
+      ...required("string", "Pending or acknowledged."),
+      pg_default: "'pending'::character varying",
+    },
+    created_at: created,
+    expires_at: {
+      ...time("Finite inbox retention deadline."),
+      not_null: true,
+    },
+    acknowledged_at: time("Explicit external acknowledgment time."),
   },
 });

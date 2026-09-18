@@ -51,10 +51,8 @@ describe("hub API argument transforms", () => {
 
   it("requires review of every RPC that preserves account_id as target data", () => {
     expect(getHubApiAccountTargetMethods()).toEqual([
-      "agent.authorizeDelivery",
       "agent.authorizeRpcAdmission",
       "agent.authorizeRpcExecution",
-      "agent.beginMessageAdmission",
       "agent.endIdentityRun",
       "agent.getMentionIdentity",
       "agent.issueIdentity",
@@ -78,12 +76,7 @@ describe("hub API argument transforms", () => {
     ]);
   });
 
-  it.each([
-    "agent.issueIdentity",
-    "agent.endIdentityRun",
-    "agent.authorizeDelivery",
-    "agent.beginMessageAdmission",
-  ])(
+  it.each(["agent.issueIdentity", "agent.endIdentityRun"])(
     "binds %s to the trusted host while preserving the execution account target",
     async (name) => {
       expect(
@@ -107,8 +100,10 @@ describe("hub API argument transforms", () => {
 
   it.each([
     "agent.registerIdentity",
-    "agent.grantMessaging",
-    "agent.revokeMessaging",
+    "agent.createAgentSession",
+    "agent.updateAgentSession",
+    "agent.resolveAgentSessionProposal",
+    "agent.setPersonalMessagingState",
     "agent.disableIdentity",
   ])("requires a human and binds %s to the actual session", async (name) => {
     const args = await transformArgs({
@@ -132,7 +127,6 @@ describe("hub API argument transforms", () => {
   });
 
   it.each([
-    "agent.listMessageReceipts",
     "purchases.getMembership",
     "org.get",
     "sync.history",

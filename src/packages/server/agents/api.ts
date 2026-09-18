@@ -1,8 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { AgentApi, AgentHumanAuth } from "@cocalc/conat/hub/api/agent";
-import { requireUuid, validateAgentPage } from "@cocalc/conat/agents/protocol";
-import type { AgentGrant } from "@cocalc/conat/hub/api/agent";
-import { agentPage, ownMessageReceipts } from "./inspection";
+import { requireUuid } from "@cocalc/conat/agents/protocol";
 import { requireDangerousSessionAuth } from "@cocalc/server/conat/api/dangerous-session-auth";
 import { assertProjectHostAgentTokenAccess } from "@cocalc/server/conat/api/project-host-token-auth";
 import { agentStore, agentMessagingEnabled, normalizeAgentPath } from "./store";
@@ -184,98 +182,6 @@ export const resolveIdentityLocal: AgentApi["resolveIdentity"] = async (
     throw new Error("invalid thread_id");
   await assertActor(opts.account_id, opts.project_id);
   return agentStore().find(opts.project_id, opts.path, opts.thread_id);
-};
-
-export const listGrants: AgentApi["listGrants"] = async (opts) => {
-  requireUuid(opts.account_id, "account_id");
-  requireUuid(opts.agent_id, "agent_id");
-  validateAgentPage(opts);
-  if (opts.project_id === undefined) return listGrantsLocal(opts);
-  const request = {
-    account_id: opts.account_id,
-    project_id: opts.project_id,
-    agent_id: opts.agent_id,
-    limit: opts.limit,
-    cursor: opts.cursor,
-  };
-  return withAgentIdentityOwner({
-    project_id: opts.project_id,
-    local: () => listGrantsLocal(request),
-    remote: (api, route) => api.listGrants({ ...request, route }),
-  });
-};
-
-export const listGrantsLocal: AgentApi["listGrants"] = async (opts) => {
-  const limit = validateAgentPage(opts);
-  const agent = await getIdentityLocal(opts);
-  if (agent.created_by !== opts.account_id)
-    throw new Error("only the endpoint registrant may inspect its links");
-  const { rows } = await agentStore().query<AgentGrant>(
-    `SELECT grant_id,source_agent_id,target_agent_id,allow_guidance,approved_by,reason,expires_at,revoked_at
-     FROM agent_message_grants WHERE (source_agent_id=$1 OR target_agent_id=$1)
-       AND ($2::uuid IS NULL OR grant_id>$2) ORDER BY grant_id LIMIT $3`,
-    [agent.agent_id, opts.cursor ?? null, limit + 1],
-  );
-  return agentPage(rows, limit, (row) => row.grant_id);
-};
-
-export const listMessageReceipts: AgentApi["listMessageReceipts"] = async (
-  opts,
-) => {
-  requireUuid(opts.account_id, "account_id");
-  requireUuid(opts.agent_id, "agent_id");
-  validateAgentPage(opts);
-  if (opts.project_id === undefined) return listMessageReceiptsLocal(opts);
-  const request = {
-    account_id: opts.account_id,
-    project_id: opts.project_id,
-    agent_id: opts.agent_id,
-    limit: opts.limit,
-    cursor: opts.cursor,
-  };
-  return withAgentIdentityOwner({
-    project_id: opts.project_id,
-    local: () => listMessageReceiptsLocal(request),
-    remote: (api, route) => api.listMessageReceipts({ ...request, route }),
-  });
-};
-
-export const listMessageReceiptsLocal: AgentApi["listMessageReceipts"] = async (
-  opts,
-) => {
-  validateAgentPage(opts);
-  const agent = await getIdentityLocal(opts);
-  if (agent.created_by !== opts.account_id)
-    throw new Error("only the endpoint registrant may inspect its receipts");
-  return ownMessageReceipts(agent.agent_id, opts);
-};
-
-export const grantMessaging: AgentApi["grantMessaging"] = async () => {
-  throw new Error("Legacy grants are retired; approve an RPC link instead");
-};
-
-export const revokeMessaging: AgentApi["revokeMessaging"] = async (opts) => {
-  const db = agentStore();
-  const account_id = await human(opts);
-  requireUuid(opts.grant_id, "grant_id");
-  const grant = (
-    await db.query("SELECT * FROM agent_message_grants WHERE grant_id=$1", [
-      opts.grant_id,
-    ])
-  ).rows[0];
-  if (!grant) throw new Error("link not found");
-  const source = await db.get(grant.source_agent_id);
-  const target = await db.get(grant.target_agent_id);
-  if (account_id !== source.created_by && account_id !== target.created_by)
-    throw new Error("only an endpoint registrant may revoke the link");
-  await assertActor(
-    account_id,
-    account_id === source.created_by ? source.project_id : target.project_id,
-  );
-  await db.query(
-    "UPDATE agent_message_grants SET revoked_at=COALESCE(revoked_at,now()),revoked_by=$2 WHERE grant_id=$1",
-    [opts.grant_id, account_id],
-  );
 };
 
 export const disableIdentity: AgentApi["disableIdentity"] = async (opts) => {
@@ -462,12 +368,3 @@ export const endIdentityRun: AgentApi["endIdentityRun"] = async (opts) => {
     [opts.agent_id, opts.run_id, opts.account_id],
   );
 };
-
-// Compatibility gates for old hosts. Never revive experimental pending work.
-export const authorizeDelivery: AgentApi["authorizeDelivery"] = async () => {
-  throw new Error("Legacy agent delivery is retired; no work was authorized");
-};
-export const beginMessageAdmission: AgentApi["beginMessageAdmission"] =
-  async () => {
-    throw new Error("Legacy agent delivery is retired; no work was authorized");
-  };

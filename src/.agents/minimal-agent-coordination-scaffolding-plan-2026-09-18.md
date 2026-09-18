@@ -2,8 +2,10 @@
 
 Date: 2026-09-18
 
-Status: focused architecture and implementation plan. This replaces the brief
-experimental directional-link model before it becomes a compatibility contract.
+Status: implemented on `feature/my-agents-workspace` for PR #640. This replaces
+the brief experimental directional-link model before it becomes a compatibility
+contract. Deployment qualification and production measurement are recorded
+separately below rather than treated as additional authority models.
 
 ## Executive Decision
 
@@ -622,29 +624,29 @@ communicated by color alone.
 
 ### Stage 1: Same-Project Session Cutover
 
-- [ ] Add home-bay session/member schema and management API.
-- [ ] Inventory every existing authority route in the account API, personal
+- [x] Add home-bay session/member schema and management API.
+- [x] Inventory every existing authority route in the account API, personal
       connection store, RPC link/grant service, receipt/protocol-v2 path, CLI,
       and external-agent destination flow. Delete directional authorization and
       all optional `link_id`/session fallback; retain only the account-wide
       pause/revoke control and generation.
-- [ ] Remove directional connection request/grant UI, API, CLI, schema, and
+- [x] Remove directional connection request/grant UI, API, CLI, schema, and
       authorization fallback; no migration UI is required.
-- [ ] Add `max_agent_session_members` to membership tiers and presentation.
-- [ ] Add fixed per-account/session/proposal bounds, pagination, proposal TTL,
+- [x] Add `max_agent_session_members` to membership tiers and presentation.
+- [x] Add fixed per-account/session/proposal bounds, pagination, proposal TTL,
       and canonical idempotency for mutations, direct sends, and broadcasts.
-- [ ] Build create/list/inspect/pause/close/add/remove UI.
-- [ ] Authorize complete-graph direct sends without N-squared grant rows.
-- [ ] Preserve authorization guards before admission, after startup/file
+- [x] Build create/list/inspect/pause/close/add/remove UI.
+- [x] Authorize complete-graph direct sends without N-squared grant rows.
+- [x] Preserve authorization guards before admission, after startup/file
       validation, and at queued execution, bound to session/account generations,
       source run, target, route/host, request digest, and deadline.
-- [ ] Add queued/live session policy, generation invalidation, live guidance
+- [x] Add queued/live session policy, generation invalidation, live guidance
       admission, and honest queued fallback.
-- [ ] Replace peer discovery and message metadata with exact session
+- [x] Replace peer discovery and message metadata with exact session
       authorization and correlation.
-- [ ] Add the Slate `agent-message` renderer, bounded operational inspection,
+- [x] Add the Slate `agent-message` renderer, bounded operational inspection,
       and honest editable-history fallback before enabling session sends.
-- [ ] Add focused authorization, delivery, accessibility, light/dark theme,
+- [x] Add focused authorization, delivery, accessibility, light/dark theme,
       edit, missing-evidence, and static-renderer tests.
 
 Exit criterion: one human can put two named agents in one same-project session,
@@ -653,15 +655,15 @@ security/delivery claim. No directional link path can authorize new work.
 
 ### Stage 2: Complete-Graph UX And Broadcast
 
-- [ ] Exercise add/remove with at least three agents and make the complete-graph
+- [x] Exercise add/remove with at least three agents and make the complete-graph
       consequence explicit in confirmation and session details.
-- [ ] Add bounded explicit broadcast with per-target outcomes.
-- [ ] Replace per-target external destination approval with session enrollment;
+- [x] Add bounded explicit broadcast with per-target outcomes.
+- [x] Replace per-target external destination approval with session enrollment;
       add the authenticated bounded external inbox required for two-way
       membership and remove the old send-only authorization path.
-- [ ] Add chronological session activity, per-member counts, and links to
+- [x] Add chronological session activity, per-member counts, and links to
       inspectable message cards.
-- [ ] Tune grouping, empty/error states, keyboard behavior, zoom, and narrow
+- [x] Tune grouping, empty/error states, keyboard behavior, zoom, and narrow
       layouts without adding a graph or workflow editor.
 
 Exit criterion: at least three same-project agents communicate pairwise through
@@ -670,12 +672,12 @@ bounded broadcast fanout.
 
 ### Stage 3: Cross-Project Qualification
 
-- [ ] Add project-set-based fresh-auth creation, expansion, and resume flows for
+- [x] Add project-set-based fresh-auth creation, expansion, and resume flows for
       cross-project sessions. Adding another agent from an already represented
       project does not require fresh auth.
-- [ ] Route session checks through the account home bay and target admission
+- [x] Route session checks through the account home bay and target admission
       through the current project owning bay/host.
-- [ ] Test route staleness, host restart, collaborator removal, agent and
+- [x] Test route staleness, host restart, collaborator removal, agent and
       external-member retirement/recovery, delivery-mode changes, pause, and
       close.
 - [ ] Load-test effective tier limits, broadcast fanout, and failure isolation.
@@ -686,9 +688,10 @@ truthful partial or unknown outcomes during failures.
 
 ### Stage 4: UX Polish And Measurement
 
-- [ ] Add session activity summaries to the Agents page without making it a
+- [x] Add session activity summaries to the Agents page without making it a
       second transcript.
-- [ ] Tune grouping, labels, and empty/error states using real message traffic.
+- [x] Tune grouping, labels, and empty/error states using development message
+      traffic.
 - [ ] Measure direct sends, replies, broadcast fanout, outcomes, queue delay,
       live-guidance admission, queued fallback, human inspection, session size,
       and aggregate runtime/cost.

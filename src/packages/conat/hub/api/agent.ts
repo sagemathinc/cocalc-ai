@@ -17,43 +17,36 @@ import {
 import type {
   AgentIdentity,
   AgentCredential,
-  AgentPage,
-  AgentPageOptions,
-  AgentMessageHistoryEntry,
 } from "@cocalc/conat/agents/protocol";
+import type { AgentEndpoint, AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
 import type {
-  AgentEndpoint,
-  AgentRpcEnvelope,
-  AgentRpcLink,
-} from "@cocalc/conat/agents/rpc";
-import type { AgentRpcLinkApproval } from "@cocalc/conat/inter-bay/agent-rpc";
-import type {
+  AgentSession,
+  AgentSessionActivity,
+  AgentSessionDirectory,
+  AgentSessionProposal,
+  CreateAgentSessionOptions,
   NamedAgent,
   NamedAgentDirectory,
   NameAgentOptions,
   RetireNamedAgentOptions,
-  PersonalConnection,
-  PersonalConnectionDirectory,
   PersonalMessagingControls,
-  GrantPersonalConnectionOptions,
-  SetPersonalConnectionStateOptions,
+  ResolveAgentSessionProposalOptions,
   SetPersonalMessagingStateOptions,
-  PersonalConnectionRequest,
+  UpdateAgentSessionOptions,
 } from "@cocalc/conat/agents/personal";
 
 export const agent = {
-  listPersonalConnectionRequests: authFirstRequireAccount,
-  resolvePersonalConnectionRequest: authFirstRequireAccountWithBoundSession,
   listNamedAgents: authFirstRequireAccount,
   nameAgent: authFirstRequireAccountWithBoundSession,
   retireNamedAgent: authFirstRequireAccountWithBoundSession,
-  listPersonalConnections: authFirstRequireAccount,
-  grantPersonalConnection: authFirstRequireAccountWithBoundSession,
-  setPersonalConnectionState: authFirstRequireAccountWithBoundSession,
+  listAgentSessions: authFirstRequireAccount,
+  createAgentSession: authFirstRequireAccountWithBoundSession,
+  updateAgentSession: authFirstRequireAccountWithBoundSession,
+  listAgentSessionActivity: authFirstRequireAccount,
+  inspectAgentSessionAttempt: authFirstRequireAccount,
+  listAgentSessionProposals: authFirstRequireAccount,
+  resolveAgentSessionProposal: authFirstRequireAccountWithBoundSession,
   setPersonalMessagingState: authFirstRequireAccountWithBoundSession,
-  grantRpcLink: authFirstRequireAccountWithBoundSession,
-  revokeRpcLink: authFirstRequireAccountWithBoundSession,
-  listRpcLinks: authFirstRequireAccount,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
@@ -61,16 +54,10 @@ export const agent = {
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
   resolveIdentity: authFirstRequireAccount,
-  listGrants: authFirstRequireAccount,
-  listMessageReceipts: authFirstRequireAccount,
-  grantMessaging: authFirstRequireAccountWithBoundSession,
-  revokeMessaging: authFirstRequireAccountWithBoundSession,
   disableIdentity: authFirstRequireAccountWithBoundSession,
   recoverIdentity: authFirstRequireAccountWithBoundSession,
   issueIdentity: authFirstRequireHostWithAccountTarget,
   endIdentityRun: authFirstRequireHostWithAccountTarget,
-  authorizeDelivery: authFirstRequireHostWithAccountTarget,
-  beginMessageAdmission: authFirstRequireHostWithAccountTarget,
   execute: authFirstRequireAccount,
   manifest: authFirstRequireAccount,
   plan: authFirstRequireAccount,
@@ -202,17 +189,6 @@ export interface AgentHostAuth {
   account_id?: string;
   host_id?: string;
 }
-export interface AgentGrant {
-  grant_id: string;
-  source_agent_id: string;
-  target_agent_id: string;
-  allow_guidance: boolean;
-  approved_by: string;
-  reason: string;
-  expires_at: Date | string;
-  revoked_at?: Date | string | null;
-}
-
 export interface AgentIdentityLocator {
   account_id?: string;
   agent_id: string;
@@ -221,39 +197,42 @@ export interface AgentIdentityLocator {
 }
 
 export interface AgentApi {
-  listPersonalConnectionRequests(opts: {
-    account_id?: string;
-  }): Promise<{ enabled: boolean; requests: PersonalConnectionRequest[] }>;
-  resolvePersonalConnectionRequest(
-    opts: AgentHumanAuth & { request_id: string; decision: "approve" | "deny" },
-  ): Promise<PersonalConnectionRequest>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
   retireNamedAgent(
     opts: AgentHumanAuth & RetireNamedAgentOptions,
   ): Promise<void>;
-  listPersonalConnections(opts: {
+  listAgentSessions(opts: {
     account_id?: string;
-  }): Promise<PersonalConnectionDirectory>;
-  grantPersonalConnection(
-    opts: AgentHumanAuth & GrantPersonalConnectionOptions,
-  ): Promise<PersonalConnection[]>;
-  setPersonalConnectionState(
-    opts: AgentHumanAuth & SetPersonalConnectionStateOptions,
-  ): Promise<PersonalConnection[]>;
+    limit?: number;
+    cursor?: string;
+  }): Promise<AgentSessionDirectory>;
+  createAgentSession(
+    opts: AgentHumanAuth & CreateAgentSessionOptions,
+  ): Promise<AgentSession>;
+  updateAgentSession(
+    opts: AgentHumanAuth & UpdateAgentSessionOptions,
+  ): Promise<AgentSession>;
+  listAgentSessionActivity(opts: {
+    account_id?: string;
+    agent_session_id: string;
+    limit?: number;
+  }): Promise<AgentSessionActivity[]>;
+  inspectAgentSessionAttempt(opts: {
+    account_id?: string;
+    agent_session_id: string;
+    attempt_id: string;
+  }): Promise<AgentSessionActivity | undefined>;
+  listAgentSessionProposals(opts: {
+    account_id?: string;
+    limit?: number;
+  }): Promise<AgentSessionProposal[]>;
+  resolveAgentSessionProposal(
+    opts: AgentHumanAuth & ResolveAgentSessionProposalOptions,
+  ): Promise<AgentSessionProposal>;
   setPersonalMessagingState(
     opts: AgentHumanAuth & SetPersonalMessagingStateOptions,
   ): Promise<PersonalMessagingControls>;
-  grantRpcLink(
-    opts: AgentHumanAuth & AgentRpcLinkApproval,
-  ): Promise<AgentRpcLink>;
-  revokeRpcLink(
-    opts: AgentHumanAuth & { source: AgentEndpoint; link_id: string },
-  ): Promise<void>;
-  listRpcLinks(opts: {
-    account_id?: string;
-    source: AgentEndpoint;
-  }): Promise<AgentRpcLink[]>;
   authorizeRpcAdmission(
     opts: AgentHostAuth & { envelope: AgentRpcEnvelope },
   ): Promise<void>;
@@ -274,12 +253,6 @@ export interface AgentApi {
   getMentionIdentity(
     opts: AgentHostAuth & { project_id: string; target: AgentEndpoint },
   ): Promise<AgentIdentity>;
-  listGrants(
-    opts: AgentIdentityLocator & AgentPageOptions,
-  ): Promise<AgentPage<AgentGrant>>;
-  listMessageReceipts(
-    opts: AgentIdentityLocator & AgentPageOptions,
-  ): Promise<AgentPage<AgentMessageHistoryEntry>>;
   registerIdentity(
     opts: AgentHumanAuth & {
       project_id: string;
@@ -291,17 +264,6 @@ export interface AgentApi {
     account_id?: string;
     project_id: string;
   }): Promise<AgentIdentity[]>;
-  grantMessaging(
-    opts: AgentHumanAuth & {
-      grant_id?: string;
-      source_agent_id: string;
-      target_agent_id: string;
-      ttl_seconds: number;
-      reason: string;
-      allow_guidance?: boolean;
-    },
-  ): Promise<AgentGrant>;
-  revokeMessaging(opts: AgentHumanAuth & { grant_id: string }): Promise<void>;
   disableIdentity(opts: AgentHumanAuth & { agent_id: string }): Promise<void>;
   recoverIdentity(
     opts: AgentHumanAuth & { project_id: string; agent_id: string },
@@ -318,26 +280,6 @@ export interface AgentApi {
   endIdentityRun(
     opts: AgentHostAuth & { agent_id: string; run_id: string },
   ): Promise<void>;
-  authorizeDelivery(
-    opts: AgentHostAuth & {
-      project_id: string;
-      path: string;
-      thread_id: string;
-      message_id: string;
-      recovery_generation?: string;
-    },
-  ): Promise<void>;
-  /** One-use queue attempt, not a replayable capability. False means observe only. */
-  beginMessageAdmission(
-    opts: AgentHostAuth & {
-      project_id: string;
-      path: string;
-      thread_id: string;
-      message_id: string;
-      recovery_generation: string;
-      operation_id: string;
-    },
-  ): Promise<boolean>;
   execute: (opts: AgentExecuteRequest) => Promise<AgentExecuteResponse>;
   manifest: (opts?: { account_id?: string }) => Promise<AgentManifestEntry[]>;
   plan: (opts: AgentPlanRequest) => Promise<AgentPlanResponse>;

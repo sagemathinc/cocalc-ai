@@ -6,7 +6,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
-import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
+import type { AgentSessionDirectory } from "@cocalc/conat/agents/personal";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function ExternalAgentApproval({
@@ -22,8 +22,8 @@ export function ExternalAgentApproval({
   isAuthenticated: boolean;
   accountLabel?: string;
 }) {
-  const [directory, setDirectory] = useState<NamedAgentDirectory>();
-  const [selected, setSelected] = useState<string[]>([]);
+  const [directory, setDirectory] = useState<AgentSessionDirectory>();
+  const [selected, setSelected] = useState<string>();
   const [duration, setDuration] = useState(86400);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -36,7 +36,7 @@ export function ExternalAgentApproval({
   useEffect(() => {
     let disposed = false;
     if (isAuthenticated) {
-      void postAuthApi<NamedAgentDirectory>({
+      void postAuthApi<AgentSessionDirectory>({
         origin,
         endpoint: "auth/cli/agent/destinations",
         body: {},
@@ -54,11 +54,7 @@ export function ExternalAgentApproval({
   }, [isAuthenticated, origin]);
 
   async function approve() {
-    const targets =
-      directory?.agents
-        .filter((agent) => selected.includes(agent.name) && agent.available)
-        .map((agent) => agent.endpoint) ?? [];
-    if (!targets.length) return;
+    if (!selected) return;
     setError("");
     setBusy(true);
     try {
@@ -69,7 +65,7 @@ export function ExternalAgentApproval({
           body: {
             challenge_id: challengeId,
             origin_bay_id: originBayId,
-            targets,
+            agent_session_id: selected,
             ttl_seconds: duration,
           },
         });
@@ -90,8 +86,8 @@ export function ExternalAgentApproval({
     >
       <h2>Connect External Agent</h2>
       <p>
-        <strong>{label}</strong> is requesting its own send-only identity, not
-        access to your CoCalc account.
+        <strong>{label}</strong> is requesting a session-scoped external agent
+        identity, not access to your CoCalc account.
       </p>
       {isAuthenticated && accountLabel && (
         <p>
@@ -102,7 +98,7 @@ export function ExternalAgentApproval({
         <Alert
           type="info"
           role="note"
-          title="Sign in to select the agents this installation may message."
+          title="Sign in to select the Agent Session this installation may join."
         />
       ) : approved ? (
         <Alert
@@ -116,7 +112,7 @@ export function ExternalAgentApproval({
             type="warning"
             role="note"
             title="Only approve a request you started."
-            description="Anyone who can read this installation's credential can use it until it expires or you revoke it. Messages may start projects and agent work under your account, subject to your normal permissions and limits. This does not allow receiving messages or browsing project files."
+            description="Anyone who can read this installation's credential can send and receive messages as this external agent within the selected session until it expires or you revoke it. Every session member can exchange prompt data with it. This does not permit browsing project files."
           />
           {error && <Alert type="error" role="alert" title={error} />}
           {!directory ? (
@@ -127,50 +123,42 @@ export function ExternalAgentApproval({
                 disabled={busy}
                 style={{ border: 0, padding: 0, minWidth: 0 }}
               >
-                <legend>Allow sending to these agents</legend>
-                {directory.agents.length === 0 && (
+                <legend>Join one Agent Session</legend>
+                {directory.sessions.filter(
+                  (session) =>
+                    session.state === "active" &&
+                    session.members.length < directory.usage.member_limit,
+                ).length === 0 && (
                   <p>
-                    Name an agent in CoCalc first, then reopen this approval
-                    page.
+                    Create an Agent Session with room for another member, then
+                    reopen this approval page.
                   </p>
                 )}
-                {directory.agents.map((agent) => (
-                  <label
-                    key={agent.name}
-                    style={{
-                      display: "flex",
-                      alignItems: "start",
-                      gap: 8,
-                      marginBottom: 12,
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      disabled={
-                        !agent.available ||
-                        (!selected.includes(agent.name) &&
-                          selected.length >= 32)
-                      }
-                      checked={selected.includes(agent.name)}
-                      onChange={(event) =>
-                        setSelected((values) =>
-                          event.target.checked
-                            ? [...values, agent.name]
-                            : values.filter((name) => name !== agent.name),
-                        )
-                      }
-                    />
-                    <span>
-                      <strong>@{agent.name}</strong>
-                      {!agent.available && " (unavailable)"}
-                      <br />
-                      {[agent.project_title, agent.thread_title]
-                        .filter(Boolean)
-                        .join(" / ")}
-                    </span>
-                  </label>
-                ))}
+                <Select
+                  aria-label="Agent Session"
+                  value={selected}
+                  onChange={setSelected}
+                  style={{ width: "100%" }}
+                  placeholder="Select an Agent Session"
+                  options={directory.sessions
+                    .filter(
+                      (session) =>
+                        session.state === "active" &&
+                        session.members.length < directory.usage.member_limit,
+                    )
+                    .map((session) => ({
+                      value: session.agent_session_id,
+                      label: `${session.title || "Untitled Agent Session"} (${session.members.length} members, ${session.delivery_mode})`,
+                    }))}
+                />
+                {selected && (
+                  <Alert
+                    style={{ marginTop: 12 }}
+                    type="info"
+                    title="Two-way complete-graph membership"
+                    description="This external agent and every current or future member of the selected session may message one another in both directions."
+                  />
+                )}
               </fieldset>
               <label htmlFor={durationId}>Credential expires after</label>
               <Select
@@ -191,17 +179,15 @@ export function ExternalAgentApproval({
                 type="primary"
                 onClick={approve}
                 loading={busy}
-                disabled={
-                  busy || !selected.length || directory.controls?.paused
-                }
+                disabled={busy || !selected || directory.controls.paused}
               >
-                Approve Send-Only Access
+                Approve Session Membership
               </Button>
-              {directory.controls?.paused && (
+              {directory.controls.paused && (
                 <Alert
                   type="info"
                   role="note"
-                  title="Your agent connections are paused. Resume them in Agents before approving this request."
+                  title="Your agent messaging is paused. Resume it in Agents before approving this request."
                 />
               )}
             </>

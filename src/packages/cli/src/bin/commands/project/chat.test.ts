@@ -7,6 +7,7 @@ import { registerProjectChatCommands } from "./chat";
 
 test("named send uses one scoped attempt and never the human send path", async () => {
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  const agent_session_id = randomUUID();
   let resolved = 0;
   const attempts: any[] = [];
   let output: any;
@@ -16,7 +17,7 @@ test("named send uses one scoped attempt and never the human send path", async (
     async (name: string) => {
       assert.equal(name, "@reviewer");
       resolved++;
-      return target;
+      return { target, agent_session_id };
     },
   );
   const transport = mock.method(
@@ -40,7 +41,16 @@ test("named send uses one scoped attempt and never the human send path", async (
   const oldExit = process.exitCode;
   try {
     await program.parseAsync(
-      ["project", "chat", "send", "--to", "@reviewer", "Review this"],
+      [
+        "project",
+        "chat",
+        "send",
+        "--to",
+        "@reviewer",
+        "--agent-session",
+        agent_session_id,
+        "Review this",
+      ],
       { from: "user" },
     );
     assert.equal(resolved, 1);
@@ -74,6 +84,7 @@ test("named send uses one scoped attempt and never the human send path", async (
 
 test("attachment sends preserve same-project references and prepare cross-project bytes", async () => {
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  const agent_session_id = randomUUID();
   const paths = [
     { kind: "project-file", path: "/tmp/report.pdf" },
     { kind: "project-file", path: "/tmp/results.json" },
@@ -82,7 +93,7 @@ test("attachment sends preserve same-project references and prepare cross-projec
   const resolver = mock.method(
     require("../../core/agent-destination"),
     "resolveRuntimeAgentName",
-    async () => target,
+    async () => ({ target, agent_session_id }),
   );
   const reader = mock.method(
     require("../../core/agent-attachments"),
@@ -118,7 +129,8 @@ test("attachment sends preserve same-project references and prepare cross-projec
       if (request.action === "prepare-attachments")
         return allowPreparation
           ? {
-              version: 2,
+              version: 3,
+              agent_session_id,
               target,
               attempt_id: request.attempt_id,
               outcome: "prepared",
@@ -126,7 +138,8 @@ test("attachment sends preserve same-project references and prepare cross-projec
               expires_at: Date.now() + 30_000,
             }
           : {
-              version: 2,
+              version: 3,
+              agent_session_id,
               target,
               attempt_id: request.attempt_id,
               outcome: "rejected",
@@ -151,6 +164,8 @@ test("attachment sends preserve same-project references and prepare cross-projec
     "send",
     "--to",
     "reviewer",
+    "--agent-session",
+    agent_session_id,
     "--attach",
     "report.pdf",
     "--attach",
@@ -196,14 +211,7 @@ function setup() {
   let output: any;
   const ctx = {
     accountId: "actor",
-    hub: {
-      agent: {
-        listMessageReceipts: async (options: unknown) => {
-          calls.push(options);
-          return { items: [] };
-        },
-      },
-    },
+    hub: { agent: {} },
   };
   registerProjectChatCommands(project, {
     withContext: async (
@@ -237,23 +245,36 @@ function setup() {
   return { program, calls, ctx, output: () => output };
 }
 
+async function withoutRuntimeIdentity<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = process.env.COCALC_AGENT_IDENTITY_FILE;
+  delete process.env.COCALC_AGENT_IDENTITY_FILE;
+  try {
+    return await fn();
+  } finally {
+    if (previous === undefined) delete process.env.COCALC_AGENT_IDENTITY_FILE;
+    else process.env.COCALC_AGENT_IDENTITY_FILE = previous;
+  }
+}
+
 test("chat send targets the exact project/path/thread and defaults to queued delivery", async () => {
   const f = setup();
-  await f.program.parseAsync(
-    [
-      "project",
-      "chat",
-      "send",
-      "--project",
-      "target",
-      "--path",
-      "test.chat",
-      "--thread-id",
-      "one",
-      "Please",
-      "review",
-    ],
-    { from: "user" },
+  await withoutRuntimeIdentity(() =>
+    f.program.parseAsync(
+      [
+        "project",
+        "chat",
+        "send",
+        "--project",
+        "target",
+        "--path",
+        "test.chat",
+        "--thread-id",
+        "one",
+        "Please",
+        "review",
+      ],
+      { from: "user" },
+    ),
   );
   assert.deepEqual(f.calls, [
     {
@@ -268,43 +289,23 @@ test("chat send targets the exact project/path/thread and defaults to queued del
   assert.equal(f.output().state, "accepted");
 });
 
-test("human receipt inspection forwards only the chosen endpoint and page", async () => {
-  const f = setup();
-  await f.program.parseAsync(
-    [
-      "project",
-      "chat",
-      "agent",
-      "receipts",
-      "source",
-      "--limit",
-      "7",
-      "--cursor",
-      "cursor",
-    ],
-    { from: "user" },
-  );
-  assert.deepEqual(f.calls, [
-    { agent_id: "source", project_id: undefined, limit: 7, cursor: "cursor" },
-  ]);
-  assert.deepEqual(f.output(), { items: [] });
-});
-
 test("chat send --stdin --guidance preserves JSON and newlines", async () => {
   const f = setup();
-  await f.program.parseAsync(
-    [
-      "project",
-      "chat",
-      "send",
-      "--path",
-      "test.chat",
-      "--thread-id",
-      "one",
-      "--stdin",
-      "--guidance",
-    ],
-    { from: "user" },
+  await withoutRuntimeIdentity(() =>
+    f.program.parseAsync(
+      [
+        "project",
+        "chat",
+        "send",
+        "--path",
+        "test.chat",
+        "--thread-id",
+        "one",
+        "--stdin",
+        "--guidance",
+      ],
+      { from: "user" },
+    ),
   );
   assert.equal(f.calls[0].prompt, '{"message":"hello"}\n');
   assert.equal(f.calls[0].guidance, true);
@@ -314,18 +315,20 @@ test("chat send rejects ambiguous or empty input before connecting", async () =>
   for (const message of [[], ["--stdin", "also text"]]) {
     const f = setup();
     await assert.rejects(
-      f.program.parseAsync(
-        [
-          "project",
-          "chat",
-          "send",
-          "--path",
-          "test.chat",
-          "--thread-id",
-          "one",
-          ...message,
-        ],
-        { from: "user" },
+      withoutRuntimeIdentity(() =>
+        f.program.parseAsync(
+          [
+            "project",
+            "chat",
+            "send",
+            "--path",
+            "test.chat",
+            "--thread-id",
+            "one",
+            ...message,
+          ],
+          { from: "user" },
+        ),
       ),
       /empty|either/,
     );

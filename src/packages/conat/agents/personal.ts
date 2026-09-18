@@ -1,18 +1,21 @@
-import type { AgentEndpoint, AgentRpcLink } from "./rpc";
+import type { ExternalAgentSource } from "./external";
+import type { AgentEndpoint, AgentRpcSource } from "./rpc";
 
 export type PersonalAgentDenialCode =
   | "approval_required"
-  | "grant_expired"
-  | "grant_paused"
-  | "grant_revoked"
+  | "session_paused"
+  | "session_closed"
+  | "session_stale"
+  | "not_a_member"
   | "principal_mismatch"
   | "account_disabled"
   | "agent_unavailable";
+
 export interface PersonalAgentDenial {
   denied: PersonalAgentDenialCode;
 }
-/** Local exception only. Trusted inter-bay checks return PersonalAgentDenial
- * data instead: RPC error messages are decorated and are not a protocol. */
+
+/** Local exception only. Trusted inter-bay checks return denial data instead. */
 export class PersonalAgentAuthorizationError extends Error {
   constructor(readonly denial: PersonalAgentDenialCode) {
     super(denial);
@@ -31,20 +34,20 @@ export interface NamedAgent {
   available: boolean;
   updated_at: string;
 }
+
 export interface PersonalMessagingControls {
   /** Blocks subsequent authority checks, not already admitted work. */
   paused: boolean;
   generation: number;
 }
+
 export interface NamedAgentDirectory {
   enabled: boolean;
   agents: NamedAgent[];
-  usage?: {
-    active: number;
-    limit: number;
-  };
+  usage?: { active: number; limit: number };
   controls?: PersonalMessagingControls;
 }
+
 export interface NameAgentOptions {
   endpoint: AgentEndpoint;
   name: string;
@@ -52,69 +55,178 @@ export interface NameAgentOptions {
   project_title?: string;
   thread_title?: string;
 }
+
 export interface RetireNamedAgentOptions {
   endpoint: AgentEndpoint;
 }
-export type PersonalConnectionStatus =
-  | "active"
-  | "expired"
-  | "paused"
-  | "revoked";
-export interface PersonalConnection extends AgentRpcLink {
-  principal_account_id: string;
-  direction_group_id: string;
-  approval_request_id: string;
-  generation: number;
-  paused: boolean;
-  status: PersonalConnectionStatus;
+
+export type AgentSessionState = "active" | "paused" | "closed";
+export type AgentSessionDeliveryMode = "queued" | "live";
+
+export interface RegisteredAgentSessionMember {
+  kind: "registered";
+  member_id: string;
+  endpoint: AgentEndpoint;
+  name?: string;
+  project_title?: string;
+  thread_title?: string;
+  available: boolean;
+  added_at: string;
+  removed_at?: string | null;
+}
+
+export interface ExternalAgentSessionMember {
+  kind: "external";
+  member_id: string;
+  source: ExternalAgentSource;
+  label: string;
+  available: boolean;
+  added_at: string;
+  removed_at?: string | null;
+}
+
+export type AgentSessionMember =
+  | RegisteredAgentSessionMember
+  | ExternalAgentSessionMember;
+
+export type AgentSessionMemberLocator =
+  | { kind: "registered"; endpoint: AgentEndpoint }
+  | {
+      kind: "external";
+      agent_id: string;
+      installation_id: string;
+    };
+
+export interface AgentSession {
+  agent_session_id: string;
+  account_id: string;
+  title?: string | null;
+  state: AgentSessionState;
+  delivery_mode: AgentSessionDeliveryMode;
+  generation: string;
+  created_by: string;
   created_at: string;
-  last_attempt_at?: string | null;
-  last_accepted_at?: string | null;
+  updated_at: string;
+  closed_at?: string | null;
+  members: AgentSessionMember[];
 }
-export interface PersonalConnectionDirectory {
+
+export interface AgentSessionDirectory {
   enabled: boolean;
-  connections: PersonalConnection[];
-  controls?: PersonalMessagingControls;
+  sessions: AgentSession[];
+  usage: {
+    active_sessions: number;
+    session_limit: number;
+    member_limit: number;
+  };
+  controls: PersonalMessagingControls;
+  next_cursor?: string;
 }
-export interface GrantPersonalConnectionOptions {
-  source: AgentEndpoint;
-  target: AgentEndpoint;
-  /** Stable UUID for safe inspection/retry of approval, never send replay. */
-  approval_request_id: string;
-  /** Omitted: one day. Null: never expires. Maximum: 30 days. */
-  ttl_seconds?: number | null;
-  both_directions?: boolean;
-  allow_guidance?: boolean;
-  reason: string;
+
+export interface CreateAgentSessionOptions {
+  request_id: string;
+  title?: string;
+  delivery_mode?: AgentSessionDeliveryMode;
+  members: AgentSessionMemberLocator[];
 }
-export interface SetPersonalConnectionStateOptions {
-  direction_group_id: string;
-  state: "paused" | "active" | "revoked";
-}
+
+export type UpdateAgentSessionOptions =
+  | {
+      request_id: string;
+      agent_session_id: string;
+      action: "pause" | "resume" | "close";
+    }
+  | {
+      request_id: string;
+      agent_session_id: string;
+      action: "set-delivery";
+      delivery_mode: AgentSessionDeliveryMode;
+    }
+  | {
+      request_id: string;
+      agent_session_id: string;
+      action: "add-member" | "remove-member";
+      member: AgentSessionMemberLocator;
+    }
+  | {
+      request_id: string;
+      agent_session_id: string;
+      action: "set-title";
+      title?: string;
+    };
+
 export interface SetPersonalMessagingStateOptions {
   action: "pause" | "resume" | "revoke_all";
 }
-export interface PersonalConnectionRequestOptions {
-  request_id: string;
-  target: AgentEndpoint;
-  reason: string;
-  ttl_seconds?: number | null;
-  both_directions?: boolean;
-  allow_guidance?: boolean;
-}
-export type AgentConnectionRequest = PersonalConnectionRequest;
-export interface PersonalConnectionRequest extends PersonalConnectionRequestOptions {
-  /** On inspection of a coalesced submitted ID, identifies its sole authority. */
-  canonical_request_id?: string;
-  generation: number;
-  request_id: string;
+
+export interface AgentSessionAuthorization {
+  agent_session_id: string;
+  session_generation: string;
+  account_generation: number;
   account_id: string;
-  source: AgentEndpoint;
-  run_id: string;
+  delivery_mode: AgentSessionDeliveryMode;
+  source: AgentSessionMember;
+  target: AgentSessionMember;
+}
+
+export interface AgentSessionPeer {
+  member: AgentSessionMember;
+  sessions: Array<
+    Pick<
+      AgentSession,
+      "agent_session_id" | "title" | "delivery_mode" | "generation"
+    >
+  >;
+}
+
+export interface AgentSessionDiscovery {
+  peers: AgentSessionPeer[];
+}
+
+export interface AgentSessionActivity {
+  attempt_id: string;
+  agent_session_id: string;
+  session_generation: string;
+  source_member_id: string;
+  target_member_id: string;
+  configured_delivery: AgentSessionDeliveryMode;
+  effective_delivery?:
+    | "idle-wake"
+    | "queued"
+    | "live-guidance"
+    | "queued-fallback"
+    | "external-inbox";
+  outcome?: "accepted" | "rejected" | "unknown";
+  observed_at: string;
+}
+
+export interface AgentSessionProposal {
+  proposal_id: string;
+  account_id: string;
+  source: AgentRpcSource;
+  title?: string | null;
+  delivery_mode: AgentSessionDeliveryMode;
+  members: AgentSessionMemberLocator[];
+  reason?: string | null;
+  state: "pending" | "approved" | "rejected" | "expired";
   created_at: string;
   expires_at: string;
-  state: "pending" | "approved" | "denied" | "expired" | "invalidated";
-  direction_group_id?: string;
+  resolved_at?: string | null;
+  agent_session_id?: string | null;
+}
+
+export interface ProposeAgentSessionOptions {
+  proposal_id: string;
+  title?: string;
+  delivery_mode?: AgentSessionDeliveryMode;
+  members: AgentSessionMemberLocator[];
+  reason?: string;
+}
+
+export interface ResolveAgentSessionProposalOptions {
+  proposal_id: string;
+  action: "approve" | "reject";
+  request_id: string;
 }
 
 export function normalizeAgentName(value: string): string {

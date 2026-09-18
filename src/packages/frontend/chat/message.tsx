@@ -382,6 +382,8 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   | {
       label: string;
       detail: string;
+      agent_session_id?: string;
+      attempt_id?: string;
     }
   | undefined {
   const raw = field<any>(message, "agent_rpc");
@@ -390,16 +392,38 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   const agentId = `${source?.agent_id ?? ""}`.trim();
   if (!agentId) return;
   const short = agentId.length > 12 ? `${agentId.slice(0, 8)}...` : agentId;
+  const evidence = {
+    agent_session_id:
+      typeof rpc.agent_session_id === "string"
+        ? rpc.agent_session_id
+        : undefined,
+    attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
+  };
   if (source.kind === "external") {
     return {
+      ...evidence,
       label: `External agent ${short}`,
       detail: `Authenticated external agent ${agentId}, installation ${source.installation_id ?? "unknown"}`,
     };
   }
   return {
+    ...evidence,
     label: `Agent ${short}`,
     detail: `Authenticated agent ${agentId} from project ${source.project_id ?? "unknown"}`,
   };
+}
+
+function agentMessageFence(
+  value: string,
+  evidence?: { agent_session_id?: string; attempt_id?: string },
+): string {
+  let fence = "```";
+  while (value.includes(fence)) fence += "`";
+  const info =
+    evidence?.agent_session_id && evidence.attempt_id
+      ? `agent-message ${evidence.agent_session_id} ${evidence.attempt_id}`
+      : "agent-message";
+  return `${fence}${info}\n${value}\n${fence}`;
 }
 
 export default function Message({
@@ -1068,17 +1092,16 @@ export default function Message({
     }
     return recordCodexFirstResponseVisible(responseParentMessageId);
   }, [isCodexThread, renderedMessageValue, responseParentMessageId]);
-  const renderedMessageMarkdown = useMemo(
-    () =>
-      is_viewers_message
-        ? renderedMessageValue
-        : formatCodexErrorMarkdown(
-            linkifyCommitHashes(renderedMessageValue),
-            lite,
-            acpState === "error",
-          ),
-    [is_viewers_message, renderedMessageValue, acpState],
-  );
+  const renderedMessageMarkdown = useMemo(() => {
+    const value = is_viewers_message
+      ? renderedMessageValue
+      : formatCodexErrorMarkdown(
+          linkifyCommitHashes(renderedMessageValue),
+          lite,
+          acpState === "error",
+        );
+    return rpcAttribution ? agentMessageFence(value, rpcAttribution) : value;
+  }, [is_viewers_message, renderedMessageValue, acpState, rpcAttribution]);
   const showCodexErrorHelp =
     isCodexThread && !is_viewers_message && acpState === "error";
   const acpResubmitParentMessage = (() => {

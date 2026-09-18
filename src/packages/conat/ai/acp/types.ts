@@ -77,18 +77,21 @@ export interface AcpAutomationRecord {
 export interface AcpChatContext {
   // Trusted receiving service marks model-authored messages; never bind their refs.
   agent_message?: boolean;
-  // Revalidate the directional grant before executing a queued agent message.
+  // Revalidate legacy delivery rows before execution; new work never sets these.
   agent_delivery_id?: string;
   agent_delivery_generation?: string;
   // Immutable provenance for reauthorizing an RPC message at queue execution.
   agent_rpc_execution?: {
-    version: 2;
+    version: 3;
     source: AgentRpcSource;
     source_run_id?: string;
     target: AgentEndpoint;
     target_path: string;
     target_thread_id: string;
-    link_id: string;
+    agent_session_id: string;
+    session_generation: string;
+    account_generation: number;
+    configured_delivery: "queued" | "live";
     principal_account_id: string;
     guidance: boolean;
   };
@@ -298,7 +301,7 @@ export type AcpAttentionQuestion = {
 };
 
 export type AcpAttentionAction = {
-  kind: "fresh_auth" | "agent_messaging";
+  kind: "fresh_auth";
   reference: string;
   expires_at: number;
 };

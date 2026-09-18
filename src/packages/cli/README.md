@@ -384,48 +384,39 @@ and cross-site identity federation are not provided by this command. To use a
 different site, explicitly select its API/profile and authorized credentials;
 never put credentials into the message text.
 
-### Personal Named Agent Messaging (Opt-In)
+### Named Agent Sessions
 
-With personal messaging enabled, name agents in **My Agents** or beside the
-thread title. Select a named agent in the composer's `@` picker to approve
-communication at the point of use. Permissions belong to the human initiating
-the turn, not everyone sharing the thread. Names span that human's projects;
-selected references remain bound to the original agent after a rename.
+Name agents in the Agents page or beside the thread title, then explicitly put
+two or more agents in an Agent Session. A session is always a complete graph:
+every active member can message every other member in both directions. Session
+authority belongs to the human account that created it, not everyone sharing a
+thread.
 
 During an agent turn, use the runtime-issued scoped identity, never a broader
 account/project credential:
 
 ```bash
 cocalc project chat agent destinations --json
-cocalc project chat send --to reviewer --stdin --json <<'EOF'
+cocalc project chat send --to reviewer --agent-session SESSION_ID --stdin --json <<'EOF'
 {"kind":"review-request","correlation_id":"review-42","text":"Please review the PR."}
 EOF
-cocalc project chat agent request-connection --to reviewer --reason "Review this PR"
-cocalc project chat agent connection-request "$request_id" --json
 ```
 
-`--to` resolves an exact approved name or a reference selected for the current
-turn. It never guesses from project titles or historical messages. For approval
-of a previously resolved endpoint, `request-connection` also accepts the pair
-`--to-agent` and `--target-project` instead of `--to`.
-
-A connection request is a typed request to the turn's human, not approval itself
-and not a message. It supports `--ttl-seconds` (default one day, maximum 30 days),
-`--never-expires`, and `--both-directions`. Approval never replays a send. The
-command waits up to 120 seconds using read-only inspection; use `--wait-seconds 0`
-to return immediately or set a limit up to 900 seconds. A pending result is not
-approval and does not keep the source run alive after that run finishes. The
-human can pause or revoke their permissions in My Agents. Intentional pause or
-revocation is not a reason to repeatedly request renewal.
+`--to` resolves an exact named member of the exact `--agent-session`; it never
+selects the only matching session or guesses from project titles. Agents may use
+`agent propose-session` to place a bounded typed proposal in the Agents page,
+but only a human can approve it. Approval never replays a send.
 
 Named send returns `accepted`, `rejected`, or `unknown` with an attempt ID
 (exit codes 0, 2, and 3 respectively). Acceptance is admission, not completion;
 a timeout is not rejection. There is no automatic retry or delivery guarantee.
 Use the lower-level `project chat agent rpc inspect` command with the returned
 attempt/endpoint IDs to inspect evidence without starting work. An explicit
-retry may duplicate work. Cross-site federation is not supported.
+retry may duplicate work. Use `agent broadcast` for bounded fanout with one
+durable parent id and per-target outcomes. Cross-site federation is not
+supported.
 
-### External Send-Only Agents (Experimental)
+### External Session Members (Experimental)
 
 On sites that explicitly enable external agent login, an agent on another
 computer can obtain its own identity without obtaining a human account session:
@@ -433,34 +424,29 @@ computer can obtain its own identity without obtaining a human account session:
 ```sh
 cocalc --api https://your-cocalc-site.example auth login --agent security --agent-label "Security assistant"
 cocalc project chat agent rpc destinations --external-agent security --json
-cocalc project chat send --external-agent security --to reviewer --attach ./receipt.pdf "Please review the attached receipt."
+cocalc project chat send --external-agent security --to reviewer --agent-session SESSION_ID "Please review this."
+cocalc project chat agent inbox --external-agent security --json
 ```
 
 Open the printed approval URL, sign in and complete fresh authentication. Select
-the exact named recipients and a finite lifetime (at most 30 days). Credentials
+the exact Agent Session and a finite lifetime (at most 30 days). Credentials
 are stored separately in `~/.config/cocalc/agents/security.json` with owner-only
 file permissions. Anyone able to read that file can use the installation;
 do not put it in a shared directory, source control, or a chat message. These
 permissions do not isolate collaborators sharing the same project OS user.
 
 `--external-agent` pins both the installation and its approved site. It never
-falls back to ambient account/project credentials. The grant permits sending
-only; it does not permit receiving, steering running turns, or browsing remote
-files. My Agents lists installations and supports immediate revocation.
-
-External attachments are snapshots, limited to 16 files and 32 MiB total, sent
-as native binary data. The recipient gets actual temporary local paths. A
-metadata-only preparation first checks startup and capacity; failed preparation
-does not silently send a text-only message. Acceptance is not completion. A
-timeout after submission remains unknown; failure to sign in before submission
-does not send anything. Inspect an attempt without retrying it:
+falls back to ambient account/project credentials. The external identity can
+send to and receive from every member of its approved session through a bounded
+authenticated inbox. Acknowledge received messages with `agent ack-inbox`.
+External attachments are not supported. My Agents lists installations and
+supports immediate revocation. Inspect an attempt without retrying it:
 
 ```sh
 cocalc project chat agent rpc inspect ATTEMPT_ID --external-agent security --to-agent TARGET_AGENT_ID --target-project TARGET_PROJECT_ID --json
 ```
 
-This is a login to one site's messaging service, not site federation or a
-daemon for receiving messages on arbitrary computers.
+This is a login to one site's session service, not site federation.
 
 ### Manual Smoke Check
 

@@ -2,27 +2,26 @@ import { connect } from "@cocalc/conat/core/client";
 import {
   externalAgentInbox,
   externalAgentSubject,
+  type ExternalAgentInboxMessage,
 } from "@cocalc/conat/agents/external";
 import {
   validateAgentRpcRequest,
   validateAgentRpcOutcome,
   validateAgentRpcPreparation,
-  validateAgentEndpoint,
+  validateAgentRpcBroadcastOutcome,
   rpcOutcome,
   type AgentRpcRequest,
   type AgentRpcOutcome,
   type AgentRpcPreparation,
-  type AgentEndpoint,
+  type AgentRpcBroadcastOutcome,
 } from "@cocalc/conat/agents/rpc";
+import type {
+  AgentSessionDiscovery,
+  AgentSessionProposal,
+} from "@cocalc/conat/agents/personal";
+import type { ResolvedAgentDestination } from "./agent-destination";
 import { readExternalAgentCredential } from "./external-agent-profile";
 import { withTimeout } from "./context";
-
-export interface ExternalDestination {
-  link_id: string;
-  target: AgentEndpoint;
-  target_name?: string;
-  expires_at: string;
-}
 
 function waitForExternalSignIn(
   client: ReturnType<typeof connect>,
@@ -64,17 +63,17 @@ function waitForExternalSignIn(
 export async function sendExternalAgentMessage(
   profile: string,
   request: AgentRpcRequest,
-): Promise<ExternalDestination[] | AgentRpcOutcome | AgentRpcPreparation> {
+): Promise<
+  | AgentSessionDiscovery
+  | AgentSessionProposal
+  | AgentRpcBroadcastOutcome
+  | AgentRpcOutcome
+  | AgentRpcPreparation
+  | ExternalAgentInboxMessage[]
+  | { acknowledged: true; message_id: string }
+> {
   validateAgentRpcRequest(request);
-  if (
-    request.action === "request-connection" ||
-    request.action === "connection-request"
-  )
-    throw new Error("External approval changes require browser-approved login");
-  if (
-    "body" in request &&
-    (request.guidance || request.file_references !== undefined)
-  )
+  if ("file_references" in request && request.file_references !== undefined)
     throw new Error(
       "External agents may send snapshots, not guidance or project references",
     );
@@ -109,12 +108,40 @@ export async function sendExternalAgentMessage(
     if (response.data?.error) throw new Error(response.data.error);
     const result = response.data?.result;
     if (request.action === "destinations") {
-      if (!Array.isArray(result) || result.length > 32)
+      if (!result || !Array.isArray(result.peers) || result.peers.length > 64)
         throw new Error("invalid external destination response");
-      for (const item of result) validateAgentEndpoint(item.target);
     } else if (request.action === "prepare-attachments")
       validateAgentRpcPreparation(result, request);
-    else validateAgentRpcOutcome(result, request);
+    else if (request.action === "broadcast")
+      validateAgentRpcBroadcastOutcome(result, request);
+    else if (request.action === "inbox") {
+      if (!Array.isArray(result) || result.length > (request.limit ?? 50))
+        throw new Error("invalid external inbox response");
+      for (const message of result) {
+        if (
+          typeof message?.message_id !== "string" ||
+          typeof message?.attempt_id !== "string" ||
+          typeof message?.agent_session_id !== "string" ||
+          typeof message?.body !== "string" ||
+          typeof message?.created_at !== "string" ||
+          typeof message?.expires_at !== "string" ||
+          !message?.source
+        )
+          throw new Error("invalid external inbox message");
+      }
+    } else if (request.action === "ack-inbox") {
+      if (
+        result?.acknowledged !== true ||
+        result?.message_id !== request.message_id
+      )
+        throw new Error("invalid external inbox acknowledgment");
+    } else if (request.action === "propose-session") {
+      if (
+        result?.proposal_id !== request.proposal_id ||
+        result?.state === undefined
+      )
+        throw new Error("invalid session proposal response");
+    } else validateAgentRpcOutcome(result, request);
     return result;
   } catch (error) {
     if (!submissionStarted && request.action === "send")
@@ -143,16 +170,34 @@ export async function sendExternalAgentMessage(
 export async function resolveExternalAgentName(
   profile: string,
   name: string,
-): Promise<AgentEndpoint> {
+  agentSessionId?: string,
+): Promise<ResolvedAgentDestination> {
   const normalized = name.replace(/^@/, "");
   const destinations = (await sendExternalAgentMessage(profile, {
-    version: 2,
+    version: 3,
     action: "destinations",
-  })) as ExternalDestination[];
-  const matches = destinations.filter((d) => d.target_name === normalized);
-  if (matches.length !== 1)
+  })) as AgentSessionDiscovery;
+  const matches = destinations.peers.filter(
+    ({ member, sessions }) =>
+      member.kind === "registered" &&
+      member.name === normalized &&
+      sessions.some(
+        ({ agent_session_id }) =>
+          agentSessionId === undefined || agent_session_id === agentSessionId,
+      ),
+  );
+  if (matches.length !== 1 || matches[0].member.kind !== "registered")
     throw new Error(
-      "No unambiguous approved external destination; run agent rpc destinations",
+      "No unambiguous session peer; run agent destinations and specify --agent-session",
     );
-  return matches[0].target;
+  const sessions = matches[0].sessions.filter(
+    ({ agent_session_id }) =>
+      agentSessionId === undefined || agent_session_id === agentSessionId,
+  );
+  if (sessions.length !== 1)
+    throw new Error("Specify the exact --agent-session for this peer");
+  return {
+    target: matches[0].member.endpoint,
+    agent_session_id: sessions[0].agent_session_id,
+  };
 }

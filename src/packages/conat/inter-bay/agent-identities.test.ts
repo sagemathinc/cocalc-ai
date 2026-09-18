@@ -11,14 +11,7 @@ test.each(["", "bay.*", "bay.>", "bay one", "https://other/site"])(
   },
 );
 
-test.each([
-  "list",
-  "resolve",
-  "register",
-  "get",
-  "listGrants",
-  "listMessageReceipts",
-] as const)(
+test.each(["list", "resolve", "register", "recover", "get"] as const)(
   "%s uses the exact versioned owner subject with a bounded timeout",
   async (method) => {
     const fastRpcRequest = jest.fn(async () => ({

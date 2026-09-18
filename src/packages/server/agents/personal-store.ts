@@ -1,37 +1,54 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
 import {
+  agentRpcSourceKey,
+  isExternalAgentSource,
   validateAgentEndpoint,
-  validatePersonalApproval,
+  validateAgentRpcSource,
+  type AgentEndpoint,
+  type AgentRpcBroadcast,
+  type AgentRpcBroadcastOutcome,
+  type AgentRpcSource,
 } from "@cocalc/conat/agents/rpc";
-import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import {
   normalizeAgentName,
   PersonalAgentAuthorizationError,
-} from "@cocalc/conat/agents/personal";
-import type {
-  NamedAgent,
-  NameAgentOptions,
-  RetireNamedAgentOptions,
-  PersonalConnection,
-  PersonalMessagingControls,
-  GrantPersonalConnectionOptions,
-  SetPersonalConnectionStateOptions,
-  SetPersonalMessagingStateOptions,
-  PersonalConnectionRequest,
-  PersonalConnectionRequestOptions,
+  type AgentSession,
+  type AgentSessionActivity,
+  type AgentSessionAuthorization,
+  type AgentSessionDeliveryMode,
+  type AgentSessionDiscovery,
+  type AgentSessionMember,
+  type AgentSessionMemberLocator,
+  type AgentSessionProposal,
+  type CreateAgentSessionOptions,
+  type NamedAgent,
+  type NameAgentOptions,
+  type PersonalMessagingControls,
+  type ProposeAgentSessionOptions,
+  type RetireNamedAgentOptions,
+  type SetPersonalMessagingStateOptions,
+  type UpdateAgentSessionOptions,
 } from "@cocalc/conat/agents/personal";
 import type { AgentStore } from "./store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 
+const MAX_ACTIVE_SESSIONS = 100;
+const MAX_RETAINED_SESSIONS = 1000;
+const MAX_TITLE_LENGTH = 120;
+const MAX_ACTIVITY_PER_ACCOUNT = 10_000;
+const MAX_PENDING_PROPOSALS = 100;
+const MAX_EXPANSIVE_MUTATIONS_PER_HOUR = 1_000;
 const iso = (value: Date | string) => new Date(value).toISOString();
 const same = (a: AgentEndpoint, b: AgentEndpoint) =>
   a.project_id === b.project_id && a.agent_id === b.agent_id;
+const digest = (value: unknown) =>
+  createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
 type Query = {
   query(sql: string, values?: unknown[]): Promise<{ rows: any[] }>;
 };
-type RequestSource = { source: AgentEndpoint; run_id: string };
 
 export class PersonalAgentStore {
   constructor(
@@ -80,21 +97,11 @@ export class PersonalAgentStore {
     );
   }
 
-  async observe(account: string, link_id: string, accepted: boolean) {
-    requireUuid(link_id, "link_id");
-    await this.locked(account, (db) =>
-      db.query(
-        `UPDATE agent_personal_grants SET last_attempt_at=now(),
-      last_accepted_at=CASE WHEN $3 THEN now() ELSE last_accepted_at END WHERE account_id=$1 AND link_id=$2`,
-        [account, link_id, accepted],
-      ),
-    );
-  }
-
   private async locked<T>(
     account: string,
     fn: (db: Query, controls: PersonalMessagingControls) => Promise<T>,
   ): Promise<T> {
+    requireUuid(account, "account_id");
     return this.db.transaction(async (db) => {
       await this.assertAuthority(db, account);
       await db.query(
@@ -188,9 +195,8 @@ export class PersonalAgentStore {
             [account],
           )
         ).rows[0].count;
-        if (active >= maxActive) {
+        if (active >= maxActive)
           throw new Error(`named_agent_limit_reached:${active}:${maxActive}`);
-        }
       }
       if (!previous) {
         const count = (
@@ -257,614 +263,957 @@ export class PersonalAgentStore {
     return this.named(row);
   }
 
-  private connection(
-    row: any,
-    controls: PersonalMessagingControls,
-  ): PersonalConnection {
-    const status =
-      row.revoked_at || row.generation < controls.generation
-        ? "revoked"
-        : row.paused || controls.paused
-          ? "paused"
-          : row.expires_at && new Date(row.expires_at).getTime() <= Date.now()
-            ? "expired"
-            : "active";
-    return {
-      link_id: row.link_id,
-      source: {
-        project_id: row.source_project_id,
-        agent_id: row.source_agent_id,
-      },
-      target: {
-        project_id: row.target_project_id,
-        agent_id: row.target_agent_id,
-      },
-      approved_by: row.account_id,
-      principal_account_id: row.account_id,
-      reason: row.reason,
-      allow_guidance: row.allow_guidance,
-      direction_group_id: row.direction_group_id,
-      approval_request_id: row.approval_request_id,
-      generation: row.generation,
-      paused: row.paused,
-      status,
-      created_at: iso(row.created_at),
-      expires_at: row.expires_at ? iso(row.expires_at) : null,
-      revoked_at: row.revoked_at ? iso(row.revoked_at) : null,
-      last_attempt_at: row.last_attempt_at ? iso(row.last_attempt_at) : null,
-      last_accepted_at: row.last_accepted_at ? iso(row.last_accepted_at) : null,
-    };
+  private validateTitle(title?: string) {
+    if (title === undefined) return undefined;
+    if (typeof title !== "string" || title.trim().length > MAX_TITLE_LENGTH)
+      throw new Error("invalid_session_title");
+    return title.trim() || undefined;
   }
 
-  private async decorate(account: string, links: PersonalConnection[]) {
-    // Only read exact granted endpoints, never the principal's entire directory.
-    for (const link of links)
-      for (const side of ["source", "target"] as const) {
-        const endpoint = link[side];
-        const row = (
+  private validateDelivery(value?: string): AgentSessionDeliveryMode {
+    if (value === undefined) return "queued";
+    if (value !== "queued" && value !== "live")
+      throw new Error("invalid_delivery_mode");
+    return value;
+  }
+
+  private validateLocator(locator: AgentSessionMemberLocator) {
+    if (locator.kind === "registered") validateAgentEndpoint(locator.endpoint);
+    else {
+      requireUuid(locator.agent_id, "external agent_id");
+      requireUuid(locator.installation_id, "external installation_id");
+    }
+  }
+
+  private locatorKey(locator: AgentSessionMemberLocator) {
+    return locator.kind === "registered"
+      ? `registered/${locator.endpoint.project_id}/${locator.endpoint.agent_id}`
+      : `external/${locator.agent_id}/${locator.installation_id}`;
+  }
+
+  private async validateMembers(
+    account: string,
+    members: AgentSessionMemberLocator[],
+    memberLimit: number,
+  ) {
+    if (!Array.isArray(members) || members.length < 2)
+      throw new Error("agent_session_requires_two_members");
+    if (members.length > Math.min(memberLimit, 64))
+      throw new Error(`agent_session_member_limit_reached:${memberLimit}`);
+    const seen = new Set<string>();
+    for (const member of members) {
+      this.validateLocator(member);
+      const key = this.locatorKey(member);
+      if (seen.has(key)) throw new Error("duplicate_session_member");
+      seen.add(key);
+      if (member.kind === "registered") {
+        await this.endpoint(account, member.endpoint);
+        const named = (
           await this.db.query(
-            "SELECT * FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
-            [account, endpoint.project_id, endpoint.agent_id],
+            "SELECT 1 FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+            [account, member.endpoint.project_id, member.endpoint.agent_id],
           )
         ).rows[0];
-        if (row) {
-          link[`${side}_name`] = row.name;
-          link[`${side}_named_agent`] = this.named(row);
-        }
-        if (side === "target") {
-          link.target_retired_names = (
-            await this.db.query(
-              "SELECT name FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NOT NULL ORDER BY name",
-              [account, endpoint.project_id, endpoint.agent_id],
-            )
-          ).rows.map((retired) => retired.name);
-        }
+        if (!named) throw new Error("session_member_not_named");
       }
-    return links;
+    }
   }
 
-  async connections(
-    account: string,
-    source?: AgentEndpoint,
-  ): Promise<PersonalConnection[]> {
-    const controls = await this.controls(account);
-    const rows = (
-      await this.db.query(
-        `SELECT * FROM agent_personal_grants WHERE account_id=$1
-      AND ($2::uuid IS NULL OR (source_project_id=$2 AND source_agent_id=$3)) ORDER BY created_at DESC,link_id`,
-        [account, source?.project_id ?? null, source?.agent_id ?? null],
-      )
-    ).rows;
-    return this.decorate(
-      account,
-      rows.map((row) => this.connection(row, controls)),
-    );
-  }
-
-  private approval(opts: GrantPersonalConnectionOptions) {
-    validateAgentEndpoint(opts.source);
-    validateAgentEndpoint(opts.target);
-    validatePersonalApproval(opts);
-    requireUuid(opts.approval_request_id, "approval_request_id");
-    if (same(opts.source, opts.target))
-      throw new Error("source and target must differ");
+  private proposal(row: any): AgentSessionProposal {
     return {
-      source: {
-        project_id: opts.source.project_id,
-        agent_id: opts.source.agent_id,
-      },
-      target: {
-        project_id: opts.target.project_id,
-        agent_id: opts.target.agent_id,
-      },
-      reason: opts.reason.trim(),
-      ttl_seconds: opts.ttl_seconds === undefined ? 86400 : opts.ttl_seconds,
-      both_directions: opts.both_directions === true,
-      allow_guidance: opts.allow_guidance === true,
+      proposal_id: row.proposal_id,
+      account_id: row.account_id,
+      source: row.source,
+      title: row.title,
+      delivery_mode: row.delivery_mode,
+      members: row.members,
+      reason: row.reason,
+      state: row.state,
+      created_at: iso(row.created_at),
+      expires_at: iso(row.expires_at),
+      resolved_at: row.resolved_at ? iso(row.resolved_at) : null,
+      agent_session_id: row.agent_session_id,
     };
   }
 
-  private async grantLocked(
+  async proposeSession(
     account: string,
-    opts: GrantPersonalConnectionOptions,
-    db: Query,
-    controls: PersonalMessagingControls,
-  ): Promise<PersonalConnection[]> {
-    const approval = this.approval(opts);
-    const prior = (
-      await db.query(
-        "SELECT * FROM agent_personal_grants WHERE account_id=$1 AND approval_request_id=$2 ORDER BY link_id",
-        [account, opts.approval_request_id],
-      )
-    ).rows;
-    if (prior.length) {
-      // JSONB does not retain object-key order.
-      const expected = JSON.stringify(approval);
-      if (
-        prior.some(
-          (row) =>
-            JSON.stringify(
-              this.approval({
-                ...row.approval,
-                approval_request_id: opts.approval_request_id,
-              }),
-            ) !== expected,
+    source: AgentRpcSource,
+    run_id: string | undefined,
+    options: ProposeAgentSessionOptions,
+    memberLimit: number,
+  ): Promise<AgentSessionProposal> {
+    requireUuid(options.proposal_id, "proposal_id");
+    validateAgentRpcSource(source, run_id);
+    if (isExternalAgentSource(source)) {
+      const active = (
+        await this.db.query(
+          `SELECT 1 FROM agent_external_installations
+           WHERE account_id=$1 AND agent_id=$2 AND installation_id=$3
+             AND state='active' AND expires_at>now()`,
+          [account, source.agent_id, source.installation_id],
         )
-      )
-        throw new Error("approval_request_conflict");
-      return prior.map((row) => this.connection(row, controls));
+      ).rows[0];
+      if (!active) throw new Error("external_identity_unavailable");
+    } else {
+      if ((await this.principal(source, run_id!)) !== account)
+        throw new PersonalAgentAuthorizationError("principal_mismatch");
+      await this.endpoint(account, source);
     }
-    const group = randomUUID();
-    const expires =
-      approval.ttl_seconds === null
-        ? null
-        : new Date(Date.now() + approval.ttl_seconds * 1000);
-    const directions = [{ source: opts.source, target: opts.target }];
-    if (approval.both_directions)
-      directions.push({ source: opts.target, target: opts.source });
-    const count = (
-      await db.query(
-        "SELECT count(*) AS count FROM agent_personal_grants WHERE account_id=$1",
-        [account],
-      )
-    ).rows[0];
-    if (+count.count + directions.length > 10_000)
-      throw new Error("agent_connection_capacity");
-    const links: PersonalConnection[] = [];
-    for (const { source, target } of directions) {
+    const title = this.validateTitle(options.title);
+    const delivery_mode = this.validateDelivery(options.delivery_mode);
+    if (
+      options.reason !== undefined &&
+      (typeof options.reason !== "string" || options.reason.length > 500)
+    )
+      throw new Error("invalid_proposal_reason");
+    await this.validateMembers(account, options.members, memberLimit);
+    const sourcePresent = options.members.some((member) =>
+      member.kind === "registered"
+        ? !isExternalAgentSource(source) && same(member.endpoint, source)
+        : isExternalAgentSource(source) &&
+          member.agent_id === source.agent_id &&
+          member.installation_id === source.installation_id,
+    );
+    if (!sourcePresent) throw new Error("proposal_must_include_source");
+    const binding = digest({
+      source: agentRpcSourceKey(source),
+      title,
+      delivery_mode,
+      members: options.members.map((x) => this.locatorKey(x)).sort(),
+      reason: options.reason?.trim() || undefined,
+    });
+    return this.locked(account, async (db, controls) => {
+      if (controls.paused) throw new Error("messaging_paused");
+      const existing = (
+        await db.query(
+          "SELECT * FROM agent_session_proposals WHERE account_id=$1 AND proposal_id=$2",
+          [account, options.proposal_id],
+        )
+      ).rows[0];
+      if (existing) {
+        if (existing.binding_hash !== binding)
+          throw new Error("proposal_idempotency_conflict");
+        return this.proposal(existing);
+      }
+      const pending = +(
+        await db.query(
+          `SELECT count(*) AS count FROM agent_session_proposals
+           WHERE account_id=$1 AND state='pending' AND expires_at>now()`,
+          [account],
+        )
+      ).rows[0].count;
+      if (pending >= MAX_PENDING_PROPOSALS)
+        throw new Error("proposal_capacity_reached");
+      const recent = +(
+        await db.query(
+          `SELECT count(*) AS count FROM agent_session_proposals
+           WHERE account_id=$1 AND created_at>now()-interval '1 hour'`,
+          [account],
+        )
+      ).rows[0].count;
+      if (recent >= 100) throw new Error("proposal_rate_limited");
       const row = (
         await db.query(
-          `INSERT INTO agent_personal_grants(link_id,account_id,source_project_id,source_agent_id,target_project_id,target_agent_id,direction_group_id,approval_request_id,approval,reason,allow_guidance,generation,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+          `INSERT INTO agent_session_proposals
+           (proposal_id,account_id,source,title,delivery_mode,members,reason,binding_hash,expires_at)
+           VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '7 days') RETURNING *`,
           [
-            randomUUID(),
+            options.proposal_id,
             account,
-            source.project_id,
-            source.agent_id,
-            target.project_id,
-            target.agent_id,
-            group,
-            opts.approval_request_id,
-            approval,
-            approval.reason,
-            approval.allow_guidance,
-            controls.generation,
-            expires,
+            source,
+            title,
+            delivery_mode,
+            options.members,
+            options.reason?.trim() || null,
+            binding,
           ],
         )
       ).rows[0];
-      links.push(this.connection(row, controls));
-    }
-    return links;
+      return this.proposal(row);
+    });
   }
 
-  async grant(account: string, opts: GrantPersonalConnectionOptions) {
-    this.approval(opts);
-    await this.endpoint(account, opts.source);
-    await this.endpoint(account, opts.target);
+  async proposals(
+    account: string,
+    limit = 100,
+  ): Promise<AgentSessionProposal[]> {
+    const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
+    await this.db.query(
+      `UPDATE agent_session_proposals SET state='expired',resolved_at=now()
+       WHERE account_id=$1 AND state='pending' AND expires_at<=now()`,
+      [account],
+    );
+    return (
+      await this.db.query(
+        `SELECT * FROM agent_session_proposals WHERE account_id=$1
+         ORDER BY created_at DESC LIMIT $2`,
+        [account, bounded],
+      )
+    ).rows.map((row) => this.proposal(row));
+  }
+
+  async getProposal(account: string, proposal_id: string) {
+    requireUuid(proposal_id, "proposal_id");
+    const row = (
+      await this.db.query(
+        "SELECT * FROM agent_session_proposals WHERE account_id=$1 AND proposal_id=$2",
+        [account, proposal_id],
+      )
+    ).rows[0];
+    if (!row) throw new Error("session_proposal_not_found");
+    if (
+      row.state !== "pending" ||
+      new Date(row.expires_at).getTime() <= Date.now()
+    )
+      throw new Error("session_proposal_not_pending");
+    return this.proposal(row);
+  }
+
+  async finishProposal(
+    account: string,
+    proposal_id: string,
+    state: "approved" | "rejected",
+    agent_session_id?: string,
+  ) {
+    requireUuid(proposal_id, "proposal_id");
+    if (agent_session_id) requireUuid(agent_session_id, "agent_session_id");
+    const row = (
+      await this.db.query(
+        `UPDATE agent_session_proposals
+         SET state=$3,resolved_at=now(),agent_session_id=$4
+         WHERE account_id=$1 AND proposal_id=$2 AND state='pending'
+         RETURNING *`,
+        [account, proposal_id, state, agent_session_id ?? null],
+      )
+    ).rows[0];
+    if (!row) throw new Error("session_proposal_not_pending");
+    return this.proposal(row);
+  }
+
+  async beginBroadcast(
+    account: string,
+    source: AgentRpcSource,
+    run_id: string | undefined,
+    broadcast: AgentRpcBroadcast,
+  ): Promise<{
+    claimed: boolean;
+    binding_hash: string;
+    outcome?: AgentRpcBroadcastOutcome;
+  }> {
+    for (const target of broadcast.targets)
+      await this.checkSession(
+        account,
+        broadcast.agent_session_id,
+        source,
+        run_id,
+        target,
+      );
+    const binding_hash = digest({
+      source: agentRpcSourceKey(source),
+      agent_session_id: broadcast.agent_session_id,
+      targets: broadcast.targets.map(agentRpcSourceKey),
+      body: broadcast.body,
+    });
     return this.locked(account, async (db, controls) => {
-      // Pending requests can only be approved by the typed resolver which also
-      // checks the bound run. Ordinary grant IDs cannot impersonate that action.
-      const pending = (
+      if (controls.paused) throw new Error("messaging_paused");
+      const existing = (
         await db.query(
-          "SELECT request_id FROM agent_personal_requests WHERE request_id=$1",
-          [opts.approval_request_id],
+          `SELECT binding_hash,state,outcome FROM agent_session_broadcasts
+           WHERE account_id=$1 AND broadcast_id=$2`,
+          [account, broadcast.broadcast_id],
         )
       ).rows[0];
-      if (pending) throw new Error("use resolvePersonalConnectionRequest");
-      return this.grantLocked(account, opts, db, controls);
+      if (existing) {
+        if (existing.binding_hash !== binding_hash)
+          throw new Error("broadcast_idempotency_conflict");
+        return {
+          claimed: false,
+          binding_hash,
+          ...(existing.state === "complete" && existing.outcome
+            ? { outcome: existing.outcome }
+            : {}),
+        };
+      }
+      await db.query(
+        `INSERT INTO agent_session_broadcasts
+         (account_id,broadcast_id,agent_session_id,source,binding_hash,state)
+         VALUES($1,$2,$3,$4,$5,'pending')`,
+        [
+          account,
+          broadcast.broadcast_id,
+          broadcast.agent_session_id,
+          source,
+          binding_hash,
+        ],
+      );
+      return { claimed: true, binding_hash };
     });
   }
 
-  async setConnection(
+  async finishBroadcast(
     account: string,
-    opts: SetPersonalConnectionStateOptions,
+    broadcast_id: string,
+    binding_hash: string,
+    outcome: AgentRpcBroadcastOutcome,
   ) {
-    requireUuid(opts.direction_group_id, "direction_group_id");
-    if (!["paused", "active", "revoked"].includes(opts.state))
-      throw new Error("invalid connection state");
-    if (opts.state === "active") {
-      const links = (await this.connections(account)).filter(
-        (link) => link.direction_group_id === opts.direction_group_id,
+    requireUuid(broadcast_id, "broadcast_id");
+    const row = (
+      await this.db.query(
+        `UPDATE agent_session_broadcasts
+         SET state='complete',outcome=$4,updated_at=now()
+         WHERE account_id=$1 AND broadcast_id=$2 AND binding_hash=$3
+         RETURNING broadcast_id`,
+        [account, broadcast_id, binding_hash, outcome],
+      )
+    ).rows[0];
+    if (!row) throw new Error("broadcast_binding_unavailable");
+  }
+
+  private mutationBinding(action: string, options: unknown) {
+    return digest([action, options]);
+  }
+
+  private async replay(
+    db: Query,
+    account: string,
+    request_id: string,
+    binding_hash: string,
+  ): Promise<string | undefined> {
+    requireUuid(request_id, "request_id");
+    const row = (
+      await db.query(
+        "SELECT binding_hash,agent_session_id FROM agent_session_mutations WHERE account_id=$1 AND request_id=$2",
+        [account, request_id],
+      )
+    ).rows[0];
+    if (!row) return undefined;
+    if (row.binding_hash !== binding_hash)
+      throw new Error("session_mutation_idempotency_conflict");
+    return row.agent_session_id;
+  }
+
+  private async recordMutation(
+    db: Query,
+    account: string,
+    request_id: string,
+    binding_hash: string,
+    agent_session_id: string,
+  ) {
+    await db.query(
+      "INSERT INTO agent_session_mutations(account_id,request_id,binding_hash,agent_session_id) VALUES($1,$2,$3,$4)",
+      [account, request_id, binding_hash, agent_session_id],
+    );
+    await db.query(
+      `DELETE FROM agent_session_mutations WHERE account_id=$1 AND request_id IN
+       (SELECT request_id FROM agent_session_mutations WHERE account_id=$1 ORDER BY created_at DESC OFFSET 10000)`,
+      [account],
+    );
+  }
+
+  private async assertExpansiveMutationRate(db: Query, account: string) {
+    const recent = +(
+      await db.query(
+        `SELECT count(*) AS count FROM agent_session_mutations
+         WHERE account_id=$1 AND created_at>now()-interval '1 hour'`,
+        [account],
+      )
+    ).rows[0].count;
+    if (recent >= MAX_EXPANSIVE_MUTATIONS_PER_HOUR)
+      throw new Error("agent_session_mutation_rate_limited");
+  }
+
+  private async insertMember(
+    db: Query,
+    account: string,
+    agent_session_id: string,
+    member: AgentSessionMemberLocator,
+  ) {
+    if (member.kind === "registered") {
+      await db.query(
+        `INSERT INTO agent_session_members
+         (agent_session_id,member_kind,member_id,registered_agent_id,project_id,added_by)
+         VALUES($1,'registered',$2,$2,$3,$4)`,
+        [
+          agent_session_id,
+          member.endpoint.agent_id,
+          member.endpoint.project_id,
+          account,
+        ],
       );
-      for (const link of links) {
-        await this.endpoint(account, link.source);
-        await this.endpoint(account, link.target);
-      }
+      return;
     }
-    return this.locked(account, async (db, controls) => {
-      const rows = (
+    const installation = (
+      await db.query(
+        `SELECT * FROM agent_external_installations
+         WHERE account_id=$1 AND installation_id=$2 AND agent_id=$3
+           AND agent_session_id=$4 AND state='active' AND expires_at>now()`,
+        [account, member.installation_id, member.agent_id, agent_session_id],
+      )
+    ).rows[0];
+    if (!installation) throw new Error("external_identity_unavailable");
+    await db.query(
+      `INSERT INTO agent_session_members
+       (agent_session_id,member_kind,member_id,external_agent_id,installation_id,added_by)
+       VALUES($1,'external',$2,$2,$3,$4)`,
+      [agent_session_id, member.agent_id, member.installation_id, account],
+    );
+  }
+
+  private async member(db: Query, account: string, row: any) {
+    if (row.member_kind === "registered") {
+      const namedRow = (
         await db.query(
-          "SELECT * FROM agent_personal_grants WHERE account_id=$1 AND direction_group_id=$2",
-          [account, opts.direction_group_id],
+          `SELECT * FROM agent_personal_names
+           WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL`,
+          [account, row.project_id, row.registered_agent_id],
+        )
+      ).rows[0];
+      let available = !!namedRow;
+      if (available)
+        try {
+          await this.endpoint(account, {
+            project_id: row.project_id,
+            agent_id: row.registered_agent_id,
+          });
+        } catch {
+          available = false;
+        }
+      return {
+        kind: "registered" as const,
+        member_id: row.member_id,
+        endpoint: {
+          project_id: row.project_id,
+          agent_id: row.registered_agent_id,
+        },
+        name: namedRow?.name,
+        project_title: namedRow?.metadata?.project_title,
+        thread_title: namedRow?.metadata?.thread_title,
+        available,
+        added_at: iso(row.added_at),
+        removed_at: row.removed_at ? iso(row.removed_at) : null,
+      };
+    }
+    const external = (
+      await db.query(
+        `SELECT i.*,e.disabled_at FROM agent_external_installations i
+         JOIN agent_external_identities e USING(agent_id)
+         WHERE i.account_id=$1 AND i.installation_id=$2 AND i.agent_id=$3`,
+        [account, row.installation_id, row.external_agent_id],
+      )
+    ).rows[0];
+    return {
+      kind: "external" as const,
+      member_id: row.member_id,
+      source: {
+        kind: "external" as const,
+        account_id: account,
+        agent_id: row.external_agent_id,
+        installation_id: row.installation_id,
+      },
+      label: external?.label ?? "External agent",
+      available:
+        !!external &&
+        !external.disabled_at &&
+        external.state === "active" &&
+        new Date(external.expires_at).getTime() > Date.now(),
+      added_at: iso(row.added_at),
+      removed_at: row.removed_at ? iso(row.removed_at) : null,
+    };
+  }
+
+  private async session(
+    db: Query,
+    account: string,
+    row: any,
+  ): Promise<AgentSession> {
+    const members: AgentSessionMember[] = [];
+    for (const memberRow of (
+      await db.query(
+        "SELECT * FROM agent_session_members WHERE agent_session_id=$1 ORDER BY added_at,member_id",
+        [row.agent_session_id],
+      )
+    ).rows)
+      members.push(await this.member(db, account, memberRow));
+    return {
+      agent_session_id: row.agent_session_id,
+      account_id: row.account_id,
+      title: row.title,
+      state: row.state,
+      delivery_mode: row.delivery_mode,
+      generation: row.generation,
+      created_by: row.created_by,
+      created_at: iso(row.created_at),
+      updated_at: iso(row.updated_at),
+      closed_at: row.closed_at ? iso(row.closed_at) : null,
+      members,
+    };
+  }
+
+  async sessions(account: string, limit = 100, cursor?: string) {
+    const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
+    const values: unknown[] = [account, bounded + 1];
+    let cursorSql = "";
+    if (cursor) {
+      const [updated, id] = Buffer.from(cursor, "base64url")
+        .toString()
+        .split("/");
+      requireUuid(id, "session cursor");
+      if (!Number.isFinite(+updated)) throw new Error("invalid_session_cursor");
+      values.push(new Date(+updated), id);
+      cursorSql = "AND (updated_at,agent_session_id)<($3,$4)";
+    }
+    const rows = (
+      await this.db.query(
+        `SELECT * FROM agent_sessions WHERE account_id=$1 ${cursorSql}
+         ORDER BY updated_at DESC,agent_session_id DESC LIMIT $2`,
+        values,
+      )
+    ).rows;
+    const page = rows.slice(0, bounded);
+    const sessions: AgentSession[] = [];
+    for (const row of page)
+      sessions.push(await this.session(this.db, account, row));
+    const last = page[page.length - 1];
+    const active_count = +(
+      await this.db.query(
+        "SELECT count(*) AS count FROM agent_sessions WHERE account_id=$1 AND state<>'closed'",
+        [account],
+      )
+    ).rows[0].count;
+    return {
+      sessions,
+      active_count,
+      next_cursor:
+        rows.length > bounded && last
+          ? Buffer.from(
+              `${new Date(last.updated_at).getTime()}/${last.agent_session_id}`,
+            ).toString("base64url")
+          : undefined,
+    };
+  }
+
+  async createSession(
+    account: string,
+    options: CreateAgentSessionOptions,
+    memberLimit: number,
+    fresh = false,
+  ): Promise<AgentSession> {
+    requireUuid(options.request_id, "request_id");
+    const title = this.validateTitle(options.title);
+    const delivery = this.validateDelivery(options.delivery_mode);
+    await this.validateMembers(account, options.members, memberLimit);
+    const projects = new Set(
+      options.members
+        .filter((x) => x.kind === "registered")
+        .map((x) => x.kind === "registered" && x.endpoint.project_id),
+    );
+    if (
+      (projects.size > 1 || (delivery === "live" && projects.size > 1)) &&
+      !fresh
+    )
+      throw new Error("fresh_auth_required");
+    const binding = this.mutationBinding("create", {
+      title,
+      delivery,
+      members: options.members.map((x) => this.locatorKey(x)).sort(),
+    });
+    return this.locked(account, async (db, controls) => {
+      if (controls.paused) throw new Error("messaging_paused");
+      const replay = await this.replay(
+        db,
+        account,
+        options.request_id,
+        binding,
+      );
+      if (replay) {
+        const row = (
+          await db.query(
+            "SELECT * FROM agent_sessions WHERE account_id=$1 AND agent_session_id=$2",
+            [account, replay],
+          )
+        ).rows[0];
+        return this.session(db, account, row);
+      }
+      await this.assertExpansiveMutationRate(db, account);
+      const counts = (
+        await db.query(
+          `SELECT count(*) AS retained,
+             count(*) FILTER(WHERE state<>'closed') AS active
+           FROM agent_sessions WHERE account_id=$1`,
+          [account],
+        )
+      ).rows[0];
+      if (+counts.retained >= MAX_RETAINED_SESSIONS)
+        throw new Error("agent_session_history_capacity");
+      if (+counts.active >= MAX_ACTIVE_SESSIONS)
+        throw new Error("agent_session_capacity");
+      const agent_session_id = randomUUID();
+      const row = (
+        await db.query(
+          `INSERT INTO agent_sessions
+           (agent_session_id,account_id,title,state,delivery_mode,generation,created_by)
+           VALUES($1,$2,$3,'active',$4,$5,$2) RETURNING *`,
+          [agent_session_id, account, title, delivery, randomUUID()],
+        )
+      ).rows[0];
+      for (const member of options.members)
+        await this.insertMember(db, account, agent_session_id, member);
+      await this.recordMutation(
+        db,
+        account,
+        options.request_id,
+        binding,
+        agent_session_id,
+      );
+      return this.session(db, account, row);
+    });
+  }
+
+  private async lockedSession(db: Query, account: string, id: string) {
+    requireUuid(id, "agent_session_id");
+    const row = (
+      await db.query(
+        "SELECT * FROM agent_sessions WHERE account_id=$1 AND agent_session_id=$2 FOR UPDATE",
+        [account, id],
+      )
+    ).rows[0];
+    if (!row) throw new Error("agent_session_not_found");
+    return row;
+  }
+
+  async updateSession(
+    account: string,
+    options: UpdateAgentSessionOptions,
+    memberLimit: number,
+    fresh = false,
+  ): Promise<AgentSession> {
+    requireUuid(options.request_id, "request_id");
+    requireUuid(options.agent_session_id, "agent_session_id");
+    if ("member" in options) this.validateLocator(options.member);
+    const normalized = {
+      ...options,
+      ...(options.action === "set-title"
+        ? { title: this.validateTitle(options.title) }
+        : {}),
+    };
+    const binding = this.mutationBinding("update", normalized);
+    return this.locked(account, async (db, controls) => {
+      const replay = await this.replay(
+        db,
+        account,
+        options.request_id,
+        binding,
+      );
+      if (replay) {
+        const row = await this.lockedSession(db, account, replay);
+        return this.session(db, account, row);
+      }
+      const row = await this.lockedSession(
+        db,
+        account,
+        options.agent_session_id,
+      );
+      if (row.state === "closed") throw new Error("agent_session_closed");
+      if (
+        options.action === "add-member" ||
+        options.action === "resume" ||
+        options.action === "set-title" ||
+        (options.action === "set-delivery" && options.delivery_mode === "live")
+      )
+        await this.assertExpansiveMutationRate(db, account);
+      const activeMembers = (
+        await db.query(
+          "SELECT * FROM agent_session_members WHERE agent_session_id=$1 AND removed_at IS NULL FOR UPDATE",
+          [row.agent_session_id],
         )
       ).rows;
-      if (!rows.length) throw new Error("connection_not_found");
+      const projectSet = new Set(
+        activeMembers
+          .filter((x) => x.member_kind === "registered")
+          .map((x) => x.project_id),
+      );
+      if (options.action === "resume" && projectSet.size > 1 && !fresh)
+        throw new Error("fresh_auth_required");
       if (
-        opts.state === "active" &&
-        rows.some((r) => r.revoked_at || r.generation < controls.generation)
+        options.action === "set-delivery" &&
+        options.delivery_mode === "live" &&
+        row.delivery_mode !== "live" &&
+        projectSet.size > 1 &&
+        !fresh
       )
-        throw new Error("grant_revoked");
+        throw new Error("fresh_auth_required");
+      if (options.action === "add-member") {
+        await this.validateMembers(
+          account,
+          [
+            ...activeMembers.map((x) =>
+              x.member_kind === "registered"
+                ? ({
+                    kind: "registered",
+                    endpoint: {
+                      project_id: x.project_id,
+                      agent_id: x.registered_agent_id,
+                    },
+                  } as const)
+                : ({
+                    kind: "external",
+                    agent_id: x.external_agent_id,
+                    installation_id: x.installation_id,
+                  } as const),
+            ),
+            options.member,
+          ],
+          memberLimit,
+        );
+        if (
+          options.member.kind === "registered" &&
+          projectSet.size > 0 &&
+          !projectSet.has(options.member.endpoint.project_id) &&
+          !fresh
+        )
+          throw new Error("fresh_auth_required");
+        await this.insertMember(
+          db,
+          account,
+          row.agent_session_id,
+          options.member,
+        );
+      } else if (options.action === "remove-member") {
+        const memberId =
+          options.member.kind === "registered"
+            ? options.member.endpoint.agent_id
+            : options.member.agent_id;
+        const result = await db.query(
+          `UPDATE agent_session_members SET removed_at=now()
+           WHERE agent_session_id=$1 AND member_kind=$2 AND member_id=$3 AND removed_at IS NULL RETURNING member_id`,
+          [row.agent_session_id, options.member.kind, memberId],
+        );
+        if (!result.rows.length)
+          throw new Error("agent_session_member_not_found");
+        if (activeMembers.length - 1 < 2)
+          throw new Error("agent_session_requires_two_members");
+      } else if (options.action === "pause") {
+        row.state = "paused";
+      } else if (options.action === "resume") {
+        if (controls.paused) throw new Error("messaging_paused");
+        row.state = "active";
+      } else if (options.action === "close") {
+        row.state = "closed";
+      } else if (options.action === "set-delivery") {
+        row.delivery_mode = this.validateDelivery(options.delivery_mode);
+      } else if (options.action === "set-title") {
+        row.title = this.validateTitle(options.title);
+      }
       const updated = (
         await db.query(
-          `UPDATE agent_personal_grants SET paused=CASE WHEN $3='revoked' THEN paused ELSE $3='paused' END,
-        revoked_at=CASE WHEN $3='revoked' THEN COALESCE(revoked_at,now()) ELSE revoked_at END WHERE account_id=$1 AND direction_group_id=$2 RETURNING *`,
-          [account, opts.direction_group_id, opts.state],
+          `UPDATE agent_sessions SET title=$3,state=$4,delivery_mode=$5,
+             generation=$6,updated_at=now(),closed_at=CASE WHEN $4='closed' THEN now() ELSE closed_at END
+           WHERE account_id=$1 AND agent_session_id=$2 RETURNING *`,
+          [
+            account,
+            row.agent_session_id,
+            row.title,
+            row.state,
+            row.delivery_mode,
+            randomUUID(),
+          ],
         )
-      ).rows;
-      if (opts.state !== "active")
-        await db.query(
-          `UPDATE agent_personal_requests r SET state='invalidated'
-        WHERE r.account_id=$1 AND r.state='pending' AND r.canonical_request_id IS NULL
-        AND EXISTS (SELECT 1 FROM agent_personal_grants g WHERE g.account_id=$1 AND g.direction_group_id=$2 AND (
-          (r.source_project_id=g.source_project_id AND r.source_agent_id=g.source_agent_id
-           AND r.request->'target'->>'project_id'=g.target_project_id::text AND r.request->'target'->>'agent_id'=g.target_agent_id::text)
-          OR (r.request->>'both_directions'='true' AND r.source_project_id=g.target_project_id AND r.source_agent_id=g.target_agent_id
-           AND r.request->'target'->>'project_id'=g.source_project_id::text AND r.request->'target'->>'agent_id'=g.source_agent_id::text)))`,
-          [account, opts.direction_group_id],
-        );
-      return updated.map((row) => this.connection(row, controls));
+      ).rows[0];
+      await this.recordMutation(
+        db,
+        account,
+        options.request_id,
+        binding,
+        row.agent_session_id,
+      );
+      return this.session(db, account, updated);
     });
+  }
+
+  private findMember(members: AgentSessionMember[], source: AgentRpcSource) {
+    return members.find((member) =>
+      isExternalAgentSource(source)
+        ? member.kind === "external" &&
+          member.source.agent_id === source.agent_id &&
+          member.source.installation_id === source.installation_id &&
+          member.source.account_id === source.account_id
+        : member.kind === "registered" && same(member.endpoint, source),
+    );
+  }
+
+  async checkSession(
+    account: string,
+    agent_session_id: string,
+    source: AgentRpcSource,
+    run_id: string | undefined,
+    target: AgentRpcSource,
+  ): Promise<AgentSessionAuthorization> {
+    requireUuid(agent_session_id, "agent_session_id");
+    if (!isExternalAgentSource(source)) {
+      requireUuid(run_id, "run_id");
+      if ((await this.principal(source, run_id!)) !== account)
+        throw new PersonalAgentAuthorizationError("principal_mismatch");
+    } else if (source.account_id !== account) {
+      throw new PersonalAgentAuthorizationError("principal_mismatch");
+    }
+    return this.locked(account, async (db, controls) => {
+      if (controls.paused)
+        throw new PersonalAgentAuthorizationError("session_paused");
+      const row = await this.lockedSession(db, account, agent_session_id);
+      if (row.state === "closed")
+        throw new PersonalAgentAuthorizationError("session_closed");
+      if (row.state !== "active")
+        throw new PersonalAgentAuthorizationError("session_paused");
+      const session = await this.session(db, account, row);
+      const sourceMember = this.findMember(session.members, source);
+      const targetMember = this.findMember(session.members, target);
+      if (
+        !sourceMember ||
+        !targetMember ||
+        sourceMember.removed_at ||
+        targetMember.removed_at ||
+        !sourceMember.available ||
+        !targetMember.available ||
+        sourceMember.member_id === targetMember.member_id
+      )
+        throw new PersonalAgentAuthorizationError("not_a_member");
+      return {
+        agent_session_id,
+        session_generation: row.generation,
+        account_generation: controls.generation,
+        account_id: account,
+        delivery_mode: row.delivery_mode,
+        source: sourceMember,
+        target: targetMember,
+      };
+    });
+  }
+
+  async discover(
+    account: string,
+    source: AgentRpcSource,
+    run_id?: string,
+  ): Promise<AgentSessionDiscovery> {
+    if (!isExternalAgentSource(source)) {
+      requireUuid(run_id, "run_id");
+      if ((await this.principal(source, run_id!)) !== account)
+        throw new PersonalAgentAuthorizationError("principal_mismatch");
+    }
+    const rows = (
+      await this.db.query(
+        `SELECT DISTINCT s.* FROM agent_sessions s
+         JOIN agent_session_members m USING(agent_session_id)
+         WHERE s.account_id=$1 AND s.state='active' AND m.removed_at IS NULL
+           AND ((m.member_kind='registered' AND m.registered_agent_id=$2)
+             OR (m.member_kind='external' AND m.external_agent_id=$2))
+         ORDER BY s.updated_at DESC LIMIT 100`,
+        [account, source.agent_id],
+      )
+    ).rows;
+    const sessions: AgentSession[] = [];
+    for (const row of rows)
+      sessions.push(await this.session(this.db, account, row));
+    const peers = new Map<string, AgentSessionDiscovery["peers"][number]>();
+    for (const session of sessions)
+      for (const member of session.members) {
+        if (this.findMember([member], source)) continue;
+        const key =
+          member.kind === "registered"
+            ? `registered/${member.endpoint.project_id}/${member.endpoint.agent_id}`
+            : agentRpcSourceKey(member.source);
+        const current = peers.get(key) ?? { member, sessions: [] };
+        current.sessions.push({
+          agent_session_id: session.agent_session_id,
+          title: session.title,
+          delivery_mode: session.delivery_mode,
+          generation: session.generation,
+        });
+        peers.set(key, current);
+      }
+    return { peers: [...peers.values()] };
+  }
+
+  async observeActivity(account: string, activity: AgentSessionActivity) {
+    requireUuid(activity.attempt_id, "attempt_id");
+    await this.locked(account, async (db) => {
+      await db.query(
+        `INSERT INTO agent_session_activity
+         (attempt_id,account_id,agent_session_id,session_generation,source_member_id,target_member_id,configured_delivery,effective_delivery,outcome,observed_at)
+         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT(attempt_id) DO UPDATE SET
+           effective_delivery=EXCLUDED.effective_delivery,outcome=EXCLUDED.outcome,observed_at=EXCLUDED.observed_at`,
+        [
+          activity.attempt_id,
+          account,
+          activity.agent_session_id,
+          activity.session_generation,
+          activity.source_member_id,
+          activity.target_member_id,
+          activity.configured_delivery,
+          activity.effective_delivery,
+          activity.outcome,
+          new Date(activity.observed_at),
+        ],
+      );
+      await db.query(
+        `DELETE FROM agent_session_activity WHERE account_id=$1 AND attempt_id IN
+         (SELECT attempt_id FROM agent_session_activity WHERE account_id=$1 ORDER BY observed_at DESC OFFSET $2)`,
+        [account, MAX_ACTIVITY_PER_ACCOUNT],
+      );
+    });
+  }
+
+  async activity(account: string, agent_session_id: string, limit = 100) {
+    requireUuid(agent_session_id, "agent_session_id");
+    const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
+    return (
+      await this.db.query(
+        `SELECT * FROM agent_session_activity WHERE account_id=$1 AND agent_session_id=$2
+         ORDER BY observed_at DESC LIMIT $3`,
+        [account, agent_session_id, bounded],
+      )
+    ).rows.map((row) => ({ ...row, observed_at: iso(row.observed_at) }));
+  }
+
+  async inspectActivity(
+    account: string,
+    agent_session_id: string,
+    attempt_id: string,
+  ): Promise<AgentSessionActivity | undefined> {
+    requireUuid(agent_session_id, "agent_session_id");
+    requireUuid(attempt_id, "attempt_id");
+    const row = (
+      await this.db.query(
+        `SELECT * FROM agent_session_activity
+         WHERE account_id=$1 AND agent_session_id=$2 AND attempt_id=$3`,
+        [account, agent_session_id, attempt_id],
+      )
+    ).rows[0];
+    return row ? { ...row, observed_at: iso(row.observed_at) } : undefined;
   }
 
   async setControls(account: string, opts: SetPersonalMessagingStateOptions) {
     if (!["pause", "resume", "revoke_all"].includes(opts.action))
-      throw new Error("invalid account control");
-    return this.locked(account, async (db) => {
-      if (opts.action !== "resume")
-        await db.query(
-          "UPDATE agent_personal_requests SET state='invalidated' WHERE account_id=$1 AND state='pending' AND canonical_request_id IS NULL",
-          [account],
-        );
-      return (
-        await db.query(
-          `UPDATE agent_personal_controls
-      SET paused=CASE WHEN $2='revoke_all' THEN paused ELSE $2='pause' END,
-      generation=generation+CASE WHEN $2='revoke_all' THEN 1 ELSE 0 END WHERE account_id=$1 RETURNING paused,generation`,
-          [account, opts.action],
-        )
-      ).rows[0] as PersonalMessagingControls;
-    });
-  }
-
-  async links(account: string, source: AgentEndpoint) {
-    await this.endpoint(account, source);
-    const links = (await this.connections(account, source)).filter(
-      (link) => link.status === "active",
-    );
-    const available: PersonalConnection[] = [];
-    for (const link of links) {
-      try {
-        await this.endpoint(account, link.target);
-        available.push(link);
-      } catch {
-        /* Unavailable authority is not a usable destination. */
-      }
-    }
-    return available;
-  }
-
-  async check(
-    account: string,
-    source: AgentEndpoint,
-    target: AgentEndpoint,
-    guidance: boolean,
-  ) {
-    await this.endpoint(account, source);
-    await this.endpoint(account, target);
-    const active = await this.locked(account, async (db, controls) => {
-      const rows = (
-        await db.query(
-          `SELECT * FROM agent_personal_grants WHERE account_id=$1 AND source_project_id=$2 AND source_agent_id=$3
-        AND target_project_id=$4 AND target_agent_id=$5 AND (NOT $6::boolean OR allow_guidance) ORDER BY created_at DESC,link_id`,
-          [
-            account,
-            source.project_id,
-            source.agent_id,
-            target.project_id,
-            target.agent_id,
-            guidance,
-          ],
-        )
-      ).rows;
-      const links = rows.map((row) => this.connection(row, controls));
-      const active = links.find((link) => link.status === "active");
-      if (active) return active;
-      const status = links[0]?.status;
-      throw new PersonalAgentAuthorizationError(
-        status && status !== "active" ? `grant_${status}` : "approval_required",
-      );
-    });
-    return (await this.decorate(account, [active]))[0];
-  }
-
-  private requestRow(row: any): PersonalConnectionRequest {
-    return {
-      ...row.request,
-      request_id: row.request_id,
-      account_id: row.account_id,
-      source: {
-        project_id: row.source_project_id,
-        agent_id: row.source_agent_id,
-      },
-      run_id: row.run_id,
-      generation: row.generation,
-      state:
-        row.state === "pending" &&
-        new Date(row.expires_at).getTime() <= Date.now()
-          ? "expired"
-          : row.state,
-      created_at: iso(row.created_at),
-      expires_at: iso(row.expires_at),
-      direction_group_id: row.direction_group_id ?? undefined,
-    };
-  }
-
-  async requests(account: string) {
-    // Ten new IDs/minute and a 15-minute lifetime bound active prompts below
-    // 200. Keep actionable requests ahead of history, which remains inspectable
-    // individually even when it falls out of this bounded account list.
-    const rows = (
-      await this.db.query(
-        "SELECT * FROM agent_personal_requests WHERE account_id=$1 AND canonical_request_id IS NULL ORDER BY (state='pending' AND expires_at>now()) DESC,created_at DESC LIMIT 200",
-        [account],
-      )
-    ).rows;
-    return rows.map((row) => this.requestRow(row));
-  }
-
-  async readRequest(
-    account: string,
-    request_id: string,
-    source?: RequestSource,
-  ) {
-    requireUuid(request_id, "request_id");
-    let row = (
-      await this.db.query(
-        "SELECT * FROM agent_personal_requests WHERE account_id=$1 AND request_id=$2",
-        [account, request_id],
-      )
-    ).rows[0];
-    if (row?.canonical_request_id)
-      row = (
-        await this.db.query(
-          "SELECT * FROM agent_personal_requests WHERE account_id=$1 AND request_id=$2 AND canonical_request_id IS NULL",
-          [account, row.canonical_request_id],
-        )
-      ).rows[0];
-    if (
-      !row ||
-      (source &&
-        (row.source_project_id !== source.source.project_id ||
-          row.source_agent_id !== source.source.agent_id ||
-          row.run_id !== source.run_id))
-    )
-      throw new Error("connection_request_not_found");
-    const result = this.requestRow(row);
-    return row.request_id === request_id
-      ? result
-      : { ...result, request_id, canonical_request_id: row.request_id };
-  }
-
-  async request(
-    account: string,
-    opts: PersonalConnectionRequestOptions & RequestSource,
-  ) {
-    requireUuid(opts.request_id, "request_id");
-    requireUuid(opts.run_id, "run_id");
-    const canonical = this.approval({
-      ...opts,
-      approval_request_id: opts.request_id,
-    });
-    await this.endpoint(account, opts.source);
-    await this.endpoint(account, opts.target);
-    if ((await this.principal(opts.source, opts.run_id)) !== account)
-      throw new Error("principal_mismatch");
+      throw new Error("invalid messaging control");
     return this.locked(account, async (db, controls) => {
-      let prior = (
+      const generation =
+        opts.action === "revoke_all"
+          ? controls.generation + 1
+          : controls.generation;
+      const paused = opts.action !== "resume";
+      const row = (
         await db.query(
-          "SELECT * FROM agent_personal_requests WHERE request_id=$1",
-          [opts.request_id],
+          "UPDATE agent_personal_controls SET paused=$2,generation=$3 WHERE account_id=$1 RETURNING paused,generation",
+          [account, paused, generation],
         )
       ).rows[0];
-      if (prior?.canonical_request_id && prior.account_id === account)
-        prior = (
-          await db.query(
-            "SELECT * FROM agent_personal_requests WHERE account_id=$1 AND request_id=$2 AND canonical_request_id IS NULL",
-            [account, prior.canonical_request_id],
-          )
-        ).rows[0];
-      if (prior) {
-        if (
-          prior.account_id !== account ||
-          prior.source_project_id !== opts.source.project_id ||
-          prior.source_agent_id !== opts.source.agent_id ||
-          prior.run_id !== opts.run_id ||
-          JSON.stringify(
-            this.approval({
-              ...prior.request,
-              source: opts.source,
-              approval_request_id: opts.request_id,
-            }),
-          ) !== JSON.stringify(canonical)
-        )
-          throw new Error("connection_request_conflict");
-        return this.requestRow(prior);
-      }
-      if (
-        (
-          await db.query(
-            "SELECT link_id FROM agent_personal_grants WHERE account_id=$1 AND approval_request_id=$2 LIMIT 1",
-            [account, opts.request_id],
-          )
-        ).rows[0]
-      )
-        throw new Error("connection_request_conflict");
-      if (controls.paused) throw new Error("grant_paused");
-      const total = (
+      if (opts.action === "revoke_all")
         await db.query(
-          "SELECT count(*) AS count FROM agent_personal_requests WHERE account_id=$1",
-          [account],
-        )
-      ).rows[0];
-      if (+total.count >= 10_000)
-        throw new Error("connection_request_capacity");
-      const restriction = await this.requestRestriction(
-        account,
-        opts.source,
-        opts.target,
-        canonical.both_directions,
-        db,
-        controls,
-      );
-      if (restriction) throw new Error(restriction);
-      const request = {
-        target: canonical.target,
-        reason: canonical.reason,
-        ttl_seconds: canonical.ttl_seconds,
-        both_directions: canonical.both_directions,
-        allow_guidance: canonical.allow_guidance,
-      };
-      const pending = (
-        await db.query(
-          `SELECT * FROM agent_personal_requests WHERE account_id=$1 AND source_project_id=$2 AND source_agent_id=$3 AND run_id=$4 AND state='pending' AND expires_at>now() AND request=$5::jsonb AND generation=$6 AND canonical_request_id IS NULL LIMIT 1`,
-          [
-            account,
-            opts.source.project_id,
-            opts.source.agent_id,
-            opts.run_id,
-            request,
-            controls.generation,
-          ],
-        )
-      ).rows[0];
-      const count = (
-        await db.query(
-          "SELECT count(*) AS n FROM agent_personal_requests WHERE account_id=$1 AND created_at>now()-interval '1 minute'",
-          [account],
-        )
-      ).rows[0];
-      if (+count.n >= 10) throw new Error("connection_request_rate_limited");
-      if (pending) {
-        // Preserve every submitted ID so a lost coalescing response remains
-        // inspectable after the canonical request has been resolved/expired.
-        await db.query(
-          `INSERT INTO agent_personal_requests(request_id,canonical_request_id,account_id,source_project_id,source_agent_id,run_id,request,state,expires_at,generation)
-          SELECT $1,request_id,account_id,source_project_id,source_agent_id,run_id,request,'pending',expires_at,generation FROM agent_personal_requests WHERE request_id=$2`,
-          [opts.request_id, pending.request_id],
+          "UPDATE agent_sessions SET state='closed',generation=$2,updated_at=now(),closed_at=now() WHERE account_id=$1 AND state<>'closed'",
+          [account, randomUUID()],
         );
-        return this.requestRow(pending);
-      }
-      const row = (
-        await db.query(
-          `INSERT INTO agent_personal_requests(request_id,account_id,source_project_id,source_agent_id,run_id,request,state,expires_at,generation)
-        VALUES($1,$2,$3,$4,$5,$6,'pending',now()+interval '15 minutes',$7) RETURNING *`,
-          [
-            opts.request_id,
-            account,
-            opts.source.project_id,
-            opts.source.agent_id,
-            opts.run_id,
-            request,
-            controls.generation,
-          ],
-        )
-      ).rows[0];
-      return this.requestRow(row);
+      return row;
     });
-  }
-
-  async resolveRequest(
-    account: string,
-    request_id: string,
-    decision: "approve" | "deny",
-  ) {
-    if (!["approve", "deny"].includes(decision))
-      throw new Error("invalid request decision");
-    const request = await this.readRequest(account, request_id);
-    request_id = request.canonical_request_id ?? request_id;
-    let valid = true;
-    if (decision === "approve" && request.state === "pending") {
-      try {
-        valid =
-          (await this.principal(request.source, request.run_id)) === account;
-        await this.endpoint(account, request.source);
-        await this.endpoint(account, request.target);
-      } catch {
-        valid = false;
-      }
-    }
-    return this.locked(account, async (db, controls) => {
-      const row = (
-        await db.query(
-          "SELECT * FROM agent_personal_requests WHERE account_id=$1 AND request_id=$2",
-          [account, request_id],
-        )
-      ).rows[0];
-      const current = this.requestRow(row);
-      if (current.state !== "pending") return current;
-      if (
-        decision === "approve" &&
-        (current.generation !== controls.generation ||
-          controls.paused ||
-          (await this.requestRestriction(
-            account,
-            current.source,
-            current.target,
-            current.both_directions === true,
-            db,
-            controls,
-          )))
-      )
-        valid = false;
-      let group: string | null = null;
-      const state =
-        decision === "deny" ? "denied" : valid ? "approved" : "invalidated";
-      if (state === "approved") {
-        const grants = await this.grantLocked(
-          account,
-          { ...current, approval_request_id: request_id },
-          db,
-          controls,
-        );
-        group = grants[0].direction_group_id;
-      }
-      return this.requestRow(
-        (
-          await db.query(
-            "UPDATE agent_personal_requests SET state=$3,direction_group_id=$4 WHERE account_id=$1 AND request_id=$2 RETURNING *",
-            [account, request_id, state, group],
-          )
-        ).rows[0],
-      );
-    });
-  }
-
-  private async requestRestriction(
-    account: string,
-    source: AgentEndpoint,
-    target: AgentEndpoint,
-    both: boolean,
-    db: Query,
-    controls: PersonalMessagingControls,
-  ): Promise<string | undefined> {
-    const directions = [{ source, target }];
-    if (both) directions.push({ source: target, target: source });
-    for (const direction of directions) {
-      const row = (
-        await db.query(
-          `SELECT * FROM agent_personal_grants WHERE account_id=$1 AND source_project_id=$2 AND source_agent_id=$3 AND target_project_id=$4 AND target_agent_id=$5 ORDER BY created_at DESC,link_id DESC LIMIT 1`,
-          [
-            account,
-            direction.source.project_id,
-            direction.source.agent_id,
-            direction.target.project_id,
-            direction.target.agent_id,
-          ],
-        )
-      ).rows[0];
-      const status = row && this.connection(row, controls).status;
-      if (status === "paused" || status === "revoked") return `grant_${status}`;
-    }
   }
 }

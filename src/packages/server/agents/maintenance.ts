@@ -45,37 +45,48 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
         WHERE COALESCE(ended_at,expires_at)<now()-interval '30 days' LIMIT $1)`,
       result,
     );
-    // Aliases must be removed before their canonical request because of the
-    // self-reference. Old pending rows are expired by time even if their
-    // stored state was never rewritten.
     await remove(
       db,
-      "request_aliases",
-      `DELETE FROM agent_personal_requests WHERE request_id IN
-       (SELECT request_id FROM agent_personal_requests
-        WHERE canonical_request_id IS NOT NULL
-          AND expires_at<now()-interval '30 days' LIMIT $1)`,
+      "session_mutations",
+      `DELETE FROM agent_session_mutations WHERE (account_id,request_id) IN
+       (SELECT account_id,request_id FROM agent_session_mutations
+        WHERE created_at<now()-interval '30 days' LIMIT $1)`,
       result,
     );
     await remove(
       db,
-      "requests",
-      `DELETE FROM agent_personal_requests WHERE request_id IN
-       (SELECT request_id FROM agent_personal_requests
-        WHERE canonical_request_id IS NULL
-          AND expires_at<now()-interval '30 days' LIMIT $1)`,
+      "session_activity",
+      `DELETE FROM agent_session_activity WHERE attempt_id IN
+       (SELECT attempt_id FROM agent_session_activity
+        WHERE observed_at<now()-interval '180 days' LIMIT $1)`,
       result,
     );
     await remove(
       db,
-      "personal_grants",
-      `DELETE FROM agent_personal_grants WHERE link_id IN
-       (SELECT g.link_id FROM agent_personal_grants g
-        LEFT JOIN agent_personal_controls c USING(account_id)
-        WHERE (g.revoked_at<now()-interval '180 days'
-          OR g.expires_at<now()-interval '180 days'
-          OR (g.created_at<now()-interval '180 days'
-              AND g.generation<COALESCE(c.generation,0))) LIMIT $1)`,
+      "session_proposals",
+      `DELETE FROM agent_session_proposals WHERE proposal_id IN
+       (SELECT proposal_id FROM agent_session_proposals
+        WHERE expires_at<now()-interval '30 days'
+          OR (resolved_at IS NOT NULL AND resolved_at<now()-interval '30 days')
+        LIMIT $1)`,
+      result,
+    );
+    await remove(
+      db,
+      "session_broadcasts",
+      `DELETE FROM agent_session_broadcasts WHERE (account_id,broadcast_id) IN
+       (SELECT account_id,broadcast_id FROM agent_session_broadcasts
+        WHERE created_at<now()-interval '30 days' LIMIT $1)`,
+      result,
+    );
+    await remove(
+      db,
+      "external_inbox",
+      `DELETE FROM agent_external_inbox WHERE message_id IN
+       (SELECT message_id FROM agent_external_inbox
+        WHERE expires_at<now()
+          OR (state='acknowledged' AND acknowledged_at<now()-interval '30 days')
+        LIMIT $1)`,
       result,
     );
     await remove(
@@ -85,37 +96,6 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
        (SELECT installation_id FROM agent_external_installations
         WHERE expires_at<now()-interval '180 days'
           OR (state='revoked' AND created_at<now()-interval '180 days')
-        LIMIT $1)`,
-      result,
-    );
-    await remove(
-      db,
-      "rpc_links",
-      `DELETE FROM agent_rpc_links WHERE link_id IN
-       (SELECT link_id FROM agent_rpc_links
-        WHERE expires_at<now()-interval '180 days'
-          OR revoked_at<now()-interval '180 days' LIMIT $1)`,
-      result,
-    );
-    // Legacy uncertain/dispatched inbox state is intentionally retained. Only
-    // rejected work is unambiguously terminal and safe to remove.
-    await remove(
-      db,
-      "rejected_inbox",
-      `DELETE FROM agent_message_inbox WHERE message_id IN
-       (SELECT message_id FROM agent_message_inbox
-        WHERE state='rejected' AND updated_at<now()-interval '180 days' LIMIT $1)`,
-      result,
-    );
-    await remove(
-      db,
-      "legacy_grants",
-      `DELETE FROM agent_message_grants WHERE grant_id IN
-       (SELECT g.grant_id FROM agent_message_grants g
-        WHERE (g.revoked_at<now()-interval '180 days'
-               OR g.expires_at<now()-interval '180 days')
-          AND NOT EXISTS (SELECT 1 FROM agent_message_inbox i
-                          WHERE i.grant_id=g.grant_id)
         LIMIT $1)`,
       result,
     );
