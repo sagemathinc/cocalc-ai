@@ -78,6 +78,7 @@ export const TABLE_OWNERSHIP = {
       "compute_funding_purchase_attributions",
       "compute_vm_personal_consents",
       "financial_approval_sessions",
+      "financial_approval_identities",
     ],
     {
       ownership: "seed-global",

@@ -78,6 +78,34 @@ interface IntentRow {
 // Initialized only when the separate approval service is explicitly enabled.
 export async function ensureCourseFundingApprovalSchema(): Promise<void> {
   await getPool()
+    .query(`CREATE TABLE IF NOT EXISTS financial_approval_identities (
+    account_id UUID PRIMARY KEY,
+    email_address VARCHAR(254) NOT NULL,
+    generation BIGINT NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  )`);
+  await getPool()
+    .query(`CREATE TABLE IF NOT EXISTS financial_approval_sessions (
+    session_hash TEXT PRIMARY KEY,
+    account_id UUID NOT NULL,
+    approval_origin TEXT NOT NULL,
+    primary_auth_method TEXT NOT NULL,
+    primary_verified_at TIMESTAMPTZ NOT NULL,
+    factor_level TEXT NOT NULL,
+    factor_verified_at TIMESTAMPTZ,
+    authenticated_for_intent_id UUID NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expire TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ,
+    email_address VARCHAR(254),
+    identity_generation BIGINT
+  )`);
+  await getPool().query(
+    `ALTER TABLE financial_approval_sessions
+       ADD COLUMN IF NOT EXISTS email_address VARCHAR(254),
+       ADD COLUMN IF NOT EXISTS identity_generation BIGINT`,
+  );
+  await getPool()
     .query(`CREATE TABLE IF NOT EXISTS course_funding_approval_intents (
     id UUID PRIMARY KEY,
     payer_account_id UUID NOT NULL,

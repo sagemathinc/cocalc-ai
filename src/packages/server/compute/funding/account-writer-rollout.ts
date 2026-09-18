@@ -55,6 +55,7 @@ export const FUNDING_AUTHORITY_TABLES = [
   "compute_funding_purchase_attributions",
   "compute_vm_personal_consents",
   "financial_approval_sessions",
+  "financial_approval_identities",
   "compute_vms",
   "compute_volumes",
   "compute_resource_work",

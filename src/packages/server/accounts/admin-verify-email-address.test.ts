@@ -68,6 +68,7 @@ it("records verification for the exact current email", async () => {
   ).resolves.toMatchObject({ email_address: "new@example.com" });
   expect(updateDirectory).toHaveBeenCalledWith({
     account_id: "00000000-0000-4000-8000-000000000001",
+    email_address: "new@example.com",
     email_address_verified: true,
   });
 });

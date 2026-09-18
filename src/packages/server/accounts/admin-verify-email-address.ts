@@ -71,6 +71,7 @@ export default async function adminVerifyEmailAddress({
 
   await updateClusterAccountEmailAddressVerified({
     account_id,
+    email_address: result.email_address,
     email_address_verified: true,
   });
 

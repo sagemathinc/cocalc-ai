@@ -296,6 +296,25 @@ Table({
   },
 });
 
+Table({
+  name: "financial_approval_identities",
+  rules: {
+    primary_key: "account_id",
+    durability: "hard",
+  },
+  fields: {
+    account_id: { type: "uuid", not_null: true },
+    email_address: { type: "string", not_null: true },
+    generation: {
+      type: "integer",
+      pg_type: "BIGINT",
+      not_null: true,
+      pg_default: "1",
+    },
+    updated_at: { type: "timestamp", not_null: true, pg_default: "now()" },
+  },
+});
+
 // These sessions exist only on the seed billing authority.  Account-home bays
 // prove identity and second factor, but do not own or validate this capability.
 Table({
@@ -314,6 +333,8 @@ Table({
     factor_level: { type: "string", not_null: true },
     factor_verified_at: { type: "timestamp" },
     authenticated_for_intent_id: { type: "uuid", not_null: true },
+    email_address: { type: "string" },
+    identity_generation: { type: "integer", pg_type: "BIGINT" },
     created_at: { type: "timestamp", not_null: true, pg_default: "now()" },
     expire: { type: "timestamp", not_null: true },
     revoked_at: { type: "timestamp" },

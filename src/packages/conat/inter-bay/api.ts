@@ -709,6 +709,7 @@ export interface AccountDirectoryUpdateEmailAddressRequest {
 
 export interface AccountDirectoryUpdateEmailAddressVerifiedRequest {
   account_id: string;
+  email_address: string;
   email_address_verified: boolean;
 }
 
@@ -1349,6 +1350,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
       action: "begin";
       account_id: string;
       email_address: string;
+      identity_generation: number;
       approval_origin: string;
       intent_id: string;
       primary_auth_method: "password" | "email_code" | "email_link";
@@ -1358,6 +1360,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
       action: "verify-code";
       account_id: string;
       email_address: string;
+      identity_generation: number;
       approval_origin: string;
       intent_id: string;
       challenge_id: string;
@@ -1368,6 +1371,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
       action: "start-passkey";
       account_id: string;
       email_address: string;
+      identity_generation: number;
       approval_origin: string;
       intent_id: string;
       challenge_id: string;
@@ -1382,6 +1386,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
       action: "finish-passkey";
       account_id: string;
       email_address: string;
+      identity_generation: number;
       approval_origin: string;
       intent_id: string;
       challenge_id: string;
@@ -1392,6 +1397,8 @@ export type AccountLocalFinancialApprovalAuthResult =
   | {
       state: "ready";
       account_id: string;
+      email_address: string;
+      identity_generation: number;
       primary_auth_method: "password" | "email_code" | "email_link";
       primary_verified_at: string;
       password_verified_at?: string;

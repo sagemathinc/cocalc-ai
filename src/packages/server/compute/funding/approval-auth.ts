@@ -18,6 +18,7 @@ import {
   redeemEmailAuthCodeDirect,
   startEmailAuthChallengeDirect,
 } from "@cocalc/server/auth/email/challenge-store";
+import { getFinancialApprovalIdentityDirect } from "@cocalc/server/accounts/cluster-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   getClusterAccountByEmail,
@@ -29,6 +30,7 @@ import { financialApprovalAuthOnHome } from "./approval-auth-home";
 export type FundingApprovalPendingAuth = {
   account_id: string;
   email_address: string;
+  identity_generation: number;
   home_bay_id: string;
   intent_id: string;
   origin: string;
@@ -54,6 +56,8 @@ interface FundingApprovalSessionRow {
   authenticated_for_intent_id: string;
   expire: Date;
   revoked_at: Date | null;
+  email_address: string;
+  identity_generation: number;
 }
 
 export function fundingSessionHash(token: string): string {
@@ -69,6 +73,10 @@ async function accountForEmail(email_address: string) {
   if (!account?.account_id || !account.home_bay_id) {
     throw new Error("Financial sign-in failed");
   }
+  const identity = await getFinancialApprovalIdentityDirect({
+    account_id: account.account_id,
+    email_address: email,
+  });
   return {
     account: {
       ...account,
@@ -76,6 +84,7 @@ async function accountForEmail(email_address: string) {
       home_bay_id: account.home_bay_id,
     },
     email,
+    identity_generation: identity.generation,
   };
 }
 
@@ -123,6 +132,7 @@ async function beginSecondFactor(
     action: "begin",
     account_id: auth.account_id,
     email_address: auth.email_address,
+    identity_generation: auth.identity_generation,
     approval_origin: auth.origin,
     intent_id: auth.intent_id,
     primary_auth_method,
@@ -145,7 +155,9 @@ export async function beginFundingApprovalPassword(opts: {
   intent_id: string;
   origin: string;
 }): Promise<FundingApprovalPendingAuth | FundingApprovalReadyAuth> {
-  const { account, email } = await accountForEmail(opts.email_address);
+  const { account, email, identity_generation } = await accountForEmail(
+    opts.email_address,
+  );
   const verified = await verifyClusterAccountSignInPassword({
     home_bay_id: account.home_bay_id,
     email_address: email,
@@ -158,6 +170,7 @@ export async function beginFundingApprovalPassword(opts: {
     pending({
       account_id: account.account_id,
       email_address: email,
+      identity_generation,
       home_bay_id: account.home_bay_id,
       intent_id: opts.intent_id,
       origin: opts.origin,
@@ -173,7 +186,9 @@ export async function beginFundingApprovalEmail(opts: {
   intent_id: string;
   origin: string;
 }): Promise<FundingApprovalPendingAuth> {
-  const { account, email } = await accountForEmail(opts.email_address);
+  const { account, email, identity_generation } = await accountForEmail(
+    opts.email_address,
+  );
   const challenge = await startEmailAuthChallengeDirect({
     email_address: email,
     browser_binding: opts.browser_binding,
@@ -184,6 +199,7 @@ export async function beginFundingApprovalEmail(opts: {
   return pending({
     account_id: account.account_id,
     email_address: email,
+    identity_generation,
     home_bay_id: account.home_bay_id,
     intent_id: opts.intent_id,
     origin: opts.origin,
@@ -239,6 +255,7 @@ export async function verifyFundingApprovalCode(opts: {
     action: "verify-code",
     account_id: opts.auth.account_id,
     email_address: opts.auth.email_address,
+    identity_generation: opts.auth.identity_generation,
     approval_origin: opts.auth.origin,
     intent_id: opts.auth.intent_id,
     challenge_id: opts.auth.second_factor_challenge_id,
@@ -266,6 +283,7 @@ export async function startFundingApprovalPasskey(opts: {
     action: "start-passkey",
     account_id: opts.auth.account_id,
     email_address: opts.auth.email_address,
+    identity_generation: opts.auth.identity_generation,
     approval_origin: opts.auth.origin,
     intent_id: opts.auth.intent_id,
     challenge_id: opts.auth.second_factor_challenge_id,
@@ -287,6 +305,7 @@ export async function finishFundingApprovalPasskey(opts: {
     action: "finish-passkey",
     account_id: opts.auth.account_id,
     email_address: opts.auth.email_address,
+    identity_generation: opts.auth.identity_generation,
     approval_origin: opts.auth.origin,
     intent_id: opts.auth.intent_id,
     challenge_id: opts.auth.second_factor_challenge_id,
@@ -303,12 +322,16 @@ export async function issueFundingApprovalSession(opts: {
 }) {
   const token = randomBytes(32).toString("hex");
   const expire = new Date(Date.now() + 8 * 60 * 60_000);
-  await getPool().query(
+  const inserted = await getPool().query(
     `INSERT INTO financial_approval_sessions
        (session_hash,account_id,approval_origin,primary_auth_method,
         primary_verified_at,factor_level,factor_verified_at,
-        authenticated_for_intent_id,expire)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        authenticated_for_intent_id,expire,email_address,identity_generation)
+     SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+       FROM financial_approval_identities
+      WHERE account_id=$2 AND email_address=$10 AND generation=$11
+      FOR SHARE
+     RETURNING account_id`,
     [
       fundingSessionHash(token),
       opts.auth.account_id,
@@ -321,8 +344,13 @@ export async function issueFundingApprovalSession(opts: {
         : null,
       opts.intent_id,
       expire,
+      opts.auth.email_address,
+      opts.auth.identity_generation,
     ],
   );
+  if (inserted.rows.length !== 1) {
+    throw new Error("Financial sign-in identity changed");
+  }
   return { account_id: opts.auth.account_id, token };
 }
 
@@ -336,8 +364,13 @@ export async function requireFundingApprovalSession(opts: {
   const db = opts.db ?? getPool();
   const session = (
     await db.query<FundingApprovalSessionRow>(
-      `SELECT * FROM financial_approval_sessions WHERE session_hash=$1
-         AND revoked_at IS NULL AND expire > clock_timestamp()
+      `SELECT session.* FROM financial_approval_sessions session
+       JOIN financial_approval_identities identity
+         ON identity.account_id=session.account_id
+        AND identity.email_address=session.email_address
+        AND identity.generation=session.identity_generation
+       WHERE session.session_hash=$1
+         AND session.revoked_at IS NULL AND session.expire > clock_timestamp()
          ${opts.db ? "FOR SHARE" : ""}`,
       [opts.session_hash],
     )

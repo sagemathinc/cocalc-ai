@@ -39,6 +39,7 @@ const intent_id = randomUUID();
 const challenge_id = randomUUID();
 const approval_origin = "https://approve.example.test";
 const email_address = "payer@example.test";
+const identity_generation = 7;
 const primary_verified_at = new Date().toISOString();
 const query = jest.fn();
 
@@ -60,6 +61,7 @@ it("returns ready after primary authentication when no second factor is active",
       action: "begin",
       account_id,
       email_address,
+      identity_generation,
       approval_origin,
       intent_id,
       primary_auth_method: "email_code",
@@ -68,6 +70,8 @@ it("returns ready after primary authentication when no second factor is active",
   ).resolves.toMatchObject({
     state: "ready",
     account_id,
+    email_address,
+    identity_generation,
     primary_auth_method: "email_code",
     factor_level: "none",
   });
@@ -88,6 +92,7 @@ it("creates an intent-bound challenge using the account's actual methods", async
       action: "begin",
       account_id,
       email_address,
+      identity_generation,
       approval_origin,
       intent_id,
       primary_auth_method: "password",
@@ -106,6 +111,7 @@ it("creates an intent-bound challenge using the account's actual methods", async
         financial_approval_origin: approval_origin,
         financial_intent_id: intent_id,
         financial_approval_email: email_address,
+        financial_identity_generation: identity_generation,
       },
     }),
   );
@@ -124,6 +130,7 @@ it("rejects a challenge bound to another intent before factor verification", asy
             financial_approval_origin: approval_origin,
             financial_intent_id: randomUUID(),
             financial_approval_email: email_address,
+            financial_identity_generation: identity_generation,
           },
         },
       ],
@@ -134,6 +141,7 @@ it("rejects a challenge bound to another intent before factor verification", asy
       action: "verify-code",
       account_id,
       email_address,
+      identity_generation,
       approval_origin,
       intent_id,
       challenge_id,
@@ -157,6 +165,7 @@ it("rejects a challenge bound to another email before factor verification", asyn
             financial_approval_origin: approval_origin,
             financial_intent_id: intent_id,
             financial_approval_email: "old@example.test",
+            financial_identity_generation: identity_generation,
           },
         },
       ],
@@ -168,6 +177,43 @@ it("rejects a challenge bound to another email before factor verification", asyn
       action: "verify-code",
       account_id,
       email_address,
+      identity_generation,
+      approval_origin,
+      intent_id,
+      challenge_id,
+      method: "totp",
+      code: "123456",
+    }),
+  ).rejects.toThrow("challenge mismatch");
+  expect(verifySignInSecondFactorChallenge).not.toHaveBeenCalled();
+});
+
+it("rejects a challenge bound to an earlier identity generation", async () => {
+  query.mockImplementation(async (sql: string) => {
+    if (sql.includes("FROM accounts")) {
+      return { rows: [{ exists: 1 }] };
+    }
+    return {
+      rows: [
+        {
+          account_id,
+          metadata: {
+            financial_approval_origin: approval_origin,
+            financial_intent_id: intent_id,
+            financial_approval_email: email_address,
+            financial_identity_generation: identity_generation - 1,
+          },
+        },
+      ],
+    };
+  });
+
+  await expect(
+    financialApprovalAuthOnHome({
+      action: "verify-code",
+      account_id,
+      email_address,
+      identity_generation,
       approval_origin,
       intent_id,
       challenge_id,
@@ -191,6 +237,7 @@ it("uses the isolated origin and parent RP ID for passkey verification", async (
             financial_approval_origin: approval_origin,
             financial_intent_id: intent_id,
             financial_approval_email: email_address,
+            financial_identity_generation: identity_generation,
           },
         },
       ],
@@ -205,6 +252,7 @@ it("uses the isolated origin and parent RP ID for passkey verification", async (
       action: "start-passkey",
       account_id,
       email_address,
+      identity_generation,
       approval_origin,
       intent_id,
       challenge_id,
@@ -239,6 +287,7 @@ it("binds related-origin passkeys to the challenged approval origin", async () =
             financial_approval_origin: approval_origin,
             financial_intent_id: intent_id,
             financial_approval_email: email_address,
+            financial_identity_generation: identity_generation,
           },
         },
       ],
@@ -249,6 +298,7 @@ it("binds related-origin passkeys to the challenged approval origin", async () =
       action: "start-passkey",
       account_id,
       email_address,
+      identity_generation,
       approval_origin,
       intent_id,
       challenge_id,
@@ -271,6 +321,7 @@ it("rejects an obsolete email before issuing a financial challenge", async () =>
       action: "begin",
       account_id,
       email_address: "old@example.test",
+      identity_generation,
       approval_origin,
       intent_id,
       primary_auth_method: "email_code",

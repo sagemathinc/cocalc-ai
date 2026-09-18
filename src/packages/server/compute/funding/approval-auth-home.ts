@@ -34,6 +34,8 @@ function requireIdentity(opts: AccountLocalFinancialApprovalAuthRequest): void {
     !isValidUUID(opts.intent_id) ||
     !email ||
     email !== opts.email_address ||
+    !Number.isSafeInteger(opts.identity_generation) ||
+    opts.identity_generation < 1 ||
     new URL(opts.approval_origin).origin !== opts.approval_origin
   ) {
     throw new Error("invalid financial approval authentication request");
@@ -71,7 +73,8 @@ async function requireBoundChallenge(
     row?.account_id !== opts.account_id ||
     row.metadata?.financial_approval_origin !== opts.approval_origin ||
     row.metadata?.financial_intent_id !== opts.intent_id ||
-    row.metadata?.financial_approval_email !== opts.email_address
+    row.metadata?.financial_approval_email !== opts.email_address ||
+    row.metadata?.financial_identity_generation !== opts.identity_generation
   ) {
     throw new Error("financial approval authentication challenge mismatch");
   }
@@ -84,10 +87,13 @@ function ready(
       | typeof finishSignInPasskeyAuthentication
     >
   >,
+  opts: AccountLocalFinancialApprovalAuthRequest,
 ): AccountLocalFinancialApprovalAuthResult {
   return {
     state: "ready",
     account_id: result.account_id,
+    email_address: opts.email_address,
+    identity_generation: opts.identity_generation,
     primary_auth_method: result.primary_auth_method as
       | "password"
       | "email_code"
@@ -118,6 +124,8 @@ export async function financialApprovalAuthOnHome(
       return {
         state: "ready",
         account_id: opts.account_id,
+        email_address: opts.email_address,
+        identity_generation: opts.identity_generation,
         primary_auth_method: opts.primary_auth_method,
         primary_verified_at: primaryVerifiedAt.toISOString(),
         ...(opts.primary_auth_method === "password"
@@ -134,6 +142,7 @@ export async function financialApprovalAuthOnHome(
         financial_approval_origin: opts.approval_origin,
         financial_intent_id: opts.intent_id,
         financial_approval_email: opts.email_address,
+        financial_identity_generation: opts.identity_generation,
       },
     });
     return {
@@ -151,6 +160,7 @@ export async function financialApprovalAuthOnHome(
         method: opts.method,
         code: opts.code,
       }),
+      opts,
     );
   }
   if (opts.action === "start-passkey") {
@@ -172,5 +182,6 @@ export async function financialApprovalAuthOnHome(
       challenge_id: opts.challenge_id,
       response: opts.response as unknown as AuthenticationResponseJSON,
     }),
+    opts,
   );
 }

@@ -16,6 +16,9 @@ jest.mock("@cocalc/database/pool", () => ({
   default: jest.fn(),
 }));
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({}));
+jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
+  getFinancialApprovalIdentityDirect: jest.fn(),
+}));
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => "bay-0",
 }));
@@ -27,13 +30,15 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 it("binds the reusable independently verified session to origin and payer", async () => {
-  const query = jest.fn().mockResolvedValue({ rows: [] });
+  const query = jest.fn().mockResolvedValue({ rows: [{ account_id }] });
   (getPool as jest.Mock).mockReturnValue({ query });
   const now = new Date().toISOString();
   const result = await issueFundingApprovalSession({
     auth: {
       state: "ready",
       account_id,
+      email_address: "payer@example.test",
+      identity_generation: 7,
       primary_auth_method: "email_code",
       primary_verified_at: now,
       factor_level: "passkey",
@@ -57,6 +62,28 @@ it("binds the reusable independently verified session to origin and payer", asyn
   const lifetime = created[8].getTime() - Date.now();
   expect(lifetime).toBeGreaterThan(7.9 * 60 * 60_000);
   expect(lifetime).toBeLessThanOrEqual(8 * 60 * 60_000);
+  expect(query.mock.calls[0][0]).toContain(
+    "WHERE account_id=$2 AND email_address=$10 AND generation=$11",
+  );
+});
+it("does not issue a session after the financial identity changes", async () => {
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  (getPool as jest.Mock).mockReturnValue({ query });
+  await expect(
+    issueFundingApprovalSession({
+      auth: {
+        state: "ready",
+        account_id,
+        email_address: "old@example.test",
+        identity_generation: 4,
+        primary_auth_method: "email_code",
+        primary_verified_at: new Date().toISOString(),
+        factor_level: "none",
+      },
+      intent_id,
+      origin,
+    }),
+  ).rejects.toThrow("identity changed");
 });
 it("accepts the reusable approval session for another exact intent", async () => {
   const query = jest.fn().mockResolvedValue({
@@ -110,7 +137,7 @@ it("rechecks expiry and revocation under a database lock before committing", asy
   ).rejects.toThrow("Financial sign-in required");
   expect(query).toHaveBeenCalledWith(
     expect.stringMatching(
-      /revoked_at IS NULL[\s\S]*expire > clock_timestamp\(\)[\s\S]*FOR SHARE/,
+      /JOIN financial_approval_identities[\s\S]*revoked_at IS NULL[\s\S]*expire > clock_timestamp\(\)[\s\S]*FOR SHARE/,
     ),
     ["hash"],
   );
