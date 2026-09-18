@@ -5553,6 +5553,10 @@ PROJECT_CGROUP_LOCK_WAIT_SECONDS="5"
 # project I/O policy is reconciled. Foreground starts should wait for that
 # bounded maintenance pass instead of failing after the short mutation timeout.
 PROJECT_STARTUP_CGROUP_LOCK_WAIT_SECONDS="120"
+# Recursive storage operations can run concurrently and may begin while a
+# recovered host is reconciling its cgroup hierarchy. Existing project cgroups
+# only need a shared lock, but repair must tolerate that bounded maintenance.
+PROJECT_STORAGE_CGROUP_LOCK_WAIT_SECONDS="120"
 PROJECT_IO_RESERVATION_LOCK="/run/lock/cocalc-project-io-reservation.lock"
 PROJECT_IO_NORMAL_LIMITS_SNAPSHOT="/run/cocalc-project-pool-normal-io.max"
 PROJECT_IO_PRESSURE_MODE_STATE="/run/cocalc-project-pool-pressure-mode"
@@ -5717,6 +5721,20 @@ acquire_project_startup_cgroup_shared_lock() {
   fi
 }
 
+acquire_project_storage_cgroup_lock() {
+  exec 9>/run/lock/cocalc-project-cgroups.lock
+  if ! flock -x -w "$PROJECT_STORAGE_CGROUP_LOCK_WAIT_SECONDS" 9; then
+    deny "project-cgroup-lock-timeout" "$PROJECT_STORAGE_CGROUP_LOCK_WAIT_SECONDS"
+  fi
+}
+
+acquire_project_storage_cgroup_shared_lock() {
+  exec 9>/run/lock/cocalc-project-cgroups.lock
+  if ! flock -s -w "$PROJECT_STORAGE_CGROUP_LOCK_WAIT_SECONDS" 9; then
+    deny "project-cgroup-lock-timeout" "$PROJECT_STORAGE_CGROUP_LOCK_WAIT_SECONDS"
+  fi
+}
+
 release_project_lock() {
   flock -u 9 || true
   exec 9>&-
@@ -5790,7 +5808,7 @@ is_trusted_conmon_executable() {
 
 host_service_process_title() {
   local title=""
-  IFS= read -r -d '' title < "/proc/$1/cmdline" 2>/dev/null || true
+  IFS= read -r -d '' title 2>/dev/null < "/proc/$1/cmdline" || true
   printf '%s\n' "$title"
 }
 
@@ -6211,6 +6229,18 @@ remove_backup_browser_cgroup() {
   rmdir "$leaf" 2>/dev/null || true
 }
 
+reconcile_host_service_pid() {
+  local pid="$1"
+  # Discovery is a snapshot: a managed process may exit during an upgrade.
+  # Keep validation fatal for live processes and ignore only departed ones.
+  if (require_host_service_pid "$pid" &&
+      printf '%s\n' "$pid" > "${HOST_SERVICE_CGROUP_DEFAULT}/cgroup.procs"); then
+    return 0
+  fi
+  kill -0 "$pid" 2>/dev/null || return 0
+  deny "host-service-reconcile-failed" "pid=${pid}"
+}
+
 reconcile_host_service_cgroup() {
   local pid_file pid title runtime_uid actual_uid
   configure_host_service_cgroup
@@ -6232,8 +6262,7 @@ reconcile_host_service_cgroup() {
     [ "$actual_uid" = "$runtime_uid" ] || continue
     title="$(host_service_process_title "$pid")"
     grep -Eq '^project-host:(app|host-agent(:[0-9]+)?|conat-router|conat-persist|acp-worker|conat-router-cluster-node)$' <<< "$title" || continue
-    require_host_service_pid "$pid"
-    printf '%s\n' "$pid" > "${HOST_SERVICE_CGROUP_DEFAULT}/cgroup.procs"
+    reconcile_host_service_pid "$pid"
   done
 }
 
@@ -7452,10 +7481,27 @@ project_id_from_delete_root() {
 attach_storage_worker_to_project() {
   local root="$1" project_id target io_class="standard"
   project_id="$(project_id_from_delete_root "$root")" || deny "storage-worker-project-invalid" "$root"
-  acquire_project_cgroup_lock
-  configure_project_pool_hierarchy
-  require_finite_project_pool_memory_max
   target="$(project_cgroup "$project_id")"
+
+  # Moving a process into an existing leaf does not mutate the hierarchy, so
+  # concurrent storage helpers can safely share the global cgroup lock.
+  acquire_project_storage_cgroup_shared_lock
+  if project_pool_hierarchy_ready && [ -d "$target" ]; then
+    require_finite_project_pool_memory_max
+    printf '%s\n' "$$" > "$target/cgroup.procs"
+    verify_project_pid_in_pool "$project_id" "$$" || deny "storage-worker-cgroup-mismatch" "$project_id"
+    release_project_lock
+    return 0
+  fi
+  release_project_lock
+
+  # Repair or leaf creation changes shared hierarchy state. Recheck after
+  # obtaining the exclusive lock because another helper may have repaired it.
+  acquire_project_storage_cgroup_lock
+  if ! project_pool_hierarchy_ready; then
+    configure_project_pool_hierarchy
+  fi
+  require_finite_project_pool_memory_max
   if [ ! -d "$target" ]; then
     if [ -r "${PROJECT_IO_CLASS_STATE_DIR}/${project_id}" ]; then
       io_class="$(cat "${PROJECT_IO_CLASS_STATE_DIR}/${project_id}")"

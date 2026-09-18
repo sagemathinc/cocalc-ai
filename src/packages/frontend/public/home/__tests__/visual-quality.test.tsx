@@ -75,7 +75,7 @@ describe("PublicHomeApp visual quality contract", () => {
       "Jupyter Notebooks",
       "LaTeX Editor",
       "Linux Terminal",
-      "Codex Agent Chat",
+      "AI Agents",
       "Teaching a Course",
       "Whiteboard",
     ]);
@@ -87,17 +87,17 @@ describe("PublicHomeApp visual quality contract", () => {
     expect(getDirectCards(codexGrid)).toHaveLength(3);
     expectGridTemplate(codexGrid, "repeat(3, minmax(0, 1fr))");
     expect(getCardTitles(codexGrid, "h3")).toEqual([
-      "Runs where your work lives",
-      "You stay in review",
-      "Bring the agent you use",
+      "Work with files and services",
+      "Review agent changes",
+      "Integrated chat or terminal",
     ]);
 
     expect(getDirectCards(audienceGrid)).toHaveLength(3);
     expectGridTemplate(audienceGrid, "repeat(3, minmax(0, 1fr))");
     expect(getCardTitles(audienceGrid, "h3")).toEqual([
-      "Research and engineering teams",
-      "IT and platform teams",
-      "Technical courses and workshops",
+      "Researchers, analysts, and builders",
+      "Organizations and platform teams",
+      "Educators and learners",
     ]);
     for (const card of getDirectCards(audienceGrid)) {
       expect(card.tagName).toBe("A");
@@ -165,6 +165,9 @@ describe("PublicHomeApp visual quality contract", () => {
       "grid-template-columns: repeat(2, minmax(0, 1fr)) !important;",
     );
 
+    expect(css).toContain("@media (max-width: 620px)");
+    expect(css).toContain(".cocalc-public-home-final-actions .ant-btn");
+
     expect(css).toContain("@media (max-width: 560px)");
     expect(css).toContain(".cocalc-public-home-feature-grid");
     expect(css).toContain(".cocalc-public-home-codex-grid");
@@ -213,7 +216,7 @@ describe("PublicHomeApp visual quality contract", () => {
     const h1 = container.querySelectorAll("h1");
     expect(h1).toHaveLength(1);
     expect(h1[0]).toHaveTextContent(
-      "A persistent shared computer for technical work.",
+      "Keep people, AI agents, and project work together.",
     );
     expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
 
@@ -244,11 +247,13 @@ describe("PublicHomeApp visual quality contract", () => {
     const heroImage = within(
       screen.getByRole("region", { name: "CoCalc hero" }),
     ).getByRole("img", {
-      name: "A persistent CoCalc project shared by people and AI agents",
+      name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
     });
-    expect(heroImage.getAttribute("src")).toBe("/public/landing/home-hero.jpg");
+    expect(heroImage.getAttribute("src")).toBe(
+      "/public/landing/project-notebook-20260916.jpg",
+    );
     expect(heroImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 1672 / 941;",
+      "aspect-ratio: 1050 / 650;",
     );
     expect(heroImage.getAttribute("style") ?? "").toContain(
       "object-fit: contain;",
@@ -257,13 +262,13 @@ describe("PublicHomeApp visual quality contract", () => {
     const workflowImage = within(
       screen.getByRole("region", { name: "Core workflows" }),
     ).getByRole("img", {
-      name: "One CoCalc workspace containing many workflows",
+      name: "A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average",
     });
     expect(workflowImage.getAttribute("src")).toBe(
-      "/public/landing/project-workflows.jpg",
+      "/public/landing/project-terminal-20260916.jpg",
     );
     expect(workflowImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 16 / 9;",
+      "aspect-ratio: 2 / 1;",
     );
     expect(workflowImage.getAttribute("style") ?? "").toContain(
       "object-fit: contain;",

@@ -5,6 +5,20 @@ jest.mock("awaiting", () => ({ delay: jest.fn(async () => undefined) }));
 import { Actions } from "../actions";
 
 describe("chat notification fragment navigation", () => {
+  it("opens a thread-only permalink without scrolling to an invented message", async () => {
+    const actions: any = Object.create(Actions.prototype);
+    actions.waitUntilFrameReady = jest.fn().mockResolvedValue("frame-1");
+    actions.set_frame_data = jest.fn();
+    const chatActions = {
+      setSelectedThread: jest.fn(),
+      scrollToDate: jest.fn(),
+    };
+    actions.getChatActions = jest.fn(() => chatActions);
+    await actions.gotoFragment({ thread: "thread%20one" });
+    expect(chatActions.setSelectedThread).toHaveBeenCalledWith("thread one");
+    expect(chatActions.scrollToDate).not.toHaveBeenCalled();
+    expect(actions.set_frame_data).not.toHaveBeenCalled();
+  });
   it("selects the thread, opens its attention request, and scrolls", async () => {
     const chatActions = {
       setSelectedThread: jest.fn(),

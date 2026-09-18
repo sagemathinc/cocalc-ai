@@ -8,6 +8,10 @@ import { Typography } from "antd";
 import { appPath, PublicNextStep } from "@cocalc/frontend/public/common";
 import { PublicCard, PublicGrid } from "@cocalc/frontend/public/layout/shell";
 import { PUBLIC_TYPE } from "@cocalc/frontend/public/theme";
+import {
+  PUBLIC_COMMUNITY_INTRO,
+  PUBLIC_COMMUNITY_LINKS,
+} from "@cocalc/util/public-support-content";
 
 const { Paragraph } = Typography;
 
@@ -15,31 +19,6 @@ interface CommunityViewConfig {
   help_email?: string;
   zendesk?: boolean;
 }
-
-const COMMUNITY_LINKS = [
-  {
-    title: "GitHub source code",
-    description:
-      "Browse the source, track issues, report bugs, and send pull requests.",
-    href: "https://github.com/sagemathinc/cocalc-ai",
-  },
-  {
-    title: "LinkedIn",
-    description: "Follow company news and updates from SageMath, Inc.",
-    href: "https://www.linkedin.com/company/sagemath-inc./",
-  },
-  {
-    title: "X",
-    description:
-      "Follow public announcements and updates, or tag the team publicly.",
-    href: "https://x.com/cocalc_ai",
-  },
-  {
-    title: "Bluesky",
-    description: "Follow CoCalc announcements and updates on Bluesky.",
-    href: "https://bsky.app/profile/cocalc.bsky.social",
-  },
-] as const;
 
 export default function CommunityView({
   config = {},
@@ -50,8 +29,7 @@ export default function CommunityView({
   return (
     <div style={{ display: "grid", gap: 16 }}>
       <Paragraph style={{ margin: 0, fontSize: PUBLIC_TYPE.body }}>
-        Use these public channels to follow CoCalc updates and inspect the
-        source code. For account, billing, or project-specific help,{" "}
+        {PUBLIC_COMMUNITY_INTRO} For account, billing, or project-specific help,{" "}
         {config.zendesk ? (
           <a href={appPath("support/new")}>open a direct support ticket</a>
         ) : (
@@ -60,7 +38,7 @@ export default function CommunityView({
         .
       </Paragraph>
       <PublicGrid columns={4}>
-        {COMMUNITY_LINKS.map((item) => (
+        {PUBLIC_COMMUNITY_LINKS.map((item) => (
           <PublicCard
             href={item.href}
             key={item.href}

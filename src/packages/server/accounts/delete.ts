@@ -5,6 +5,7 @@ import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fenc
 import { revokeAllAuthSessions } from "@cocalc/server/auth/auth-sessions";
 import { deleteAllRememberMe } from "@cocalc/server/auth/remember-me";
 import { deleteBlobsForAccountDeletion } from "@cocalc/server/membership/blob-limits";
+import { cleanupSiteLicenseAccessForAccountDeletion } from "@cocalc/server/membership/account-deletion";
 import { disposeOwnedProjectsForAccountDeletion } from "@cocalc/server/projects/ownership";
 import { deleteRootfsImagesForAccountDeletion } from "@cocalc/server/rootfs/catalog";
 import {
@@ -19,6 +20,10 @@ export default async function deleteAccount(account_id: string): Promise<void> {
   }
 
   const revokedBeforeMs = Date.now();
+
+  // Site-license access is seed-authoritative and must be released before
+  // billing is frozen, since normal membership revocation rejects frozen accounts.
+  await cleanupSiteLicenseAccessForAccountDeletion({ account_id });
 
   // Cancel any subscriptions
   await cancelStripeEverything(account_id);

@@ -78,6 +78,7 @@ import {
 } from "./codex-defaults";
 import { CodexFullAccessNotice } from "./codex-full-access";
 import { CodexThreadId } from "./codex-thread-id";
+import { AgentCommunication } from "./agent-communication";
 import { getLatestAcpThreadIdForThread } from "./thread-session";
 import {
   getCodexPaymentSourceShortLabel,
@@ -1798,6 +1799,15 @@ export function CodexConfigButton({
                   <CodexSubagentConcurrencyButton />
                 </div>
                 <CodexThreadId threadId={threadKey} />
+                {projectId && threadKey && accountId && (
+                  <AgentCommunication
+                    api={webapp_client.conat_client.hub.agent}
+                    projectId={projectId}
+                    path={chatPath}
+                    threadId={threadKey}
+                    accountId={accountId}
+                  />
+                )}
                 {effectiveServiceTier === "fast" && !siteFundedPolicy ? (
                   <Alert
                     type="warning"

@@ -37,6 +37,7 @@ describe("loadProjectRuntimeSponsor", () => {
           },
           owning_bay_id: "bay-0",
           host_id: "host-1",
+          runtime_authority_revision: "7",
         },
       ],
     }));
@@ -47,6 +48,7 @@ describe("loadProjectRuntimeSponsor", () => {
         sponsor_account_id: "student",
         owning_bay_id: "bay-0",
         host_id: "host-1",
+        runtime_authority_revision: "7",
       },
     );
     expect(queryMock).toHaveBeenCalledWith(

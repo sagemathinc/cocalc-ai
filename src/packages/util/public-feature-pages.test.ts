@@ -76,6 +76,20 @@ describe("public feature page catalog", () => {
     }
   });
 
+  it("keeps agent discovery connected to current internal documentation", () => {
+    expect(getPublicFeaturePage("ai")?.docsUrl).toBe("/docs/ai/codex-chat");
+  });
+
+  it("describes agent sandboxes without claiming they cannot persist", () => {
+    const page = getPublicFeaturePage("compare");
+    const content = JSON.stringify(page);
+    expect(page?.title).toBe("CoCalc vs AI Agent Sandboxes");
+    expect(content).toContain("Some support persistent files");
+    expect(content).toContain("persistent shared project");
+    expect(content).toContain("If your design requires automatic fleets");
+    expect(content).not.toContain("sandboxes are disposable");
+  });
+
   it("returns exactly the pages marked for the public feature index", () => {
     expect(getPublicFeatureIndexPages()).toEqual(
       PUBLIC_FEATURE_PAGES.filter((page) => page.index),

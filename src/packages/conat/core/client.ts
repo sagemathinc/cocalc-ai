@@ -220,6 +220,7 @@ import {
   type ManagerOptions,
 } from "socket.io-client";
 import { EventIterator } from "@cocalc/util/event-iterator";
+import { ReceiveBudget, type ReceiveLimits } from "./receive-budget";
 import type { ConnectionStats, ServerInfo } from "./types";
 import { DataEncoding, decode, encode } from "./codec";
 import {
@@ -477,6 +478,8 @@ export function onConatTrace(listener: ConatTraceListener): () => void {
 }
 
 interface SubscriptionOptions {
+  receiveLimits?: ReceiveLimits;
+  maxQueue?: number;
   maxWait?: number;
   mesgLimit?: number;
   queue?: string;
@@ -1570,6 +1573,7 @@ export class Client extends EventEmitter {
       queue,
       confirm,
       timeout,
+      receiveLimits,
     }: {
       // if true, when the off method of the event emitter is called, then
       // the entire subscription is closed. This is very useful when we wrap the
@@ -1585,6 +1589,7 @@ export class Client extends EventEmitter {
       // how long to wait to confirm creation of the subscription;
       // only explicitly *used* when confirm=true, but always must be set.
       timeout?: number;
+      receiveLimits?: ReceiveLimits;
     } = {},
   ): { sub: SubscriptionEmitter; promise? } => {
     // Having timeout set at all is absolutely critical because if the connection
@@ -1607,6 +1612,8 @@ export class Client extends EventEmitter {
     }
     let sub = this.subs[subject];
     if (sub != null) {
+      if (!sub.matchesReceiveLimits(receiveLimits))
+        throw Error("incompatible receive limits for shared subscription");
       if (queue && this.queueGroups[subject] != queue) {
         throw Error(
           `client can only have one queue group subscription for a given subject -- subject='${subject}', queue='${queue}'`,
@@ -1626,6 +1633,7 @@ export class Client extends EventEmitter {
       client: this,
       subject,
       closeWhenOffCalled,
+      receiveLimits,
     });
     this.subs[subject] = sub;
     this.stats.subs++;
@@ -1681,6 +1689,7 @@ export class Client extends EventEmitter {
       idle: opts?.maxWait,
       limit: opts?.mesgLimit,
       map: (args) => args[0],
+      maxQueue: opts?.maxQueue,
     });
     return iter;
   };
@@ -1697,6 +1706,7 @@ export class Client extends EventEmitter {
       confirm: false,
       closeWhenOffCalled: true,
       queue: opts?.queue,
+      receiveLimits: opts?.receiveLimits,
     });
     return this.subscriptionIterator(sub, opts);
   };
@@ -1715,6 +1725,7 @@ export class Client extends EventEmitter {
       closeWhenOffCalled: true,
       queue: opts?.queue,
       timeout: opts?.timeout,
+      receiveLimits: opts?.receiveLimits,
     });
     try {
       await promise;
@@ -2822,9 +2833,10 @@ interface Chunk {
 // memory leaks when a chunk is dropped.
 const MAX_CHUNK_TIME = 2 * 60000;
 
-class SubscriptionEmitter extends EventEmitter {
+export class SubscriptionEmitter extends EventEmitter {
+  private readonly receiveBudget?: ReceiveBudget;
   private incoming: { [id: string]: (Partial<Chunk> & { time: number })[] } =
-    {};
+    Object.create(null);
   private client: Client;
   private closeWhenOffCalled?: boolean;
   private subject: string;
@@ -2832,13 +2844,27 @@ class SubscriptionEmitter extends EventEmitter {
   private dropOldTimer?: ReturnType<typeof setTimeout>;
   private dropOldSleepResolve?: () => void;
 
-  constructor({ client, subject, closeWhenOffCalled }) {
+  constructor({ client, subject, closeWhenOffCalled, receiveLimits }) {
     super();
     this.client = client;
     this.subject = subject;
+    this.receiveBudget = receiveLimits
+      ? new ReceiveBudget(receiveLimits)
+      : undefined;
     this.client.conn.on(subject, this.handle);
     this.closeWhenOffCalled = closeWhenOffCalled;
     this.dropOldLoop();
+  }
+
+  matchesReceiveLimits(limits?: ReceiveLimits): boolean {
+    const previous = this.receiveBudget?.limits;
+    return (
+      previous?.maxMessageBytes === limits?.maxMessageBytes &&
+      previous?.maxInflightBytes === limits?.maxInflightBytes &&
+      previous?.maxInflightMessages === limits?.maxInflightMessages &&
+      previous?.maxFragmentsPerMessage ===
+        (limits ? (limits.maxFragmentsPerMessage ?? 1024) : undefined)
+    );
   }
 
   close = (force?) => {
@@ -2853,6 +2879,7 @@ class SubscriptionEmitter extends EventEmitter {
     }
     this.dropOldSleepResolve?.();
     this.dropOldSleepResolve = undefined;
+    this.receiveBudget?.clear();
     this.emit("closed");
     this.client.conn.removeListener(this.subject, this.handle);
     // @ts-ignore
@@ -2880,8 +2907,26 @@ class SubscriptionEmitter extends EventEmitter {
     }
     const traceEnabled = conatTraceListeners.size > 0;
     const [id, seq, done, encoding, buffer, headers, , caller] = data;
+    if (
+      this.receiveBudget &&
+      !(buffer instanceof Uint8Array || buffer instanceof ArrayBuffer)
+    ) {
+      delete this.incoming[id];
+      this.receiveBudget.remove(id);
+      return;
+    }
     // console.log({ id, seq, done, encoding, buffer, headers });
-    const chunk = { seq, done, encoding, buffer, headers, caller };
+    const chunk = {
+      seq,
+      done,
+      encoding,
+      buffer:
+        this.receiveBudget && buffer instanceof ArrayBuffer
+          ? new Uint8Array(buffer)
+          : buffer,
+      headers,
+      caller,
+    };
     const { incoming } = this;
     if (incoming[id] == null) {
       if (seq != 0) {
@@ -2934,6 +2979,7 @@ class SubscriptionEmitter extends EventEmitter {
         }
         // part of message was dropped -- discard everything
         delete incoming[id];
+        this.receiveBudget?.remove(id);
         return;
       }
     }
@@ -2951,6 +2997,13 @@ class SubscriptionEmitter extends EventEmitter {
         encoding,
         ...(done && headers ? { headers } : {}),
       });
+    }
+    if (
+      this.receiveBudget &&
+      !this.receiveBudget.add(id, buffer?.byteLength ?? buffer?.length ?? NaN)
+    ) {
+      delete incoming[id];
+      return;
     }
     incoming[id].push({ ...chunk, time: Date.now() });
     if (chunk.done) {
@@ -3001,6 +3054,7 @@ class SubscriptionEmitter extends EventEmitter {
 
       const authenticatedCaller = incoming[id]?.[0]?.caller;
       delete incoming[id];
+      this.receiveBudget?.remove(id);
       const mesg = new Message({
         encoding,
         raw,
@@ -3059,6 +3113,7 @@ class SubscriptionEmitter extends EventEmitter {
             });
           }
           delete this.incoming[id];
+          this.receiveBudget?.remove(id);
         }
       }
       await this.sleepDropOld(MAX_CHUNK_TIME / 2);

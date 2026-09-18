@@ -3,6 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
+import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
+import { agentRpcControl } from "@cocalc/server/agents/rpc";
+import { list as listOperations } from "@cocalc/server/conat/api/lro";
+
 import {
   createInterBayAuthTokenHandlers,
   createInterBayAccountProjectFeedHandlers,
@@ -251,6 +257,7 @@ import {
   archiveSiteLicensePool,
   assignSiteLicensePoolSeat,
   cancelSiteLicensePoolRequest,
+  cleanupSiteLicenseAccessForAccountDeletionOnSeed,
   getVerifiedEmailAddressesForAccount,
   getSiteLicenseAffiliationReverificationStatusForAccount,
   getSiteLicenseOverview,
@@ -289,6 +296,7 @@ import {
   resolveMembershipForAccount,
 } from "@cocalc/server/membership/resolve";
 import * as legacyMigration from "@cocalc/server/legacy-migration";
+import { validateHostActionAuthLocal } from "@cocalc/server/auth/host-action-auth";
 import * as publicDirectoryShares from "@cocalc/server/public-directory-shares";
 import { getAccountUsageOverviewForAccount } from "@cocalc/server/membership/account-usage-overview";
 import { recordSiteFundedCodexAccountUsage } from "@cocalc/server/ai/save-response";
@@ -592,6 +600,18 @@ export async function initInterBayServices(): Promise<void> {
     await startProjectControlStartService();
     await startProjectReferenceService();
     await startProjectDetailsService();
+    services.push(
+      createAgentRpcControlHandler(getConfiguredBayId(), agentRpcControl, {
+        client: getInterBayFabricClient({ noCache: true }),
+        parallel: true,
+      }),
+      createInterBayAgentIdentityHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: agentIdentityControl,
+      }),
+    );
     await startProjectSecretsService();
     await startExternalCredentialsService();
     await startHostConnectionService();
@@ -1233,6 +1253,7 @@ async function startAccountLocalService(): Promise<void> {
         revoked_at: normalizeOptionalDateLike(revoked_at),
       });
     },
+    validateHostActionAuth: validateHostActionAuthLocal,
     getMembership: async ({ account_id }) =>
       await resolveMembershipForAccount(account_id),
     getArchiveLifecycleStatuses: async ({ account_ids }) =>
@@ -1428,6 +1449,12 @@ async function startAccountLocalService(): Promise<void> {
             revoked: await releaseSiteLicensePoolSeat(opts),
           }
         : await getSeedSiteLicenseClient().releaseSiteLicensePoolSeat(opts),
+    cleanupSiteLicenseAccessForAccountDeletion: async (opts) =>
+      isSeedSiteLicenseBay()
+        ? await cleanupSiteLicenseAccessForAccountDeletionOnSeed(opts)
+        : await getSeedSiteLicenseClient().cleanupSiteLicenseAccessForAccountDeletion(
+            opts,
+          ),
     listSoftwareLicenseTiers: async ({ actor_account_id, include_disabled }) =>
       isSeedSiteLicenseBay()
         ? await listLicenseTiersOnSeed({ include_disabled })
@@ -2317,8 +2344,10 @@ async function startProjectCollabInviteService(): Promise<void> {
     deleteInbox: async ({ invite_id }) => {
       await deleteProjectedCollabInviteDirect(invite_id);
     },
-    create: async (opts) => {
-      const result = await createCollabInvite(opts);
+    create: async ({ trusted_product_access_checked, ...opts }) => {
+      const result = await createCollabInvite(opts, {
+        trustedProductAccessChecked: trusted_product_access_checked === true,
+      });
       return {
         created: result.created,
         invite: collabInviteToWire(result.invite),
@@ -2449,6 +2478,13 @@ async function startProjectCollabInviteService(): Promise<void> {
 async function startHostConnectionService(): Promise<void> {
   const client = getInterBayFabricClient({ noCache: true });
   const impl: InterBayHostConnectionApi = {
+    listHostOperations: async ({ account_id, host_id, include_completed }) =>
+      await listOperations({
+        account_id,
+        scope_type: "host",
+        scope_id: host_id,
+        include_completed,
+      }),
     get: async ({ account_id, host_id }) => {
       const connection = await resolveHostConnectionLocal({
         account_id,

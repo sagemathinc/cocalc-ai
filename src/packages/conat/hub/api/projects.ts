@@ -2226,6 +2226,9 @@ export interface Projects {
   restart: (opts: {
     account_id?: string;
     project_id: string;
+    // Stable across retries of one logical restart action. A later explicit
+    // restart must use a new id so it cannot join an older policy boundary.
+    restart_request_id: string;
     wait?: boolean;
   }) => Promise<{
     op_id: string;

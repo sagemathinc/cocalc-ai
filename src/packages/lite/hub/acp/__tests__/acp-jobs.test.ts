@@ -35,6 +35,7 @@ import {
   decodeAcpJobRequest,
   enqueueAcpJob,
   enqueueAcpJobCancelingQueuedRecoveries,
+  fenceAcpJobsForProject,
   getAcpJob,
   getAcpJobByOpId,
   hasNewerNonRecoveryAcpJob,
@@ -265,6 +266,48 @@ describe("acp job queue ordering", () => {
       getAcpJobByOpId(queued.op_id)?.updated_at,
     );
     expect(latestAcpJobUpdateForWorker("another-worker")).toBeUndefined();
+  });
+
+  it("terminally fences queued and running work for one stopped project", () => {
+    const queued = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-fenced-queued",
+        assistantMessageId: "assistant-fenced-queued",
+        assistantDate: "2026-09-16T00:00:00.000Z",
+      }) as any,
+    );
+    const running = enqueueAcpJob(
+      makeRequest({
+        userMessageId: "user-fenced-running",
+        assistantMessageId: "assistant-fenced-running",
+        assistantDate: "2026-09-16T00:00:01.000Z",
+      }) as any,
+    );
+    const setCreatedAt = getAcpDatabase().prepare(
+      "UPDATE acp_jobs SET created_at = ?, updated_at = ? WHERE op_id = ?",
+    );
+    setCreatedAt.run(10_000, 10_000, queued.op_id);
+    setCreatedAt.run(20_000, 20_000, running.op_id);
+    claimNextQueuedAcpJobForThread({
+      project_id: running.project_id,
+      path: running.path,
+      thread_id: running.thread_id,
+    });
+    // The first row is claimed first; keep the identities explicit.
+    expect(getAcpJobByOpId(queued.op_id)?.state).toBe("running");
+    const result = fenceAcpJobsForProject({
+      project_id: queued.project_id,
+      reason: "project restart fence",
+    });
+    expect(result).toEqual({ queued: 1, running: 1 });
+    expect(getAcpJobByOpId(queued.op_id)?.state).toBe("interrupted");
+    expect(getAcpJobByOpId(running.op_id)?.state).toBe("canceled");
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "completed",
+      worker_id: "stale-worker",
+    });
+    expect(getAcpJobByOpId(queued.op_id)?.state).toBe("interrupted");
   });
 
   it("does not claim a delayed recovery until its availability time", () => {

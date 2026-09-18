@@ -138,6 +138,7 @@ function userFromBearerToken({
   return {
     account_id: claims.sub,
     auth_iat_s: claims.iat,
+    auth_actor: claims.auth_actor,
   } satisfies CoCalcUser;
 }
 
@@ -389,6 +390,7 @@ export function createProjectHostConatAuth({ host_id }: { host_id: string }): {
         examProjectId != null ||
         type !== "pub" ||
         parsed == null ||
+        (parsed.operation === "automation" && user.auth_actor !== "account") ||
         (parsed.version === "account-project" && parsed.account_id !== userId)
       ) {
         return false;

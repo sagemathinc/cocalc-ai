@@ -375,6 +375,30 @@ export function getFocusMessageButtonStyle(): CSSProperties {
   };
 }
 
+function rpcSourceAttribution(message: ChatMessageTyped):
+  | {
+      label: string;
+      detail: string;
+    }
+  | undefined {
+  const raw = field<any>(message, "agent_rpc");
+  const rpc = typeof raw?.toJS === "function" ? raw.toJS() : raw;
+  const source = rpc?.source;
+  const agentId = `${source?.agent_id ?? ""}`.trim();
+  if (!agentId) return;
+  const short = agentId.length > 12 ? `${agentId.slice(0, 8)}...` : agentId;
+  if (source.kind === "external") {
+    return {
+      label: `External agent ${short}`,
+      detail: `Authenticated external agent ${agentId}, installation ${source.installation_id ?? "unknown"}`,
+    };
+  }
+  return {
+    label: `Agent ${short}`,
+    detail: `Authenticated agent ${agentId} from project ${source.project_id ?? "unknown"}`,
+  };
+}
+
 export default function Message({
   index,
   actions,
@@ -454,7 +478,11 @@ export default function Message({
     () => is_editing(message, account_id),
     [message, account_id],
   );
-  const is_viewers_message = sender_is_viewer(account_id, message);
+  const rpcAttribution = rpcSourceAttribution(message);
+  // The stored sender remains the target execution principal for compatibility,
+  // but an authenticated RPC source must not visually impersonate that human.
+  const is_viewers_message =
+    !rpcAttribution && sender_is_viewer(account_id, message);
   const isLLMThread = useMemo(
     () => actions?.isLanguageModelThread(dateValue(message)),
     [message, actions],
@@ -477,10 +505,13 @@ export default function Message({
     hasAcpAssistantMetadata,
   });
   const msgWrittenByLLM = hasLanguageModelServiceAuthor || isCodexAgentMessage;
-  const senderName = isCodexAgentMessage
-    ? codexAgentName(senderId)
-    : get_user_name(senderId);
-  const avatarAccountId = isCodexAgentMessage ? "codex-agent" : senderId;
+  const senderName = rpcAttribution
+    ? rpcAttribution.label
+    : isCodexAgentMessage
+      ? codexAgentName(senderId)
+      : get_user_name(senderId);
+  const avatarAccountId =
+    rpcAttribution || isCodexAgentMessage ? "codex-agent" : senderId;
   const useCodexSelectToolbar = useMemo(
     () =>
       shouldUseCodexSelectToolbar({
@@ -1401,7 +1432,7 @@ export default function Message({
     }
 
     if (!is_thread_body) {
-      if (sender_is_viewer(account_id, message)) {
+      if (is_viewers_message) {
         style.marginLeft = AVATAR_MARGIN_LEFTRIGHT;
       } else {
         style.marginRight = AVATAR_MARGIN_LEFTRIGHT;
@@ -2562,7 +2593,7 @@ export default function Message({
     const mainXS = fullWidthContent ? 24 : mode === "standalone" ? 20 : 22;
 
     const { background, color, lighten, message_class } = message_colors(
-      account_id,
+      rpcAttribution ? "" : account_id,
       message,
     );
 
@@ -2600,7 +2631,13 @@ export default function Message({
             if (d != null) actions?.setFragment(d);
           }}
         >
-          {!is_prev_sender && !is_viewers_message && senderId ? (
+          {rpcAttribution ? (
+            <Tooltip
+              title={`${rpcAttribution.detail}. This project transcript is collaborator-editable; authorization was checked separately at delivery time.`}
+            >
+              <Tag icon={<Icon name="robot" />}>{rpcAttribution.label}</Tag>
+            </Tooltip>
+          ) : !is_prev_sender && !is_viewers_message && senderId ? (
             <Name sender_name={senderName} />
           ) : undefined}
         </div>

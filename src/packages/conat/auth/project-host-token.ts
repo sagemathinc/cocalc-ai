@@ -52,6 +52,9 @@ export interface ProjectHostAuthClaims {
   jti: string;
   v: string;
   act?: ProjectHostAuthActor;
+  // Signed credential provenance. Absent on pre-cutover tokens, which must
+  // not authorize human-only automation settings changes.
+  auth_actor?: "account" | "agent";
   sid?: string;
   browser_session_exp_s?: number;
 }
@@ -63,6 +66,7 @@ export interface IssueProjectHostTokenOptions {
   issuer?: string;
   now_ms?: number;
   actor?: ProjectHostAuthActor;
+  auth_actor?: "account" | "agent";
   account_id?: string;
   hub_id?: string;
   session_id?: string;
@@ -153,6 +157,7 @@ export function issueProjectHostAuthToken({
   issuer = "cocalc-hub",
   now_ms = Date.now(),
   actor,
+  auth_actor,
   account_id,
   hub_id,
   session_id,
@@ -194,6 +199,7 @@ export function issueProjectHostAuthToken({
         ? TOKEN_VERSION
         : RESTRICTED_BROWSER_SESSION_TOKEN_VERSION,
     act: identity.actor,
+    ...(auth_actor ? { auth_actor } : {}),
     ...(session_id ? { sid: session_id } : {}),
     ...(browserSessionExp == null
       ? {}
@@ -290,6 +296,13 @@ export function verifyProjectHostAuthToken({
   }
 
   const actor = claims?.act ?? "account";
+  if (
+    claims.auth_actor != null &&
+    claims.auth_actor !== "account" &&
+    claims.auth_actor !== "agent"
+  ) {
+    throw new Error("invalid token credential actor");
+  }
   if (actor !== "account" && actor !== "hub") {
     throw new Error("invalid token actor");
   }

@@ -1,6 +1,7 @@
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
+import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
 
 export interface AcpAutomationConfig {
   enabled?: boolean;
@@ -37,6 +38,7 @@ export interface AcpAutomationState {
 }
 
 export interface AcpAutomationRecord {
+  settings_revision?: string;
   automation_id: string;
   project_id: string;
   path: string;
@@ -73,6 +75,23 @@ export interface AcpAutomationRecord {
 }
 
 export interface AcpChatContext {
+  // Trusted receiving service marks model-authored messages; never bind their refs.
+  agent_message?: boolean;
+  // Revalidate the directional grant before executing a queued agent message.
+  agent_delivery_id?: string;
+  agent_delivery_generation?: string;
+  // Immutable provenance for reauthorizing an RPC message at queue execution.
+  agent_rpc_execution?: {
+    version: 2;
+    source: AgentRpcSource;
+    source_run_id?: string;
+    target: AgentEndpoint;
+    target_path: string;
+    target_thread_id: string;
+    link_id: string;
+    principal_account_id: string;
+    guidance: boolean;
+  };
   project_id: string;
   path: string;
   message_date: string;
@@ -97,6 +116,8 @@ export interface AcpChatContext {
   // automation attached to the thread.
   automation_id?: string;
   automation_title?: string;
+  // Server-stamped settings snapshot; never refresh a queued job to a new owner.
+  automation_revision?: string;
   // Optional restart-recovery metadata for turns automatically resumed after
   // backend or host interruption.
   recovery_parent_op_id?: string;
@@ -275,7 +296,7 @@ export type AcpAttentionQuestion = {
 };
 
 export type AcpAttentionAction = {
-  kind: "fresh_auth";
+  kind: "fresh_auth" | "agent_messaging";
   reference: string;
   expires_at: number;
 };

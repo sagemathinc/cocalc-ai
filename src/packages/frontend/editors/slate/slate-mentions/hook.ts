@@ -14,17 +14,15 @@ import { Editor, Range, Text, Transforms } from "slate";
 import { ReactEditor } from "../slate-react";
 import React from "react";
 import { useIsMountedRef } from "@cocalc/frontend/app-framework";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import {
-  Complete,
-  Item,
-} from "@cocalc/frontend/editors/markdown-input/complete";
+import { useCallback, useEffect, useState } from "react";
+import { Complete } from "@cocalc/frontend/editors/markdown-input/complete";
+import type { Item } from "@cocalc/frontend/editors/markdown-input/complete";
 import { debounce } from "lodash";
 
 interface Options {
   editor: ReactEditor;
   insertMention: (Editor, string) => void;
-  matchingUsers: (search: string) => (string | React.JSX.Element)[];
+  matchingUsers: (search: string) => Item[];
   isVisible?: boolean;
 }
 
@@ -34,7 +32,22 @@ interface MentionsControl {
   Mentions: React.JSX.Element | undefined;
 }
 
-export const useMentions: (Options) => MentionsControl = ({
+export function mentionQueryAtCursor(
+  text: string,
+  offset: number,
+): { start: number; search: string } | undefined {
+  if (
+    offset < 0 ||
+    offset > text.length ||
+    (text[offset] && !/\s/.test(text[offset]))
+  )
+    return;
+  const match = text.slice(0, offset).match(/(?:^|[\s([])@([\w-]*)$/);
+  if (!match) return;
+  return { start: offset - match[1].length - 1, search: match[1] };
+}
+
+export const useMentions: (options: Options) => MentionsControl = ({
   isVisible,
   editor,
   insertMention,
@@ -50,9 +63,7 @@ export const useMentions: (Options) => MentionsControl = ({
     }
   }, [isVisible]);
 
-  const items: Item[] = useMemo(() => {
-    return matchingUsers(search.toLowerCase());
-  }, [search]);
+  const items = matchingUsers(search.toLowerCase());
 
   const onKeyDown = useCallback(
     (event) => {
@@ -93,42 +104,17 @@ export const useMentions: (Options) => MentionsControl = ({
             return;
           }
           if (Text.isText(current)) {
-            const charBeforeCursor = current.text[focus.offset - 1];
-            //  keep use of this consistent with before stuff in frontend/editors/markdown-input/component.tsx
-            const charBeforeBefore = current.text[focus.offset - 2]?.trim();
-            let afterMatch, beforeMatch, beforeRange, search;
-            if (charBeforeCursor == "@") {
-              beforeRange = {
-                focus: editor.selection.focus,
+            // Slate's word boundaries split on hyphens, but agent names do not.
+            const query = mentionQueryAtCursor(current.text, focus.offset);
+            if (query) {
+              setTarget({
+                focus,
                 anchor: {
-                  path: editor.selection.anchor.path,
-                  offset: editor.selection.anchor.offset - 1,
+                  path: focus.path,
+                  offset: query.start,
                 },
-              };
-              search = "";
-              afterMatch = beforeMatch = null;
-            } else {
-              const wordBefore = Editor.before(editor, focus, { unit: "word" });
-              const before = wordBefore && Editor.before(editor, wordBefore);
-              beforeRange = before && Editor.range(editor, before, focus);
-              const beforeText =
-                beforeRange && Editor.string(editor, beforeRange);
-              beforeMatch = beforeText && beforeText.match(/^@(\w*)$/);
-              search = beforeMatch?.[1];
-              const after = Editor.after(editor, focus);
-              const afterRange = Editor.range(editor, focus, after);
-              const afterText = Editor.string(editor, afterRange);
-              afterMatch = afterText.match(/^(\s|$)/);
-            }
-            if (
-              (charBeforeCursor == "@" &&
-                (!charBeforeBefore ||
-                  charBeforeBefore == "(" ||
-                  charBeforeBefore == "[")) ||
-              (beforeMatch && afterMatch)
-            ) {
-              setTarget(beforeRange);
-              setSearch(search);
+              });
+              setSearch(query.search);
               return;
             }
           }
@@ -141,6 +127,7 @@ export const useMentions: (Options) => MentionsControl = ({
     }, 250),
     [editor],
   );
+  useEffect(() => () => onChange.cancel(), [onChange]);
 
   const renderMentions = useCallback(() => {
     if (target == null) return;
@@ -175,7 +162,7 @@ export const useMentions: (Options) => MentionsControl = ({
         left: rect.left + rect.width,
       },
     });
-  }, [search, target]);
+  }, [editor, insertMention, items, target]);
 
   return {
     onChange,

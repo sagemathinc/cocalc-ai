@@ -24,6 +24,7 @@ import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import { getControlPlaneAppUrl } from "@cocalc/frontend/control-plane-origin";
 import { open_new_tab } from "@cocalc/frontend/misc/open-browser-tab";
 import { lite } from "@cocalc/frontend/lite";
+import { AgentMessagingRequests } from "@cocalc/frontend/agents/messaging-requests";
 
 const { Paragraph, Text, Title } = Typography;
 const POLL_MS = 2_000;
@@ -73,16 +74,74 @@ function answersForQuestion(opts: {
   return answer ? [answer] : opts.selected ? [opts.selected] : [];
 }
 
+export interface CodexAttentionDraft {
+  selected: Record<string, string | undefined>;
+  other: Record<string, string>;
+}
+
+export type CodexAttentionDraftUpdater = (
+  current: CodexAttentionDraft,
+) => CodexAttentionDraft;
+
 export function CodexAttentionCard({
   initialRecord,
+  draft: savedDraft,
+  onDraftChange,
 }: {
   initialRecord: AcpAttentionRecord;
+  draft?: CodexAttentionDraft;
+  onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
+}) {
+  if (initialRecord.action?.kind === "agent_messaging") {
+    return (
+      <section
+        aria-label="Codex needs attention"
+        data-codex-attention-id={initialRecord.attention_id}
+        tabIndex={-1}
+        style={{
+          border: `1px solid ${UI_COLORS.warning}`,
+          borderRadius: 8,
+          padding: 12,
+          width: "100%",
+          color: UI_COLORS.text,
+          background: UI_COLORS.warningBg,
+        }}
+      >
+        <Title level={5}>Agent requests messaging approval</Title>
+        <AgentMessagingRequests
+          projectId={initialRecord.project_id}
+          path={initialRecord.path}
+          threadId={initialRecord.thread_id}
+          requestId={initialRecord.action.reference}
+        />
+      </section>
+    );
+  }
+  return (
+    <RuntimeCodexAttentionCard
+      initialRecord={initialRecord}
+      draft={savedDraft}
+      onDraftChange={onDraftChange}
+    />
+  );
+}
+
+function RuntimeCodexAttentionCard({
+  initialRecord,
+  draft: savedDraft,
+  onDraftChange,
+}: {
+  initialRecord: AcpAttentionRecord;
+  draft?: CodexAttentionDraft;
+  onDraftChange?: (update: CodexAttentionDraftUpdater) => void;
 }) {
   const [record, setRecord] = useState(initialRecord);
-  const [selected, setSelected] = useState<Record<string, string | undefined>>(
-    {},
-  );
-  const [other, setOther] = useState<Record<string, string>>({});
+  const [localDraft, setLocalDraft] = useState<CodexAttentionDraft>({
+    selected: {},
+    other: {},
+  });
+  const draft = savedDraft ?? localDraft;
+  const updateDraft = onDraftChange ?? setLocalDraft;
   const [submitting, setSubmitting] = useState(false);
   const [uploads, setUploads] = useState(0);
   const [error, setError] = useState<string>();
@@ -161,12 +220,12 @@ export function CodexAttentionCard({
           question.id,
           answersForQuestion({
             question,
-            selected: selected[question.id],
-            other: other[question.id] ?? "",
+            selected: draft.selected[question.id],
+            other: draft.other[question.id] ?? "",
           }),
         ]),
       ),
-    [other, record.questions, selected],
+    [draft, record.questions],
   );
   const canSubmit = record.questions.every(
     ({ id }) => (answers[id]?.length ?? 0) > 0,
@@ -350,15 +409,14 @@ export function CodexAttentionCard({
                   <Radio.Group
                     aria-label={`Suggested answers for ${question.header}`}
                     name={`codex-attention-${record.attention_id}-${question.id}`}
-                    value={selected[question.id]}
+                    value={draft.selected[question.id]}
                     onChange={(event) => {
-                      setSelected((current) => ({
-                        ...current,
-                        [question.id]: String(event.target.value),
-                      }));
-                      setOther((current) => ({
-                        ...current,
-                        [question.id]: "",
+                      updateDraft((current) => ({
+                        selected: {
+                          ...current.selected,
+                          [question.id]: String(event.target.value),
+                        },
+                        other: { ...current.other, [question.id]: "" },
                       }));
                     }}
                     style={{ display: "grid", gap: 6, marginBottom: 8 }}
@@ -396,18 +454,17 @@ export function CodexAttentionCard({
                       redoMode="local"
                       onUploadStart={() => setUploads((n) => n + 1)}
                       onUploadEnd={() => setUploads((n) => Math.max(0, n - 1))}
-                      value={other[question.id] ?? ""}
+                      value={draft.other[question.id] ?? ""}
                       onChange={(value) => {
-                        setOther((current) => ({
-                          ...current,
-                          [question.id]: value,
+                        updateDraft((current) => ({
+                          other: { ...current.other, [question.id]: value },
+                          selected: value
+                            ? {
+                                ...current.selected,
+                                [question.id]: undefined,
+                              }
+                            : current.selected,
                         }));
-                        if (value) {
-                          setSelected((current) => ({
-                            ...current,
-                            [question.id]: undefined,
-                          }));
-                        }
                       }}
                     />
                   </div>

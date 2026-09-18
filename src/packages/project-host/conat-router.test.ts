@@ -10,6 +10,7 @@ import express from "express";
 import {
   attachProjectHostHttpFallbackProxy,
   attachProjectHostConatRouterProxy,
+  deriveProjectHostConatClusterLinkPassword,
   examHostnameFromProjectHostPublicUrl,
   isProjectHostExternalConatRouterEnabled,
   isProjectHostManagedLocalConatRouter,
@@ -122,6 +123,23 @@ describe("project-host conat router helpers", () => {
         localClusterSize: 2,
       }),
     ).toBe("explicit-cluster");
+  });
+
+  it("derives a stable, domain-separated local cluster credential", () => {
+    const systemPassword = "host-system-secret";
+    const clusterPassword =
+      deriveProjectHostConatClusterLinkPassword(systemPassword);
+
+    expect(clusterPassword).toBe(
+      deriveProjectHostConatClusterLinkPassword(systemPassword),
+    );
+    expect(clusterPassword).not.toBe(systemPassword);
+    expect(clusterPassword).not.toBe(
+      deriveProjectHostConatClusterLinkPassword("another-system-secret"),
+    );
+    expect(() => deriveProjectHostConatClusterLinkPassword("")).toThrow(
+      /system account password is required/i,
+    );
   });
 
   it("identifies the project host on router and ingress health responses", () => {

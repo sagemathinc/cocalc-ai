@@ -63,10 +63,56 @@ This matters because direct project-host traffic:
   control-plane glitches.
 - keeps permission boundaries close to the resource being protected.
 
-If a new access mode needs narrower permissions, add a project-host service,
-subject, token, or capability boundary for that mode. Do not proxy project data
-through the hub as a shortcut. For example, read-only project viewers should use
-a project-host read-only file service rather than hub-mediated file reads.
+If a new access mode needs narrower permissions, prefer a project-host service,
+subject, token, or capability boundary for steady-state data access. Do not proxy
+unbounded project data through the hub as a shortcut. For example, read-only
+project viewers should use a project-host read-only file service rather than
+hub-mediated file reads. Bounded inter-project RPC payloads are a separate,
+documented exception below; direct project-host-to-project-host traffic is not
+a requirement for those operations.
+
+### Documented exception: bounded inter-project RPC payloads
+
+Hubs may relay small, explicitly bounded file payloads inside Conat RPC messages
+using the existing authenticated owner-routing paths. This avoids adding a
+separate east-west host network or new public cross-host credentials solely to
+transfer a small payload. It does not authorize generic file browsing or large
+streaming reads/writes through the control plane.
+
+Existing precedent: `server/projects/copy.ts` creates and forwards a bounded
+path-copy archive through hub orchestration. Its default compressed archive limit
+is 64 MiB, with separate uncompressed-size and file-count limits; larger copies
+use the existing backup/object-storage path rather than an unbounded hub stream.
+
+Agent attachments may use the same architectural exception, with a stricter
+initial 32 MiB total file-content limit per message and native MsgPack binary
+buffers, not base64. This is approval of the architecture, not a claim that
+attachment support has been implemented. Requirements:
+
+- Preserve source run identity, human-scoped grants, and account-home/project-owner
+  routing. Never forward reusable human credentials to another bay or project.
+- Apply non-waiting concurrency admission globally per destination project host
+  and per destination project, including text-only messages. Reserve capacity
+  before expensive startup or file work; return an explicit overload error when
+  full. Release capacity on completion/error or bounded server-side expiry, not
+  merely because the caller disconnected.
+- Bound payload bytes and in-flight work at relaying hubs as well. Account for
+  ingress, transport fragment reassembly, serialization copies, and queued data;
+  a semaphore acquired only after a full payload is decoded is not a complete
+  memory bound. Do not introduce an unbounded queue of waiting sends.
+- Use a small metadata-only preparation step for attachment sends to authorize,
+  reserve capacity, and ensure the target project is running via normal startup
+  admission before transferring bytes or writing the chat message. An unavailable
+  or disallowed start fails this send; inspection never starts a project.
+- Preparation does not reserve an agent execution slot or guarantee later
+  execution. Recheck authorization and readiness before final message admission.
+  Preserve rejected versus unknown outcomes across timeout/acknowledgment races;
+  do not automatically retransmit or silently drop attachments from a message.
+- Keep temporary destination storage and cleanup bounded. File data must not be
+  persisted in hub databases, logs, or messaging outboxes.
+
+This exception does not include federation or add a new large-file transfer
+system. Ordinary client/project data traffic retains the direct-host default.
 
 ### Documented exception: workspace project runtime
 

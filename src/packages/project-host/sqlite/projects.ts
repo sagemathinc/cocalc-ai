@@ -129,6 +129,7 @@ export interface ProjectRow {
   authorized_keys?: string | null;
   run_quota?: any;
   run_quota_revision?: number;
+  runtime_lifecycle_revision?: number;
   secret_names?: string[];
   local_only?: boolean;
   exam_run_id?: string | null;
@@ -173,6 +174,7 @@ export function ensureProjectsTable() {
       authorized_keys TEXT,
       run_quota TEXT,
       run_quota_revision INTEGER,
+      runtime_lifecycle_revision INTEGER,
       secret_names TEXT,
       local_only INTEGER,
       exam_run_id TEXT,
@@ -216,6 +218,11 @@ export function ensureProjectsTable() {
     db.exec("ALTER TABLE projects ADD COLUMN run_quota_revision INTEGER");
   } catch {}
   try {
+    db.exec(
+      "ALTER TABLE projects ADD COLUMN runtime_lifecycle_revision INTEGER",
+    );
+  } catch {}
+  try {
     db.exec("ALTER TABLE projects ADD COLUMN secret_names TEXT");
   } catch {}
   try {
@@ -255,7 +262,7 @@ export function upsertProject(row: ProjectRow) {
   const existingProjectsRow =
     db
       .prepare(
-        "SELECT state, state_reported, state_updated_at, runtime_exit_reason, image, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, run_quota_revision, secret_names, local_only, exam_run_id, usage_account_id FROM projects WHERE project_id=?",
+        "SELECT state, state_reported, state_updated_at, runtime_exit_reason, image, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, run_quota_revision, runtime_lifecycle_revision, secret_names, local_only, exam_run_id, usage_account_id FROM projects WHERE project_id=?",
       )
       .get(row.project_id) || {};
   const existing = getRow("projects", pk) || {};
@@ -315,6 +322,25 @@ export function upsertProject(row: ProjectRow) {
   const run_quota_revision = acceptIncomingRunQuota
     ? (incomingRunQuotaRevision ?? existingRunQuotaRevision)
     : existingRunQuotaRevision;
+  const existingRuntimeLifecycleRevision = Math.max(
+    0,
+    Math.floor(
+      Number(
+        (existingProjectsRow as any).runtime_lifecycle_revision ??
+          (existing as any).runtime_lifecycle_revision ??
+          0,
+      ),
+    ),
+  );
+  const incomingRuntimeLifecycleRevision = Number.isFinite(
+    Number(row.runtime_lifecycle_revision),
+  )
+    ? Math.max(0, Math.floor(Number(row.runtime_lifecycle_revision)))
+    : undefined;
+  const runtime_lifecycle_revision = Math.max(
+    existingRuntimeLifecycleRevision,
+    incomingRuntimeLifecycleRevision ?? 0,
+  );
   const diskFromQuota =
     run_quota?.disk_quota != null
       ? Math.floor(run_quota.disk_quota * 1_000_000)
@@ -415,8 +441,8 @@ export function upsertProject(row: ProjectRow) {
   }
 
   const stmt = db.prepare(`
-    INSERT INTO projects(project_id, title, state, state_reported, state_updated_at, runtime_exit_reason, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, run_quota_revision, secret_names, local_only, exam_run_id, usage_account_id)
-    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects(project_id, title, state, state_reported, state_updated_at, runtime_exit_reason, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, run_quota_revision, runtime_lifecycle_revision, secret_names, local_only, exam_run_id, usage_account_id)
+    VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(project_id) DO UPDATE SET
       title=excluded.title,
       state=excluded.state,
@@ -436,6 +462,7 @@ export function upsertProject(row: ProjectRow) {
       authorized_keys=excluded.authorized_keys,
       run_quota=excluded.run_quota,
       run_quota_revision=excluded.run_quota_revision,
+      runtime_lifecycle_revision=MAX(COALESCE(projects.runtime_lifecycle_revision, 0), COALESCE(excluded.runtime_lifecycle_revision, 0)),
       secret_names=excluded.secret_names,
       local_only=excluded.local_only,
       exam_run_id=excluded.exam_run_id,
@@ -461,6 +488,7 @@ export function upsertProject(row: ProjectRow) {
     authorized_keys,
     run_quota_json,
     run_quota_revision,
+    runtime_lifecycle_revision,
     secret_names_json,
     local_only ? 1 : 0,
     exam_run_id,
@@ -519,6 +547,7 @@ export function upsertProject(row: ProjectRow) {
     authorized_keys,
     run_quota: run_quota ?? existing.run_quota,
     run_quota_revision,
+    runtime_lifecycle_revision,
     local_only,
     exam_run_id,
     usage_account_id,
@@ -674,7 +703,7 @@ export function getProject(project_id: string): ProjectRow | undefined {
   ensureProjectsTable();
   const db = getDatabase();
   const stmt = db.prepare(
-    "SELECT project_id, title, state, state_reported, state_updated_at, runtime_exit_reason, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, run_quota_revision, secret_names, local_only, exam_run_id, usage_account_id FROM projects WHERE project_id=?",
+    "SELECT project_id, title, state, state_reported, state_updated_at, runtime_exit_reason, image, disk, scratch, last_seen, updated_at, http_port, ssh_port, project_bundle_version, tools_version, secret_token, authorized_keys, run_quota, run_quota_revision, runtime_lifecycle_revision, secret_names, local_only, exam_run_id, usage_account_id FROM projects WHERE project_id=?",
   );
   const row = stmt.get(project_id) as any;
   if (!row) {

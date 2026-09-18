@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import "@cocalc/conat/sync-doc/install";
 import type {
@@ -77,6 +77,7 @@ type CourseHub = {
     getProjectState: (opts: { project_id: string }) => Promise<ProjectState>;
     restart: (opts: {
       project_id: string;
+      restart_request_id: string;
       wait: boolean;
     }) => Promise<{ op_id: string }>;
   };
@@ -220,7 +221,11 @@ export async function applyCourseRootfsToManagedProjects({
     });
     const active = stateBefore === "running" || stateBefore === "starting";
     const restart = active
-      ? await hub.projects.restart({ project_id, wait: true })
+      ? await hub.projects.restart({
+          project_id,
+          restart_request_id: randomUUID(),
+          wait: true,
+        })
       : undefined;
     projects.push({
       project_id,

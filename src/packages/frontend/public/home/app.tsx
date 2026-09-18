@@ -31,8 +31,8 @@ interface HomeConfig extends PublicConfig {
   site_description?: string;
 }
 
-const HERO_IMAGE_URL = "/public/landing/home-hero.jpg";
-const WORKFLOW_IMAGE_URL = "/public/landing/project-workflows.jpg";
+const HERO_IMAGE_URL = "/public/landing/project-notebook-20260916.jpg";
+const WORKFLOW_IMAGE_URL = "/public/landing/project-terminal-20260916.jpg";
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
 const PANEL_RADIUS = 8;
 const CARD_TITLE_STYLE = {
@@ -82,7 +82,7 @@ const HOME_PAGE_CSS = `
       line-height: 1.08 !important;
     }
 
-    .cocalc-public-home-hero-image {
+    .cocalc-public-home-hero-visual {
       order: 2;
     }
 
@@ -96,6 +96,16 @@ const HOME_PAGE_CSS = `
     .cocalc-public-home-final-layout,
     .cocalc-public-home-workflow-layout {
       grid-template-columns: minmax(0, 1fr) !important;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .cocalc-public-home-final-actions {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    .cocalc-public-home-final-actions .ant-btn {
+      width: 100%;
     }
   }
 
@@ -170,8 +180,8 @@ const WORKFLOW_FEATURES = [
     href: "features/ai",
     icon: "robot",
     summary:
-      "Ask Codex to help with files, notebooks, terminals, and documents while humans review changes in the same project.",
-    title: "Codex Agent Chat",
+      "Use integrated Codex or terminal-based agents beside the files, tools, and collaborators involved in the work.",
+    title: "AI Agents",
   },
   {
     accent: PUBLIC_COLORS.success,
@@ -200,11 +210,11 @@ const WORKFLOW_FEATURES = [
 const AUDIENCE_ROUTES = [
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep experiments, code, papers, outputs, and AI-assisted changes together in one shared project, where collaborators can review what happened and decide what to do next.",
-    button: "Explore workflows",
-    href: "features/compare",
+    body: "Keep experiments, datasets, code, papers, outputs, and AI-assisted changes together, then explore CPU, RAM, and GPU options when the work needs more capacity.",
+    button: "Plan research compute",
+    href: "docs/hosts/choose-compute",
     icon: "project-outlined",
-    title: "Research and engineering teams",
+    title: "Researchers, analysts, and builders",
   },
   {
     accent: COLORS.GRAY_D,
@@ -212,7 +222,7 @@ const AUDIENCE_ROUTES = [
     button: "Review product paths",
     href: "products",
     icon: "servers",
-    title: "IT and platform teams",
+    title: "Organizations and platform teams",
   },
   {
     accent: COLORS.RUN,
@@ -220,7 +230,7 @@ const AUDIENCE_ROUTES = [
     button: "Course workflows",
     href: "features/teaching",
     icon: "graduation-cap",
-    title: "Technical courses and workshops",
+    title: "Educators and learners",
   },
 ] satisfies Array<{
   accent: string;
@@ -249,7 +259,7 @@ const PRODUCT_OPTIONS = [
   },
   {
     accent: COLORS.RUN,
-    body: "Free local runtime for self-directed technical work and evaluation.",
+    body: "Free local runtime for self-directed work and evaluation.",
     href: "products/cocalc-plus",
     icon: "laptop",
     label: "Local",
@@ -291,21 +301,21 @@ const PRODUCT_OPTIONS = [
 const AGENT_DEFINITION_CARDS = [
   {
     accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Agents run on the same persistent computer as your files, notebooks, terminals, and services instead of in a disconnected coding tool.",
+    body: "Codex works in project chat, while terminal-based agents run beside the files, notebooks, terminals, and services they need.",
     icon: "robot",
-    title: "Runs where your work lives",
+    title: "Work with files and services",
   },
   {
     accent: COLORS.RUN,
     body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work before keeping it.",
     icon: "search",
-    title: "You stay in review",
+    title: "Review agent changes",
   },
   {
     accent: COLORS.ANTD_LINK_BLUE_DARK,
     body: "Use the integrated Codex experience, Claude Code in a terminal, or other shell-capable agents without moving the project somewhere else.",
     icon: "terminal",
-    title: "Bring the agent you use",
+    title: "Integrated chat or terminal",
   },
 ] satisfies Array<{
   accent: string;
@@ -541,7 +551,7 @@ function Hero({
       }}
     >
       <Flex vertical gap={20}>
-        <Eyebrow>Shared Linux Workspace</Eyebrow>
+        <Eyebrow>Persistent shared projects</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
@@ -555,7 +565,7 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            A persistent shared computer for technical work.
+            Keep people, AI agents, and project work together.
           </Title>
           <Paragraph
             style={{
@@ -566,9 +576,8 @@ function Hero({
               maxWidth: 590,
             }}
           >
-            People and AI agents work in the same Linux project with shared
-            files, notebooks, terminals, services, and history. The computer is
-            ready whenever the work continues.
+            Files, notebooks, terminals, services, and history stay in a shared
+            Linux project so work can continue, be reviewed, and be handed off.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -589,18 +598,34 @@ function Hero({
           </Button>
         </Flex>
       </Flex>
-      <img
-        alt="A persistent CoCalc project shared by people and AI agents"
-        className="cocalc-public-home-hero-image"
-        decoding="async"
-        src={HERO_IMAGE_URL}
-        style={{
-          aspectRatio: "1672 / 941",
-          display: "block",
-          objectFit: "contain",
-          width: "100%",
-        }}
-      />
+      <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
+        <img
+          alt="A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls"
+          className="cocalc-public-home-hero-image"
+          decoding="async"
+          src={HERO_IMAGE_URL}
+          style={{
+            aspectRatio: "1050 / 650",
+            border: `1px solid ${PUBLIC_COLORS.border}`,
+            borderRadius: PANEL_RADIUS,
+            boxShadow: `0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.08)}`,
+            display: "block",
+            objectFit: "contain",
+            width: "100%",
+          }}
+        />
+        <figcaption
+          style={{
+            color: PUBLIC_COLORS.mutedText,
+            fontSize: 13,
+            lineHeight: 1.45,
+            marginTop: 8,
+          }}
+        >
+          A saved Jupyter notebook in a fresh CoCalc.ai project, using only
+          synthetic data.
+        </figcaption>
+      </figure>
     </section>
   );
 }
@@ -612,10 +637,16 @@ function AgentDefinitionSection() {
       style={{ padding: "22px 0 24px" }}
     >
       <SectionIntro
-        body="Use Codex, Claude Code, or another shell-capable agent with the files, tools, and running services your collaborators already use."
+        body="Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use."
         eyebrow="Agent-ready by design"
-        title="Agents work where your project lives."
+        title="Give AI agents the files and tools they need."
       />
+      <Flex gap={12} style={{ marginTop: 18 }} wrap>
+        <Button href={appPath("features/ai")}>See agent workflows</Button>
+        <Button href={appPath("features/compare")}>
+          Compare with agent sandboxes
+        </Button>
+      </Flex>
       <div
         className="cocalc-public-home-codex-grid"
         style={{
@@ -658,8 +689,8 @@ function AudienceRoutesSection() {
     <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
       <SectionIntro
         eyebrow="Who it helps"
-        title="Built for research, technical teams, and teaching."
-        body="Start with the path that matches how your group works."
+        title="For work that must persist across people and agents."
+        body="Researchers, builders, educators, and organizations can start with the path that matches how their work is created, reviewed, taught, or operated."
       />
       <div
         className="cocalc-public-home-audience-grid"
@@ -724,7 +755,7 @@ function WorkflowsSection() {
         }
         body="Use notebooks, documents, terminals, agents, courses, slide decks, and more inside the same persistent Linux environment."
         eyebrow="Core workflows"
-        title="One computer, many workflows."
+        title="One project, many workflows."
       />
       <div
         className="cocalc-public-home-workflow-layout"
@@ -737,22 +768,35 @@ function WorkflowsSection() {
         }}
       >
         <Flex vertical gap={16}>
-          <img
-            alt="One CoCalc workspace containing many workflows"
-            className="cocalc-public-home-workflow-image"
-            decoding="async"
-            loading="eager"
-            src={WORKFLOW_IMAGE_URL}
-            style={{
-              aspectRatio: "16 / 9",
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.06)}`,
-              display: "block",
-              objectFit: "contain",
-              width: "100%",
-            }}
-          />
+          <figure style={{ margin: 0 }}>
+            <img
+              alt="A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average"
+              className="cocalc-public-home-workflow-image"
+              decoding="async"
+              loading="eager"
+              src={WORKFLOW_IMAGE_URL}
+              style={{
+                aspectRatio: "2 / 1",
+                border: `1px solid ${PUBLIC_COLORS.border}`,
+                borderRadius: PANEL_RADIUS,
+                boxShadow: `0 12px 34px ${alpha(PUBLIC_COLORS.shadowInk, 0.06)}`,
+                display: "block",
+                objectFit: "contain",
+                width: "100%",
+              }}
+            />
+            <figcaption
+              style={{
+                color: PUBLIC_COLORS.mutedText,
+                fontSize: 13,
+                lineHeight: 1.45,
+                marginTop: 8,
+              }}
+            >
+              A project terminal reruns the same synthetic analysis from saved
+              files.
+            </figcaption>
+          </figure>
           <aside
             aria-label="One CoCalc project model"
             style={{
@@ -1124,9 +1168,9 @@ function PathSection({
             Ready to choose how CoCalc fits?
           </Title>
           <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            Start with CoCalc.ai, review the product paths, or contact CoCalc
-            when licensing, procurement, support, or private deployment are part
-            of the decision.
+            Start with CoCalc.ai, review the product paths, or open support and
+            sales options when licensing, procurement, support, or private
+            deployment are part of the decision.
           </Paragraph>
           {trustHref ? (
             <Paragraph
@@ -1156,7 +1200,7 @@ function PathSection({
             {authenticated ? "Open projects" : "Start on CoCalc.ai"}
           </Button>
           <Button href={appPath("products")}>Review product paths</Button>
-          <Button href={appPath("support")}>Talk with CoCalc</Button>
+          <Button href={appPath("support")}>Review support and sales</Button>
         </div>
       </div>
     </section>

@@ -37,6 +37,8 @@ import {
 import { setAcpAdmissionLimitsProvider } from "../admission";
 
 jest.mock("@cocalc/ai/acp", () => ({
+  assertSameTurnPrincipal:
+    jest.requireActual("@cocalc/ai/acp").assertSameTurnPrincipal,
   CODEX_ACP_RECOVERY_ERROR_CODE: {
     appServerExited: "codex_app_server_exited",
     commandBlocked: "codex_command_blocked",
@@ -269,6 +271,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  acpTestInternals.setDetachedWorkerContextForTests(null);
   acpTestInternals.cancelDelayedAcpQueueWake();
   jest.restoreAllMocks();
   await disposeAllChatWritersForTests();
@@ -276,6 +279,59 @@ afterEach(async () => {
 
 afterAll(() => {
   closeAcpDatabase();
+});
+
+it("rejects another human before durable steering while permitting an ordinary queued turn", () => {
+  const request = makeRequest();
+  enqueueAcpJob(request);
+  claimNextQueuedAcpJobForThread({
+    project_id: request.project_id,
+    path: request.chat.path,
+    thread_id: request.chat.thread_id,
+    worker_id: "worker-P",
+  });
+  expect(() =>
+    acpTestInternals.assertRunningJobSteerPrincipal({
+      ...request,
+      account_id: "Q",
+    }),
+  ).toThrow("Queue a new turn under your account");
+  expect(() =>
+    acpTestInternals.assertRunningJobSteerPrincipal(request),
+  ).not.toThrow();
+  const queued = enqueueAcpJob({
+    ...request,
+    account_id: "Q",
+    chat: {
+      ...request.chat,
+      parent_message_id: "user-Q",
+      message_id: "assistant-Q",
+      message_date: "2026-03-16T00:01:01.000Z",
+    },
+  });
+  expect(queued.account_id).toBe("Q");
+  expect(queued.state).toBe("queued");
+});
+
+it("cancels stale automation jobs at execution without invoking Codex or commands", async () => {
+  const request = makeRequest();
+  const queued = enqueueAcpJob({
+    ...request,
+    chat: {
+      ...request.chat,
+      automation_id: "deleted-automation",
+      automation_revision: "obsolete",
+    },
+  });
+  await acpTestInternals.runQueuedAcpJob(queued);
+  expect(
+    getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    })?.state,
+  ).toBe("canceled");
+  expect(chatServer.acquireChatSyncDB).not.toHaveBeenCalled();
 });
 
 function makeSyncdb(rows: any[] = []) {
@@ -1605,6 +1661,32 @@ describe("recoverCurrentWorkerStuckAcpTurns", () => {
     expect(owner_instance_id).toBeTruthy();
     return { rows, syncdb, writer, owner_instance_id };
   }
+
+  it("records queue progress before releasing a completed turn lease", async () => {
+    acpTestInternals.setDetachedWorkerContextForTests({
+      worker_id: "worker-current",
+      host_id: "host-1",
+      bundle_version: "bundle-a",
+      bundle_path: "/bundle-a",
+      state: "active",
+      started_at: Date.now() - 60_000,
+      last_heartbeat_at: Date.now(),
+      last_queue_progress_at: Date.now() - 60_000,
+    });
+    const { writer } = await startWriterForRequest();
+
+    (writer as any).finalizeLease("completed");
+
+    const progressCall = (workers.heartbeatAcpWorker as jest.Mock).mock.calls
+      .map((args, index) => ({ args, index }))
+      .find(({ args }) => Number(args[0]?.last_queue_progress_at) > 0);
+    expect(progressCall).toBeDefined();
+    const progressOrder = (workers.heartbeatAcpWorker as jest.Mock).mock
+      .invocationCallOrder[progressCall!.index];
+    const finalizeOrder = (turns.finalizeAcpTurnLease as jest.Mock).mock
+      .invocationCallOrder[0];
+    expect(progressOrder).toBeLessThan(finalizeOrder);
+  });
 
   it("does not recover a current-worker turn while its writer is recently active", async () => {
     const request = makeRequest();

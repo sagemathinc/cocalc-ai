@@ -3213,13 +3213,17 @@ describe("CodexAppServerAgent", () => {
         }
       });
 
-    const setAgentSessionKey = jest.fn(async () => {});
+    const runtimeEnv: Record<string, string> = {};
+    const setAgentSessionKey = jest.fn(async () => {
+      runtimeEnv.COCALC_AGENT_IDENTITY_FILE = "/tmp/runtime/identity.json";
+    });
     const spawnCodexAppServer = jest.fn(async () => ({
       proc: makeProc(++spawnCount) as any,
       cmd: "fake-codex",
       args: ["app-server"],
       cwd: "/tmp/project",
       setAgentSessionKey,
+      runtimeEnv,
     }));
     setCodexProjectSpawner({
       spawnCodexExec: async () => {
@@ -3283,152 +3287,199 @@ describe("CodexAppServerAgent", () => {
     expect(setAgentSessionKey).toHaveBeenCalledWith(
       "research-thread\u00002026-08-14T12:05:00.000Z",
     );
+    const turns = appServerCalls.filter((call) => call.method === "turn/start");
+    expect(turns).toHaveLength(2);
+    expect(turns[0].params.env?.COCALC_AGENT_IDENTITY_FILE).toBeUndefined();
+    expect(turns[1].params.env?.COCALC_AGENT_IDENTITY_FILE).toBe(
+      "/tmp/runtime/identity.json",
+    );
   });
 
-  it("reports and retains background terminals and subagents after a turn", async () => {
-    const requests: Array<{ method: string; params: any }> = [];
-    const outstandingWorkChanged = jest.fn();
-    const proc = new FakeCodexAppServerProc((fake, message) => {
-      requests.push({ method: message.method, params: message.params });
-      switch (message.method) {
-        case "initialize":
-          fake.sendResponse(message.id, { ok: true });
-          break;
-        case "thread/start":
-          fake.sendResponse(message.id, { thread: { id: "thr-background" } });
-          break;
-        case "turn/start":
-          fake.sendResponse(message.id, { turn: { id: "turn-background" } });
-          setImmediate(() => {
-            fake.sendNotification("turn/completed", {
-              turn: { id: "turn-background", status: "completed" },
+  it.each([false, true])(
+    "retains background work without crossing principals (scoped identity: %s)",
+    async (scopedIdentity) => {
+      const requests: Array<{ method: string; params: any }> = [];
+      const outstandingWorkChanged = jest.fn();
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        requests.push({ method: message.method, params: message.params });
+        switch (message.method) {
+          case "initialize":
+            fake.sendResponse(message.id, { ok: true });
+            break;
+          case "thread/start":
+            fake.sendResponse(message.id, { thread: { id: "thr-background" } });
+            break;
+          case "turn/start":
+            fake.sendResponse(message.id, { turn: { id: "turn-background" } });
+            setImmediate(() => {
+              fake.sendNotification("turn/completed", {
+                turn: { id: "turn-background", status: "completed" },
+              });
             });
-          });
-          break;
-        case "thread/backgroundTerminals/list":
-          fake.sendResponse(message.id, {
-            data: [
-              {
-                itemId: "item-build",
-                processId: "42",
-                command: "pnpm build",
-                cwd: "/tmp/project",
-              },
-            ],
-            nextCursor: null,
-          });
-          break;
-        case "thread/list":
-          fake.sendResponse(message.id, {
-            data: [
-              {
+            break;
+          case "thread/backgroundTerminals/list":
+            fake.sendResponse(message.id, {
+              data: [
+                {
+                  itemId: "item-build",
+                  processId: "42",
+                  command: "pnpm build",
+                  cwd: "/tmp/project",
+                },
+              ],
+              nextCursor: null,
+            });
+            break;
+          case "thread/list":
+            fake.sendResponse(message.id, {
+              data: [
+                {
+                  id: "thr-child-background",
+                  parentThreadId: "thr-background",
+                  status: { type: "active", activeFlags: ["waiting"] },
+                },
+              ],
+              nextCursor: null,
+            });
+            break;
+          case "thread/read":
+            fake.sendResponse(message.id, {
+              thread: {
                 id: "thr-child-background",
-                parentThreadId: "thr-background",
-                status: { type: "active", activeFlags: ["waiting"] },
+                turns: [{ id: "turn-child", status: "inProgress" }],
               },
-            ],
-            nextCursor: null,
-          });
-          break;
-        case "thread/read":
-          fake.sendResponse(message.id, {
-            thread: {
-              id: "thr-child-background",
-              turns: [{ id: "turn-child", status: "inProgress" }],
-            },
-          });
-          break;
-        default:
-          if (typeof message.id === "number") fake.sendResponse(message.id, {});
-      }
-    });
-    setCodexProjectSpawner({
-      spawnCodexExec: async () => {
-        throw new Error("unexpected codex exec spawn");
-      },
-      spawnCodexAppServer: async () => ({
-        proc: proc as any,
-        cmd: "fake-codex",
-        args: ["app-server"],
-        cwd: "/tmp/project",
-      }),
-    });
-    const agent = new CodexAppServerAgent({
-      onOutstandingWorkChanged: outstandingWorkChanged,
-    });
+            });
+            break;
+          default:
+            if (typeof message.id === "number")
+              fake.sendResponse(message.id, {});
+        }
+      });
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected codex exec spawn");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake-codex",
+          args: ["app-server"],
+          cwd: "/tmp/project",
+          runtimeEnv: scopedIdentity
+            ? { COCALC_AGENT_IDENTITY_FILE: "/tmp/retained/identity.json" }
+            : undefined,
+        }),
+      });
+      const agent = new CodexAppServerAgent({
+        onOutstandingWorkChanged: outstandingWorkChanged,
+      });
 
-    await agent.evaluate({
-      project_id: "00000000-0000-4000-8000-000000000000",
-      account_id: "00000000-0000-4000-8000-000000000001",
-      session_id: "chat-background",
-      prompt: "start a build",
-      stream: async () => {},
-      config: { workingDirectory: "/tmp/project" },
-    });
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "00000000-0000-4000-8000-000000000001",
+        session_id: "chat-background",
+        prompt: "start a build",
+        stream: async () => {},
+        config: { workingDirectory: "/tmp/project" },
+      });
 
-    expect(agent.getRuntimeStatus()).toEqual({
-      liveRuntimes: 1,
-      activeTurns: 0,
-      backgroundTerminals: 1,
-      activeDescendants: 1,
-    });
-    expect(outstandingWorkChanged).toHaveBeenCalledWith({
-      sessionId: "chat-background",
-      projectId: "00000000-0000-4000-8000-000000000000",
-      accountId: "00000000-0000-4000-8000-000000000001",
-      chat: undefined,
-      managerState: "completed",
-      activeDescendantThreadIds: ["thr-child-background"],
-      activeDescendants: 1,
-      backgroundTerminals: 1,
-      maxConcurrentSubagents: undefined,
-    });
-    await expect(
-      agent.evaluate({
+      expect(agent.getRuntimeStatus()).toEqual({
+        liveRuntimes: 1,
+        activeTurns: 0,
+        backgroundTerminals: 1,
+        activeDescendants: 1,
+      });
+      expect(outstandingWorkChanged).toHaveBeenCalledWith({
+        sessionId: "chat-background",
+        projectId: "00000000-0000-4000-8000-000000000000",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        chat: undefined,
+        managerState: "completed",
+        activeDescendantThreadIds: ["thr-child-background"],
+        activeDescendants: 1,
+        backgroundTerminals: 1,
+        maxConcurrentSubagents: undefined,
+      });
+      const deniedEvents: any[] = [];
+      await agent.evaluate({
+        project_id: "00000000-0000-4000-8000-000000000000",
+        account_id: "another-human",
+        session_id: "chat-background",
+        prompt: "take over",
+        stream: async (event) => {
+          deniedEvents.push(event);
+        },
+        config: { workingDirectory: "/tmp/project" },
+      });
+      expect(deniedEvents).toEqual([
+        {
+          type: "error",
+          error: expect.stringContaining(
+            "still has subagents or background commands running",
+          ),
+        },
+      ]);
+      expect(proc.killed).toBe(false);
+      const nextEvents: any[] = [];
+      const nextTurn = agent.evaluate({
         project_id: "00000000-0000-4000-8000-000000000000",
         account_id: "00000000-0000-4000-8000-000000000001",
         session_id: "chat-background",
         prompt: "continue managing the outstanding work",
-        stream: async () => {},
+        stream: async (event) => {
+          nextEvents.push(event);
+        },
         config: {
           workingDirectory: "/tmp/project",
           maxConcurrentSubagents: 10,
         },
-      }),
-    ).resolves.toBeUndefined();
-    expect(
-      requests.filter(({ method }) => method === "initialize"),
-    ).toHaveLength(1);
-    expect(
-      requests.filter(({ method }) => method === "turn/start"),
-    ).toHaveLength(2);
-    expect(proc.killed).toBe(false);
-    await expect(agent.interruptOutstanding("chat-background")).resolves.toBe(
-      true,
-    );
-    expect(requests).toEqual(
-      expect.arrayContaining([
-        {
-          method: "turn/interrupt",
-          params: {
-            threadId: "thr-child-background",
-            turnId: "turn-child",
+      });
+      if (scopedIdentity) {
+        await nextTurn;
+        expect(nextEvents).toEqual([
+          {
+            type: "error",
+            error: expect.stringContaining(
+              "still has subagents or background commands running",
+            ),
           },
-        },
-        {
-          method: "thread/backgroundTerminals/clean",
-          params: { threadId: "chat-background" },
-        },
-        {
-          method: "thread/backgroundTerminals/clean",
-          params: { threadId: "thr-child-background" },
-        },
-      ]),
-    );
-    expect(proc.killed).toBe(false);
-    await agent.dispose();
-    expect(proc.killed).toBe(true);
-  });
+        ]);
+      } else {
+        await expect(nextTurn).resolves.toBeUndefined();
+      }
+      expect(
+        requests.filter(({ method }) => method === "initialize"),
+      ).toHaveLength(1);
+      expect(
+        requests.filter(({ method }) => method === "turn/start"),
+      ).toHaveLength(scopedIdentity ? 1 : 2);
+      expect(proc.killed).toBe(false);
+      await expect(agent.interruptOutstanding("chat-background")).resolves.toBe(
+        true,
+      );
+      expect(requests).toEqual(
+        expect.arrayContaining([
+          {
+            method: "turn/interrupt",
+            params: {
+              threadId: "thr-child-background",
+              turnId: "turn-child",
+            },
+          },
+          {
+            method: "thread/backgroundTerminals/clean",
+            params: { threadId: "chat-background" },
+          },
+          {
+            method: "thread/backgroundTerminals/clean",
+            params: { threadId: "thr-child-background" },
+          },
+        ]),
+      );
+      expect(proc.killed).toBe(false);
+      await agent.dispose();
+      expect(proc.killed).toBe(true);
+    },
+  );
 
   it("never replaces an established session when resume fails", async () => {
     const appServerCalls: string[] = [];
@@ -4146,6 +4197,27 @@ describe("CodexAppServerAgent", () => {
     expect(text).toContain("project build -h");
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
+    expect(text).toContain("project chat agent rpc destinations --json");
+    expect(text).toContain("project chat agent destinations --json");
+    expect(text).toContain("project chat send --to NAME --stdin --json");
+    expect(text).toContain(
+      "project chat agent request-connection --to NAME --reason TEXT",
+    );
+    expect(text).toContain("project chat agent connection-request REQUEST_ID");
+    expect(text).toContain("Legacy grants do not authorize personal sends");
+    expect(text).toContain("the approval handler never replays one");
+    expect(text).toContain(
+      "protocol_version describes identity authentication",
+    );
+    expect(text).toContain("project chat send --rpc --to-agent ID");
+    expect(text).toContain(
+      "supply it with a pipe or heredoc in the same shell invocation",
+    );
+    expect(text).toContain("A timeout is unknown, never proof of rejection");
+    expect(text).toContain("Do not automatically retry");
+    expect(text).toContain(
+      "Replies require a separately approved reverse link",
+    );
     expect(text).not.toContain("COCALC_BROWSER_ID");
     expect(text).not.toContain("browser files --project-id");
     expect(text).not.toContain("browser workspace-state");
@@ -4891,6 +4963,156 @@ describe("CodexAppServerAgent", () => {
     expect(proc.killed).toBe(true);
   });
 
+  it("hands refs to shell processes without turn/start.env on successive scoped turns", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "acp-human-turns-"));
+    const processes: FakeCodexAppServerProc[] = [];
+    const observed: any[] = [];
+    const spawnCodexAppServer = jest.fn(async (opts) => {
+      const n = processes.length + 1;
+      const identityPath = path.join(dir, `identity-${n}.json`);
+      writeFileSync(
+        identityPath,
+        JSON.stringify({ agent_id: "source", run_id: `run-${n}` }),
+      );
+      // Model the deployed protocol: turn/start.env is ignored. Shell commands
+      // only see the immutable environment captured when the process spawned.
+      const processEnv = {
+        COCALC_AGENT_IDENTITY_FILE: identityPath,
+        COCALC_AGENT_MENTION_REFERENCES_FILE: `${identityPath}.mentions.json`,
+      };
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        if (
+          message.method === "thread/start" ||
+          message.method === "thread/resume"
+        ) {
+          fake.sendResponse(message.id, { thread: { id: "shared-session" } });
+        } else if (message.method === "turn/start") {
+          const file = processEnv.COCALC_AGENT_MENTION_REFERENCES_FILE;
+          observed.push({
+            account: opts.accountId,
+            file,
+            refs: JSON.parse(readFileSync(file, "utf8")),
+          });
+          fake.sendResponse(message.id, { turn: { id: `turn-${n}` } });
+          setImmediate(() =>
+            fake.sendNotification("turn/completed", {
+              turn: { id: `turn-${n}`, status: "completed" },
+            }),
+          );
+        } else if (typeof message.id === "number") {
+          fake.sendResponse(message.id, {});
+        }
+      });
+      processes.push(proc);
+      return {
+        proc: proc as any,
+        cmd: "fake",
+        args: [],
+        cwd: dir,
+        runtimeEnv: { ...processEnv },
+      };
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected");
+      },
+      spawnCodexAppServer,
+    });
+    const agent = new CodexAppServerAgent();
+    try {
+      for (const account of ["P", "Q", "Q"]) {
+        await agent.evaluate({
+          project_id: "project",
+          account_id: account,
+          session_id: "shared-session",
+          prompt: "work",
+          config: { workingDirectory: dir },
+          mentionReferences:
+            account === "P"
+              ? [
+                  {
+                    version: 1,
+                    naming_account_id: "P",
+                    name: "reviewer",
+                    target: { project_id: "other", agent_id: "reviewer-P" },
+                  },
+                ]
+              : [],
+          stream: async () => {},
+        });
+      }
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(3);
+      expect(
+        observed.map(({ account, refs }) => [account, refs.run_id]),
+      ).toEqual([
+        ["P", "run-1"],
+        ["Q", "run-2"],
+        ["Q", "run-3"],
+      ]);
+      expect(observed[0].refs.references[0].target.agent_id).toBe("reviewer-P");
+      expect(observed[1].refs.references).toEqual([]);
+      expect(observed[2].refs.references).toEqual([]);
+      expect(processes[0].killed).toBe(true);
+      expect(processes[1].killed).toBe(true);
+      for (const { file } of observed)
+        expect(() => readFileSync(file)).toThrow();
+    } finally {
+      await agent.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each([undefined, "/stale/previous-human.json"])(
+    "rejects a missing or mismatched spawn handoff (%s) before model execution",
+    async (mentionFile) => {
+      const methods: string[] = [];
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        methods.push(message.method);
+        if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      });
+      setCodexProjectSpawner({
+        spawnCodexExec: async () => {
+          throw new Error("unexpected");
+        },
+        spawnCodexAppServer: async () => ({
+          proc: proc as any,
+          cmd: "fake",
+          args: [],
+          runtimeEnv: {
+            COCALC_AGENT_IDENTITY_FILE: "/current-run/identity.json",
+            ...(mentionFile == null
+              ? {}
+              : { COCALC_AGENT_MENTION_REFERENCES_FILE: mentionFile }),
+          },
+        }),
+      });
+      const agent = new CodexAppServerAgent();
+      const events: any[] = [];
+      try {
+        await agent.evaluate({
+          project_id: "project",
+          account_id: "Q",
+          prompt: "work",
+          mentionReferences: [],
+          stream: async (event) => {
+            events.push(event);
+          },
+        });
+        expect(events).toContainEqual(
+          expect.objectContaining({
+            type: "error",
+            error: expect.stringContaining(
+              "Scoped mention environment was not installed at process spawn",
+            ),
+          }),
+        );
+        expect(methods).not.toContain("turn/start");
+      } finally {
+        await agent.dispose();
+      }
+    },
+  );
+
   it("steers an active app-server turn without interrupting it", async () => {
     const steerRequests: any[] = [];
     let steerPromise: Promise<any> | undefined;
@@ -4963,6 +5185,21 @@ describe("CodexAppServerAgent", () => {
           payload.state === "running"
         ) {
           requested = true;
+          await expect(
+            agent.steer("thr-steer-1", {
+              project_id: "00000000-0000-4000-8000-000000000000",
+              account_id: "another-human",
+              prompt: "use my reviewer instead",
+              chat: {
+                project_id: "00000000-0000-4000-8000-000000000000",
+                path: "x.chat",
+                sender_id: "another-human",
+                message_date: new Date().toISOString(),
+                thread_id: "thread-1",
+              },
+            }),
+          ).rejects.toMatchObject({ code: "principal_mismatch" });
+          expect(steerRequests).toHaveLength(0);
           steerPromise = agent.steer("thr-steer-1", {
             project_id: "00000000-0000-4000-8000-000000000000",
             account_id: "00000000-0000-4000-8000-000000000001",

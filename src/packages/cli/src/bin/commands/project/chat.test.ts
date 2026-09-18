@@ -1,8 +1,192 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
+import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import type { ProjectCommandDeps } from "../project";
 import { registerProjectChatCommands } from "./chat";
+
+test("named send uses one scoped attempt and never the human send path", async () => {
+  const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  let resolved = 0;
+  const attempts: any[] = [];
+  let output: any;
+  const resolver = mock.method(
+    require("../../core/agent-destination"),
+    "resolveRuntimeAgentName",
+    async (name: string) => {
+      assert.equal(name, "@reviewer");
+      resolved++;
+      return target;
+    },
+  );
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      attempts.push(request);
+      return { ...request, outcome: "accepted", observed_at: Date.now() };
+    },
+  );
+  const program = new Command();
+  registerProjectChatCommands(program.command("project"), {
+    globalsFrom: () => ({}),
+    emitSuccess: (_ctx: unknown, _command: unknown, result: unknown) => {
+      output = result;
+    },
+    withContext: () => {
+      throw new Error("broad credential fallback");
+    },
+  } as any);
+  const oldExit = process.exitCode;
+  try {
+    await program.parseAsync(
+      ["project", "chat", "send", "--to", "@reviewer", "Review this"],
+      { from: "user" },
+    );
+    assert.equal(resolved, 1);
+    assert.equal(attempts.length, 1);
+    assert.deepEqual(attempts[0].target, target);
+    assert.equal(attempts[0].action, "send");
+    assert.equal(attempts[0].body, "Review this");
+    assert.equal(output.outcome, "accepted");
+    await assert.rejects(
+      program.parseAsync(
+        [
+          "project",
+          "chat",
+          "send",
+          "--to",
+          "@reviewer",
+          "--to-agent",
+          target.agent_id,
+          "Review this",
+        ],
+        { from: "user" },
+      ),
+    );
+    assert.equal(attempts.length, 1);
+  } finally {
+    process.exitCode = oldExit;
+    resolver.mock.restore();
+    transport.mock.restore();
+  }
+});
+
+test("attachment sends preserve same-project references and prepare cross-project bytes", async () => {
+  const target = { project_id: randomUUID(), agent_id: randomUUID() };
+  const paths = [
+    { kind: "project-file", path: "/tmp/report.pdf" },
+    { kind: "project-file", path: "/tmp/results.json" },
+  ];
+  const calls: any[] = [];
+  const resolver = mock.method(
+    require("../../core/agent-destination"),
+    "resolveRuntimeAgentName",
+    async () => target,
+  );
+  const reader = mock.method(
+    require("../../core/agent-attachments"),
+    "readAgentFileReferences",
+    async (input: string[]) => {
+      assert.deepEqual(input, ["report.pdf", "results.json"]);
+      return { kind: "project-files", files: paths };
+    },
+  );
+  let sourceProject = target.project_id;
+  let allowPreparation = true;
+  const data = Buffer.from([0, 128, 255]);
+  const snapshot = {
+    name: "report.pdf",
+    size: data.length,
+    sha256: "a".repeat(64),
+  };
+  const snapshotReader = mock.method(
+    require("../../core/agent-attachments"),
+    "readAgentAttachmentSnapshots",
+    async () => ({
+      metadata: { kind: "snapshots", files: [snapshot] },
+      files: [{ ...snapshot, data }],
+    }),
+  );
+  const transport = mock.method(
+    require("../../core/agent-message"),
+    "sendIdentityMessage",
+    async (request: any) => {
+      calls.push(request);
+      if (request.action === "whoami")
+        return { identity: { project_id: sourceProject } };
+      if (request.action === "prepare-attachments")
+        return allowPreparation
+          ? {
+              version: 2,
+              target,
+              attempt_id: request.attempt_id,
+              outcome: "prepared",
+              reservation_id: randomUUID(),
+              expires_at: Date.now() + 30_000,
+            }
+          : {
+              version: 2,
+              target,
+              attempt_id: request.attempt_id,
+              outcome: "rejected",
+              observed_at: Date.now(),
+              reason: "autostart disabled",
+            };
+      return { ...request, outcome: "accepted", observed_at: Date.now() };
+    },
+  );
+  const program = new Command();
+  registerProjectChatCommands(program.command("project"), {
+    globalsFrom: () => ({}),
+    emitSuccess: () => {},
+    withContext: () => {
+      throw Error("broad auth fallback");
+    },
+  } as any);
+  const oldExit = process.exitCode;
+  const args = [
+    "project",
+    "chat",
+    "send",
+    "--to",
+    "reviewer",
+    "--attach",
+    "report.pdf",
+    "--attach",
+    "results.json",
+    "Review these",
+  ];
+  try {
+    await program.parseAsync(args, { from: "user" });
+    assert.deepEqual(
+      calls.map((c) => c.action),
+      ["whoami", "send"],
+    );
+    assert.deepEqual(calls[1].file_references, paths);
+    sourceProject = randomUUID();
+    await program.parseAsync(args, { from: "user" });
+    assert.deepEqual(
+      calls.map((c) => c.action),
+      ["whoami", "send", "whoami", "prepare-attachments", "send"],
+    );
+    assert.equal(calls[3].snapshot_payload, undefined);
+    assert.deepEqual(calls[4].snapshot_payload[0].data, data);
+    assert.ok(calls[4].attachment_reservation);
+    allowPreparation = false;
+    await program.parseAsync(args, { from: "user" });
+    assert.equal(calls.at(-1).action, "prepare-attachments");
+    assert.equal(calls.filter((r) => r.action === "send").length, 2);
+    assert.equal(process.exitCode, 2);
+    assert.equal(reader.mock.callCount(), 1);
+  } finally {
+    process.exitCode = oldExit;
+    resolver.mock.restore();
+    reader.mock.restore();
+    snapshotReader.mock.restore();
+    transport.mock.restore();
+  }
+});
 
 function setup() {
   const program = new Command();
@@ -10,7 +194,17 @@ function setup() {
   const project = program.command("project");
   const calls: any[] = [];
   let output: any;
-  const ctx = { accountId: "actor" };
+  const ctx = {
+    accountId: "actor",
+    hub: {
+      agent: {
+        listMessageReceipts: async (options: unknown) => {
+          calls.push(options);
+          return { items: [] };
+        },
+      },
+    },
+  };
   registerProjectChatCommands(project, {
     withContext: async (
       _command: Command,
@@ -72,6 +266,28 @@ test("chat send targets the exact project/path/thread and defaults to queued del
     },
   ]);
   assert.equal(f.output().state, "accepted");
+});
+
+test("human receipt inspection forwards only the chosen endpoint and page", async () => {
+  const f = setup();
+  await f.program.parseAsync(
+    [
+      "project",
+      "chat",
+      "agent",
+      "receipts",
+      "source",
+      "--limit",
+      "7",
+      "--cursor",
+      "cursor",
+    ],
+    { from: "user" },
+  );
+  assert.deepEqual(f.calls, [
+    { agent_id: "source", project_id: undefined, limit: 7, cursor: "cursor" },
+  ]);
+  assert.deepEqual(f.output(), { items: [] });
 });
 
 test("chat send --stdin --guidance preserves JSON and newlines", async () => {

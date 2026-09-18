@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Checkbox } from "antd";
-import { useEffect, useMemo, useRef } from "react";
+import { Alert, Checkbox, Select } from "antd";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewItem } from "@pierre/diffs";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
@@ -69,6 +69,7 @@ function DocumentDiffContent({
   const { label } = source;
   const { resolved } = useAppearance();
   const { split, wrap } = useDiffViewPreferences();
+  const [contextLines, setContextLines] = useState(3);
   const viewport = useRef<HTMLDivElement>(null);
   const parsed = useMemo(() => {
     try {
@@ -99,12 +100,12 @@ function DocumentDiffContent({
             );
         }
       }
-      const files = parsePreviewSource(source);
+      const files = parsePreviewSource(source, contextLines);
       return { files, error: "" };
     } catch (error) {
       return { files: [], error: String(error) };
     }
-  }, [source]);
+  }, [source, contextLines]);
   const generation = useRef({ parsed, version: 0 });
   if (generation.current.parsed !== parsed) {
     generation.current = { parsed, version: generation.current.version + 1 };
@@ -170,6 +171,18 @@ function DocumentDiffContent({
           flexShrink: 0,
         }}
       >
+        {source.kind === "documents" && (
+          <Select
+            aria-label="Context lines"
+            value={contextLines}
+            onChange={setContextLines}
+            options={[3, 10, 30].map((value) => ({
+              value,
+              label: `Context ${value}`,
+            }))}
+            style={{ minWidth: 120 }}
+          />
+        )}
         <Checkbox
           checked={split}
           onChange={(event) =>
@@ -204,7 +217,7 @@ function DocumentDiffContent({
             diffStyle: split ? "split" : "unified",
             overflow: wrap ? "wrap" : "scroll",
             lineDiffType: "word",
-            expandUnchanged: source.kind === "documents",
+            expandUnchanged: false,
             stickyHeaders: true,
             itemMetrics: { lineHeight: diffLineHeight(fontSize) },
             theme: { light: "github-light", dark: "github-dark" },

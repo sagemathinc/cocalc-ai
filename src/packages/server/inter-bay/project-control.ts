@@ -419,6 +419,7 @@ export async function handleProjectControlCheckStartAdmission(
         });
   const admission = {
     storage_recovery_required: storageRecoveryRequired,
+    runtime_authority_revision: sponsor.runtime_authority_revision,
   };
   const bypassRuntimeSlotAdmission =
     req.managed_egress_override === "admin-host-drain";
@@ -496,6 +497,15 @@ export async function handleProjectControlRestart(
   });
   const project = await getProject(req.project_id);
   const sponsor = await loadProjectRuntimeSponsor(req.project_id);
+  if (
+    !/^\d+$/.test(req.runtime_authority_revision ?? "") ||
+    req.runtime_authority_revision !== sponsor.runtime_authority_revision
+  ) {
+    throw new Error(
+      `project collaborator authority changed before restart admission ` +
+        `(expected ${req.runtime_authority_revision ?? "missing"}, current ${sponsor.runtime_authority_revision})`,
+    );
+  }
   await upsertProjectActiveOperation({
     project_id: req.project_id,
     op_id: req.lro_op_id,
@@ -756,12 +766,15 @@ export async function handleProjectReferenceGet(
   }
   const { rows } = await getPool().query<{
     users: Record<string, any> | null;
+    runtime_lifecycle_revision: number | string | null;
     usage_account_id: string | null;
     allow_collaborator_destructive_storage_actions: boolean | null;
   }>(
     `
       SELECT
         COALESCE(users, '{}'::jsonb) AS users,
+        COALESCE(runtime_lifecycle_revision, 0)::bigint
+          AS runtime_lifecycle_revision,
         usage_account_id,
         allow_collaborator_destructive_storage_actions
       FROM projects
@@ -778,6 +791,9 @@ export async function handleProjectReferenceGet(
     owning_bay_id: project.owning_bay_id,
     usage_account_id: rows[0]?.usage_account_id ?? null,
     users: rows[0]?.users ?? {},
+    runtime_lifecycle_revision: Number(
+      rows[0]?.runtime_lifecycle_revision ?? 0,
+    ),
     allow_collaborator_destructive_storage_actions:
       rows[0]?.allow_collaborator_destructive_storage_actions ?? null,
   };

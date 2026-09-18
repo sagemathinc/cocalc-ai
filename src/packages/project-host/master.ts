@@ -1377,7 +1377,43 @@ export async function startMasterRegistration({
   };
 
   // Control plane for this host (master can ask us to create/start/stop projects).
+  const agentRpcService = async () => {
+    await awaitReadyForControl("agentRpc", waitUntilReady);
+    if (!controlClient) throw new Error("host messaging transport unavailable");
+    const { createLocalAgentRpcService } =
+      await import("@cocalc/lite/hub/acp/agent-rpc-service");
+    const { ensureProjectContainerRunning } =
+      await import("./codex/codex-project");
+    return createLocalAgentRpcService(controlClient, hubApi.agent, (e) =>
+      ensureProjectContainerRunning({
+        projectId: e.target.project_id,
+        accountId: e.account_id,
+        timeout: Math.max(1, e.deadline - Date.now()),
+      }),
+    );
+  };
   const controlImpl: HostControlApi = {
+    async prepareAgentRpcAttachments(envelope) {
+      return (await agentRpcService()).prepareAttachments(envelope);
+    },
+    async cancelAgentRpcAttachments(envelope) {
+      await (await agentRpcService()).cancelAttachments(envelope);
+    },
+    async submitAgentRpc(envelope, files) {
+      return (await agentRpcService()).submit(envelope, files);
+    },
+    async inspectAgentRpc(opts) {
+      await awaitReadyForControl("inspectAgentRpc", waitUntilReady);
+      if (!controlClient)
+        throw new Error("host messaging transport unavailable");
+      const { createLocalAgentRpcService } =
+        await import("@cocalc/lite/hub/acp/agent-rpc-service");
+      return createLocalAgentRpcService(controlClient, hubApi.agent).inspect(
+        opts.source,
+        opts.request,
+        opts.account_id,
+      );
+    },
     async applyExamRun(opts) {
       await awaitReadyForControl("applyExamRun", waitUntilReady);
       return await applyExamRunLocal(opts);
@@ -1530,12 +1566,17 @@ export async function startMasterRegistration({
     async startProjectIdempotent(opts) {
       return await startProjectRequest(opts, true);
     },
-    async stopProject({ project_id }) {
+    async stopProject({ project_id, runtime_lifecycle_revision }) {
       await awaitRuntimeReadyForControl("stopProject");
       if (!hubApi.projects?.stop) {
         throw Error("stop not available");
       }
-      const status = await hubApi.projects.stop({ account_id, project_id });
+      const status = await hubApi.projects.stop({
+        account_id,
+        project_id,
+        runtime_lifecycle_revision,
+        require_runtime_lifecycle_revision: true,
+      } as any);
       return { project_id, state: (status as any)?.state };
     },
     async getProjectStatus({ project_id }) {
@@ -1557,16 +1598,26 @@ export async function startMasterRegistration({
         phase_timings_ms: (status as any)?.phase_timings_ms,
       };
     },
-    async updateAuthorizedKeys({ project_id, authorized_keys }) {
+    async updateAuthorizedKeys({
+      project_id,
+      authorized_keys,
+      runtime_lifecycle_revision,
+    }) {
       await updateAuthorizedKeys({
         project_id,
         authorized_keys,
+        runtime_lifecycle_revision,
       });
     },
-    async updateProjectUsers({ project_id, users }) {
+    async updateProjectUsers({
+      project_id,
+      users,
+      runtime_lifecycle_revision,
+    }) {
       await updateProjectUsers({
         project_id,
         users,
+        runtime_lifecycle_revision,
       });
     },
     async updateProjectRunQuota({ project_id, run_quota, run_quota_revision }) {
@@ -2196,7 +2247,12 @@ export async function startMasterRegistration({
   };
 
   const applyUserRows = async (
-    rows: Array<{ project_id: string; users: any; updated_ms: number }>,
+    rows: Array<{
+      project_id: string;
+      users: any;
+      runtime_lifecycle_revision: number;
+      updated_ms: number;
+    }>,
   ): Promise<number> => {
     let applied = 0;
     for (const row of rows) {
@@ -2206,6 +2262,9 @@ export async function startMasterRegistration({
         await updateProjectUsers({
           project_id,
           users: row?.users ?? {},
+          runtime_lifecycle_revision: Number(
+            row?.runtime_lifecycle_revision ?? 0,
+          ),
         });
         applied += 1;
       } catch (err) {

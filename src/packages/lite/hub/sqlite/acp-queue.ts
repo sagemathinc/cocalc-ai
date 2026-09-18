@@ -79,6 +79,13 @@ export function clearAcpPayloads(context: AcpChatContext): void {
   stmt.run(context.project_id, context.path, context.message_date);
 }
 
+export function clearAcpPayloadsForProject(project_id: string): number {
+  ensureInit();
+  return getAcpDatabase()
+    .prepare(`DELETE FROM ${TABLE} WHERE project_id = ?`)
+    .run(project_id).changes;
+}
+
 const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000;
 
 export function pruneExpired(retentionMs: number = DEFAULT_RETENTION_MS): void {

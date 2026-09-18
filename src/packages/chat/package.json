@@ -4,6 +4,16 @@
   "description": "Shared chat helpers and types for CoCalc",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "server": [
+        "dist/server.d.ts"
+      ],
+      "send": [
+        "dist/send.d.ts"
+      ]
+    }
+  },
   "exports": {
     ".": {
       "import": "./dist/index.js",
@@ -14,6 +24,10 @@
       "import": "./dist/server.js",
       "require": "./dist/server.js",
       "types": "./dist/server.d.ts"
+    },
+    "./send": {
+      "types": "./dist/send.d.ts",
+      "default": "./dist/send.js"
     },
     "./package.json": "./package.json"
   },

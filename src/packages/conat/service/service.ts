@@ -16,6 +16,7 @@ import { randomId } from "@cocalc/conat/names";
 import { EventEmitter } from "events";
 import { encodeBase64 } from "@cocalc/conat/util";
 import { type Client } from "@cocalc/conat/core/client";
+import type { ReceiveLimits } from "@cocalc/conat/core/receive-budget";
 import { until } from "@cocalc/util/async-utils";
 import {
   recordServiceAdmissionDenial,
@@ -108,6 +109,8 @@ export interface Options extends ServiceDescription {
   client: Client;
   parallel?: boolean;
   maxParallelHandlers?: number;
+  receiveLimits?: ReceiveLimits;
+  maxQueue?: number;
 }
 
 export function createConatService(options: Options) {
@@ -212,7 +215,15 @@ export class ConatService extends EventEmitter {
     const queue = this.options.all ? randomId() : "0";
     // service=true so upon disconnect the socketio backend server
     // immediately stops routing traffic to this.
-    this.sub = await cn.subscribe(this.subject, { queue });
+    this.sub = await cn.subscribe(this.subject, {
+      queue,
+      ...(this.options.receiveLimits
+        ? { receiveLimits: this.options.receiveLimits }
+        : {}),
+      ...(this.options.maxQueue != null
+        ? { maxQueue: this.options.maxQueue }
+        : {}),
+    });
     this.emit("running");
     await this.listen();
   };

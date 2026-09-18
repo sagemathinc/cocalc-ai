@@ -6,6 +6,18 @@
 import { Table } from "./types";
 
 Table({
+  name: "membership_recipient_deletions",
+  rules: { primary_key: "account_id" },
+  fields: {
+    account_id: { type: "uuid", desc: "Recipient fenced at the seed bay." },
+    deleting_at: {
+      type: "timestamp",
+      desc: "Permanent deletion marker, retained after account removal.",
+    },
+  },
+});
+
+Table({
   name: "membership_grants",
   rules: {
     primary_key: "id",

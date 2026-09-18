@@ -1,13 +1,14 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import DocumentDiff from "./document-diff";
 
 let mockTheme = "light";
-const mockParse = jest.fn((source) => [
+const mockParse = jest.fn((source, _context?: number) => [
   { name: source.path, contents: source.after },
 ]);
 jest.mock("./pierre-model", () => ({
-  parsePreviewSource: (source: any) => mockParse(source),
+  parsePreviewSource: (source: any, context: number) =>
+    mockParse(source, context),
 }));
 jest.mock("./highlighting-provider", () => ({
   DiffHighlightingProvider: ({ children }: any) => children,
@@ -27,6 +28,7 @@ jest.mock(
         data-theme={options.themeType}
         data-split={options.diffStyle}
         data-kind={items[0].type}
+        data-expanded={String(options.expandUnchanged)}
       >
         {(items[0].fileDiff ?? items[0].file).contents}
       </div>
@@ -73,6 +75,25 @@ test("updates versioned content in place and respects explicit appearance and ke
   expect(viewport.scrollTop).toBe(450);
   await user.keyboard("{Shift>} {/Shift}");
   expect(viewport.scrollTop).toBe(0);
+});
+
+test("defaults to three context lines and supports keyboard context selection", async () => {
+  const user = userEvent.setup();
+  render(<DocumentDiff {...props} />);
+  expect(mockParse).toHaveBeenLastCalledWith(expect.anything(), 3);
+  expect(
+    screen.getByRole("region", { name: "Selected versions" }),
+  ).toHaveAttribute("data-expanded", "false");
+  const context = screen.getByRole("combobox", { name: "Context lines" });
+  await user.tab();
+  expect(context).toHaveFocus();
+  // rc-select uses legacy keyCode, which user-event does not populate.
+  fireEvent.keyDown(context, { key: "ArrowDown", keyCode: 40 });
+  await screen.findByRole("listbox");
+  fireEvent.keyDown(context, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(context, { key: "Enter", keyCode: 13 });
+  expect(mockParse).toHaveBeenLastCalledWith(expect.anything(), 10);
+  expect(context).toHaveFocus();
 });
 
 test("oversized sources fail explicitly without invoking the parser or truncating", () => {
