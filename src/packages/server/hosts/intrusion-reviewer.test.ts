@@ -312,6 +312,7 @@ describe("project-host intrusion reviewer", () => {
     });
     await runHostIntrusionReviewerPass();
 
+    const escalationAt = Date.now() + 1000;
     await insertObservation({
       classification: "actionable",
       reasonCodes: [
@@ -320,8 +321,12 @@ describe("project-host intrusion reviewer", () => {
       ],
       actionableDelta: delta,
       state: changed,
+      createdAt: new Date(escalationAt),
     });
-    await insertObservation({ state: changed });
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(escalationAt + 1),
+    });
     await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
       escalated: 1,
       notifications_delivered: 1,
