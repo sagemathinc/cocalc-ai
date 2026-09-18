@@ -27,6 +27,7 @@ import type {
   HostAvailabilityReport,
   HostAvailabilityState,
   HostConatPersistMetrics,
+  HostIoProjectMetrics,
 } from "@cocalc/conat/hub/api/hosts";
 
 const TABLE = "project_host_availability_events";
@@ -187,6 +188,7 @@ type HostAvailabilityRow = {
 
 type ProjectHostAvailabilitySnapshot = {
   id: string;
+  name?: string | null;
   status?: string | null;
   deleted?: Date | string | null;
   last_seen?: Date | string | null;
@@ -206,9 +208,14 @@ type HostPressureAlertRow = ProjectHostAvailabilitySnapshot & {
   metric_memory_used_percent?: number | string | null;
   metric_memory_available_bytes?: number | string | null;
   metric_running_project_count?: number | string | null;
+  metric_io_containment?: {
+    top_projects?: HostIoProjectMetrics[] | null;
+  } | null;
   pressure_zone: "pressure" | "emergency";
   pressure_action_status: "no_candidates" | "stop_failed";
   pressure_reason?: string;
+  pressure_category: "memory" | "resource" | "storage_io" | "unknown";
+  leading_io_project?: HostIoProjectMetrics;
 };
 
 type RuntimeDegradedHostRow = ProjectHostAvailabilitySnapshot & {
@@ -1116,7 +1123,23 @@ export async function runRunningStaleHostAlertCheck(): Promise<number> {
 function pressureAlertHostName(row: ProjectHostAvailabilitySnapshot): string {
   const metadataName =
     `${row.metadata?.name ?? row.metadata?.display_name ?? ""}`.trim();
-  return metadataName || row.id;
+  return `${row.name ?? ""}`.trim() || metadataName || row.id;
+}
+
+function pressureCategory(
+  reason: string,
+): HostPressureAlertRow["pressure_category"] {
+  if (reason.includes("storage_io") || reason.includes("io_full")) {
+    return "storage_io";
+  }
+  if (
+    reason.includes("memory_used_percent") ||
+    reason.includes("memory_available_bytes")
+  ) {
+    return "memory";
+  }
+  if (reason) return "resource";
+  return "unknown";
 }
 
 function numericValue(value: unknown): number | undefined {
@@ -1139,6 +1162,9 @@ function pressureAlertRow(
     metric_memory_used_percent?: number | string | null;
     metric_memory_available_bytes?: number | string | null;
     metric_running_project_count?: number | string | null;
+    metric_io_containment?: {
+      top_projects?: HostIoProjectMetrics[] | null;
+    } | null;
   },
   now = Date.now(),
 ): HostPressureAlertRow | undefined {
@@ -1157,10 +1183,10 @@ function pressureAlertRow(
     return undefined;
   }
   const metricCollectedAtMs = timestampMs(row.metric_collected_at);
-  if (
+  const metricsAreFresh =
     metricCollectedAtMs != null &&
-    now - metricCollectedAtMs <= PRESSURE_ALERT_FRESH_METRICS_MS
-  ) {
+    now - metricCollectedAtMs <= PRESSURE_ALERT_FRESH_METRICS_MS;
+  if (metricsAreFresh) {
     const usedPercent = numericValue(row.metric_memory_used_percent);
     const runningProjects = numericValue(row.metric_running_project_count);
     const reason = `${pressure.last_action_reason ?? pressure.reason ?? ""}`;
@@ -1179,21 +1205,45 @@ function pressureAlertRow(
       return undefined;
     }
   }
+  const reason =
+    `${pressure.last_action_reason ?? pressure.reason ?? ""}`.trim();
+  const category = pressureCategory(reason);
+  const leadingIoProject =
+    metricsAreFresh && category === "storage_io"
+      ? row.metric_io_containment?.top_projects?.[0]
+      : undefined;
   return {
     ...row,
     pressure_zone: zone,
     pressure_action_status: actionStatus,
-    pressure_reason:
-      `${pressure.last_action_reason ?? pressure.reason ?? ""}`.trim() ||
-      undefined,
+    pressure_reason: reason || undefined,
+    pressure_category: category,
+    ...(leadingIoProject ? { leading_io_project: leadingIoProject } : {}),
   };
+}
+
+function formatIoRate(project: HostIoProjectMetrics): string | undefined {
+  const readBytes = numericValue(project.read_bytes_per_second) ?? 0;
+  const writeBytes = numericValue(project.write_bytes_per_second) ?? 0;
+  const bytes = readBytes + writeBytes;
+  const readIops = numericValue(project.read_iops) ?? 0;
+  const writeIops = numericValue(project.write_iops) ?? 0;
+  const iops = readIops + writeIops;
+  const parts: string[] = [];
+  if (bytes > 0) {
+    parts.push(`io_rate=${(bytes / 1024 ** 2).toFixed(1)}MiB/s`);
+  }
+  if (iops > 0) {
+    parts.push(`io_iops=${Math.round(iops)}`);
+  }
+  return parts.length ? parts.join(" ") : undefined;
 }
 
 function formatHostPressureAlertBody(rows: HostPressureAlertRow[]): string {
   return [
     `${rows.length} project host${rows.length === 1 ? " has" : "s have"} unresolved host-local pressure actions.`,
     "",
-    "This means the host is under memory/resource pressure but the automatic pressure controller either could not find a project to stop or failed to stop one.",
+    "The automatic pressure controller observed sustained memory, process/resource, or storage I/O pressure but either could not find an eligible project to stop or failed to stop one.",
     "",
     "Hosts:",
     "",
@@ -1201,10 +1251,17 @@ function formatHostPressureAlertBody(rows: HostPressureAlertRow[]): string {
       .slice(0, PRESSURE_ALERT_LIMIT)
       .map((row) =>
         [
-          `- ${pressureAlertHostName(row)}`,
+          `- host=${pressureAlertHostName(row)}`,
           `host_id=${row.id}`,
           `zone=${row.pressure_zone}`,
+          `pressure=${row.pressure_category}`,
           `action=${row.pressure_action_status}`,
+          row.leading_io_project
+            ? `leading_project_id=${row.leading_io_project.project_id}`
+            : undefined,
+          row.leading_io_project
+            ? formatIoRate(row.leading_io_project)
+            : undefined,
           row.public_url ? `url=${row.public_url}` : undefined,
         ]
           .filter((part) => part != null)
@@ -1226,6 +1283,7 @@ async function getHostPressureAlertRows(): Promise<HostPressureAlertRow[]> {
     `
       SELECT
         h.id,
+        h.name,
         h.status,
         h.deleted,
         h.last_seen,
@@ -1234,14 +1292,16 @@ async function getHostPressureAlertRows(): Promise<HostPressureAlertRow[]> {
         m.collected_at AS metric_collected_at,
         m.memory_used_percent AS metric_memory_used_percent,
         m.memory_available_bytes AS metric_memory_available_bytes,
-        m.running_project_count AS metric_running_project_count
+        m.running_project_count AS metric_running_project_count,
+        m.io_containment AS metric_io_containment
       FROM project_hosts h
       LEFT JOIN LATERAL (
         SELECT
           collected_at,
           memory_used_percent,
           memory_available_bytes,
-          running_project_count
+          running_project_count,
+          io_containment
         FROM project_host_metrics_samples
         WHERE host_id = h.id
         ORDER BY collected_at DESC
@@ -1260,11 +1320,26 @@ async function getHostPressureAlertRows(): Promise<HostPressureAlertRow[]> {
 export async function runHostPressureAlertCheck(): Promise<number> {
   const rows = await getHostPressureAlertRows();
   if (!rows.length) return 0;
-  await adminAlert({
-    subject: "Project hosts have unresolved pressure actions",
-    body: formatHostPressureAlertBody(rows),
-    dedupMinutes: 30,
-  });
+  const noCandidateRows = rows.filter(
+    ({ pressure_action_status }) => pressure_action_status === "no_candidates",
+  );
+  const stopFailedRows = rows.filter(
+    ({ pressure_action_status }) => pressure_action_status === "stop_failed",
+  );
+  if (noCandidateRows.length) {
+    await adminAlert({
+      subject: "Project hosts have no eligible pressure stop candidates",
+      body: formatHostPressureAlertBody(noCandidateRows),
+      dedupMinutes: 4 * 60,
+    });
+  }
+  if (stopFailedRows.length) {
+    await adminAlert({
+      subject: "Project hosts failed pressure stop actions",
+      body: formatHostPressureAlertBody(stopFailedRows),
+      dedupMinutes: 60,
+    });
+  }
   return rows.length;
 }
 
