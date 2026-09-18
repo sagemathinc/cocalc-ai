@@ -713,6 +713,40 @@ messaging authority. Existing experimental directional records are discarded.
 Do not build migration, account-rehome, or cross-version fallback machinery for
 unused experimental state.
 
+## Implementation And Deployment Evidence
+
+Implementation landed on `feature/my-agents-workspace` in PR #640 on
+September 18, 2026. The superseded plan-only PR #638 is closed. The hard cutover
+includes schema convergence for legacy installations, protocol v3 CLI and
+runtime bundles, session management and activity UI, registered and external
+members, queued/live delivery, broadcast, attempt inspection, and the Slate
+message inspector.
+
+Qualification completed before the live smoke test:
+
+- full workspace TypeScript and development builds, frontend lint, formatting,
+  and dependency-version checks;
+- 26 focused server integration tests, 110 Conat/API tests, 29 frontend tests,
+  75 AI/Codex tests, 40 Lite ACP boundary tests, and focused project-host, HTTP
+  approval, CLI, lost-ack, and PostgreSQL schema-convergence tests; and
+- both development spot project hosts upgraded to the same project-host and
+  CLI tools artifacts, with their managed runtime components healthy and
+  aligned across two bays.
+
+The deployed `lite1b.cocalc.ai` smoke test created a two-member queued session
+between `@x` and `@illustrator`. Each agent independently discovered the other
+through the exact `agent_session_id`, sent a message in each direction, and
+received `accepted` with `chat_effect: saved`. The receiving chat rows retained
+the source and target identities, session generation, attempt ID, configured
+and effective delivery, and the warning that peer content is not a human
+instruction. A subsequent send and explicit attempt inspection through the
+normal installed `/opt/cocalc/bin2/cocalc-cli.js` both returned the same
+accepted outcome after the project picked up the new tools bundle.
+
+The unchecked load and product-measurement items below remain deliberate
+post-deployment qualification work. They are not missing authority or user-flow
+implementation.
+
 ## Test And Release Gates
 
 ### Authorization
