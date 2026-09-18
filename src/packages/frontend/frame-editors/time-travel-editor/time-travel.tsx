@@ -22,6 +22,7 @@ import { GitAuthors, TimeTravelAuthors } from "./authors";
 import { Diff } from "./diff";
 import { timeTravelDocumentSource } from "./document-source";
 import { useHistoryLoad } from "./use-history-load";
+import { usePreservedScroll } from "./use-preserved-scroll";
 import { LoadMoreHistory } from "./load-more-history";
 import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
@@ -402,6 +403,8 @@ export function TimeTravel(props: Props) {
     }
   });
   const { doc, doc0, doc1, useJson = false } = loadedDocuments?.value ?? {};
+  const { elementRef: bodyScrollRef, onScroll: handleBodyScroll } =
+    usePreservedScroll(documentSelection, loadedDocuments != null);
 
   useAsyncEffect(async () => {
     if (!gitMode || changesMode || version == null) {
@@ -1351,6 +1354,8 @@ export function TimeTravel(props: Props) {
       >
         <div
           data-testid="timetravel-body-scroll"
+          onScroll={handleBodyScroll}
+          ref={bodyScrollRef}
           style={{
             flex: "1 1 0",
             height: "100%",
