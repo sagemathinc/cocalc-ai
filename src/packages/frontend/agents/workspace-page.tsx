@@ -75,6 +75,10 @@ import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
 import {
+  AGENT_SIDEBAR_ID,
+  AgentsSidebarToggle,
+} from "./workspace-sidebar-toggle";
+import {
   agentWorkspaceKey,
   findWorkspaceAgentForThread,
   selectedChatThreadFromLocalViewState,
@@ -92,6 +96,7 @@ const DEFAULT_AGENT_SIDEBAR_WIDTH = 280;
 const MIN_AGENT_SIDEBAR_WIDTH = 220;
 const MAX_AGENT_SIDEBAR_WIDTH = 600;
 const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
+const AGENT_SIDEBAR_HIDDEN_STORAGE_KEY = "cocalc-agents-sidebar-hidden-v1";
 
 function initialAgentSidebarWidth(): number {
   if (typeof window === "undefined") return DEFAULT_AGENT_SIDEBAR_WIDTH;
@@ -105,6 +110,13 @@ function initialAgentSidebarWidth(): number {
         Math.max(MIN_AGENT_SIDEBAR_WIDTH, stored),
       )
     : DEFAULT_AGENT_SIDEBAR_WIDTH;
+}
+
+function initialAgentSidebarHidden(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.localStorage.getItem(AGENT_SIDEBAR_HIDDEN_STORAGE_KEY) === "true"
+  );
 }
 
 interface PendingAgent {
@@ -598,6 +610,8 @@ function AgentWorkspace({
   active,
   accountId,
   onShowList,
+  agentSidebarHidden,
+  onToggleAgentSidebar,
   onClose,
   onRegisteredThreadSelected,
 }: {
@@ -607,6 +621,8 @@ function AgentWorkspace({
   active: boolean;
   accountId?: string;
   onShowList?: () => void;
+  agentSidebarHidden?: boolean;
+  onToggleAgentSidebar?: () => void;
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
 }) {
@@ -700,6 +716,12 @@ function AgentWorkspace({
             onClick={onShowList}
           />
         )}
+        {onToggleAgentSidebar && agentSidebarHidden != null && (
+          <AgentsSidebarToggle
+            hidden={agentSidebarHidden}
+            onToggle={onToggleAgentSidebar}
+          />
+        )}
         <div style={{ minWidth: 0, flex: 1 }}>
           <Text strong ellipsis style={{ display: "block" }}>
             {unregistered
@@ -775,6 +797,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     initialAgentSidebarWidth,
   );
+  const [agentSidebarHidden, setAgentSidebarHidden] = useState(
+    initialAgentSidebarHidden,
+  );
   const [mountedWorkspaces, setMountedWorkspaces] = useState<Set<string>>(
     () => new Set(),
   );
@@ -782,6 +807,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     Map<string, string>
   >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
+
+  const toggleAgentSidebar = useCallback(() => {
+    setAgentSidebarHidden((hidden) => {
+      const next = !hidden;
+      window.localStorage.setItem(AGENT_SIDEBAR_HIDDEN_STORAGE_KEY, `${next}`);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (active || !rootRef.current?.contains(document.activeElement)) return;
@@ -1023,6 +1056,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   if (loading && !directory) return <Loading theme="medium" />;
   const sidebar = (
     <aside
+      id={AGENT_SIDEBAR_ID}
       aria-label="Agents"
       style={{
         background: UI_COLORS.inset,
@@ -1157,46 +1191,53 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       {isNarrow ? (
         sidebar
       ) : (
-        <Resizable
-          size={{ width: agentSidebarWidth, height: "100%" }}
-          enable={{ right: true }}
-          minWidth={MIN_AGENT_SIDEBAR_WIDTH}
-          maxWidth={MAX_AGENT_SIDEBAR_WIDTH}
-          handleStyles={{
-            right: {
-              width: "6px",
-              right: "-3px",
-              cursor: "col-resize",
-              background: "transparent",
-              zIndex: 2,
-            },
+        <div
+          style={{
+            display: agentSidebarHidden ? "none" : "block",
+            flex: "0 0 auto",
+            height: "100%",
           }}
-          handleComponent={{
-            right: (
-              <div
-                aria-label="Resize Agents panel"
-                style={{ width: "100%", height: "100%" }}
-              />
-            ),
-          }}
-          onResizeStop={(_, __, ___, delta) => {
-            const width = Math.min(
-              MAX_AGENT_SIDEBAR_WIDTH,
-              Math.max(
-                MIN_AGENT_SIDEBAR_WIDTH,
-                agentSidebarWidth + delta.width,
-              ),
-            );
-            setAgentSidebarWidth(width);
-            window.localStorage.setItem(
-              AGENT_SIDEBAR_WIDTH_STORAGE_KEY,
-              `${width}`,
-            );
-          }}
-          style={{ flex: "0 0 auto" }}
         >
-          {sidebar}
-        </Resizable>
+          <Resizable
+            size={{ width: agentSidebarWidth, height: "100%" }}
+            enable={{ right: true }}
+            minWidth={MIN_AGENT_SIDEBAR_WIDTH}
+            maxWidth={MAX_AGENT_SIDEBAR_WIDTH}
+            handleStyles={{
+              right: {
+                width: "6px",
+                right: "-3px",
+                cursor: "col-resize",
+                background: "transparent",
+                zIndex: 2,
+              },
+            }}
+            handleComponent={{
+              right: (
+                <div
+                  aria-label="Resize Agents panel"
+                  style={{ width: "100%", height: "100%" }}
+                />
+              ),
+            }}
+            onResizeStop={(_, __, ___, delta) => {
+              const width = Math.min(
+                MAX_AGENT_SIDEBAR_WIDTH,
+                Math.max(
+                  MIN_AGENT_SIDEBAR_WIDTH,
+                  agentSidebarWidth + delta.width,
+                ),
+              );
+              setAgentSidebarWidth(width);
+              window.localStorage.setItem(
+                AGENT_SIDEBAR_WIDTH_STORAGE_KEY,
+                `${width}`,
+              );
+            }}
+          >
+            {sidebar}
+          </Resizable>
+        </div>
       )}
       <section
         aria-label={selected ? `Agent @${selected.name}` : "Agent workspace"}
@@ -1215,12 +1256,24 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             !mountedWorkspaces.has(agentWorkspaceKey(selected))) && (
             <div
               style={{
+                alignItems: "center",
+                display: "flex",
+                justifyContent: "space-between",
+                left: 8,
                 position: "absolute",
                 right: 12,
                 top: 6,
                 zIndex: 3,
               }}
             >
+              {!isNarrow ? (
+                <AgentsSidebarToggle
+                  hidden={agentSidebarHidden}
+                  onToggle={toggleAgentSidebar}
+                />
+              ) : (
+                <span />
+              )}
               <AgentsWorkspaceNavigation />
             </div>
           )}
@@ -1301,6 +1354,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   }
                   onRegisteredThreadSelected={handleRegisteredThreadSelected}
                   onShowList={isNarrow ? () => setMobileList(true) : undefined}
+                  agentSidebarHidden={isNarrow ? undefined : agentSidebarHidden}
+                  onToggleAgentSidebar={
+                    isNarrow ? undefined : toggleAgentSidebar
+                  }
                   onClose={() => {
                     setMountedWorkspaces((old) => {
                       const next = new Set(old);
