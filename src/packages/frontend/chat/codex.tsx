@@ -42,6 +42,7 @@ import {
   writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { UsageWindowMeters } from "@cocalc/frontend/account/usage-window-meters";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -712,7 +713,9 @@ export function CodexConfigButton({
     ? "Checking…"
     : paymentSource?.source === "subscription" && selectedSubscription
       ? `ChatGPT: ${selectedSubscription.label ?? selectedSubscription.email ?? selectedSubscription.plan ?? "Plan"}`
-      : getCodexPaymentSourceShortLabel(paymentSource?.source);
+      : selectedPaymentSource === "subscription" && selectedCredentialId
+        ? "ChatGPT selection unavailable"
+        : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
   const membershipNeedsNewThread =
     hasEstablishedSession &&
@@ -1143,32 +1146,40 @@ export function CodexConfigButton({
         ? `subscription:${selectedSubscription.id}`
         : selectedPaymentSource,
     ],
-    items: paymentSourceOptions.flatMap((option) =>
-      option.value === "subscription"
-        ? (paymentSource?.subscriptions ?? []).map((credential) => ({
-            key: `subscription:${credential.id}`,
-            label:
-              credential.label ??
-              credential.email ??
-              `${credential.plan ?? "ChatGPT plan"} (${credential.id.slice(0, 8)})`,
-            title: credential.plan
-              ? `${credential.email ?? "ChatGPT subscription"} - ${credential.plan}`
-              : credential.email,
-          }))
-        : [
-            {
-              key: option.value,
-              label: option.label,
-              disabled:
-                option.value === "site-api-key" && membershipNeedsNewThread
-                  ? false
-                  : option.disabled,
-              title: option.description,
-            },
-          ],
-    ),
+    items: [
+      ...paymentSourceOptions.flatMap((option) =>
+        option.value === "subscription"
+          ? (paymentSource?.subscriptions ?? []).map((credential) => ({
+              key: `subscription:${credential.id}`,
+              label:
+                credential.label ??
+                credential.email ??
+                `${credential.plan ?? "ChatGPT plan"} (${credential.id.slice(0, 8)})`,
+              title: credential.plan
+                ? `${credential.email ?? "ChatGPT subscription"} - ${credential.plan}`
+                : credential.email,
+            }))
+          : [
+              {
+                key: option.value,
+                label: option.label,
+                disabled:
+                  option.value === "site-api-key" && membershipNeedsNewThread
+                    ? false
+                    : option.disabled,
+                title: option.description,
+              },
+            ],
+      ),
+      { type: "divider" },
+      { key: "manage-subscriptions", label: "Manage subscriptions" },
+    ],
     onClick: ({ domEvent, key }) => {
       domEvent.stopPropagation();
+      if (key === "manage-subscriptions") {
+        openAccountSettings({ page: "ai" });
+        return;
+      }
       if (key.startsWith("subscription:")) {
         const credentialId = key.slice("subscription:".length);
         if (accountId && projectId) {
