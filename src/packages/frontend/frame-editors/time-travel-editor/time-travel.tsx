@@ -58,7 +58,9 @@ interface Props {
 
 export function TimeTravel(props: Props) {
   const { project_id, path } = props;
-  const documentScrollPosition = useRef(0);
+  const textScrollPosition = useRef(0);
+  const notebookScrollPosition = useRef(0);
+  const diffScrollPosition = useRef(0);
 
   const useEditor = useEditorRedux<TimeTravelState>({ project_id, path });
   const error = useEditor("error");
@@ -785,7 +787,7 @@ export function TimeTravel(props: Props) {
         font_size={props.font_size}
         editor_settings={props.editor_settings}
         use_json={useJson}
-        scrollPosition={documentScrollPosition}
+        scrollPosition={diffScrollPosition}
       />
     );
   };
@@ -1329,7 +1331,8 @@ export function TimeTravel(props: Props) {
         project_id={props.project_id}
         font_size={props.font_size}
         editor_settings={props.editor_settings}
-        scrollPosition={documentScrollPosition}
+        textScrollPosition={textScrollPosition}
+        notebookScrollPosition={notebookScrollPosition}
       />
     );
   } else if (!changesMode && loadedDocuments == null) {
