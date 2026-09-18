@@ -527,6 +527,7 @@ import {
   setSiteSettingsOnSeed,
   syncSiteSettingsToBays,
 } from "@cocalc/server/conat/api/system";
+import { getHostIntrusionReviewReport } from "@cocalc/server/hosts/intrusion-reviewer";
 import {
   cancelCourseReconfigureOperationLocal,
   getCourseReconfigureOperationLocal,
@@ -663,6 +664,8 @@ async function startBayOpsService(): Promise<void> {
         bay_id,
         internalAuth: BAY_OPS_INTERNAL_AUTH,
       }),
+    getHostIntrusionReviewReport: async () =>
+      await getHostIntrusionReviewReport({ bayId: bay_id }),
     getDrainPreflight: async ({ unsafe_rehome }) =>
       await runBayDrainPreflight({
         source_bay_id: bay_id,

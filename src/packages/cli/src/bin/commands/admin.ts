@@ -3361,6 +3361,27 @@ Merge comments are private unless their corresponding --*-comment-public flag is
     );
 
   admin
+    .command("intrusion-review")
+    .description(
+      "show the bounded project-host intrusion review report for one bay (admin-only)",
+    )
+    .requiredOption("--bay <bay_id>", "authoritative bay id")
+    .action(
+      async (
+        opts: {
+          bay: string;
+        },
+        command: Command,
+      ) => {
+        await withContext(command, "admin intrusion-review", async (ctx) => {
+          return await ctx.hub.system.getHostIntrusionReviewReport({
+            bay_id: opts.bay,
+          });
+        });
+      },
+    );
+
+  admin
     .command("health")
     .description("show minimum launch operator health checks (admin-only)")
     .option(

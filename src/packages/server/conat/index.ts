@@ -51,6 +51,7 @@ import { configureHubServiceAdmissionDenialRecorder } from "./api/service-admiss
 import { startConatAdmissionSettingsRefresh } from "./admission-settings";
 import { startHostAvailabilityMaintenance } from "@cocalc/server/hosts/availability";
 import { startHostIntrusionMonitor } from "@cocalc/server/hosts/intrusion-monitor";
+import { startHostIntrusionReviewer } from "@cocalc/server/hosts/intrusion-reviewer";
 import { startGlobalConfigMirrorRepairMaintenance } from "@cocalc/server/global-config-mirror-maintenance";
 import { startAiSessionReconciliationMaintenance } from "@cocalc/server/ai/acp-sessions";
 import { startSiteFundedCodexMaintenance } from "@cocalc/server/ai/site-funded-codex-maintenance";
@@ -130,6 +131,7 @@ export function startConatApiBackgroundWorkers(): void {
   startHostAvailabilityMaintenance();
   if (isPrimaryBayWorker()) {
     startHostIntrusionMonitor();
+    startHostIntrusionReviewer();
   }
   startRootfsPublishLroWorker();
   startRootfsReleaseGcMaintenance();

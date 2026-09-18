@@ -28,6 +28,7 @@ import type {
   ChatSpeechCapabilities,
   ChatSpeechSynthesisResult,
   ChatSpeechTranscriptionResult,
+  HostIntrusionReviewReport,
 } from "@cocalc/conat/hub/api/system";
 import type { ProjectRootfsStateEntry } from "@cocalc/util/rootfs-images";
 import type {
@@ -2946,6 +2947,7 @@ export type BayRegistryMethod = "register" | "list";
 export type BayOpsMethod =
   | "get-load"
   | "get-backups"
+  | "get-host-intrusion-review-report"
   | "get-drain-preflight"
   | "get-rootfs-catalog"
   | "get-rootfs-quota-report"
@@ -4661,6 +4663,9 @@ export interface InterBayBayRegistryApi {
 export interface InterBayBayOpsApi {
   getLoad: (opts: BayOpsHealthRequest) => Promise<BayLoadInfo>;
   getBackups: (opts: BayOpsHealthRequest) => Promise<BayBackupsInfo>;
+  getHostIntrusionReviewReport: (
+    opts: BayOpsHealthRequest,
+  ) => Promise<HostIntrusionReviewReport>;
   getDrainPreflight: (
     opts: BayOpsDrainPreflightRequest,
   ) => Promise<BayDrainPreflightResult>;
@@ -10480,6 +10485,15 @@ export function createInterBayBayOpsClient({
     ...serviceClientOptions({ client, timeout }),
     subject: bayOpsSubject({ dest_bay, method: "get-backups" }),
   });
+  const hostIntrusionReviewClient = createServiceClient<
+    Pick<InterBayBayOpsApi, "getHostIntrusionReviewReport">
+  >({
+    ...serviceClientOptions({ client, timeout }),
+    subject: bayOpsSubject({
+      dest_bay,
+      method: "get-host-intrusion-review-report",
+    }),
+  });
   const drainPreflightClient = createServiceClient<
     Pick<InterBayBayOpsApi, "getDrainPreflight">
   >({
@@ -10802,6 +10816,8 @@ export function createInterBayBayOpsClient({
   return {
     getLoad: async (opts) => await loadClient.getLoad(opts),
     getBackups: async (opts) => await backupsClient.getBackups(opts),
+    getHostIntrusionReviewReport: async (opts) =>
+      await hostIntrusionReviewClient.getHostIntrusionReviewReport(opts),
     getDrainPreflight: async (opts) =>
       await drainPreflightClient.getDrainPreflight(opts),
     getRootfsCatalog: async (opts) =>
@@ -10951,6 +10967,20 @@ export function createInterBayBayOpsHandlers({
       subject: bayOpsSubject({ dest_bay: bay_id, method: "get-backups" }),
       impl: {
         getBackups: async (opts) => await impl.getBackups(opts),
+      },
+    }),
+    createServiceHandler<
+      Pick<InterBayBayOpsApi, "getHostIntrusionReviewReport">
+    >({
+      ...options,
+      service: "inter-bay-bay-ops",
+      subject: bayOpsSubject({
+        dest_bay: bay_id,
+        method: "get-host-intrusion-review-report",
+      }),
+      impl: {
+        getHostIntrusionReviewReport: async (opts) =>
+          await impl.getHostIntrusionReviewReport(opts),
       },
     }),
     createServiceHandler<Pick<InterBayBayOpsApi, "getDrainPreflight">>({
