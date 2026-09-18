@@ -622,6 +622,7 @@ type CodexAppServerRuntime = {
 type RetryableAppServerFailureKind =
   | "remote-compact-timeout"
   | "model-capacity"
+  | "runtime-environment-refresh"
   | "timeout"
   | "stream-disconnect";
 type InProcessRetryableAppServerFailureKind = Exclude<
@@ -1375,6 +1376,10 @@ function formatStreamDisconnectRetryExhaustedError(error: string): string {
   return normalized ? `${normalized}\n\n${guidance}` : guidance;
 }
 
+function formatRuntimeEnvironmentRefreshExhaustedError(): string {
+  return "The agent runtime could not finish updating automatically. Please retry this message. If it continues to fail, restart the project or contact support.";
+}
+
 function formatRetryDelay(ms: number): string {
   if (ms >= 60_000 && ms % 60_000 === 0) {
     const minutes = ms / 60_000;
@@ -1392,10 +1397,19 @@ function getRetryPolicyForFailure(
 ): {
   maxRetries: number;
   retryDelayMs: number;
+  announceRetry?: boolean;
   retryMessage: (attempt: number, maxRetries: number) => string;
   exhaustedMessage: (error: string) => string;
 } {
   switch (kind) {
+    case "runtime-environment-refresh":
+      return {
+        maxRetries: 1,
+        retryDelayMs: 0,
+        announceRetry: false,
+        retryMessage: () => "Refreshing the agent runtime...",
+        exhaustedMessage: formatRuntimeEnvironmentRefreshExhaustedError,
+      };
     case "timeout": {
       const retryDelayMs = getTimeoutRetryDelayMs();
       return {
@@ -2609,6 +2623,7 @@ export class CodexAppServerAgent implements AcpAgent {
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
     let maxRetries = 0;
     let retryDelayMs = 0;
+    let announceRetry = true;
     let retryMessage = (_attempt: number, _maxRetries: number) => "Retrying...";
     let exhaustedMessage = (error: string) => error;
     for (let attempt = 0; ; attempt += 1) {
@@ -2657,6 +2672,7 @@ export class CodexAppServerAgent implements AcpAgent {
           const policy = getRetryPolicyForFailure(retryKind);
           maxRetries = policy.maxRetries;
           retryDelayMs = policy.retryDelayMs;
+          announceRetry = policy.announceRetry ?? true;
           retryMessage = policy.retryMessage;
           exhaustedMessage = policy.exhaustedMessage;
         }
@@ -2680,14 +2696,18 @@ export class CodexAppServerAgent implements AcpAgent {
           delayMs: retryDelayMs,
           stderrTail: err.stderrTail ?? [],
         });
-        await request.stream({
-          type: "event",
-          event: {
-            type: "thinking",
-            text: retryMessage(retryNumber, maxRetries),
-          },
-        });
-        await delay(retryDelayMs * retryNumber);
+        if (announceRetry) {
+          await request.stream({
+            type: "event",
+            event: {
+              type: "thinking",
+              text: retryMessage(retryNumber, maxRetries),
+            },
+          });
+        }
+        if (retryDelayMs > 0) {
+          await delay(retryDelayMs * retryNumber);
+        }
       }
     }
   }
@@ -2862,14 +2882,20 @@ export class CodexAppServerAgent implements AcpAgent {
     try {
       if (request.mentionReferences != null) {
         const identityPath = spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE;
+        // A retained process can straddle a project-tools rollout. Refresh it
+        // before turn/start rather than exposing an operator-only error.
         if (
-          identityPath &&
-          spawned.runtimeEnv?.[TURN_MENTION_FILE_ENV] !==
-            turnMentionFilePath(identityPath)
+          (identityPath &&
+            spawned.runtimeEnv?.[TURN_MENTION_FILE_ENV] !==
+              turnMentionFilePath(identityPath)) ||
+          (!identityPath && request.mentionReferences.length > 0)
         ) {
-          throw new Error(
-            "Scoped mention environment was not installed at process spawn; restart the ACP runtime",
-          );
+          throw createRetryableAppServerError({
+            kind: "runtime-environment-refresh",
+            message:
+              "Scoped mention environment is not installed in the current ACP runtime",
+            threadId: currentThreadId,
+          });
         }
         const file = await materializeTurnMentionFile({
           identityPath,
@@ -4003,6 +4029,9 @@ export class CodexAppServerAgent implements AcpAgent {
         stderrTail,
       });
       if (isRecoverableTurnError(err)) {
+        throw err;
+      }
+      if (isRetryableAppServerError(err)) {
         throw err;
       }
       if (

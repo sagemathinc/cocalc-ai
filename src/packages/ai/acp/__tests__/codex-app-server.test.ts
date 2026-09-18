@@ -5063,28 +5063,64 @@ describe("CodexAppServerAgent", () => {
   });
 
   it.each([undefined, "/stale/previous-human.json"])(
-    "rejects a missing or mismatched spawn handoff (%s) before model execution",
+    "refreshes a missing or mismatched spawn handoff (%s) before model execution",
     async (mentionFile) => {
-      const methods: string[] = [];
-      const proc = new FakeCodexAppServerProc((fake, message) => {
-        methods.push(message.method);
-        if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      const dir = mkdtempSync(path.join(tmpdir(), "acp-mention-refresh-"));
+      const methods: string[][] = [];
+      const processes: FakeCodexAppServerProc[] = [];
+      const spawnCodexAppServer = jest.fn(async () => {
+        const spawnIndex = processes.length;
+        const identityPath = path.join(dir, `identity-${spawnIndex}.json`);
+        writeFileSync(
+          identityPath,
+          JSON.stringify({ agent_id: "source", run_id: `run-${spawnIndex}` }),
+        );
+        const spawnedMethods: string[] = [];
+        methods.push(spawnedMethods);
+        const proc = new FakeCodexAppServerProc((fake, message) => {
+          spawnedMethods.push(message.method);
+          switch (message.method) {
+            case "thread/start":
+              fake.sendResponse(message.id, {
+                thread: { id: "refreshed-thread" },
+              });
+              break;
+            case "turn/start":
+              fake.sendResponse(message.id, { turn: { id: "refreshed-turn" } });
+              setImmediate(() =>
+                fake.sendNotification("turn/completed", {
+                  turn: { id: "refreshed-turn", status: "completed" },
+                }),
+              );
+              break;
+            default:
+              if (typeof message.id === "number") {
+                fake.sendResponse(message.id, {});
+              }
+          }
+        });
+        processes.push(proc);
+        return {
+          proc: proc as any,
+          cmd: "fake",
+          args: [],
+          runtimeEnv: {
+            COCALC_AGENT_IDENTITY_FILE: identityPath,
+            ...(spawnIndex === 0
+              ? mentionFile == null
+                ? {}
+                : { COCALC_AGENT_MENTION_REFERENCES_FILE: mentionFile }
+              : {
+                  COCALC_AGENT_MENTION_REFERENCES_FILE: `${identityPath}.mentions.json`,
+                }),
+          },
+        };
       });
       setCodexProjectSpawner({
         spawnCodexExec: async () => {
           throw new Error("unexpected");
         },
-        spawnCodexAppServer: async () => ({
-          proc: proc as any,
-          cmd: "fake",
-          args: [],
-          runtimeEnv: {
-            COCALC_AGENT_IDENTITY_FILE: "/current-run/identity.json",
-            ...(mentionFile == null
-              ? {}
-              : { COCALC_AGENT_MENTION_REFERENCES_FILE: mentionFile }),
-          },
-        }),
+        spawnCodexAppServer,
       });
       const agent = new CodexAppServerAgent();
       const events: any[] = [];
@@ -5098,20 +5134,84 @@ describe("CodexAppServerAgent", () => {
             events.push(event);
           },
         });
-        expect(events).toContainEqual(
-          expect.objectContaining({
-            type: "error",
-            error: expect.stringContaining(
-              "Scoped mention environment was not installed at process spawn",
-            ),
-          }),
-        );
-        expect(methods).not.toContain("turn/start");
+        expect(spawnCodexAppServer).toHaveBeenCalledTimes(2);
+        expect(processes[0].killed).toBe(true);
+        expect(methods[0]).not.toContain("turn/start");
+        expect(methods[1]).toContain("turn/start");
+        expect(events.find((event) => event.type === "error")).toBeUndefined();
+        expect(
+          events.find(
+            (event) =>
+              event.type === "event" && event.event?.type === "thinking",
+          ),
+        ).toBeUndefined();
       } finally {
         await agent.dispose();
+        rmSync(dir, { recursive: true, force: true });
       }
     },
   );
+
+  it("bounds incompatible spawn handoff retries and returns actionable guidance", async () => {
+    const processes: FakeCodexAppServerProc[] = [];
+    const methods: string[][] = [];
+    const spawnCodexAppServer = jest.fn(async () => {
+      const spawnedMethods: string[] = [];
+      methods.push(spawnedMethods);
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        spawnedMethods.push(message.method);
+        if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      });
+      processes.push(proc);
+      return {
+        proc: proc as any,
+        cmd: "fake",
+        args: [],
+        runtimeEnv: {},
+      };
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected");
+      },
+      spawnCodexAppServer,
+    });
+    const agent = new CodexAppServerAgent();
+    const events: any[] = [];
+    try {
+      await agent.evaluate({
+        project_id: "project",
+        account_id: "Q",
+        prompt: "work",
+        mentionReferences: [
+          {
+            version: 1,
+            naming_account_id: "Q",
+            name: "reviewer",
+            target: { project_id: "other-project", agent_id: "reviewer-Q" },
+          },
+        ],
+        stream: async (event) => {
+          events.push(event);
+        },
+      });
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(2);
+      expect(processes.every((proc) => proc.killed)).toBe(true);
+      expect(methods.flat()).not.toContain("turn/start");
+      expect(events).toContainEqual({
+        type: "error",
+        error:
+          "The agent runtime could not finish updating automatically. Please retry this message. If it continues to fail, restart the project or contact support.",
+      });
+      expect(
+        events.find(
+          (event) => event.type === "event" && event.event?.type === "thinking",
+        ),
+      ).toBeUndefined();
+    } finally {
+      await agent.dispose();
+    }
+  });
 
   it("steers an active app-server turn without interrupting it", async () => {
     const steerRequests: any[] = [];
