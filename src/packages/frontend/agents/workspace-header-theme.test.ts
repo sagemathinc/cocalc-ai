@@ -5,6 +5,7 @@
 
 import {
   resolveAgentHeaderTheme,
+  resolveNamedAgentTheme,
   sameAgentHeaderAppearance,
 } from "./workspace-header-theme";
 
@@ -56,4 +57,24 @@ it("detects material thread appearance changes", () => {
       thread_icon: "rocket",
     }),
   ).toBe(false);
+});
+
+it("uses one live presentation for a registered agent", () => {
+  const agent = {
+    name: "reviewer",
+    thread_title: "Reviewer (recv.chat)",
+  };
+  expect(
+    resolveNamedAgentTheme(agent, {
+      name: "RPC cross-bay review",
+      thread_color: "#cf1322",
+      thread_accent_color: "#fff1f0",
+      thread_icon: "deployment-unit",
+    }),
+  ).toMatchObject({
+    title: "RPC cross-bay review",
+    primaryColor: "#cf1322",
+    accentColor: "#fff1f0",
+  });
+  expect(resolveNamedAgentTheme(agent).title).toBe("Reviewer (recv.chat)");
 });

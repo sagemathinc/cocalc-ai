@@ -5,6 +5,7 @@
 
 import { avatar_fontcolor } from "@cocalc/frontend/account/avatar/font-color";
 import type { ThreadMetadataSnapshot } from "@cocalc/frontend/chat/actions";
+import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export type AgentHeaderAppearance = Pick<
@@ -50,4 +51,14 @@ export function resolveAgentHeaderTheme({
     textColor: accentColor ? avatar_fontcolor(accentColor) : UI_COLORS.text,
     title: appearance?.name?.trim() || fallbackTitle,
   };
+}
+
+export function resolveNamedAgentTheme(
+  agent: Pick<NamedAgent, "name" | "thread_title">,
+  appearance?: AgentHeaderAppearance,
+) {
+  return resolveAgentHeaderTheme({
+    appearance,
+    fallbackTitle: agent.thread_title || `@${agent.name}`,
+  });
 }

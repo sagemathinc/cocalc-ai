@@ -84,6 +84,7 @@ import {
 } from "./workspace-sidebar-toggle";
 import {
   resolveAgentHeaderTheme,
+  resolveNamedAgentTheme,
   sameAgentHeaderAppearance,
   type AgentHeaderAppearance,
 } from "./workspace-header-theme";
@@ -708,6 +709,8 @@ function AgentWorkspace({
   agentSidebarHidden,
   onToggleAgentSidebar,
   onAgentActivity,
+  agentAppearances,
+  onAgentAppearance,
   onClose,
   onRegisteredThreadSelected,
 }: {
@@ -720,6 +723,11 @@ function AgentWorkspace({
   agentSidebarHidden?: boolean;
   onToggleAgentSidebar?: () => void;
   onAgentActivity: (agentId: string, at: number) => void;
+  agentAppearances: Map<string, AgentHeaderAppearance>;
+  onAgentAppearance: (
+    agentId: string,
+    appearance: AgentHeaderAppearance,
+  ) => void;
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
 }) {
@@ -792,17 +800,22 @@ function AgentWorkspace({
   const appearance =
     headerAppearance?.threadId === selectedThread
       ? headerAppearance.value
-      : undefined;
-  const fallbackTitle = unregistered
-    ? threadTitle || "Unregistered thread"
-    : displayedAgent.thread_title || `@${displayedAgent.name}`;
+      : selectedAgent
+        ? agentAppearances.get(selectedAgent.endpoint.agent_id)
+        : undefined;
+  const resolvedTheme = unregistered
+    ? resolveAgentHeaderTheme({
+        appearance,
+        fallbackTitle: threadTitle || "Unregistered thread",
+      })
+    : resolveNamedAgentTheme(displayedAgent, appearance);
   const {
     accentColor,
     backgroundColor,
     primaryColor,
     textColor: headerTextColor,
     title,
-  } = resolveAgentHeaderTheme({ appearance, fallbackTitle });
+  } = resolvedTheme;
   const openAppearanceEditor = () => {
     if (!selectedThread) return;
     const actions: any = redux.getEditorActions(
@@ -1071,6 +1084,15 @@ function AgentWorkspace({
                 ? current
                 : { threadId, value },
             );
+            const registered = findWorkspaceAgentForThread(
+              workspaceAgents,
+              agent.endpoint.project_id,
+              agent.path,
+              threadId,
+            );
+            if (registered) {
+              onAgentAppearance(registered.endpoint.agent_id, value);
+            }
           }}
         />
       </div>
@@ -1104,6 +1126,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [workspaceAgentIds, setWorkspaceAgentIds] = useState<
     Map<string, string>
   >(() => new Map());
+  const [agentAppearances, setAgentAppearances] = useState<
+    Map<string, AgentHeaderAppearance>
+  >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
 
   const toggleAgentSidebar = useCallback(() => {
@@ -1124,6 +1149,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     ? agents.find((agent) => agent.endpoint.agent_id === activeAgentId)
     : (agentOrganization.groups.pinned[0] ??
       agentOrganization.groups.unpinned[0]);
+
+  const handleAgentAppearance = useCallback(
+    (agentId: string, appearance: AgentHeaderAppearance) => {
+      setAgentAppearances((current) => {
+        if (sameAgentHeaderAppearance(current.get(agentId), appearance)) {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(agentId, appearance);
+        return next;
+      });
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!selected) return;
@@ -1146,7 +1185,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     const value = search.trim().toLowerCase();
     const filter = (agent: NamedAgent) =>
       !value ||
-      [agent.name, agent.thread_title, agent.project_title, agent.description]
+      [
+        agent.name,
+        agentAppearances.get(agent.endpoint.agent_id)?.name,
+        agent.thread_title,
+        agent.project_title,
+        agent.description,
+      ]
         .filter(Boolean)
         .some((part) => `${part}`.toLowerCase().includes(value));
     return {
@@ -1154,7 +1199,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       unpinned: agentOrganization.groups.unpinned.filter(filter),
       hidden: agentOrganization.groups.hidden.filter(filter),
     };
-  }, [agentOrganization.groups, search]);
+  }, [agentAppearances, agentOrganization.groups, search]);
   const recencySections = useMemo(
     () =>
       groupAgentsByRecency(
@@ -1222,12 +1267,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   ) {
     const active = agent.endpoint.agent_id === selected?.endpoint.agent_id;
     const id = agent.endpoint.agent_id;
+    const appearance = agentAppearances.get(id);
+    const theme = resolveNamedAgentTheme(agent, appearance);
     return (
       <div
         role="listitem"
         style={{
           alignItems: "center",
           background: active ? UI_COLORS.selected : "transparent",
+          borderInlineStart: `3px solid ${theme.primaryColor ?? "transparent"}`,
           borderRadius: 6,
           display: "flex",
         }}
@@ -1253,22 +1301,35 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           aria-current={active ? "page" : undefined}
           onClick={() => selectAgent(agent)}
           style={{
+            alignItems: "center",
             background: "transparent",
             border: 0,
             color: UI_COLORS.text,
             cursor: "pointer",
+            display: "flex",
             flex: 1,
+            gap: 8,
             minWidth: 0,
             padding: "9px 4px",
             textAlign: "left",
           }}
         >
-          <Text strong ellipsis style={{ display: "block" }}>
-            {agent.thread_title || `@${agent.name}`}
-          </Text>
-          <Text type="secondary" ellipsis style={{ display: "block" }}>
-            @{agent.name} · {agent.project_title || agent.endpoint.project_id}
-          </Text>
+          <ThreadBadge
+            icon={appearance?.thread_icon}
+            color={theme.primaryColor}
+            accentColor={theme.accentColor}
+            image={appearance?.thread_image}
+            fallbackIcon="robot"
+            size={30}
+          />
+          <span style={{ minWidth: 0 }}>
+            <Text strong ellipsis style={{ display: "block" }}>
+              {theme.title}
+            </Text>
+            <Text type="secondary" ellipsis style={{ display: "block" }}>
+              @{agent.name} · {agent.project_title || agent.endpoint.project_id}
+            </Text>
+          </span>
         </button>
         {!hidden && (
           <Button
@@ -1656,6 +1717,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                     isNarrow ? undefined : toggleAgentSidebar
                   }
                   onAgentActivity={agentOrganization.recordActivity}
+                  agentAppearances={agentAppearances}
+                  onAgentAppearance={handleAgentAppearance}
                   onClose={() => {
                     setMountedWorkspaces((old) => {
                       const next = new Set(old);
