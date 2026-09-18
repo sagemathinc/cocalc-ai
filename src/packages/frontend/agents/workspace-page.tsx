@@ -46,6 +46,7 @@ import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import DirectorySelector from "@cocalc/frontend/project/directory-selector";
 import { openFileComponentRuntimeIsUsable } from "@cocalc/frontend/project/redux/open-file-runtime";
+import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { COLORS } from "@cocalc/util/theme";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
@@ -584,6 +585,12 @@ function AgentProjectContext({
   );
 }
 
+function AgentsWorkspaceNavigation() {
+  const { pageStyle } = useAppContext();
+  const accountId = useTypedRedux("account", "account_id");
+  return <CompactAgentsTopNav isLoggedIn={!!accountId} pageStyle={pageStyle} />;
+}
+
 function AgentWorkspace({
   workspaceKey,
   agent,
@@ -731,6 +738,7 @@ function AgentWorkspace({
         >
           Open in project
         </Button>
+        {active && <AgentsWorkspaceNavigation />}
         <Button
           icon={<Icon name="times" />}
           aria-label={`Close workspace for ${agent.path}`}
@@ -1031,9 +1039,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }}
     >
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
-        <Title level={3} style={{ margin: 0 }}>
-          Agents
-        </Title>
         <Button
           type="primary"
           block
@@ -1209,6 +1214,23 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           ...(isNarrow && mobileList ? { display: "none" } : {}),
         }}
       >
+        {active &&
+          (creating ||
+            !!error ||
+            agents.length === 0 ||
+            !selected ||
+            !mountedWorkspaces.has(agentWorkspaceKey(selected))) && (
+            <div
+              style={{
+                position: "absolute",
+                right: 12,
+                top: 6,
+                zIndex: 3,
+              }}
+            >
+              <AgentsWorkspaceNavigation />
+            </div>
+          )}
         {creating ? (
           <NewAgentPanel
             agents={agents}

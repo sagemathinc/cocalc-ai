@@ -81,12 +81,6 @@ const PostSurfaceProjectsNav = lazyWithRetry(
   }),
   "post-surface project navigation",
 );
-const CompactAgentsTopNav = lazyWithRetry(
-  async () => ({
-    default: (await import("./compact-agents-top-nav")).CompactAgentsTopNav,
-  }),
-  "compact Agents navigation",
-);
 const PostSurfaceBanners = lazyWithRetry(
   async () => ({
     default: (await import("./post-surface-banners")).PostSurfaceBanners,
@@ -546,43 +540,35 @@ export const Page: React.FC = () => {
         <Alert banner showIcon type="error" title={configurationLoadError} />
       )}
       <ImpersonationBanner />
-      {!lite && !examMode && !fullscreen && !isAuthView && (
-        <nav className="smc-top-bar" style={topBarStyle}>
-          <AppLogo size={pageStyle.height} />
-          {is_logged_in && render_agents_nav_button()}
-          {!compactAgentsNavigation &&
-            is_logged_in &&
-            render_project_nav_button()}
-          {!compactAgentsNavigation && render_hosts_tab()}
-          {compactAgentsNavigation ? (
-            <>
-              <div style={{ flex: "1 1 auto" }} />
-              <PostSurfaceSlot scope="app.compact-agents-top-nav">
-                <CompactAgentsTopNav
-                  isLoggedIn={is_logged_in}
-                  pageStyle={pageStyle}
-                />
-              </PostSurfaceSlot>
-            </>
-          ) : !isNarrow ? (
-            showPostSurfaceNavigation ? (
-              <PostSurfaceSlot scope="app.post-surface-project-navigation">
-                <PostSurfaceProjectsNav
-                  height={pageStyle.height}
-                  onModeChange={setProjectsNavMode}
-                  style={projectsNavStyle}
-                />
-              </PostSurfaceSlot>
+      {!lite &&
+        !examMode &&
+        !fullscreen &&
+        !isAuthView &&
+        !compactAgentsNavigation && (
+          <nav className="smc-top-bar" style={topBarStyle}>
+            <AppLogo size={pageStyle.height} />
+            {is_logged_in && render_agents_nav_button()}
+            {is_logged_in && render_project_nav_button()}
+            {render_hosts_tab()}
+            {!isNarrow ? (
+              showPostSurfaceNavigation ? (
+                <PostSurfaceSlot scope="app.post-surface-project-navigation">
+                  <PostSurfaceProjectsNav
+                    height={pageStyle.height}
+                    onModeChange={setProjectsNavMode}
+                    style={projectsNavStyle}
+                  />
+                </PostSurfaceSlot>
+              ) : (
+                <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
+              )
             ) : (
-              <div style={{ ...projectsNavStyle, flex: "1 1 auto" }} />
-            )
-          ) : (
-            // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
-            <div style={{ flex: "1 1 auto" }} />
-          )}
-          {!compactAgentsNavigation && render_right_nav()}
-        </nav>
-      )}
+              // we need an expandable placeholder, otherwise the right-nav-buttons won't align to the right
+              <div style={{ flex: "1 1 auto" }} />
+            )}
+            {render_right_nav()}
+          </nav>
+        )}
       {fullscreen && !isAuthView && render_fullscreen()}
       {!lite &&
         !examMode &&
