@@ -5,7 +5,6 @@ import { join } from "node:path";
 import { createAgentIdentityLease } from "./agent-identity-lease";
 
 describe("separate runtime identity lease", () => {
-  const old = process.env.COCALC_AGENT_MESSAGING_ENABLED;
   let dir: string;
   const issueIdentity = jest.fn(),
     endIdentityRun = jest.fn();
@@ -18,7 +17,6 @@ describe("separate runtime identity lease", () => {
     COCALC_BEARER_TOKEN: "broad-token-never-used",
   };
   beforeEach(async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     dir = await mkdtemp(join(tmpdir(), "agent-identity-test-"));
     issueIdentity.mockReset().mockImplementation(async ({ run_id }) => ({
       agent_id,
@@ -32,10 +30,6 @@ describe("separate runtime identity lease", () => {
     jest.useRealTimers();
     await rm(dir, { recursive: true, force: true });
   });
-  afterAll(() => {
-    if (old === undefined) delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
-    else process.env.COCALC_AGENT_MESSAGING_ENABLED = old;
-  });
   const create = () =>
     createAgentIdentityLease({
       api: { issueIdentity, endIdentityRun },
@@ -44,11 +38,7 @@ describe("separate runtime identity lease", () => {
       env,
       hostDir: dir,
     });
-  test("off by default and no credential for an unregistered thread", async () => {
-    delete process.env.COCALC_AGENT_MESSAGING_ENABLED;
-    expect(await create()).toBeUndefined();
-    expect(issueIdentity).not.toHaveBeenCalled();
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+  test("no credential is issued for an unregistered thread", async () => {
     issueIdentity.mockResolvedValue(undefined);
     expect(await create()).toBeUndefined();
   });

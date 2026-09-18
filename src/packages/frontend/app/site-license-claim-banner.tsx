@@ -21,6 +21,7 @@ import {
   getClaimableMembershipPackages,
   requestSiteLicensePool,
 } from "@cocalc/frontend/purchases/api";
+import { is_valid_uuid_string } from "@cocalc/util/misc";
 
 const { Text } = Typography;
 
@@ -34,6 +35,14 @@ const REMIND_LATER_MS = 7 * 24 * 60 * 60 * 1000;
 const INSTRUCTOR_ACTIVITY_MS = 3 * 24 * 60 * 60 * 1000;
 const REMIND_LATER_KEY = "site-license-claim-remind-later";
 const COURSE_ACTIVITY_KEY = "site-license-course-editor-activity";
+
+export function activeProjectIdForSiteLicenseBanner(
+  activeTopTab: string | undefined,
+): string {
+  return activeTopTab != null && is_valid_uuid_string(activeTopTab)
+    ? activeTopTab
+    : "";
+}
 
 export type CourseRoleHint = "instructor" | "student" | undefined;
 
@@ -201,7 +210,7 @@ export function useSiteLicenseClaimBannerState({
   const projectMap = useTypedRedux("projects", "project_map");
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const activeProjectTab = useTypedRedux(
-    { project_id: `${activeTopTab ?? ""}` },
+    { project_id: activeProjectIdForSiteLicenseBanner(activeTopTab) },
     "active_project_tab",
   );
   const [data, setData] = useState<{

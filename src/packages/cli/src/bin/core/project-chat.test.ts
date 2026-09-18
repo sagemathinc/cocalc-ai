@@ -1,7 +1,60 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { mergeThreadConfigRecord } from "./project-chat";
+import {
+  mergeThreadConfigRecord,
+  resolveArtifactMessage,
+  createProjectChatOps,
+} from "./project-chat";
+
+test("artifact writes require opt-in before opening a live document", async () => {
+  let opened = false;
+  const ops = createProjectChatOps({
+    resolveProjectConatClient: async () => {
+      opened = true;
+      throw Error("unexpected project connection");
+    },
+  });
+  await assert.rejects(
+    ops.projectChatArtifactData({
+      ctx: {},
+      path: "x.chat",
+      threadId: "thread",
+      action: "create",
+    }),
+    /experimental opt-in/,
+  );
+  assert.equal(opened, false);
+});
+
+test("artifact context resolves an exact producing row, never the newest row", () => {
+  const row = {
+    event: "chat",
+    thread_id: "t",
+    message_id: "m",
+    date: "2026-09-09T00:00:00.000Z",
+  };
+  assert.equal(
+    resolveArtifactMessage(
+      [row, { ...row, message_id: "new", date: "2026-09-09T01:00:00Z" }],
+      "t",
+      row.date,
+    ),
+    "m",
+  );
+  assert.throws(
+    () => resolveArtifactMessage([row], "other", row.date),
+    /missing/,
+  );
+  assert.throws(
+    () => resolveArtifactMessage([row, row], "t", row.date),
+    /ambiguous/,
+  );
+  assert.throws(
+    () => resolveArtifactMessage([row], "t", "bad"),
+    /valid message date/,
+  );
+});
 
 test("mergeThreadConfigRecord preserves unrelated thread metadata while updating automation settings", () => {
   const merged = mergeThreadConfigRecord({

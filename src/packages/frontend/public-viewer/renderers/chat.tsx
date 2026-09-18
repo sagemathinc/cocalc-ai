@@ -23,10 +23,12 @@ export default function PublicViewerChatRenderer({
   content,
   style,
   fileContext,
+  showArtifacts = false,
 }: {
   content: string;
   style?: CSSProperties;
   fileContext: IFileContext;
+  showArtifacts?: boolean;
 }): JSX.Element {
   const doc = useMemo(() => {
     const parsed = createChatViewerDocument(content);
@@ -45,7 +47,13 @@ export default function PublicViewerChatRenderer({
         ...style,
       }}
     >
-      <ChatViewer doc={doc} readOnly virtualized={false} showThreadList />
+      <ChatViewer
+        doc={doc}
+        readOnly
+        virtualized={false}
+        showThreadList
+        showArtifacts={showArtifacts}
+      />
     </div>,
     fileContext,
   );

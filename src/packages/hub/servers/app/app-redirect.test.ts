@@ -33,4 +33,13 @@ describe("app redirect routes", () => {
     const redirected = new URL(`http://host${location}`);
     expect(redirected.searchParams.get("target")).toBe("/share/x?foo=bar");
   });
+
+  it("redirects My Agents urls into the app shell", async () => {
+    const response = await request("/agents/agent-123");
+    expect(response.status).toBe(302);
+    const location = response.headers.get("location");
+    expect(location).toContain("/static/app.html?target=");
+    const redirected = new URL(`http://host${location}`);
+    expect(redirected.searchParams.get("target")).toBe("/agents/agent-123");
+  });
 });

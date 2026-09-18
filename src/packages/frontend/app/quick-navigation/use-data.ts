@@ -32,6 +32,13 @@ import { recentActivity } from "./recent-activity";
 import type { AppPage, Candidate, Editor } from "./model";
 import { settingsKeywords } from "./settings-keywords";
 import { frameLayout } from "./frames";
+import { myAgentsUIEnabled } from "@cocalc/frontend/agents/workspace-ui-preference";
+import { useNamedAgents } from "@cocalc/frontend/agents/api";
+import {
+  MY_AGENTS_ORGANIZATION_SETTING,
+  normalizeAgentWorkspaceOrganization,
+  organizeAgents,
+} from "@cocalc/frontend/agents/workspace-organization";
 
 const logger = getLogger("quick-navigation");
 const plain = (value: any) => value?.toJS?.() ?? value;
@@ -80,6 +87,12 @@ export function useNavigationData() {
     useTypedRedux("customize", "compute_vm_enabled") === true;
   const runtime = useProjectRuntimeCapabilities();
   const accountId = useTypedRedux("account", "account_id");
+  const accountOtherSettings = useTypedRedux("account", "other_settings");
+  const showMyAgents = myAgentsUIEnabled(accountOtherSettings);
+  const { directory: namedAgentDirectory } = useNamedAgents(showMyAgents);
+  const agentOrganization = normalizeAgentWorkspaceOrganization(
+    accountOtherSettings?.get?.(MY_AGENTS_ORGANIZATION_SETTING),
+  );
   // CoCalc-ai has public/signed-in users, but no upstream anonymous-account
   // state. Treat the legacy noAnonymous metadata as requiring sign-in here.
   const signedIn =
@@ -172,6 +185,31 @@ export function useNavigationData() {
   // when no project is open yet.
   const closedSession: { [projectId: string]: string[] } =
     redux.getActions("page")?.closed_session_files?.() ?? {};
+  if (showMyAgents && namedAgentDirectory) {
+    const namedAgents = organizeAgents(
+      namedAgentDirectory.agents,
+      agentOrganization,
+    );
+    for (const [pinned, agents] of [
+      [true, namedAgents.pinned],
+      [false, namedAgents.unpinned],
+    ] as const) {
+      for (const agent of agents) {
+        items.push({
+          id: `agent:${agent.endpoint.agent_id}`,
+          title: agent.thread_title || `@${agent.name}`,
+          detail: `Agents › ${agent.project_title || agent.endpoint.project_id}`,
+          keywords: `@${agent.name} ${agent.description ?? ""}`,
+          priority: pinned ? 4 : 8,
+          recent: agentOrganization.lastOpened[agent.endpoint.agent_id],
+          destination: {
+            kind: "agent",
+            agentId: agent.endpoint.agent_id,
+          },
+        });
+      }
+    }
+  }
   for (const id of projectIds) {
     const title = String(projects?.getIn([id, "title"]) || id);
     const isCurrent = id === activeProject;
@@ -320,6 +358,12 @@ export function useNavigationData() {
     keywords: string;
     show: boolean;
   }[] = [
+    {
+      page: "agents",
+      title: "Agents",
+      keywords: "named registered agents chats artifacts terminals",
+      show: signedIn && !lite && showMyAgents,
+    },
     {
       page: "projects",
       title: intl.formatMessage(labels.projects),

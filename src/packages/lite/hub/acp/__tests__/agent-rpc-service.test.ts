@@ -495,45 +495,24 @@ test("concurrent calls for the same attempt share startup and admission", async 
   expect(deps.admit).toHaveBeenCalledTimes(1);
 });
 
-test.each([undefined, "0", "1"])(
-  "host evidence is principal scoped independently of personal flag %s",
-  async (flag) => {
-    const previous = process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-    if (flag == null)
-      delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-    else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = flag;
-    try {
-      const { e, deps, service } = fixture();
-      const q = { ...e, account_id: randomUUID(), run_id: randomUUID() };
-      expect((await service.submit(e)).outcome).toBe("accepted");
-      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
-        "accepted",
-      );
-      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
-        "unknown",
-      );
-      expect(service.inspect(e.source, e).outcome).toBe("unknown");
-      expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
-      deps.admit = jest.fn(async () => {
-        throw new Error("lost Q acknowledgment");
-      });
-      expect((await service.submit(q)).outcome).toBe("unknown");
-      expect(service.inspect(e.source, e, e.account_id).outcome).toBe(
-        "accepted",
-      );
-      expect(service.inspect(e.source, e, q.account_id).outcome).toBe(
-        "unknown",
-      );
-      await service.submit(q);
-      expect(deps.admit).toHaveBeenCalledTimes(1);
-      expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
-    } finally {
-      if (previous == null)
-        delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-      else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = previous;
-    }
-  },
-);
+test("host evidence is scoped to the personal principal", async () => {
+  const { e, deps, service } = fixture();
+  const q = { ...e, account_id: randomUUID(), run_id: randomUUID() };
+  expect((await service.submit(e)).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, q.account_id).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e).outcome).toBe("unknown");
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(1);
+  deps.admit = jest.fn(async () => {
+    throw new Error("lost Q acknowledgment");
+  });
+  expect((await service.submit(q)).outcome).toBe("unknown");
+  expect(service.inspect(e.source, e, e.account_id).outcome).toBe("accepted");
+  expect(service.inspect(e.source, e, q.account_id).outcome).toBe("unknown");
+  await service.submit(q);
+  expect(deps.admit).toHaveBeenCalledTimes(1);
+  expect(deps.ensureRunning).toHaveBeenCalledTimes(2);
+});
 
 test("inspection never falls back to legacy unscoped evidence", async () => {
   const { e, deps } = fixture();

@@ -31,6 +31,7 @@ import type {
   NamedAgent,
   NamedAgentDirectory,
   NameAgentOptions,
+  RetireNamedAgentOptions,
   PersonalConnection,
   PersonalConnectionDirectory,
   PersonalMessagingControls,
@@ -45,6 +46,7 @@ export const agent = {
   resolvePersonalConnectionRequest: authFirstRequireAccountWithBoundSession,
   listNamedAgents: authFirstRequireAccount,
   nameAgent: authFirstRequireAccountWithBoundSession,
+  retireNamedAgent: authFirstRequireAccountWithBoundSession,
   listPersonalConnections: authFirstRequireAccount,
   grantPersonalConnection: authFirstRequireAccountWithBoundSession,
   setPersonalConnectionState: authFirstRequireAccountWithBoundSession,
@@ -227,6 +229,9 @@ export interface AgentApi {
   ): Promise<PersonalConnectionRequest>;
   listNamedAgents(opts: { account_id?: string }): Promise<NamedAgentDirectory>;
   nameAgent(opts: AgentHumanAuth & NameAgentOptions): Promise<NamedAgent>;
+  retireNamedAgent(
+    opts: AgentHumanAuth & RetireNamedAgentOptions,
+  ): Promise<void>;
   listPersonalConnections(opts: {
     account_id?: string;
   }): Promise<PersonalConnectionDirectory>;

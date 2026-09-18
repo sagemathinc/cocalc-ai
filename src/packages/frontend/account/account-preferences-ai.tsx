@@ -24,6 +24,7 @@ import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import type { SettingsPageDefinition } from "./settings-page";
 import { AgentMessagingPreference } from "./agent-messaging-preference";
+import { MyAgentsPreference } from "./my-agents-preference";
 
 const CODEX_SESSIONS_TITLE = "Codex sessions";
 
@@ -81,6 +82,7 @@ export function AccountPreferencesAI() {
     return (
       <>
         {codexSessionsSection}
+        <MyAgentsPreference />
         <AgentMessagingPreference />
         <Typography.Title level={4} style={{ marginBottom: 8 }}>
           Choose one: ChatGPT Plan or OpenAI API key
@@ -105,6 +107,7 @@ export function AccountPreferencesAI() {
   return (
     <>
       {codexSessionsSection}
+      <MyAgentsPreference />
       <AgentMessagingPreference />
       <OtherSettings
         other_settings={other_settings}

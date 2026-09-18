@@ -76,6 +76,9 @@ export function normalizeMembershipEffectiveLimits(
       usageLimits?.total_storage_hard_bytes,
     ),
     max_projects: normalizeNonNegativeInteger(usageLimits?.max_projects),
+    max_named_agents: normalizeNonNegativeInteger(
+      usageLimits?.max_named_agents,
+    ),
     max_sponsored_running_projects: normalizeNonNegativeInteger(
       usageLimits?.max_sponsored_running_projects,
     ),

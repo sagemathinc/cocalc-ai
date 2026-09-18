@@ -279,6 +279,12 @@ function buildMembershipTierDetailGroups({
     value: formatLimitCount(usageLimits.max_projects),
   });
   add({
+    group: "ai-automation",
+    key: "max_named_agents",
+    label: "Named agents",
+    value: formatLimitCount(usageLimits.max_named_agents),
+  });
+  add({
     group: "compute-projects",
     key: "max_sponsored_running_projects",
     label: "Simultaneous sponsored running projects",

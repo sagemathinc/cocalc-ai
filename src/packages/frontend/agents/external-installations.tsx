@@ -76,12 +76,6 @@ export function ExternalAgentInstallations({
         Account pause and revoke-all also apply. No access to browse your
         projects.
       </p>
-      {directory && !directory.enabled && (
-        <p role="status">
-          External sending is disabled on this site. Existing installations can
-          still be revoked.
-        </p>
-      )}
       {error && <Alert type="error" role="alert" title={error} />}
       {notice && <p role="status">{notice}</p>}
       <Space orientation="vertical" style={{ width: "100%" }}>

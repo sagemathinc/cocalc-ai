@@ -68,7 +68,26 @@ describe("buildCodexRuntimeEnv", () => {
 
     expect(env.COCALC_BEARER_TOKEN).toBe("existing-bearer");
     expect(env.COCALC_AGENT_TOKEN).toBe("existing-bearer");
+    expect(env.COCALC_WORKBENCH).toBe("0");
     expect(issueToken).not.toHaveBeenCalled();
+  });
+
+  it("derives workbench capability from the initiating surface, not inherited env", async () => {
+    process.env.COCALC_BEARER_TOKEN = "existing-bearer";
+    const { buildCodexRuntimeEnv } = await import("../runtime-env");
+    for (const enabled of [false, true]) {
+      const env = await buildCodexRuntimeEnv({
+        request: {
+          prompt: "test",
+          chat: { workbench: enabled },
+          runtime_env: { COCALC_WORKBENCH: enabled ? "0" : "1" },
+        } as any,
+        projectId: "project",
+        includeCliBin: false,
+        useContainer: false,
+      });
+      expect(env.COCALC_WORKBENCH).toBe(enabled ? "1" : "0");
+    }
   });
 
   it("issues a host-scoped agent bearer when none is already present", async () => {

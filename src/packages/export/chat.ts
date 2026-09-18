@@ -11,6 +11,16 @@ import type {
   MessageHistory,
 } from "@cocalc/chat";
 import { readChatStoreArchived } from "@cocalc/backend/chat-store/sqlite-offload";
+import {
+  validateArtifact,
+  validateArtifactPublication,
+  validateArtifactFeedback,
+} from "@cocalc/chat";
+import type {
+  ArtifactRecord,
+  ArtifactPublication,
+  ArtifactFeedback,
+} from "@cocalc/chat";
 
 import type { ExportBundle, ExportFile } from "./bundle";
 import { normalizeExportManifest } from "./manifest";
@@ -77,6 +87,7 @@ export interface ChatExportCodexContext {
 }
 
 export interface ChatExportMessageRow {
+  artifact_feedback?: ArtifactFeedback;
   event: "chat-message";
   message_kind: "message";
   message_id: string;
@@ -98,6 +109,7 @@ export interface ChatExportMessageRow {
 }
 
 export interface ChatExportThreadData {
+  artifacts?: (ArtifactRecord | ArtifactPublication)[];
   thread_id: string;
   title: string;
   archived: boolean;
@@ -143,6 +155,7 @@ export interface ChatExportWarning {
 type ChatRow = any;
 type ChatThreadConfigRow = ChatThreadConfigRecord & { archived?: boolean };
 type SourceChatMessageRow = {
+  artifact_feedback?: ArtifactFeedback;
   event: "chat";
   sender_id: string;
   history: MessageHistory[];
@@ -312,6 +325,18 @@ export async function collectChatExport(
       toExportMessageRow(message, senderDirectory, blobReplacements),
     );
     const threadData: ChatExportThreadData = {
+      artifacts: liveRows
+        .filter(
+          (row) =>
+            row.thread_id === aggregate.threadId &&
+            (row.event === "chat-artifact" ||
+              row.event === "chat-artifact-publication"),
+        )
+        .map((row) =>
+          row.event === "chat-artifact"
+            ? validateArtifact(row)
+            : validateArtifactPublication(row),
+        ),
       thread_id: aggregate.threadId,
       title: aggregate.title,
       archived: aggregate.archived,
@@ -806,6 +831,9 @@ function toExportMessageRow(
   const current = currentHistoryEntry(message);
   return {
     event: "chat-message",
+    artifact_feedback: message.artifact_feedback
+      ? validateArtifactFeedback(message.artifact_feedback)
+      : undefined,
     message_kind: "message",
     message_id: normalizeString(message.message_id) ?? messageKey(message),
     thread_id: normalizeString(message.thread_id) ?? "unknown-thread",
@@ -1147,6 +1175,9 @@ function isThreadStateRecordRow(row: any): row is ChatThreadStateRecord {
 
 function normalizeMessageRow(row: ChatMessage): SourceChatMessageRow {
   return {
+    artifact_feedback: row.artifact_feedback
+      ? validateArtifactFeedback(row.artifact_feedback)
+      : undefined,
     event: "chat",
     sender_id: normalizeString(row.sender_id) ?? "",
     history: normalizeHistory(row.history),

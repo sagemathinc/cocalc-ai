@@ -156,6 +156,7 @@ jest.mock("@cocalc/frontend/account/codex-credentials-panel", () => ({
 
 jest.mock("@cocalc/frontend/account/lite-ai-settings", () => () => null);
 
+// The actual field's keyboard, popover, and Form binding have separate coverage.
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
     conat_client: {

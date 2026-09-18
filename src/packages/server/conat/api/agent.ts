@@ -9,6 +9,7 @@ import * as rpc from "@cocalc/server/agents/rpc";
 export {
   listNamedAgents,
   nameAgent,
+  retireNamedAgent,
   listPersonalConnections,
   grantPersonalConnection,
   setPersonalConnectionState,

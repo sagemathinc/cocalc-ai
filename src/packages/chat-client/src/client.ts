@@ -8,7 +8,7 @@ import {
   CHAT_PRIMARY_KEYS,
   CHAT_STRING_COLS,
   type CodexThreadConfig,
-} from "@cocalc/chat";
+} from "@cocalc/chat/core";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
 import type { DStream } from "@cocalc/conat/sync/dstream";

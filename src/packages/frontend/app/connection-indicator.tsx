@@ -27,6 +27,7 @@ interface Props {
   height: number; // px
   pageStyle: PageStyle;
   on_click?: () => void;
+  hideWhenConnected?: boolean;
 }
 
 const BASE_STYLE: CSS = {
@@ -37,7 +38,7 @@ const BASE_STYLE: CSS = {
 
 export const ConnectionIndicator: React.FC<Props> = React.memo(
   (props: Props) => {
-    const { on_click, height, pageStyle } = props;
+    const { on_click, height, hideWhenConnected = false, pageStyle } = props;
     const { topPaddingIcons, sidePaddingIcons, fontSizeIcons } = pageStyle;
 
     const intl = useIntl();
@@ -52,6 +53,8 @@ export const ConnectionIndicator: React.FC<Props> = React.memo(
     } as const;
 
     const outer_style: CSS = {
+      background: "transparent",
+      border: "none",
       flex: "0 0 auto",
       display: "flex",
       alignItems: "center",
@@ -100,14 +103,20 @@ export const ConnectionIndicator: React.FC<Props> = React.memo(
       blur_active_element(); // otherwise, it'll be highlighted even when closed again
     }
 
+    if (hideWhenConnected && connection_status === "connected") {
+      return null;
+    }
+
     return (
-      <div
+      <button
+        type="button"
+        aria-label={`Connection status: ${connection_status}. Show details`}
         className={TOP_BAR_ELEMENT_CLASS}
         style={outer_style}
         onClick={connection_click}
       >
         {render_connection_status()}
-      </div>
+      </button>
     );
   },
 );

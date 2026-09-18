@@ -39,6 +39,10 @@ export interface PersonalMessagingControls {
 export interface NamedAgentDirectory {
   enabled: boolean;
   agents: NamedAgent[];
+  usage?: {
+    active: number;
+    limit: number;
+  };
   controls?: PersonalMessagingControls;
 }
 export interface NameAgentOptions {
@@ -47,6 +51,9 @@ export interface NameAgentOptions {
   description?: string;
   project_title?: string;
   thread_title?: string;
+}
+export interface RetireNamedAgentOptions {
+  endpoint: AgentEndpoint;
 }
 export type PersonalConnectionStatus =
   | "active"

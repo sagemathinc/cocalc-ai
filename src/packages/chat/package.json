@@ -11,10 +11,18 @@
       ],
       "send": [
         "dist/send.d.ts"
+      ],
+      "core": [
+        "dist/core.d.ts"
       ]
     }
   },
   "exports": {
+    "./core": {
+      "import": "./dist/core.js",
+      "require": "./dist/core.js",
+      "types": "./dist/core.d.ts"
+    },
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.js",

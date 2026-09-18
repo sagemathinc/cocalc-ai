@@ -28,6 +28,7 @@ import { resetThreadSelectionForNewChat } from "./thread-selection";
 import type { ThreadMeta, ThreadSectionWithUnread } from "./threads";
 import type { ChatExportOpenRequest } from "./export-types";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
+import { ArtifactBrowserButton } from "./artifact-discovery";
 import type * as immutable from "immutable";
 
 const THREAD_SIDEBAR_HEADER: React.CSSProperties = {
@@ -624,6 +625,9 @@ export function ChatRoomSidebarContent({
             >
               Search
             </Button>
+            <div style={{ marginTop: 8 }}>
+              <ArtifactBrowserButton actions={actions} />
+            </div>
           </>
         )}
       </div>

@@ -15,7 +15,7 @@ import {
   type AgentMessageReceipt,
 } from "@cocalc/conat/agents/protocol";
 import getLogger from "@cocalc/backend/logger";
-import { agentStore, agentMessagingEnabled } from "./store";
+import { agentStore } from "./store";
 import { assertAgent, assertRun } from "./access";
 import { ownMessageReceipts } from "./inspection";
 import { personalMessagingEnabled } from "./personal";
@@ -99,12 +99,10 @@ export async function startAgentMessaging(
   client: Client,
   external = false,
 ): Promise<() => Promise<void>> {
-  if (!agentMessagingEnabled()) return async () => {};
-  const binary = process.env.COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED === "1";
-  const stopExternal =
-    !external && process.env.COCALC_AGENT_EXTERNAL_LOGIN_ENABLED === "1"
-      ? await startAgentMessaging(client, true)
-      : undefined;
+  const binary = true;
+  const stopExternal = !external
+    ? await startAgentMessaging(client, true)
+    : undefined;
   const stopMaintenance = !external
     ? startAgentMessagingMaintenance()
     : undefined;

@@ -234,6 +234,14 @@ export class PageActions extends Actions<PageState> {
     const projectLabel = intl.formatMessage(labels.project);
 
     switch (key) {
+      case "agents": {
+        const agent_id = this.redux.getStore("page").get("active_agent_id");
+        if (change_history) {
+          set_url(getPageUrlPath({ page: "agents", agent_id }));
+        }
+        set_window_title("Agents");
+        return;
+      }
       case "projects":
         if (change_history) {
           set_url(getPageUrlPath({ page: "projects" }));

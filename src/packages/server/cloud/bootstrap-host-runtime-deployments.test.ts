@@ -14,14 +14,6 @@ let getLaunchpadLocalConfigMock: jest.Mock;
 let ensureCloudflareTunnelForHostMock: jest.Mock;
 let getServerProviderMock: jest.Mock;
 
-const AGENT_MESSAGING_HOST_ENV_FLAGS = [
-  "COCALC_AGENT_MESSAGING_ENABLED",
-  "COCALC_AGENT_MESSAGING_RPC_ENABLED",
-  "COCALC_AGENT_PERSONAL_MESSAGING_ENABLED",
-  "COCALC_AGENT_MESSAGING_ATTACHMENTS_ENABLED",
-  "COCALC_AGENT_EXTERNAL_LOGIN_ENABLED",
-] as const;
-
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   __esModule: true,
   getServerSettings: (...args: any[]) => getServerSettingsMock(...args),
@@ -160,9 +152,6 @@ describe("bootstrap-host promoted artifact defaults", () => {
   afterEach(() => {
     delete process.env.MASTER_CONAT_SERVER;
     delete process.env.COCALC_GCP_INTERNAL_MASTER_CONAT_MODE;
-    for (const flag of AGENT_MESSAGING_HOST_ENV_FLAGS) {
-      delete process.env[flag];
-    }
   });
 
   async function loadBootstrapHost() {
@@ -309,29 +298,6 @@ describe("bootstrap-host promoted artifact defaults", () => {
     );
     expect(scripts.containerRuntimeVersion).toBe("runtime-latest");
     expect(scripts.bootstrapSelector).toBe("latest");
-  });
-
-  it("propagates enabled agent messaging gates to managed host environments", async () => {
-    for (const flag of AGENT_MESSAGING_HOST_ENV_FLAGS) {
-      process.env[flag] = "1";
-    }
-    const { buildBootstrapScripts } = await loadBootstrapHost();
-    const scripts = await buildBootstrapScripts(baseRow() as any);
-
-    for (const flag of AGENT_MESSAGING_HOST_ENV_FLAGS) {
-      expect(scripts.envLines).toContain(`${flag}=1`);
-    }
-  });
-
-  it("does not propagate nonliteral agent messaging gate values", async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "true";
-    process.env.COCALC_AGENT_MESSAGING_RPC_ENABLED = "0";
-    const { buildBootstrapScripts } = await loadBootstrapHost();
-    const scripts = await buildBootstrapScripts(baseRow() as any);
-
-    expect(
-      scripts.envLines.some((line) => line.startsWith("COCALC_AGENT_")),
-    ).toBe(false);
   });
 
   it("enables additive direct HTTPS ingress for managed GCP hosts", async () => {

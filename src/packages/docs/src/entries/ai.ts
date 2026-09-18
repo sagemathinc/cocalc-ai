@@ -14,9 +14,24 @@ import {
   CODEX_AUTOMATION_BODY,
   CODEX_NOTIFICATIONS_BODY,
   EDITOR_AGENT_BODY,
+  MY_AGENTS_BODY,
 } from "../content/ai";
 
 export const AI_ENTRIES: DocsEntry[] = [
+  {
+    audiences: ["agents", "researchers", "students", "teams"],
+    body: MY_AGENTS_BODY.trim(),
+    category: "AI",
+    id: "ai.my-agents",
+    lastReviewed: "2026-09-17",
+    noActionReason:
+      "The experimental workspace is enabled from account AI settings.",
+    slug: "ai/my-agents",
+    status: "ready",
+    summary:
+      "Use registered agents, their chats, artifacts, and terminals from one workspace.",
+    title: "Use the Agents workspace",
+  },
   {
     audiences: ["agents", "researchers", "students", "teams"],
     body: AI_CREDENTIALS_BODY.trim(),

@@ -196,15 +196,13 @@ async function serve() {
   startAccountSecurityStateSyncLoop();
   const cn = await conat({ noCache: true });
   let stopAgentMessaging = async () => {};
-  if (process.env.COCALC_AGENT_MESSAGING_ENABLED === "1") {
-    try {
-      const { startAgentMessaging } =
-        await import("@cocalc/server/agents/messaging");
-      stopAgentMessaging = await startAgentMessaging(cn);
-    } catch (error) {
-      // Experimental messaging must not take the ordinary hub API offline.
-      logger.warn("agent messaging unavailable", { error: `${error}` });
-    }
+  try {
+    const { startAgentMessaging } =
+      await import("@cocalc/server/agents/messaging");
+    stopAgentMessaging = await startAgentMessaging(cn);
+  } catch (error) {
+    // Messaging startup must not take the ordinary hub API offline.
+    logger.warn("agent messaging unavailable", { error: `${error}` });
   }
   const subscriptions = await Promise.all(
     HUB_API_SUBJECTS.map(async (subject) => ({

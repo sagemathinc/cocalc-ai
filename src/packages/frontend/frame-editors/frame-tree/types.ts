@@ -49,6 +49,7 @@ export type ConnectionStatus = "disconnected" | "connected" | "connecting";
 type EditorType =
   | "chat"
   | "chatroom"
+  | "workbench"
   | "cm-lean"
   | "cm"
   | "course-assignments"

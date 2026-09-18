@@ -37,6 +37,7 @@ export interface MembershipUsageLimits {
   total_storage_soft_bytes?: number;
   total_storage_hard_bytes?: number;
   max_projects?: number;
+  max_named_agents?: number;
   max_sponsored_running_projects?: number;
   max_snapshots_per_project?: number;
   max_backups_per_project?: number;
@@ -129,6 +130,7 @@ export interface AccountUsageLimitOverrides {
   total_storage_soft_bytes?: NumericLimitRule;
   total_storage_hard_bytes?: NumericLimitRule;
   max_projects?: NumericLimitRule;
+  max_named_agents?: NumericLimitRule;
   max_sponsored_running_projects?: NumericLimitRule;
   max_snapshots_per_project?: NumericLimitRule;
   max_backups_per_project?: NumericLimitRule;

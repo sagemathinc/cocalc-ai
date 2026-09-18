@@ -70,6 +70,9 @@ export interface OpenFileOpts {
   fragmentId?: FragmentId; // optional URI fragment identifier that describes position in this document to jump to when we actually open it, which could be long in the future, e.g., due to shift+click to open a background tab.  Inspiration from https://en.wikipedia.org/wiki/URI_fragment
   foreground?: boolean;
   foreground_project?: boolean;
+  // Mount an editor in another application surface without registering the
+  // project in the global project-tab navigation.
+  embedded?: boolean;
   // if false, return once the loading tab exists and continue the remaining
   // sync identity / project availability work in the background.
   wait_for_ready?: boolean;
@@ -311,6 +314,7 @@ export async function open_file(
     fragmentId: undefined,
     foreground,
     foreground_project,
+    embedded: false,
     wait_for_ready,
     chat: undefined,
     chat_width: undefined,
@@ -627,33 +631,35 @@ export async function open_file(
     }
 
     // Wait for the project to start opening.
-    try {
-      mark_file_open_v2_phase(
-        actions.project_id,
-        displayPath,
-        "project_ui_open_start",
-      );
-      await ensureProjectIsOpenWithRetry(actions, {
-        foreground_project: opts.foreground_project,
-        isOpen: tabIsOpened,
-      });
-      mark_file_open_v2_phase(
-        actions.project_id,
-        displayPath,
-        "project_ui_open_done",
-      );
-      if (!tabIsOpened()) {
+    if (!opts.embedded) {
+      try {
+        mark_file_open_v2_phase(
+          actions.project_id,
+          displayPath,
+          "project_ui_open_start",
+        );
+        await ensureProjectIsOpenWithRetry(actions, {
+          foreground_project: opts.foreground_project,
+          isOpen: tabIsOpened,
+        });
+        mark_file_open_v2_phase(
+          actions.project_id,
+          displayPath,
+          "project_ui_open_done",
+        );
+        if (!tabIsOpened()) {
+          return;
+        }
+      } catch (err) {
+        if (isCancelledProjectOpenRetryError(err)) {
+          return;
+        }
+        actions.set_activity({
+          id: uuid(),
+          error: `Error opening file '${displayPath}' (error ensuring project is open) -- ${err}`,
+        });
         return;
       }
-    } catch (err) {
-      if (isCancelledProjectOpenRetryError(err)) {
-        return;
-      }
-      actions.set_activity({
-        id: uuid(),
-        error: `Error opening file '${displayPath}' (error ensuring project is open) -- ${err}`,
-      });
-      return;
     }
     if (!tabIsOpened()) {
       return;

@@ -5,6 +5,7 @@ test.each([
   ["listNamedAgents", {}, true],
   ["listPersonalConnections", {}, true],
   ["listPersonalConnectionRequests", {}, true],
+  ["retireNamedAgent", {}, true],
   ["setPersonalConnectionState", { state: "paused" }, true],
   ["setPersonalConnectionState", { state: "revoked" }, true],
   ["setPersonalMessagingState", { action: "pause" }, true],

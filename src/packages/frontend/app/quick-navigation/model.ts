@@ -42,9 +42,15 @@ export type Destination =
   | { kind: "project-page"; projectId: string; page: FixedTab }
   | { kind: "settings"; page: SettingsPageType }
   | { kind: "docs"; projectId?: string }
+  | { kind: "agent"; agentId: string }
   // Pages of the top navigation bar.
   | { kind: "app-page"; page: AppPage };
-export type AppPage = "projects" | "hosts" | "admin" | "notifications";
+export type AppPage =
+  | "agents"
+  | "projects"
+  | "hosts"
+  | "admin"
+  | "notifications";
 export interface Candidate {
   id: string;
   title: string;

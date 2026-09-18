@@ -100,4 +100,27 @@ describe("top-nav notifications", () => {
     fireEvent.click(screen.getByTestId("badge"));
     expect(setActiveTabMock).toHaveBeenCalledWith("notifications");
   });
+
+  it("can stay out of compact navigation until there is unread activity", () => {
+    const { rerender } = render(
+      <Notification
+        type="notifications"
+        active={false}
+        hideWhenEmpty
+        pageStyle={pageStyle}
+      />,
+    );
+    expect(screen.queryByTestId("badge")).toBeNull();
+
+    mentionsUnread = 1;
+    rerender(
+      <Notification
+        type="notifications"
+        active
+        hideWhenEmpty
+        pageStyle={pageStyle}
+      />,
+    );
+    expect(screen.getByTestId("badge").getAttribute("data-count")).toBe("1");
+  });
 });

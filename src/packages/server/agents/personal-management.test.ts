@@ -3,13 +3,15 @@ import { personalControl } from "./personal";
 const mockConnections = jest.fn();
 const mockSetConnection = jest.fn();
 const mockAssertHome = jest.fn();
+const mockNames = jest.fn();
+const mockRetire = jest.fn();
 let mockHome = "home";
 jest.mock("./store", () => ({
   AgentStore: jest.fn(),
   agentStore: () => {
     throw new Error("master switch off");
   },
-  agentMessagingEnabled: () => false,
+  agentMessagingEnabled: () => true,
 }));
 jest.mock("./personal-store", () => ({
   PersonalAgentStore: jest.fn().mockImplementation(() => ({
@@ -17,6 +19,8 @@ jest.mock("./personal-store", () => ({
     connections: mockConnections,
     controls: async () => ({ paused: false, generation: 0 }),
     setConnection: mockSetConnection,
+    names: mockNames,
+    retire: mockRetire,
   })),
 }));
 jest.mock("./api", () => ({ getIdentity: jest.fn() }));
@@ -43,35 +47,34 @@ jest.mock("@cocalc/server/accounts/security-state", () => ({
   ensureAccountSecurityStateReady: async () => {},
   isAccountBannedCached: () => false,
 }));
+jest.mock("@cocalc/server/membership/resolve", () => ({
+  resolveMembershipForAccount: async () => ({
+    effective_limits: { max_named_agents: 15 },
+  }),
+}));
 
 const account_id = "11111111-1111-4111-8111-111111111111";
-const previous = process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
 beforeEach(() => {
-  process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = "0";
   mockHome = "home";
   jest.clearAllMocks();
   mockAssertHome.mockResolvedValue(undefined);
   mockConnections.mockResolvedValue([]);
-});
-afterAll(() => {
-  if (previous === undefined)
-    delete process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED;
-  else process.env.COCALC_AGENT_PERSONAL_MESSAGING_ENABLED = previous;
+  mockNames.mockResolvedValue([]);
 });
 
-test("site-off inspection still passes the account-home fence", async () => {
+test("inspection passes the account-home fence", async () => {
   await expect(
     personalControl({
       account_id,
       home_bay_id: "home",
       request: { action: "listPersonalConnections", options: {} },
     }),
-  ).resolves.toMatchObject({ enabled: false, connections: [] });
+  ).resolves.toMatchObject({ enabled: true, connections: [] });
   expect(mockAssertHome).toHaveBeenCalledWith(account_id);
   expect(mockConnections).toHaveBeenCalledWith(account_id);
 });
 
-test("site-off revocation remains available without fresh elevation", async () => {
+test("revocation remains available without fresh elevation", async () => {
   const options = { direction_group_id: "group", state: "revoked" as const };
   await personalControl({
     account_id,
@@ -81,22 +84,33 @@ test("site-off revocation remains available without fresh elevation", async () =
   expect(mockSetConnection).toHaveBeenCalledWith(account_id, options);
 });
 
-test("site-off resume stays denied even with a fresh attestation", async () => {
+test("named-agent directory reports membership usage", async () => {
+  mockNames.mockResolvedValue([{ name: "reviewer" }, { name: "builder" }]);
   await expect(
     personalControl({
       account_id,
       home_bay_id: "home",
-      fresh_auth_at: Date.now(),
-      request: {
-        action: "setPersonalConnectionState",
-        options: { direction_group_id: "group", state: "active" },
-      },
+      request: { action: "listNamedAgents", options: {} },
     }),
-  ).rejects.toThrow("not enabled");
-  expect(mockSetConnection).not.toHaveBeenCalled();
+  ).resolves.toMatchObject({ usage: { active: 2, limit: 15 } });
 });
 
-test("site-off inspection rejects a stale home route", async () => {
+test("retiring a name remains available without fresh elevation", async () => {
+  const options = {
+    endpoint: {
+      project_id: "22222222-2222-4222-8222-222222222222",
+      agent_id: "33333333-3333-4333-8333-333333333333",
+    },
+  };
+  await personalControl({
+    account_id,
+    home_bay_id: "home",
+    request: { action: "retireNamedAgent", options },
+  });
+  expect(mockRetire).toHaveBeenCalledWith(account_id, options);
+});
+
+test("inspection rejects a stale home route", async () => {
   mockHome = "other";
   await expect(
     personalControl({

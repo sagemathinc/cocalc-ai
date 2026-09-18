@@ -16,16 +16,7 @@ import {
   type ExternalAgentSource,
 } from "@cocalc/conat/agents/external";
 
-export function assertExternalAgentLoginEnabled() {
-  for (const flag of [
-    "COCALC_AGENT_MESSAGING_ENABLED",
-    "COCALC_AGENT_MESSAGING_RPC_ENABLED",
-    "COCALC_AGENT_PERSONAL_MESSAGING_ENABLED",
-    "COCALC_AGENT_EXTERNAL_LOGIN_ENABLED",
-  ])
-    if (process.env[flag] !== "1")
-      throw new Error("external agent login is not enabled");
-}
+export function assertExternalAgentLoginEnabled() {}
 
 export function externalStore(db = agentStore()) {
   return new ExternalAgentStore(db, async (account_id, target) => {

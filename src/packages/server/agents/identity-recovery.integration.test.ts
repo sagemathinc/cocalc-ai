@@ -29,7 +29,6 @@ describeDb("native identity recovery", () => {
   const run = randomUUID();
 
   beforeAll(async () => {
-    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
     const db = getPool();
     await db.query(
       "CREATE TABLE IF NOT EXISTS projects(project_id uuid PRIMARY KEY, users jsonb)",

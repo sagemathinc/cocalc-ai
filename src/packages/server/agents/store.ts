@@ -8,13 +8,10 @@ import {
 } from "@cocalc/conat/agents/protocol";
 
 export function agentMessagingEnabled(): boolean {
-  return process.env.COCALC_AGENT_MESSAGING_ENABLED === "1";
+  return true;
 }
 
-export function assertAgentMessagingEnabled(): void {
-  if (!agentMessagingEnabled())
-    throw new Error("agent messaging is not enabled on this bay");
-}
+export function assertAgentMessagingEnabled(): void {}
 
 export function normalizeAgentPath(path: string): string {
   if (

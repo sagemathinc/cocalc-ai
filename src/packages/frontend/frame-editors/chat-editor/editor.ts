@@ -22,6 +22,7 @@ import { time_travel } from "@cocalc/frontend/frame-editors/time-travel-editor/e
 import { set } from "@cocalc/util/misc";
 import { CHATROOM_COMMANDS } from "./commands";
 import { search } from "./search";
+import { workbench } from "./workbench";
 
 const ChatRoom = lazyWithRetry(
   async () => ({
@@ -76,6 +77,7 @@ const EDITOR_SPEC = {
   terminal,
   time_travel,
   search,
+  workbench,
 } as const;
 
 export const Editor = createEditor({

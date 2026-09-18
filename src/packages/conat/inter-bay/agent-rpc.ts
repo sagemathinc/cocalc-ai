@@ -25,6 +25,7 @@ import type {
 export type PersonalHumanMethod =
   | "listNamedAgents"
   | "nameAgent"
+  | "retireNamedAgent"
   | "listPersonalConnections"
   | "grantPersonalConnection"
   | "setPersonalConnectionState"

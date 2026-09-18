@@ -128,6 +128,23 @@ describeDb("account-home personal names, grants and approval requests", () => {
     ).rejects.toThrow();
   });
 
+  test("membership limit blocks new endpoints, permits rename, and retirement frees a slot", async () => {
+    await store.name(account, { endpoint: source, name: "builder" }, 1);
+    await expect(
+      store.name(account, { endpoint: target, name: "reviewer" }, 1),
+    ).rejects.toThrow("named_agent_limit_reached:1:1");
+
+    await expect(
+      store.name(account, { endpoint: source, name: "builder-new" }, 1),
+    ).resolves.toMatchObject({ name: "builder-new", endpoint: source });
+
+    await store.retire(account, { endpoint: source });
+    await expect(
+      store.name(account, { endpoint: target, name: "reviewer" }, 1),
+    ).resolves.toMatchObject({ name: "reviewer", endpoint: target });
+    expect(await store.names(account)).toHaveLength(1);
+  });
+
   test("unavailable targets retain metadata and listing never starts execution", async () => {
     await store.name(account, { endpoint: target, name: "reviewer" });
     identity.mockRejectedValue(new Error("owner unavailable"));

@@ -75,23 +75,3 @@ test("changed account prevents an action rather than reusing the new session", a
   expect(await screen.findByRole("alert")).toBeTruthy();
   expect(postAuthApi).toHaveBeenCalledTimes(1);
 });
-
-test("site kill switch leaves existing installations inspectable and revocable", async () => {
-  jest
-    .mocked(postAuthApi)
-    .mockResolvedValue({ enabled: false, installations: [installation] });
-  const user = userEvent.setup();
-  render(<ExternalAgentInstallations />);
-  const revoke = await screen.findByRole("button", {
-    name: "Revoke Security assistant",
-  });
-  expect(screen.getByRole("status")).toHaveTextContent(
-    "External sending is disabled",
-  );
-  await user.click(revoke);
-  expect(postAuthApi).toHaveBeenLastCalledWith({
-    origin: "https://home.test",
-    endpoint: "auth/cli/agent/installations",
-    body: { action: "revoke", installation_id: installation.installation_id },
-  });
-});

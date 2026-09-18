@@ -249,6 +249,25 @@ test("Name agent opens by keyboard and Escape restores focus without registratio
   expect(mockApi.registerIdentity).not.toHaveBeenCalled();
 });
 
+test("a registered agent uses a concise trigger and a clear edit title", async () => {
+  const user = userEvent.setup();
+  render(
+    <NameAgent
+      agent={namedAgent}
+      projectId={target.project_id}
+      path="/review.chat"
+      threadId="review"
+    />,
+  );
+  const trigger = screen.getByRole("button", { name: "Rename @reviewer" });
+  expect(trigger).toHaveTextContent("@reviewer");
+  expect(trigger).not.toHaveTextContent("Rename");
+  await user.click(trigger);
+  expect(
+    screen.getByRole("dialog", { name: "Edit agent name" }),
+  ).toBeInTheDocument();
+});
+
 async function saveAgentName() {
   const user = userEvent.setup();
   render(

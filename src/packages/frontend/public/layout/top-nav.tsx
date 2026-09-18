@@ -335,14 +335,19 @@ export default function PublicTopNav({
         </span>
       ) : null}
       <Button
-        href={appPath("projects")}
+        href={appPath("agents")}
+        icon={<Icon name="robot" />}
         size={isCompact ? "small" : "middle"}
         type="primary"
       >
-        Projects
+        Agents
       </Button>
-      <Button href={appPath("settings")} size={isCompact ? "small" : "middle"}>
-        Settings
+      <Button
+        href={appPath("projects")}
+        icon={<Icon name="edit" />}
+        size={isCompact ? "small" : "middle"}
+      >
+        Projects
       </Button>
     </>
   ) : null;

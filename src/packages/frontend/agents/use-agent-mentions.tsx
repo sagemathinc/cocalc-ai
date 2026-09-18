@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert } from "antd";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   FreshAuthModal,
   useFreshAuthAction,
@@ -110,11 +111,9 @@ export function useAgentMentions({
       );
     const connections = await api.listPersonalConnections({});
     if (epoch !== generation.current) return false;
-    if (!connections.enabled)
-      throw new Error("Personal agent messaging is not enabled on this site.");
     if (connections.controls?.paused)
       throw new Error(
-        "Your agent communication is paused. Resume it in My Agents before sending.",
+        "Your agent communication is paused. Resume it in Agents before sending.",
       );
     const links = connections.connections.filter(
       (connection) =>
@@ -139,7 +138,7 @@ export function useAgentMentions({
       )
     )
       throw new Error(
-        `Communication with @${reference.name} was paused or revoked. Explicitly re-enable it in My Agents; your draft has not been sent.`,
+        `Communication with @${reference.name} was paused or revoked. Explicitly re-enable it in Agents; your draft has not been sent.`,
       );
     setStates((states) => ({ ...states, [stateKey]: "Needs approval" }));
     if (pending.current) return false;
@@ -271,7 +270,24 @@ export function useAgentMentions({
               title="Agent mention needs attention"
               description={
                 <>
-                  {error} <a href="/settings/my-agents">My Agents</a>
+                  {error}{" "}
+                  <a
+                    href="/settings/my-agents"
+                    onClick={(event) => {
+                      if (
+                        event.button !== 0 ||
+                        event.metaKey ||
+                        event.ctrlKey ||
+                        event.shiftKey ||
+                        event.altKey
+                      )
+                        return;
+                      event.preventDefault();
+                      openAccountSettings({ page: "my-agents" });
+                    }}
+                  >
+                    Agents
+                  </a>
                 </>
               }
             />

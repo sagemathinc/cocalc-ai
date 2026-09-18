@@ -224,6 +224,17 @@ export default async function init(opts: Options): Promise<{
     (!isLaunchpadMode() || isEnabled(process.env.COCALC_ENABLE_ANALYTICS));
   if (analyticsEnabled) {
     await initAnalytics(router, database);
+  } else {
+    // The consent-aware frontend always probes this same-origin endpoint.
+    // Keep disabled analytics silent without loading code or recording data.
+    router.get("/analytics.js", (_req, res) => {
+      res.set("Cache-Control", "no-store");
+      res.type("application/javascript").send("");
+    });
+    router.post("/analytics.js", (_req, res) => {
+      res.set("Cache-Control", "no-store");
+      res.status(204).end();
+    });
   }
 
   // The /static content, used by docker, development, etc.
