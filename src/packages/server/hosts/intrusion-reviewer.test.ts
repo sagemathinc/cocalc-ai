@@ -396,6 +396,53 @@ describe("project-host intrusion reviewer", () => {
     ).resolves.toMatchObject({ rows: [{ state: "open" }] });
   });
 
+  it("reopens a suppressed incident when its expected change is removed", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
+      "persistent-host-state";
+    process.env.COCALC_HOST_INTRUSION_EXPECTED_CHANGES = JSON.stringify([
+      {
+        id: "maintenance-removed",
+        bay_id: BAY_ID,
+        host_ids: [HOST_ID],
+        categories: ["services.enabled"],
+        starts_at: new Date(Date.now() - 60_000).toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        reason: "staging fixture",
+      },
+    ]);
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+    await runHostIntrusionReviewerPass();
+
+    delete process.env.COCALC_HOST_INTRUSION_EXPECTED_CHANGES;
+    await insertObservation({ state: changed });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      reopened: 1,
+      notifications_delivered: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT state, suppression_ref, suppression_expires_at FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          state: "open",
+          suppression_ref: null,
+          suppression_expires_at: null,
+        },
+      ],
+    });
+  });
+
   it("bounds batch work, rejects foreign bays, and reports backlog", async () => {
     for (let i = 0; i < 3; i++) {
       await insertObservation({

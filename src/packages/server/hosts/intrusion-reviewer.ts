@@ -472,11 +472,8 @@ async function openIncident(
     return;
   }
 
-  const suppressionExpired =
-    existing.state === "suppressed" &&
-    existing.suppression_expires_at != null &&
-    Date.parse(`${existing.suppression_expires_at}`) < now.getTime();
-  const reopens = existing.state === "resolved" || suppressionExpired;
+  const suppressionEnded = existing.state === "suppressed" && !suppressed;
+  const reopens = existing.state === "resolved" || suppressionEnded;
   await client.query(
     `UPDATE ${INCIDENTS}
         SET state=$2,
