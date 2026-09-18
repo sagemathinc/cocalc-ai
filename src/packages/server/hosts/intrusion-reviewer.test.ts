@@ -206,6 +206,39 @@ describe("project-host intrusion reviewer", () => {
     });
   });
 
+  it("processes an observation that commits behind the diagnostic cursor", async () => {
+    const newer = await insertObservation();
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 1,
+    });
+    const late = await insertObservation({
+      createdAt: new Date(Date.now() - 60 * 60 * 1000),
+    });
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 1,
+      findings: 1,
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 0,
+    });
+    await expect(
+      getPool().query(
+        `SELECT observation_id FROM project_host_intrusion_findings
+          WHERE observation_id IN ($1,$2) ORDER BY observation_id`,
+        [newer, late],
+      ),
+    ).resolves.toMatchObject({
+      rows: expect.arrayContaining([
+        { observation_id: newer },
+        { observation_id: late },
+      ]),
+    });
+    await expect(getHostIntrusionReviewReport()).resolves.toMatchObject({
+      reviewer: { backlog: 0, cursor_id: newer },
+    });
+  });
+
   it("opens one stable incident only after a later complete confirmation", async () => {
     const delta = { added: { "services.enabled": [ADDED_VALUE] } };
     const changed = normalized({ "services.enabled": [ADDED_VALUE] });
@@ -266,14 +299,12 @@ describe("project-host intrusion reviewer", () => {
   it("opens one explicitly approved critical fixture notification", async () => {
     process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
       "persistent-host-state";
-    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
-    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    const criticalValue = '["root-equivalent",0]';
+    const delta = { added: { "accounts.uid_zero": [criticalValue] } };
+    const changed = normalized({ "accounts.uid_zero": [criticalValue] });
     await insertObservation({
       classification: "actionable",
-      reasonCodes: [
-        "actionable_selector_match",
-        "critical_host_boundary_change",
-      ],
+      reasonCodes: ["actionable_selector_match"],
       actionableDelta: delta,
       state: changed,
       createdAt: new Date(Date.now() - 1000),
@@ -292,6 +323,27 @@ describe("project-host intrusion reviewer", () => {
       rows: [{ severity: "critical", state: "open" }],
     });
     expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not correlate observations outside the source-time window", async () => {
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000),
+    });
+    await insertObservation({ state: changed });
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 2,
+      opened: 0,
+    });
+    await expect(
+      getPool().query("SELECT id FROM project_host_intrusion_incidents"),
+    ).resolves.toMatchObject({ rows: [] });
   });
 
   it("emits one durable transition when an open incident escalates", async () => {

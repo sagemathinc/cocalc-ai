@@ -37,6 +37,12 @@ const MAX_REPORT_HOSTS = 100;
 const MAX_REPORT_OBSERVATION_GROUPS = 100;
 const MAX_REPORT_FINDING_GROUPS = 50;
 const PERSISTENCE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const CRITICAL_PERSISTENCE_CATEGORIES = new Set([
+  "accounts.uid_zero",
+  "privileged_files.writable",
+  "privileged_files.suid_sgid",
+  "privileged_files.capabilities",
+]);
 const RULE_CATALOG = [
   {
     id: "persistent-host-state",
@@ -167,6 +173,18 @@ function boundedDelta(value: unknown): Delta | undefined {
     if (Object.keys(selected).length) result[direction] = selected;
   }
   return result.added || result.removed ? result : undefined;
+}
+
+function persistenceSeverity(
+  delta: Delta,
+  reasonCodes: string[],
+): "warning" | "critical" {
+  if (reasonCodes.includes("critical_host_boundary_change")) return "critical";
+  return Object.keys(delta.added ?? {}).some((category) =>
+    CRITICAL_PERSISTENCE_CATEGORIES.has(category),
+  )
+    ? "critical"
+    : "warning";
 }
 
 function normalizedSignals(
@@ -693,11 +711,7 @@ async function reviewObservation(
   }
 
   if (actionableDelta) {
-    const candidateSeverity = reasonCodes.includes(
-      "critical_host_boundary_change",
-    )
-      ? "critical"
-      : "warning";
+    const candidateSeverity = persistenceSeverity(actionableDelta, reasonCodes);
     const evidence = {
       status: "candidate",
       candidate_severity: candidateSeverity,
@@ -718,16 +732,23 @@ async function reviewObservation(
     }
   } else if (observation.coverage === "complete" && observation.normalized) {
     const { rows } = await client.query(
-      `SELECT observation_id, evidence
-         FROM ${FINDINGS}
-        WHERE bay_id=$1 AND host_id=$2 AND rule_id='persistent-host-state'
-          AND rule_version=$3 AND classification='diagnostic'
-          AND created_at >= NOW() - ($4::double precision * INTERVAL '1 millisecond')
-        ORDER BY created_at DESC LIMIT 20`,
+      `SELECT findings.observation_id, findings.evidence
+         FROM ${FINDINGS} AS findings
+         JOIN ${OBSERVATIONS} AS source
+           ON source.id=findings.observation_id
+        WHERE findings.bay_id=$1 AND findings.host_id=$2
+          AND findings.rule_id='persistent-host-state'
+          AND findings.rule_version=$3
+          AND findings.classification='diagnostic'
+          AND source.created_at BETWEEN
+              $4::timestamptz - ($5::double precision * INTERVAL '1 millisecond')
+              AND $4::timestamptz
+        ORDER BY source.created_at DESC LIMIT 20`,
       [
         getConfiguredBayId(),
         observation.host_id,
         RULE_VERSION,
+        observation.created_at,
         PERSISTENCE_WINDOW_MS,
       ],
     );
@@ -921,11 +942,11 @@ export async function runHostIntrusionReviewerPass({
                 ELSE octet_length(decision::text) > $3 OR octet_length(normalized::text) > $3
               END AS evidence_oversized
          FROM ${OBSERVATIONS} AS observations
-         JOIN ${STATE} AS state ON state.bay_id=$1
         WHERE observations.bay_id=$1
-          AND (state.cursor_created_at IS NULL OR
-               (observations.created_at, observations.id) >
-               (state.cursor_created_at, state.cursor_id))
+          AND NOT EXISTS (
+            SELECT 1 FROM ${FINDINGS} AS processed
+             WHERE processed.observation_id=observations.id
+          )
         ORDER BY observations.created_at, observations.id
         LIMIT $4`,
       [bayId, MAX_STORED_PHYSICAL_BYTES, MAX_STORED_JSON_BYTES, limit],
@@ -937,11 +958,22 @@ export async function runHostIntrusionReviewerPass({
     const last = observations.rows.at(-1);
     await client.query(
       `UPDATE ${STATE}
-          SET cursor_created_at=COALESCE(
-                (SELECT created_at FROM ${OBSERVATIONS} WHERE id=$2),
-                cursor_created_at
-              ),
-              cursor_id=COALESCE($2, cursor_id),
+          SET cursor_created_at=CASE
+                WHEN $2::uuid IS NULL THEN cursor_created_at
+                WHEN cursor_created_at IS NULL OR cursor_id IS NULL OR
+                     ((SELECT created_at FROM ${OBSERVATIONS} WHERE id=$2), $2::uuid) >
+                     (cursor_created_at, cursor_id)
+                THEN (SELECT created_at FROM ${OBSERVATIONS} WHERE id=$2)
+                ELSE cursor_created_at
+              END,
+              cursor_id=CASE
+                WHEN $2::uuid IS NULL THEN cursor_id
+                WHEN cursor_created_at IS NULL OR cursor_id IS NULL OR
+                     ((SELECT created_at FROM ${OBSERVATIONS} WHERE id=$2), $2::uuid) >
+                     (cursor_created_at, cursor_id)
+                THEN $2::uuid
+                ELSE cursor_id
+              END,
               last_success_at=NOW(), last_error_at=NULL, last_error=NULL,
               updated_at=NOW()
         WHERE bay_id=$1`,
@@ -1014,11 +1046,11 @@ export async function getHostIntrusionReviewReport({
     boundedQuery(
       `SELECT COUNT(*)::integer AS count, MIN(observations.created_at) AS oldest
            FROM ${OBSERVATIONS} AS observations
-           LEFT JOIN ${STATE} AS state ON state.bay_id=$1
           WHERE observations.bay_id=$1
-            AND (state.cursor_created_at IS NULL OR
-                 (observations.created_at, observations.id) >
-                 (state.cursor_created_at, state.cursor_id))`,
+            AND NOT EXISTS (
+              SELECT 1 FROM ${FINDINGS} AS processed
+               WHERE processed.observation_id=observations.id
+            )`,
       [bayId],
     ),
     boundedQuery(
