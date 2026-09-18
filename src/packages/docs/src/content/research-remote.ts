@@ -643,26 +643,24 @@ project itself.
 
 ## Try the energy scenario explorer
 
-Run the interactive dashboard pictured on the CoCalc homepage. Change demand or
-solar generation, compare the chart and summary figures, and inspect all 24
-hourly values. This is a Python application with invented data, served privately
-through your project's **Apps** page. It is not a forecast or a demonstration
-of an AI agent generating the application.
+Run the homepage dashboard with invented data: change demand or solar
+generation and inspect the chart, summaries and 24 hourly values. Open it
+privately through your project's **Apps** page.
 
-Use a **new scratch project** with Python 3 and runtime access. The example
-needs no extra Python packages. Running the project uses its normal compute
-resources; stopping the app alone does not stop the project.
+Use a **new scratch project** with Python 3 and runtime access; no extra
+packages are needed. Normal compute usage applies. Stopping the app leaves
+the project running.
 
 ### Get the example and check the connection
 
-Download \`energy-dashboard.py\` from the repository's
+Download \`energy-dashboard.py\` from the
 [research example directory](https://github.com/sagemathinc/cocalc-ai/tree/main/src/packages/docs/examples/research-workflows).
-Use GitHub's **Download raw file** action so you save Python source rather than
-the HTML page. Keep the filename unchanged.
+Choose **Download raw file**, keeping the filename, to save Python rather
+than HTML.
 
-Complete the [CLI quickstart](/docs/cli/getting-started). In **Bash on your own
-computer**, change to the directory containing the downloaded script, then set
-the profile you configured and your new project's full ID:
+Complete the [CLI quickstart](/docs/cli/getting-started). In **Bash on your
+computer**, open the script's directory. Set your configured profile and new
+project's full ID:
 
 ~~~bash
 export CLI_PROFILE=cocalc-ai
@@ -676,16 +674,15 @@ cocalc --profile "$CLI_PROFILE" project app list --project "$PROJECT_ID"
 python3 energy-dashboard.py --self-test
 ~~~
 
-Check the account and project in the responses. Replace \`cocalc-ai\` if your
-existing CLI profile has another name. The self-test should report **7 tests**
-and **OK**. Confirm that app ID \`energy-scenario-demo\`, the destination directory
-and port \`8765\` are unused. If you ran the measurements example in this project,
-stop it first; it uses the same port.
+Check the account and project responses; replace \`cocalc-ai\` if needed.
+Require **7 tests** and **OK**. Confirm that app ID \`energy-scenario-demo\`,
+the destination directory and port \`8765\` are unused. Stop the earlier
+measurements app first if present; it uses the same port.
 
 ### Upload and run the private app
 
-The following commands still run on your computer. \`project exec\` runs the
-specified Python process **inside CoCalc**:
+Run these commands on your computer; \`project exec\` executes Python
+**inside CoCalc**:
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" project file put --project "$PROJECT_ID" \\
@@ -729,9 +726,8 @@ cocalc --profile "$CLI_PROFILE" --json project app status energy-scenario-demo \
   --project "$PROJECT_ID"
 ~~~
 
-Require the remote self-test to pass, followed by app \`state: "running"\` and
-\`ready: true\`. These are different checks: port readiness does not establish
-correct scenario results. Verify the running app's response separately:
+Require passing remote tests, app \`state: "running"\` and \`ready: true\`.
+Readiness does not prove numerical correctness. Check the running response:
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" project exec --project "$PROJECT_ID" -- \\
@@ -740,14 +736,14 @@ cocalc --profile "$CLI_PROFILE" project exec --project "$PROJECT_ID" -- \\
 
 ### Explore and inspect the result
 
-Open your project in CoCalc, choose **Apps** (under **More** if hidden), refresh
-the app list if needed, and open **Energy scenario explorer**. Use CoCalc's open
-action rather than copying a temporary authentication URL.
+Choose **Apps** (under **More** if hidden), refresh if needed, and open
+**Energy scenario explorer**. Use CoCalc's open action, not a copied temporary
+authentication URL.
 
-1. Select each scenario with a mouse or with **Tab** and **Enter**.
-2. Check the figures against the table below and confirm that the plot changes.
-3. Expand **Inspect the 24 hourly values** and check that the table changes too.
-4. Return to **Base case** and confirm the original figures return.
+1. Select each scenario using the mouse or **Tab** and **Enter**.
+2. Compare its figures with the table; confirm the plot changes.
+3. Expand **Inspect the 24 hourly values**; confirm those values change.
+4. Return to **Base case**; confirm its original figures return.
 
 | Scenario | Expected result |
 |---|---|
@@ -755,35 +751,30 @@ action rather than copying a temporary authentication URL.
 | Lower demand | Grid energy: **536 kWh**. Demand met by solar: **51.1%**. Peak grid draw: **67.2 kW**. |
 | More solar | Grid energy: **637 kWh**. Demand met by solar: **53.5%**. Peak grid draw: **84 kW**. |
 
-**Lower demand** reduces every hourly demand value by 20%. **More solar**
-increases every solar value by 50%. For each interval, grid draw in kW is \`max(demand - solar, 0)\`;
-multiply by the one-hour interval to obtain energy in kWh. Surplus solar is
-not carried to another hour.
-The model omits batteries, weather, prices, export credits and losses.
+**Lower demand** reduces hourly demand by 20%; **More solar** increases solar
+by 50%. Grid draw is \`max(demand - solar, 0)\` kW; multiply by one hour for kWh.
+This illustrative model discards surplus solar and omits batteries, weather,
+prices, export credits and losses. It is not a forecast.
 
-The Python file contains the inputs, calculations, HTML and browser controls.
-After editing it, rerun the self-test and restart the managed app. If you change
-the intended model, update the expected values deliberately and retain the old
-source for comparison. The app computes responses in memory; it does not write
-a result file or save the selected scenario.
+The Python file contains inputs, calculations and interface. After edits,
+rerun the self-test and restart the app. For model changes, revise expected
+values deliberately and preserve the previous source. The app saves neither
+result files nor scenario selections.
 
 ### Diagnose failures and clean up
 
-A wrong result or a failing self-test means the example is not verified.
-Check the downloaded source and its inputs. If opening fails, inspect this
-app's status and logs before retrying:
+Wrong results or failed self-tests leave the example unverified. Check its
+source and inputs. For opening failures, inspect this app's status and logs:
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json project app logs energy-scenario-demo \\
   --project "$PROJECT_ID" --tail 50
 ~~~
 
-Use the earlier startup diagnostics for a missing Python interpreter, occupied
-port or timeout. This test confirms your own private app access; use the
-collaborator check above separately if another person needs to open it.
+Use the earlier diagnostics for missing Python, port conflicts or timeouts.
+This checks only your access; test collaborators separately as described above.
 
-When finished, close the app tab, stop this app and verify it is stopped before
-removing its registration:
+Close the app tab. Stop this app, confirm it stopped, then delete its registration:
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" --json project app stop energy-scenario-demo \\
@@ -794,18 +785,17 @@ cocalc --profile "$CLI_PROFILE" project app delete energy-scenario-demo \\
   --project "$PROJECT_ID"
 ~~~
 
-In **Files**, remove only the scratch directory \`energy-scenario-demo\` when
-you no longer need it. Keep the downloaded source and local \`energy-app.json\`
-if you want to reproduce the example. Stop the **new scratch project** when no
-other work is running in it:
+In **Files**, delete only \`energy-scenario-demo\` when finished. Keep the source
+and local \`energy-app.json\` for reproduction. Stop the **new scratch project**
+only when no other work is running:
 
 ~~~bash
 cocalc --profile "$CLI_PROFILE" project stop --project "$PROJECT_ID" --wait
 ~~~
 
-Validation evidence: the original example was executed in a fresh CoCalc.ai
-project on 2026-09-17 with Python 3.14.4. Its seven self-tests, running HTTP
-response, scenario controls and hourly table were checked. This does not
-establish access for a second account, public publishing or agent authorship.
+Validation evidence: tested in a fresh CoCalc.ai project on 2026-09-17 with
+Python 3.14.4: seven self-tests, running HTTP response, scenario controls and
+hourly table. Second-account access, public publishing and agent authorship
+remain unverified.
 
 `;
