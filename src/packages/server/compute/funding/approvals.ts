@@ -104,24 +104,6 @@ export async function ensureCourseFundingApprovalSchema(): Promise<void> {
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (payer_account_id, operation_id)
   )`);
-  await getPool()
-    .query(`CREATE TABLE IF NOT EXISTS financial_approval_sessions (
-    session_hash TEXT PRIMARY KEY,
-    account_id UUID NOT NULL,
-    approval_origin TEXT NOT NULL,
-    primary_auth_method TEXT NOT NULL,
-    primary_verified_at TIMESTAMPTZ NOT NULL,
-    factor_level TEXT NOT NULL,
-    factor_verified_at TIMESTAMPTZ,
-    authenticated_for_intent_id UUID NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    expire TIMESTAMPTZ NOT NULL,
-    revoked_at TIMESTAMPTZ
-  )`);
-  await getPool().query(
-    `CREATE INDEX IF NOT EXISTS financial_approval_sessions_account_expire
-       ON financial_approval_sessions(account_id, expire)`,
-  );
 }
 
 export async function assertFundingPayerHomeBay(payer_account_id: string) {
