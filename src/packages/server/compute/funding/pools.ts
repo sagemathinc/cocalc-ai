@@ -160,6 +160,20 @@ export async function createCourseFundingPoolInTransaction(
       state,
     ],
   );
+  await client.query(
+    `INSERT INTO compute_funding_pool_approvals
+       (id,pool_id,payer_account_id,operation_id,amount_usd,starts_at,ends_at)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) ON CONFLICT (pool_id,operation_id) DO NOTHING`,
+    [
+      randomUUID(),
+      id,
+      payer,
+      operation,
+      terms.amount_usd,
+      terms.starts_at,
+      terms.ends_at,
+    ],
+  );
   grants.sort((a, b) =>
     a.beneficiary_account_id.localeCompare(b.beneficiary_account_id),
   );

@@ -280,12 +280,44 @@ async function readPayerSummary(
        ORDER BY g.beneficiary_account_id, g.id LIMIT 10001`,
       params,
     );
-    if (pools.length > 1000 || grants.length > 10000)
+    const { rows: approvals } = await client.query<{
+      pool_id: string;
+      amount_usd: string;
+      starts_at: Date;
+      ends_at: Date;
+    }>(
+      `SELECT a.pool_id,a.amount_usd::text,a.starts_at,a.ends_at
+         FROM compute_funding_pool_approvals a
+         JOIN compute_funding_pools p ON p.id=a.pool_id
+        WHERE p.payer_account_id=$1
+          AND ($2::uuid IS NULL OR p.course_project_id=$2)
+          AND ($3::uuid IS NULL OR p.course_instance_id=$3)
+        ORDER BY a.created_at,a.id LIMIT 10001`,
+      params,
+    );
+    if (
+      pools.length > 1000 ||
+      grants.length > 10000 ||
+      approvals.length > 10000
+    )
       throw new ComputeFundingError(
         "funding_unavailable",
         "Funding summary exceeds the bounded listing limit; narrow to a course.",
       );
     const byPool = new Map<string, CourseFundingGrantSummary[]>();
+    const approvalsByPool = new Map<
+      string,
+      CourseFundingPoolSummary["approval_rectangles"]
+    >();
+    for (const approval of approvals) {
+      const list = approvalsByPool.get(approval.pool_id) ?? [];
+      list.push({
+        amount_usd: approval.amount_usd,
+        starts_at: approval.starts_at.toISOString(),
+        ends_at: approval.ends_at.toISOString(),
+      });
+      approvalsByPool.set(approval.pool_id, list);
+    }
     const usage = await getCourseFundingUsageProjection(client, {
       payer_account_id: account_id,
       grant_ids: grants.map((g) => g.id),
@@ -334,6 +366,19 @@ async function readPayerSummary(
           pool.approval_starts_at ?? pool.starts_at
         ).toISOString(),
         approval_ends_at: (pool.approval_ends_at ?? pool.ends_at).toISOString(),
+        approval_rectangles: approvalsByPool.get(pool.id) ?? [
+          {
+            amount_usd:
+              pool.approval_limit_usd ??
+              moneyToDbString(
+                toDecimal(pool.authorized_usd).minus(pool.released_usd),
+              ),
+            starts_at: (
+              pool.approval_starts_at ?? pool.starts_at
+            ).toISOString(),
+            ends_at: (pool.approval_ends_at ?? pool.ends_at).toISOString(),
+          },
+        ],
         starts_at: pool.starts_at.toISOString(),
         ends_at: pool.ends_at.toISOString(),
         grants: byPool.get(pool.id) ?? [],

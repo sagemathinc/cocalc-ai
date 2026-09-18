@@ -16,12 +16,14 @@ export type WebAuthnRelyingParty = {
   origin: string;
   rp_id: string;
   rp_name: string;
+  allow_related_origin?: boolean;
 };
 
 export function validateWebAuthnRelyingParty({
   origin,
   rp_id,
   rp_name,
+  allow_related_origin,
 }: WebAuthnRelyingParty): WebAuthnRelyingParty {
   const normalizedOrigin = normalizeOrigin(origin);
   if (!normalizedOrigin) {
@@ -33,7 +35,9 @@ export function validateWebAuthnRelyingParty({
   if (
     !hostname ||
     !normalizedRpId ||
-    (hostname !== normalizedRpId && !hostname.endsWith(`.${normalizedRpId}`))
+    (!allow_related_origin &&
+      hostname !== normalizedRpId &&
+      !hostname.endsWith(`.${normalizedRpId}`))
   ) {
     throw new Error("passkey relying party is not a parent of its origin");
   }
@@ -41,6 +45,7 @@ export function validateWebAuthnRelyingParty({
     origin: normalizedOrigin,
     rp_id: normalizedRpId,
     rp_name: `${rp_name ?? ""}`.trim() || "CoCalc",
+    ...(allow_related_origin ? { allow_related_origin: true } : {}),
   };
 }
 

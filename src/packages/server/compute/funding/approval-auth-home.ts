@@ -131,6 +131,9 @@ export async function financialApprovalAuthOnHome(
     );
   }
   if (opts.action === "start-passkey") {
+    if (opts.relying_party.origin !== opts.approval_origin) {
+      throw new Error("financial approval passkey origin mismatch");
+    }
     const started = await startSignInPasskeyAuthentication({
       challenge_id: opts.challenge_id,
       relying_party: opts.relying_party,

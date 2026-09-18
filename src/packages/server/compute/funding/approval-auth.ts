@@ -5,18 +5,13 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
+import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import {
   createInterBayAccountLocalClient,
   type AccountLocalFinancialApprovalAuthRequest,
   type AccountLocalFinancialApprovalAuthResult,
 } from "@cocalc/conat/inter-bay/api";
-import {
-  getAuthSession,
-  recordNewAuthSession,
-  requireFreshAuthForSessionHash,
-  type AccountAuthSessionRow,
-} from "@cocalc/server/auth/auth-sessions";
 import {
   completeEmailFreshAuthDirect,
   getEmailAuthChallengeStatusDirect,
@@ -48,6 +43,19 @@ export type FundingApprovalReadyAuth = Extract<
   { state: "ready" }
 >;
 
+interface FundingApprovalSessionRow {
+  session_hash: string;
+  account_id: string;
+  approval_origin: string;
+  primary_auth_method: string;
+  primary_verified_at: Date;
+  factor_level: string;
+  factor_verified_at: Date | null;
+  authenticated_for_intent_id: string;
+  expire: Date;
+  revoked_at: Date | null;
+}
+
 export function fundingSessionHash(token: string): string {
   if (!/^[a-f0-9]{64}$/.test(token)) {
     throw new Error("Financial sign-in required");
@@ -69,6 +77,16 @@ async function accountForEmail(email_address: string) {
     },
     email,
   };
+}
+
+export async function requireFundingApprovalEmailForPayer(opts: {
+  email_address: string;
+  payer_account_id: string;
+}): Promise<void> {
+  const { account } = await accountForEmail(opts.email_address);
+  if (account.account_id !== opts.payer_account_id) {
+    throw new Error("Financial sign-in failed");
+  }
 }
 
 async function homeAuth(
@@ -231,7 +249,12 @@ export async function verifyFundingApprovalCode(opts: {
 
 export async function startFundingApprovalPasskey(opts: {
   auth: FundingApprovalPendingAuth;
-  relying_party: { origin: string; rp_id: string; rp_name: string };
+  relying_party: {
+    origin: string;
+    rp_id: string;
+    rp_name: string;
+    allow_related_origin?: boolean;
+  };
 }) {
   requirePending(opts.auth);
   if (!opts.auth.second_factor_challenge_id) {
@@ -276,27 +299,26 @@ export async function issueFundingApprovalSession(opts: {
 }) {
   const token = randomBytes(32).toString("hex");
   const expire = new Date(Date.now() + 8 * 60 * 60_000);
-  await recordNewAuthSession({
-    account_id: opts.auth.account_id,
-    session_hash: fundingSessionHash(token),
-    expire,
-    authenticated_at: new Date(opts.auth.primary_verified_at),
-    password_verified_at: opts.auth.password_verified_at
-      ? new Date(opts.auth.password_verified_at)
-      : null,
-    primary_verified_at: new Date(opts.auth.primary_verified_at),
-    primary_auth_method: opts.auth.primary_auth_method,
-    factor_verified_at: opts.auth.factor_verified_at
-      ? new Date(opts.auth.factor_verified_at)
-      : null,
-    factor_level: opts.auth.factor_level,
-    fresh_auth_until: expire,
-    metadata: {
-      financial_approval_origin: opts.origin,
-      financial_approval_scope: "account",
-      authenticated_for_intent_id: opts.intent_id,
-    },
-  });
+  await getPool().query(
+    `INSERT INTO financial_approval_sessions
+       (session_hash,account_id,approval_origin,primary_auth_method,
+        primary_verified_at,factor_level,factor_verified_at,
+        authenticated_for_intent_id,expire)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+    [
+      fundingSessionHash(token),
+      opts.auth.account_id,
+      opts.origin,
+      opts.auth.primary_auth_method,
+      new Date(opts.auth.primary_verified_at),
+      opts.auth.factor_level,
+      opts.auth.factor_verified_at
+        ? new Date(opts.auth.factor_verified_at)
+        : null,
+      opts.intent_id,
+      expire,
+    ],
+  );
   return { account_id: opts.auth.account_id, token };
 }
 
@@ -307,32 +329,22 @@ export async function requireFundingApprovalSession(opts: {
   origin: string;
   db?: Pick<PoolClient, "query">;
 }) {
-  const session = opts.db
-    ? (
-        await opts.db.query<AccountAuthSessionRow>(
-          `SELECT * FROM account_auth_sessions WHERE session_hash=$1
+  const db = opts.db ?? getPool();
+  const session = (
+    await db.query<FundingApprovalSessionRow>(
+      `SELECT * FROM financial_approval_sessions WHERE session_hash=$1
          AND revoked_at IS NULL AND expire > clock_timestamp()
-         AND fresh_auth_until > clock_timestamp() FOR SHARE`,
-          [opts.session_hash],
-        )
-      ).rows[0]
-    : await getAuthSession(opts.session_hash);
+         ${opts.db ? "FOR SHARE" : ""}`,
+      [opts.session_hash],
+    )
+  ).rows[0];
   if (
     !session ||
     (opts.payer_account_id != null &&
       session.account_id !== opts.payer_account_id) ||
-    session.metadata?.financial_approval_origin !== opts.origin ||
-    (session.metadata?.financial_approval_scope !== "account" &&
-      session.metadata?.financial_intent_id !== opts.intent_id)
+    session.approval_origin !== opts.origin
   ) {
     throw new Error("Financial sign-in required");
-  }
-  if (!opts.db) {
-    await requireFreshAuthForSessionHash({
-      account_id: session.account_id,
-      session_hash: opts.session_hash,
-      allow_actor_impersonation: false,
-    });
   }
   return session.account_id;
 }

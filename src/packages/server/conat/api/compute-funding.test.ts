@@ -489,6 +489,7 @@ describe("read-only funding projections", () => {
           },
         ],
       })
+      .mockResolvedValueOnce({ rows: [] })
       .mockResolvedValueOnce({ rows: [{ as_of: now }] });
     const result = await client().getCourseSummary({
       course_project_id: project,
@@ -512,6 +513,13 @@ describe("read-only funding projections", () => {
           approval_limit_usd: "10.0000000000",
           approval_starts_at: now.toISOString(),
           approval_ends_at: terms.ends_at,
+          approval_rectangles: [
+            {
+              amount_usd: "10.0000000000",
+              starts_at: now.toISOString(),
+              ends_at: terms.ends_at,
+            },
+          ],
           starts_at: now.toISOString(),
           ends_at: terms.ends_at,
           grants: [

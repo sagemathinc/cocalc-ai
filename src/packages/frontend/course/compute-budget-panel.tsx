@@ -335,13 +335,30 @@ export function ComputeBudget({
             {moneyToCurrency(pool.reserved_usd)} · Returned{" "}
             {moneyToCurrency(pool.released_usd)}
           </p>
-          <Typography.Paragraph type="secondary">
-            Secure authorization: up to{" "}
-            {moneyToCurrency(pool.approval_limit_usd)} from{" "}
-            {new Date(pool.approval_starts_at).toLocaleString()} through{" "}
-            {new Date(pool.approval_ends_at).toLocaleString()}. Changes within
-            this envelope do not require another secure authorization.
-          </Typography.Paragraph>
+          <div style={{ color: UI_COLORS.secondary, marginBottom: 16 }}>
+            <div>Secure authorizations:</div>
+            <ul style={{ marginBlock: 4 }}>
+              {(
+                pool.approval_rectangles ?? [
+                  {
+                    amount_usd: pool.approval_limit_usd,
+                    starts_at: pool.approval_starts_at,
+                    ends_at: pool.approval_ends_at,
+                  },
+                ]
+              ).map((approval, index) => (
+                <li
+                  key={`${approval.amount_usd}-${approval.starts_at}-${approval.ends_at}-${index}`}
+                >
+                  Up to {moneyToCurrency(approval.amount_usd)} from{" "}
+                  {new Date(approval.starts_at).toLocaleString()} through{" "}
+                  {new Date(approval.ends_at).toLocaleString()}
+                </li>
+              ))}
+            </ul>
+            Changes covered by one of these authorizations do not require
+            another secure authorization.
+          </div>
           <div
             role="region"
             aria-label="Student budget details"

@@ -34,14 +34,14 @@ with different terms is rejected. UI and CLI open the returned URL and poll the
 account-authenticated status RPC. They never receive a redeemable approval token.
 Do not expose the factory's server-only `approve` method as a hub/agent RPC.
 
-The approved pool amount and date window are a durable envelope, stored
-separately from the live held budget. Grant reallocations, pool reductions,
-closures, and restoring a previously reduced amount/date inside that envelope
-commit directly through the payer's financial transaction. Raising the maximum,
-starting earlier, or ending later creates a new isolated approval intent. The
-classification is recomputed under the same locks as the write; the browser's
-preview is not authoritative. Direct operations have their own exact-terms
-idempotency journal.
+Each approved pool amount and date window is stored as a distinct durable
+rectangle, separately from the live held budget. Axes from different approvals
+are never combined. Grant reallocations, pool reductions, closures, and
+restoring a previously reduced amount/date covered by one rectangle commit
+directly through the payer's financial transaction. A combination not covered
+by one rectangle creates a new isolated approval intent. The classification is
+recomputed under the same locks as the write; the browser's preview is not
+authoritative. Direct operations have their own exact-terms idempotency journal.
 
 The generic store factory is `createCourseFundingApprovals({ approval_origin,
 validateTerms, resolveReview, apply })`. Its callback receives
@@ -202,11 +202,14 @@ session. Financial email challenges deliberately send a code without a link so
 the proof is entered on the isolated origin rather than redeemed on the normal
 application origin.
 
-The seed listener owns only the intent-bound approval browser session. Password
+The seed listener owns only the approval browser session in the seed-global
+`financial_approval_sessions` table; it never writes an attached home's normal
+`account_auth_sessions`. Password
 and second-factor verification run on the account's authoritative home bay over
 the authenticated inter-bay service. The WebAuthn challenge uses the isolated
-origin and the parent application RP ID, allowing an existing application
-passkey while still requiring the browser to interact with the isolated host.
+origin and application RP ID. A sibling approval host is accepted only through
+the explicitly configured WebAuthn Related Origins path; otherwise the approval
+host must be the RP ID or its child.
 The approval session is bound to the payer account and isolated origin, expires
 after 8 hours, and has no normal-application authority. It may skip independent
 sign-in for another intent during that window, but every exact financial intent

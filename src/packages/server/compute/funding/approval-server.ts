@@ -23,13 +23,17 @@ import {
   fundingSessionHash,
   getFundingApprovalEmailStatus,
   issueFundingApprovalSession,
+  requireFundingApprovalEmailForPayer,
   requireFundingApprovalSession,
   startFundingApprovalPasskey,
   verifyFundingApprovalCode,
   type FundingApprovalPendingAuth,
   type FundingApprovalReadyAuth,
 } from "./approval-auth";
-import { validateFundingListener } from "./approval-config";
+import {
+  fundingApprovalRelatedOrigin,
+  validateFundingListener,
+} from "./approval-config";
 import type { FundingApprovalListenerConfig } from "./approval-config";
 import type { CourseFundingApprovals, FundingIntent } from "./approvals";
 import type { CourseFundingDraft } from "@cocalc/util/compute-funding";
@@ -313,10 +317,11 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   app.disable("x-powered-by");
   app.set("trust proxy", false);
   const csrfKey = randomBytes(32);
-  // Bound credential attempts across this single pinned listener.
+  // A valid intent is an unguessable admission token. Rate limits are scoped
+  // to that intent/account so arbitrary UUIDs cannot consume shared capacity.
   let windowStart = Date.now();
-  let attempts = 0;
-  const perEmail = new Map<string, number>();
+  const perIntent = new Map<string, number>();
+  const perIntentEmail = new Map<string, number>();
   const pendingAuth = new Map<string, FundingApprovalPendingAuth>();
   function removeExpiredPendingAuth() {
     const now = Date.now();
@@ -324,17 +329,27 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       if (auth.expires_at <= now) pendingAuth.delete(flow);
     }
   }
-  function rateLimit(email: string) {
+  function resetRateLimits() {
     if (Date.now() - windowStart > 60_000) {
       windowStart = Date.now();
-      attempts = 0;
-      perEmail.clear();
+      perIntent.clear();
+      perIntentEmail.clear();
       removeExpiredPendingAuth();
     }
-    const count = (perEmail.get(email) ?? 0) + 1;
-    if (++attempts > 60 || count > 5)
+  }
+  function rateLimitIntent(intent: string) {
+    resetRateLimits();
+    const intentCount = (perIntent.get(intent) ?? 0) + 1;
+    if (intentCount > 60)
       throw new Error("Too many financial sign-in attempts");
-    perEmail.set(email, count);
+    perIntent.set(intent, intentCount);
+  }
+  function rateLimitAccountEmail(intent: string, payer: string, email: string) {
+    resetRateLimits();
+    const accountEmailKey = `${intent}:${payer}:${email}`;
+    const emailCount = (perIntentEmail.get(accountEmailKey) ?? 0) + 1;
+    if (emailCount > 5) throw new Error("Too many financial sign-in attempts");
+    perIntentEmail.set(accountEmailKey, emailCount);
   }
   function csrf(
     req: Request,
@@ -434,14 +449,14 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     id: string,
     auth: FundingApprovalReadyAuth,
   ) {
+    const payer = await requireSignInIntent(id);
+    if (payer !== auth.account_id) {
+      throw new Error("Financial sign-in failed");
+    }
     const signedIn = await issueFundingApprovalSession({
       auth,
       intent_id: id,
       origin: url.origin,
-    });
-    await approvals.retrieve({
-      intent_id: id,
-      payer_account_id: signedIn.account_id,
     });
     const approvalSessionAge = 8 * 60 * 60_000;
     setCookie(res, COOKIE, signedIn.token, secure, approvalSessionAge);
@@ -467,6 +482,9 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       origin: url.origin,
     });
     return { payer_account_id, session_hash };
+  }
+  async function requireSignInIntent(id: string): Promise<string> {
+    return await approvals.payerForSignIn(id);
   }
   app.use((req, res, next) => {
     res.set({
@@ -526,6 +544,7 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       /* Independent sign-in below. */
     }
     if (!actor) {
+      await requireSignInIntent(id);
       if (req.query.restart === "1") {
         clearPendingAuth(req, res);
       }
@@ -630,7 +649,13 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     const email_address = String(req.body.email ?? "")
       .trim()
       .toLowerCase();
-    rateLimit(email_address);
+    const payer = await requireSignInIntent(id);
+    rateLimitIntent(id);
+    await requireFundingApprovalEmailForPayer({
+      email_address,
+      payer_account_id: payer,
+    });
+    rateLimitAccountEmail(id, payer, email_address);
     try {
       setPendingAuth(
         req,
@@ -654,7 +679,13 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     const email_address = String(req.body.email ?? "")
       .trim()
       .toLowerCase();
-    rateLimit(email_address);
+    const payer = await requireSignInIntent(id);
+    rateLimitIntent(id);
+    await requireFundingApprovalEmailForPayer({
+      email_address,
+      payer_account_id: payer,
+    });
+    rateLimitAccountEmail(id, payer, email_address);
     try {
       const result = await beginFundingApprovalPassword({
         email_address,
@@ -739,6 +770,9 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
           origin: url.origin,
           rp_id: config.webauthn_rp_id ?? url.hostname,
           rp_name: siteName,
+          ...(fundingApprovalRelatedOrigin(config) === url.origin
+            ? { allow_related_origin: true }
+            : {}),
         },
       });
       res.json({ options: started.options });

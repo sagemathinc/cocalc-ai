@@ -208,6 +208,59 @@ it("serializes direct envelope edits and replays only the committed operation", 
   expect(rows).toEqual([{ operation_id }]);
 });
 
+it("does not combine amount and date axes from separate approvals", async () => {
+  const f = await fixture();
+  const longerEnd = new Date(
+    f.allocation.pool.ends_at.getTime() + 86_400_000,
+  ).toISOString();
+  await f.apply({
+    ...f.base,
+    action: "revise",
+    amount_usd: "10",
+    ends_at: longerEnd,
+    grants: f.allocation.grants.map((grant, index) => ({
+      grant_id: grant.id,
+      expected_version: grant.version,
+      action: "revise" as const,
+      amount_usd: index === 0 ? "4" : "6",
+      ends_at: longerEnd,
+    })),
+  });
+  const current = await f.pool();
+  const grants = (
+    await getPool().query(
+      "SELECT * FROM compute_funding_grants WHERE pool_id=$1 ORDER BY id",
+      [f.base.pool_id],
+    )
+  ).rows;
+  const preview = await withFundingAccountTransaction(f.payer, (db) =>
+    previewCourseFundingPoolChangeInTransaction(db, {
+      payer_account_id: f.payer,
+      terms: {
+        ...f.base,
+        expected_version: current.version,
+        action: "revise",
+        amount_usd: "100",
+        grants: grants.map((grant, index) => ({
+          grant_id: grant.id,
+          expected_version: grant.version,
+          action: "revise" as const,
+          amount_usd: index === 0 ? "40" : "60",
+        })),
+      },
+    }),
+  );
+  expect(preview.requires_financial_approval).toBe(true);
+  expect(
+    (
+      await getPool().query(
+        "SELECT amount_usd,starts_at,ends_at FROM compute_funding_pool_approvals WHERE pool_id=$1 ORDER BY created_at",
+        [f.base.pool_id],
+      )
+    ).rows,
+  ).toHaveLength(2);
+});
+
 it("revokes only a student's uncommitted capacity without returning earmarked pool money to the payer", async () => {
   const f = await fixture();
   await f.apply({

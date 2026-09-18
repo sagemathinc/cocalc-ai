@@ -71,11 +71,13 @@ export const TABLE_OWNERSHIP = {
       "account_funding_authorities",
       "account_funding_holds",
       "compute_funding_pools",
+      "compute_funding_pool_approvals",
       "compute_funding_grants",
       "compute_funding_reservations",
       "compute_funding_events",
       "compute_funding_purchase_attributions",
       "compute_vm_personal_consents",
+      "financial_approval_sessions",
     ],
     {
       ownership: "seed-global",

@@ -54,6 +54,13 @@ export interface CourseFundingPoolSummary extends FundingBudget {
   approval_limit_usd: string;
   approval_starts_at: string;
   approval_ends_at: string;
+  // Separate approvals are exact rectangles; their amount/date axes must not
+  // be combined. Missing on older hubs means use the legacy fields above.
+  approval_rectangles?: Array<{
+    amount_usd: string;
+    starts_at: string;
+    ends_at: string;
+  }>;
   starts_at: string;
   ends_at: string;
   grants: CourseFundingGrantSummary[];

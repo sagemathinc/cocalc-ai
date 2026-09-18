@@ -1372,6 +1372,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
         origin: string;
         rp_id: string;
         rp_name: string;
+        allow_related_origin?: boolean;
       };
     }
   | {

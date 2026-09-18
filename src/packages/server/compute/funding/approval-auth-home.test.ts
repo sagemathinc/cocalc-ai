@@ -160,3 +160,33 @@ it("uses the isolated origin and parent RP ID for passkey verification", async (
   });
   expect(finishSignInPasskeyAuthentication).not.toHaveBeenCalled();
 });
+
+it("binds related-origin passkeys to the challenged approval origin", async () => {
+  query.mockResolvedValue({
+    rows: [
+      {
+        account_id,
+        metadata: {
+          financial_approval_origin: approval_origin,
+          financial_intent_id: intent_id,
+        },
+      },
+    ],
+  });
+  await expect(
+    financialApprovalAuthOnHome({
+      action: "start-passkey",
+      account_id,
+      approval_origin,
+      intent_id,
+      challenge_id,
+      relying_party: {
+        origin: "https://attacker.example.test",
+        rp_id: "example.test",
+        rp_name: "CoCalc",
+        allow_related_origin: true,
+      },
+    }),
+  ).rejects.toThrow("passkey origin mismatch");
+  expect(startSignInPasskeyAuthentication).not.toHaveBeenCalled();
+});

@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import getPool from "@cocalc/database/pool";
 import type { PoolClient } from "@cocalc/database/pool";
 import type {
@@ -326,19 +326,9 @@ async function plan(
         );
     }
   }
-  const approvalLimit = toDecimal(
-    current.approval_limit_usd ??
-      toDecimal(current.authorized_usd).minus(current.released_usd),
-  );
-  const approvalStarts = current.approval_starts_at ?? current.starts_at;
-  const approvalEnds = current.approval_ends_at ?? current.ends_at;
   const requiresFinancialApproval =
     terms.action !== "close" &&
-    (toDecimal(pool.authorized_usd)
-      .minus(pool.released_usd)
-      .gt(approvalLimit) ||
-      pool.starts_at < approvalStarts ||
-      pool.ends_at > approvalEnds);
+    !(await isInsideApprovedRectangle(db, current, pool));
   return {
     current,
     pool,
@@ -367,6 +357,49 @@ function expandsCommitment(
       .gt(toDecimal(before.authorized_usd).minus(before.released_usd)) ||
     after.starts_at < before.starts_at ||
     after.ends_at > before.ends_at
+  );
+}
+
+interface PoolApprovalRectangle {
+  amount_usd: string;
+  starts_at: Date;
+  ends_at: Date;
+}
+
+async function isInsideApprovedRectangle(
+  db: PoolClient,
+  current: CourseFundingPoolRow,
+  proposed: CourseFundingPoolRow,
+): Promise<boolean> {
+  const { rows } = await db.query<PoolApprovalRectangle>(
+    `SELECT amount_usd,starts_at,ends_at
+       FROM compute_funding_pool_approvals
+      WHERE pool_id=$1 AND payer_account_id=$2`,
+    [current.id, current.payer_account_id],
+  );
+  // Existing development pools predate the rectangle table. Their prior
+  // columns represent one exact approval, not independently mergeable axes.
+  const approvals = rows.length
+    ? rows
+    : [
+        {
+          amount_usd:
+            current.approval_limit_usd ??
+            moneyToDbString(
+              toDecimal(current.authorized_usd).minus(current.released_usd),
+            ),
+          starts_at: current.approval_starts_at ?? current.starts_at,
+          ends_at: current.approval_ends_at ?? current.ends_at,
+        },
+      ];
+  const amount = toDecimal(proposed.authorized_usd).minus(
+    proposed.released_usd,
+  );
+  return approvals.some(
+    (approval) =>
+      amount.lte(approval.amount_usd) &&
+      proposed.starts_at >= approval.starts_at &&
+      proposed.ends_at <= approval.ends_at,
   );
 }
 
@@ -437,28 +470,47 @@ async function applyPlannedPoolChange(
   pool.approval_starts_at ??= current.starts_at;
   pool.approval_ends_at ??= current.ends_at;
   if (opts.extend_approval_envelope && planned.requires_financial_approval) {
-    const currentLimit = toDecimal(
-      current.approval_limit_usd ??
-        toDecimal(current.authorized_usd).minus(current.released_usd),
-    );
     const requestedLimit = toDecimal(pool.authorized_usd).minus(
       pool.released_usd,
     );
-    pool.approval_limit_usd = moneyToDbString(
-      requestedLimit.gt(currentLimit) ? requestedLimit : currentLimit,
+    // Preserve a legacy pool's prior exact rectangle before replacing the
+    // compatibility columns with the newly reviewed rectangle.
+    await db.query(
+      `INSERT INTO compute_funding_pool_approvals
+         (id,pool_id,payer_account_id,operation_id,amount_usd,starts_at,ends_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (pool_id,operation_id) DO NOTHING`,
+      [
+        randomUUID(),
+        current.id,
+        payer,
+        current.operation_id,
+        current.approval_limit_usd ??
+          moneyToDbString(
+            toDecimal(current.authorized_usd).minus(current.released_usd),
+          ),
+        current.approval_starts_at ?? current.starts_at,
+        current.approval_ends_at ?? current.ends_at,
+      ],
     );
-    pool.approval_starts_at = new Date(
-      Math.min(
-        (current.approval_starts_at ?? current.starts_at).getTime(),
-        pool.starts_at.getTime(),
-      ),
+    await db.query(
+      `INSERT INTO compute_funding_pool_approvals
+         (id,pool_id,payer_account_id,operation_id,amount_usd,starts_at,ends_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7)
+       ON CONFLICT (pool_id,operation_id) DO NOTHING`,
+      [
+        randomUUID(),
+        current.id,
+        payer,
+        opts.operation_id,
+        moneyToDbString(requestedLimit),
+        pool.starts_at,
+        pool.ends_at,
+      ],
     );
-    pool.approval_ends_at = new Date(
-      Math.max(
-        (current.approval_ends_at ?? current.ends_at).getTime(),
-        pool.ends_at.getTime(),
-      ),
-    );
+    pool.approval_limit_usd = moneyToDbString(requestedLimit);
+    pool.approval_starts_at = pool.starts_at;
+    pool.approval_ends_at = pool.ends_at;
   }
   const added = toDecimal(pool.authorized_usd).minus(current.authorized_usd);
   if (added.gt(0)) {

@@ -21,6 +21,7 @@ import {
   finishFundingApprovalPasskey,
   getFundingApprovalEmailStatus,
   issueFundingApprovalSession,
+  requireFundingApprovalEmailForPayer,
   requireFundingApprovalSession,
   startFundingApprovalPasskey,
 } from "./approval-auth";
@@ -37,6 +38,7 @@ jest.mock("./approval-auth", () => ({
   finishFundingApprovalPasskey: jest.fn(),
   getFundingApprovalEmailStatus: jest.fn(),
   issueFundingApprovalSession: jest.fn(),
+  requireFundingApprovalEmailForPayer: jest.fn(),
   requireFundingApprovalSession: jest.fn(),
   startFundingApprovalPasskey: jest.fn(),
   verifyFundingApprovalCode: jest.fn(),
@@ -178,6 +180,10 @@ describe("isolated financial browser approval", () => {
     })),
     status: jest.fn(async () => ({ status: "pending" })),
     approve: apply,
+    payerForSignIn: jest.fn(async (intentId: string) => {
+      if (intentId !== id || applied) throw new Error("Funding intent missing");
+      return payer;
+    }),
   };
   beforeAll(async () => {
     const port = await freePort();
@@ -220,6 +226,12 @@ describe("isolated financial browser approval", () => {
       status: applied ? ("applied" as const) : intent.status,
     }));
     sessions.clear();
+    (requireFundingApprovalEmailForPayer as jest.Mock).mockImplementation(
+      async ({ email_address, payer_account_id }) => {
+        if (email_address !== loginEmail || payer_account_id !== payer)
+          throw new Error("wrong payer");
+      },
+    );
     (beginFundingApprovalPassword as jest.Mock).mockImplementation(
       async (opts) => {
         if (
@@ -339,6 +351,29 @@ describe("isolated financial browser approval", () => {
     expect(await page.locator("body").innerText()).toContain(
       "student@example.test",
     );
+  });
+  it("rejects arbitrary intent identifiers without consuming valid-intent sign-in capacity", async () => {
+    for (let i = 0; i < 65; i++) {
+      const response = await context.request.get(
+        `${origin}/funding/${randomUUID()}`,
+      );
+      expect(response.status()).toBeGreaterThanOrEqual(400);
+    }
+    await page.goto(`${origin}/funding/${id}`);
+    const csrf = await page.locator('input[name="csrf"]').inputValue();
+    for (let i = 0; i < 10; i++) {
+      const response = await context.request.post(
+        `${origin}/funding/${id}/sign-in/email`,
+        {
+          headers: { Origin: origin, "Sec-Fetch-Site": "same-origin" },
+          form: { csrf, email: `not-the-payer-${i}@example.test` },
+        },
+      );
+      expect(response.status()).toBeGreaterThanOrEqual(400);
+    }
+    await page.getByRole("textbox", { name: "Email address" }).fill(loginEmail);
+    await page.getByRole("button", { name: "Continue with email" }).click();
+    expect(beginFundingApprovalEmail).toHaveBeenCalledTimes(1);
   });
   it("supports passwordless email followed by a passkey", async () => {
     await context.addInitScript(() => {
@@ -810,7 +845,14 @@ describe("isolated financial browser approval", () => {
 it("uses host-only Secure __Host cookies behind the pinned HTTPS proxy", async () => {
   const port = await freePort();
   const origin = "https://approve.example.test";
-  const approvals: any = { approval_origin: origin };
+  const intentId = randomUUID();
+  const approvals: any = {
+    approval_origin: origin,
+    payerForSignIn: async (id: string) => {
+      if (id !== intentId) throw new Error("Funding intent missing");
+      return randomUUID();
+    },
+  };
   const server = await startCourseFundingApprovalServer({
     approvals,
     config: {
@@ -829,7 +871,7 @@ it("uses host-only Secure __Host cookies behind the pinned HTTPS proxy", async (
           hostname: "127.0.0.2",
           port,
           localAddress,
-          path: `/funding/${randomUUID()}`,
+          path: `/funding/${intentId}`,
           headers,
         },
         (res) => {

@@ -4,21 +4,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import {
-  getAuthSession,
-  requireFreshAuthForSessionHash,
-  recordNewAuthSession,
-} from "@cocalc/server/auth/auth-sessions";
+import getPool from "@cocalc/database/pool";
 import {
   fundingSessionHash,
   issueFundingApprovalSession,
   requireFundingApprovalSession,
 } from "./approval-auth";
 
-jest.mock("@cocalc/server/auth/auth-sessions", () => ({
-  getAuthSession: jest.fn(),
-  requireFreshAuthForSessionHash: jest.fn(),
-  recordNewAuthSession: jest.fn(),
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: jest.fn(),
 }));
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({}));
 jest.mock("@cocalc/server/bay-config", () => ({
@@ -32,6 +27,8 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 it("binds the reusable independently verified session to origin and payer", async () => {
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  (getPool as jest.Mock).mockReturnValue({ query });
   const now = new Date().toISOString();
   const result = await issueFundingApprovalSession({
     auth: {
@@ -45,32 +42,32 @@ it("binds the reusable independently verified session to origin and payer", asyn
     intent_id,
     origin,
   });
-  expect(recordNewAuthSession).toHaveBeenCalledWith(
-    expect.objectContaining({
-      session_hash: fundingSessionHash(result.token),
+  expect(query).toHaveBeenCalledWith(
+    expect.stringContaining("INSERT INTO financial_approval_sessions"),
+    expect.arrayContaining([
+      fundingSessionHash(result.token),
       account_id,
-      primary_auth_method: "email_code",
-      factor_level: "passkey",
-      metadata: {
-        financial_approval_origin: origin,
-        financial_approval_scope: "account",
-        authenticated_for_intent_id: intent_id,
-      },
-    }),
+      origin,
+      "email_code",
+      "passkey",
+      intent_id,
+    ]),
   );
-  const created = (recordNewAuthSession as jest.Mock).mock.calls[0][0];
-  const lifetime = created.fresh_auth_until.getTime() - Date.now();
+  const created = query.mock.calls[0][1];
+  const lifetime = created[8].getTime() - Date.now();
   expect(lifetime).toBeGreaterThan(7.9 * 60 * 60_000);
   expect(lifetime).toBeLessThanOrEqual(8 * 60 * 60_000);
 });
 it("accepts the reusable approval session for another exact intent", async () => {
-  (getAuthSession as jest.Mock).mockResolvedValue({
-    account_id,
-    metadata: {
-      financial_approval_origin: origin,
-      financial_approval_scope: "account",
-    },
+  const query = jest.fn().mockResolvedValue({
+    rows: [
+      {
+        account_id,
+        approval_origin: origin,
+      },
+    ],
   });
+  (getPool as jest.Mock).mockReturnValue({ query });
   await expect(
     requireFundingApprovalSession({
       session_hash: "hash",
@@ -80,16 +77,15 @@ it("accepts the reusable approval session for another exact intent", async () =>
     }),
   ).resolves.toBe(account_id);
 });
-it("rejects ordinary, wrong-intent and wrong-origin sessions", async () => {
-  for (const metadata of [
-    {},
-    { financial_approval_origin: origin, financial_intent_id: randomUUID() },
-    {
-      financial_approval_origin: "http://localhost:9100",
-      financial_intent_id: intent_id,
-    },
+it("rejects missing, wrong-payer and wrong-origin sessions", async () => {
+  for (const session of [
+    undefined,
+    { account_id: randomUUID(), approval_origin: origin },
+    { account_id, approval_origin: "http://localhost:9100" },
   ]) {
-    (getAuthSession as jest.Mock).mockResolvedValue({ account_id, metadata });
+    (getPool as jest.Mock).mockReturnValue({
+      query: jest.fn().mockResolvedValue({ rows: session ? [session] : [] }),
+    });
     await expect(
       requireFundingApprovalSession({
         session_hash: "hash",
@@ -99,32 +95,6 @@ it("rejects ordinary, wrong-intent and wrong-origin sessions", async () => {
       }),
     ).rejects.toThrow("Financial sign-in");
   }
-  expect(requireFreshAuthForSessionHash).not.toHaveBeenCalled();
-});
-it("uses existing fresh-auth expiry/revocation verification without impersonation", async () => {
-  (getAuthSession as jest.Mock).mockResolvedValue({
-    account_id,
-    metadata: {
-      financial_approval_origin: origin,
-      financial_intent_id: intent_id,
-    },
-  });
-  (requireFreshAuthForSessionHash as jest.Mock).mockRejectedValue(
-    new Error("expired"),
-  );
-  await expect(
-    requireFundingApprovalSession({
-      session_hash: "hash",
-      payer_account_id: account_id,
-      intent_id,
-      origin,
-    }),
-  ).rejects.toThrow("expired");
-  expect(requireFreshAuthForSessionHash).toHaveBeenCalledWith({
-    session_hash: "hash",
-    account_id,
-    allow_actor_impersonation: false,
-  });
 });
 
 it("rechecks expiry and revocation under a database lock before committing", async () => {
@@ -140,7 +110,7 @@ it("rechecks expiry and revocation under a database lock before committing", asy
   ).rejects.toThrow("Financial sign-in required");
   expect(query).toHaveBeenCalledWith(
     expect.stringMatching(
-      /revoked_at IS NULL[\s\S]*fresh_auth_until > clock_timestamp\(\)[\s\S]*FOR SHARE/,
+      /revoked_at IS NULL[\s\S]*expire > clock_timestamp\(\)[\s\S]*FOR SHARE/,
     ),
     ["hash"],
   );
