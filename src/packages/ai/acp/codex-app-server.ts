@@ -2621,12 +2621,11 @@ export class CodexAppServerAgent implements AcpAgent {
   }
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
-    let maxRetries = 0;
-    let retryDelayMs = 0;
-    let announceRetry = true;
-    let retryMessage = (_attempt: number, _maxRetries: number) => "Retrying...";
-    let exhaustedMessage = (error: string) => error;
-    for (let attempt = 0; ; attempt += 1) {
+    const retriesByKind = new Map<
+      InProcessRetryableAppServerFailureKind,
+      number
+    >();
+    for (;;) {
       try {
         const outcome = await this.evaluateOnce(request);
         if (outcome === "interrupted") {
@@ -2658,33 +2657,31 @@ export class CodexAppServerAgent implements AcpAgent {
           });
           return;
         }
-        if (isRetryableAppServerError(err)) {
-          const retryKind = err.kind;
-          if (retryKind === "model-capacity") {
-            await request.stream({
-              type: "error",
-              error: err.message,
-              code: CODEX_ACP_RECOVERY_ERROR_CODE.modelCapacity,
-              retryable: true,
-            });
-            return;
-          }
-          const policy = getRetryPolicyForFailure(retryKind);
-          maxRetries = policy.maxRetries;
-          retryDelayMs = policy.retryDelayMs;
-          announceRetry = policy.announceRetry ?? true;
-          retryMessage = policy.retryMessage;
-          exhaustedMessage = policy.exhaustedMessage;
-        }
-        if (!isRetryableAppServerError(err) || attempt >= maxRetries) {
-          const error =
-            isRetryableAppServerError(err) && attempt >= maxRetries
-              ? exhaustedMessage(err.message ?? `${err}`)
-              : ((err as Error)?.message ?? `${err}`);
-          await request.stream({ type: "error", error });
+        if (!isRetryableAppServerError(err)) {
+          await request.stream({ type: "error", error: terminalError });
           return;
         }
-        const retryNumber = attempt + 1;
+        const retryKind = err.kind;
+        if (retryKind === "model-capacity") {
+          await request.stream({
+            type: "error",
+            error: err.message,
+            code: CODEX_ACP_RECOVERY_ERROR_CODE.modelCapacity,
+            retryable: true,
+          });
+          return;
+        }
+        const policy = getRetryPolicyForFailure(retryKind);
+        const completedRetries = retriesByKind.get(retryKind) ?? 0;
+        if (completedRetries >= policy.maxRetries) {
+          await request.stream({
+            type: "error",
+            error: policy.exhaustedMessage(err.message ?? `${err}`),
+          });
+          return;
+        }
+        const retryNumber = completedRetries + 1;
+        retriesByKind.set(retryKind, retryNumber);
         logger.warn("codex app-server: retrying transient failure", {
           projectId: request.chat?.project_id ?? request.project_id,
           accountId: request.account_id,
@@ -2692,21 +2689,21 @@ export class CodexAppServerAgent implements AcpAgent {
           threadId: err.threadId,
           turnId: err.turnId,
           attempt: retryNumber,
-          maxRetries,
-          delayMs: retryDelayMs,
+          maxRetries: policy.maxRetries,
+          delayMs: policy.retryDelayMs,
           stderrTail: err.stderrTail ?? [],
         });
-        if (announceRetry) {
+        if (policy.announceRetry ?? true) {
           await request.stream({
             type: "event",
             event: {
               type: "thinking",
-              text: retryMessage(retryNumber, maxRetries),
+              text: policy.retryMessage(retryNumber, policy.maxRetries),
             },
           });
         }
-        if (retryDelayMs > 0) {
-          await delay(retryDelayMs * retryNumber);
+        if (policy.retryDelayMs > 0) {
+          await delay(policy.retryDelayMs * retryNumber);
         }
       }
     }
@@ -2730,7 +2727,7 @@ export class CodexAppServerAgent implements AcpAgent {
       }).filter(([, value]) => typeof value === "string"),
     ) as Record<string, string>;
     const cwd = this.resolveCwd(config);
-    const { runtime } = await this.acquireRuntime({
+    const { runtime, created: runtimeCreated } = await this.acquireRuntime({
       request,
       session,
       cwd,
@@ -2890,6 +2887,31 @@ export class CodexAppServerAgent implements AcpAgent {
               turnMentionFilePath(identityPath)) ||
           (!identityPath && request.mentionReferences.length > 0)
         ) {
+          if (!runtimeCreated) {
+            let backgroundTerminalCount: number;
+            let activeDescendantCount: number;
+            try {
+              const [backgroundCount, descendants] = await Promise.all([
+                this.listBackgroundTerminals(runtime),
+                this.listDescendantThreads(runtime),
+              ]);
+              backgroundTerminalCount = backgroundCount;
+              activeDescendantCount = descendants.filter(
+                (thread) => thread?.status?.type === "active",
+              ).length;
+            } catch (err) {
+              runtimeHealthy = true;
+              throw new Error(
+                `Unable to verify whether this Codex thread still has subagents or background commands running, so CoCalc preserved its current runtime. Retry shortly. ${err}`,
+              );
+            }
+            if (backgroundTerminalCount > 0 || activeDescendantCount > 0) {
+              runtimeHealthy = true;
+              throw new Error(
+                "This Codex thread still has subagents or background commands running, so CoCalc preserved its current runtime. Wait for them to finish or stop them, then retry this message.",
+              );
+            }
+          }
           throw createRetryableAppServerError({
             kind: "runtime-environment-refresh",
             message:
