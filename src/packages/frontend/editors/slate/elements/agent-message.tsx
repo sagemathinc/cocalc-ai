@@ -3,6 +3,12 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  QuestionCircleOutlined,
+  RobotOutlined,
+} from "@ant-design/icons";
 import { useState } from "react";
 import type { AgentSessionActivity } from "@cocalc/conat/agents/personal";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -17,6 +23,54 @@ export interface AgentMessage extends SlateElement {
   type: "agent-message";
   agent_session_id?: string;
   attempt_id?: string;
+}
+
+function deliveryLabel(activity: AgentSessionActivity): string {
+  switch (activity.effective_delivery) {
+    case "idle-wake":
+      return "Woke idle agent";
+    case "live-guidance":
+      return "Delivered as guidance";
+    case "queued-fallback":
+      return "Queued (live unavailable)";
+    case "external-inbox":
+      return "External inbox";
+    case "queued":
+      return "Queued";
+    default:
+      return activity.configured_delivery === "live" ? "Live" : "Queued";
+  }
+}
+
+function outcomePresentation(activity: AgentSessionActivity) {
+  switch (activity.outcome) {
+    case "accepted":
+      return {
+        label: "Accepted for delivery",
+        color: UI_COLORS.success,
+        background: UI_COLORS.successBg,
+        icon: <CheckCircleOutlined />,
+      };
+    case "rejected":
+      return {
+        label: "Rejected",
+        color: UI_COLORS.danger,
+        background: UI_COLORS.dangerBg,
+        icon: <CloseCircleOutlined />,
+      };
+    default:
+      return {
+        label: "Outcome unknown",
+        color: UI_COLORS.warning,
+        background: UI_COLORS.warningBg,
+        icon: <QuestionCircleOutlined />,
+      };
+  }
+}
+
+function observedLabel(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.valueOf()) ? value : date.toLocaleString();
 }
 
 export function agentMessageFromMarkdownFence({
@@ -55,6 +109,7 @@ export function AgentMessageElement({
     throw new Error("Expected agent-message element");
   const message = element as AgentMessage;
   const inspectable = !!(message.agent_session_id && message.attempt_id);
+  const outcome = activity ? outcomePresentation(activity) : undefined;
   async function inspect() {
     const next = !expanded;
     setExpanded(next);
@@ -83,68 +138,175 @@ export function AgentMessageElement({
       className="cocalc-slate-agent-message"
       style={{
         margin: "6px 0",
-        padding: "8px 10px 10px",
-        borderRadius: 10,
-        background: UI_COLORS.inset,
+        padding: "10px 12px 12px",
+        borderRadius: 12,
+        background: UI_COLORS.surface,
         color: UI_COLORS.text,
         border: `1px solid ${UI_COLORS.border}`,
-        borderLeft: `4px solid ${UI_COLORS.info}`,
       }}
     >
-      <button
-        type="button"
+      <div
         contentEditable={false}
-        aria-expanded={expanded}
-        onClick={() => void inspect()}
         style={{
-          appearance: "none",
-          border: 0,
-          padding: 0,
-          background: "transparent",
-          color: UI_COLORS.info,
-          cursor: "pointer",
-          fontSize: 12,
-          fontWeight: 600,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 10,
+          flexWrap: "wrap",
+          marginBottom: 8,
         }}
       >
-        Agent-message quote {expanded ? "(hide details)" : "(inspect)"}
-      </button>
+        <span
+          style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 7,
+            color: UI_COLORS.secondary,
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <span
+            aria-hidden="true"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 25,
+              height: 25,
+              borderRadius: 999,
+              color: UI_COLORS.info,
+              background: UI_COLORS.infoBg,
+            }}
+          >
+            <RobotOutlined />
+          </span>
+          Agent message
+        </span>
+        <button
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => void inspect()}
+          style={{
+            appearance: "none",
+            border: 0,
+            borderRadius: 6,
+            padding: "3px 7px",
+            background: "transparent",
+            color: UI_COLORS.info,
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: 600,
+          }}
+        >
+          {expanded ? "Hide delivery details" : "Inspect delivery"}
+        </button>
+      </div>
       {expanded && (
-        <div contentEditable={false} style={{ color: UI_COLORS.secondary }}>
-          <p>
-            This content is editable project data. A quote does not prove
-            sender, delivery, session membership, or authorization.
-          </p>
-          {loading && <p role="status">Loading operational evidence...</p>}
-          {error && <p role="alert">{error}</p>}
+        <div
+          contentEditable={false}
+          style={{
+            color: UI_COLORS.secondary,
+            background: UI_COLORS.inset,
+            borderRadius: 8,
+            padding: "9px 10px",
+            marginBottom: 10,
+            fontSize: 12,
+          }}
+        >
+          {loading && <div role="status">Loading delivery details...</div>}
+          {error && (
+            <div role="alert">
+              Delivery details are unavailable. This message remains editable
+              project content.
+              <details style={{ marginTop: 7 }}>
+                <summary style={{ cursor: "pointer", color: UI_COLORS.info }}>
+                  Error details
+                </summary>
+                <div style={{ marginTop: 4, overflowWrap: "anywhere" }}>
+                  {error}
+                </div>
+              </details>
+            </div>
+          )}
           {activity && (
-            <dl style={{ margin: "4px 0", fontSize: 12 }}>
-              <dt>Session</dt>
-              <dd>{activity.agent_session_id}</dd>
-              <dt>Attempt</dt>
-              <dd>{activity.attempt_id}</dd>
-              <dt>Source member</dt>
-              <dd>{activity.source_member_id}</dd>
-              <dt>Target member</dt>
-              <dd>{activity.target_member_id}</dd>
-              <dt>Operational outcome</dt>
-              <dd>{activity.outcome ?? "not observed"}</dd>
-              <dt>Delivery</dt>
-              <dd>
-                {activity.effective_delivery ?? activity.configured_delivery}
-              </dd>
-              <dt>Observed</dt>
-              <dd>{activity.observed_at}</dd>
-              <dt>Session generation</dt>
-              <dd>{activity.session_generation}</dd>
-            </dl>
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 7,
+                  flexWrap: "wrap",
+                  marginBottom: 7,
+                }}
+              >
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    borderRadius: 999,
+                    padding: "3px 8px",
+                    color: outcome!.color,
+                    background: outcome!.background,
+                    fontWeight: 600,
+                  }}
+                >
+                  {outcome!.icon}
+                  {outcome!.label}
+                </span>
+                <span>{deliveryLabel(activity)}</span>
+                <span aria-hidden="true">·</span>
+                <time dateTime={activity.observed_at}>
+                  {observedLabel(activity.observed_at)}
+                </time>
+              </div>
+              <div style={{ lineHeight: 1.45 }}>
+                Operational evidence confirms admission, not task completion.
+                The message text is editable project data.
+              </div>
+              <details style={{ marginTop: 8 }}>
+                <summary style={{ cursor: "pointer", color: UI_COLORS.info }}>
+                  Technical details
+                </summary>
+                <dl
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "minmax(90px, auto) minmax(0, 1fr)",
+                    columnGap: 10,
+                    rowGap: 3,
+                    margin: "7px 0 0",
+                    overflowWrap: "anywhere",
+                  }}
+                >
+                  <dt>Session</dt>
+                  <dd style={{ margin: 0 }}>{activity.agent_session_id}</dd>
+                  <dt>Attempt</dt>
+                  <dd style={{ margin: 0 }}>{activity.attempt_id}</dd>
+                  <dt>Source</dt>
+                  <dd style={{ margin: 0 }}>{activity.source_member_id}</dd>
+                  <dt>Target</dt>
+                  <dd style={{ margin: 0 }}>{activity.target_member_id}</dd>
+                  <dt>Generation</dt>
+                  <dd style={{ margin: 0 }}>{activity.session_generation}</dd>
+                </dl>
+              </details>
+            </>
           )}
           {!inspectable && !loading && (
-            <p>No authenticated correlation metadata is attached.</p>
+            <div>No authenticated delivery details are attached.</div>
           )}
         </div>
       )}
-      <div style={{ minWidth: 0, overflowWrap: "anywhere" }}>{children}</div>
+      <div
+        style={{
+          minWidth: 0,
+          overflowWrap: "anywhere",
+          lineHeight: 1.5,
+        }}
+      >
+        {children}
+      </div>
     </section>
   );
 }

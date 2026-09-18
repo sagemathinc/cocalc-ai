@@ -148,6 +148,7 @@ import {
   ChatReadAloudButton,
   CodexFinalResponseCopy,
 } from "./codex-final-response-copy";
+import { stripAgentRpcPrompt } from "./agent-message-presentation";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -381,7 +382,6 @@ export function getFocusMessageButtonStyle(): CSSProperties {
 function rpcSourceAttribution(message: ChatMessageTyped):
   | {
       label: string;
-      detail: string;
       agent_session_id?: string;
       attempt_id?: string;
     }
@@ -391,7 +391,6 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   const source = rpc?.source;
   const agentId = `${source?.agent_id ?? ""}`.trim();
   if (!agentId) return;
-  const short = agentId.length > 12 ? `${agentId.slice(0, 8)}...` : agentId;
   const evidence = {
     agent_session_id:
       typeof rpc.agent_session_id === "string"
@@ -402,14 +401,12 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   if (source.kind === "external") {
     return {
       ...evidence,
-      label: `External agent ${short}`,
-      detail: `Authenticated external agent ${agentId}, installation ${source.installation_id ?? "unknown"}`,
+      label: "External agent message",
     };
   }
   return {
     ...evidence,
-    label: `Agent ${short}`,
-    detail: `Authenticated agent ${agentId} from project ${source.project_id ?? "unknown"}`,
+    label: "Agent message",
   };
 }
 
@@ -1093,15 +1090,26 @@ export default function Message({
     return recordCodexFirstResponseVisible(responseParentMessageId);
   }, [isCodexThread, renderedMessageValue, responseParentMessageId]);
   const renderedMessageMarkdown = useMemo(() => {
-    const value = is_viewers_message
+    const formattedValue = is_viewers_message
       ? renderedMessageValue
       : formatCodexErrorMarkdown(
           linkifyCommitHashes(renderedMessageValue),
           lite,
           acpState === "error",
         );
+    const rawRpc = field<any>(message, "agent_rpc");
+    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
+    const value = rpcAttribution
+      ? stripAgentRpcPrompt(formattedValue, rpc)
+      : formattedValue;
     return rpcAttribution ? agentMessageFence(value, rpcAttribution) : value;
-  }, [is_viewers_message, renderedMessageValue, acpState, rpcAttribution]);
+  }, [
+    is_viewers_message,
+    renderedMessageValue,
+    acpState,
+    rpcAttribution,
+    message,
+  ]);
   const showCodexErrorHelp =
     isCodexThread && !is_viewers_message && acpState === "error";
   const acpResubmitParentMessage = (() => {
@@ -2688,23 +2696,20 @@ export default function Message({
 
     return (
       <Col key={1} xs={mainXS}>
-        <div
-          style={{ display: "flex", margin: "10px 0 -10px 0" }}
-          onClick={() => {
-            const d = dateValue(message);
-            if (d != null) actions?.setFragment(d);
-          }}
-        >
-          {rpcAttribution ? (
-            <Tooltip
-              title={`${rpcAttribution.detail}. This project transcript is collaborator-editable; authorization was checked separately at delivery time.`}
-            >
-              <Tag icon={<Icon name="robot" />}>{rpcAttribution.label}</Tag>
-            </Tooltip>
-          ) : !is_prev_sender && !is_viewers_message && senderId ? (
+        {!rpcAttribution &&
+        !is_prev_sender &&
+        !is_viewers_message &&
+        senderId ? (
+          <div
+            style={{ display: "flex", margin: "10px 0 -10px 0" }}
+            onClick={() => {
+              const d = dateValue(message);
+              if (d != null) actions?.setFragment(d);
+            }}
+          >
             <Name sender_name={senderName} />
-          ) : undefined}
-        </div>
+          </div>
+        ) : null}
         <div style={messageStyle} className="smc-chat-message">
           {renderMessageHeader(lighten)}
           {messageBodyMode === "edit"

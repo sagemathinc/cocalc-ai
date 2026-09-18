@@ -67,11 +67,15 @@ test("shows retained evidence without claiming that editable content is verified
       Edited peer result
     </AgentMessageElement>,
   );
-  fireEvent.click(screen.getByRole("button", { name: /inspect/i }));
-  expect(
-    screen.getByText(/content is editable project data/i),
-  ).toBeInTheDocument();
-  await waitFor(() => expect(screen.getByText("accepted")).toBeVisible());
+  expect(screen.getByText("Agent message")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Inspect delivery" }));
+  await waitFor(() =>
+    expect(screen.getByText("Accepted for delivery")).toBeVisible(),
+  );
+  expect(screen.getByText("Delivered as guidance")).toBeVisible();
+  expect(screen.getByText(/not task completion/i)).toBeVisible();
+  expect(screen.getByText(agent_session_id)).not.toBeVisible();
+  fireEvent.click(screen.getByText("Technical details"));
   expect(screen.getByText(agent_session_id)).toBeVisible();
   expect(screen.getByText(attempt_id)).toBeVisible();
 });
@@ -95,6 +99,6 @@ test("missing evidence degrades to an explicit unavailable state", async () => {
   );
   fireEvent.click(screen.getByRole("button", { name: /inspect/i }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "No retained operational evidence is available",
+    "Delivery details are unavailable",
   );
 });
