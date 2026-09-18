@@ -1044,7 +1044,9 @@ export function MessageList({
           return;
         if (!isVisibleRef.current) return;
         const anchor = captureChatViewportAnchor({
-          forceAtBottom,
+          // Streaming can grow a row before Virtuoso follows it. Preserve the
+          // user's bottom-following intent across that intermediate layout.
+          forceAtBottom: forceAtBottom || keepBottomAnchoredRef?.current,
           scroller: scrollerRef.current,
           sortedDates: sortedDatesRef.current,
         });
@@ -1056,7 +1058,7 @@ export function MessageList({
         anchorCaptureFrameRef.current = window.setTimeout(capture, 0);
       }
     },
-    [cacheId, useVirtuoso],
+    [cacheId, keepBottomAnchoredRef, useVirtuoso],
   );
 
   const clearUserScrollIntentLater = () => {
@@ -1164,7 +1166,6 @@ export function MessageList({
   };
 
   const maybeBlockScrollKeys = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!blockScrollInput) return;
     if (
       isEditableOrOverlayInteractionTarget(event.target) ||
       isEditableOrOverlayInteractionTarget(document.activeElement)
@@ -1172,13 +1173,12 @@ export function MessageList({
       return;
     }
     const key = `${event.key ?? ""}`.toLowerCase();
-    if (
-      key === "arrowup" ||
-      key === "pageup" ||
-      key === "home" ||
-      key === " " ||
-      key === "spacebar"
-    ) {
+    if (key === "arrowup" || key === "pageup" || key === "home") {
+      markUserScrollIntent();
+      markManualScrollAway();
+    }
+    if (!blockScrollInput) return;
+    if (key === " " || key === "spacebar") {
       markUserScrollIntent();
       markManualScrollAway();
     }
