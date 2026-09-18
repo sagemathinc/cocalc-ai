@@ -17,6 +17,7 @@ const logger = getLogger("server:hosts:intrusion-monitor");
 
 const TABLE = "project_host_intrusion_snapshots";
 const NORMALIZATION_VERSION = 2;
+const DECISION_POLICY_VERSION = 1;
 const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const MIN_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_RETENTION_DAYS = 90;
@@ -31,7 +32,17 @@ const MAX_ALERT_ENTRIES_PER_CATEGORY = 10;
 const MAX_ALERT_BODY_CHARS = 60_000;
 const LOCK_KEY = "project_host_intrusion_monitor";
 
-type TransitionAlertMode = "actionable" | "all" | "off";
+type LegacyAlertMode = "actionable" | "all" | "off";
+export type IntrusionNotificationPolicy =
+  | "legacy"
+  | "incidents-only"
+  | "disabled";
+type DiagnosticVerbosity = "actionable" | "all";
+export type HostIntrusionObservationClass =
+  | "inventory"
+  | "diagnostic"
+  | "actionable"
+  | "coverage_loss";
 
 const MONITORED_CATEGORIES = [
   "accounts.uid_zero",
@@ -128,7 +139,8 @@ type CandidateHost = {
   public_url?: string | null;
 };
 
-type PreviousSnapshotRow = {
+type BaselineSnapshotRow = {
+  id: string;
   normalized: NormalizedHostIntrusionSnapshot;
 };
 
@@ -137,7 +149,23 @@ type CoverageRow = {
 };
 
 type FleetSnapshotRow = {
+  id: string;
+  host_id: string;
   normalized: NormalizedHostIntrusionSnapshot;
+};
+
+export type HostIntrusionBaselineProvenance = {
+  kind: "none" | "host" | "fleet";
+  snapshot_ids: string[];
+};
+
+export type HostIntrusionObservationDecision = {
+  version: 1;
+  classification: HostIntrusionObservationClass;
+  reason_codes: string[];
+  actionable_delta?: HostIntrusionSnapshotDelta;
+  notification_policy: IntrusionNotificationPolicy;
+  diagnostic_verbosity: DiagnosticVerbosity;
 };
 
 type PersistSnapshotOptions = {
@@ -147,6 +175,8 @@ type PersistSnapshotOptions = {
   normalized: NormalizedHostIntrusionSnapshot;
   delta?: HostIntrusionSnapshotDelta;
   assessment?: SnapshotAssessment;
+  decision: HostIntrusionObservationDecision;
+  baseline: HostIntrusionBaselineProvenance;
   baselineEligible?: boolean;
 };
 
@@ -164,7 +194,7 @@ type SnapshotAssessment =
       resolution: "attested" | "reverted";
     }
   | {
-      state: "notified_snap_refresh_confirmation";
+      state: "confirmed_snap_refresh_confirmation";
       pending_snapshot_id: string;
       fingerprint: string;
       units: string[];
@@ -884,10 +914,9 @@ export function selectActionableHostIntrusionChanges(
   return actionable;
 }
 
-function transitionAlertMode(): TransitionAlertMode {
-  // `off` keeps collection and coverage alerts; `all` is useful for diagnosis.
+function legacyAlertMode(): LegacyAlertMode | undefined {
   const configured = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
-  if (configured == null || configured === "") return "actionable";
+  if (configured == null || configured === "") return;
   if (
     configured === "actionable" ||
     configured === "all" ||
@@ -897,9 +926,44 @@ function transitionAlertMode(): TransitionAlertMode {
   }
   logger.warn("invalid project-host intrusion monitor alert mode", {
     configured,
-    fallback: "actionable",
+    fallback: "incidents-only",
   });
-  return "actionable";
+  return;
+}
+
+export function intrusionNotificationPolicy(): IntrusionNotificationPolicy {
+  const configured =
+    process.env.COCALC_HOST_INTRUSION_MONITOR_NOTIFICATION_POLICY;
+  if (
+    configured === "legacy" ||
+    configured === "incidents-only" ||
+    configured === "disabled"
+  ) {
+    return configured;
+  }
+  if (configured) {
+    logger.warn("invalid intrusion monitor notification policy", {
+      configured,
+      fallback: "incidents-only",
+    });
+  }
+  const legacy = legacyAlertMode();
+  if (legacy === "off") return "disabled";
+  if (legacy === "actionable" || legacy === "all") return "legacy";
+  return "incidents-only";
+}
+
+function diagnosticVerbosity(): DiagnosticVerbosity {
+  const configured =
+    process.env.COCALC_HOST_INTRUSION_MONITOR_DIAGNOSTIC_VERBOSITY;
+  if (configured === "actionable" || configured === "all") return configured;
+  if (configured) {
+    logger.warn("invalid intrusion monitor diagnostic verbosity", {
+      configured,
+      fallback: "actionable",
+    });
+  }
+  return legacyAlertMode() === "all" ? "all" : "actionable";
 }
 
 export function diffHostIntrusionSnapshotAgainstFleet(
@@ -923,15 +987,66 @@ function monitoredFingerprint(
   snapshot: NormalizedHostIntrusionSnapshot,
 ): string {
   return createHash("sha256")
-    .update(
-      JSON.stringify(
-        MONITORED_CATEGORIES.map((category) => [
-          category,
-          monitoredSignals(snapshot, category),
-        ]),
-      ),
-    )
+    .update(JSON.stringify([NORMALIZATION_VERSION, snapshot]))
     .digest("hex");
+}
+
+function observationDecision({
+  coverage,
+  delta,
+  actionableDelta,
+  assessment,
+  baseline,
+  notificationPolicy,
+  verbosity,
+  coverageFailureThresholdReached = false,
+}: {
+  coverage: HostIntrusionSnapshotResponse["coverage"];
+  delta?: HostIntrusionSnapshotDelta;
+  actionableDelta?: HostIntrusionSnapshotDelta;
+  assessment: SnapshotAssessment;
+  baseline: HostIntrusionBaselineProvenance;
+  notificationPolicy: IntrusionNotificationPolicy;
+  verbosity: DiagnosticVerbosity;
+  coverageFailureThresholdReached?: boolean;
+}): HostIntrusionObservationDecision {
+  let classification: HostIntrusionObservationClass = "inventory";
+  const reasonCodes: string[] = [];
+  if (coverage !== "complete") {
+    classification = "coverage_loss";
+    reasonCodes.push(
+      coverageFailureThresholdReached
+        ? "coverage_failure_threshold_reached"
+        : `coverage_${coverage}`,
+    );
+  } else if (assessment.state === "pending_snap_refresh_confirmation") {
+    classification = "diagnostic";
+    reasonCodes.push("transient_confirmation_pending");
+  } else if (
+    actionableDelta != null &&
+    hasHostIntrusionSnapshotChanges(actionableDelta)
+  ) {
+    classification = "actionable";
+    reasonCodes.push("actionable_selector_match");
+  } else if (delta != null && hasHostIntrusionSnapshotChanges(delta)) {
+    classification = "diagnostic";
+    reasonCodes.push("normalized_delta_observed");
+  } else if (baseline.kind === "none") {
+    reasonCodes.push("initial_baseline");
+  } else {
+    reasonCodes.push("no_normalized_delta");
+  }
+  return {
+    version: DECISION_POLICY_VERSION,
+    classification,
+    reason_codes: reasonCodes,
+    ...(actionableDelta != null &&
+    hasHostIntrusionSnapshotChanges(actionableDelta)
+      ? { actionable_delta: actionableDelta }
+      : {}),
+    notification_policy: notificationPolicy,
+    diagnostic_verbosity: verbosity,
+  };
 }
 
 export async function ensureHostIntrusionMonitorSchema(): Promise<void> {
@@ -951,6 +1066,9 @@ export async function ensureHostIntrusionMonitorSchema(): Promise<void> {
         delta JSONB,
         collector_evidence JSONB NOT NULL DEFAULT '{}'::jsonb,
         assessment JSONB NOT NULL DEFAULT '{"state":"observed"}'::jsonb,
+        decision_policy_version INTEGER NOT NULL DEFAULT 1,
+        decision JSONB NOT NULL DEFAULT '{}'::jsonb,
+        baseline JSONB NOT NULL DEFAULT '{"kind":"none","snapshot_ids":[]}'::jsonb,
         baseline_eligible BOOLEAN NOT NULL DEFAULT TRUE,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         CHECK (coverage IN ('complete', 'partial', 'unavailable'))
@@ -962,7 +1080,31 @@ export async function ensureHostIntrusionMonitorSchema(): Promise<void> {
           DEFAULT '{}'::jsonb,
         ADD COLUMN IF NOT EXISTS assessment JSONB NOT NULL
           DEFAULT '{"state":"observed"}'::jsonb,
+        ADD COLUMN IF NOT EXISTS decision_policy_version INTEGER NOT NULL
+          DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS decision JSONB NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS baseline JSONB NOT NULL
+          DEFAULT '{"kind":"none","snapshot_ids":[]}'::jsonb,
         ADD COLUMN IF NOT EXISTS baseline_eligible BOOLEAN NOT NULL DEFAULT TRUE
+    `);
+    await pool.query(`
+      UPDATE ${TABLE}
+         SET baseline_eligible = FALSE
+       WHERE coverage <> 'complete' AND baseline_eligible
+    `);
+    await pool.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint
+           WHERE conname = '${TABLE}_complete_baseline_check'
+        ) THEN
+          ALTER TABLE ${TABLE}
+            ADD CONSTRAINT ${TABLE}_complete_baseline_check
+            CHECK (NOT baseline_eligible OR coverage = 'complete');
+        END IF;
+      END
+      $$
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS ${TABLE}_host_created_idx
@@ -999,10 +1141,10 @@ async function listCandidateHosts(bayId: string): Promise<CandidateHost[]> {
 
 async function loadPreviousCompleteSnapshot(
   hostId: string,
-): Promise<NormalizedHostIntrusionSnapshot | undefined> {
-  const { rows } = await getPool().query<PreviousSnapshotRow>(
+): Promise<BaselineSnapshotRow | undefined> {
+  const { rows } = await getPool().query<BaselineSnapshotRow>(
     `
-      SELECT normalized
+      SELECT id, normalized
       FROM ${TABLE}
       WHERE host_id = $1
         AND coverage = 'complete'
@@ -1013,7 +1155,7 @@ async function loadPreviousCompleteSnapshot(
     `,
     [hostId, NORMALIZATION_VERSION],
   );
-  return rows[0]?.normalized;
+  return rows[0];
 }
 
 async function loadRecentCoverage(hostId: string): Promise<CoverageRow[]> {
@@ -1036,10 +1178,11 @@ async function loadFleetCompleteSnapshots({
 }: {
   bayId: string;
   excludeHostId: string;
-}): Promise<NormalizedHostIntrusionSnapshot[]> {
+}): Promise<FleetSnapshotRow[]> {
   const { rows } = await getPool().query<FleetSnapshotRow>(
     `
-      SELECT DISTINCT ON (snapshots.host_id) snapshots.normalized
+      SELECT DISTINCT ON (snapshots.host_id)
+        snapshots.id, snapshots.host_id, snapshots.normalized
       FROM ${TABLE} AS snapshots
       INNER JOIN project_hosts AS hosts ON hosts.id = snapshots.host_id
       WHERE snapshots.bay_id = $1
@@ -1055,7 +1198,7 @@ async function loadFleetCompleteSnapshots({
     `,
     [bayId, excludeHostId, NORMALIZATION_VERSION, HOST_ONLINE_WINDOW_MS],
   );
-  return rows.map(({ normalized }) => normalized);
+  return rows;
 }
 
 export async function activeFleetHasCompleteBaseline(
@@ -1144,28 +1287,32 @@ async function persistSnapshot({
   normalized,
   delta,
   assessment = { state: "observed" },
+  decision,
+  baseline,
   baselineEligible = true,
-}: PersistSnapshotOptions): Promise<void> {
+}: PersistSnapshotOptions): Promise<string> {
+  const id = randomUUID();
   await getPool().query(
     `
       INSERT INTO ${TABLE} (
         id, host_id, bay_id, captured_at, duration_ms, coverage,
         normalization_version, fingerprint, normalized, delta,
-        collector_evidence, assessment, baseline_eligible
+        collector_evidence, assessment, decision_policy_version, decision,
+        baseline, baseline_eligible
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb,
-        $11::jsonb, $12::jsonb, $13
+        $11::jsonb, $12::jsonb, $13, $14::jsonb, $15::jsonb, $16
       )
     `,
     [
-      randomUUID(),
+      id,
       hostId,
       bayId,
       source.captured_at,
       Math.max(0, Math.floor(source.duration_ms)),
       source.coverage,
       NORMALIZATION_VERSION,
-      source.coverage === "complete" ? monitoredFingerprint(normalized) : null,
+      monitoredFingerprint(normalized),
       JSON.stringify(normalized),
       delta == null ? null : JSON.stringify(delta),
       JSON.stringify({
@@ -1182,9 +1329,13 @@ async function persistSnapshot({
         persistence_truncated: source.persistence.truncated,
       }),
       JSON.stringify(assessment),
+      DECISION_POLICY_VERSION,
+      JSON.stringify(decision),
+      JSON.stringify(baseline),
       baselineEligible,
     ],
   );
+  return id;
 }
 
 function hostLabel(host: CandidateHost): string {
@@ -1375,7 +1526,6 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   const transitions: HostTransition[] = [];
   const coverageFailures: CoverageFailure[] = [];
   const initialBaselines: CandidateHost[] = [];
-  const deferredCompleteSnapshots: PersistSnapshotOptions[] = [];
   const result: HostIntrusionMonitorResult = {
     checked: 0,
     changed: 0,
@@ -1391,13 +1541,17 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       1,
     ),
   );
-  const alertMode = transitionAlertMode();
+  const notificationPolicy = intrusionNotificationPolicy();
+  const verbosity = diagnosticVerbosity();
   const trustedAdminSshSources = configuredTrustedAdminSshSources(bayId);
 
   await mapWithConcurrency(hosts, concurrency, async (host) => {
     result.checked += 1;
     try {
-      const previousCoverage = await loadRecentCoverage(host.id);
+      const [previousCoverage, previous] = await Promise.all([
+        loadRecentCoverage(host.id),
+        loadPreviousCompleteSnapshot(host.id),
+      ]);
       const source = requireCgroupAwareCollector(
         await (
           await getRoutedHostControlClient({
@@ -1410,58 +1564,85 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       const normalized = normalizeHostIntrusionSnapshot(source);
       if (source.coverage !== "complete") {
         result.incomplete += 1;
+        const coverageFailureThresholdReached =
+          reachedCoverageFailureThreshold(previousCoverage);
+        const baseline: HostIntrusionBaselineProvenance = previous
+          ? { kind: "host", snapshot_ids: [previous.id] }
+          : { kind: "none", snapshot_ids: [] };
         await persistSnapshot({
           hostId: host.id,
           bayId,
           source,
           normalized,
+          assessment: { state: "observed" },
+          decision: observationDecision({
+            coverage: source.coverage,
+            assessment: { state: "observed" },
+            baseline,
+            notificationPolicy,
+            verbosity,
+            coverageFailureThresholdReached,
+          }),
+          baseline,
+          baselineEligible: false,
         });
-        if (reachedCoverageFailureThreshold(previousCoverage)) {
+        if (coverageFailureThresholdReached) {
           coverageFailures.push({ host, coverage: source.coverage });
         }
         return;
       }
 
-      const [previous, pendingSnapRefresh] = await Promise.all([
-        loadPreviousCompleteSnapshot(host.id),
-        loadPendingSnapRefresh(host.id),
-      ]);
+      const pendingSnapRefresh = await loadPendingSnapRefresh(host.id);
       let delta: HostIntrusionSnapshotDelta | undefined;
       let baselineSnapshots: NormalizedHostIntrusionSnapshot[] = [];
       let baseline: HostTransition["baseline"] = "host";
+      let baselineProvenance: HostIntrusionBaselineProvenance = {
+        kind: "none",
+        snapshot_ids: [],
+      };
       let comparedWithFleet = false;
       if (previous) {
-        baselineSnapshots = [previous];
-        delta = diffHostIntrusionSnapshots(previous, normalized);
+        baselineSnapshots = [previous.normalized];
+        baselineProvenance = {
+          kind: "host",
+          snapshot_ids: [previous.id],
+        };
+        delta = diffHostIntrusionSnapshots(previous.normalized, normalized);
       } else if (hadActiveFleetBaseline) {
         const fleet = await loadFleetCompleteSnapshots({
           bayId,
           excludeHostId: host.id,
         });
         if (fleet.length) {
-          baselineSnapshots = fleet;
-          delta = diffHostIntrusionSnapshotAgainstFleet(fleet, normalized);
+          baselineSnapshots = fleet.map(({ normalized }) => normalized);
+          baselineProvenance = {
+            kind: "fleet",
+            snapshot_ids: fleet.map(({ id }) => id).slice(0, 1000),
+          };
+          delta = diffHostIntrusionSnapshotAgainstFleet(
+            baselineSnapshots,
+            normalized,
+          );
           baseline = "fleet";
           comparedWithFleet = true;
         }
       }
-      const alertDelta =
-        delta == null || alertMode === "off"
+      const selectedActionableDelta =
+        delta == null
           ? undefined
-          : alertMode === "all"
-            ? delta
-            : selectActionableHostIntrusionChanges(delta, {
-                installedSnapMountUnits: source.snap_mount_units,
-                baselineSnapshots,
-                trustedAdminSshSources,
-              });
-      let changedDelta =
-        alertDelta != null && hasHostIntrusionSnapshotChanges(alertDelta)
-          ? alertDelta
+          : selectActionableHostIntrusionChanges(delta, {
+              installedSnapMountUnits: source.snap_mount_units,
+              baselineSnapshots,
+              trustedAdminSshSources,
+            });
+      let actionableDelta =
+        selectedActionableDelta != null &&
+        hasHostIntrusionSnapshotChanges(selectedActionableDelta)
+          ? selectedActionableDelta
           : undefined;
       const snapRefreshCandidate =
-        alertMode === "actionable" && delta != null && changedDelta != null
-          ? snapRefreshConfirmationCandidate(delta, changedDelta, {
+        delta != null && actionableDelta != null
+          ? snapRefreshConfirmationCandidate(delta, actionableDelta, {
               installedSnapMountUnits: source.snap_mount_units,
               baselineSnapshots,
               persistenceFiles: source.persistence.files,
@@ -1482,19 +1663,18 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
             ...snapRefreshCandidate,
           };
           baselineEligible = false;
-          changedDelta = undefined;
           result.pending += 1;
         } else if (
           pendingSnapRefresh.assessment.fingerprint ===
           snapRefreshCandidate.fingerprint
         ) {
           assessment = {
-            state: "notified_snap_refresh_confirmation",
+            state: "confirmed_snap_refresh_confirmation",
             pending_snapshot_id: pendingSnapRefresh.id,
             ...snapRefreshCandidate,
           };
         }
-      } else if (pendingSnapRefresh && changedDelta == null) {
+      } else if (pendingSnapRefresh && actionableDelta == null) {
         const installedUnits = new Set(source.snap_mount_units ?? []);
         assessment = {
           state: "resolved_snap_refresh_confirmation",
@@ -1507,6 +1687,18 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
             : "reverted",
         };
       }
+      if (assessment.state === "pending_snap_refresh_confirmation") {
+        actionableDelta = undefined;
+      }
+      const decision = observationDecision({
+        coverage: source.coverage,
+        delta,
+        actionableDelta,
+        assessment,
+        baseline: baselineProvenance,
+        notificationPolicy,
+        verbosity,
+      });
       const completeSnapshot = {
         hostId: host.id,
         bayId,
@@ -1514,25 +1706,23 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
         normalized,
         delta,
         assessment,
+        decision,
+        baseline: baselineProvenance,
         baselineEligible,
       };
-      const needsInitialReview =
-        alertMode !== "off" && !previous && !comparedWithFleet;
-      // Do not promote a security baseline until its alert is accepted. If
-      // delivery fails, the next pass compares against the older baseline and
-      // retries rather than silently absorbing the transition.
-      if (changedDelta || needsInitialReview) {
-        deferredCompleteSnapshots.push(completeSnapshot);
-      } else {
-        await persistSnapshot(completeSnapshot);
-      }
+      await persistSnapshot(completeSnapshot);
       if (!previous && baselineEligible) {
         result.baselined += 1;
-        if (needsInitialReview) initialBaselines.push(host);
+        if (!comparedWithFleet) initialBaselines.push(host);
       }
-      if (changedDelta) {
+      if (actionableDelta) {
         result.changed += 1;
-        transitions.push({ host, delta: changedDelta, baseline });
+      }
+      if (notificationPolicy === "legacy") {
+        const legacyDelta = verbosity === "all" ? delta : actionableDelta;
+        if (legacyDelta && hasHostIntrusionSnapshotChanges(legacyDelta)) {
+          transitions.push({ host, delta: legacyDelta, baseline });
+        }
       }
     } catch (err) {
       result.failed += 1;
@@ -1544,11 +1734,28 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
         () => [],
       );
       const source = unavailableSource(host);
+      const assessment: SnapshotAssessment = { state: "observed" };
+      const baseline: HostIntrusionBaselineProvenance = {
+        kind: "none",
+        snapshot_ids: [],
+      };
       await persistSnapshot({
         hostId: host.id,
         bayId,
         source,
         normalized: normalizeHostIntrusionSnapshot(source),
+        assessment,
+        decision: observationDecision({
+          coverage: source.coverage,
+          assessment,
+          baseline,
+          notificationPolicy,
+          verbosity,
+          coverageFailureThresholdReached:
+            reachedCoverageFailureThreshold(previousCoverage),
+        }),
+        baseline,
+        baselineEligible: false,
       }).catch((persistErr) => {
         logger.warn("failed persisting unavailable intrusion snapshot", {
           host_id: host.id,
@@ -1565,7 +1772,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     }
   });
 
-  if (transitions.length) {
+  if (notificationPolicy === "legacy" && transitions.length) {
     await adminAlert({
       subject:
         "Project host intrusion monitor detected actionable security-state changes",
@@ -1574,7 +1781,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       errorOnFail: true,
     });
   }
-  if (coverageFailures.length) {
+  if (notificationPolicy === "legacy" && coverageFailures.length) {
     await adminAlert({
       subject: "Project host intrusion monitoring has incomplete coverage",
       body: formatCoverageAlert(coverageFailures),
@@ -1582,7 +1789,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       errorOnFail: true,
     });
   }
-  if (initialBaselines.length) {
+  if (notificationPolicy === "legacy" && initialBaselines.length) {
     await adminAlert({
       subject:
         "Project host intrusion monitoring established initial baselines",
@@ -1592,11 +1799,6 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
     });
   }
 
-  await mapWithConcurrency(
-    deferredCompleteSnapshots,
-    concurrency,
-    persistSnapshot,
-  );
   result.pending = await countPendingSnapRefreshes(bayId);
 
   const retentionDays = envNumberAtLeast(
@@ -1652,7 +1854,8 @@ export function startHostIntrusionMonitor(): void {
   logger.info("starting project-host intrusion monitor", {
     interval_ms: intervalMs,
     normalization_version: NORMALIZATION_VERSION,
-    alert_mode: transitionAlertMode(),
+    notification_policy: intrusionNotificationPolicy(),
+    diagnostic_verbosity: diagnosticVerbosity(),
   });
   void runLockedPass().catch((err) => {
     logger.error("project-host intrusion monitoring failed", err);
