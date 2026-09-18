@@ -808,7 +808,9 @@ describe("PublicFeaturesApp", () => {
     );
 
     expect(
-      screen.getByText("Persistent workspace or isolated execution?"),
+      screen.getByRole("heading", {
+        name: "Choose where your AI work gets done.",
+      }),
     ).not.toBeNull();
     expect(screen.getByText("Decision checklist")).not.toBeNull();
     expect(
@@ -826,9 +828,7 @@ describe("PublicFeaturesApp", () => {
     expect(
       screen.getByText(/Some support persistent files, snapshots/),
     ).not.toBeNull();
-    expect(
-      screen.getByText(/persistent shared project that people and agents/),
-    ).not.toBeNull();
+    expect(screen.getByText(/CoCalc also has APIs and a CLI/)).not.toBeNull();
     expect(
       screen.getByRole("columnheader", {
         name: "Choose an agent sandbox when",
@@ -854,10 +854,40 @@ describe("PublicFeaturesApp", () => {
       container.querySelectorAll(".cocalc-compare-route-row"),
     ).toHaveLength(3);
     expect(
-      screen.queryByRole("link", { name: "Review pricing options" }),
+      screen
+        .getByRole("link", { name: "Review pricing and setup" })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(screen.queryByText("Is teaching part of the workflow?")).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Teaching workflows" }),
     ).toBeNull();
     expect(
+      screen.getByRole("rowheader", { name: "What will larger jobs need?" }),
+    ).not.toBeNull();
+    expect(
       screen.queryByText("Google Colab and quick notebook hosts"),
+    ).toBeNull();
+  });
+
+  it("keeps comparison setup links usable on Plus without hosted documentation", () => {
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        initialRoute={{ slug: "compare", view: "detail" }}
+      />,
+    );
+    expect(
+      screen.getByText(/CoCalc Plus is a local, one-user project/),
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole("link", { name: "Review pricing and setup" })
+        .getAttribute("href"),
+    ).toBe("/pricing");
+    expect(container.querySelector('a[href^="/docs/"]')).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Teaching workflows" }),
     ).toBeNull();
   });
 

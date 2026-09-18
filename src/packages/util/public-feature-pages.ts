@@ -574,17 +574,17 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     slug: "compare",
     title: "CoCalc vs AI Agent Sandboxes",
     navLabel: "Compare",
-    tagline: "Choose the execution model that matches the work.",
+    tagline: "Choose where your AI work gets done.",
     summary:
-      "Compare CoCalc's persistent shared projects with API-first agent sandboxes, then choose based on who needs to use and review the environment.",
+      "Build a dashboard, test a model or develop an application. Compare how you will review the results, work with others and continue the project.",
     metadataSummary:
-      "Compare CoCalc's persistent shared projects with API-first AI agent sandboxes for collaboration, review, durable project work, and deployment.",
+      "Compare CoCalc and AI agent sandboxes for building applications, reviewing analysis, collaborating and choosing compute or hosting.",
     index: true,
     sections: [
       {
         title: "Shared project or agent sandbox?",
         paragraphs: [
-          "Agent sandboxes are built to launch isolated execution environments from an API or SDK. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc is built around a persistent shared project that people and agents open and use together.",
+          "A persistent workspace and isolated execution are not opposites. Agent sandboxes can provide both. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc also has APIs and a CLI; its shared interface lets people and agents open and work in the same project.",
         ],
       },
       {
@@ -599,15 +599,15 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
         title: "Choose CoCalc when",
         bullets: [
           "People and agents work directly in the same notebooks, files, documents, terminals, and services",
-          "Collaborators need live work, review context, history, and recovery in one place",
-          "The work must persist across sessions, collaborators, reviews, and handoffs",
+          "Collaborators need to inspect and improve an analysis, report or application together",
+          "You want to return to saved work, review changes and continue it with collaborators",
           "You need a hosted service, a local or single-VM installation, or a customer-operated private deployment path",
         ],
       },
       {
         title: "Check the operating boundary",
         paragraphs: [
-          "Use the product and compute guides to confirm what is available for your deployment, account, and workload. If your design requires automatic fleets of per-run environments, GPU autoscaling, or exclusive GPU capacity, evaluate infrastructure built for those requirements.",
+          "Use the product and compute guides to confirm what is available for your deployment, account, and workload. CoCalc Plus is a local, one-user project; choose another edition for shared collaboration. If your design requires automatic fleets of per-run environments, GPU autoscaling, or exclusive GPU capacity, evaluate infrastructure built for those requirements.",
         ],
         links: [
           { href: "/features/ai", label: "Explore agent workflows" },

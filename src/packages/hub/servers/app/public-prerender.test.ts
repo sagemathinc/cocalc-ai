@@ -227,6 +227,14 @@ describe("core landing page initial HTML", () => {
       "/",
     );
     expect(html).toContain("Shared project or agent sandbox?");
+    expect(html).toContain("Choose where your AI work gets done.");
+    expect(html).toContain(
+      "Build a dashboard, test a model or develop an application.",
+    );
+    expect(html).toContain(
+      "A persistent workspace and isolated execution are not opposites",
+    );
+    expect(html).toContain("CoCalc also has APIs and a CLI");
     expect(html).toContain(
       "Some support persistent files, snapshots, pause and resume",
     );

@@ -39,10 +39,10 @@ const SANDBOX_BOUNDARY = COMPARE_PAGE.sections?.find(
 const DECISION_ROWS = [
   {
     cocalc:
-      "People and agents need files, notebooks, terminals, output, discussion, and review history in one shared project.",
+      "An analysis, dashboard, report or application that people keep reviewing and refining.",
     other:
-      "The source of truth and review already live outside the execution environment.",
-    question: "What needs to stay together?",
+      "Code execution within a product whose interface and review workflow you already operate.",
+    question: "What will you deliver?",
   },
   {
     cocalc:
@@ -52,20 +52,22 @@ const DECISION_ROWS = [
     question: "Who needs to inspect the work?",
   },
   {
-    cocalc: "Review and handoff happen while the work is still active.",
-    other: "Each run produces a result for later review.",
-    question: "When does collaboration happen?",
-  },
-  {
     cocalc:
-      "Courses, labs, or workshops need the same environment as the computation.",
+      "Return to saved files and outputs, review changes, and continue with collaborators.",
     other:
-      "The execution environment does not need course management or live help.",
-    question: "Is teaching part of the workflow?",
+      "Manage retained state and result handoff through the runtime and your application.",
+    question: "How will the work continue?",
   },
   {
     cocalc:
-      "Teams need hosted, local, single-VM, and private deployment choices.",
+      "Choose project resources or connect a remote notebook kernel using the options available for your deployment.",
+    other:
+      "Match jobs to the provider's supported resources, execution limits and concurrency.",
+    question: "What will larger jobs need?",
+  },
+  {
+    cocalc:
+      "Choose hosted CoCalc or an edition you operate, with collaboration depending on the edition.",
     other:
       "Your product already owns the runtime lifecycle and infrastructure.",
     question: "Who operates it?",
@@ -86,10 +88,10 @@ const NEXT_ROUTES = [
     title: "Reviewing AI-assisted work",
   },
   {
-    body: "Assignments, grading, support, and shared environments.",
-    href: "features/teaching",
-    label: "Teaching workflows",
-    title: "Planning a course or workshop",
+    body: "Review pricing and setup options for your edition.",
+    href: "pricing",
+    label: "Review pricing and setup",
+    title: "Planning what comes next",
   },
 ] as const;
 
@@ -380,7 +382,7 @@ export default function CompareFeaturePage({
               Evaluation guide
             </Text>
             <Title level={2} style={{ margin: 0 }}>
-              Persistent workspace or isolated execution?
+              {COMPARE_PAGE.tagline}
             </Title>
             <Paragraph
               style={{
@@ -389,9 +391,7 @@ export default function CompareFeaturePage({
                 maxWidth: "65ch",
               }}
             >
-              Decide what must persist, who needs to inspect the work, and
-              whether the environment is a shared workspace or an API-managed
-              execution runtime.
+              {COMPARE_PAGE.summary}
             </Paragraph>
             <Flex gap={12} style={HERO_ACTION_STYLE} wrap>
               <Button type="primary" href={featureAppPath("products")}>
@@ -402,16 +402,16 @@ export default function CompareFeaturePage({
           </Flex>
           <div className="cocalc-compare-quick-read">
             <Text strong style={{ color: PUBLIC_COLORS.heading }}>
-              Quick read
+              At a glance
             </Text>
             <ul className="cocalc-compare-list">
               <li>
-                Choose CoCalc when people and agents need to keep using the same
-                files, notebooks, terminals, services, and review history.
+                Work in CoCalc when you and your collaborators want to open,
+                inspect and improve the same work with AI.
               </li>
               <li>
-                Choose an agent sandbox when your product mainly needs
-                API-created execution environments for individual runs.
+                Consider an agent sandbox when your application needs a place to
+                run code.
               </li>
             </ul>
           </div>
@@ -479,8 +479,9 @@ export default function CompareFeaturePage({
           Decision checklist
         </Title>
         <Paragraph style={{ margin: 0, maxWidth: "70ch" }}>
-          Use the questions below to separate collaboration needs from buying
-          mechanics.
+          These are workflow fits, not exclusive capabilities. Persistence and
+          programmatic access can exist in either approach; check the actual
+          tools and limits you need.
         </Paragraph>
         <table
           aria-describedby="cocalc-compare-table-caption"
@@ -492,7 +493,7 @@ export default function CompareFeaturePage({
             id="cocalc-compare-table-caption"
           >
             Each row compares the decision question, when to choose CoCalc, and
-            when an agent sandbox is enough. On narrow screens, each row is
+            when an API-first runtime may fit. On narrow screens, each row is
             shown as labelled stacked fields with the same column meaning.
           </caption>
           <thead>
