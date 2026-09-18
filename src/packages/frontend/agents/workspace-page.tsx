@@ -25,7 +25,8 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
-import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import type { ChatActions } from "@cocalc/frontend/chat/actions";
+import { initChat } from "@cocalc/frontend/chat/register";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -471,6 +472,7 @@ function AgentProjectContext({
   onSelectedThread,
   onAgentActivity,
   onThreadAppearance,
+  onChatActions,
 }: {
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -482,6 +484,7 @@ function AgentProjectContext({
     threadId: string,
     appearance: AgentHeaderAppearance,
   ) => void;
+  onChatActions: (actions: ChatActions | undefined) => void;
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -506,7 +509,13 @@ function AgentProjectContext({
     { project_id: agent.endpoint.project_id },
     "open_files",
   );
-  const component = openFiles?.getIn?.([agent.path, "component"]);
+  const component = openFiles?.getIn?.([agent.path, "component"]) as
+    | {
+        Editor?: unknown;
+        redux_name?: string;
+        runtime_generation?: number;
+      }
+    | undefined;
   const runtimeIsUsable = openFileComponentRuntimeIsUsable({
     info: component,
     isViewer: false,
@@ -557,9 +566,9 @@ function AgentProjectContext({
     if (!ready) return;
     let disposed = false;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
-    let actions: any;
+    let actions: ChatActions | undefined;
     let cleanupListeners = () => {};
-    const update = (chatActions: any) => {
+    const update = (chatActions: ChatActions) => {
       const threadIds = new Set(
         workspaceAgentsRef.current.map(({ thread_id }) => thread_id),
       );
@@ -573,21 +582,22 @@ function AgentProjectContext({
     };
     const attach = () => {
       if (disposed) return;
-      actions = getChatActions(
-        agent.endpoint.project_id,
-        chatMetaFile(agent.path),
-      );
+      actions = redux
+        .getEditorActions(agent.endpoint.project_id, agent.path)
+        ?.getChatActions?.();
       if (!actions?.getThreadMetadata) {
         retryTimer = setTimeout(attach, 50);
         return;
       }
-      const refresh = () => update(actions);
-      update(actions);
-      actions.syncdb?.on?.("change", refresh);
-      actions.messageCache?.on?.("version", refresh);
+      const attachedActions = actions;
+      onChatActions(attachedActions);
+      const refresh = () => update(attachedActions);
+      update(attachedActions);
+      attachedActions.syncdb?.on?.("change", refresh);
+      attachedActions.messageCache?.on?.("version", refresh);
       cleanupListeners = () => {
-        actions.syncdb?.removeListener?.("change", refresh);
-        actions.messageCache?.removeListener?.("version", refresh);
+        attachedActions.syncdb?.removeListener?.("change", refresh);
+        attachedActions.messageCache?.removeListener?.("version", refresh);
       };
     };
     attach();
@@ -595,10 +605,14 @@ function AgentProjectContext({
       disposed = true;
       if (retryTimer) clearTimeout(retryTimer);
       cleanupListeners();
+      onChatActions(undefined);
     };
   }, [
     agent.endpoint.project_id,
     agent.path,
+    component?.redux_name,
+    component?.runtime_generation,
+    onChatActions,
     ready,
     selectedThread,
     workspaceAgentKey,
@@ -770,6 +784,7 @@ function AgentWorkspace({
   const [appearanceThreadId, setAppearanceThreadId] = useState<string>();
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
+  const [chatActions, setChatActions] = useState<ChatActions>();
   const selectedAgent = findWorkspaceAgentForThread(
     workspaceAgents,
     agent.endpoint.project_id,
@@ -847,11 +862,7 @@ function AgentWorkspace({
   } = resolvedTheme;
   const openAppearanceEditor = () => {
     if (!selectedThread) return;
-    const actions: any = getChatActions(
-      agent.endpoint.project_id,
-      chatMetaFile(agent.path),
-    );
-    const metadata = readAgentThreadAppearance(actions, selectedThread);
+    const metadata = readAgentThreadAppearance(chatActions, selectedThread);
     setAppearanceDraft({
       title: metadata?.name?.trim() || title,
       description: "",
@@ -865,11 +876,7 @@ function AgentWorkspace({
   };
   const saveAppearance = () => {
     if (!appearanceThreadId || !appearanceDraft) return;
-    const actions: any = getChatActions(
-      agent.endpoint.project_id,
-      chatMetaFile(agent.path),
-    );
-    const saved = actions?.setThreadAppearance?.(appearanceThreadId, {
+    const saved = chatActions?.setThreadAppearance?.(appearanceThreadId, {
       name: appearanceDraft.title,
       color: appearanceDraft.color ?? undefined,
       accentColor: appearanceDraft.accent_color ?? undefined,
@@ -953,7 +960,11 @@ function AgentWorkspace({
             color={primaryColor}
             accentColor={accentColor}
             image={appearance?.thread_image}
-            fallbackIcon="robot"
+            fallbackIcon={
+              primaryColor || accentColor || appearance?.thread_image
+                ? undefined
+                : "robot"
+            }
             size={36}
           />
         </Button>
@@ -1104,6 +1115,7 @@ function AgentWorkspace({
           accountId={accountId}
           onSelectedThread={handleSelectedThread}
           onAgentActivity={onAgentActivity}
+          onChatActions={setChatActions}
           onThreadAppearance={(threadId, value) => {
             if (threadId === selectedThread) {
               setHeaderAppearance((current) =>
@@ -1348,7 +1360,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             color={theme.primaryColor}
             accentColor={theme.accentColor}
             image={appearance?.thread_image}
-            fallbackIcon="robot"
+            fallbackIcon={
+              theme.primaryColor ||
+              theme.accentColor ||
+              appearance?.thread_image
+                ? undefined
+                : "robot"
+            }
             size={30}
           />
           <span style={{ minWidth: 0 }}>
