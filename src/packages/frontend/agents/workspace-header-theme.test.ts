@@ -4,6 +4,7 @@
  */
 
 import {
+  readAgentThreadAppearance,
   resolveAgentHeaderTheme,
   resolveNamedAgentTheme,
   sameAgentHeaderAppearance,
@@ -77,4 +78,30 @@ it("uses one live presentation for a registered agent", () => {
     accentColor: "#fff1f0",
   });
   expect(resolveNamedAgentTheme(agent).title).toBe("Reviewer (recv.chat)");
+});
+
+it("reads appearance through the thread lookup key used by chat", () => {
+  const rootMessage = { name: "RPC cross-bay receiver" };
+  const getThreadMetadata = jest.fn(() => ({
+    thread_color: "#2196f3",
+    thread_accent_color: "#f44336",
+    thread_icon: "deployment-unit",
+  }));
+  const actions = {
+    messageCache: {
+      getThreadKeyByThreadId: () => "root-message-date",
+    },
+    getThreadIndex: () => new Map([["root-message-date", { rootMessage }]]),
+    getThreadMetadata,
+  };
+
+  expect(readAgentThreadAppearance(actions, "stable-thread-id")).toMatchObject({
+    name: "RPC cross-bay receiver",
+    thread_color: "#2196f3",
+    thread_accent_color: "#f44336",
+    thread_icon: "deployment-unit",
+  });
+  expect(getThreadMetadata).toHaveBeenCalledWith("root-message-date", {
+    threadId: "stable-thread-id",
+  });
 });

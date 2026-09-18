@@ -83,6 +83,7 @@ import {
   AgentsSidebarToggle,
 } from "./workspace-sidebar-toggle";
 import {
+  readAgentThreadAppearance,
   resolveAgentHeaderTheme,
   resolveNamedAgentTheme,
   sameAgentHeaderAppearance,
@@ -559,20 +560,18 @@ function AgentProjectContext({
     );
     if (!actions?.getThreadMetadata) return;
     const update = () => {
-      const metadata = actions.getThreadMetadata(selectedThread, {
-        threadId: selectedThread,
-      });
-      onThreadAppearanceRef.current(selectedThread, {
-        name: metadata?.name,
-        thread_color: metadata?.thread_color,
-        thread_accent_color: metadata?.thread_accent_color,
-        thread_icon: metadata?.thread_icon,
-        thread_image: metadata?.thread_image,
-      });
+      onThreadAppearanceRef.current(
+        selectedThread,
+        readAgentThreadAppearance(actions, selectedThread),
+      );
     };
     update();
     actions.syncdb?.on?.("change", update);
-    return () => actions.syncdb?.removeListener?.("change", update);
+    actions.messageCache?.on?.("version", update);
+    return () => {
+      actions.syncdb?.removeListener?.("change", update);
+      actions.messageCache?.removeListener?.("version", update);
+    };
   }, [agent.endpoint.project_id, agent.path, ready, selectedThread]);
 
   const openEmbeddedFile = useCallback(async () => {
