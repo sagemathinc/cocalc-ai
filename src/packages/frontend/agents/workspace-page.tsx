@@ -553,17 +553,23 @@ function AgentProjectContext({
   }, [activity, workspaceAgentKey]);
 
   useEffect(() => {
-    if (!ready || !selectedThread) return;
+    if (!ready) return;
     const actions: any = redux.getEditorActions(
       agent.endpoint.project_id,
       agent.path,
     );
     if (!actions?.getThreadMetadata) return;
     const update = () => {
-      onThreadAppearanceRef.current(
-        selectedThread,
-        readAgentThreadAppearance(actions, selectedThread),
+      const threadIds = new Set(
+        workspaceAgentsRef.current.map(({ thread_id }) => thread_id),
       );
+      if (selectedThread) threadIds.add(selectedThread);
+      for (const threadId of threadIds) {
+        onThreadAppearanceRef.current(
+          threadId,
+          readAgentThreadAppearance(actions, threadId),
+        );
+      }
     };
     update();
     actions.syncdb?.on?.("change", update);
@@ -572,7 +578,13 @@ function AgentProjectContext({
       actions.syncdb?.removeListener?.("change", update);
       actions.messageCache?.removeListener?.("version", update);
     };
-  }, [agent.endpoint.project_id, agent.path, ready, selectedThread]);
+  }, [
+    agent.endpoint.project_id,
+    agent.path,
+    ready,
+    selectedThread,
+    workspaceAgentKey,
+  ]);
 
   const openEmbeddedFile = useCallback(async () => {
     await ensureProjectReduxRuntime();
@@ -1077,12 +1089,14 @@ function AgentWorkspace({
           onSelectedThread={handleSelectedThread}
           onAgentActivity={onAgentActivity}
           onThreadAppearance={(threadId, value) => {
-            setHeaderAppearance((current) =>
-              current?.threadId === threadId &&
-              sameAgentHeaderAppearance(current.value, value)
-                ? current
-                : { threadId, value },
-            );
+            if (threadId === selectedThread) {
+              setHeaderAppearance((current) =>
+                current?.threadId === threadId &&
+                sameAgentHeaderAppearance(current.value, value)
+                  ? current
+                  : { threadId, value },
+              );
+            }
             const registered = findWorkspaceAgentForThread(
               workspaceAgents,
               agent.endpoint.project_id,
