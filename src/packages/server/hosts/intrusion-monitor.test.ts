@@ -281,7 +281,7 @@ describe("project-host intrusion monitor normalization", () => {
     ).toBe(false);
   });
 
-  it("does not promote a baseline until its alert is delivered", async () => {
+  it("persists an initial baseline without routine notification", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
     const hostId = "83ce7448-8b5f-4b28-a531-f728067bf2b4";
@@ -297,32 +297,31 @@ describe("project-host intrusion monitor normalization", () => {
       [hostId],
     );
     try {
-      mockAdminAlert.mockRejectedValueOnce(
-        new Error("notification unavailable"),
-      );
-      await expect(runHostIntrusionMonitorPass()).rejects.toThrow(
-        "notification unavailable",
-      );
-      let result = await pool.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-           FROM project_host_intrusion_snapshots
-          WHERE host_id=$1 AND coverage='complete'`,
-        [hostId],
-      );
-      expect(result.rows[0]?.count).toBe("0");
-
-      mockAdminAlert.mockResolvedValueOnce(undefined);
       await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
         checked: 1,
         baselined: 1,
       });
-      result = await pool.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      const result = await pool.query<{
+        decision: Record<string, unknown>;
+        baseline: Record<string, unknown>;
+      }>(
+        `SELECT decision, baseline
            FROM project_host_intrusion_snapshots
           WHERE host_id=$1 AND coverage='complete'`,
         [hostId],
       );
-      expect(result.rows[0]?.count).toBe("1");
+      expect(result.rows).toEqual([
+        {
+          decision: expect.objectContaining({
+            version: 1,
+            classification: "inventory",
+            reason_codes: ["initial_baseline"],
+            notification_policy: "incidents-only",
+          }),
+          baseline: { kind: "none", snapshot_ids: [] },
+        },
+      ]);
     } finally {
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
@@ -418,13 +417,25 @@ describe("project-host intrusion monitor normalization", () => {
       }
       expect(mockAdminAlert).not.toHaveBeenCalled();
       await runHostIntrusionMonitorPass();
-      expect(mockAdminAlert).toHaveBeenCalledTimes(1);
-      expect(mockAdminAlert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subject: "Project host intrusion monitoring has incomplete coverage",
-          errorOnFail: true,
-        }),
+      expect(mockAdminAlert).not.toHaveBeenCalled();
+      const incomplete = await pool.query<{
+        decision: Record<string, unknown>;
+        baseline_eligible: boolean;
+      }>(
+        `SELECT decision, baseline_eligible
+           FROM project_host_intrusion_snapshots
+          WHERE host_id=$1 AND coverage='partial'
+          ORDER BY created_at DESC LIMIT 1`,
+        [hostId],
       );
+      expect(incomplete.rows[0]).toMatchObject({
+        decision: {
+          classification: "coverage_loss",
+          reason_codes: ["coverage_failure_threshold_reached"],
+          notification_policy: "disabled",
+        },
+        baseline_eligible: false,
+      });
     } finally {
       if (previousMode == null) {
         delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
@@ -476,12 +487,12 @@ describe("project-host intrusion monitor normalization", () => {
         );
         await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
           checked: 1,
-          changed: mode === "all" ? 1 : 0,
+          changed: 0,
           failed: 0,
         });
         expect(mockAdminAlert).toHaveBeenCalledTimes(mode === "all" ? 1 : 0);
         const { rows } = await pool.query(
-          `SELECT normalized, delta FROM project_host_intrusion_snapshots
+          `SELECT normalized, delta, decision FROM project_host_intrusion_snapshots
            WHERE host_id=$1 AND id<>$2`,
           [hostId, baselineId],
         );
@@ -489,6 +500,11 @@ describe("project-host intrusion monitor normalization", () => {
           {
             normalized: current,
             delta: diffHostIntrusionSnapshots(before, current),
+            decision: expect.objectContaining({
+              classification: "diagnostic",
+              reason_codes: ["normalized_delta_observed"],
+              notification_policy: mode === "off" ? "disabled" : "legacy",
+            }),
           },
         ]);
       } finally {
@@ -508,7 +524,7 @@ describe("project-host intrusion monitor normalization", () => {
     },
   );
 
-  it("does not promote a changed baseline until its alert is delivered", async () => {
+  it("commits actionable evidence before legacy delivery and retains it on failure", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
     const snapshotId = "1f56604f-93cf-40d9-a16f-7648490b9945";
@@ -519,6 +535,8 @@ describe("project-host intrusion monitor normalization", () => {
     mockAdminAlert.mockReset();
     mockGetIntrusionSnapshot.mockReset();
     mockGetIntrusionSnapshot.mockResolvedValue(current);
+    const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "actionable";
     await pool.query(
       `INSERT INTO project_hosts
          (id, name, bay_id, status, last_seen, created, updated)
@@ -539,26 +557,28 @@ describe("project-host intrusion monitor normalization", () => {
       ],
     );
     try {
-      mockAdminAlert.mockRejectedValueOnce(
-        new Error("notification unavailable"),
-      );
+      mockAdminAlert.mockImplementationOnce(async () => {
+        const visible = await pool.query<{
+          decision: Record<string, unknown>;
+        }>(
+          `SELECT decision FROM project_host_intrusion_snapshots
+            WHERE host_id=$1 ORDER BY created_at DESC LIMIT 1`,
+          [hostId],
+        );
+        expect(visible.rows[0]?.decision).toMatchObject({
+          classification: "actionable",
+          reason_codes: ["actionable_selector_match"],
+          notification_policy: "legacy",
+          actionable_delta: {
+            added: { "services.enabled": expect.any(Array) },
+          },
+        });
+        throw new Error("notification unavailable");
+      });
       await expect(runHostIntrusionMonitorPass()).rejects.toThrow(
         "notification unavailable",
       );
-      let result = await pool.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count
-           FROM project_host_intrusion_snapshots
-          WHERE host_id=$1 AND coverage='complete'`,
-        [hostId],
-      );
-      expect(result.rows[0]?.count).toBe("1");
-
-      mockAdminAlert.mockResolvedValueOnce(undefined);
-      await expect(runHostIntrusionMonitorPass()).resolves.toMatchObject({
-        checked: 1,
-        changed: 1,
-      });
-      result = await pool.query<{ count: string }>(
+      const result = await pool.query<{ count: string }>(
         `SELECT COUNT(*)::text AS count
            FROM project_host_intrusion_snapshots
           WHERE host_id=$1 AND coverage='complete'`,
@@ -566,6 +586,11 @@ describe("project-host intrusion monitor normalization", () => {
       );
       expect(result.rows[0]?.count).toBe("2");
     } finally {
+      if (previousMode == null) {
+        delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      } else {
+        process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+      }
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
         [hostId],
@@ -749,13 +774,7 @@ describe("project-host intrusion monitor normalization", () => {
         changed: 1,
         pending: 0,
       });
-      expect(mockAdminAlert).toHaveBeenCalledTimes(1);
-      expect(mockAdminAlert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subject:
-            "Project host intrusion monitor detected actionable security-state changes",
-        }),
-      );
+      expect(mockAdminAlert).not.toHaveBeenCalled();
       const { rows } = await pool.query<{
         assessment: Record<string, unknown>;
         baseline_eligible: boolean;
@@ -776,7 +795,7 @@ describe("project-host intrusion monitor normalization", () => {
         baseline_eligible: false,
       });
       expect(rows[2]).toMatchObject({
-        assessment: { state: "notified_snap_refresh_confirmation" },
+        assessment: { state: "confirmed_snap_refresh_confirmation" },
         baseline_eligible: true,
       });
     } finally {
