@@ -19,6 +19,7 @@ import {
   hasActiveSecondFactor,
   verifySignInSecondFactorChallenge,
 } from "@cocalc/server/auth/two-factor";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { isValidUUID } from "@cocalc/util/misc";
 
 type ChallengeIdentity = {
@@ -27,12 +28,31 @@ type ChallengeIdentity = {
 };
 
 function requireIdentity(opts: AccountLocalFinancialApprovalAuthRequest): void {
+  const email = `${opts.email_address ?? ""}`.trim().toLowerCase();
   if (
     !isValidUUID(opts.account_id) ||
     !isValidUUID(opts.intent_id) ||
+    !email ||
+    email !== opts.email_address ||
     new URL(opts.approval_origin).origin !== opts.approval_origin
   ) {
     throw new Error("invalid financial approval authentication request");
+  }
+}
+
+async function requireCurrentAccountEmail(
+  opts: AccountLocalFinancialApprovalAuthRequest,
+): Promise<void> {
+  const result = await getPool().query(
+    `SELECT 1 FROM accounts
+      WHERE account_id=$1::UUID
+        AND lower(email_address)=$2
+        AND deleted IS NOT TRUE
+        AND COALESCE(NULLIF(BTRIM(home_bay_id), ''), $3::TEXT)=$3::TEXT`,
+    [opts.account_id, opts.email_address, getConfiguredBayId()],
+  );
+  if (result.rows.length !== 1) {
+    throw new Error("financial approval authentication identity mismatch");
   }
 }
 
@@ -50,7 +70,8 @@ async function requireBoundChallenge(
   if (
     row?.account_id !== opts.account_id ||
     row.metadata?.financial_approval_origin !== opts.approval_origin ||
-    row.metadata?.financial_intent_id !== opts.intent_id
+    row.metadata?.financial_intent_id !== opts.intent_id ||
+    row.metadata?.financial_approval_email !== opts.email_address
   ) {
     throw new Error("financial approval authentication challenge mismatch");
   }
@@ -84,6 +105,7 @@ export async function financialApprovalAuthOnHome(
   opts: AccountLocalFinancialApprovalAuthRequest,
 ): Promise<AccountLocalFinancialApprovalAuthResult> {
   requireIdentity(opts);
+  await requireCurrentAccountEmail(opts);
   if (opts.action === "begin") {
     const primaryVerifiedAt = new Date(opts.primary_verified_at);
     if (
@@ -111,6 +133,7 @@ export async function financialApprovalAuthOnHome(
       metadata: {
         financial_approval_origin: opts.approval_origin,
         financial_intent_id: opts.intent_id,
+        financial_approval_email: opts.email_address,
       },
     });
     return {

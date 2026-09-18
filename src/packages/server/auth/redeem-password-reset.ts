@@ -38,6 +38,7 @@ export default async function redeemPasswordReset(
   }
   await setClusterAccountPasswordFromReset({
     account_id,
+    email_address,
     password,
   });
   return account_id;

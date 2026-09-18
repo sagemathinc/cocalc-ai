@@ -297,6 +297,7 @@ describe("seed-global email authentication challenges", () => {
     expect(exchange.exchange_token).toContain("signed-");
     expect(adminVerifyClusterAccountEmailAddressMock).toHaveBeenCalledWith({
       account_id: "22222222-2222-4222-8222-222222222222",
+      email_address: "person@example.edu",
     });
 
     const tokenArgs = issueHomeBayRetryTokenMock.mock.calls.at(-1)?.[0];
@@ -433,6 +434,7 @@ describe("seed-global email authentication challenges", () => {
     );
     expect(adminVerifyClusterAccountEmailAddressMock).toHaveBeenCalledWith({
       account_id: "33333333-3333-4333-8333-333333333333",
+      email_address: "new@example.edu",
     });
   });
 

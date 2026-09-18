@@ -1348,6 +1348,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
   | {
       action: "begin";
       account_id: string;
+      email_address: string;
       approval_origin: string;
       intent_id: string;
       primary_auth_method: "password" | "email_code" | "email_link";
@@ -1356,6 +1357,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
   | {
       action: "verify-code";
       account_id: string;
+      email_address: string;
       approval_origin: string;
       intent_id: string;
       challenge_id: string;
@@ -1365,6 +1367,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
   | {
       action: "start-passkey";
       account_id: string;
+      email_address: string;
       approval_origin: string;
       intent_id: string;
       challenge_id: string;
@@ -1378,6 +1381,7 @@ export type AccountLocalFinancialApprovalAuthRequest =
   | {
       action: "finish-passkey";
       account_id: string;
+      email_address: string;
       approval_origin: string;
       intent_id: string;
       challenge_id: string;
@@ -1531,6 +1535,7 @@ export interface AccountLocalSendEmailVerificationRequest {
 
 export interface AccountLocalAdminVerifyEmailAddressRequest {
   account_id: string;
+  email_address?: string;
 }
 
 export interface AccountLocalAdminVerifyEmailAddressResult {
@@ -1656,6 +1661,7 @@ export interface AccountLocalRedeemPasswordResetResult {
 
 export interface AccountLocalSetPasswordFromResetRequest {
   account_id: string;
+  email_address: string;
   password: string;
 }
 

@@ -399,11 +399,12 @@ async function getLocalAccountByEmail(
   const { rows } = await getPool().query(
     `SELECT account_id, display_name, first_name, last_name, email_address, home_bay_id,
             created, last_active, banned, email_address_verified
-       FROM accounts
+      FROM accounts
       WHERE email_address=$1
+        AND COALESCE(NULLIF(BTRIM(home_bay_id), ''), $2::TEXT) = $2::TEXT
         AND (deleted IS NULL OR deleted=FALSE)
       LIMIT 1`,
-    [email],
+    [email, getConfiguredBayId()],
   );
   return rows[0] ? canonicalLocalEntry(rows[0]) : null;
 }
@@ -697,6 +698,24 @@ function mergeEntries(
     const current = merged.get(entry.account_id);
     if (!current) {
       merged.set(entry.account_id, entry);
+      continue;
+    }
+    // Directory identity is authoritative once an account has moved away from
+    // this bay. Retained source rows remain useful for migration bookkeeping,
+    // but their old email and profile must never remain authentication aliases.
+    if (normalizedHomeBayId(entry.home_bay_id ?? "") !== getConfiguredBayId()) {
+      merged.set(entry.account_id, {
+        ...current,
+        ...entry,
+        is_admin: current.is_admin ?? entry.is_admin,
+        membership_class: current.membership_class ?? entry.membership_class,
+        membership_label: current.membership_label ?? entry.membership_label,
+        membership_source: current.membership_source ?? entry.membership_source,
+        last_active: latestAccountActivity(
+          current.last_active,
+          entry.last_active,
+        ),
+      });
       continue;
     }
     merged.set(entry.account_id, {

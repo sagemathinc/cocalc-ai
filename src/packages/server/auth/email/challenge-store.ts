@@ -957,6 +957,7 @@ async function resolveChallengeAccount(
     }
     await adminVerifyClusterAccountEmailAddress({
       account_id: existing.account_id,
+      email_address: row.normalized_email,
     });
     return {
       account_created: false,
@@ -1116,7 +1117,10 @@ async function resolveChallengeAccount(
     }
     throw new Error("account creation did not return an account id");
   }
-  await adminVerifyClusterAccountEmailAddress({ account_id });
+  await adminVerifyClusterAccountEmailAddress({
+    account_id,
+    email_address: row.normalized_email,
+  });
   return {
     account_created: accountCreated,
     account_id,

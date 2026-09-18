@@ -16,8 +16,10 @@ export interface AdminVerifyEmailAddressResult {
 
 export default async function adminVerifyEmailAddress({
   account_id,
+  email_address: expectedEmailAddress,
 }: {
   account_id: string;
+  email_address?: string;
 }): Promise<AdminVerifyEmailAddressResult> {
   const result = await withAccountRehomeWriteFence({
     account_id,
@@ -35,6 +37,10 @@ export default async function adminVerifyEmailAddress({
         .toLowerCase();
       if (!email_address) {
         throw Error("account does not have an email address");
+      }
+      const expected = `${expectedEmailAddress ?? ""}`.trim().toLowerCase();
+      if (expected && email_address !== expected) {
+        throw Error("verified email does not match the account");
       }
 
       const current = rows[0].email_address_verified ?? {};

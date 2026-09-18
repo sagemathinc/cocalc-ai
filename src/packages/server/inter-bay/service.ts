@@ -1345,8 +1345,8 @@ async function startAccountLocalService(): Promise<void> {
     },
     sendEmailVerification: async ({ account_id, only_verify }) =>
       await sendEmailVerificationLocal(account_id, only_verify),
-    adminVerifyEmailAddress: async ({ account_id }) =>
-      await adminVerifyEmailAddressLocal({ account_id }),
+    adminVerifyEmailAddress: async ({ account_id, email_address }) =>
+      await adminVerifyEmailAddressLocal({ account_id, email_address }),
     adminDisableTwoFactor: async ({ account_id }) =>
       await adminDisableTwoFactorLocal({ account_id }),
     adminGrantAdminRole: async (opts) => await grantAdminRoleLocal(opts),
@@ -1357,8 +1357,8 @@ async function startAccountLocalService(): Promise<void> {
     setAutoBalance: async (opts) => await setAutoBalanceLocal(opts),
     searchRelatedAccounts: async (opts) =>
       await searchRelatedClusterAccounts(opts),
-    setPasswordFromReset: async ({ account_id, password }) => {
-      await setPasswordFromResetLocal({ account_id, password });
+    setPasswordFromReset: async ({ account_id, email_address, password }) => {
+      await setPasswordFromResetLocal({ account_id, email_address, password });
     },
     assertProductAccessTrust: async ({ account_id, action }) => {
       await assertAccountTrustedForProductAccess(account_id, action);

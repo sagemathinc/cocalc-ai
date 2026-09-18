@@ -122,6 +122,7 @@ async function beginSecondFactor(
   const result = await homeAuth(auth.home_bay_id, {
     action: "begin",
     account_id: auth.account_id,
+    email_address: auth.email_address,
     approval_origin: auth.origin,
     intent_id: auth.intent_id,
     primary_auth_method,
@@ -237,6 +238,7 @@ export async function verifyFundingApprovalCode(opts: {
   const result = await homeAuth(opts.auth.home_bay_id, {
     action: "verify-code",
     account_id: opts.auth.account_id,
+    email_address: opts.auth.email_address,
     approval_origin: opts.auth.origin,
     intent_id: opts.auth.intent_id,
     challenge_id: opts.auth.second_factor_challenge_id,
@@ -263,6 +265,7 @@ export async function startFundingApprovalPasskey(opts: {
   const result = await homeAuth(opts.auth.home_bay_id, {
     action: "start-passkey",
     account_id: opts.auth.account_id,
+    email_address: opts.auth.email_address,
     approval_origin: opts.auth.origin,
     intent_id: opts.auth.intent_id,
     challenge_id: opts.auth.second_factor_challenge_id,
@@ -283,6 +286,7 @@ export async function finishFundingApprovalPasskey(opts: {
   const result = await homeAuth(opts.auth.home_bay_id, {
     action: "finish-passkey",
     account_id: opts.auth.account_id,
+    email_address: opts.auth.email_address,
     approval_origin: opts.auth.origin,
     intent_id: opts.auth.intent_id,
     challenge_id: opts.auth.second_factor_challenge_id,

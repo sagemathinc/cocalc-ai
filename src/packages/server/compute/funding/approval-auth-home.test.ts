@@ -30,17 +30,27 @@ jest.mock("@cocalc/server/auth/two-factor", () => ({
   hasActiveSecondFactor: jest.fn(),
   verifySignInSecondFactorChallenge: jest.fn(),
 }));
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: jest.fn(() => "bay-home"),
+}));
 
 const account_id = randomUUID();
 const intent_id = randomUUID();
 const challenge_id = randomUUID();
 const approval_origin = "https://approve.example.test";
+const email_address = "payer@example.test";
 const primary_verified_at = new Date().toISOString();
 const query = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
   (getPool as jest.Mock).mockReturnValue({ query });
+  query.mockImplementation(async (sql: string) => {
+    if (sql.includes("FROM accounts")) {
+      return { rows: [{ exists: 1 }] };
+    }
+    return { rows: [] };
+  });
 });
 
 it("returns ready after primary authentication when no second factor is active", async () => {
@@ -49,6 +59,7 @@ it("returns ready after primary authentication when no second factor is active",
     financialApprovalAuthOnHome({
       action: "begin",
       account_id,
+      email_address,
       approval_origin,
       intent_id,
       primary_auth_method: "email_code",
@@ -60,6 +71,10 @@ it("returns ready after primary authentication when no second factor is active",
     primary_auth_method: "email_code",
     factor_level: "none",
   });
+  expect(query).toHaveBeenCalledWith(
+    expect.stringContaining("lower(email_address)=$2"),
+    [account_id, email_address, "bay-home"],
+  );
 });
 
 it("creates an intent-bound challenge using the account's actual methods", async () => {
@@ -72,6 +87,7 @@ it("creates an intent-bound challenge using the account's actual methods", async
     financialApprovalAuthOnHome({
       action: "begin",
       account_id,
+      email_address,
       approval_origin,
       intent_id,
       primary_auth_method: "password",
@@ -89,27 +105,69 @@ it("creates an intent-bound challenge using the account's actual methods", async
       metadata: {
         financial_approval_origin: approval_origin,
         financial_intent_id: intent_id,
+        financial_approval_email: email_address,
       },
     }),
   );
 });
 
 it("rejects a challenge bound to another intent before factor verification", async () => {
-  query.mockResolvedValue({
-    rows: [
-      {
-        account_id,
-        metadata: {
-          financial_approval_origin: approval_origin,
-          financial_intent_id: randomUUID(),
+  query.mockImplementation(async (sql: string) => {
+    if (sql.includes("FROM accounts")) {
+      return { rows: [{ exists: 1 }] };
+    }
+    return {
+      rows: [
+        {
+          account_id,
+          metadata: {
+            financial_approval_origin: approval_origin,
+            financial_intent_id: randomUUID(),
+            financial_approval_email: email_address,
+          },
         },
-      },
-    ],
+      ],
+    };
   });
   await expect(
     financialApprovalAuthOnHome({
       action: "verify-code",
       account_id,
+      email_address,
+      approval_origin,
+      intent_id,
+      challenge_id,
+      method: "totp",
+      code: "123456",
+    }),
+  ).rejects.toThrow("challenge mismatch");
+  expect(verifySignInSecondFactorChallenge).not.toHaveBeenCalled();
+});
+
+it("rejects a challenge bound to another email before factor verification", async () => {
+  query.mockImplementation(async (sql: string) => {
+    if (sql.includes("FROM accounts")) {
+      return { rows: [{ exists: 1 }] };
+    }
+    return {
+      rows: [
+        {
+          account_id,
+          metadata: {
+            financial_approval_origin: approval_origin,
+            financial_intent_id: intent_id,
+            financial_approval_email: "old@example.test",
+          },
+        },
+      ],
+    };
+  });
+
+  await expect(
+    financialApprovalAuthOnHome({
+      action: "verify-code",
+      account_id,
+      email_address,
       approval_origin,
       intent_id,
       challenge_id,
@@ -121,16 +179,22 @@ it("rejects a challenge bound to another intent before factor verification", asy
 });
 
 it("uses the isolated origin and parent RP ID for passkey verification", async () => {
-  query.mockResolvedValue({
-    rows: [
-      {
-        account_id,
-        metadata: {
-          financial_approval_origin: approval_origin,
-          financial_intent_id: intent_id,
+  query.mockImplementation(async (sql: string) => {
+    if (sql.includes("FROM accounts")) {
+      return { rows: [{ exists: 1 }] };
+    }
+    return {
+      rows: [
+        {
+          account_id,
+          metadata: {
+            financial_approval_origin: approval_origin,
+            financial_intent_id: intent_id,
+            financial_approval_email: email_address,
+          },
         },
-      },
-    ],
+      ],
+    };
   });
   (startSignInPasskeyAuthentication as jest.Mock).mockResolvedValue({
     challenge_id,
@@ -140,6 +204,7 @@ it("uses the isolated origin and parent RP ID for passkey verification", async (
     financialApprovalAuthOnHome({
       action: "start-passkey",
       account_id,
+      email_address,
       approval_origin,
       intent_id,
       challenge_id,
@@ -162,21 +227,28 @@ it("uses the isolated origin and parent RP ID for passkey verification", async (
 });
 
 it("binds related-origin passkeys to the challenged approval origin", async () => {
-  query.mockResolvedValue({
-    rows: [
-      {
-        account_id,
-        metadata: {
-          financial_approval_origin: approval_origin,
-          financial_intent_id: intent_id,
+  query.mockImplementation(async (sql: string) => {
+    if (sql.includes("FROM accounts")) {
+      return { rows: [{ exists: 1 }] };
+    }
+    return {
+      rows: [
+        {
+          account_id,
+          metadata: {
+            financial_approval_origin: approval_origin,
+            financial_intent_id: intent_id,
+            financial_approval_email: email_address,
+          },
         },
-      },
-    ],
+      ],
+    };
   });
   await expect(
     financialApprovalAuthOnHome({
       action: "start-passkey",
       account_id,
+      email_address,
       approval_origin,
       intent_id,
       challenge_id,
@@ -189,4 +261,21 @@ it("binds related-origin passkeys to the challenged approval origin", async () =
     }),
   ).rejects.toThrow("passkey origin mismatch");
   expect(startSignInPasskeyAuthentication).not.toHaveBeenCalled();
+});
+
+it("rejects an obsolete email before issuing a financial challenge", async () => {
+  query.mockResolvedValue({ rows: [] });
+
+  await expect(
+    financialApprovalAuthOnHome({
+      action: "begin",
+      account_id,
+      email_address: "old@example.test",
+      approval_origin,
+      intent_id,
+      primary_auth_method: "email_code",
+      primary_verified_at,
+    }),
+  ).rejects.toThrow("identity mismatch");
+  expect(hasActiveSecondFactor).not.toHaveBeenCalled();
 });
