@@ -30,6 +30,7 @@ import {
   PUBLIC_FEATURED_GUIDES,
   PUBLIC_GUIDE_GROUPS,
 } from "@cocalc/util/public-guides";
+import { getPublicPricingContent } from "@cocalc/util/public-pricing-content";
 import { getDocsEntry } from "@cocalc/docs";
 import {
   getPublicHomeContent,
@@ -224,48 +225,38 @@ function renderPricing(
   basePath: string,
   config: PublicRouteMetadataConfig,
 ): string {
-  const isPlusProduct = config.cocalc_product === "plus";
-  const researchCompute =
-    getPublicFeaturePage("research-compute", config) != null
-      ? `<li><h3>${publicLink(
-          basePath,
-          "features/research-compute",
-          "Evaluate research compute",
-        )}</h3><p>Compare CPU, RAM, GPU, storage, software, and remote-kernel requirements before opening the authenticated host console. Host creation also depends on account eligibility, catalog availability, and authorization.</p></li>`
-      : "";
-  const introduction = isPlusProduct
-    ? "CoCalc Plus is the local, one-user runtime. Use the product paths below when you need hosted collaboration, a shared VM, or a customer-operated private deployment."
-    : "The membership options on this page apply to the hosted service on this site. For local, single-VM, and customer-operated paths, continue through the relevant product or contact page.";
-  const hostedAction = isPlusProduct
-    ? ""
-    : publicLink(basePath, "auth/sign-up", "Create account for hosted CoCalc");
-  const hostedSection = isPlusProduct
-    ? ""
-    : `<section>
-  <h2>Hosted memberships</h2>
-  <p>Use CoCalc.ai without operating CoCalc yourself. Current membership tiers, limits, and billing choices appear on this page when it loads.</p>
-</section>`;
+  const plus = config.cocalc_product === "plus";
+  const content = getPublicPricingContent(config.cocalc_product);
+  const section = (
+    item: { title: string; description: string },
+    links: string,
+  ) =>
+    `<section><h3>${htmlEscape(item.title)}</h3><p>${htmlEscape(item.description)}</p><p>${links}</p></section>`;
+  const compute = getPublicFeaturePage("research-compute", config) != null;
   return `<main data-cocalc-public-prerender="pricing" style="${ARTICLE_STYLE}">
 <header>
-  <p>CoCalc.ai pricing and licensing</p>
-  <h1>Find the right fit</h1>
-  <p>${htmlEscape(introduction)}</p>
-  <p>${hostedAction} ${publicLink(basePath, "products", "Compare operating models")}</p>
+  <p>${htmlEscape(content.pageTitle)}</p>
+  <h1>${htmlEscape(content.hero.title)}</h1>
+  <p>${htmlEscape(content.hero.description)}</p>
+  <p>${plus ? publicLink(basePath, "products/cocalc-plus#install-cocalc-plus", "Review CoCalc Plus setup") : publicLink(basePath, "auth/sign-up", "Create account for hosted CoCalc")} ${publicLink(basePath, "products", "Compare operating models")}</p>
 </header>
-${hostedSection}
+${
+  plus
+    ? ""
+    : `<section>
+  <h2>${htmlEscape(content.memberships.title)}</h2>
+  <p>${htmlEscape(content.memberships.description)}</p>
+  <p>${htmlEscape(content.memberships.upgrade)}</p>
+  <p>Enable JavaScript to load current membership plans and prices.</p>
+</section>`
+}
 <section>
-  <h2>${isPlusProduct ? "Licensing and deployment" : "For teams and organizations"}</h2>
-  ${
-    isPlusProduct
-      ? ""
-      : "<p>Choose team seats, organization licenses, dedicated project hosts, or a customer-operated product path according to your users, workload, procurement, and operating requirements. Account actions require sign-in, and host creation also depends on membership or grant eligibility.</p>"
-  }
-  <ul>${researchCompute}<li><h3>${publicLink(
-    basePath,
-    "products",
-    "Compare customer-operated options",
-  )}</h3><p>Compare local, one-VM, and private-deployment paths, including who owns infrastructure, recovery, and ongoing operations.</p></li></ul>
-  <p>${publicLink(basePath, "support", "Pricing and licensing support options")}</p>
+  <h2>${htmlEscape(content.nextTitle)}</h2>
+  ${plus ? "" : section(content.team, publicLink(basePath, "auth/sign-up", "Create account for team seats"))}
+  ${plus ? "" : section(content.organization, publicLink(basePath, "support", "Discuss organization pricing"))}
+  ${!plus && compute ? section(content.host, publicLink(basePath, "features/research-compute", "Evaluate research compute")) : ""}
+  ${section(content.deployment, publicLink(basePath, "products", "Compare customer-operated options"))}
+  ${plus ? section(content.quote, publicLink(basePath, "support", "Request a product quote")) : ""}
 </section>
 </main>`;
 }

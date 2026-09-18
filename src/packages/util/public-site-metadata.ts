@@ -3,6 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { getPublicPricingContent } from "./public-pricing-content";
 import { getPublicHomeContent } from "./public-home-content";
 
 import { LOCALE } from "./i18n/locale";
@@ -1029,10 +1030,13 @@ function getSameOriginPublicRouteMetadata(
     case "pricing":
       return {
         canonicalPath: publicPath("pricing", options),
-        description:
-          "Review CoCalc.ai hosted plans, site licensing, quotes, team seats, and buying paths for hosted, local, single-VM, and customer-operated deployment options.",
+        description: getPublicPricingContent(config?.cocalc_product)
+          .description,
         imagePath: publicPath(PRODUCT_SOCIAL_IMAGE, options),
-        title: pageTitle("CoCalc.ai Pricing and Licensing", siteName),
+        title: pageTitle(
+          getPublicPricingContent(config?.cocalc_product).pageTitle,
+          siteName,
+        ),
       };
     case "features":
       return featureRouteMetadata(route.route, siteName, config, options);

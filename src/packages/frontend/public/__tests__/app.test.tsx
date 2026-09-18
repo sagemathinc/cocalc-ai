@@ -16,6 +16,7 @@ import { setStoredControlPlaneOrigin } from "@cocalc/frontend/control-plane-orig
 import * as authApi from "@cocalc/frontend/auth/api";
 import type { NewsItem } from "@cocalc/util/types/news";
 import PublicApp from "../app";
+import PricingPage from "../pricing/page";
 import type { PublicAboutRoute } from "../about/routes";
 import { getAboutRouteFromPath } from "../about/routes";
 import type { PublicNewsRoute } from "../news/routes";
@@ -459,6 +460,7 @@ describe("PublicApp", () => {
 
   it("renders the pricing page from live membership tier data", async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({
         tiers: [
           {
@@ -548,11 +550,11 @@ describe("PublicApp", () => {
 
     expect(
       screen.getByRole("heading", {
-        name: "Choose Your Launchpad Membership",
+        name: "Plans and pricing",
       }),
     ).not.toBeNull();
     expect(
-      screen.getByText(/membership grid below applies to the hosted service/i),
+      screen.getByText(/Choose a membership for the work you do today/i),
     ).not.toBeNull();
     expect(screen.queryByText(/then choose a plan below/i)).toBeNull();
     expect(
@@ -581,10 +583,10 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Functionality")).not.toBeNull();
     expect(
-      screen.getByText(
+      screen.queryByText(
         "Pay at the end of the month for dedicated project host",
       ),
-    ).not.toBeNull();
+    ).toBeNull();
     expect(screen.getByText("CPU priority")).not.toBeNull();
     expect(screen.getByText("Low")).not.toBeNull();
     expect(screen.getByText("Medium")).not.toBeNull();
@@ -614,6 +616,9 @@ describe("PublicApp", () => {
     ).not.toBeNull();
     expect(screen.getByText("Rent dedicated project hosts")).not.toBeNull();
     expect(
+      screen.getByText("Postpaid host spending guardrail, rolling 7 days"),
+    ).not.toBeNull();
+    expect(
       screen.getByText(/These are the current membership parameters/),
     ).not.toBeNull();
     expect(screen.queryByText("Launchpad license")).toBeNull();
@@ -626,7 +631,7 @@ describe("PublicApp", () => {
     expect(screen.getAllByText("/ month").length).toBe(2);
     expect(screen.getAllByText("Save 25% with annual billing").length).toBe(2);
     expect(
-      screen.getByRole("heading", { name: "For Teams and Organizations" }),
+      screen.getByRole("heading", { name: "When your work needs more" }),
     ).not.toBeNull();
     expect(screen.getByRole("heading", { name: "Team seats" })).not.toBeNull();
     expect(
@@ -659,12 +664,17 @@ describe("PublicApp", () => {
         name: "Compare customer-operated options",
       }),
     ).toHaveAttribute("href", "/products");
-    expect(screen.getByText(/eligible membership or grant/i)).not.toBeNull();
+    expect(
+      screen.getByText(
+        /Access depends on your account, available capacity and deployment/i,
+      ),
+    ).not.toBeNull();
     expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
   });
 
   it("gives anonymous pricing readers public evaluation paths before account-only actions", async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({ tiers: [] }),
     }) as typeof fetch;
 
@@ -716,12 +726,13 @@ describe("PublicApp", () => {
         name: "Compare customer-operated options",
       }),
     ).toHaveAttribute("href", "/products");
-    expect(screen.getByText(/purchaser must sign in/i)).not.toBeNull();
+    expect(screen.getByText(/Sign in to buy or manage seats/i)).not.toBeNull();
     expect(screen.queryByText(/purchases above \$100/i)).toBeNull();
   });
 
   it("does not expose hosted research-compute evaluation on CoCalc Plus pricing", async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({ tiers: [] }),
     }) as typeof fetch;
 
@@ -744,6 +755,9 @@ describe("PublicApp", () => {
         name: "Create account for hosted CoCalc",
       }),
     ).toBeNull();
+    expect(
+      screen.getByRole("link", { name: "Review CoCalc Plus setup" }),
+    ).toHaveAttribute("href", "/products/cocalc-plus#install-cocalc-plus");
     expect(screen.queryByRole("heading", { name: "Team seats" })).toBeNull();
     expect(
       screen.queryByRole("heading", {
@@ -754,7 +768,7 @@ describe("PublicApp", () => {
       screen.queryByRole("heading", { name: "Dedicated project hosts" }),
     ).toBeNull();
     expect(
-      screen.getByText(/CoCalc Plus is the local, one-user runtime/i),
+      screen.getByText(/Run one project on your own computer/i),
     ).not.toBeNull();
     expect(
       screen.getByRole("link", {
@@ -778,6 +792,7 @@ describe("PublicApp", () => {
 
   it("does not render an actionless host card for anonymous unknown product profiles", async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({
         tiers: [
           {
@@ -810,6 +825,7 @@ describe("PublicApp", () => {
 
   it("does not promise included AI when no funded tier is configured", async () => {
     global.fetch = jest.fn().mockResolvedValue({
+      ok: true,
       json: async () => ({ tiers: [] }),
     }) as typeof fetch;
 
@@ -2393,5 +2409,246 @@ describe("feature configuration loading", () => {
       await screen.findByRole("heading", { name: "About CoCalc" }),
     ).not.toBeNull();
     expectNoCompute();
+  });
+});
+
+describe("public pricing catalog recovery", () => {
+  const tier = {
+    id: "synthetic-plan",
+    label: "Synthetic plan",
+    store_visible: true,
+    price_monthly: 12,
+    price_yearly: 120,
+  };
+  const response = (tiers: unknown[]) => ({
+    ok: true,
+    json: async () => ({ tiers }),
+  });
+
+  it.each([
+    [
+      "HTTP failure",
+      () => Promise.resolve({ ok: false, json: async () => ({ tiers: [] }) }),
+    ],
+    ["network failure", () => Promise.reject(new Error("offline"))],
+    [
+      "invalid JSON",
+      () =>
+        Promise.resolve({
+          ok: true,
+          json: async () => {
+            throw new Error("JSON");
+          },
+        }),
+    ],
+    [
+      "API error",
+      () =>
+        Promise.resolve({
+          ok: true,
+          json: async () => ({ error: "unavailable" }),
+        }),
+    ],
+    ["invalid tier", () => Promise.resolve(response([null]))],
+    ["invalid label", () => Promise.resolve(response([{ ...tier, label: 3 }]))],
+    [
+      "invalid description",
+      () => Promise.resolve(response([{ ...tier, store_description: {} }])),
+    ],
+    [
+      "invalid price",
+      () => Promise.resolve(response([{ ...tier, price_yearly: false }])),
+    ],
+    [
+      "invalid course price",
+      () => Promise.resolve(response([{ ...tier, course_price: {} }])),
+    ],
+    [
+      "invalid limits",
+      () =>
+        Promise.resolve(
+          response([
+            {
+              ...tier,
+              usage_limits: { credit_spend_limit_7d_usd: { toNumber: 1 } },
+            },
+          ]),
+        ),
+    ],
+    [
+      "invalid presentation",
+      () =>
+        Promise.resolve(
+          response([
+            {
+              ...tier,
+              presentation: {
+                detailGroups: [
+                  { key: "billing", title: "Billing", details: {} },
+                ],
+              },
+            },
+          ]),
+        ),
+    ],
+  ])(
+    "recovers from %s without pretending the catalog is empty",
+    async (_name, firstRequest) => {
+      global.fetch = jest
+        .fn()
+        .mockImplementationOnce(firstRequest)
+        .mockResolvedValue(response([tier]));
+      render(<PricingPage cocalcProduct="launchpad" />);
+      expect(
+        await screen.findByText("Membership plans could not be loaded."),
+      ).not.toBeNull();
+      expect(
+        screen.queryByText(
+          "No public membership tiers are currently configured.",
+        ),
+      ).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      expect(
+        await screen.findByRole("heading", { name: "Synthetic plan" }),
+      ).not.toBeNull();
+      expect(
+        screen.queryByText("Membership plans could not be loaded."),
+      ).toBeNull();
+    },
+  );
+
+  it.each([
+    [],
+    [{ ...tier, store_visible: false }],
+    [{ ...tier, disabled: true }],
+  ])("distinguishes a successful empty public catalog %#", async (...items) => {
+    global.fetch = jest.fn().mockResolvedValue(response(items));
+    render(<PricingPage />);
+    expect(
+      await screen.findByText(
+        "No public membership tiers are currently configured.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
+  });
+
+  it("accepts numeric-string course prices without exposing course-only tiers", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(
+        response([
+          tier,
+          {
+            id: "synthetic-course",
+            label: "Synthetic course",
+            course_store_visible: true,
+            store_visible: false,
+            course_price: "25.0000000000",
+          },
+        ]),
+      );
+    render(<PricingPage />);
+    expect(
+      await screen.findByRole("heading", { name: "Synthetic plan" }),
+    ).not.toBeNull();
+    expect(screen.queryByText("Synthetic course")).toBeNull();
+    expect(
+      screen.queryByText("Membership plans could not be loaded."),
+    ).toBeNull();
+  });
+
+  it("does not turn a missing annual price into a free offer", async () => {
+    global.fetch = jest
+      .fn()
+      .mockResolvedValue(response([{ ...tier, price_yearly: null }]));
+    render(<PricingPage />);
+    expect(
+      await screen.findByText(
+        "No annual membership tiers are currently configured.",
+      ),
+    ).not.toBeNull();
+    expect(screen.queryByText("$0")).toBeNull();
+    fireEvent.click(screen.getByText("Monthly"));
+    expect(
+      await screen.findByRole("heading", { name: "Synthetic plan" }),
+    ).not.toBeNull();
+    expect(screen.getByText("$12")).not.toBeNull();
+  });
+
+  it("announces loading, times out and ignores a late response after retry", async () => {
+    jest.useFakeTimers();
+    try {
+      let resolveFirst!: (value: unknown) => void;
+      let firstSignal!: AbortSignal;
+      global.fetch = jest
+        .fn()
+        .mockImplementationOnce((_url, { signal }) => {
+          firstSignal = signal;
+          return new Promise((resolve) => {
+            resolveFirst = resolve;
+          });
+        })
+        .mockResolvedValue(response([tier]));
+      render(<PricingPage />);
+      expect(screen.getByRole("status").textContent).toBe(
+        "Loading membership plans…",
+      );
+      await act(async () => {
+        jest.advanceTimersByTime(20_000);
+      });
+      expect(firstSignal.aborted).toBe(true);
+      expect(
+        screen.getByText("Membership plans could not be loaded."),
+      ).not.toBeNull();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+      });
+      expect(
+        screen.getByRole("heading", { name: "Synthetic plan" }),
+      ).not.toBeNull();
+      await act(async () => {
+        resolveFirst(response([]));
+      });
+      expect(
+        screen.getByRole("heading", { name: "Synthetic plan" }),
+      ).not.toBeNull();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("skips Plus, cancels on product change and unmount, and ignores stale data", async () => {
+    const signals: AbortSignal[] = [];
+    const resolvers: ((value: unknown) => void)[] = [];
+    global.fetch = jest.fn((_url, init) => {
+      signals.push(init!.signal as AbortSignal);
+      return new Promise((resolve) => {
+        resolvers.push(resolve);
+      });
+    }) as typeof fetch;
+    const { rerender, unmount } = render(<PricingPage cocalcProduct="plus" />);
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(screen.queryByRole("status")).toBeNull();
+    rerender(<PricingPage cocalcProduct="launchpad" />);
+    expect(signals).toHaveLength(1);
+    rerender(<PricingPage cocalcProduct="star" />);
+    expect(signals[0].aborted).toBe(true);
+    await act(async () => {
+      resolvers[0](response([tier]));
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Synthetic plan" }),
+    ).toBeNull();
+    rerender(<PricingPage cocalcProduct="plus" />);
+    expect(signals[1].aborted).toBe(true);
+    await act(async () => {
+      resolvers[1](response([tier]));
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Synthetic plan" }),
+    ).toBeNull();
+    rerender(<PricingPage cocalcProduct="launchpad" />);
+    unmount();
+    expect(signals[2].aborted).toBe(true);
   });
 });

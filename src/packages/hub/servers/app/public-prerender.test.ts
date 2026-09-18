@@ -1,3 +1,4 @@
+import { getPublicPricingContent } from "@cocalc/util/public-pricing-content";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
 import { getDocsEntry } from "@cocalc/docs";
 import {
@@ -63,17 +64,15 @@ describe("core landing page initial HTML", () => {
       );
       expect(pricing).toContain('data-cocalc-public-prerender="pricing"');
       expect(pricing).toContain("Hosted memberships");
-      expect(pricing).toContain("For teams and organizations");
+      expect(pricing).toContain("When your work needs more");
       expect(pricing).toContain(
-        "membership options on this page apply to the hosted service",
+        "Choose a membership for the work you do today",
       );
       expect(pricing).toContain(
         `href="${prefix}/auth/sign-up">Create account for hosted CoCalc`,
       );
       expect(pricing).toContain("Compare customer-operated options");
-      expect(pricing).toContain(
-        "Account actions require sign-in, and host creation also depends on membership or grant eligibility.",
-      );
+      expect(pricing).toContain("Sign in to buy or manage seats.");
       expect(pricing).not.toContain("then choose a plan");
     },
   );
@@ -90,7 +89,9 @@ describe("core landing page initial HTML", () => {
       expect(launchpad).toContain(
         `href="${prefix}/features/research-compute">Evaluate research compute`,
       );
-      expect(launchpad).toContain("catalog availability, and authorization");
+      expect(launchpad).toContain(
+        "Access depends on your account, available capacity and deployment",
+      );
 
       const plus = renderPublicRoutePrerender(
         { section: "pricing" },
@@ -101,7 +102,10 @@ describe("core landing page initial HTML", () => {
       expect(plus).not.toContain("Evaluate research compute");
       expect(plus).not.toContain("Create account for hosted CoCalc");
       expect(plus).not.toContain("Hosted memberships");
-      expect(plus).toContain("CoCalc Plus is the local, one-user runtime");
+      expect(plus).toContain(
+        `href="${prefix}/products/cocalc-plus#install-cocalc-plus">Review CoCalc Plus setup`,
+      );
+      expect(plus).toContain("Run one project on your own computer");
     },
   );
 
@@ -466,6 +470,37 @@ describe("professional AI project initial HTML", () => {
             html.includes(`href="${prefix}/features/research-compute"`),
           ).toBe(product === "launchpad" || product === "rocket");
         }
+      }
+    },
+  );
+});
+
+describe("shared pricing guidance", () => {
+  it.each(["launchpad", "star", "plus"])(
+    "keeps %s initial HTML consistent with the buying copy",
+    (product) => {
+      const content = getPublicPricingContent(product);
+      const html = renderPublicRoutePrerender(
+        { section: "pricing" },
+        "/preview-base",
+        { cocalc_product: product },
+      );
+      expect(html).toContain(content.hero.title);
+      expect(html).toContain(content.hero.description);
+      expect(html).toContain(content.deployment.description);
+      expect(html).toContain('href="/preview-base/products"');
+      expect(html).not.toContain('href="/products"');
+      expect(html).not.toContain("Pay at the end of the month");
+      if (product === "plus") {
+        expect(html).not.toContain("Hosted memberships");
+        expect(html).not.toContain("auth/sign-up");
+        expect(html).toContain(content.quote.description);
+      } else {
+        expect(html).toContain(content.memberships.upgrade);
+        expect(html).toContain(
+          "Enable JavaScript to load current membership plans and prices.",
+        );
+        expect(html).toContain(content.team.description);
       }
     },
   );
