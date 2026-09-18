@@ -3,6 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import {
+  getPublicAIContent,
+  getPublicAISections,
+} from "@cocalc/util/public-ai-content";
+
 export interface PublicFeatureSection {
   bullets?: string[];
   links?: Array<{ href: string; label: string }>;
@@ -303,42 +308,14 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     title: "AI Agents in CoCalc",
     navLabel: "AI Agents",
     metadataTitle: "AI Agents",
-    tagline: "Use AI agents where the work already lives.",
+    tagline: getPublicAIContent().hero.title,
     summary:
-      "Use integrated Codex or terminal-based agents alongside your files, notebooks, terminals, review notes, and collaborators.",
+      "Build dashboards, compare scenarios and investigate data with AI. Keep inputs, code and saved results together for inspection and further work.",
     metadataSummary:
-      "Use integrated Codex near files, notebooks, terminals, screenshots, patches, review notes, and live notebook state, or run other agents as terminal tools.",
-    image: "/public/features/chatgpt-fix-code.png",
+      "Develop business dashboards, engineering comparisons and portfolio research with AI in CoCalc. Inspect the inputs, code and saved results.",
     docsUrl: "/docs/ai/codex-chat",
     index: true,
-    sections: [
-      {
-        title: "Codex in project threads",
-        paragraphs: [
-          "CoCalc-AI uses AI through Codex chat threads. Human @mentions notify collaborators; they do not invoke models.",
-        ],
-        bullets: [
-          "Use OpenAI API keys or OpenAI subscription plans for native Codex support",
-          "Keep prompts, images, patches, and review notes in one durable thread",
-          "Let Codex work with files, terminals, and live notebook state",
-          "Run other command-line agents in project terminals as normal Linux tools",
-        ],
-        links: [{ href: "/docs/ai/codex-chat", label: "Set up Codex chat" }],
-      },
-      {
-        title: "Integrated chat or a terminal agent",
-        paragraphs: [
-          "Codex runs through project chat and can work with project files, terminals, and live notebook state. Claude Code, OpenCode, and other shell-based agents run in project terminals as normal Linux tools; their interfaces, credentials, and capabilities are separate from Codex chat.",
-        ],
-        links: [
-          { href: "/features/terminal", label: "Use project terminals" },
-          {
-            href: "/features/compare",
-            label: "Compare with agent sandboxes",
-          },
-        ],
-      },
-    ],
+    sections: getPublicAISections(),
   },
   {
     slug: "whiteboard",
@@ -597,17 +574,17 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
     slug: "compare",
     title: "CoCalc vs AI Agent Sandboxes",
     navLabel: "Compare",
-    tagline: "Choose the execution model that matches the work.",
+    tagline: "Choose where your AI work gets done.",
     summary:
-      "Compare CoCalc's persistent shared projects with API-first agent sandboxes, then choose based on who needs to use and review the environment.",
+      "Build a dashboard, test a model or develop an application. Compare how you will review the results, work with others and continue the project.",
     metadataSummary:
-      "Compare CoCalc's persistent shared projects with API-first AI agent sandboxes for collaboration, review, durable project work, and deployment.",
+      "Compare CoCalc and AI agent sandboxes for building applications, reviewing analysis, collaborating and choosing compute or hosting.",
     index: true,
     sections: [
       {
         title: "Shared project or agent sandbox?",
         paragraphs: [
-          "Agent sandboxes are built to launch isolated execution environments from an API or SDK. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc is built around a persistent shared project that people and agents open and use together.",
+          "A persistent workspace and isolated execution are not opposites. Agent sandboxes can provide both. Some support persistent files, snapshots, pause and resume, or full virtual machines. CoCalc also has APIs and a CLI; its shared interface lets people and agents open and work in the same project.",
         ],
       },
       {
@@ -622,15 +599,15 @@ export const PUBLIC_FEATURE_PAGES: PublicFeaturePage[] = [
         title: "Choose CoCalc when",
         bullets: [
           "People and agents work directly in the same notebooks, files, documents, terminals, and services",
-          "Collaborators need live work, review context, history, and recovery in one place",
-          "The work must persist across sessions, collaborators, reviews, and handoffs",
+          "Collaborators need to inspect and improve an analysis, report or application together",
+          "You want to return to saved work, review changes and continue it with collaborators",
           "You need a hosted service, a local or single-VM installation, or a customer-operated private deployment path",
         ],
       },
       {
         title: "Check the operating boundary",
         paragraphs: [
-          "Use the product and compute guides to confirm what is available for your deployment, account, and workload. If your design requires automatic fleets of per-run environments, GPU autoscaling, or exclusive GPU capacity, evaluate infrastructure built for those requirements.",
+          "Use the product and compute guides to confirm what is available for your deployment, account, and workload. CoCalc Plus is a local, one-user project; choose another edition for shared collaboration. If your design requires automatic fleets of per-run environments, GPU autoscaling, or exclusive GPU capacity, evaluate infrastructure built for those requirements.",
         ],
         links: [
           { href: "/features/ai", label: "Explore agent workflows" },

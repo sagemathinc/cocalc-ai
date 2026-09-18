@@ -85,7 +85,11 @@ describe("public feature page catalog", () => {
     const content = JSON.stringify(page);
     expect(page?.title).toBe("CoCalc vs AI Agent Sandboxes");
     expect(content).toContain("Some support persistent files");
-    expect(content).toContain("persistent shared project");
+    expect(page?.tagline).toBe("Choose where your AI work gets done.");
+    expect(content).toContain(
+      "A persistent workspace and isolated execution are not opposites",
+    );
+    expect(content).toContain("CoCalc also has APIs and a CLI");
     expect(content).toContain("If your design requires automatic fleets");
     expect(content).not.toContain("sandboxes are disposable");
   });

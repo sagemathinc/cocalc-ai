@@ -103,6 +103,9 @@ class ResearchExamples(unittest.TestCase):
             self.assertNotEqual(run.returncode, 0, run.stdout)
         return run
 
+    def test_energy_dashboard_reference_and_route_checks(self):
+        self.run_script("energy-dashboard.py", "--self-test")
+
     def test_independent_analysis_and_changed_input(self):
         source = self.directory / "measurements.csv"
         shutil.copyfile(EXAMPLES / source.name, source)

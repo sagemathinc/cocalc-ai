@@ -7,12 +7,15 @@ import type { ReactNode } from "react";
 import { createContext, useContext } from "react";
 
 import type { DocsAccess } from "@cocalc/docs";
-import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
+import {
+  APP_ICON,
+  APP_LOGO_NAME,
+  APP_LOGO_NAME_WHITE,
+} from "@cocalc/frontend/art";
 import type { EmailAuthenticationMode } from "@cocalc/util/auth/email-auth";
 import { SITE_NAME } from "@cocalc/util/theme";
 import type { SignupEmailDomainPublicPolicy } from "@cocalc/util/accounts/signup-email-domain-policy";
 import type { PassportStrategyFrontend } from "@cocalc/util/types/passport-types";
-import { joinUrlPath } from "@cocalc/util/url-path";
 import { isCanonicalPublicSiteHost } from "@cocalc/util/public-site-policy";
 import {
   getExternalPoliciesUrl,
@@ -60,14 +63,8 @@ export interface PublicConfig {
 }
 
 const PublicConfigContext = createContext<PublicConfig | undefined>(undefined);
-export const COCALC_WORDMARK_BLACK_URL = joinUrlPath(
-  appBasePath,
-  "webapp/cocalc-font-black.svg",
-);
-export const COCALC_WORDMARK_WHITE_URL = joinUrlPath(
-  appBasePath,
-  "webapp/cocalc-font-white.svg",
-);
+export const COCALC_WORDMARK_BLACK_URL = APP_LOGO_NAME;
+export const COCALC_WORDMARK_WHITE_URL = APP_LOGO_NAME_WHITE;
 
 export function PublicConfigProvider({
   children,
@@ -123,10 +120,7 @@ export function getPublicMarketingSiteName(config?: PublicConfig): string {
 }
 
 export function getLogoSquare(config?: PublicConfig): string {
-  return (
-    config?.logo_square?.trim() ||
-    joinUrlPath(appBasePath, "webapp/favicon.ico")
-  );
+  return config?.logo_square?.trim() || APP_ICON;
 }
 
 export function usesDefaultCoCalcBranding(config?: PublicConfig): boolean {

@@ -105,3 +105,65 @@ it.each(["/prefix", "/docs"])(
     ).toBeNull();
   },
 );
+
+it.each([
+  ["/prefix", "ai"],
+  ["/prefix", "openai-chatgpt"],
+  ["/docs", "ai"],
+  ["/docs", "openai-chatgpt"],
+])(
+  "keeps professional AI project links and Plus actions on %s for %s",
+  (basePath, slug) => {
+    jest.replaceProperty(
+      jest.requireMock("@cocalc/frontend/customize/app-base-path"),
+      "appBasePath",
+      basePath,
+    );
+    const { unmount } = render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "launchpad", site_name: "CoCalc" }}
+        initialRoute={{ view: "detail", slug }}
+      />,
+    );
+    expect(
+      screen.getByRole("link", { name: "Start with a dashboard guide" }),
+    ).toHaveAttribute("href", `${basePath}/docs/research/private-dashboard`);
+    expect(
+      screen.getByRole("link", { name: "Run a parameter comparison" }),
+    ).toHaveAttribute("href", `${basePath}/docs/research/parallel-cpu`);
+    expect(
+      screen.getByRole("link", { name: "Make an analysis reproducible" }),
+    ).toHaveAttribute("href", `${basePath}/docs/research/reproduce-analysis`);
+    expect(
+      document.querySelector(`a[href="${basePath}/features/ai"]`),
+    ).toHaveAttribute("aria-current", "page");
+    unmount();
+    const { container } = render(
+      <PublicFeaturesApp
+        config={{ cocalc_product: "plus", site_name: "CoCalc Plus" }}
+        initialRoute={{ view: "detail", slug }}
+      />,
+    );
+    for (const link of screen.getAllByRole("link", {
+      name: "Explore CoCalc Plus",
+    })) {
+      expect(link).toHaveAttribute(
+        "href",
+        `${basePath}/products/cocalc-plus#install-cocalc-plus`,
+      );
+    }
+    expect(screen.queryByRole("link", { name: "Create account" })).toBeNull();
+    expect(container.querySelector('a[href*="/docs/research/"]')).toBeNull();
+    expect(
+      container.querySelector('a[href*="/docs/ai/codex-chat"]'),
+    ).toBeNull();
+    expect(
+      container.querySelector(`a[href="${basePath}/features/ai"]`),
+    ).toHaveAttribute("aria-current", "page");
+    expect(
+      screen.getByRole("heading", {
+        name: "Turn a question into work you can use.",
+      }),
+    ).not.toBeNull();
+  },
+);

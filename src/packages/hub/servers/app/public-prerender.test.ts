@@ -1,4 +1,11 @@
+import { getPublicPricingContent } from "@cocalc/util/public-pricing-content";
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import { getDocsEntry } from "@cocalc/docs";
+import {
+  isPublicHomeLinkAvailable,
+  getPublicHomeContent,
+  PUBLIC_HOME_CONTENT as homeContent,
+} from "@cocalc/util/public-home-content";
 import { renderPublicRoutePrerender } from "./public-prerender";
 
 describe("public feature initial HTML", () => {
@@ -31,9 +38,7 @@ describe("core landing page initial HTML", () => {
       const prefix = basePath === "/" ? "" : basePath;
       const home = renderPublicRoutePrerender({ section: "home" }, basePath);
       expect(home).toContain('data-cocalc-public-prerender="home"');
-      expect(home).toContain(
-        "Keep people, AI agents, and project work together.",
-      );
+      expect(home).toContain(homeContent.hero.title);
       expect(home).toContain(
         `href="${basePath === "/" ? "" : basePath}/features/compare"`,
       );
@@ -59,17 +64,15 @@ describe("core landing page initial HTML", () => {
       );
       expect(pricing).toContain('data-cocalc-public-prerender="pricing"');
       expect(pricing).toContain("Hosted memberships");
-      expect(pricing).toContain("For teams and organizations");
+      expect(pricing).toContain("When your work needs more");
       expect(pricing).toContain(
-        "membership options on this page apply to the hosted service",
+        "Choose a membership for the work you do today",
       );
       expect(pricing).toContain(
         `href="${prefix}/auth/sign-up">Create account for hosted CoCalc`,
       );
       expect(pricing).toContain("Compare customer-operated options");
-      expect(pricing).toContain(
-        "Account actions require sign-in, and host creation also depends on membership or grant eligibility.",
-      );
+      expect(pricing).toContain("Sign in to buy or manage seats.");
       expect(pricing).not.toContain("then choose a plan");
     },
   );
@@ -86,7 +89,9 @@ describe("core landing page initial HTML", () => {
       expect(launchpad).toContain(
         `href="${prefix}/features/research-compute">Evaluate research compute`,
       );
-      expect(launchpad).toContain("catalog availability, and authorization");
+      expect(launchpad).toContain(
+        "Access depends on your account, available capacity and deployment",
+      );
 
       const plus = renderPublicRoutePrerender(
         { section: "pricing" },
@@ -97,7 +102,10 @@ describe("core landing page initial HTML", () => {
       expect(plus).not.toContain("Evaluate research compute");
       expect(plus).not.toContain("Create account for hosted CoCalc");
       expect(plus).not.toContain("Hosted memberships");
-      expect(plus).toContain("CoCalc Plus is the local, one-user runtime");
+      expect(plus).toContain(
+        `href="${prefix}/products/cocalc-plus#install-cocalc-plus">Review CoCalc Plus setup`,
+      );
+      expect(plus).toContain("Run one project on your own computer");
     },
   );
 
@@ -219,6 +227,14 @@ describe("core landing page initial HTML", () => {
       "/",
     );
     expect(html).toContain("Shared project or agent sandbox?");
+    expect(html).toContain("Choose where your AI work gets done.");
+    expect(html).toContain(
+      "Build a dashboard, test a model or develop an application.",
+    );
+    expect(html).toContain(
+      "A persistent workspace and isolated execution are not opposites",
+    );
+    expect(html).toContain("CoCalc also has APIs and a CLI");
     expect(html).toContain(
       "Some support persistent files, snapshots, pause and resume",
     );
@@ -308,4 +324,192 @@ describe("feature initial HTML product availability", () => {
       ),
     ).toBe("");
   });
+});
+
+describe("shared homepage content", () => {
+  it.each(["/", "/prefix", "/docs"])(
+    "renders the client story and prefixed links on %s",
+    (basePath) => {
+      const html = renderPublicRoutePrerender({ section: "home" }, basePath, {
+        cocalc_product: "launchpad",
+        policy_pages: "sagemathinc",
+      });
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const text of [
+        homeContent.hero.title,
+        homeContent.hero.description,
+        homeContent.hero.example.description,
+        homeContent.closing.description,
+      ]) {
+        expect(html).toContain(text);
+      }
+      for (const group of [
+        homeContent.benefits,
+        homeContent.workflows,
+        homeContent.hosting,
+      ]) {
+        expect(html).toContain(`<h2>${group.title}</h2>`);
+        for (const card of group.cards) {
+          expect(html).toContain(`<h3>${card.title}</h3>`);
+          expect(html).toContain(card.description);
+        }
+      }
+      for (const path of [
+        homeContent.hero.example.guide.href,
+        homeContent.hero.example.image,
+        homeContent.hero.secondary.href,
+        homeContent.benefits.link.href,
+        "pricing",
+        "products",
+        "policies/trust",
+      ]) {
+        expect(html).toContain(`href="${prefix}/${path}"`);
+      }
+      expect(html.match(/<h1>/g)).toHaveLength(1);
+      expect(html.match(/<section /g)).toHaveLength(5);
+    },
+  );
+
+  it("filters hosted docs and unconfigured policies", () => {
+    const html = renderPublicRoutePrerender({ section: "home" }, "/prefix", {
+      cocalc_product: "plus",
+      policy_pages: "",
+    });
+    expect(html).not.toContain('href="/prefix/docs/research/');
+    expect(html).not.toContain('href="/prefix/docs/hosts/');
+    expect(html).not.toContain('href="/prefix/policies/trust"');
+    expect(html).toContain('href="/prefix/docs/terminal/use-terminal"');
+    expect(html).toContain(
+      'href="/prefix/products/cocalc-plus#install-cocalc-plus"',
+    );
+    expect(html).not.toMatch(
+      /CoCalc.ai|collaborator|coauthor|hosted membership|project host|auth\/sign-up/i,
+    );
+    expect(html).not.toContain(homeContent.hero.example.image);
+    expect(html).toContain(getPublicHomeContent("plus").hero.description);
+  });
+
+  it("escapes custom site labels and URL attributes", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "home" },
+      '/prefix" data-injected="yes',
+      {
+        site_name: 'Example <script>alert(1)</script> "team"',
+        cocalc_product: "star",
+      },
+    );
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&quot;team&quot;");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain(' data-injected="yes');
+  });
+});
+
+// Keep the lightweight Home contract checked against the authoritative registry.
+it.each([undefined, "plus", "launchpad", "rocket", "star"])(
+  "matches Home link visibility to the docs registry for %s",
+  (product) => {
+    const content = getPublicHomeContent(product);
+    const links = [
+      content.hero.example.guide,
+      ...content.workflows.cards.map((c) => c.link),
+      ...content.hosting.cards.flatMap((c) => c.links),
+    ];
+    for (const link of links.filter((l) => l.href.startsWith("docs/"))) {
+      const slug = link.href.slice(5).split("#")[0];
+      expect(isPublicHomeLinkAvailable(link.href, product)).toBe(
+        getDocsEntry(slug, {
+          product: product === "plus" ? "plus" : undefined,
+        }) != null,
+      );
+    }
+  },
+);
+
+describe("professional AI project initial HTML", () => {
+  it.each(["/", "/prefix", "/docs"])(
+    "renders the same professional project briefs across product profiles on %s",
+    (basePath) => {
+      const { getPublicAIContent } = require("@cocalc/util/public-ai-content");
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const product of [
+        undefined,
+        "star",
+        "plus",
+        "launchpad",
+        "rocket",
+      ]) {
+        for (const slug of ["ai", "openai-chatgpt"]) {
+          const content = getPublicAIContent(product);
+          const html = renderPublicRoutePrerender(
+            { section: "features", route: { view: "detail", slug } },
+            basePath,
+            { cocalc_product: product },
+          )!;
+          expect(html).toContain(content.hero.title);
+          expect(html.split(content.hero.description)).toHaveLength(2);
+          for (const card of content.projects.cards) {
+            expect(html).toContain(card.title);
+            expect(html).toContain(card.description);
+            expect(html).toContain(`href="${prefix}${card.link.href}"`);
+          }
+          for (const step of content.workflow.steps) {
+            expect(html).toContain(step.title);
+            expect(html).toContain(step.description);
+          }
+          expect(html).toContain(content.review.description);
+          expect(html).toContain(content.setup.description);
+          expect(html).not.toContain("Teams and teaching");
+          expect(html).not.toContain("3 checks complete");
+          if (product === "plus") {
+            expect(html).toContain(
+              `href="${prefix}/products/cocalc-plus#install-cocalc-plus"`,
+            );
+            expect(html).not.toContain("auth/sign-up");
+            expect(html).not.toContain("invite others");
+            expect(html).not.toContain("docs/research/");
+            expect(html).not.toContain("docs/ai/codex-chat");
+          } else {
+            expect(html).toContain(
+              `href="${prefix}/auth/sign-up?intent=codex"`,
+            );
+          }
+          expect(
+            html.includes(`href="${prefix}/features/research-compute"`),
+          ).toBe(product === "launchpad" || product === "rocket");
+        }
+      }
+    },
+  );
+});
+
+describe("shared pricing guidance", () => {
+  it.each(["launchpad", "star", "plus"])(
+    "keeps %s initial HTML consistent with the buying copy",
+    (product) => {
+      const content = getPublicPricingContent(product);
+      const html = renderPublicRoutePrerender(
+        { section: "pricing" },
+        "/preview-base",
+        { cocalc_product: product },
+      );
+      expect(html).toContain(content.hero.title);
+      expect(html).toContain(content.hero.description);
+      expect(html).toContain(content.deployment.description);
+      expect(html).toContain('href="/preview-base/products"');
+      expect(html).not.toContain('href="/products"');
+      expect(html).not.toContain("Pay at the end of the month");
+      if (product === "plus") {
+        expect(html).not.toContain("Hosted memberships");
+        expect(html).not.toContain("auth/sign-up");
+        expect(html).toContain(content.quote.description);
+      } else {
+        expect(html).toContain(content.memberships.upgrade);
+        expect(html).toContain(
+          "Enable JavaScript to load current membership plans and prices.",
+        );
+        expect(html).toContain(content.team.description);
+      }
+    },
+  );
 });

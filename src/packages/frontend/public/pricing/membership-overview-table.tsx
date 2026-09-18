@@ -96,18 +96,6 @@ function tierFeatures(tier: MembershipPricingTier): Record<string, unknown> {
   return asRecord(tier.features);
 }
 
-function hasPositiveUsageLimit(
-  tier: MembershipPricingTier,
-  firstKey: string,
-  secondKey: string,
-): boolean {
-  const limits = usageLimits(tier);
-  return [firstKey, secondKey].some((key) => {
-    const limit = asNumber(limits[key]);
-    return limit != null && limit > 0;
-  });
-}
-
 const COMPARISON_GROUPS: ComparisonGroup[] = [
   {
     title: "Limits Per Project",
@@ -158,17 +146,6 @@ const COMPARISON_GROUPS: ComparisonGroup[] = [
           "Dedicated Project Host VM with much larger RAM, CPU, and Disk (pay as you go)",
         value: ({ tier }) =>
           formatBooleanValue(tierFeatures(tier).create_hosts),
-      },
-      {
-        label: "Pay at the end of the month for dedicated project host",
-        value: ({ tier }) =>
-          formatBooleanValue(
-            hasPositiveUsageLimit(
-              tier,
-              "credit_spend_limit_5h_usd",
-              "credit_spend_limit_7d_usd",
-            ),
-          ),
       },
     ],
   },

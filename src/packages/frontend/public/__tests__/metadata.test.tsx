@@ -1,6 +1,8 @@
 /** @jest-environment jsdom */
 
 import { render, waitFor } from "@testing-library/react";
+import { getPublicPricingContent } from "@cocalc/util/public-pricing-content";
+import { PUBLIC_HOME_CONTENT } from "@cocalc/util/public-home-content";
 
 import {
   applyPublicRouteMetadata,
@@ -151,10 +153,7 @@ describe("public route metadata", () => {
     );
 
     expect(metadata.title).toBe("CoCalc");
-    expect(metadata.description).toContain(
-      "people, AI agents, and project work",
-    );
-    expect(metadata.description).toContain("persistent shared Linux projects");
+    expect(metadata.description).toBe(PUBLIC_HOME_CONTENT.hero.description);
     expect(metadata.description).not.toMatch(/notebooks, code, documents/i);
   });
 
@@ -443,3 +442,18 @@ describe("research compute product metadata", () => {
     );
   });
 });
+
+it.each(["launchpad", "star", "plus"])(
+  "uses product-aware pricing metadata for %s",
+  (product) => {
+    const content = getPublicPricingContent(product);
+    const metadata = getPublicRouteMetadata(
+      { section: "pricing" },
+      { cocalc_product: product, site_name: "CoCalc" },
+      { basePath: "/preview-base" },
+    );
+    expect(metadata.title).toBe(`${content.pageTitle} | CoCalc`);
+    expect(metadata.description).toBe(content.description);
+    expect(metadata.canonicalPath).toBe("/preview-base/pricing");
+  },
+);
