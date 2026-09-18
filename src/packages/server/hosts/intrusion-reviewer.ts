@@ -794,48 +794,41 @@ export async function runHostIntrusionReviewerPass({
          SET last_started_at=NOW(), updated_at=NOW()`,
       [bayId],
     );
-    const cursor = await client.query<{
-      cursor_created_at: Date | string | null;
-      cursor_id: string | null;
-    }>(
+    await client.query(
       `SELECT cursor_created_at, cursor_id FROM ${STATE}
         WHERE bay_id=$1 FOR UPDATE`,
       [bayId],
     );
-    const current = cursor.rows[0];
     const limit = Math.min(
       MAX_BATCH_LIMIT,
       Math.max(1, Math.floor(batchLimit)),
     );
     const observations = await client.query<ObservationRow>(
-      `SELECT id, host_id, created_at, coverage,
+      `SELECT observations.id, observations.host_id,
+              observations.created_at, observations.coverage,
               CASE
-                WHEN pg_column_size(decision) > $4 THEN NULL
-                WHEN octet_length(decision::text) > $5 THEN NULL
+                WHEN pg_column_size(decision) > $2 THEN NULL
+                WHEN octet_length(decision::text) > $3 THEN NULL
                 ELSE decision
               END AS decision,
               CASE
-                WHEN pg_column_size(normalized) > $4 THEN NULL
-                WHEN octet_length(normalized::text) > $5 THEN NULL
+                WHEN pg_column_size(normalized) > $2 THEN NULL
+                WHEN octet_length(normalized::text) > $3 THEN NULL
                 ELSE normalized
               END AS normalized,
               CASE
-                WHEN pg_column_size(decision) > $4 OR pg_column_size(normalized) > $4 THEN TRUE
-                ELSE octet_length(decision::text) > $5 OR octet_length(normalized::text) > $5
+                WHEN pg_column_size(decision) > $2 OR pg_column_size(normalized) > $2 THEN TRUE
+                ELSE octet_length(decision::text) > $3 OR octet_length(normalized::text) > $3
               END AS evidence_oversized
-         FROM ${OBSERVATIONS}
-        WHERE bay_id=$1
-          AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
-        ORDER BY created_at, id
-        LIMIT $6`,
-      [
-        bayId,
-        current?.cursor_created_at ?? null,
-        current?.cursor_id ?? "00000000-0000-0000-0000-000000000000",
-        MAX_STORED_PHYSICAL_BYTES,
-        MAX_STORED_JSON_BYTES,
-        limit,
-      ],
+         FROM ${OBSERVATIONS} AS observations
+         JOIN ${STATE} AS state ON state.bay_id=$1
+        WHERE observations.bay_id=$1
+          AND (state.cursor_created_at IS NULL OR
+               (observations.created_at, observations.id) >
+               (state.cursor_created_at, state.cursor_id))
+        ORDER BY observations.created_at, observations.id
+        LIMIT $4`,
+      [bayId, MAX_STORED_PHYSICAL_BYTES, MAX_STORED_JSON_BYTES, limit],
     );
     for (const observation of observations.rows) {
       await reviewObservation(client, observation, result);
@@ -844,12 +837,15 @@ export async function runHostIntrusionReviewerPass({
     const last = observations.rows.at(-1);
     await client.query(
       `UPDATE ${STATE}
-          SET cursor_created_at=COALESCE($2, cursor_created_at),
-              cursor_id=COALESCE($3, cursor_id),
+          SET cursor_created_at=COALESCE(
+                (SELECT created_at FROM ${OBSERVATIONS} WHERE id=$2),
+                cursor_created_at
+              ),
+              cursor_id=COALESCE($2, cursor_id),
               last_success_at=NOW(), last_error_at=NULL, last_error=NULL,
               updated_at=NOW()
         WHERE bay_id=$1`,
-      [bayId, last?.created_at ?? null, last?.id ?? null],
+      [bayId, last?.id ?? null],
     );
     await client.query("COMMIT");
   } catch (err) {

@@ -145,6 +145,26 @@ describe("project-host intrusion reviewer", () => {
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
 
+  it("preserves PostgreSQL timestamp precision in the durable cursor", async () => {
+    const id = await insertObservation();
+    await getPool().query(
+      `UPDATE project_host_intrusion_snapshots
+          SET created_at=created_at + INTERVAL '111 microseconds'
+        WHERE id=$1`,
+      [id],
+    );
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 1,
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 0,
+    });
+    await expect(getHostIntrusionReviewReport()).resolves.toMatchObject({
+      reviewer: { backlog: 0 },
+    });
+  });
+
   it("opens one stable incident only after a later complete confirmation", async () => {
     const delta = { added: { "services.enabled": [ADDED_VALUE] } };
     const changed = normalized({ "services.enabled": [ADDED_VALUE] });
