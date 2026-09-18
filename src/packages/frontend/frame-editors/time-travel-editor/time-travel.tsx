@@ -9,7 +9,7 @@ import { Button, Modal, Radio, Select, Space, message } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import { useAsyncEffect, useEditorRedux } from "@cocalc/frontend/app-framework";
 import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
@@ -58,6 +58,7 @@ interface Props {
 
 export function TimeTravel(props: Props) {
   const { project_id, path } = props;
+  const documentScrollPosition = useRef(0);
 
   const useEditor = useEditorRedux<TimeTravelState>({ project_id, path });
   const error = useEditor("error");
@@ -784,6 +785,7 @@ export function TimeTravel(props: Props) {
         font_size={props.font_size}
         editor_settings={props.editor_settings}
         use_json={useJson}
+        scrollPosition={documentScrollPosition}
       />
     );
   };
@@ -1327,6 +1329,7 @@ export function TimeTravel(props: Props) {
         project_id={props.project_id}
         font_size={props.font_size}
         editor_settings={props.editor_settings}
+        scrollPosition={documentScrollPosition}
       />
     );
   } else if (!changesMode && loadedDocuments == null) {

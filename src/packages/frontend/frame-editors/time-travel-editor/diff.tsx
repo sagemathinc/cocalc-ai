@@ -18,6 +18,7 @@ export interface TimeTravelDiffProps {
   editor_settings: AccountState["editor_settings"];
   font_size: number;
   use_json: boolean;
+  scrollPosition: { current: number };
 }
 
 export function Diff(props: TimeTravelDiffProps) {
@@ -36,6 +37,7 @@ export function Diff(props: TimeTravelDiffProps) {
             path={props.use_json ? "history.json" : props.path}
             label={`${props.path}: selected TimeTravel versions`}
             fontSize={props.font_size}
+            scrollPosition={props.scrollPosition}
           />
         </Suspense>
       </DiffRenderBoundary>

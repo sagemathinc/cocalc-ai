@@ -167,6 +167,7 @@ interface CellListProps {
   scroll?: Scroll; // scroll as described by this, e.g., cecll visible'
   scroll_seq?: number; // indicates
   scrollTop?: any;
+  scrollPosition?: { current: number };
   sel_ids?: immutable.Set<string>; // set of selected cells
   trust?: boolean;
   aiTools?: AITools;
@@ -238,6 +239,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
     scroll,
     scroll_seq,
     scrollTop,
+    scrollPosition,
     sel_ids,
     trust,
     aiTools,
@@ -469,7 +471,7 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
   }
 
   async function restore_scroll(): Promise<void> {
-    const targetScrollTop = Number(scrollTop);
+    const targetScrollTop = Number(scrollTop ?? scrollPosition?.current);
     if (!Number.isFinite(targetScrollTop)) return;
     restoreScrollCancelledRef.current = false;
     restoreScrollActiveRef.current = true;
@@ -1075,6 +1077,9 @@ const LoadedCellList: React.FC<LoadedCellListProps> = (
           tabIndex={-1}
           onClick={actions != null && complete != null ? on_click : undefined}
           onScroll={() => {
+            if (scrollPosition != null) {
+              scrollPosition.current = cellListDivRef.current?.scrollTop ?? 0;
+            }
             cancelScrollRestoreIfUserScrolled();
             hydrateVisibleCells();
             minimap.onNotebookScroll();

@@ -37,6 +37,7 @@ type TextDocumentProps = {
   value: string | (() => string);
   syntaxHighlightExtension?: string;
   sourcePosition?: { line: number; column?: number; request?: number };
+  scrollPosition?: { current: number };
 };
 
 function readValue(value: string | (() => string)): string {
@@ -44,8 +45,14 @@ function readValue(value: string | (() => string)): string {
 }
 
 export function TextDocument(props: TextDocumentProps) {
-  const { path, font_size, editor_settings, value, syntaxHighlightExtension } =
-    props;
+  const {
+    path,
+    font_size,
+    editor_settings,
+    value,
+    syntaxHighlightExtension,
+    scrollPosition,
+  } = props;
   const modePath = useMemo(
     () =>
       syntaxHighlightExtension != null
@@ -73,13 +80,26 @@ export function TextDocument(props: TextDocumentProps) {
     init_style_hacks(cm);
     $(cm.getWrapperElement()).css({ height: "100%" });
     cm.setValue(readValue(value));
-    requestAnimationFrame(refresh);
+    const saveScrollPosition = () => {
+      if (scrollPosition != null) {
+        scrollPosition.current = cm.getScrollInfo().top;
+      }
+    };
+    cm.on("scroll", saveScrollPosition);
+    requestAnimationFrame(() => {
+      refresh();
+      if (scrollPosition != null) {
+        cm.scrollTo(null, scrollPosition.current);
+      }
+    });
 
     return () => {
+      saveScrollPosition();
+      cm.off("scroll", saveScrollPosition);
       $(cm.getWrapperElement()).remove();
       cmRef.current = null;
     };
-  }, [modePath, editor_settings]);
+  }, [modePath, editor_settings, scrollPosition]);
 
   useEffect(() => {
     const cm = cmRef.current;
