@@ -3,10 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { type ReactNode, useEffect, useState } from "react";
-
-import { Button, Flex, Modal, Tag, Typography } from "antd";
-
+import { type ReactNode, useEffect } from "react";
+import { Button, Flex, Typography } from "antd";
 import { Icon, type IconName } from "@cocalc/frontend/components/icon";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
 import {
@@ -15,466 +13,57 @@ import {
   type PublicConfig,
 } from "@cocalc/frontend/public/config";
 import { PublicPage } from "@cocalc/frontend/public/layout/shell";
+import { PUBLIC_COLORS } from "@cocalc/frontend/public/theme";
 import {
-  alpha,
-  publicAccent,
-  PUBLIC_COLORS,
-  PUBLIC_TYPE,
-} from "@cocalc/frontend/public/theme";
-import { COLORS } from "@cocalc/util/theme";
+  PUBLIC_HOME_CONTENT,
+  getPublicHomeContent,
+  isPublicHomeLinkAvailable,
+} from "@cocalc/util/public-home-content";
 import { joinUrlPath } from "@cocalc/util/url-path";
 import { builtinPolicyPath } from "../common";
 
 const { Paragraph, Text, Title } = Typography;
-
-interface HomeConfig extends PublicConfig {
-  site_description?: string;
-}
-
-const HERO_IMAGE_URL = appPath("public/landing/energy-dashboard-20260917.jpg");
+const HERO_IMAGE_URL = appPath(PUBLIC_HOME_CONTENT.hero.example.image);
 const DASHBOARD_GUIDE_URL = appPath(
-  "docs/research/private-dashboard#try-the-energy-scenario-explorer",
-);
-const WORKFLOW_IMAGE_URL = appPath(
-  "public/landing/project-terminal-20260916.jpg",
+  PUBLIC_HOME_CONTENT.hero.example.guide.href,
 );
 const PUBLIC_PAGE_GUTTER = "max(16px, calc((100vw - 1200px) / 2))";
-const PANEL_RADIUS = 8;
-const CARD_TITLE_STYLE = {
-  fontSize: PUBLIC_TYPE.lead,
-  lineHeight: 1.25,
-  margin: "0 0 8px",
-};
-const DIFFERENCE_CARD_TITLE_STYLE = {
-  ...CARD_TITLE_STYLE,
-  margin: "8px 0",
-};
 
 const HOME_PAGE_CSS = `
-  .cocalc-public-home {
-    color: ${PUBLIC_COLORS.text};
-  }
-
-  .cocalc-public-home a {
-    transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
-  }
-
-  .cocalc-public-home > section {
-    scroll-margin-top: 76px;
-  }
-
-  .cocalc-public-home-card-link:hover {
-    border-color: ${PUBLIC_COLORS.linkHover} !important;
-    box-shadow: 0 18px 44px ${alpha(PUBLIC_COLORS.shadowInk, 0.1)} !important;
-    transform: translateY(-1px);
-  }
-
-  .cocalc-public-home-hero-image,
-  .cocalc-public-home-workflow-image {
-    max-width: 100%;
-  }
-
-  .cocalc-public-home-hero-visual {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 24px;
-    padding: clamp(16px, 3vw, 32px);
-    background: ${PUBLIC_COLORS.surface};
-    border-top: 3px solid ${PUBLIC_COLORS.accent};
-  }
-
-  .cocalc-public-home-hero-visual figcaption {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-  }
-
-  @media (max-width: 760px) {
-    .cocalc-public-home-hero-visual figcaption {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-  }
-
-  @media (max-width: 920px) {
-    .cocalc-public-home-hero,
-    .cocalc-public-home-products,
-    .cocalc-public-home-difference,
-    .cocalc-public-home-workflow-layout {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-
-    .cocalc-public-home-hero-title {
-      font-size: 52px !important;
-      line-height: 1.08 !important;
-    }
-
-    .cocalc-public-home-hero-visual {
-      order: 2;
-    }
-
-    .cocalc-public-home-product-grid,
-    .cocalc-public-home-audience-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-    }
-  }
-
-  @media (max-width: 1120px) {
-    .cocalc-public-home-final-layout,
-    .cocalc-public-home-workflow-layout {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-  }
-
-  @media (max-width: 620px) {
-    .cocalc-public-home-final-actions {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-
-    .cocalc-public-home-final-actions .ant-btn {
-      width: 100%;
-    }
-  }
-
-  @media (max-width: 560px) {
-    .cocalc-public-home {
-      gap: 28px !important;
-    }
-
-    .cocalc-public-home-hero-title {
-      font-size: 38px !important;
-    }
-
-    .cocalc-public-home-actions .ant-btn,
-    .cocalc-public-home-final-actions .ant-btn {
-      width: 100%;
-    }
-
-    .cocalc-public-home-feature-grid,
-    .cocalc-public-home-audience-grid,
-    .cocalc-public-home-codex-grid,
-    .cocalc-public-home-product-grid,
-    .cocalc-public-home-difference-grid,
-    .cocalc-public-home-modal-grid,
-    .cocalc-public-home-final-actions {
-      grid-template-columns: minmax(0, 1fr) !important;
-    }
-  }
-`;
-
-const PROJECT_FACTS = [
-  {
-    body: "Teammates continue from the same project state instead of reconstructing work from scattered tools.",
-    title: "Context survives handoff",
-  },
-  {
-    body: "The project record stays available when someone returns to inspect or extend the work.",
-    title: "Review stays close",
-  },
-  {
-    body: "Snapshots, backups, and project history make useful states easier to recover.",
-    title: "Recovery remains practical",
-  },
-] as const;
-
-const WORKFLOW_FEATURES = [
-  {
-    accent: COLORS.RUN,
-    href: "features/jupyter-notebook",
-    icon: "jupyter",
-    summary:
-      "Run standard Jupyter notebooks in shared projects, with live collaboration, synchronized output, files, terminals, and history kept together.",
-    title: "Jupyter Notebooks",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    href: "features/latex-editor",
-    icon: "tex",
-    summary:
-      "Write papers and technical documents with live editing, build output, and source files close by.",
-    title: "LaTeX Editor",
-  },
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    href: "features/terminal",
-    icon: "terminal",
-    summary:
-      "Use Linux terminals for commands, scripts, services, and package setup beside notebooks and documents.",
-    title: "Linux Terminal",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    href: "features/ai",
-    icon: "robot",
-    summary:
-      "Use integrated Codex or terminal-based agents beside the files, tools, and collaborators involved in the work.",
-    title: "AI Agents",
-  },
-  {
-    accent: PUBLIC_COLORS.success,
-    href: "features/teaching",
-    icon: "graduation-cap",
-    summary:
-      "Run technical courses and workshops with assignment distribution, grading workflows, and collaborative support.",
-    title: "Teaching a Course",
-  },
-  {
-    accent: COLORS.ANTD_RED,
-    href: "features/whiteboard",
-    icon: "slides",
-    summary:
-      "Sketch ideas, formulas, notebook-backed explanations, and slide decks on a collaborative canvas.",
-    title: "Whiteboard",
-  },
-] satisfies Array<{
-  accent: string;
-  href: string;
-  icon: IconName;
-  summary: string;
-  title: string;
-}>;
-
-const AUDIENCE_ROUTES = [
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep experiments, datasets, code, papers, outputs, and AI-assisted changes together, then explore CPU, RAM, and GPU options when the work needs more capacity.",
-    button: "Plan research compute",
-    href: "docs/hosts/choose-compute",
-    icon: "project-outlined",
-    title: "Researchers, analysts, and builders",
-  },
-  {
-    accent: COLORS.GRAY_D,
-    body: "Choose customer-operated deployments where your data stays in your environment — matched to your infrastructure, governance, and support needs.",
-    button: "Review product paths",
-    href: "products",
-    icon: "servers",
-    title: "Organizations and platform teams",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Run courses and workshops in shared projects for assignments, grading, live help, reproducible environments, and student support.",
-    button: "Course workflows",
-    href: "features/teaching",
-    icon: "graduation-cap",
-    title: "Educators and learners",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  button: string;
-  href: string;
-  icon: IconName;
-  title: string;
-}>;
-
-const PROJECT_MODEL_ITEMS = [
-  { icon: "files", label: "Code and files" },
-  { icon: "jupyter", label: "Notebooks" },
-  { icon: "tex", label: "Documents" },
-  { icon: "history", label: "History" },
-] satisfies Array<{ icon: IconName; label: string }>;
-
-const PRODUCT_OPTIONS = [
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Managed hosted workspace for individuals and teams that do not want to run infrastructure.",
-    href: "auth/sign-up",
-    icon: "cloud",
-    label: "Hosted",
-    title: "CoCalc.ai",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Free local runtime for self-directed work and evaluation.",
-    href: "products/cocalc-plus",
-    icon: "laptop",
-    label: "Local",
-    title: "CoCalc Plus",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Run one shared CoCalc instance on a single Ubuntu VM, either in the cloud or locally.",
-    href: "products/cocalc-star",
-    icon: "star",
-    label: "One VM",
-    title: "CoCalc Star",
-  },
-  {
-    accent: PUBLIC_COLORS.warning,
-    body: "Lightweight private deployment for pilots, labs, workshops, and small teams.",
-    href: "products/cocalc-launchpad",
-    icon: "servers",
-    label: "Private",
-    title: "CoCalc Launchpad",
-  },
-  {
-    accent: COLORS.GRAY_D,
-    body: "Enterprise private-cloud path for institutions and organizations with broader deployment requirements.",
-    href: "products/cocalc-rocket",
-    icon: "rocket",
-    label: "Enterprise",
-    title: "CoCalc Rocket",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  href: string;
-  icon: IconName;
-  label: string;
-  title: string;
-}>;
-
-const AGENT_DEFINITION_CARDS = [
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "Codex works in project chat, while terminal-based agents run beside the files, notebooks, terminals, and services they need.",
-    icon: "robot",
-    title: "Work with files and services",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Patches, notes, and run output stay visible in the project, so your team can inspect the work before keeping it.",
-    icon: "search",
-    title: "Review agent changes",
-  },
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Use the integrated Codex experience, Claude Code in a terminal, or other shell-capable agents without moving the project somewhere else.",
-    icon: "terminal",
-    title: "Integrated chat or terminal",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  icon: IconName;
-  title: string;
-}>;
-
-const DIFFERENCE_SIGNALS = [
-  { icon: "files", label: "Shared context" },
-  { icon: "users", label: "Collaboration" },
-  { icon: "history", label: "Review history" },
-  { icon: "disk-snapshot", label: "Recovery paths" },
-] satisfies Array<{ icon: IconName; label: string }>;
-
-const DIFFERENTIATORS = [
-  {
-    accent: COLORS.ANTD_LINK_BLUE_DARK,
-    body: "Keep the main artifacts of computational work near the discussions, outputs, and decisions they produce.",
-    ctaHref: "docs/projects/project-list",
-    ctaLabel: "Read project docs",
-    details: PROJECT_FACTS,
-    eyebrow: "Project continuity",
-    icon: "project-outlined",
-    modalBody:
-      "CoCalc projects keep notebooks, files, outputs, documents, terminals, and agent-assisted work in one durable workspace, so the work remains understandable over time.",
-    title: "Project-centered workflow",
-  },
-  {
-    accent: COLORS.RUN,
-    body: "Review live collaboration and AI-assisted changes in the project before teammates build on them.",
-    ctaHref: "docs/collaboration/chat",
-    ctaLabel: "Read chat docs",
-    details: [
-      {
-        body: "Realtime editing, chat, and shared outputs help collaborators compare results and decide how to move forward.",
-        title: "Review together",
-      },
-      {
-        body: "Codex edits, patches, test output, screenshots, and review notes stay beside affected files.",
-        title: "Inspect exact changes",
-      },
-      {
-        body: "Reasoning, commands, outputs, and follow-up questions stay with the project.",
-        title: "Keep evidence together",
-      },
-    ],
-    eyebrow: "Review together",
-    icon: "search",
-    modalBody:
-      "CoCalc keeps collaboration, AI-assisted edits, notebooks, terminals, outputs, screenshots, and discussion in the project, so people can review the work before relying on it.",
-    title: "Inspection before handoff",
-  },
-  {
-    accent: COLORS.AI_ASSISTANT_FONT,
-    body: "History, TimeTravel, snapshots, and backups help teams understand changes and return to useful states.",
-    ctaHref: "docs/files/timetravel",
-    ctaLabel: "Read TimeTravel docs",
-    details: [
-      {
-        body: "Project history shows how notebooks, files, documents, and outputs changed.",
-        title: "Trace what changed",
-      },
-      {
-        body: "Snapshots and backups let teams resume from a known project state.",
-        title: "Recover useful states",
-      },
-      {
-        body: "Files, notes, outputs, and discussion keep recovery tied to the project record.",
-        title: "Resume with context",
-      },
-    ],
-    eyebrow: "Keep moving",
-    icon: "history",
-    modalBody:
-      "CoCalc keeps history, TimeTravel, snapshots, backups, and project context together so teams can return to useful states and continue with less guesswork.",
-    title: "Practical recovery",
-  },
-  {
-    accent: COLORS.GRAY_M,
-    body: "Review different product paths when infrastructure, governance, or support needs shape the decision.",
-    ctaHref: "products",
-    ctaLabel: "Review product paths",
-    details: [
-      {
-        body: "Choose hosted, local, single-VM, or organization-operated deployment.",
-        title: "Match where it runs",
-      },
-      {
-        body: "Compare upgrades, data boundaries, licensing, governance, and support.",
-        title: "Keep ownership clear",
-      },
-      {
-        body: "Use the product comparison for procurement, security, platform, and support questions.",
-        title: "Route the next conversation",
-      },
-    ],
-    eyebrow: "Choose where it runs",
-    icon: "cloud",
-    modalBody:
-      "CoCalc product paths are choices about where the workspace runs and who operates it, from hosted CoCalc.ai through local, single-VM, private, and enterprise deployments.",
-    title: "Operating model choice",
-  },
-] satisfies Array<{
-  accent: string;
-  body: string;
-  ctaHref: string;
-  ctaLabel: string;
-  details: ReadonlyArray<{
-    body: string;
-    title: string;
-  }>;
-  eyebrow: string;
-  icon: IconName;
-  modalBody: string;
-  title: string;
-}>;
-
-function accessibleAccentTextColor(accent: string): string {
-  if (accent === COLORS.RUN) return publicAccent(COLORS.ANTD_GREEN_D);
-  if (accent === COLORS.AI_ASSISTANT_FONT || accent === PUBLIC_COLORS.warning) {
-    return publicAccent(COLORS.BRWN);
-  }
-  if (accent === PUBLIC_COLORS.link) return PUBLIC_COLORS.linkHover;
-  return publicAccent(accent);
+.cocalc-public-home { color: ${PUBLIC_COLORS.text}; }
+.cocalc-public-home > section { scroll-margin-top: 80px; }
+.cocalc-public-home-hero-visual {
+  display: grid; grid-template-columns: minmax(0, 1fr); gap: 24px;
+  padding: clamp(16px, 3vw, 32px); background: ${PUBLIC_COLORS.surface};
+  border-top: 3px solid ${PUBLIC_COLORS.accent};
 }
+.cocalc-public-home-hero-visual figcaption {
+  display: flex; align-items: center; justify-content: space-between; gap: 24px;
+}
+.cocalc-public-home-hero-image { max-width: 100%; }
+.cocalc-public-home-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px;
+  margin-top: 24px;
+}
+.cocalc-public-home-hosting-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cocalc-public-home-card { border-top: 1px solid ${PUBLIC_COLORS.border}; padding: 24px 0; min-width: 0; }
+a.cocalc-public-home-card { color: inherit; text-decoration: none; }
+a.cocalc-public-home-card:hover h3 { color: ${PUBLIC_COLORS.linkHover}; }
+.cocalc-public-home a:focus-visible { outline: 3px solid ${PUBLIC_COLORS.link}; outline-offset: 5px; }
+.cocalc-public-home-final { background: ${PUBLIC_COLORS.surface}; border-top: 3px solid ${PUBLIC_COLORS.accent}; padding: clamp(20px, 4vw, 40px); }
+@media (max-width: 760px) {
+  .cocalc-public-home-hero-visual figcaption { align-items: flex-start; flex-direction: column; }
+  .cocalc-public-home-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+}
+@media (max-width: 560px) {
+  .cocalc-public-home-hero-title { font-size: 38px !important; }
+  .cocalc-public-home-actions .ant-btn, .cocalc-public-home-final-actions .ant-btn { width: 100%; }
+}
+`;
 
 function appPath(path: string): string {
   return joinUrlPath(appBasePath, path);
 }
-
 function Eyebrow({ children }: { children: ReactNode }) {
   return (
     <Text
@@ -491,39 +80,6 @@ function Eyebrow({ children }: { children: ReactNode }) {
     </Text>
   );
 }
-
-function IconTile({
-  accent,
-  icon,
-  size = 42,
-}: {
-  accent: string;
-  icon: IconName;
-  size?: number;
-}) {
-  accent = publicAccent(accent);
-  return (
-    <span
-      aria-hidden="true"
-      style={{
-        alignItems: "center",
-        background: alpha(accent, 0.1),
-        border: `1px solid ${alpha(accent, 0.22)}`,
-        borderRadius: PANEL_RADIUS,
-        color: accent,
-        display: "inline-flex",
-        flex: `0 0 ${size}px`,
-        fontSize: Math.max(16, Math.round(size * 0.45)),
-        height: size,
-        justifyContent: "center",
-        width: size,
-      }}
-    >
-      <Icon name={icon} />
-    </span>
-  );
-}
-
 function DecorativeButtonIcon({ name }: { name: IconName }) {
   return (
     <span aria-hidden="true" style={{ display: "inline-flex" }}>
@@ -531,39 +87,57 @@ function DecorativeButtonIcon({ name }: { name: IconName }) {
     </span>
   );
 }
-
 function SectionIntro({
   eyebrow,
   title,
-  body,
-  action,
+  description,
 }: {
-  action?: ReactNode;
-  body?: ReactNode;
-  eyebrow: ReactNode;
-  title: ReactNode;
+  eyebrow: string;
+  title: string;
+  description?: string;
 }) {
   return (
-    <Flex align="end" justify="space-between" wrap gap={16}>
-      <div style={{ maxWidth: 760 }}>
-        <Eyebrow>{eyebrow}</Eyebrow>
-        <Title level={2} style={{ margin: "8px 0 10px" }}>
-          {title}
-        </Title>
-        {body == null ? null : (
-          <Paragraph style={{ fontSize: 18, margin: 0 }}>{body}</Paragraph>
-        )}
-      </div>
-      {action}
-    </Flex>
+    <div style={{ maxWidth: 760 }}>
+      <Eyebrow>{eyebrow}</Eyebrow>
+      <Title level={2} style={{ margin: "8px 0 12px" }}>
+        {title}
+      </Title>
+      {description && (
+        <Paragraph style={{ fontSize: 18, margin: 0 }}>{description}</Paragraph>
+      )}
+    </div>
   );
 }
-
+function CardText({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <>
+      <Title
+        level={3}
+        style={{ fontSize: 22, lineHeight: 1.3, margin: "0 0 10px" }}
+      >
+        {title}
+      </Title>
+      <Paragraph style={{ margin: "0 0 16px", fontSize: 17 }}>
+        {description}
+      </Paragraph>
+    </>
+  );
+}
 function Hero({
+  content,
   authenticated,
+  showDashboardGuide,
   siteName,
 }: {
+  content: ReturnType<typeof getPublicHomeContent>;
   authenticated: boolean;
+  showDashboardGuide: boolean;
   siteName: string;
 }) {
   return (
@@ -577,7 +151,7 @@ function Hero({
       }}
     >
       <Flex vertical gap={24} style={{ maxWidth: 1040 }}>
-        <Eyebrow>A workspace for people and AI agents</Eyebrow>
+        <Eyebrow>{content.hero.eyebrow}</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
@@ -592,7 +166,7 @@ function Hero({
               maxWidth: 1040,
             }}
           >
-            Analyze data and build apps with AI.
+            {content.hero.title}
           </Title>
           <Paragraph
             style={{
@@ -603,14 +177,12 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Work with AI agents alongside your code, data and running
-            applications. Review the results, invite collaborators and keep
-            improving your work.
+            {content.hero.description}
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
           <Button
-            href={appPath(authenticated ? "projects" : "auth/sign-up")}
+            href={appPath(authenticated ? "projects" : content.hero.startHref)}
             icon={
               <DecorativeButtonIcon
                 name={authenticated ? "project-outlined" : "rocket"}
@@ -619,656 +191,202 @@ function Hero({
             size="large"
             type="primary"
           >
-            {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+            {authenticated
+              ? content.hero.returningLabel
+              : content.hero.startLabel}
           </Button>
-          <Button href={appPath("features/ai")} size="large" type="text">
-            Explore AI workflows
-          </Button>
-        </Flex>
-      </Flex>
-      <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
-        <figcaption>
-          <div style={{ maxWidth: 650 }}>
-            <Text strong style={{ fontSize: 24, color: PUBLIC_COLORS.heading }}>
-              Explore an idea. See what changes.
-            </Text>
-            <Paragraph style={{ margin: "8px 0 0", fontSize: 16 }}>
-              Change demand or solar generation to compare energy use in this
-              Python dashboard running in CoCalc. All data is synthetic.
-            </Paragraph>
-          </div>
-          <Flex vertical gap={8} style={{ flexShrink: 0 }}>
-            <Button href={DASHBOARD_GUIDE_URL}>Run this example</Button>
-            <a href={HERO_IMAGE_URL} target="_blank" rel="noopener noreferrer">
-              View full-size screenshot
-            </a>
-          </Flex>
-        </figcaption>
-        <img
-          alt="Energy scenario dashboard running in CoCalc, with synthetic demand and solar plots, summary figures and hourly grid use"
-          className="cocalc-public-home-hero-image"
-          decoding="async"
-          width={1512}
-          height={1245}
-          src={HERO_IMAGE_URL}
-          style={{
-            aspectRatio: "1512 / 760",
-            border: `1px solid ${PUBLIC_COLORS.border}`,
-            borderRadius: 4,
-            display: "block",
-            height: "auto",
-            objectFit: "cover",
-            objectPosition: "center",
-            width: "100%",
-          }}
-        />
-      </figure>
-    </section>
-  );
-}
-
-function AgentDefinitionSection() {
-  return (
-    <section
-      aria-label="AI agents in CoCalc"
-      style={{ padding: "22px 0 24px" }}
-    >
-      <SectionIntro
-        body="Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use."
-        eyebrow="Agent-ready by design"
-        title="Give AI agents the files and tools they need."
-      />
-      <Flex gap={12} style={{ marginTop: 18 }} wrap>
-        <Button href={appPath("features/ai")}>See agent workflows</Button>
-        <Button href={appPath("features/compare")}>
-          Compare with agent sandboxes
-        </Button>
-      </Flex>
-      <div
-        className="cocalc-public-home-codex-grid"
-        style={{
-          display: "grid",
-          gap: 18,
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          marginTop: 22,
-        }}
-      >
-        {AGENT_DEFINITION_CARDS.map((card) => (
-          <div
-            key={card.title}
-            style={{
-              borderTop: `1px solid ${PUBLIC_COLORS.border}`,
-              minHeight: 190,
-              padding: "24px 0",
-            }}
-          >
-            <Flex vertical gap={14}>
-              <IconTile accent={card.accent} icon={card.icon} />
-              <div>
-                <Title level={3} style={CARD_TITLE_STYLE}>
-                  {card.title}
-                </Title>
-                <Paragraph style={{ margin: 0 }}>{card.body}</Paragraph>
-              </div>
-            </Flex>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AudienceRoutesSection() {
-  return (
-    <section aria-label="Who CoCalc helps" style={{ padding: "10px 0 24px" }}>
-      <SectionIntro
-        eyebrow="Who it helps"
-        title="For work that must persist across people and agents."
-        body="Researchers, builders, educators, and organizations can start with the path that matches how their work is created, reviewed, taught, or operated."
-      />
-      <div
-        className="cocalc-public-home-audience-grid"
-        style={{
-          display: "grid",
-          gap: 18,
-          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          marginTop: 24,
-        }}
-      >
-        {AUDIENCE_ROUTES.map((route) => (
-          <a
-            className="cocalc-public-home-card-link cocalc-public-home-audience-card"
-            href={appPath(route.href)}
-            key={route.title}
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${alpha(route.accent, 0.18)}`,
-              borderRadius: PANEL_RADIUS,
-              color: "inherit",
-              display: "grid",
-              gap: 16,
-              gridTemplateRows: "44px minmax(96px, 1fr) auto",
-              minHeight: 220,
-              padding: 22,
-              textDecoration: "none",
-            }}
-          >
-            <IconTile accent={route.accent} icon={route.icon} />
-            <div>
-              <Title level={3} style={CARD_TITLE_STYLE}>
-                {route.title}
-              </Title>
-              <Paragraph style={{ margin: 0 }}>{route.body}</Paragraph>
-            </div>
-            <Text
-              className="cocalc-public-home-audience-action"
-              strong
-              style={{
-                alignItems: "center",
-                color: PUBLIC_COLORS.link,
-                display: "inline-flex",
-                gap: 6,
-              }}
-            >
-              {route.button}
-            </Text>
-          </a>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function WorkflowsSection() {
-  return (
-    <section aria-label="Core workflows" style={{ padding: "28px 0" }}>
-      <SectionIntro
-        action={
-          <Button href={appPath("features")}>Browse feature workflows</Button>
-        }
-        body="Use notebooks, documents, terminals, agents, courses, slide decks, and more inside the same persistent Linux environment."
-        eyebrow="Core workflows"
-        title="One project, many workflows."
-      />
-      <div
-        className="cocalc-public-home-workflow-layout"
-        style={{
-          alignItems: "stretch",
-          display: "grid",
-          gap: 18,
-          gridTemplateColumns: "400px minmax(0, 1fr)",
-          marginTop: 26,
-        }}
-      >
-        <Flex vertical gap={16}>
-          <figure style={{ margin: 0 }}>
-            <img
-              alt="A CoCalc project terminal listing synthetic files and reproducing an 18.3-second average"
-              className="cocalc-public-home-workflow-image"
-              decoding="async"
-              loading="lazy"
-              src={WORKFLOW_IMAGE_URL}
-              style={{
-                aspectRatio: "2 / 1",
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
-                display: "block",
-                objectFit: "contain",
-                width: "100%",
-                maxWidth: 400,
-              }}
-            />
-            <figcaption
-              style={{
-                color: PUBLIC_COLORS.mutedText,
-                fontSize: 13,
-                lineHeight: 1.45,
-                marginTop: 8,
-              }}
-            >
-              A project terminal reruns the same synthetic analysis from saved
-              files.
-            </figcaption>
-          </figure>
-          <aside
-            aria-label="One CoCalc project model"
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              padding: 18,
-            }}
-          >
-            <Flex vertical gap={14}>
-              <Flex align="center" gap={12}>
-                <IconTile accent={PUBLIC_COLORS.link} icon="project-outlined" />
-                <span>
-                  <Text strong style={{ color: PUBLIC_COLORS.link }}>
-                    Project context
-                  </Text>
-                  <Text style={{ display: "block" }} type="secondary">
-                    People, tools, and AI use the same materials.
-                  </Text>
-                </span>
-              </Flex>
-              {PROJECT_MODEL_ITEMS.map((item) => (
-                <div
-                  key={item.label}
-                  style={{
-                    alignItems: "center",
-                    background: PUBLIC_COLORS.surface,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PANEL_RADIUS,
-                    display: "grid",
-                    gap: 10,
-                    gridTemplateColumns: "24px minmax(0, 1fr)",
-                    minHeight: 42,
-                    padding: "9px 10px",
-                  }}
-                >
-                  <Icon
-                    name={item.icon}
-                    style={{ color: PUBLIC_COLORS.link, fontSize: 15 }}
-                  />
-                  <Text>{item.label}</Text>
-                </div>
-              ))}
-            </Flex>
-          </aside>
-        </Flex>
-        <div
-          aria-label="CoCalc workflow feature cards"
-          className="cocalc-public-home-feature-grid"
-          role="group"
-          style={{
-            display: "grid",
-            gap: 18,
-            gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-          }}
-        >
-          {WORKFLOW_FEATURES.map((feature) => (
-            <a
-              className="cocalc-public-home-card-link"
-              href={appPath(feature.href)}
-              key={feature.title}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
-                color: "inherit",
-                minHeight: 190,
-                padding: 18,
-                textDecoration: "none",
-              }}
-            >
-              <Flex vertical gap={14}>
-                <IconTile accent={feature.accent} icon={feature.icon} />
-                <div>
-                  <Title level={3} style={CARD_TITLE_STYLE}>
-                    {feature.title}
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>{feature.summary}</Paragraph>
-                </div>
-              </Flex>
-            </a>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function ProductsSection() {
-  return (
-    <section
-      aria-label="Ways to run CoCalc"
-      className="cocalc-public-home-products"
-      style={{
-        alignItems: "stretch",
-        display: "grid",
-        gap: 22,
-        gridTemplateColumns: "minmax(0, 1fr)",
-        padding: "36px 0",
-      }}
-    >
-      <Flex vertical gap={16}>
-        <div>
-          <Eyebrow>Ways to run CoCalc</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Choose the operating model that fits your team.
-          </Title>
-          <Paragraph style={{ fontSize: 18, margin: 0 }}>
-            Start hosted on CoCalc.ai, evaluate locally with CoCalc Plus, run
-            one shared VM with CoCalc Star, or choose Launchpad or Rocket when
-            your organization needs a customer-operated environment.
-          </Paragraph>
-        </div>
-        <Flex gap={10} wrap>
-          <Button href={appPath("products")} type="primary">
-            Compare operating models
-          </Button>
-          <Button href={appPath("pricing")}>Pricing and licensing</Button>
-        </Flex>
-      </Flex>
-      <div
-        style={{
-          background: PUBLIC_COLORS.surface,
-          border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: PANEL_RADIUS,
-          padding: 20,
-        }}
-      >
-        <div
-          className="cocalc-public-home-product-grid"
-          style={{
-            display: "grid",
-            gap: 12,
-            gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-          }}
-        >
-          {PRODUCT_OPTIONS.map((option) => (
-            <a
-              className="cocalc-public-home-card-link"
-              href={appPath(option.href)}
-              key={option.title}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${alpha(option.accent, 0.18)}`,
-                borderRadius: PANEL_RADIUS,
-                color: "inherit",
-                display: "block",
-                minHeight: 225,
-                padding: 16,
-                textDecoration: "none",
-              }}
-            >
-              <Flex vertical gap={12}>
-                <IconTile accent={option.accent} icon={option.icon} />
-                <Tag
-                  style={{
-                    alignSelf: "flex-start",
-                    background: alpha(option.accent, 0.08),
-                    borderColor: alpha(option.accent, 0.2),
-                    color: accessibleAccentTextColor(option.accent),
-                    marginInlineEnd: 0,
-                  }}
-                >
-                  {option.label}
-                </Tag>
-                <div>
-                  <Title level={3} style={CARD_TITLE_STYLE}>
-                    {option.title}
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>{option.body}</Paragraph>
-                </div>
-              </Flex>
-            </a>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function DifferenceSection() {
-  const [activeTitle, setActiveTitle] = useState<string | null>(null);
-  const activeItem =
-    DIFFERENTIATORS.find((item) => item.title === activeTitle) ?? null;
-
-  return (
-    <>
-      <section
-        aria-label="Why CoCalc is different"
-        className="cocalc-public-home-difference"
-        style={{
-          background: PUBLIC_COLORS.surface,
-          border: `1px solid ${PUBLIC_COLORS.border}`,
-          borderRadius: PANEL_RADIUS,
-          display: "grid",
-          gap: 56,
-          gridTemplateColumns: "minmax(0, 0.7fr) minmax(0, 1.3fr)",
-          margin: "16px 0",
-          padding: 36,
-        }}
-      >
-        <Flex vertical gap={18}>
-          <div>
-            <Eyebrow>Why CoCalc is different</Eyebrow>
-            <Title level={2} style={{ margin: "8px 0 10px" }}>
-              The project is the computer.
-            </Title>
-            <Paragraph style={{ margin: 0 }}>
-              Every CoCalc project is a persistent Linux environment for files,
-              computation, services, collaboration, history, and recovery. The
-              people and agents working there share the same state.
-            </Paragraph>
-          </div>
-          <div
-            style={{
-              background: PUBLIC_COLORS.surface,
-              border: `1px solid ${PUBLIC_COLORS.border}`,
-              borderRadius: PANEL_RADIUS,
-              display: "grid",
-              gap: 10,
-              padding: 14,
-            }}
-          >
-            {DIFFERENCE_SIGNALS.map((signal) => (
-              <Flex align="center" gap={10} key={signal.label}>
-                <IconTile
-                  accent={PUBLIC_COLORS.link}
-                  icon={signal.icon}
-                  size={28}
-                />
-                <Text strong>{signal.label}</Text>
-              </Flex>
-            ))}
-          </div>
-        </Flex>
-        <div
-          className="cocalc-public-home-difference-grid"
-          style={{
-            display: "grid",
-            gap: 18,
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-          }}
-        >
-          {DIFFERENTIATORS.map((item) => (
-            <button
-              aria-haspopup="dialog"
-              className="cocalc-public-home-card-link cocalc-public-home-difference-card"
-              key={item.title}
-              onClick={() => setActiveTitle(item.title)}
-              style={{
-                background: PUBLIC_COLORS.surface,
-                border: `1px solid ${PUBLIC_COLORS.border}`,
-                borderRadius: PANEL_RADIUS,
-                color: "inherit",
-                cursor: "pointer",
-                minHeight: 240,
-                padding: 22,
-                textAlign: "left",
-              }}
-              type="button"
-            >
-              <Flex vertical gap={14}>
-                <IconTile accent={item.accent} icon={item.icon} />
-                <div>
-                  <Text
-                    strong
-                    style={{
-                      color: accessibleAccentTextColor(item.accent),
-                      display: "block",
-                      fontSize: 12,
-                      textTransform: "uppercase",
-                    }}
-                  >
-                    {item.eyebrow}
-                  </Text>
-                  <Title level={3} style={DIFFERENCE_CARD_TITLE_STYLE}>
-                    {item.title}
-                  </Title>
-                  <Paragraph style={{ margin: 0 }}>{item.body}</Paragraph>
-                </div>
-                <Text strong style={{ color: PUBLIC_COLORS.link }}>
-                  View details
-                </Text>
-              </Flex>
-            </button>
-          ))}
-        </div>
-      </section>
-      <Modal
-        footer={null}
-        onCancel={() => setActiveTitle(null)}
-        open={activeItem != null}
-        title={activeItem?.title}
-        width={720}
-      >
-        {activeItem == null ? null : (
-          <Flex vertical gap={18}>
-            <Paragraph style={{ fontSize: 16, margin: 0 }}>
-              {activeItem.modalBody}
-            </Paragraph>
-            <div
-              className="cocalc-public-home-modal-grid"
-              style={{
-                display: "grid",
-                gap: 12,
-                gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-              }}
-            >
-              {activeItem.details.map((detail) => (
-                <div
-                  key={detail.title}
-                  style={{
-                    background: PUBLIC_COLORS.surfaceMuted,
-                    border: `1px solid ${PUBLIC_COLORS.border}`,
-                    borderRadius: PANEL_RADIUS,
-                    padding: 14,
-                  }}
-                >
-                  <Text strong>{detail.title}</Text>
-                  <Paragraph style={{ margin: "8px 0 0" }}>
-                    {detail.body}
-                  </Paragraph>
-                </div>
-              ))}
-            </div>
-            <Button href={appPath(activeItem.ctaHref)} type="primary">
-              {activeItem.ctaLabel}
-            </Button>
-          </Flex>
-        )}
-      </Modal>
-    </>
-  );
-}
-
-function PathSection({
-  authenticated,
-  trustHref,
-}: {
-  authenticated: boolean;
-  trustHref?: string;
-}) {
-  return (
-    <section
-      aria-label="Next step"
-      style={{
-        background: `linear-gradient(135deg, ${PUBLIC_COLORS.surface} 0%, ${PUBLIC_COLORS.warningTint} 100%)`,
-        border: `1px solid ${PUBLIC_COLORS.border}`,
-        borderRadius: PANEL_RADIUS,
-        margin: "16px 0 0",
-        padding: 36,
-      }}
-    >
-      <div
-        className="cocalc-public-home-final-layout"
-        style={{
-          alignItems: "center",
-          display: "grid",
-          gap: 24,
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-        }}
-      >
-        <div>
-          <Eyebrow>Next step</Eyebrow>
-          <Title level={2} style={{ margin: "8px 0 10px" }}>
-            Ready to choose how CoCalc fits?
-          </Title>
-          <Paragraph style={{ fontSize: 17, margin: 0, maxWidth: 760 }}>
-            Start with CoCalc.ai, review the product paths, or open support and
-            sales options when licensing, procurement, support, or private
-            deployment are part of the decision.
-          </Paragraph>
-          {trustHref ? (
-            <Paragraph
-              style={{
-                color: PUBLIC_COLORS.mutedText,
-                fontSize: 14,
-                margin: "10px 0 0",
-                maxWidth: 760,
-              }}
-            >
-              <a href={trustHref}>Review trust and compliance</a>
-            </Paragraph>
-          ) : null}
-        </div>
-        <div
-          className="cocalc-public-home-final-actions"
-          style={{
-            display: "grid",
-            gap: 10,
-            gridTemplateColumns: "repeat(3, max-content)",
-          }}
-        >
           <Button
-            href={authenticated ? appPath("projects") : appPath("auth/sign-up")}
-            type="primary"
+            href={appPath(content.hero.secondary.href)}
+            size="large"
+            type="text"
           >
-            {authenticated ? "Open projects" : "Start on CoCalc.ai"}
+            {content.hero.secondary.label}
           </Button>
-          <Button href={appPath("products")}>Review product paths</Button>
-          <Button href={appPath("support")}>Review support and sales</Button>
-        </div>
-      </div>
+        </Flex>
+      </Flex>
+      {content.showExample && (
+        <figure
+          className="cocalc-public-home-hero-visual"
+          style={{ margin: 0 }}
+        >
+          <figcaption>
+            <div style={{ maxWidth: 650 }}>
+              <Text
+                strong
+                style={{ fontSize: 24, color: PUBLIC_COLORS.heading }}
+              >
+                {content.hero.example.title}
+              </Text>
+              <Paragraph style={{ margin: "8px 0 0", fontSize: 16 }}>
+                {content.hero.example.description}
+              </Paragraph>
+            </div>
+            <Flex vertical gap={8} style={{ flexShrink: 0 }}>
+              {showDashboardGuide && (
+                <Button href={DASHBOARD_GUIDE_URL}>
+                  {content.hero.example.guide.label}
+                </Button>
+              )}
+              <a
+                href={HERO_IMAGE_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {content.hero.example.fullSizeLabel}
+              </a>
+            </Flex>
+          </figcaption>
+          <img
+            alt={content.hero.example.alt}
+            className="cocalc-public-home-hero-image"
+            decoding="async"
+            width={content.hero.example.width}
+            height={content.hero.example.height}
+            src={HERO_IMAGE_URL}
+            style={{
+              aspectRatio: "1512 / 760",
+              border: `1px solid ${PUBLIC_COLORS.border}`,
+              borderRadius: 4,
+              display: "block",
+              height: "auto",
+              objectFit: "cover",
+              objectPosition: "center",
+              width: "100%",
+            }}
+          />
+        </figure>
+      )}
     </section>
   );
 }
 
-export default function PublicHomeApp({ config }: { config?: HomeConfig }) {
-  const marketingConfig = getPublicMarketingConfig(config) as
-    | HomeConfig
-    | undefined;
+export default function PublicHomeApp({ config }: { config?: PublicConfig }) {
   const siteName = getPublicMarketingSiteName(config);
-  const authenticated = !!config?.is_authenticated;
+  const content = getPublicHomeContent(config?.cocalc_product);
+  const authenticated =
+    config?.cocalc_product !== "plus" && !!config?.is_authenticated;
   const trustHref = builtinPolicyPath(config, "trust");
-
+  const visibleLink = (href: string) =>
+    isPublicHomeLinkAvailable(href, config?.cocalc_product);
   useEffect(() => {
-    if (typeof document === "undefined") return;
     document.title = siteName;
   }, [siteName]);
-
   return (
-    <PublicPage active="home" config={marketingConfig}>
+    <PublicPage active="home" config={getPublicMarketingConfig(config)}>
       <style>{HOME_PAGE_CSS}</style>
       <div
         className="cocalc-public-home"
         style={{
           display: "grid",
-          gap: 34,
+          gap: 40,
           marginInline: `calc(${PUBLIC_PAGE_GUTTER} * -1)`,
           paddingInline: PUBLIC_PAGE_GUTTER,
         }}
       >
-        <Hero authenticated={authenticated} siteName={siteName} />
-        <AgentDefinitionSection />
-        <AudienceRoutesSection />
-        <WorkflowsSection />
-        <ProductsSection />
-        <DifferenceSection />
-        <PathSection authenticated={authenticated} trustHref={trustHref} />
+        <Hero
+          content={content}
+          siteName={siteName}
+          authenticated={authenticated}
+          showDashboardGuide={visibleLink(content.hero.example.guide.href)}
+        />
+        <section aria-label="Why CoCalc" style={{ padding: "28px 0" }}>
+          <SectionIntro {...content.benefits} />
+          <div className="cocalc-public-home-grid">
+            {content.benefits.cards.map((card) => (
+              <div key={card.title} className="cocalc-public-home-card">
+                <CardText {...card} />
+              </div>
+            ))}
+          </div>
+          <a href={appPath(content.benefits.link.href)}>
+            {content.benefits.link.label}
+          </a>
+        </section>
+        <section aria-label="Ways to use CoCalc" style={{ padding: "20px 0" }}>
+          <SectionIntro {...content.workflows} />
+          <div className="cocalc-public-home-grid">
+            {content.workflows.cards.map((card) => {
+              const link = visibleLink(card.link.href)
+                ? card.link
+                : content.workflows.fallbackLink;
+              return (
+                <a
+                  key={card.title}
+                  className="cocalc-public-home-card"
+                  href={appPath(link.href)}
+                >
+                  <CardText {...card} />
+                  <Text style={{ color: PUBLIC_COLORS.link }}>
+                    {link.label}
+                  </Text>
+                </a>
+              );
+            })}
+          </div>
+          <a href={appPath(content.workflows.link.href)}>
+            {content.workflows.link.label}
+          </a>
+        </section>
+        {content.showHosting && (
+          <section
+            aria-label="Choose how to run CoCalc"
+            style={{ padding: "20px 0" }}
+          >
+            <SectionIntro {...content.hosting} />
+            <div className="cocalc-public-home-grid cocalc-public-home-hosting-grid">
+              {content.hosting.cards.map((card) => (
+                <div key={card.title} className="cocalc-public-home-card">
+                  <CardText {...card} />
+                  <Flex gap={18} wrap>
+                    {card.links
+                      .filter((link) => visibleLink(link.href))
+                      .map((link) => (
+                        <a key={link.href} href={appPath(link.href)}>
+                          {link.label}
+                        </a>
+                      ))}
+                  </Flex>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+        <section aria-label="Next step" className="cocalc-public-home-final">
+          <SectionIntro
+            eyebrow={content.closing.eyebrow}
+            title={content.closing.title}
+            description={
+              authenticated
+                ? content.closing.returningDescription
+                : content.closing.description
+            }
+          />
+          <Flex
+            gap={12}
+            wrap
+            className="cocalc-public-home-final-actions"
+            style={{ marginTop: 24 }}
+          >
+            <Button
+              type="primary"
+              href={appPath(
+                authenticated ? "projects" : content.hero.startHref,
+              )}
+            >
+              {authenticated
+                ? content.hero.returningLabel
+                : content.hero.startLabel}
+            </Button>
+            <Button href={appPath(content.closing.contact.href)}>
+              {content.closing.contact.label}
+            </Button>
+          </Flex>
+          {trustHref && (
+            <Paragraph style={{ margin: "18px 0 0" }}>
+              <a href={trustHref}>{content.closing.trustLabel}</a>
+            </Paragraph>
+          )}
+        </section>
       </div>
     </PublicPage>
   );

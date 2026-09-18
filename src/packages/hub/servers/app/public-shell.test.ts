@@ -1,12 +1,14 @@
 import { mkdtempSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { createServer, get } from "http";
 
 import {
   PUBLIC_BODY_PLACEHOLDER,
   PUBLIC_STATIC_BASE_PLACEHOLDER,
 } from "@cocalc/util/public-site-metadata";
 import { renderPublicShell } from "./public-shell";
+import { PUBLIC_HOME_CONTENT as homeContent } from "@cocalc/util/public-home-content";
 
 // Public site fixtures model Launchpad explicitly; an unset product defaults
 // to Plus, whose smaller docs catalog intentionally excludes these pages.
@@ -103,6 +105,61 @@ function request(
 }
 
 describe("public shell rendering", () => {
+  it("serves the complete homepage story in an HTTP response before JavaScript", async () => {
+    // Real HTTP transport around the production renderer; database/site settings
+    // remain the explicit fixtures above. This is not a deployed-site probe.
+    const server = createServer(async (req, res) => {
+      try {
+        const result = await renderPublicShell(request(req.url ?? "/"));
+        res.writeHead(result.status, { "Content-Type": "text/html" });
+        res.end(result.html);
+      } catch (error) {
+        res.writeHead(500);
+        res.end(String(error));
+      }
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (!address || typeof address === "string")
+        throw Error("Missing test port");
+      const response = await new Promise<{
+        status: number | undefined;
+        body: string;
+      }>((resolve, reject) => {
+        get(`http://127.0.0.1:${address.port}/`, (res) => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", (chunk) => {
+            body += chunk;
+          });
+          res.on("end", () => resolve({ status: res.statusCode, body }));
+          res.on("error", reject);
+        }).on("error", reject);
+      });
+      expect(response.status).toBe(200);
+      expect(response.body).toContain(`<h1>${homeContent.hero.title}</h1>`);
+      expect(response.body).toContain(homeContent.hero.description);
+      expect(response.body).toContain(
+        'href="https://cocalc.ai/" rel="canonical"',
+      );
+      expect(response.body).toContain(
+        `href="/${homeContent.hero.example.guide.href}"`,
+      );
+      expect(response.body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
+      expect(
+        response.body.match(/data-cocalc-public-prerender="home"/g),
+      ).toHaveLength(1);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
+  });
+
   it("renders crawler-visible feature content into the initial HTML", async () => {
     const { html: body, status } = await renderPublicShell(
       request("/features/jupyter-notebook"),
@@ -117,7 +174,7 @@ describe("public shell rendering", () => {
   });
 
   it.each([
-    ["/", "home", "Keep people, AI agents, and project work together."],
+    ["/", "home", homeContent.hero.title],
     ["/products", "products", "Ways to Run CoCalc"],
     ["/pricing", "pricing", "Hosted memberships"],
   ])(

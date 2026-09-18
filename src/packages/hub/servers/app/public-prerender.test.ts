@@ -1,4 +1,10 @@
 import { getPublicFeaturePage } from "@cocalc/util/public-feature-pages";
+import { getDocsEntry } from "@cocalc/docs";
+import {
+  isPublicHomeLinkAvailable,
+  getPublicHomeContent,
+  PUBLIC_HOME_CONTENT as homeContent,
+} from "@cocalc/util/public-home-content";
 import { renderPublicRoutePrerender } from "./public-prerender";
 
 describe("public feature initial HTML", () => {
@@ -31,9 +37,7 @@ describe("core landing page initial HTML", () => {
       const prefix = basePath === "/" ? "" : basePath;
       const home = renderPublicRoutePrerender({ section: "home" }, basePath);
       expect(home).toContain('data-cocalc-public-prerender="home"');
-      expect(home).toContain(
-        "Keep people, AI agents, and project work together.",
-      );
+      expect(home).toContain(homeContent.hero.title);
       expect(home).toContain(
         `href="${basePath === "/" ? "" : basePath}/features/compare"`,
       );
@@ -309,3 +313,103 @@ describe("feature initial HTML product availability", () => {
     ).toBe("");
   });
 });
+
+describe("shared homepage content", () => {
+  it.each(["/", "/prefix", "/docs"])(
+    "renders the client story and prefixed links on %s",
+    (basePath) => {
+      const html = renderPublicRoutePrerender({ section: "home" }, basePath, {
+        cocalc_product: "launchpad",
+        policy_pages: "sagemathinc",
+      });
+      const prefix = basePath === "/" ? "" : basePath;
+      for (const text of [
+        homeContent.hero.title,
+        homeContent.hero.description,
+        homeContent.hero.example.description,
+        homeContent.closing.description,
+      ]) {
+        expect(html).toContain(text);
+      }
+      for (const group of [
+        homeContent.benefits,
+        homeContent.workflows,
+        homeContent.hosting,
+      ]) {
+        expect(html).toContain(`<h2>${group.title}</h2>`);
+        for (const card of group.cards) {
+          expect(html).toContain(`<h3>${card.title}</h3>`);
+          expect(html).toContain(card.description);
+        }
+      }
+      for (const path of [
+        homeContent.hero.example.guide.href,
+        homeContent.hero.example.image,
+        homeContent.hero.secondary.href,
+        homeContent.benefits.link.href,
+        "pricing",
+        "products",
+        "policies/trust",
+      ]) {
+        expect(html).toContain(`href="${prefix}/${path}"`);
+      }
+      expect(html.match(/<h1>/g)).toHaveLength(1);
+      expect(html.match(/<section /g)).toHaveLength(5);
+    },
+  );
+
+  it("filters hosted docs and unconfigured policies", () => {
+    const html = renderPublicRoutePrerender({ section: "home" }, "/prefix", {
+      cocalc_product: "plus",
+      policy_pages: "",
+    });
+    expect(html).not.toContain('href="/prefix/docs/research/');
+    expect(html).not.toContain('href="/prefix/docs/hosts/');
+    expect(html).not.toContain('href="/prefix/policies/trust"');
+    expect(html).toContain('href="/prefix/docs/terminal/use-terminal"');
+    expect(html).toContain(
+      'href="/prefix/products/cocalc-plus#install-cocalc-plus"',
+    );
+    expect(html).not.toMatch(
+      /CoCalc.ai|collaborator|coauthor|hosted membership|project host|auth\/sign-up/i,
+    );
+    expect(html).not.toContain(homeContent.hero.example.image);
+    expect(html).toContain(getPublicHomeContent("plus").hero.description);
+  });
+
+  it("escapes custom site labels and URL attributes", () => {
+    const html = renderPublicRoutePrerender(
+      { section: "home" },
+      '/prefix" data-injected="yes',
+      {
+        site_name: 'Example <script>alert(1)</script> "team"',
+        cocalc_product: "star",
+      },
+    );
+    expect(html).toContain("&lt;script&gt;");
+    expect(html).toContain("&quot;team&quot;");
+    expect(html).not.toContain("<script>");
+    expect(html).not.toContain(' data-injected="yes');
+  });
+});
+
+// Keep the lightweight Home contract checked against the authoritative registry.
+it.each([undefined, "plus", "launchpad", "rocket", "star"])(
+  "matches Home link visibility to the docs registry for %s",
+  (product) => {
+    const content = getPublicHomeContent(product);
+    const links = [
+      content.hero.example.guide,
+      ...content.workflows.cards.map((c) => c.link),
+      ...content.hosting.cards.flatMap((c) => c.links),
+    ];
+    for (const link of links.filter((l) => l.href.startsWith("docs/"))) {
+      const slug = link.href.slice(5).split("#")[0];
+      expect(isPublicHomeLinkAvailable(link.href, product)).toBe(
+        getDocsEntry(slug, {
+          product: product === "plus" ? "plus" : undefined,
+        }) != null,
+      );
+    }
+  },
+);

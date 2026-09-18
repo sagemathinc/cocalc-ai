@@ -27,11 +27,17 @@ import {
 } from "@cocalc/util/public-guides";
 import { getDocsEntry } from "@cocalc/docs";
 import {
+  getPublicHomeContent,
+  isPublicHomeLinkAvailable,
+} from "@cocalc/util/public-home-content";
+import {
   PUBLIC_COMMUNITY_INTRO,
   PUBLIC_COMMUNITY_LINKS,
 } from "@cocalc/util/public-support-content";
 import {
   getPublicRouteMetadata,
+  getPublicMarketingSiteName,
+  getPublicPolicyPages,
   type PublicMetadataRoute,
   type PublicRouteMetadataConfig,
 } from "@cocalc/util/public-site-metadata";
@@ -90,28 +96,78 @@ function publicOrExternalLink(
   )}</a>`;
 }
 
-function renderHome(basePath: string): string {
+function renderHome(
+  basePath: string,
+  config: PublicRouteMetadataConfig,
+): string {
+  const c = getPublicHomeContent(config.cocalc_product);
+  const visibleLink = (href: string) =>
+    isPublicHomeLinkAvailable(href, config.cocalc_product);
+  const link = ({ href, label }: { href: string; label: string }) =>
+    publicLink(basePath, href, label);
+  const card = ({
+    title,
+    description,
+  }: {
+    title: string;
+    description: string;
+  }) => `<h3>${htmlEscape(title)}</h3><p>${htmlEscape(description)}</p>`;
+  const intro = ({
+    eyebrow,
+    title,
+    description,
+  }: {
+    eyebrow: string;
+    title: string;
+    description?: string;
+  }) =>
+    `<p>${htmlEscape(eyebrow)}</p><h2>${htmlEscape(title)}</h2>${description ? `<p>${htmlEscape(description)}</p>` : ""}`;
+  const example = c.hero.example;
+  const imageHref = htmlEscape(publicPath(basePath, example.image));
   return `<main data-cocalc-public-prerender="home" style="${ARTICLE_STYLE}">
-<header>
-  <p>Persistent shared projects</p>
-  <h1>Keep people, AI agents, and project work together.</h1>
-  <p>Files, notebooks, terminals, services, and history stay in a shared Linux project so work can continue, be reviewed, and be handed off.</p>
-  <p>${publicLink(basePath, "auth/sign-up", "Start on CoCalc.ai")} ${publicLink(basePath, "products", "Ways to run CoCalc")}</p>
-</header>
-<section>
-  <h2>Agents work where your project lives.</h2>
-  <p>Use integrated Codex, or run Claude Code and other shell-based agents in project terminals, with the files, tools, and running services your collaborators already use.</p>
-  <p>${publicLink(basePath, "features/ai", "See agent workflows")} ${publicLink(basePath, "features/compare", "Compare with agent sandboxes")}</p>
+<section aria-label="${htmlEscape(getPublicMarketingSiteName(config))} hero">
+  <p>${htmlEscape(c.hero.eyebrow)}</p>
+  <h1>${htmlEscape(c.hero.title)}</h1>
+  <p>${htmlEscape(c.hero.description)}</p>
+  <p>${publicLink(basePath, c.hero.startHref, c.hero.startLabel)} ${link(c.hero.secondary)}</p>
+  ${
+    c.showExample
+      ? `<figure>
+    <figcaption><strong>${htmlEscape(example.title)}</strong><p>${htmlEscape(example.description)}</p>
+      ${visibleLink(example.guide.href) ? link(example.guide) : ""}
+      <a href="${imageHref}" target="_blank" rel="noopener noreferrer">${htmlEscape(example.fullSizeLabel)}</a>
+    </figcaption>
+    <img src="${imageHref}" alt="${htmlEscape(example.alt)}" width="${example.width}" height="${example.height}" style="max-width:100%;height:auto">
+  </figure>`
+      : ""
+  }
 </section>
-<section>
-  <h2>One project, many workflows.</h2>
-  <p>Keep notebooks, terminals, code, documents, services, discussion, history, and recovery in one durable project.</p>
-  <p>${publicLink(basePath, "features", "Browse feature workflows")} ${publicLink(basePath, "docs", "Read the documentation")}</p>
+<section aria-label="Why CoCalc">${intro(c.benefits)}
+  ${c.benefits.cards.map((item) => `<div>${card(item)}</div>`).join("")}
+  <p>${link(c.benefits.link)}</p>
 </section>
-<section>
-  <h2>Choose how CoCalc runs.</h2>
-  <p>Start with hosted CoCalc.ai, run CoCalc locally or on one VM, or evaluate a customer-operated private deployment.</p>
-  <p>${publicLink(basePath, "products", "Review product paths")} ${publicLink(basePath, "pricing", "Pricing and licensing")} ${publicLink(basePath, "support", "Review support and sales")}</p>
+<section aria-label="Ways to use CoCalc">${intro(c.workflows)}
+  ${c.workflows.cards.map((item) => `<div>${card(item)}<p>${link(visibleLink(item.link.href) ? item.link : c.workflows.fallbackLink)}</p></div>`).join("")}
+  <p>${link(c.workflows.link)}</p>
+</section>
+${
+  c.showHosting
+    ? `<section aria-label="Choose how to run CoCalc">${intro(c.hosting)}
+  ${c.hosting.cards
+    .map(
+      (item) =>
+        `<div>${card(item)}<p>${item.links
+          .filter((item) => visibleLink(item.href))
+          .map(link)
+          .join(" ")}</p></div>`,
+    )
+    .join("")}
+</section>`
+    : ""
+}
+<section aria-label="Next step">${intro(c.closing)}
+  <p>${publicLink(basePath, c.hero.startHref, c.hero.startLabel)} ${link(c.closing.contact)}</p>
+  ${getPublicPolicyPages(config) === "sagemathinc" ? `<p>${publicLink(basePath, "policies/trust", c.closing.trustLabel)}</p>` : ""}
 </section>
 </main>`;
 }
@@ -509,7 +565,7 @@ export function renderPublicRoutePrerender(
 ): string {
   const resolvedConfig = config ?? {};
   if (route.section === "home") {
-    return renderHome(basePath);
+    return renderHome(basePath, resolvedConfig);
   }
   if (route.section === "products") {
     return renderProducts(route, basePath, resolvedConfig);

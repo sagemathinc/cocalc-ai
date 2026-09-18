@@ -3,6 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
+import { getPublicHomeContent } from "./public-home-content";
+
 import { LOCALE } from "./i18n/locale";
 import type { DocsAccess, DocsEntry } from "@cocalc/docs";
 import {
@@ -1015,7 +1017,8 @@ function getSameOriginPublicRouteMetadata(
     case "home":
       return {
         canonicalPath: publicPath("", options),
-        description: PUBLIC_SITE_DESCRIPTION,
+        description: getPublicHomeContent(config?.cocalc_product).hero
+          .description,
         imagePath: publicPath(DEFAULT_SOCIAL_IMAGE, options),
         title: siteName,
       };
