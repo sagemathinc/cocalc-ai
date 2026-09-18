@@ -21,28 +21,16 @@ not a claim that the expanded interaction is implemented or accepted.
 The file/action/PR extensions and their acceptance record are in
 [Chat Workbench Objects](chat-workbench-objects.md).
 
-### Experimental Rollout Opt-In (2026-09-11)
+### Full-Editor Availability (updated 2026-09-18)
 
-Workbench default publication is off unless the thread explicitly saves
-`acp_config.workbench: true`. Enable it at the bottom of Codex settings > Model
-and session using **Workbench (experimental)**. This is shared thread metadata,
-not an account-wide default, and applies to future turns. The full chat editor
-must also support workbench frames; the Agents page/flyout remains unchanged.
-Existing threads without the new field are off, with no automatic migration.
-Turning it off preserves existing cards, artifact search, tabs, and feedback;
-explicit artifact publication remains possible. This is a rollout/presentation
-policy, not an authorization boundary or a kill switch for stored content.
-See [publication smoke tests](workbench-publication-smoke.md) for opt-in/off and
-reused-session checks. Keep the PR draft while the remaining acceptance work
-continues.
-
-Opt-in acceptance: 102 focused frontend tests pass, including persisted thread
-metadata, default-off policy, per-turn override isolation, form save/cancel,
-and keyboard help behavior. Frontend lint and the static build/typecheck pass.
-In the signed-in disposable QA chat, enable/save/reload and disable/save/reload
-both passed; existing image artifacts stayed visible. Checked light/dark mode
-and a 375px viewport, including help popup bounds. No model turns or external
-actions were submitted for this setting check. The QA thread was left off.
+Workbench publication is available automatically in every full chat editor,
+including the Agents workspace. There is no per-thread rollout preference.
+Lightweight flyouts do not advertise default publication because they cannot
+host workbench tabs, though an explicit artifact request can still use the
+experimental publication API. This remains a presentation capability, not an
+authorization boundary or a kill switch for stored content. See
+[publication smoke tests](workbench-publication-smoke.md) for full-editor,
+flyout, explicit-request, and reused-session checks.
 
 ## Decision In One Page
 

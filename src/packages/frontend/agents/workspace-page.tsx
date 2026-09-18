@@ -246,7 +246,6 @@ function NewAgentPanel({
           sessionMode: "workspace-write",
           allowWrite: true,
           workingDirectory,
-          workbench: true,
         },
       },
     });

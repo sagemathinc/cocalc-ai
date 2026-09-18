@@ -79,7 +79,6 @@ import {
 import { CodexFullAccessNotice } from "./codex-full-access";
 import { CodexThreadId } from "./codex-thread-id";
 import { AgentCommunication } from "./agent-communication";
-import { CodexWorkbenchField } from "./codex-workbench-field";
 import { getLatestAcpThreadIdForThread } from "./thread-session";
 import {
   getCodexPaymentSourceShortLabel,
@@ -606,7 +605,6 @@ export function CodexConfigButton({
       serviceTier: "standard",
       sessionMode: defaultSessionMode,
       paymentSource: "auto",
-      workbench: false,
     };
     const saved = threadConfig ?? actions?.getCodexConfig?.(threadId);
     const liveSessionId = getLatestAcpThreadIdForThread({
@@ -1819,9 +1817,6 @@ export function CodexConfigButton({
                     description="Use this only when lower latency is worth the higher cost."
                   />
                 ) : null}
-                {actions?.workbenchEnabled === true ? (
-                  <CodexWorkbenchField />
-                ) : null}
               </div>
               <div style={sectionStyle}>
                 <SectionTitle>Access</SectionTitle>
@@ -2010,7 +2005,6 @@ export function codexThreadConfigKey(
     sessionId: config.sessionId,
     sessionMode: config.sessionMode,
     workingDirectory: config.workingDirectory,
-    workbench: config.workbench,
   });
 }
 

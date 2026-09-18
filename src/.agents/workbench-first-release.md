@@ -5,6 +5,10 @@ PR #509. Latest validation checkpoint: `2cf1926dcd` (correcting the saved
 thread-config lookup). No production deployment or external support/email action was
 performed. This is a focused release-readiness pass, not a security certification.
 
+The per-thread rollout checkbox described in this historical checkpoint was
+removed on 2026-09-18. Full chat editors now advertise artifacts automatically;
+lightweight surfaces without workbench tabs do not.
+
 **Status: conditional, not yet signed off for release.** Keep the PR draft until
 the remaining gates below have evidence against the frozen release build.
 
@@ -12,14 +16,9 @@ the remaining gates below have evidence against the frozen release build.
 
 - Ship existing Markdown, bounded file/image previews, proposed action lists,
   PRs, and pinned commits. Do not add another artifact type before release.
-- Workbench default publication requires both the full chat surface and saved
-  per-thread `acp_config.workbench: true`; missing is off. Agents page/flyout
-  does not advertise workbench publication.
-- This preference is NOT a global kill switch or an authorization boundary.
-  Existing cards, tabs, search, and feedback remain available. Explicit
-  experimental CLI publication remains possible. Assistant selection replies
-  are not switched off by this checkbox. Do not describe this as disabling all
-  new frontend code for non-opted-in users.
+- Workbench default publication is available on every full chat surface,
+  including Agents. Flyouts without workbench tabs do not advertise default
+  publication; explicit experimental CLI publication remains possible.
 - Proposed-action decisions are review snapshots, not execution permissions.
   External operations must still use their existing hub authorization,
   temporary fresh-auth, and audit path. No Zendesk/email execution in QA.

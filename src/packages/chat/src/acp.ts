@@ -33,8 +33,6 @@ export interface CodexThreadConfig {
   codexPathOverride?: string;
   notifyOnTurnFinish?: boolean;
   paymentSource?: CodexPaymentSourcePreference;
-  // Per-thread opt-in. Missing is off; the initiating surface must also support it.
-  workbench?: boolean;
 }
 
 export type CodexCompletionNotificationOverride = "inherit" | "on" | "off";

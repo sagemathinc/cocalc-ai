@@ -1,4 +1,4 @@
-# Workbench Publication: Opt-In Agent Smoke Tests
+# Workbench Publication: Agent Smoke Tests
 
 Manual, paid/model-dependent smoke scenarios. Never add these to automatic CI.
 Use a disposable project/chat and an explicitly selected authenticated model;
@@ -11,11 +11,10 @@ Build current CLI tools, frontend and project-host/ACP worker. Update the QA
 host's tools and aligned runtime stack. A running container may still bind the
 old tools directory: verify installed `project chat artifact publish --help`,
 and restart only the disposable QA project if required to mount the upgrade.
-Refresh the browser. In the full chat editor, open Codex settings > Model and
-session and explicitly enable Workbench (experimental), then Save. It is off by
-default, including for existing threads without the setting. Only opted-in
-threads on this surface advertise workbench capability; Agents page/flyout turns
-intentionally do not. This flag is presentation policy, not an authorization grant.
+Refresh the browser. Every full chat editor, including the Agents workspace,
+advertises workbench capability without a per-thread setting. Lightweight agent
+flyouts do not advertise it because they cannot host workbench tabs. This is a
+surface capability, not an authorization grant.
 
 ## Prompts Without Artifact Hints
 
@@ -34,14 +33,13 @@ intentionally do not. This flag is presentation policy, not an authorization gra
    each one before anything is sent."
    Expect a proposed action list. No external messages or service mutations.
 
-Repeat the plan prompt from the Agents page/flyout: no default artifact is
-expected. Repeat with "do not create an artifact": honor that preference.
-Turn Workbench off, save, and repeat in the same session: expect no default
-publication, while previously published cards and tabs still work. Check a
-second, unconfigured thread stays off and that the original setting survives
-a browser refresh. Opening help or canceling settings must not enable anything.
-Test at least one follow-up turn in a reused session, where startup environment
-may differ from the explicit current-turn publication context.
+Repeat the plan prompt from the Agents workspace: expect normal publication.
+Repeat from a lightweight agent flyout: no default artifact is expected. Repeat
+with "do not create an artifact": honor that preference. In a second existing
+thread, verify publication works without changing settings and survives a
+browser refresh. Test at least one follow-up turn in a reused session, where
+startup environment may differ from the explicit current-turn publication
+context.
 
 ## Deterministic Checks (No Model Calls)
 

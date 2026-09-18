@@ -1168,47 +1168,6 @@ describe("thread-config by thread_id", () => {
     expect(row?.agent_mode).toBe("interactive");
   });
 
-  it.each([true, false])(
-    "reads saved workbench=%s through the preferred SyncDB record path",
-    (workbench) => {
-      const threadId = "37333333-3333-4333-8333-333333333333";
-      const actions = makeActions();
-      const config = {
-        model: "gpt-5.5",
-        workbench,
-        sessionId: "saved-session",
-      };
-      actions.syncdb.get = jest.fn(() => [
-        {
-          event: "chat-thread-config",
-          sender_id: `__thread_config__:${threadId}`,
-          date: CHAT_THREAD_META_ROW_DATE,
-          thread_id: threadId,
-          acp_config: config,
-        },
-      ]);
-      expect(actions.getCodexConfig(threadId)).toEqual(config);
-    },
-  );
-
-  it.each([true, false])(
-    "persists workbench=%s in only the target thread config",
-    (workbench) => {
-      const threadId = "37333333-3333-4333-8333-333333333333";
-      const actions = makeActions();
-      actions.setCodexConfig(threadId, { workbench });
-      const configs = actions.syncdb.set.mock.calls
-        .map((x) => x[0])
-        .filter((row: any) => row.event === "chat-thread-config");
-      expect(configs).toHaveLength(1);
-      expect(configs[0]).toMatchObject({
-        thread_id: threadId,
-        acp_config: { workbench },
-      });
-      expect(actions.syncdb.commit).toHaveBeenCalled();
-    },
-  );
-
   it("migrates the legacy Codex notify setting when saving partial config", () => {
     const threadId = "37333333-3333-4333-8333-333333333333";
     const existing = {

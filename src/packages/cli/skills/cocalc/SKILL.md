@@ -337,11 +337,11 @@ For example, a file reference has `file: { path: "/home/user/policy.md" }`;
 it references a real file, not an embedded editable copy. Unsupported previews
 should remain file links, not arbitrary HTML, SVG input, apps, or widget code.
 
-Workbench is a per-thread setting in Codex settings > Model and session >
-Workbench (experimental). New named Agents may enable it by default; the full
-chat editor's presence alone is not opt-in. Existing cards remain usable when
-the setting is off. An explicit artifact request still opts that individual
-publication into the experimental API even when the thread setting is off.
+Artifact publication is enabled automatically in every full chat editor,
+including the Agents workspace. It is not a per-thread preference. Existing
+cards remain usable on lightweight surfaces that cannot host workbench tabs.
+An explicit artifact request still opts an individual publication into the
+experimental API when issued from one of those lightweight surfaces.
 
 In a turn marked workbench-enabled, publication is part of finishing durable
 reviewable work unless the user asks otherwise. Publish plans saved to disk as
