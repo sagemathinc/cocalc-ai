@@ -84,6 +84,7 @@ import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
 } from "./workspace-sidebar-toggle";
+import { AgentWorkspaceCloseButton } from "./workspace-close-button";
 import {
   readAgentThreadAppearance,
   resolveAgentHeaderTheme,
@@ -1070,12 +1071,10 @@ function AgentWorkspace({
             }
           />
         )}
-        <Button
-          icon={<Icon name="times" />}
-          aria-label={`Close workspace for ${agent.path}`}
-          title="Close this mounted workspace view"
-          onClick={onClose}
-          style={{ color: headerTextColor }}
+        <AgentWorkspaceCloseButton
+          agentPath={agent.path}
+          color={headerTextColor}
+          onClose={onClose}
         />
       </header>
       <ThemeEditorModal
