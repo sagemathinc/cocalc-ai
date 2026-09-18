@@ -202,7 +202,7 @@ export function ReadonlyArtifactCards({
                 )}
                 {!publication.snapshot.file && (
                   <details>
-                    <summary>Published version</summary>
+                    <summary>Version from this message</summary>
                     <PublishedObject snapshot={publication.snapshot} />
                   </details>
                 )}

@@ -116,7 +116,7 @@ test.each([1024, 375])(
       screen.getByRole("button", { name: "More options for Replies" }),
     );
     const published = screen.getByRole("menuitem", {
-      name: "Published version",
+      name: "Version from this message",
     });
     published.focus();
     expect(document.activeElement).toBe(published);
@@ -131,7 +131,7 @@ test.each([1024, 375])(
         "data-origin": "chat-frame",
         "data-publication": "op-1",
         "data-version": "op-1",
-        "data-tabLabel": "Replies (published)",
+        "data-tabLabel": "Replies (message version)",
       },
     );
     expect(activateParent).not.toHaveBeenCalled();
@@ -224,7 +224,7 @@ test.each([
       screen.getByRole("button", { name: "More options for Replies" }),
     );
     fireEvent.click(
-      screen.getByRole("menuitem", { name: "Published version" }),
+      screen.getByRole("menuitem", { name: "Version from this message" }),
     );
     expect(frames.split_frame).toHaveBeenCalledWith(
       "col",
@@ -244,7 +244,7 @@ test.each([
         screen.getByRole("button", { name: "More options for Replies" }),
       );
       fireEvent.click(
-        screen.getByRole("menuitem", { name: "Published version" }),
+        screen.getByRole("menuitem", { name: "Version from this message" }),
       );
       expect(frames.split_frame).not.toHaveBeenCalled();
       expect(frames.set_active_id).toHaveBeenCalledWith("existing-artifact");

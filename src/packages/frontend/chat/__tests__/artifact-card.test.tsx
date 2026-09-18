@@ -38,7 +38,7 @@ test("card title and history are keyboard accessible without triggering the surr
   );
   await user.keyboard("{Enter}");
   const item = await screen.findByRole("menuitem", {
-    name: "Published version",
+    name: "Version from this message",
   });
   item.focus();
   // rc-menu still reads keyCode; jsdom user-event does not supply it.
@@ -50,6 +50,27 @@ test("card title and history are keyboard accessible without triggering the surr
   });
   await waitFor(() => expect(open).toHaveBeenCalledWith("version"));
   expect(parent).not.toHaveBeenCalled();
+});
+
+test("unchanged artifacts retain their stable message version", async () => {
+  const user = userEvent.setup();
+  render(
+    <ArtifactCard
+      publication={
+        {
+          operation_id: "version",
+          snapshot: { title: "Plan", markdown: "Current plan" },
+        } as any
+      }
+      open={jest.fn()}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More options for Plan" }),
+  );
+  expect(
+    screen.getByRole("menuitem", { name: "Version from this message" }),
+  ).toBeTruthy();
 });
 
 test("compact attachment bounds its width and keeps metadata on one line", () => {

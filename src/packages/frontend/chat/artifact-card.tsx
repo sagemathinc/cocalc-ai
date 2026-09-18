@@ -150,6 +150,17 @@ export function ArtifactCard({
   ]
     .filter(Boolean)
     .join("\n");
+  const menuItems = [
+    {
+      key: "message-version",
+      label: published.file
+        ? "Reference from this message"
+        : "Version from this message",
+    },
+    ...(current && syncdb
+      ? [{ key: "appearance", label: "Edit appearance" }]
+      : []),
+  ];
   return (
     <article
       aria-label={`${kind}: ${title}`}
@@ -260,17 +271,7 @@ export function ArtifactCard({
             autoFocus
             trigger={["click"]}
             menu={{
-              items: [
-                {
-                  key: "published",
-                  label: published.file
-                    ? "Published reference"
-                    : "Published version",
-                },
-                ...(current && syncdb
-                  ? [{ key: "appearance", label: "Edit appearance" }]
-                  : []),
-              ],
+              items: menuItems,
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
                 if (key === "appearance") setEditing(true);

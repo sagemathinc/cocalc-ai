@@ -150,8 +150,8 @@ export function ArtifactResults({
               {data.file?.path ?? data.theme?.description ?? data.title}
               <div>
                 {entry.published
-                  ? `Published ${new Date(entry.published).toLocaleString()}`
-                  : "Publication date unknown"}
+                  ? `Added ${new Date(entry.published).toLocaleString()}`
+                  : "Date added unknown"}
               </div>
               {!threadId && (
                 <div>
@@ -244,7 +244,7 @@ export default function ArtifactBrowser({
             value={sort}
             onChange={setSort}
             options={[
-              { value: "published", label: "Recently published" },
+              { value: "published", label: "Recently added" },
               { value: "created", label: "Recently created" },
               { value: "title", label: "Title" },
             ]}

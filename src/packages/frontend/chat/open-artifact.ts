@@ -30,7 +30,7 @@ export function openArtifact(
     "data-origin": actions.frameId,
     "data-publication": publication.operation_id,
     "data-tabLabel":
-      publication.snapshot.title + (version ? " (published)" : ""),
+      publication.snapshot.title + (version ? " (message version)" : ""),
     ...(version === undefined ? {} : { "data-version": version }),
   });
   if (opened && workbench) frames.move_frame(opened, workbench, "tab");

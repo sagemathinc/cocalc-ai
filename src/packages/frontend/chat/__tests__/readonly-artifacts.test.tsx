@@ -104,13 +104,13 @@ test("publication remains readable when current row is absent, and is scoped to 
   expect(screen.getByRole("status")).toHaveTextContent(
     "Current document unavailable",
   );
-  expect(screen.getByText("Published version")).toBeTruthy();
+  expect(screen.getByText("Version from this message")).toBeTruthy();
   rerender(
     <ReadonlyArtifactRows.Provider value={[publication]}>
       <ArtifactCards threadId="other-thread" messageId="message" />
     </ReadonlyArtifactRows.Provider>,
   );
-  expect(screen.queryByText("Published version")).toBeNull();
+  expect(screen.queryByText("Version from this message")).toBeNull();
 });
 
 test("read-only action lists distinguish current proposals from published drafts", () => {
@@ -170,7 +170,9 @@ test("read-only PR cards display cached metadata and a canonical external link",
   );
   expect(screen.getByText(/Cached metadata retrieved/)).toBeTruthy();
   // Expand the native details element before querying its accessible link.
-  screen.getByText("Published version").parentElement!.setAttribute("open", "");
+  screen
+    .getByText("Version from this message")
+    .parentElement!.setAttribute("open", "");
   expect(
     screen.getByRole("link", { name: "sagemathinc/cocalc-ai #509" }),
   ).toHaveAttribute(
