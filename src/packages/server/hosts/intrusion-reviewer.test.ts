@@ -318,6 +318,40 @@ describe("project-host intrusion reviewer", () => {
     ).resolves.toMatchObject({ rows: [{ state: "open" }] });
   });
 
+  it("keeps a multi-signal incident open until every signal recovers", async () => {
+    const second = '["another.service","enabled"]';
+    const delta = {
+      added: { "services.enabled": [ADDED_VALUE, second] },
+    };
+    const changed = normalized({
+      "services.enabled": [ADDED_VALUE, second],
+    });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({
+      state: normalized({ "services.enabled": [second] }),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      resolved: 0,
+    });
+    await expect(
+      getPool().query("SELECT state FROM project_host_intrusion_incidents"),
+    ).resolves.toMatchObject({ rows: [{ state: "open" }] });
+
+    await insertObservation({ state: normalized() });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      resolved: 1,
+    });
+  });
+
   it("retains an explicitly scoped expected change without notification", async () => {
     process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
       "persistent-host-state";
@@ -353,6 +387,49 @@ describe("project-host intrusion reviewer", () => {
       rows: [{ state: "suppressed", suppression_ref: "maintenance-1" }],
     });
     expect(mockAdminAlert).not.toHaveBeenCalled();
+  });
+
+  it("resolves suppressed evidence when the host recovers", async () => {
+    process.env.COCALC_HOST_INTRUSION_EXPECTED_CHANGES = JSON.stringify([
+      {
+        id: "maintenance-recovered",
+        bay_id: BAY_ID,
+        host_ids: [HOST_ID],
+        categories: ["services.enabled"],
+        starts_at: new Date(Date.now() - 60_000).toISOString(),
+        expires_at: new Date(Date.now() + 60_000).toISOString(),
+        reason: "staging fixture",
+      },
+    ]);
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({ state: normalized() });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      resolved: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT state, suppression_ref, suppression_expires_at FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          state: "resolved",
+          suppression_ref: null,
+          suppression_expires_at: null,
+        },
+      ],
+    });
   });
 
   it("makes an expired suppression reviewable again", async () => {

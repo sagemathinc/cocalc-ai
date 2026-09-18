@@ -158,7 +158,7 @@ function normalizedSignals(
   return signals as Record<string, string[]>;
 }
 
-function changeRemains(delta: Delta, normalized: unknown): boolean {
+function allChangesRemain(delta: Delta, normalized: unknown): boolean {
   const signals = normalizedSignals(normalized);
   if (!signals) return false;
   for (const [category, entries] of Object.entries(delta.added ?? {})) {
@@ -174,6 +174,24 @@ function changeRemains(delta: Delta, normalized: unknown): boolean {
     if (entries.some((entry) => current.has(entry))) return false;
   }
   return true;
+}
+
+function anyChangeRemains(delta: Delta, normalized: unknown): boolean {
+  const signals = normalizedSignals(normalized);
+  if (!signals) return false;
+  for (const [category, entries] of Object.entries(delta.added ?? {})) {
+    const current = new Set(
+      Array.isArray(signals[category]) ? signals[category] : [],
+    );
+    if (entries.some((entry) => current.has(entry))) return true;
+  }
+  for (const [category, entries] of Object.entries(delta.removed ?? {})) {
+    const current = new Set(
+      Array.isArray(signals[category]) ? signals[category] : [],
+    );
+    if (entries.some((entry) => !current.has(entry))) return true;
+  }
+  return false;
 }
 
 function deltaCategories(delta: Delta): string[] {
@@ -518,7 +536,8 @@ async function resolveIncidents(
   const { rows } = await client.query(
     `SELECT id, rule_id, evidence
        FROM ${INCIDENTS}
-      WHERE bay_id=$1 AND host_id=$2 AND state IN ('open','acknowledged')
+      WHERE bay_id=$1 AND host_id=$2
+        AND state IN ('open','acknowledged','suppressed')
       ORDER BY updated_at DESC LIMIT 50 FOR UPDATE`,
     [getConfiguredBayId(), observation.host_id],
   );
@@ -531,12 +550,13 @@ async function resolveIncidents(
     const recovered =
       incident.rule_id === "coverage-loss"
         ? observation.coverage === "complete"
-        : delta != null && !changeRemains(delta, normalized);
+        : delta != null && !anyChangeRemains(delta, normalized);
     if (!recovered) continue;
     await client.query(
       `UPDATE ${INCIDENTS}
-          SET state='resolved', resolved_at=$2, updated_at=NOW()
-        WHERE id=$1 AND state IN ('open','acknowledged')`,
+          SET state='resolved', resolved_at=$2, updated_at=NOW(),
+              suppression_ref=NULL, suppression_expires_at=NULL
+        WHERE id=$1 AND state IN ('open','acknowledged','suppressed')`,
       [incident.id, observation.created_at],
     );
     result.resolved += 1;
@@ -634,7 +654,7 @@ async function reviewObservation(
     );
     const candidate = (rows as CandidateFinding[]).find((row) => {
       const delta = boundedDelta(row.evidence.delta);
-      return delta != null && changeRemains(delta, observation.normalized);
+      return delta != null && allChangesRemain(delta, observation.normalized);
     });
     if (candidate) {
       const delta = boundedDelta(candidate.evidence.delta)!;
