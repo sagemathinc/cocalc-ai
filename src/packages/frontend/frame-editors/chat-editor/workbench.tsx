@@ -500,7 +500,7 @@ export function Workbench({
                 { value: "__current__", label: "Current document" },
                 ...publications.map((pub, index) => ({
                   value: `publication:${pub.operation_id}`,
-                  label: `Published ${index + 1}: ${pub.operation_id.slice(0, 12)}`,
+                  label: `Message version ${index + 1}: ${pub.operation_id.slice(0, 12)}`,
                 })),
               ]}
               onChange={(next) => {
@@ -541,7 +541,7 @@ export function Workbench({
               {saving
                 ? "Syncing..."
                 : historical
-                  ? "Published snapshot"
+                  ? "Message version"
                   : "Live document"}
             </span>
           </Space>
@@ -566,7 +566,7 @@ export function Workbench({
                   before={before?.snapshot.markdown ?? ""}
                   after={value.input}
                   path="artifact.md"
-                  label="Changes since preceding published snapshot"
+                  label="Changes since preceding message version"
                   fontSize={font_size}
                 />
               </Suspense>

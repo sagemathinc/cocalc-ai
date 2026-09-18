@@ -404,6 +404,8 @@ test("historical views stay pinned and See changes uses the preceding publicatio
     />,
   );
   expect(screen.getByText("New")).toBeTruthy();
+  expect(screen.getByText("Message version 2: second")).toBeTruthy();
+  expect(screen.getByRole("status")).toHaveTextContent("Message version");
   expect(screen.getByRole("button", { name: "Edit" })).toBeDisabled();
   fireEvent.click(screen.getByRole("button", { name: "See changes" }));
   expect((await screen.findByLabelText("Document changes")).textContent).toBe(

@@ -289,7 +289,7 @@ export function ArtifactCard({
                 position: "relative",
               }}
               onClick={(e) => e.stopPropagation()}
-              icon={<Icon name="ellipsis" />}
+              icon={<Icon name="ellipsis-vertical" />}
             />
           </Dropdown>
         )}
