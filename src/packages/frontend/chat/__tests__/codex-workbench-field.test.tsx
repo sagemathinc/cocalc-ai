@@ -56,7 +56,7 @@ describe("Workbench opt-in field", () => {
     await waitFor(() =>
       expect(
         screen.getByText(
-          /Off by default\. This setting is saved for this thread/,
+          /including the Agents workspace, but not lightweight agent flyouts/,
         ),
       ).toBeVisible(),
     );

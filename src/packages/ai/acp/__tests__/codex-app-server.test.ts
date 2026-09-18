@@ -4115,6 +4115,12 @@ describe("CodexAppServerAgent", () => {
     expect(turnStartParams?.input?.[0]?.text).toContain(
       "Publishing durable reviewable results is part of task completion",
     );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "artifact publication is required",
+    );
+    expect(turnStartParams?.input?.[0]?.text).toContain(
+      "file link alone does not satisfy the request",
+    );
     expect(turnStartParams?.sandboxPolicy).toEqual({
       type: "workspaceWrite",
       writableRoots: [],

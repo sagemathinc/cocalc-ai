@@ -38,9 +38,9 @@ export function CodexWorkbenchField() {
               to review and comment.
             </p>
             <p>
-              Off by default. This setting is saved for this thread and its
-              collaborators. It applies to future turns in the full chat editor,
-              not the Agents page or flyout.
+              This setting is saved for this thread and its collaborators. It
+              applies to future turns in the full chat editor, including the
+              Agents workspace, but not lightweight agent flyouts.
             </p>
             <p style={{ marginBottom: 0 }}>
               Experimental: formats may change. Turning it off stops default

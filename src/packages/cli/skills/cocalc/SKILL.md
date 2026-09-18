@@ -276,6 +276,14 @@ This is experimental: use it when the user requests artifacts or has opted into
 the workbench workflow. CoCalc creates the cards and manages native frame tabs;
 do not script frame layouts or fabricate chat messages to display results.
 
+An explicit request to create, make, or publish an artifact is a hard output
+requirement. Creating the underlying file or image, mentioning it in the reply,
+or returning a normal file link does not satisfy that request. Publish it with
+the artifact API, verify the returned record, and only then say the artifact was
+created. Outside an enabled workbench turn, use the command's explicit
+`--experimental` opt-in. If publication is unavailable or fails, report the
+exact failure and provide an ordinary link only as a clearly labeled fallback.
+
 Choose the supported object that fits the task:
 
 | Object               | Use it for                                                        | Important behavior                                                                                                        |
@@ -329,9 +337,11 @@ For example, a file reference has `file: { path: "/home/user/policy.md" }`;
 it references a real file, not an embedded editable copy. Unsupported previews
 should remain file links, not arbitrary HTML, SVG input, apps, or widget code.
 
-Workbench is off by default. Users enable it per thread in Codex settings >
-Model and session > Workbench (experimental). The full chat editor's presence
-alone is not opt-in. Existing cards remain usable when the setting is off.
+Workbench is a per-thread setting in Codex settings > Model and session >
+Workbench (experimental). New named Agents may enable it by default; the full
+chat editor's presence alone is not opt-in. Existing cards remain usable when
+the setting is off. An explicit artifact request still opts that individual
+publication into the experimental API even when the thread setting is off.
 
 In a turn marked workbench-enabled, publication is part of finishing durable
 reviewable work unless the user asks otherwise. Publish plans saved to disk as
