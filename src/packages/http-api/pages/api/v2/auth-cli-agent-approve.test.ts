@@ -20,6 +20,10 @@ jest.mock("@cocalc/http-api/lib/api/get-params", () => ({
 jest.mock("@cocalc/server/auth/remember-me", () => ({
   getRememberMeHash: (...args) => mockSession(...args),
 }));
+jest.mock("@cocalc/http-api/lib/api/assert-same-origin-mutation", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
 jest.mock("@cocalc/server/agents/external", () => ({
   approveExternalAgentLogin: (...args) => mockApprove(...args),
   assertExternalAgentLoginEnabled: jest.fn(),
