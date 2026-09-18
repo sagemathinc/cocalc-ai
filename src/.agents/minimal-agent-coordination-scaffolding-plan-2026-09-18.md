@@ -12,7 +12,8 @@ Build three things:
 1. **Named-agent complete graphs.** A human creates an **Agent Session** from a
    set of their registered named agents. Every active member may message every
    other active member in both directions without creating N-squared personal
-   connection grants.
+   connection grants. The human chooses whether messages queue behind active
+   turns or may interrupt them as live guidance.
 2. **Excellent observability.** Agent-to-agent messages render as compact,
    inspectable first-party Slate elements. Session management shows membership,
    state, activity, and honest delivery/execution evidence without exposing
@@ -63,11 +64,12 @@ mutable display names.
 ### Agent Sessions Are Complete Graphs
 
 An Agent Session is an account-owned set of at least two named agents. While the
-session is active, every ordered pair of active members is authorized for an
-ordinary message:
+session is active, every ordered pair of active members is authorized to send
+under the session's human-selected delivery policy:
 
 ```text
 allowed(A, B) = active(session) && member(A) && member(B) && A != B
+may_interrupt(A, B) = allowed(A, B) && delivery_mode(session) == live
 ```
 
 The complete graph is semantic. The database stores one session and one row per
@@ -85,6 +87,27 @@ Session authority is additional to existing personal links:
 The first release supports only agents personally named by the same account and
 turns running as that same authenticated human principal. It does not connect
 different humans or accounts.
+
+### Delivery Policy
+
+Every Agent Session has one human-controlled delivery mode:
+
+- `queued` is the default. A message wakes an idle target or waits behind its
+  active turn.
+- `live` wakes an idle target normally and delivers to a busy target through the
+  existing guidance mechanism so long-running agents can communicate without
+  waiting hours or days for a turn boundary.
+
+Live mode grants every active member the stronger ability to steer every other
+active member during a running turn. Creation and settings UI must state this
+plainly and require an explicit human choice; a conversational instruction from
+an agent cannot enable it. Changing the mode changes the session generation so
+an authorization checked under an older policy cannot be reused.
+
+This is a session-level policy in the first release. Do not add per-member,
+per-edge, or autonomous agent-controlled delivery policy. Existing personal
+links retain their existing ordinary-message and separately authorized guidance
+semantics outside the session.
 
 ### Codex Subagents Stay Behind Their Named Agent
 
@@ -132,6 +155,9 @@ identity, account security state, membership limits, and runtime admission are
 still checked on every send. A generation changes on membership or state changes
 so stale authorizations cannot silently survive an edit.
 
+Changing delivery mode is a human session edit and changes the generation. It
+does not cancel already admitted work or retract guidance already delivered.
+
 ### Fresh Authentication
 
 Fresh auth is required only when an action creates or reactivates a bridge across
@@ -140,14 +166,20 @@ project boundaries:
 - Creating a session whose members span multiple projects requires fresh auth.
 - Adding a member from a new project requires fresh auth.
 - Resuming a paused cross-project session requires fresh auth.
+- Enabling live delivery on a cross-project session requires fresh auth because
+  it grants every member stronger steering authority across project boundaries.
 - Same-project creation and same-project membership edits do not require fresh
-  auth because the participating agents already operate inside the same project
-  collaborator boundary.
+  auth, including enabling live delivery, because the participating agents
+  already operate inside the same project collaborator boundary. Live delivery
+  still requires explicit confirmation.
 - Pausing, removing a member, and closing never require fresh auth.
+- Changing live delivery back to queued never requires fresh auth.
 - Individual sends never require repeated fresh auth.
 
 The confirmation must say that all selected agents can contact one another and
-list the projects being bridged. A conversational "yes" is never authorization.
+list the projects being bridged. If live delivery is selected, it must also say
+that every member may interrupt every other member's running turns. A
+conversational "yes" is never authorization.
 
 ### Entitlements And Limits
 
@@ -166,6 +198,7 @@ Reuse existing limits wherever possible:
 - the current 32 KiB agent-message payload limit;
 - existing per-account and per-project ACP running/queued admission limits;
 - existing agent-messaging concurrency, deadline, and rate limits;
+- existing guidance admission and steering controls;
 - existing AI usage and credit-spend limits; and
 - the existing `codex_max_concurrent_subagents` setting, normalized to 1-16.
 
@@ -188,6 +221,7 @@ agent_personal_sessions
   account_id UUID
   title TEXT nullable
   state active | paused | closed
+  delivery_mode queued | live
   generation UUID
   created_by UUID
   created_at TIMESTAMPTZ
@@ -208,15 +242,17 @@ These are logical fields, not a migration specification. Account IDs and remote
 project-owned agent IDs may not have local foreign keys when their authority is
 owned by another bay.
 
-The home bay is authoritative for session state, generation, membership, the
-human principal, and the membership-tier limit. A project owning bay remains
-authoritative for the registered agent identity, project access, and current
-endpoint. The current host/bay remains authoritative for runtime admission.
+The home bay is authoritative for session state, delivery mode, generation,
+membership, the human principal, and the membership-tier limit. A project
+owning bay remains authoritative for the registered agent identity, project
+access, and current endpoint. The current host/bay remains authoritative for
+runtime admission and whether a busy runtime can accept guidance.
 
 Extend current attempt/inbox evidence with nullable `session_id`,
-`session_generation`, and authorization kind. A send is authorized by either an
-exact personal link or an exact Agent Session membership check, never an
-ambiguous mixture inferred after submission.
+`session_generation`, authorization kind, configured delivery mode, and
+effective delivery. A send is authorized by either an exact personal link or an
+exact Agent Session membership check, never an ambiguous mixture inferred after
+submission.
 
 ### Send Authorization
 
@@ -225,13 +261,15 @@ rather than building another messaging service:
 
 1. Authenticate the source named agent and fixed runtime principal.
 2. Route to the source account's home bay.
-3. Verify active session generation and active source/target membership.
+3. Verify active session generation, delivery mode, and active source/target
+   membership.
 4. Verify both UUIDs still resolve to active agents personally named by this
    account.
 5. Resolve the target project's current owning bay and endpoint.
 6. Recheck the human's current access to source and target projects.
-7. Apply current account, project, messaging, and runtime limits.
-8. Use the existing one-use target admission protocol and ACP submission path.
+7. Apply current account, project, messaging, guidance, and runtime limits.
+8. Bind the one-use target admission to queued or live delivery according to the
+   verified session policy and use the existing ACP submission path.
 
 Do not materialize N-squared grants. Do not send reusable human credentials or a
 general session capability to project hosts. The downstream authorization is
@@ -249,7 +287,7 @@ check. They do not retract saved text, cancel already admitted work, reverse
 filesystem effects, or erase audit history.
 
 Canceling admitted work remains a separate authorized ACP action. The UI must
-not describe session pause or close as cancellation.
+not describe session pause, delivery-mode change, or close as cancellation.
 
 ## Agent-Facing Interface
 
@@ -265,9 +303,9 @@ Extend destination discovery to return:
 - named peers from every active Agent Session containing the source.
 
 Each result identifies its authorization source as `personal` or `session` and
-includes the session ID/title when applicable. Duplicate destinations reached by
-multiple authorities collapse to one peer with all applicable sources. Knowing a
-peer or session ID conveys no authority.
+includes the session ID/title and queued/live delivery mode when applicable.
+Duplicate destinations reached by multiple authorities collapse to one peer with
+all applicable sources. Knowing a peer or session ID conveys no authority.
 
 ### Direct Send
 
@@ -275,9 +313,18 @@ Continue using the existing send operation. The caller may select an exact named
 peer and, when needed, an exact session authorization source. The server assigns
 source identity and never accepts it from message text.
 
-Ordinary sends wake an idle agent or queue behind its active turn. They do not
-interrupt active reasoning. Session authority does not permit guidance in the
-first release.
+The server derives delivery from the verified authorization source; message text
+cannot request or escalate it. Under a queued session, a send wakes an idle agent
+or queues behind its active turn. Under a live session, a send wakes an idle
+agent normally or is submitted as guidance to a busy target.
+
+If the target establishes before any possible admission that its runtime cannot
+accept guidance, the system queues the message rather than dropping it and
+records **queued fallback** as the effective delivery. It must not claim
+immediate delivery. A rejected or unknown guidance admission is not silently
+retried or queued: rejection remains rejected, and unknown remains unknown to
+avoid duplicate work. Live guidance admission means only that the runtime
+accepted the steering input, not that the model read, acted on, or completed it.
 
 Every attempt retains current `accepted`, `rejected`, and `unknown` semantics:
 
@@ -295,15 +342,19 @@ of active members in one session. It expands to independent direct attempts and
 returns one outcome per target. It is not atomic, ordered, or exactly once.
 
 Broadcast excludes the sender, cannot exceed the effective session-member limit,
-and uses the same per-target authorization and admission checks. Partial success
-is normal and visible. There is no account-wide or implicit "all agents" target.
+and uses the same per-target authorization, delivery policy, and admission
+checks. In a live session, a broadcast may therefore guide multiple busy agents;
+the existing guidance and messaging limits apply independently to every target.
+Partial success is normal and visible. There is no account-wide or implicit
+"all agents" target.
 
 ### Session Requests And Human Authorization
 
-An agent may issue a typed request proposing a title and exact named members.
-That request opens the same first-party review UI as human-initiated creation; it
-does not create or authorize the session. The human may edit, approve, or reject
-the proposal. Cross-project approval uses fresh auth.
+An agent may issue a typed request proposing a title, exact named members, and
+delivery mode. That request opens the same first-party review UI as
+human-initiated creation; it does not create or authorize the session. The human
+may edit, approve, or reject the proposal. Cross-project approval uses fresh
+auth, and live delivery always requires explicit human confirmation.
 
 Session activation, expansion, pause/resume, member removal, and close remain
 human control-plane actions in the first release. Prose alone never changes
@@ -330,6 +381,10 @@ agent_rpc: {
     link_id?: string;
     session_id?: string;
     session_generation?: string;
+  };
+  delivery: {
+    configured: "queued" | "live";
+    effective: "idle-wake" | "queued" | "live-guidance" | "queued-fallback";
   };
 }
 ```
@@ -362,6 +417,7 @@ The card includes:
 - source and target names, with UUID fallback;
 - Agent Session title when applicable;
 - a short body preview and timestamp;
+- configured and effective delivery when verified;
 - truthful admission/execution state when verified; and
 - a clear button/keyboard target to inspect details.
 
@@ -374,6 +430,7 @@ Clicking or keyboard-activating the card opens an inspector with:
 - complete intentionally sent content;
 - source, target, project, session, attempt, and correlation identifiers;
 - personal-link or session authorization source;
+- configured session delivery mode and effective delivery path;
 - admission state and separately labeled execution observation;
 - timestamps, attachment/file-reference metadata, and accessible project/thread
   links; and
@@ -409,7 +466,10 @@ agent-specific overflow menu. It provides:
 
 - create-session modal with named-agent search and project grouping;
 - explicit cross-project/fresh-auth confirmation when required;
-- session title, active/paused/closed state, members, projects, creator, and age;
+- queued/live delivery selector with queued as the default and an explicit live
+  steering warning;
+- session title, active/paused/closed state, delivery mode, members, projects,
+  creator, and age;
 - add/remove, pause/resume, and close controls;
 - recent message activity with source, target, outcome, and time;
 - per-member sent/received counts and last activity;
@@ -445,12 +505,15 @@ security/delivery claim can be inspected or is explicitly labeled unverified.
 - [ ] Add `max_agent_session_members` to membership tiers and presentation.
 - [ ] Build create/list/inspect/pause/close/add/remove UI.
 - [ ] Authorize complete-graph direct sends without N-squared grant rows.
+- [ ] Add queued/live session policy, generation invalidation, live guidance
+      admission, and honest queued fallback.
 - [ ] Extend peer discovery and message metadata with session authorization.
 - [ ] Add bounded explicit broadcast with per-target outcomes.
 
 Exit criterion: one human can put at least three named agents in one project into
 an Agent Session, and every pair can communicate bidirectionally with complete
-observable history and no fresh-auth prompt.
+observable history and no fresh-auth prompt. The human can choose queued or live
+delivery and observe which path each send actually used.
 
 ### Stage 3: Cross-Project And Multibay Qualification
 
@@ -459,7 +522,8 @@ observable history and no fresh-auth prompt.
 - [ ] Route session checks through the account home bay and target admission
       through the current project owning bay/host.
 - [ ] Test project movement, account-home changes, route staleness, host restart,
-      collaborator removal, agent retirement/recovery, pause, and close.
+      collaborator removal, agent retirement/recovery, delivery-mode changes,
+      pause, and close.
 - [ ] Load-test effective tier limits, broadcast fanout, and failure isolation.
 
 Exit criterion: a cross-project session works across different owning bays with
@@ -472,7 +536,8 @@ unknown outcomes during failures.
       second transcript.
 - [ ] Tune grouping, labels, and empty/error states using real message traffic.
 - [ ] Measure direct sends, replies, broadcast fanout, outcomes, queue delay,
-      human inspection, session size, and aggregate runtime/cost.
+      live-guidance admission, queued fallback, human inspection, session size,
+      and aggregate runtime/cost.
 - [ ] Compare coordinated results and latency against ordinary independent named
       agents before raising limits.
 
@@ -482,8 +547,14 @@ unknown outcomes during failures.
 
 - Same-project session creation does not require fresh auth.
 - Cross-project create/add/resume requires fresh auth and lists bridged projects.
+- Enabling live delivery across projects requires fresh auth; enabling it within
+  one project requires explicit confirmation but not fresh auth.
 - Pause/remove/close does not require fresh auth and blocks subsequent session
   authorizations without claiming to cancel an in-flight or admitted send.
+- Queued/live mode changes require explicit human action, change the session
+  generation, and cannot be requested through message prose.
+- Live mode authorizes guidance only between current members of the exact active
+  session; it does not create a permanent personal guidance grant.
 - Both directions work for active member pairs without permanent personal links.
 - Nonmembers, retired agents, wrong humans, external agents, forged session IDs,
   stale generations, and removed collaborators are rejected.
@@ -491,7 +562,16 @@ unknown outcomes during failures.
 
 ### Delivery
 
-- Idle targets wake and busy targets queue without guidance.
+- Queued sessions wake idle targets and queue behind busy targets.
+- Live sessions wake idle targets and guide busy targets through the existing
+  guidance path.
+- A target known not to support live guidance before possible admission queues
+  the message and reports queued fallback rather than dropping it or claiming
+  live delivery.
+- Rejected or unknown live-guidance admission is never converted into queued
+  fallback or automatically retried.
+- Live guidance is rate-bounded, and broadcast fanout cannot bypass per-target
+  guidance admission or steering controls.
 - Accepted, rejected, and unknown remain distinct in API, CLI, and UI.
 - Inspection never submits work; no mutating operation is automatically retried.
 - Broadcast returns independent per-target outcomes and tolerates partial failure.
@@ -538,16 +618,20 @@ The plan is complete when:
 2. Same-project setup is lightweight and cross-project setup uses fresh auth.
 3. Every active member can directly message every other member in both directions
    without N-squared grant rows or manager relay.
-4. Existing personal links, named-agent limits, ACP admission, and Codex subagent
+4. The human can configure queued or live delivery for the whole session; live
+   delivery can interrupt long-running turns, while unsupported live delivery
+   falls back visibly to the queue.
+5. Existing personal links, named-agent limits, ACP admission, and Codex subagent
    behavior remain intact.
-5. Agent messages are compact, readable, keyboard-accessible, and inspectable,
+6. Agent messages are compact, readable, keyboard-accessible, and inspectable,
    with trusted and unverified states clearly distinguished.
-6. The account home bay, project owning bay, and host enforce their existing
+7. The account home bay, project owning bay, and host enforce their existing
    authority boundaries with no reusable human credentials crossing bays.
-7. One session-member entitlement plus existing platform limits bounds cost and
+8. One session-member entitlement plus existing platform limits bounds cost and
    abuse without a new worker-agent quota system.
-8. Tests cover authorization, unknown outcomes, revocation, multibay movement,
-   overload, forged presentation metadata, and accessibility.
+9. Tests cover authorization, delivery-mode changes, guidance fallback, unknown
+   outcomes, revocation, multibay movement, overload, forged presentation
+   metadata, and accessibility.
 
 ## Future Ideas Explicitly Excluded From This Plan
 
@@ -564,7 +648,7 @@ stages of this plan:
 - cross-account or cross-human Agent Sessions;
 - externally installed agents as session members;
 - autonomous agent-created sessions or agent-controlled membership changes;
-- session guidance/steering that interrupts active turns;
+- per-member, per-edge, per-message, or agent-controlled delivery policies;
 - automatic delivery retry, offline store-and-forward, or exactly-once claims;
 - unbounded broadcast, account-wide discovery, or 1,000-agent swarm support;
 - coordinator agents, role systems, voting, task DAGs, workflow builders, or
