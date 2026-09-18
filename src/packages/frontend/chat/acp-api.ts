@@ -783,10 +783,14 @@ async function automationRequest({
   config?: AcpAutomationConfig | null;
 }): Promise<AcpAutomationResponse | undefined> {
   const { store } = actions;
-  if (!store) return undefined;
+  if (!store) {
+    throw new Error("Chat automation context is unavailable.");
+  }
   const project_id = store.get("project_id");
   const path = store.get("path");
-  if (!project_id || !path || !threadId) return undefined;
+  if (!project_id || !path || !threadId) {
+    throw new Error("Chat automation project, path, or thread is unavailable.");
+  }
   return await webapp_client.conat_client.automationAcp({
     project_id,
     path,
