@@ -26,6 +26,7 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
 import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
+import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -257,7 +258,7 @@ function NewAgentPanel({
     );
     await projectActions.ensureContainingDirectoryExists(path);
     await fs.writeFile(path, "");
-    const chatActions = initChat(projectId, path);
+    const chatActions = initChat(projectId, chatMetaFile(path));
     await waitForChatReady(chatActions);
     const threadId = chatActions.createEmptyThread({
       name: name.trim(),
@@ -318,7 +319,7 @@ function NewAgentPanel({
         await writeChatComposerDraft({
           account_id: boundAccount.accountId,
           project_id: created.projectId,
-          path: created.path,
+          path: chatMetaFile(created.path),
           composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
           text: firstRequest,
         });
@@ -556,7 +557,7 @@ function AgentProjectContext({
     if (!ready) return;
     const actions: any = getChatActions(
       agent.endpoint.project_id,
-      agent.path,
+      chatMetaFile(agent.path),
     );
     if (!actions?.getThreadMetadata) return;
     const update = () => {
@@ -831,7 +832,7 @@ function AgentWorkspace({
     if (!selectedThread) return;
     const actions: any = getChatActions(
       agent.endpoint.project_id,
-      agent.path,
+      chatMetaFile(agent.path),
     );
     const metadata = readAgentThreadAppearance(actions, selectedThread);
     setAppearanceDraft({
@@ -849,7 +850,7 @@ function AgentWorkspace({
     if (!appearanceThreadId || !appearanceDraft) return;
     const actions: any = getChatActions(
       agent.endpoint.project_id,
-      agent.path,
+      chatMetaFile(agent.path),
     );
     const saved = actions?.setThreadAppearance?.(appearanceThreadId, {
       name: appearanceDraft.title,
