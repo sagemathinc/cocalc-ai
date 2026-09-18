@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from "react";
 import { Alert, Button, Input, Modal, Space } from "antd";
+import type { ButtonProps } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
 import {
@@ -32,7 +33,8 @@ function EnabledNameAgent({
   projectTitle,
   initiallyOpen = false,
   triggerLabel,
-  modalTitle = "Name in your agents",
+  triggerButtonProps,
+  modalTitle,
 }: {
   agent?: NamedAgent;
   projectId: string;
@@ -42,6 +44,7 @@ function EnabledNameAgent({
   projectTitle?: string;
   initiallyOpen?: boolean;
   triggerLabel?: string;
+  triggerButtonProps?: ButtonProps;
   modalTitle?: string;
 }) {
   const id = useId();
@@ -122,6 +125,7 @@ function EnabledNameAgent({
   return (
     <>
       <Button
+        {...triggerButtonProps}
         size="small"
         aria-label={agent ? `Rename @${agent.name}` : "Name agent"}
         onClick={() => {
@@ -131,11 +135,11 @@ function EnabledNameAgent({
           setOpen(true);
         }}
       >
-        {triggerLabel ?? (agent ? `@${agent.name} - Rename` : "Name agent")}
+        {triggerLabel ?? (agent ? `@${agent.name}` : "Name agent")}
       </Button>
       <Modal
         open={open}
-        title={modalTitle}
+        title={modalTitle ?? (agent ? "Edit agent name" : "Name agent")}
         okText="Save agent name"
         confirmLoading={busy}
         okButtonProps={{ disabled: !!problem || busy || atLimit }}

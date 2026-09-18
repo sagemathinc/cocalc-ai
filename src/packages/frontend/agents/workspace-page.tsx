@@ -27,6 +27,7 @@ import {
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
+import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
@@ -37,7 +38,7 @@ import {
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
 import { EmbeddedProjectFile } from "@cocalc/frontend/project/page/content";
-import { Icon, Loading } from "@cocalc/frontend/components";
+import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
 import {
   DragHandle,
   SortableItem,
@@ -51,6 +52,8 @@ import { CompactAgentsTopNav } from "@cocalc/frontend/app/compact-agents-top-nav
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { joinAbsolutePath } from "@cocalc/util/path-model";
 import { uuid } from "@cocalc/util/misc";
+import type { ThemeEditorDraft } from "@cocalc/frontend/theme/types";
+import Fragment from "@cocalc/frontend/misc/fragment-id";
 import { Resizable } from "re-resizable";
 import {
   Alert,
@@ -63,6 +66,7 @@ import {
   Space,
   Tag,
   Typography,
+  message as antdMessage,
 } from "antd";
 import { openAgentThread } from "./open-agent";
 import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
@@ -725,6 +729,10 @@ function AgentWorkspace({
     threadId: string;
     value: AgentHeaderAppearance;
   }>();
+  const [appearanceOpen, setAppearanceOpen] = useState(false);
+  const [appearanceThreadId, setAppearanceThreadId] = useState<string>();
+  const [appearanceDraft, setAppearanceDraft] =
+    useState<ThemeEditorDraft | null>(null);
   const selectedAgent = findWorkspaceAgentForThread(
     workspaceAgents,
     agent.endpoint.project_id,
@@ -790,10 +798,68 @@ function AgentWorkspace({
     : displayedAgent.thread_title || `@${displayedAgent.name}`;
   const {
     accentColor,
+    backgroundColor,
     primaryColor,
     textColor: headerTextColor,
     title,
   } = resolveAgentHeaderTheme({ appearance, fallbackTitle });
+  const openAppearanceEditor = () => {
+    if (!selectedThread) return;
+    const actions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    const metadata = actions?.getThreadMetadata?.(selectedThread, {
+      threadId: selectedThread,
+    });
+    setAppearanceDraft({
+      title: metadata?.name?.trim() || title,
+      description: "",
+      color: metadata?.thread_color?.trim() || null,
+      accent_color: metadata?.thread_accent_color?.trim() || null,
+      icon: metadata?.thread_icon?.trim() || "",
+      image_blob: metadata?.thread_image?.trim() || "",
+    });
+    setAppearanceThreadId(selectedThread);
+    setAppearanceOpen(true);
+  };
+  const saveAppearance = () => {
+    if (!appearanceThreadId || !appearanceDraft) return;
+    const actions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    const saved = actions?.setThreadAppearance?.(appearanceThreadId, {
+      name: appearanceDraft.title,
+      color: appearanceDraft.color ?? undefined,
+      accentColor: appearanceDraft.accent_color ?? undefined,
+      icon: appearanceDraft.icon,
+      image: appearanceDraft.image_blob,
+    });
+    if (!saved) {
+      antdMessage.error("Unable to save thread appearance.");
+      return;
+    }
+    setAppearanceOpen(false);
+    setAppearanceThreadId(undefined);
+    antdMessage.success("Appearance saved.");
+  };
+  const openProject = (target: "files/" | "settings", anchor?: string) => {
+    void redux
+      .getActions("projects")
+      .open_project({
+        project_id: agent.endpoint.project_id,
+        target,
+        switch_to: true,
+        fragmentId: anchor ? { anchor } : undefined,
+      })
+      .then(() => {
+        if (anchor) Fragment.set({ anchor });
+      })
+      .catch((err) => {
+        antdMessage.error(`Unable to open project: ${err}`);
+      });
+  };
   return (
     <div
       ref={ref}
@@ -812,7 +878,7 @@ function AgentWorkspace({
       <header
         style={{
           alignItems: "center",
-          background: accentColor ?? UI_COLORS.surface,
+          background: backgroundColor,
           borderBottom: `2px solid ${primaryColor ?? UI_COLORS.border}`,
           boxShadow: primaryColor ? `inset 4px 0 0 ${primaryColor}` : undefined,
           color: headerTextColor,
@@ -836,30 +902,96 @@ function AgentWorkspace({
             color={headerTextColor}
           />
         )}
-        <ThreadBadge
-          icon={appearance?.thread_icon}
-          color={primaryColor}
-          accentColor={accentColor}
-          image={appearance?.thread_image}
-          fallbackIcon="robot"
-          size={36}
-        />
+        <Button
+          aria-label="Edit thread appearance"
+          type="text"
+          onClick={openAppearanceEditor}
+          style={{ color: headerTextColor, height: 44, padding: 4 }}
+        >
+          <ThreadBadge
+            icon={appearance?.thread_icon}
+            color={primaryColor}
+            accentColor={accentColor}
+            image={appearance?.thread_image}
+            fallbackIcon="robot"
+            size={36}
+          />
+        </Button>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <Text
-            strong
-            ellipsis
-            style={{ color: headerTextColor, display: "block", fontSize: 16 }}
+          <Button
+            aria-label="Edit thread appearance"
+            type="text"
+            onClick={openAppearanceEditor}
+            style={{
+              color: headerTextColor,
+              display: "block",
+              fontSize: 16,
+              fontWeight: 600,
+              height: "auto",
+              maxWidth: "100%",
+              overflow: "hidden",
+              padding: 0,
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
           >
             {title}
-          </Text>
-          <Text
-            ellipsis
-            style={{ color: headerTextColor, display: "block", opacity: 0.72 }}
+          </Button>
+          <div
+            style={{
+              alignItems: "center",
+              color: headerTextColor,
+              display: "flex",
+              minWidth: 0,
+              opacity: 0.78,
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+            }}
           >
-            {unregistered ? "Not yet registered" : `@${displayedAgent.name}`} ·{" "}
-            {displayedAgent.project_title || agent.endpoint.project_id}
-            {sharing ? ` · ${sharing}` : ""}
-          </Text>
+            {unregistered ? (
+              <Text style={{ color: "inherit" }}>Not yet registered</Text>
+            ) : (
+              <NameAgent
+                agent={displayedAgent}
+                projectId={agent.endpoint.project_id}
+                path={agent.path}
+                threadId={selectedThread}
+                threadTitle={title}
+                projectTitle={agent.project_title}
+                triggerLabel={`@${displayedAgent.name}`}
+                triggerButtonProps={{
+                  type: "link",
+                  style: {
+                    color: "inherit",
+                    height: "auto",
+                    padding: 0,
+                  },
+                }}
+              />
+            )}
+            <span aria-hidden="true">&nbsp;·&nbsp;</span>
+            <Button
+              type="link"
+              size="small"
+              onClick={() => openProject("files/")}
+              style={{ color: "inherit", height: "auto", padding: 0 }}
+            >
+              {displayedAgent.project_title || agent.endpoint.project_id}
+            </Button>
+            {sharing ? (
+              <>
+                <span aria-hidden="true">&nbsp;·&nbsp;</span>
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={() => openProject("settings", "people")}
+                  style={{ color: "inherit", height: "auto", padding: 0 }}
+                >
+                  {sharing}
+                </Button>
+              </>
+            ) : null}
+          </div>
         </div>
         {unregistered && (
           <NameAgent
@@ -895,6 +1027,35 @@ function AgentWorkspace({
           style={{ color: headerTextColor }}
         />
       </header>
+      <ThemeEditorModal
+        open={appearanceOpen}
+        title="Edit Thread Appearance"
+        value={appearanceDraft}
+        projectId={agent.endpoint.project_id}
+        defaultIcon="comment"
+        showDescription={false}
+        previewImageUrl={appearanceDraft?.image_blob}
+        onChange={(patch) =>
+          setAppearanceDraft((current) =>
+            current == null ? current : { ...current, ...patch },
+          )
+        }
+        onCancel={() => {
+          setAppearanceOpen(false);
+          setAppearanceThreadId(undefined);
+        }}
+        onSave={saveAppearance}
+        renderImageInput={({ value, onChange }) => (
+          <ThreadImageUpload
+            projectId={agent.endpoint.project_id}
+            value={value?.image_blob}
+            onChange={(image_blob) => onChange({ image_blob })}
+            modalTitle="Edit Chat Image"
+            uploadText="Click or drag chat image"
+            size={64}
+          />
+        )}
+      />
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
           agent={agent}

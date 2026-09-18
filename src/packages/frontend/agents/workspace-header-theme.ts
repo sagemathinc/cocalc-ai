@@ -38,8 +38,14 @@ export function resolveAgentHeaderTheme({
 }) {
   const accentColor = appearance?.thread_accent_color?.trim() || undefined;
   const primaryColor = appearance?.thread_color?.trim() || undefined;
+  const backgroundColor =
+    accentColor ??
+    (primaryColor
+      ? `color-mix(in srgb, ${primaryColor} 14%, ${UI_COLORS.surface})`
+      : UI_COLORS.surface);
   return {
     accentColor,
+    backgroundColor,
     primaryColor,
     textColor: accentColor ? avatar_fontcolor(accentColor) : UI_COLORS.text,
     title: appearance?.name?.trim() || fallbackTitle,

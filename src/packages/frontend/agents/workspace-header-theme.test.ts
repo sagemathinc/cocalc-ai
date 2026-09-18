@@ -22,6 +22,7 @@ it("uses live thread title and theme colors in the Agents header", () => {
     }),
   ).toMatchObject({
     accentColor: "#ffffff",
+    backgroundColor: "#ffffff",
     primaryColor: "#123456",
     textColor: "black",
     title: "Release reviewer",
@@ -35,6 +36,15 @@ it("uses the registered title until live appearance metadata is available", () =
   expect(resolved.title).toBe("Registered agent");
   expect(resolved.accentColor).toBeUndefined();
   expect(resolved.primaryColor).toBeUndefined();
+});
+
+it("uses a visible tint when a thread has a primary color but no accent", () => {
+  expect(
+    resolveAgentHeaderTheme({
+      appearance: { thread_color: "#1677ff" },
+      fallbackTitle: "Agent",
+    }).backgroundColor,
+  ).toContain("color-mix(in srgb, #1677ff 14%");
 });
 
 it("detects material thread appearance changes", () => {
