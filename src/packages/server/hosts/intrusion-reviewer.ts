@@ -78,6 +78,7 @@ export type HostIntrusionReviewerResult = {
   processed: number;
   findings: number;
   opened: number;
+  escalated: number;
   reopened: number;
   resolved: number;
   suppressed: number;
@@ -201,6 +202,10 @@ function deltaCategories(delta: Delta): string[] {
       ...Object.keys(delta.removed ?? {}),
     ]),
   ].sort();
+}
+
+function severityRank(severity: "warning" | "critical"): number {
+  return severity === "critical" ? 2 : 1;
 }
 
 function notificationRules(): Set<string> {
@@ -492,9 +497,19 @@ async function openIncident(
 
   const suppressionEnded = existing.state === "suppressed" && !suppressed;
   const reopens = existing.state === "resolved" || suppressionEnded;
+  const escalates =
+    !suppressed &&
+    !reopens &&
+    (existing.state === "open" || existing.state === "acknowledged") &&
+    severityRank(severity) > severityRank(existing.severity);
+  const nextSeverity =
+    severityRank(severity) > severityRank(existing.severity)
+      ? severity
+      : existing.severity;
   await client.query(
     `UPDATE ${INCIDENTS}
         SET state=$2,
+            severity=$8,
             last_seen_at=GREATEST(last_seen_at, $3),
             opened_at=CASE WHEN $2='open' AND state<>'open' THEN $3 ELSE opened_at END,
             resolved_at=CASE WHEN $2='open' THEN NULL ELSE resolved_at END,
@@ -513,6 +528,7 @@ async function openIncident(
       JSON.stringify(evidence),
       expected?.id ?? null,
       expected?.expires_at ?? null,
+      nextSeverity,
     ],
   );
   if (suppressed) result.suppressed += 1;
@@ -522,6 +538,14 @@ async function openIncident(
       client,
       existing.id,
       `reopen:${existing.occurrence_count + 1}`,
+      ruleId,
+    );
+  } else if (escalates) {
+    result.escalated += 1;
+    await queueIncidentTransition(
+      client,
+      existing.id,
+      `escalate:${nextSeverity}:${existing.occurrence_count + 1}`,
       ruleId,
     );
   }
@@ -620,8 +644,14 @@ async function reviewObservation(
   }
 
   if (actionableDelta) {
+    const candidateSeverity = reasonCodes.includes(
+      "critical_host_boundary_change",
+    )
+      ? "critical"
+      : "warning";
     const evidence = {
       status: "candidate",
+      candidate_severity: candidateSeverity,
       delta_fingerprint: sha256(stableJson(actionableDelta)),
       delta: actionableDelta,
       categories: deltaCategories(actionableDelta),
@@ -684,7 +714,10 @@ async function reviewObservation(
         await openIncident(client, {
           observation,
           ruleId: "persistent-host-state",
-          severity: "warning",
+          severity:
+            candidate.evidence.candidate_severity === "critical"
+              ? "critical"
+              : "warning",
           evidence,
           expected,
           result,
@@ -793,6 +826,7 @@ export async function runHostIntrusionReviewerPass({
     processed: 0,
     findings: 0,
     opened: 0,
+    escalated: 0,
     reopened: 0,
     resolved: 0,
     suppressed: 0,
@@ -1040,6 +1074,7 @@ async function runLockedPass(): Promise<void> {
         processed: 0,
         findings: 0,
         opened: 0,
+        escalated: 0,
         reopened: 0,
         resolved: 0,
         suppressed: 0,

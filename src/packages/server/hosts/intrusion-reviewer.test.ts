@@ -222,6 +222,90 @@ describe("project-host intrusion reviewer", () => {
     ]);
   });
 
+  it("opens one explicitly approved critical fixture notification", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
+      "persistent-host-state";
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: [
+        "actionable_selector_match",
+        "critical_host_boundary_change",
+      ],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      opened: 1,
+      notifications_delivered: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT severity, state FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ severity: "critical", state: "open" }],
+    });
+    expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("emits one durable transition when an open incident escalates", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
+      "persistent-host-state";
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 2000),
+    });
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: [
+        "actionable_selector_match",
+        "critical_host_boundary_change",
+      ],
+      actionableDelta: delta,
+      state: changed,
+    });
+    await insertObservation({ state: changed });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      escalated: 1,
+      notifications_delivered: 1,
+    });
+    await expect(
+      getPool().query(
+        `SELECT severity, transition, outbox.state
+           FROM project_host_intrusion_incidents AS incidents
+           JOIN project_host_intrusion_notification_outbox AS outbox
+             ON outbox.incident_id=incidents.id
+          ORDER BY outbox.created_at`,
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        { severity: "critical", transition: "open", state: "delivered" },
+        {
+          severity: "critical",
+          transition: expect.stringMatching(/^escalate:critical:/),
+          state: "delivered",
+        },
+      ],
+    });
+    expect(mockAdminAlert).toHaveBeenCalledTimes(2);
+  });
+
   it("does not roll back an incident when notification delivery fails", async () => {
     process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES = "coverage-loss";
     mockAdminAlert.mockRejectedValueOnce(new Error("mail unavailable"));
