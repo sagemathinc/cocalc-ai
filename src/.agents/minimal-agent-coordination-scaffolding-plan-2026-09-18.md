@@ -2,8 +2,8 @@
 
 Date: 2026-09-18
 
-Status: focused architecture and implementation plan. This does not change the
-approved personal-agent messaging release contract.
+Status: focused architecture and implementation plan. This replaces the brief
+experimental directional-link model before it becomes a compatibility contract.
 
 ## Executive Decision
 
@@ -11,9 +11,9 @@ Build three things:
 
 1. **Named-agent complete graphs.** A human creates an **Agent Session** from a
    set of their registered named agents. Every active member may message every
-   other active member in both directions without creating N-squared personal
-   connection grants. The human chooses whether messages queue behind active
-   turns or may interrupt them as live guidance.
+   other active member in both directions. A two-member session is the normal
+   one-to-one case. The human chooses whether messages queue behind active turns
+   or may interrupt them as live guidance.
 2. **Excellent observability.** Agent-to-agent messages render as compact,
    inspectable first-party Slate elements. Session management shows membership,
    state, activity, and honest delivery/execution evidence without exposing
@@ -38,7 +38,7 @@ forcing every exchange through a coordinator.
 CoCalc already has the hard foundation:
 
 - durable registered agent identities and personal names;
-- human-approved direct agent messaging;
+- authenticated direct agent messaging transport;
 - authenticated sender attribution and exact target routing;
 - multibay account-home and project-owner authority;
 - `accepted`, `rejected`, and `unknown` RPC outcomes;
@@ -75,14 +75,23 @@ may_interrupt(A, B) = allowed(A, B) && delivery_mode(session) == live
 The complete graph is semantic. The database stores one session and one row per
 member, not one grant per edge. Adding one member intentionally adds both
 directions between that member and every existing member. Removing one member
-removes all of its session edges for future sends.
+removes all of its session edges for future sends. Closing a session revokes all
+of its edges for future sends.
 
-Session authority is additional to existing personal links:
+Agent Sessions are the only user-facing and authoritative communication model:
 
-- Inside an active session, the session membership authorizes the send.
-- Outside a session, current directional personal-link rules remain unchanged.
-- Closing a session does not delete or alter separately approved personal links.
-- A session send does not create a permanent personal link.
+- Two agents communicate through a two-member session.
+- Communication is always bidirectional; there are no one-way grants.
+- There is no separate connection, link, reply grant, or guidance grant concept.
+- A send must be authorized by an exact active session containing both agents.
+- The existing transport and one-use admission machinery may be reused, but
+  legacy link records do not authorize new work.
+
+The directional connection experiment has no compatibility requirement. Remove
+its request/grant UI, API, CLI, and stored authority rather than hiding it behind
+an advanced view or building migration UX. Development records may be discarded
+by the schema transition. Previously rendered message text remains ordinary
+historical transcript content and conveys no authority.
 
 The first release supports only agents personally named by the same account and
 turns running as that same authenticated human principal. It does not connect
@@ -105,9 +114,7 @@ an agent cannot enable it. Changing the mode changes the session generation so
 an authorization checked under an older policy cannot be reused.
 
 This is a session-level policy in the first release. Do not add per-member,
-per-edge, or autonomous agent-controlled delivery policy. Existing personal
-links retain their existing ordinary-message and separately authorized guidance
-semantics outside the session.
+per-edge, or autonomous agent-controlled delivery policy.
 
 ### Codex Subagents Stay Behind Their Named Agent
 
@@ -212,11 +219,10 @@ subagent count until measured use demonstrates a need.
 
 ### Authoritative Records
 
-Store session authority on the account home bay beside the existing personal
-agent names, controls, requests, and grants:
+Store session authority on the account home bay beside the named-agent registry:
 
 ```text
-agent_personal_sessions
+agent_sessions
   session_id UUID primary key
   account_id UUID
   title TEXT nullable
@@ -228,7 +234,7 @@ agent_personal_sessions
   updated_at TIMESTAMPTZ
   closed_at TIMESTAMPTZ nullable
 
-agent_personal_session_members
+agent_session_members
   session_id UUID
   agent_id UUID
   project_id UUID
@@ -248,16 +254,15 @@ owning bay remains authoritative for the registered agent identity, project
 access, and current endpoint. The current host/bay remains authoritative for
 runtime admission and whether a busy runtime can accept guidance.
 
-Extend current attempt/inbox evidence with nullable `session_id`,
-`session_generation`, authorization kind, configured delivery mode, and
-effective delivery. A send is authorized by either an exact personal link or an
-exact Agent Session membership check, never an ambiguous mixture inferred after
-submission.
+Extend current attempt/inbox evidence with `session_id`, `session_generation`,
+configured delivery mode, and effective delivery. Every new send is authorized
+by one exact Agent Session membership check. Session authority is recorded at
+submission and is never inferred afterward from names or message text.
 
 ### Send Authorization
 
-Extend the existing personal-agent control path with session authorization
-rather than building another messaging service:
+Replace directional-link authorization in the existing agent messaging control
+path with session authorization rather than building another messaging service:
 
 1. Authenticate the source named agent and fixed runtime principal.
 2. Route to the source account's home bay.
@@ -299,24 +304,25 @@ SDK.
 
 Extend destination discovery to return:
 
-- existing personal-link destinations; and
-- named peers from every active Agent Session containing the source.
+- named peers from every active Agent Session containing the source; and
+- every applicable session ID, title, and queued/live delivery mode for each
+  peer.
 
-Each result identifies its authorization source as `personal` or `session` and
-includes the session ID/title and queued/live delivery mode when applicable.
-Duplicate destinations reached by multiple authorities collapse to one peer with
-all applicable sources. Knowing a peer or session ID conveys no authority.
+Duplicate peers shared through multiple sessions collapse to one peer with all
+applicable sessions. Knowing a peer or session ID conveys no authority.
 
 ### Direct Send
 
-Continue using the existing send operation. The caller may select an exact named
-peer and, when needed, an exact session authorization source. The server assigns
-source identity and never accepts it from message text.
+Continue using the existing send operation. The caller selects an exact named
+peer and session. If exactly one active session contains the pair, the client may
+omit the session and let discovery fill it in; an ambiguous send is rejected
+with the applicable sessions rather than silently choosing one. The server
+assigns source identity and never accepts it from message text.
 
-The server derives delivery from the verified authorization source; message text
-cannot request or escalate it. Under a queued session, a send wakes an idle agent
-or queues behind its active turn. Under a live session, a send wakes an idle
-agent normally or is submitted as guidance to a busy target.
+The server derives delivery from the verified session; message text cannot
+request or escalate it. Under a queued session, a send wakes an idle agent or
+queues behind its active turn. Under a live session, a send wakes an idle agent
+normally or is submitted as guidance to a busy target.
 
 If the target establishes before any possible admission that its runtime cannot
 accept guidance, the system queues the message rather than dropping it and
@@ -368,25 +374,22 @@ management. Neither surface is an authority source.
 ### Message Correlation And Inspection
 
 Current RPC chat rows already contain an `agent_rpc` map with source, target,
-attempt, link, attachment, and file-reference correlation. Extend it with:
+attempt, attachment, and file-reference correlation. Replace link authorization
+metadata with exact session correlation:
 
 ```ts
-agent_rpc: {
+type AgentRpc = {
   version: 3;
   source: AgentSource;
   target: AgentEndpoint;
   attempt_id: string;
-  authorization: {
-    kind: "personal" | "session";
-    link_id?: string;
-    session_id?: string;
-    session_generation?: string;
-  };
+  session_id: string;
+  session_generation: string;
   delivery: {
     configured: "queued" | "live";
     effective: "idle-wake" | "queued" | "live-guidance" | "queued-fallback";
   };
-}
+};
 ```
 
 The syncdoc metadata is a rendering and correlation hint, not proof of authority.
@@ -409,7 +412,7 @@ default compact card shows:
 
 ```text
 @reviewer -> @builder · Agent Session: Release review
-Please check the authorization boundary in personal-store.ts.       Queued
+Please check the authorization boundary in session-store.ts.        Queued
 ```
 
 The card includes:
@@ -429,7 +432,7 @@ Clicking or keyboard-activating the card opens an inspector with:
 
 - complete intentionally sent content;
 - source, target, project, session, attempt, and correlation identifiers;
-- personal-link or session authorization source;
+- exact authorizing session and generation;
 - configured session delivery mode and effective delivery path;
 - admission state and separately labeled execution observation;
 - timestamps, attachment/file-reference metadata, and accessible project/thread
@@ -447,7 +450,7 @@ Support a readable fenced export such as:
 ```agent-message
 @reviewer -> @builder
 
-Please check the authorization boundary in personal-store.ts.
+Please check the authorization boundary in session-store.ts.
 ```
 ````
 
@@ -476,6 +479,10 @@ agent-specific overflow menu. It provides:
 - direct links to member agents and inspectable message cards; and
 - aggregate Codex subagent activity counts already reported for each named agent.
 
+Rename user-facing **connections** entry points to **sessions**. Do not expose
+directional requests, grants, link direction, or separate guidance permission in
+the primary or advanced UI.
+
 Do not build a visual workflow editor. A compact member list and chronological
 activity view are sufficient for the first release; a complete graph diagram
 adds little information and becomes noisy quickly.
@@ -487,33 +494,40 @@ communicated by color alone.
 
 ## Implementation Sequence
 
-### Stage 1: Observable Existing Messages
-
-- [ ] Add the Slate `agent-message` renderer and safe unverified-fence fallback.
-- [ ] Add bounded authoritative message inspection.
-- [ ] Render current personal/RPC messages with source/target attribution and
-      honest admission/execution labels.
-- [ ] Add focused accessibility, light/dark theme, edit, legacy, missing-evidence,
-      and static-renderer tests.
-
-Exit criterion: existing agent messages are pleasant to read and every displayed
-security/delivery claim can be inspected or is explicitly labeled unverified.
-
-### Stage 2: Same-Project Agent Sessions
+### Stage 1: Same-Project Session Cutover
 
 - [ ] Add home-bay session/member schema and management API.
+- [ ] Remove directional connection request/grant UI, API, CLI, schema, and
+      authorization fallback; no migration UI is required.
 - [ ] Add `max_agent_session_members` to membership tiers and presentation.
 - [ ] Build create/list/inspect/pause/close/add/remove UI.
 - [ ] Authorize complete-graph direct sends without N-squared grant rows.
 - [ ] Add queued/live session policy, generation invalidation, live guidance
       admission, and honest queued fallback.
-- [ ] Extend peer discovery and message metadata with session authorization.
-- [ ] Add bounded explicit broadcast with per-target outcomes.
+- [ ] Replace peer discovery and message metadata with exact session
+      authorization and correlation.
+- [ ] Add the Slate `agent-message` renderer, bounded authoritative inspection,
+      and safe unverified-fence fallback before enabling session sends.
+- [ ] Add focused authorization, delivery, accessibility, light/dark theme,
+      edit, missing-evidence, and static-renderer tests.
 
-Exit criterion: one human can put at least three named agents in one project into
-an Agent Session, and every pair can communicate bidirectionally with complete
-observable history and no fresh-auth prompt. The human can choose queued or live
-delivery and observe which path each send actually used.
+Exit criterion: one human can put two named agents in one same-project session,
+send in both directions with queued or live delivery, and inspect every displayed
+security/delivery claim. No directional link path can authorize new work.
+
+### Stage 2: Complete-Graph UX And Broadcast
+
+- [ ] Exercise add/remove with at least three agents and make the complete-graph
+      consequence explicit in confirmation and session details.
+- [ ] Add bounded explicit broadcast with per-target outcomes.
+- [ ] Add chronological session activity, per-member counts, and links to
+      inspectable message cards.
+- [ ] Tune grouping, empty/error states, keyboard behavior, zoom, and narrow
+      layouts without adding a graph or workflow editor.
+
+Exit criterion: at least three same-project agents communicate pairwise through
+one session with clear membership, delivery policy, observable history, and
+bounded broadcast fanout.
 
 ### Stage 3: Cross-Project And Multibay Qualification
 
@@ -554,11 +568,14 @@ unknown outcomes during failures.
 - Queued/live mode changes require explicit human action, change the session
   generation, and cannot be requested through message prose.
 - Live mode authorizes guidance only between current members of the exact active
-  session; it does not create a permanent personal guidance grant.
-- Both directions work for active member pairs without permanent personal links.
+  session; it does not create a separate guidance grant.
+- Both directions work for every active member pair, including two-member
+  sessions. One-way messaging cannot be configured.
 - Nonmembers, retired agents, wrong humans, external agents, forged session IDs,
   stale generations, and removed collaborators are rejected.
-- Closing a session leaves unrelated personal links unchanged.
+- Closing a session revokes both directions for future sends without claiming to
+  cancel already admitted work.
+- Removed legacy request/grant/link records cannot authorize a send.
 
 ### Delivery
 
@@ -589,7 +606,7 @@ unknown outcomes during failures.
 
 ### Observability And Accessibility
 
-- Verified cards resolve exact source, target, authorization source, and attempt.
+- Verified cards resolve exact source, target, session, generation, and attempt.
 - Forged/edited/legacy metadata cannot produce a trusted badge or authority.
 - Missing or expired evidence degrades to an honest unverified state.
 - Editable, static, and server-rendered views preserve readable content.
@@ -621,8 +638,9 @@ The plan is complete when:
 4. The human can configure queued or live delivery for the whole session; live
    delivery can interrupt long-running turns, while unsupported live delivery
    falls back visibly to the queue.
-5. Existing personal links, named-agent limits, ACP admission, and Codex subagent
-   behavior remain intact.
+5. Directional connection requests and grants are absent from the product and
+   cannot authorize new work; named-agent limits, ACP admission, and Codex
+   subagent behavior remain intact.
 6. Agent messages are compact, readable, keyboard-accessible, and inspectable,
    with trusted and unverified states clearly distinguished.
 7. The account home bay, project owning bay, and host enforce their existing
@@ -648,6 +666,7 @@ stages of this plan:
 - cross-account or cross-human Agent Sessions;
 - externally installed agents as session members;
 - autonomous agent-created sessions or agent-controlled membership changes;
+- one-way agent messaging, directional connection grants, or reply grants;
 - per-member, per-edge, per-message, or agent-controlled delivery policies;
 - automatic delivery retry, offline store-and-forward, or exactly-once claims;
 - unbounded broadcast, account-wide discovery, or 1,000-agent swarm support;
