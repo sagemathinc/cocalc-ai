@@ -373,14 +373,15 @@ describe("receivable order detail", () => {
 
     render(<ReceivableOrderDetail id={order.id} onBack={jest.fn()} />);
 
-    await waitFor(() =>
-      expect(screen.getAllByTitle(accountId)).toHaveLength(3),
-    );
-    const identities = screen.getAllByTitle(accountId);
-    expect(identities).toHaveLength(3);
-    expect(
-      identities.every((identity) => identity.textContent === "William Stein"),
-    ).toBe(true);
+    await waitFor(() => {
+      const identities = screen.getAllByTitle(accountId);
+      expect(identities).toHaveLength(3);
+      expect(
+        identities.every(
+          (identity) => identity.textContent === "William Stein",
+        ),
+      ).toBe(true);
+    });
     expect(getNames).toHaveBeenCalledWith([accountId]);
   });
 
