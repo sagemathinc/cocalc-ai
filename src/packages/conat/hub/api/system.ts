@@ -669,6 +669,14 @@ export interface HostIntrusionReviewReport {
     notification_enabled: boolean;
     runbook_ref: string;
   }>;
+  incident_summary: {
+    open: number;
+    acknowledged: number;
+    suppressed: number;
+    critical: number;
+    stale: number;
+    expiring_suppressions: number;
+  };
   incidents: Array<{
     id: string;
     host_id: string;

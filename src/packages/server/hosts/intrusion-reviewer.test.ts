@@ -175,6 +175,14 @@ describe("project-host intrusion reviewer", () => {
         notification_enabled: false,
       }),
     ]);
+    expect(report.incident_summary).toEqual({
+      open: 0,
+      acknowledged: 0,
+      suppressed: 0,
+      critical: 0,
+      stale: 0,
+      expiring_suppressions: 0,
+    });
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
 

@@ -1001,6 +1001,7 @@ export async function getHostIntrusionReviewReport({
     hosts,
     findings,
     retention,
+    incidentSummary,
     incidents,
     notifications,
   ] = await Promise.all([
@@ -1102,6 +1103,26 @@ export async function getHostIntrusionReviewReport({
       [bayId],
     ),
     boundedQuery(
+      `SELECT
+         COUNT(*) FILTER (WHERE state='open')::integer AS open,
+         COUNT(*) FILTER (WHERE state='acknowledged')::integer AS acknowledged,
+         COUNT(*) FILTER (WHERE state='suppressed')::integer AS suppressed,
+         COUNT(*) FILTER (
+           WHERE state IN ('open','acknowledged') AND severity='critical'
+         )::integer AS critical,
+         COUNT(*) FILTER (
+           WHERE state IN ('open','acknowledged','suppressed') AND
+                 updated_at < NOW() - INTERVAL '24 hours'
+         )::integer AS stale,
+         COUNT(*) FILTER (
+           WHERE state='suppressed' AND suppression_expires_at >= NOW() AND
+                 suppression_expires_at < NOW() + INTERVAL '24 hours'
+         )::integer AS expiring_suppressions
+       FROM ${INCIDENTS}
+       WHERE bay_id=$1`,
+      [bayId],
+    ),
+    boundedQuery(
       `SELECT id, host_id, rule_id, rule_version, severity, confidence, state,
                 first_seen_at, last_seen_at, updated_at, occurrence_count,
                 suppression_ref, suppression_expires_at, last_notification_transition
@@ -1131,6 +1152,7 @@ export async function getHostIntrusionReviewReport({
     observations: 0,
     oldest_observation_at: null,
   };
+  const incidentCounts = incidentSummary.rows[0] ?? {};
   const now = Date.now();
   const age = (value: unknown): number | null => {
     const parsed = Date.parse(`${value ?? ""}`);
@@ -1174,6 +1196,14 @@ export async function getHostIntrusionReviewReport({
       ...rule,
       notification_enabled: notificationRules().has(rule.id),
     })),
+    incident_summary: {
+      open: Number(incidentCounts.open ?? 0),
+      acknowledged: Number(incidentCounts.acknowledged ?? 0),
+      suppressed: Number(incidentCounts.suppressed ?? 0),
+      critical: Number(incidentCounts.critical ?? 0),
+      stale: Number(incidentCounts.stale ?? 0),
+      expiring_suppressions: Number(incidentCounts.expiring_suppressions ?? 0),
+    },
     incidents: incidents.rows
       .slice(0, MAX_REPORT_INCIDENTS)
       .map((incident) => ({
