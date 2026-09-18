@@ -77,6 +77,29 @@ test("updates versioned content in place and respects explicit appearance and ke
   expect(viewport.scrollTop).toBe(0);
 });
 
+test("restores the diff viewport after remounting", () => {
+  const scrollPosition = { current: 0 };
+  const { unmount } = render(
+    <DocumentDiff {...props} scrollPosition={scrollPosition} />,
+  );
+  const viewport = screen.getByRole("region", { name: "Selected versions" });
+  viewport.scrollTop = 375;
+  fireEvent.scroll(viewport);
+  expect(scrollPosition.current).toBe(375);
+
+  unmount();
+  render(
+    <DocumentDiff
+      {...props}
+      after="replacement version"
+      scrollPosition={scrollPosition}
+    />,
+  );
+  expect(
+    screen.getByRole("region", { name: "Selected versions" }).scrollTop,
+  ).toBe(375);
+});
+
 test("defaults to three context lines and supports keyboard context selection", async () => {
   const user = userEvent.setup();
   render(<DocumentDiff {...props} />);

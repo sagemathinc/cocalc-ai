@@ -2,6 +2,8 @@
 
 import {
   canShowCellDragHandle,
+  captureNotebookScrollPosition,
+  notebookScrollTarget,
   restoreNotebookScroll,
   updateLazyCellHeights,
 } from "./cell-list";
@@ -67,6 +69,81 @@ describe("restoreNotebookScroll", () => {
     });
 
     expect(scroller.scrollTop).toBe(180);
+  });
+
+  it("does not pull a live notebook back when its height is unchanged", async () => {
+    const scroller = makeScroller({
+      scrollTop: 0,
+      getScrollHeight: () => 100,
+    });
+
+    await restoreNotebookScroll({
+      scrollTop: 25,
+      getElement: () => scroller,
+      isMounted: () => true,
+      wait: async (ms) => {
+        if (ms === 0) {
+          scroller.scrollTop = 180;
+        }
+      },
+    });
+
+    expect(scroller.scrollTop).toBe(180);
+  });
+
+  it("follows an anchored history target while heights settle", async () => {
+    const scroller = makeScroller({
+      scrollTop: 0,
+      getScrollHeight: () => 100,
+    });
+    let target = 25;
+
+    await restoreNotebookScroll({
+      scrollTop: target,
+      getElement: () => scroller,
+      getTargetScrollTop: () => target,
+      isMounted: () => true,
+      wait: async (ms) => {
+        if (ms === 0) {
+          target = 180;
+        }
+      },
+    });
+
+    expect(scroller.scrollTop).toBe(180);
+  });
+
+  it("captures and restores a visible cell anchor when content above changes", () => {
+    const scroller = makeScroller({
+      scrollTop: 300,
+      getScrollHeight: () => 2000,
+    });
+    scroller.getBoundingClientRect = jest
+      .fn()
+      .mockReturnValue({ top: 100, bottom: 600 });
+    const hidden = document.createElement("div");
+    hidden.setAttribute("data-jupyter-lazy-cell-id", "hidden");
+    hidden.getBoundingClientRect = jest
+      .fn()
+      .mockReturnValue({ top: 0, bottom: 90 });
+    const visible = document.createElement("div");
+    visible.setAttribute("data-jupyter-lazy-cell-id", "visible");
+    visible.getBoundingClientRect = jest
+      .fn()
+      .mockReturnValue({ top: 80, bottom: 300 });
+    scroller.append(hidden, visible);
+    const position = { current: 0 };
+
+    captureNotebookScrollPosition(scroller, position);
+    expect(position).toEqual({
+      current: 300,
+      anchor: { cellId: "visible", offset: -20 },
+    });
+
+    visible.getBoundingClientRect = jest
+      .fn()
+      .mockReturnValue({ top: 180, bottom: 400 });
+    expect(notebookScrollTarget(scroller, position)).toBe(400);
   });
 });
 
