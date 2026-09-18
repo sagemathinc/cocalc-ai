@@ -8966,6 +8966,7 @@ export function automationRecordFromThreadProjection({
   path,
   thread_id,
   account_id,
+  settings_revision,
   automation_config,
   automation_state,
   updated_at,
@@ -8974,6 +8975,7 @@ export function automationRecordFromThreadProjection({
   path: string;
   thread_id: string;
   account_id: string;
+  settings_revision: string;
   automation_config?: ChatThreadAutomationConfig | null;
   automation_state?: ChatThreadAutomationState | null;
   updated_at?: string;
@@ -8983,13 +8985,14 @@ export function automationRecordFromThreadProjection({
   const automation_id = `${
     config?.automation_id ?? state?.automation_id ?? ""
   }`.trim();
-  if (!automation_id || !config) return;
+  if (!automation_id || !config || !account_id || !settings_revision) return;
   return {
     automation_id,
     project_id,
     path,
     thread_id,
     account_id,
+    settings_revision,
     enabled: config.enabled,
     title: config.title,
     run_kind: config.run_kind,
@@ -9032,6 +9035,9 @@ async function recoverAcpAutomationFromThreadProjection({
   account_id: string;
 }): Promise<AcpAutomationRow | undefined> {
   if (!conatClient) return;
+  // The projection is collaborator-editable, so it cannot restore historical
+  // authority. Recovery is a new authenticated settings responsibility claim.
+  const responsibility = humanAutomationSettings(account_id);
   const record = await withChatSyncDB({
     client: conatClient,
     project_id,
@@ -9047,7 +9053,7 @@ async function recoverAcpAutomationFromThreadProjection({
         project_id,
         path,
         thread_id,
-        account_id,
+        ...responsibility,
         automation_config: toPlain(
           syncdbField<ChatThreadAutomationConfig>(
             threadConfig,
@@ -9073,6 +9079,8 @@ async function recoverAcpAutomationFromThreadProjection({
     project_id,
     path,
     thread_id,
+    account_id: restored.account_id,
+    responsibility_reassigned: true,
   });
   return restored;
 }
