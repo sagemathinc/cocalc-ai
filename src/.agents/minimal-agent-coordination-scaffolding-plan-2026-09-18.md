@@ -1,837 +1,578 @@
-# Minimal Agent Coordination Scaffolding
+# Named-Agent Sessions And Observable Coordination
 
 Date: 2026-09-18
 
-Status: proposed architecture and staged implementation plan. This is not a
-release contract and does not change the approved personal-agent messaging
-contract.
+Status: focused architecture and implementation plan. This does not change the
+approved personal-agent messaging release contract.
 
 ## Executive Decision
 
-Add the smallest platform layer that lets a bounded group of agents discover and
-message one another directly:
+Build three things:
 
-1. A human creates a short-lived **coordination session** containing a bounded
-   set of agents.
-2. Every participant receives the same minimal primitives: list peers, send one
-   ordinary message, send a bounded broadcast, and inspect a prior attempt.
-3. Messages enter the recipient's existing execution queue. There is no central
-   coordinator, task graph, workflow engine, or messaging-specific retry worker.
-4. The model decides whether to delegate, ask a peer, disagree, converge, or
-   form an informal hierarchy. CoCalc supplies identity, authority, routing,
-   limits, attribution, and human inspection, not the organization chart.
-5. Existing named agents are the first participants. Ephemeral task agents can
-   join later through the same session contract without becoming named agents or
-   consuming the named-agent account entitlement.
+1. **Named-agent complete graphs.** A human creates an **Agent Session** from a
+   set of their registered named agents. Every active member may message every
+   other active member in both directions without creating N-squared personal
+   connection grants.
+2. **Excellent observability.** Agent-to-agent messages render as compact,
+   inspectable first-party Slate elements. Session management shows membership,
+   state, activity, and honest delivery/execution evidence without exposing
+   private reasoning or flooding the transcript.
+3. **Codex-native subagents behind each named agent.** Codex remains responsible
+   for spawning, coordinating, limiting, reconciling, and stopping its subagents.
+   CoCalc treats them as an implementation detail of the named agent, not as new
+   platform identities or session members.
 
-This is intentionally narrower than a general coordination platform. The first
-useful experiment is not a board, planner, supervisor agent, shared memory, or
-durable task scheduler. It is a secure and observable `send_message(peer, text)`
-primitive between agents that a human explicitly grouped together.
+This is the complete scope. CoCalc supplies a bounded communication graph,
+identity, authorization, routing, and human visibility. It does not supply a
+manager hierarchy, task scheduler, workflow language, or worker-agent platform.
 
-## Design Input
+## Motivation
 
-The immediate design input is Noam Brown's September 17, 2026 interview,
+The design is inspired by Noam Brown's September 17, 2026 interview,
 [Agent swarms, alignment, & recursive self-improvement](https://www.dwarkesh.com/p/noam-brown).
-The relevant claims are:
+The useful product insight is narrow: direct lateral messaging lets capable
+models ask questions, compare answers, disagree, converge, and organize without
+forcing every exchange through a coordinator.
 
-- Coordinator/child scaffolds impose avoidable constraints. Children often
-  cannot talk laterally or ask a clarification without abandoning their work.
-- A productive alternative is to bake in little structure: give agents a
-  primitive way to message another agent and let stronger models learn how to
-  coordinate.
-- Useful behavior can emerge from that primitive, including questions,
-  disagreement, explanation, convergence, broadcast, and informal hierarchy.
-- Context can be forked into temporary agents and useful results merged back.
-- Coordination is not free. Parallel speedup is domain-dependent and usually
-  sublinear, and early models found incoming messages disruptive.
-- Highly cooperative agents can also cooperate in unintended ways. Messaging
-  therefore increases the importance of sandboxing, explicit authority,
-  bounded resources, monitoring, and defense in depth.
+CoCalc already has the hard foundation:
 
-These are strong reasons to expose a stable primitive, not reasons to imitate an
-unpublished training system or assume that a large swarm is automatically useful.
-The plan optimizes for future models that already know how to use direct peer
-messaging while remaining safe and understandable for current models and humans.
+- durable registered agent identities and personal names;
+- human-approved direct agent messaging;
+- authenticated sender attribution and exact target routing;
+- multibay account-home and project-owner authority;
+- `accepted`, `rejected`, and `unknown` RPC outcomes;
+- existing ACP queueing, runtime admission, and project startup rules;
+- Codex subagent lifecycle, activity, reconciliation, and stop-all behavior; and
+- named-agent membership limits and ACP resource limits.
 
-## Relationship To Existing Work
+The missing pieces are an economical way to authorize a set of edges and a
+human interface that makes the resulting traffic understandable.
 
-This plan extends, rather than replaces:
+## Product Boundaries
 
-- [Agent Messaging As RPC](agent-messaging-rpc-spec.md), including
-  `accepted`/`rejected`/`unknown`, caller-generated attempt IDs, bounded
-  inspection, no automatic retry, and ordinary queueing behind active work.
-- [Agent Messaging Release Contract](agent-messaging-release-contract.md),
-  including authenticated human scope, directional personal links, authoritative
-  bay ownership, fresh-auth approval, and the rule that message content grants
-  no authority.
-- [Agent messaging reviewer map](agent-messaging-security-map.md), including
-  credential, lifecycle, filesystem, attachment, and resource boundaries.
-- [Codex Subagent Activity UX And Implementation Plan](codex-subagent-activity-ux-plan-2026-08-13.md),
-  which already defines bounded subagent activity and human visibility.
-- The existing `guidance` Slate element in
-  [`guidance.tsx`](../packages/frontend/editors/slate/elements/guidance.tsx),
-  which demonstrates fenced Markdown parsing, editable and static rendering,
-  state presentation, and Markdown round trips.
+### Named Agents Are The Network Principals
 
-A broader coordination/workflow design remains useful for future revisioned work,
-review workflows, evidence, and protected effects. It is deliberately not the
-first implementation slice here. Direct communication should be qualified before
-CoCalc builds a workflow system around it.
+Only existing registered named agents may join an Agent Session. They retain
+their stable UUID, project, `.chat` path, thread, account-specific `@name`, and
+normal execution principal.
 
-## Goals
+A session never creates an agent, names an unnamed thread, changes a named-agent
+quota, or silently retargets a name. Member records bind stable agent UUIDs, not
+mutable display names.
 
-- Let an agent contact any authorized peer in its current coordination session
-  without routing every exchange through a manager.
-- Make clarification, disagreement, result sharing, and bounded broadcast cheap.
-- Preserve a clear distinction between durable named agents and ephemeral
-  execution workers.
-- Preserve the current human principal, project admission, and multibay rules.
-- Make every intentionally sent inter-agent message attributable and inspectable
-  without flooding the normal human transcript.
-- Bound fanout, payloads, concurrency, lifetime, spending, and recursive spawn.
-- Give future models a small, stable tool surface that resembles the primitive
-  they are likely to encounter during multi-agent training.
-- Allow the platform to measure whether coordination helps before expanding it.
+### Agent Sessions Are Complete Graphs
 
-## Non-Goals
+An Agent Session is an account-owned set of at least two named agents. While the
+session is active, every ordered pair of active members is authorized for an
+ordinary message:
 
-- No required coordinator, manager hierarchy, role taxonomy, or fixed team shape.
-- No planner, DAG executor, distributed lock service, generic task board, or
-  exactly-once workflow engine.
-- No messaging-specific offline outbox or automatic retry loop.
-- No global shared scratchpad or automatic transcript synchronization.
-- No authority conveyed by prose, agent-generated JSON, Markdown metadata,
-  artifact state, a known UUID, or membership labels.
-- No automatic permission expansion when an agent spawns or contacts another.
-- No collection or exposure of private chain of thought. Only intentionally sent
-  messages, explicit results, tool activity, and operational metadata are shown.
-- No cross-account sessions in the first release.
-- No attempt to make collaborators sharing one project Unix account mutually
-  isolated. Stronger isolation requires distinct sandboxes.
-- No claim that more agents improve every task or justify their additional cost.
-
-## Product Invariants
-
-### 1. Communication Is Primitive; Authority Is Not
-
-The model-facing operation should remain conceptually simple:
-
-```ts
-send_message({ to: peer_id, text, reply_to? })
+```text
+allowed(A, B) = active(session) && member(A) && member(B) && A != B
 ```
 
-The platform-facing operation still performs authenticated identity resolution,
-session membership checks, current project/account checks, route resolution,
-admission, size and rate limits, and attempt recording. The simple model API must
-not imply a weak backend contract.
+The complete graph is semantic. The database stores one session and one row per
+member, not one grant per edge. Adding one member intentionally adds both
+directions between that member and every existing member. Removing one member
+removes all of its session edges for future sends.
 
-Messages are attributed external input. A recipient may reason about them, but
-must not interpret them as system policy, human approval, a tool grant, or a
-credential. Protected effects continue through existing authorized executors.
+Session authority is additional to existing personal links:
 
-### 2. No Required Manager
+- Inside an active session, the session membership authorizes the send.
+- Outside a session, current directional personal-link rules remain unchanged.
+- Closing a session does not delete or alter separately approved personal links.
+- A session send does not create a permanent personal link.
 
-Every participant may directly contact any other participant permitted by the
-session policy. Parent/child provenance is retained for audit, stopping, cost,
-and capability attenuation, but it is not the required message route.
+The first release supports only agents personally named by the same account and
+turns running as that same authenticated human principal. It does not connect
+different humans or accounts.
 
-The platform may provide a root agent as an initial contact and human-facing
-anchor. It must not require all messages or decisions to pass through that root.
+### Codex Subagents Stay Behind Their Named Agent
 
-### 3. Human Approval Is Amortized, Not Removed
+Codex already owns subagent behavior. The current integration tracks descendant
+threads, reports activity, reconciles terminal state, preserves outstanding work,
+supports stop-all, and passes a per-thread maximum concurrent subagent setting.
+The existing account setting is normalized to 1-16 concurrent subagents.
 
-The human approves one bounded session policy rather than approving every edge
-in an N-agent graph. The approval names the allowed participant set or allowed
-spawn scope, human principal, projects, expiry, limits, and any outward egress.
+Agent Sessions do not introduce a second implementation:
 
-Joining a session is not a general connection grant. It authorizes direct sends
-only within that session and only while all current checks pass. Existing
-personal-agent connections remain the mechanism for communication between
-independently authorized named agents outside a session.
+- A Codex subagent is not entered in the named-agent registry.
+- It does not receive an `@name`, session membership, or independent CoCalc
+  messaging credential.
+- It does not consume a named-agent slot or a session-member slot.
+- If it invokes a messaging tool available to its parent runtime, the message is
+  authenticated and displayed as coming from the parent named agent.
+- Replies target the parent named agent. Codex decides how to route or use them
+  internally.
+- Existing Codex and ACP concurrency, queue, runtime, and spending controls
+  continue to apply.
 
-### 4. Ordinary Messages Do Not Interrupt
+Session membership neither enables nor disables Codex subagents. That remains a
+Codex/thread configuration concern. CoCalc may display trusted aggregate
+subagent activity for observability, but subagent thread IDs are not security
+principals and do not become nodes in the session graph.
 
-The default send wakes an idle recipient or enters its existing queue behind the
-current turn. It does not steer active work. This avoids recreating the early
-failure mode where frequent peer messages continually interrupt reasoning.
+## Resolved Product Decisions
 
-Guidance remains a separate, explicit permission and is excluded from the first
-session slice. A future session may allow it for selected edges, never implicitly
-for all peers.
+### Name
 
-### 5. Outcomes Remain Honest
+Use **Agent Session** in the UI and `agent session` in documentation. Use
+`agent_session` in internal schema and protocol names. Avoid **team** and
+**group**, which are easily confused with groups of human collaborators.
 
-Each target in a send or broadcast returns one of:
+### Session Lifetime
 
-- `accepted`: the recipient execution system admitted the operation;
-- `rejected`: this attempt definitively was not admitted; or
-- `unknown`: admission cannot be established or ruled out.
+Keep lifecycle simple:
 
-Accepted does not mean read, correct, complete, durable forever, or answered.
-Unknown does not authorize an automatic retry. Completion is a separate message,
-result, or observed execution state.
+- `active`: members may send through session authority;
+- `paused`: no new session-authorized sends, but membership is retained; and
+- `closed`: terminal state; create a new session rather than reopening it.
 
-### 6. Capabilities Only Narrow
+The first release has no automatic TTL or idle expiry. Project access, agent
+identity, account security state, membership limits, and runtime admission are
+still checked on every send. A generation changes on membership or state changes
+so stale authorizations cannot silently survive an edit.
 
-A child or peer cannot acquire more project, tool, network, messaging, or spending
-authority than the human-approved session and its own execution principal allow.
-A spawned worker receives the intersection of:
+### Fresh Authentication
 
-- the session policy;
-- the spawning participant's delegable scope;
-- the destination project's current policy; and
-- the runtime's own sandbox and tool policy.
+Fresh auth is required only when an action creates or reactivates a bridge across
+project boundaries:
 
-No participant receives reusable human account credentials.
+- Creating a session whose members span multiple projects requires fresh auth.
+- Adding a member from a new project requires fresh auth.
+- Resuming a paused cross-project session requires fresh auth.
+- Same-project creation and same-project membership edits do not require fresh
+  auth because the participating agents already operate inside the same project
+  collaborator boundary.
+- Pausing, removing a member, and closing never require fresh auth.
+- Individual sends never require repeated fresh auth.
 
-### 7. Human Legibility Is A First-Class Boundary
+The confirmation must say that all selected agents can contact one another and
+list the projects being bridged. A conversational "yes" is never authorization.
 
-Humans must be able to see who contacted whom, when, under which session, with
-what admission result, and what content was intentionally sent. The compact view
-should not pretend to expose hidden reasoning or every internal token.
+### Entitlements And Limits
 
-## Core Objects
+Use one new membership-tier entitlement:
 
-### Named Agent
-
-The existing durable registered agent identity bound to a project, `.chat` path,
-and thread. It appears in the Agents UI, has a personal account alias, and counts
-against the named-agent entitlement.
-
-No schema or quota semantic should be overloaded to represent a temporary worker.
-
-### Coordination Session
-
-A human-authorized, finite context in which participants may communicate directly.
-Suggested internal fields:
-
-```ts
-interface CoordinationSession {
-  session_id: string;
-  account_id: string;
-  approved_by: string;
-  root_agent_id: string;
-  project_scope: string[];
-  state: "active" | "paused" | "closed" | "expired";
-  max_participants: number;
-  max_spawn_depth: number;
-  max_messages: number;
-  max_broadcast_fanout: number;
-  allow_external_egress: boolean;
-  created_at: string;
-  expires_at: string;
-  generation: string;
-}
+```text
+usage_limits.max_agent_session_members
 ```
 
-The exact storage representation is an implementation decision. The semantics
-are not: finite scope, one authenticated human principal, explicit limits,
-revocation generation, and no hidden authority in model-authored fields.
+It limits the number of active members in any one Agent Session. The existing
+`max_named_agents` entitlement still limits the account's total registered named
+agents. Do not add task-agent or subagent membership entitlements in this plan.
 
-### Participant
+Reuse existing limits wherever possible:
 
-A session-local endpoint referring to either a named agent or an ephemeral task
-agent. It has a stable ID for the life of the session, display metadata, ancestry,
-an exact execution endpoint, and lifecycle status.
+- the current 32 KiB agent-message payload limit;
+- existing per-account and per-project ACP running/queued admission limits;
+- existing agent-messaging concurrency, deadline, and rate limits;
+- existing AI usage and credit-spend limits; and
+- the existing `codex_max_concurrent_subagents` setting, normalized to 1-16.
 
-```ts
-interface CoordinationParticipant {
-  participant_id: string;
-  session_id: string;
-  kind: "named-agent" | "task-agent";
-  agent_id?: string;
-  parent_participant_id?: string;
-  project_id: string;
-  path: string;
-  thread_id: string;
-  run_id: string;
-  depth: number;
-  state: "starting" | "ready" | "busy" | "completed" | "failed" | "stopped";
-  joined_at: string;
-  expires_at: string;
-}
+Add only fixed defensive limits required by the new operation: a hard server cap
+on session members, bounded session mutation rate, and bounded broadcast fanout.
+The effective member limit is the minimum of the tier entitlement and hard cap.
+Do not introduce separate tier fields for TTL, message count, fanout, history, or
+subagent count until measured use demonstrates a need.
+
+## Authority And Storage
+
+### Authoritative Records
+
+Store session authority on the account home bay beside the existing personal
+agent names, controls, requests, and grants:
+
+```text
+agent_personal_sessions
+  session_id UUID primary key
+  account_id UUID
+  title TEXT nullable
+  state active | paused | closed
+  generation UUID
+  created_by UUID
+  created_at TIMESTAMPTZ
+  updated_at TIMESTAMPTZ
+  closed_at TIMESTAMPTZ nullable
+
+agent_personal_session_members
+  session_id UUID
+  agent_id UUID
+  project_id UUID
+  added_by UUID
+  added_at TIMESTAMPTZ
+  removed_at TIMESTAMPTZ nullable
+  primary key (session_id, agent_id)
 ```
 
-The trusted service assigns these fields. Models may suggest display labels but
-cannot mint participant identity, ancestry, or membership.
+These are logical fields, not a migration specification. Account IDs and remote
+project-owned agent IDs may not have local foreign keys when their authority is
+owned by another bay.
 
-### Task Agent
+The home bay is authoritative for session state, generation, membership, the
+human principal, and the membership-tier limit. A project owning bay remains
+authoritative for the registered agent identity, project access, and current
+endpoint. The current host/bay remains authoritative for runtime admission.
 
-An ephemeral execution participant created for one coordination session. It does
-not appear in the main Agents list, does not receive an account-unique `@name`,
-and does not consume the named-agent quota. It has:
+Extend current attempt/inbox evidence with nullable `session_id`,
+`session_generation`, and authorization kind. A send is authorized by either an
+exact personal link or an exact Agent Session membership check, never an
+ambiguous mixture inferred after submission.
 
-- a parent and complete ancestry;
-- one human execution principal;
-- an exact project/runtime binding;
-- a maximum lifetime and spawn depth;
-- a scoped session credential; and
-- explicit completed, stopped, expired, and failed states.
+### Send Authorization
 
-The implementation should adapt the runtime's existing subagent mechanism rather
-than invent a second model runner. If the active model/runtime cannot expose a
-subagent as a messageable endpoint, the session still works with named agents.
+Extend the existing personal-agent control path with session authorization
+rather than building another messaging service:
 
-### Message Attempt
+1. Authenticate the source named agent and fixed runtime principal.
+2. Route to the source account's home bay.
+3. Verify active session generation and active source/target membership.
+4. Verify both UUIDs still resolve to active agents personally named by this
+   account.
+5. Resolve the target project's current owning bay and endpoint.
+6. Recheck the human's current access to source and target projects.
+7. Apply current account, project, messaging, and runtime limits.
+8. Use the existing one-use target admission protocol and ACP submission path.
 
-A single bounded attempt to admit one intentional message to one recipient. It
-reuses the current RPC semantics and includes trusted session metadata:
+Do not materialize N-squared grants. Do not send reusable human credentials or a
+general session capability to project hosts. The downstream authorization is
+bound to the exact source, target, principal, session generation, request, host,
+and deadline using the existing narrow admission pattern.
 
-```ts
-interface CoordinationMessageAttempt {
-  attempt_id: string;
-  session_id: string;
-  session_generation: string;
-  source_participant_id: string;
-  target_participant_id: string;
-  body: string;
-  reply_to_attempt_id?: string;
-  application_correlation_id?: string;
-}
-```
+Failure to resolve current home-bay, project-owner, or host authority fails
+closed. One-bay Launchpad uses the same logical ownership model.
 
-Application correlation is useful for agents but conveys no idempotency or
-authority. The platform's authenticated source, exact target, session generation,
-and attempt ID are trusted metadata and must not be inferred from the body.
+### Revocation Semantics
 
-## Minimal Tool Surface
+Pause, removal, close, collaborator removal, agent retirement, and account
+security changes prevent future admissions once observed by the authoritative
+check. They do not retract saved text, cancel already admitted work, reverse
+filesystem effects, or erase audit history.
 
-Expose stable, runtime-neutral operations. Names can differ by adapter, but the
-semantics should remain small and unsurprising.
+Canceling admitted work remains a separate authorized ACP action. The UI must
+not describe session pause or close as cancellation.
 
-| Operation                          | Semantics                                                                                                                       |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `peers()`                          | List active participants the caller may contact, with compact capabilities and status. No project browsing.                     |
-| `send(to, text, reply_to?)`        | Make one bounded ordinary RPC attempt to one exact peer.                                                                        |
-| `broadcast(to[], text)`            | Expand a bounded recipient list into independent send attempts and return a result for every target. No atomic broadcast claim. |
-| `inspect(attempt_id, to)`          | Read available admission evidence for the caller's own attempt. Never starts work.                                              |
-| `complete(summary?, result_refs?)` | Mark an ephemeral participant complete and publish intentional result references. It grants no merge authority.                 |
+## Agent-Facing Interface
 
-Later, when task-agent identity is qualified:
+Keep the model-facing interface close to the primitive that future models are
+likely to know. Reuse current commands and identity instead of adding a workflow
+SDK.
 
-| Operation                             | Semantics                                                                                                                        |
-| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `spawn(task, context_refs?, limits?)` | Create one child within the remaining session and parent limits. Return a participant ID or an honest failed/unknown outcome.    |
-| `stop(participant_id)`                | Request authorized cancellation of a descendant. This is separate from messaging and does not retract prior messages or effects. |
+### Peer Discovery
 
-Do not add `assign_role`, `create_plan`, `vote`, `elect_manager`, `merge_answer`,
-or domain-specific task types to the platform protocol. Models can express those
-coordination patterns in ordinary messages and artifacts. Promote a new primitive
-only after repeated evidence that it needs platform-level semantics.
+Extend destination discovery to return:
 
-## Delivery And Execution Semantics
+- existing personal-link destinations; and
+- named peers from every active Agent Session containing the source.
+
+Each result identifies its authorization source as `personal` or `session` and
+includes the session ID/title when applicable. Duplicate destinations reached by
+multiple authorities collapse to one peer with all applicable sources. Knowing a
+peer or session ID conveys no authority.
 
 ### Direct Send
 
-1. The caller generates and records an attempt ID before network submission.
-2. Trusted infrastructure authenticates the participant and current runtime.
-3. The authoritative service verifies active session generation, sender and
-   target membership, exact human principal, project access, expiry, message
-   budget, payload size, and rate limits.
-4. Current route and recipient execution eligibility are resolved.
-5. One bounded submission is made through the recipient's existing ACP path.
-6. The operation returns accepted, rejected, or unknown with inspectable evidence.
-7. No generic reconnect layer or session service retries the mutating operation.
+Continue using the existing send operation. The caller may select an exact named
+peer and, when needed, an exact session authorization source. The server assigns
+source identity and never accepts it from message text.
 
-The recipient sees the message as attributed external input. The model context
-should clearly distinguish peer, human, system, and tool content. A peer message
-must not be interpolated into system instructions.
+Ordinary sends wake an idle agent or queue behind its active turn. They do not
+interrupt active reasoning. Session authority does not permit guidance in the
+first release.
 
-### Broadcast
+Every attempt retains current `accepted`, `rejected`, and `unknown` semantics:
 
-Broadcast is a convenience expansion, not a new delivery guarantee. The caller
-supplies an explicit recipient list obtained from `peers()`. The service enforces
-fanout limits and returns one independent outcome per target. Partial acceptance
-is normal and visible. Broadcast must not enumerate undisclosed agents or infer
-membership from account/project contents.
+- `accepted` means execution admission, not read or complete;
+- `rejected` means this attempt was definitively not admitted; and
+- `unknown` means admission cannot be established or ruled out.
 
-The first slice should cap broadcast below the session participant maximum and
-apply per-source and per-session rate limits. A large swarm must use a later,
-separately qualified fanout mechanism rather than turning one RPC request into
-unbounded memory or Conat pressure.
+There is no automatic retry. Inspection remains read-only. Retrying after unknown
+uses a new attempt ID and can duplicate work.
 
-### Receiving While Busy
+### Bounded Broadcast
 
-Use the existing execution queue. Do not add a polling loop that repeatedly
-injects messages into a running turn. Multiple queued peer messages may be
-presented as a bounded chronological batch at the next safe turn boundary, but
-the original sender, target, attempt, and reply relationships must remain
-available for inspection.
+Provide one convenience operation that sends the same body to an explicit list
+of active members in one session. It expands to independent direct attempts and
+returns one outcome per target. It is not atomic, ordered, or exactly once.
 
-If batching is added, it is a context presentation optimization, not a new
-message state. Truncation should produce references to inspect the original
-messages rather than silently dropping attribution.
+Broadcast excludes the sender, cannot exceed the effective session-member limit,
+and uses the same per-target authorization and admission checks. Partial success
+is normal and visible. There is no account-wide or implicit "all agents" target.
 
-### Replies And Completion
+### Session Requests And Human Authorization
 
-A reply is an explicit send and requires current session authority in the reverse
-direction. Session membership supplies that bounded reverse direction; personal
-links outside the session remain directional as today.
+An agent may issue a typed request proposing a title and exact named members.
+That request opens the same first-party review UI as human-initiated creation; it
+does not create or authorize the session. The human may edit, approve, or reject
+the proposal. Cross-project approval uses fresh auth.
 
-A result or `complete` operation records intentional output and references. It
-does not prove correctness or perform a merge. The requesting agent or human
-decides what to do with it under their own authority.
+Session activation, expansion, pause/resume, member removal, and close remain
+human control-plane actions in the first release. Prose alone never changes
+membership.
 
-## Forking Context And Merging Results
+## Excellent Observability
 
-Future runtimes are likely to fork existing context into temporary agents. CoCalc
-should support this without treating hidden model state as a portable platform
-object.
+Observability has two surfaces: the `.chat` transcript and Agent Session
+management. Neither surface is an authority source.
 
-The spawn adapter should accept a bounded context manifest containing references
-such as:
+### Message Correlation And Inspection
 
-- parent conversation/thread and an explicit message range;
-- selected files, snapshots, blobs, artifacts, or commits;
-- a compact task prompt; and
-- the session and parent participant identities.
+Current RPC chat rows already contain an `agent_rpc` map with source, target,
+attempt, link, attachment, and file-reference correlation. Extend it with:
 
-It should not blindly duplicate every transcript, secret, browser session, open
-file, or environment variable. Reference resolution occurs under the child
-principal and project policy. Large data uses existing file/blob paths rather
-than message bodies.
-
-"Merge" initially means an agent sends a summary, patch, artifact, proof, or
-other result reference back to a peer. Applying a patch, merging a branch,
-publishing a file, or changing external state remains an existing protected
-operation. There is no generic platform `merge minds` primitive.
-
-## Human Transcript UX
-
-The current raw presentation of agent-to-agent traffic is not adequate for
-routine human inspection. Add a first-party Slate element for an intentional
-inter-agent message, following the architecture of the `guidance` element.
-
-### `agent-message` Element
-
-An agent message renders by default as a compact card:
-
-```text
-@reviewer -> @builder                         Accepted
-The failing case is in attachment-reservations.test.ts ...
+```ts
+agent_rpc: {
+  version: 3;
+  source: AgentSource;
+  target: AgentEndpoint;
+  attempt_id: string;
+  authorization: {
+    kind: "personal" | "session";
+    link_id?: string;
+    session_id?: string;
+    session_generation?: string;
+  };
+}
 ```
 
-The card should show:
+The syncdoc metadata is a rendering and correlation hint, not proof of authority.
+The authoritative attempt/session record remains in protected control-plane
+storage. Add a bounded, read-only inspection endpoint that verifies the current
+human may inspect the exact target agent/thread and returns current evidence for
+the referenced attempt. It never starts, retries, wakes, or steers work.
 
-- sender and recipient display names with distinct agent styling;
-- ordinary, reply, or broadcast-copy context;
-- a truthful admission/execution label;
-- timestamp and a compact one- or two-line body preview; and
-- an affordance to inspect details.
+If authoritative evidence is unavailable, the UI says **Unverified or expired**.
+It never promotes editable chat metadata into an authenticated claim.
 
-Clicking or keyboard-activating the card opens an inspector containing:
+### Slate `agent-message` Element
 
-- the complete intentionally sent body;
-- source, target, session, participant, run, attempt, and correlation IDs;
-- parent/reply relationship;
-- accepted, rejected, or unknown admission evidence;
-- known queued/running/completed execution observation, labeled separately;
-- timestamps and project/thread links the current human may access; and
-- a copyable diagnostic representation with credentials and secrets omitted.
+Add a first-party `agent-message` element beside the existing
+[`guidance` element](../packages/frontend/editors/slate/elements/guidance.tsx).
+For a chat row carrying agent RPC correlation metadata, the message renderer
+synthesizes this element from the row content plus an authorized inspection
+result. Without that result, it renders the explicitly unverified state. The
+default compact card shows:
 
-The default card must be visually quieter than a human message and much quieter
-than a tool transcript. Repeated messages can collapse under a "3 agent messages"
-summary while remaining individually inspectable. Questions directed at the
-current human must remain prominent and must not be collapsed as background
-traffic.
+```text
+@reviewer -> @builder · Agent Session: Release review
+Please check the authorization boundary in personal-store.ts.       Queued
+```
 
-### Trust Boundary
+The card includes:
 
-The Slate node is presentation, not authority. Trusted attribution and delivery
-state come from protected chat/message metadata or an authorized lookup keyed by
-message ID. They do not come from editable Markdown attributes.
+- source and target names, with UUID fallback;
+- Agent Session title when applicable;
+- a short body preview and timestamp;
+- truthful admission/execution state when verified; and
+- a clear button/keyboard target to inspect details.
 
-A fenced representation is still useful for editing, static rendering, and
-export, for example:
+The card is visually quieter than a human message. Consecutive agent messages
+may collapse into a count summary, but every message remains individually
+expandable. Messages asking for human input remain prominent.
+
+Clicking or keyboard-activating the card opens an inspector with:
+
+- complete intentionally sent content;
+- source, target, project, session, attempt, and correlation identifiers;
+- personal-link or session authorization source;
+- admission state and separately labeled execution observation;
+- timestamps, attachment/file-reference metadata, and accessible project/thread
+  links; and
+- a credential-free copyable diagnostic representation.
+
+Do not show chain of thought, hidden prompts, reusable credentials, raw Conat
+subjects, or another project's content.
+
+### Markdown And Trust
+
+Support a readable fenced export such as:
 
 ````markdown
 ```agent-message
 @reviewer -> @builder
 
-The failing case is in attachment-reservations.test.ts ...
+Please check the authorization boundary in personal-store.ts.
 ```
 ````
 
-When arbitrary Markdown containing this fence lacks trusted record metadata, it
-must render as an unverified quoted agent message or ordinary fenced content. It
-must not display an authenticated badge, accepted state, project access, or a
-working attempt inspector merely because text claims those fields.
-
-The Markdown exporter should preserve readable sender/recipient labels and body,
-but never emit credentials, internal RPC subjects, reusable capabilities, or
-private project locators. Static/public viewers must degrade safely when the
-viewer cannot inspect the underlying record.
-
-### Implementation Shape
-
-The likely frontend path is:
-
-1. Add `elements/agent-message.tsx` beside `guidance.tsx` with editable and static
-   renderers and theme-aware `UI_COLORS`.
-2. Register the type in `types.ts`, `types-ssr.ts`, and the public viewer with a
-   safe fallback.
-3. Extend Markdown-to-Slate fenced-code parsing for `agent-message`.
-4. Carry a trusted, non-user-authored agent-message reference from chat row
-   metadata into the render model.
-5. Add an accessible inspector drawer/modal shared by the Agents page and the
-   ordinary `.chat` editor.
-6. Test keyboard activation, screen-reader labels, light/dark themes, untrusted
-   fence fallback, missing/expired records, and narrow layouts.
-
-Do not encode the whole RPC envelope in Slate descendants. That makes operational
-metadata editable, bloats sync state, and creates two sources of truth.
-
-## Human Control Surface
-
-The Agents page should show a compact coordination activity section for the
-selected named agent, not add every worker to the main agent list.
-
-Required controls:
-
-- start a session by selecting two or more eligible named agents;
-- inspect participants, ancestry, active/idle/completed state, age, and limits;
-- pause new sends/spawns without pretending to cancel admitted work;
-- close the session and revoke future admissions;
-- stop an authorized descendant;
-- inspect message flow as a list or lightweight graph; and
-- see aggregate messages, attempts, unknown outcomes, runtime, and cost.
-
-The graph is an observability view, not a workflow editor. It should be loaded on
-demand and summarize high-volume edges. The human transcript remains the primary
-place to inspect message content in context.
-
-## Authorization Model
-
-### Session Creation
-
-Creating or materially expanding a session is a first-party human action. The
-server derives the human identity and verifies:
-
-- ownership/eligibility for the root named agent;
-- the same human's current collaborator eligibility in every selected project;
-- current named-agent identity and project ownership routes;
-- membership and resource limits; and
-- fresh authentication when the policy crosses the same threshold as creating
-  personal communication links.
-
-An agent may request that the human create or expand a session, but conversational
-approval is never sufficient.
-
-### In-Session Sends
-
-The receiving side verifies immediately before admission:
-
-- authentic participant runtime identity;
-- active session ID and generation;
-- source and exact target membership;
-- current account and project eligibility;
-- unexpired, unpaused limits and budget; and
-- current destination route and execution admission policy.
-
-Closing or pausing a session prevents new admissions. It does not retract content
-already written, cancel admitted turns, reverse file changes, or erase audit data.
-
-### Egress
-
-The first slice permits sends only to session participants. Contacting a named
-agent outside the session uses an existing personal connection. External network
-access, email, publishing, project mutation, and other effects remain governed by
-their own tool and project policies.
-
-If session egress is added later, it must name exact destination classes and be
-separately visible to the human. Never interpret "ask somebody else" as blanket
-permission to discover accounts, projects, or services.
-
-## Ownership And Multibay Routing
-
-Apply the architecture rules in [scalable-architecture.md](scalable-architecture.md):
-
-- The account home bay is authoritative for the human's session approval,
-  account limits, personal aliases, and account-level pause/revocation.
-- A project owning bay is authoritative for its named agent identity, project
-  access, project policy, and participant execution endpoint.
-- The current host/bay placement is authoritative for project-host admission and
-  runtime attachment.
-- Cross-bay operations use the existing inter-bay control plane and explicit
-  ownership resolution. A stale local row or route is not authority.
-- Human credentials are never copied to another bay or project host. Workers use
-  short-lived, narrowly scoped runtime credentials.
-- Steady-state model, file, and tool traffic continues directly between the
-  client/runtime and project host where possible. The hub authorizes and routes;
-  it does not become a proxy for all worker data.
-
-A session spanning projects has distributed execution, not distributed authority.
-The home bay owns the session policy. Each project owner still makes its own
-current admission decision. If required authority cannot be checked within the
-bounded deadline, fail closed with rejected or unknown semantics rather than
-silently accepting on cached membership.
-
-The physical table layout, short-lived permit mechanism, and authorization
-freshness window must be settled with a failure-mode review before coding the
-cross-bay slice.
-
-## Resource And Safety Boundaries
-
-The session policy must bound at least:
-
-- participants and recursive depth;
-- simultaneous running task agents;
-- session lifetime and idle lifetime;
-- UTF-8 bytes per message;
-- sends per participant and per session over time;
-- total messages and broadcast fanout;
-- queued execution admission and project starts;
-- context manifest bytes and attachment counts;
-- model tokens, runtime, and spend where the runtime can enforce them; and
-- retained attempt/message metadata.
-
-Defaults should be intentionally small. A reasonable experiment might start with
-2-8 named participants, no dynamic spawn, no guidance, 32 KiB messages, a bounded
-session TTL, and broadcast to at most 8 explicit peers. These are qualification
-inputs, not final product constants.
-
-Reject before expensive preparation whenever possible. A failed or overloaded
-recipient must not block unrelated recipients. No indefinite waits, unbounded
-in-memory fanout, or recursive automatic retry.
-
-### Threats To Qualify
-
-| Threat                                                 | Required boundary                                                                                                            |
-| ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
-| Agent text claims human approval or a broader role     | Treat body as untrusted content; enforce protected grants outside the transcript.                                            |
-| Compromised worker contacts arbitrary agents           | Exact active-session membership and target checks at admission.                                                              |
-| Child widens its tools, projects, network, or budget   | Monotonic capability intersection and server-assigned ancestry.                                                              |
-| Spawn explosion or message storm                       | Participant, depth, rate, fanout, queue, runtime, and spend limits with overload rejection.                                  |
-| Message loops                                          | Attempt/reply/causation observability, rate limits, duplicate warnings, and human stop/pause; no automatic transport replay. |
-| Unknown admission is blindly retried                   | Explicit unknown state, inspect-only operation, and duplicate-risk warning.                                                  |
-| Stale session survives pause, move, restore, or rehome | Generation/placement fencing and current authoritative checks.                                                               |
-| Model-authored Markdown forges a trusted card          | Trusted row metadata; unverified rendering for arbitrary fences.                                                             |
-| Cooperative agents hide harmful behavior               | Durable intentional-message audit, sandboxing, protected effects, anomaly metrics, and defense in depth.                     |
-| Human UI becomes unusable at volume                    | Compact grouped cards, on-demand detail, summaries, and bounded retention.                                                   |
-
-Communication observability is not a substitute for secure sandboxes or aligned
-models. Conversely, do not train or prompt models to hide ordinary coordination
-merely to make the UI quieter. Preserve the intentionally sent messages and solve
-human overload in presentation.
-
-## Persistence And Retention
-
-Persist only what needs durable authority or honest inspection:
-
-- session policy, state, generation, approval, limits, and timestamps;
-- participant identity, ancestry, exact endpoint, lifecycle, and expiry;
-- bounded attempt evidence and intentional-message references;
-- explicit completion/result references; and
-- audit events for create, expand, pause, close, spawn, stop, and denied actions.
-
-Reuse existing ACP queues and chat storage for admitted execution and transcript
-content. Do not create a second messaging backlog that retries unavailable
-recipients. Do not duplicate complete chat transcripts in session tables.
-
-Retention must be long enough to support advertised inspection and security
-review, but bounded. After attempt evidence expires, inspection returns unknown;
-it must not infer rejection. Closed session metadata can compact participant and
-edge summaries while preserving required audit records and chat messages under
-their existing retention rules.
-
-## Implementation Stages
-
-### Stage 0: Lock The Contract
-
-- [ ] Approve terminology: internal `coordination session` and
-      `participant`; choose the human-facing label after testing.
-- [ ] Specify session lifecycle, generation, limits, and authority owner.
-- [ ] Specify exact send/broadcast outcomes using the existing RPC contract.
-- [ ] Decide fresh-auth requirements and account/project eligibility checks.
-- [ ] Define the trusted chat-row metadata needed by the `agent-message` view.
-- [ ] Add threat-model and multibay failure tables before schema work.
-- [ ] Define telemetry with no message bodies or secrets in routine logs.
-
-Exit criterion: one reviewed protocol document and test matrix, with no ambiguity
-about who authorizes a session, which bay is authoritative, or what `accepted`
-means.
-
-### Stage 1: Named-Agent Session Experiment
-
-This is the recommended first implementation slice.
-
-- [ ] A human selects 2-8 of their eligible registered named agents and creates
-      one finite session.
-- [ ] The service stores one session policy and participant set, not N-squared
-      personal-link rows.
-- [ ] Each runtime can call `peers`, direct `send`, bounded `broadcast`, and
-      `inspect` through its existing scoped identity.
-- [ ] Ordinary sends use the current RPC/ACP admission path and queue semantics.
-- [ ] Existing personal-agent messaging continues unchanged outside the session.
-- [ ] The human can pause and close the session and inspect per-target outcomes.
-- [ ] The `.chat` transcript renders trusted compact `agent-message` cards with
-      an accessible detail inspector.
-- [ ] The Agents page shows one compact session/activity summary for the selected
-      agent; it does not add participant tabs or a workflow board.
-
-Exit criterion: three named agents can clarify, disagree, reply, and broadcast
-without a manager relay; all traffic is bounded, attributable, inspectable, and
-correct across one-bay and multibay project placement.
-
-### Stage 2: Ephemeral Task Agents
-
-- [ ] Adapt the existing model runtime's subagent lifecycle to issue a scoped
-      participant identity and exact parent ancestry.
-- [ ] Add `spawn`, `complete`, and descendant `stop` with strict depth,
-      concurrency, TTL, context, and spend limits.
-- [ ] Make task agents peers inside their session, including lateral direct sends.
-- [ ] Keep task agents out of the named-agent registry, account alias namespace,
-      and named-agent entitlement.
-- [ ] Reconcile runtime restarts, stopped parents, expired sessions, and lost spawn
-      acknowledgments without blind replay.
-- [ ] Reuse the subagent activity UI for lifecycle and cost; link intentional
-      peer messages to transcript cards.
-
-Exit criterion: a root can fork two bounded workers, the workers can communicate
-laterally, each can return a result, and session shutdown reliably prevents new
-work without claiming to undo admitted effects.
-
-### Stage 3: Context And Volume Controls
-
-- [ ] Add explicit bounded context manifests for spawn/fork.
-- [ ] Batch queued peer messages at safe turn boundaries while retaining original
-      inspectable records.
-- [ ] Add compact edge summaries and an on-demand communication graph.
-- [ ] Add tier-aware participant, concurrency, token, runtime, and spend limits.
-- [ ] Qualify larger fanout separately with load and failure testing.
-
-Exit criterion: useful coordination remains legible and bounded under realistic
-message volume, project movement, host failure, and session expiry.
-
-### Stage 4: Evidence-Driven Extensions
-
-Only after measurements should CoCalc consider reusable teams, broader egress,
-specialized result contracts, persistent shared artifacts, or higher-level
-workflow tools. Any added primitive must solve observed failure modes better than
-ordinary peer messaging and artifacts.
-
-## Test Matrix
-
-### Protocol And Authorization
-
-- A participant can list only peers in its active session.
-- A direct peer send succeeds without a personal N-squared link.
-- The same send outside the session is rejected unless a personal link allows it.
-- Paused, closed, expired, wrong-generation, wrong-human, and removed-collaborator
-  sessions reject new admissions.
-- A known participant ID, session ID, project path, or forged body field conveys
-  no authority.
-- A child cannot widen projects, tools, network, guidance, spend, depth, or TTL.
-- Reverse replies work within an active session but do not create a permanent
-  reverse personal link.
-
-### Outcomes And Failure
-
-- Idle recipients wake; busy recipients queue without steering.
-- Lost acknowledgment after possible admission returns unknown.
-- Inspection never creates, retries, wakes, or steers work.
-- Explicit retry after unknown has a new attempt ID and a duplicate warning.
-- Broadcast reports accepted, rejected, and unknown independently per recipient.
-- Project move, host change, restore, restart, and route staleness do not revive
-  obsolete session or runtime authority.
-- Closing the browser does not cancel an accepted send or leave an unbounded
-  server wait.
-
-### Load And Abuse
-
-- Participant, recursion, message, byte, fanout, rate, queue, and concurrency
-  limits reject predictably before resource exhaustion.
-- One unavailable recipient does not delay unrelated broadcast recipients beyond
-  the bounded call contract.
-- Message loops become rate-limited and visible; no infrastructure retry amplifies
-  them.
-- Session pause/close remains responsive under maximum qualified load.
-- Routine logs and metrics contain no message body, credential, or private file
-  content.
-
-### Transcript UX
-
-- Trusted messages render sender, recipient, and state correctly in editable,
-  static, and server-rendered views.
-- Clicking and keyboard activation open the same authorized inspector.
-- Arbitrary `agent-message` fences cannot forge trusted attribution or delivery.
-- Missing, expired, inaccessible, and legacy metadata degrade honestly.
-- Compact groups remain expandable and preserve every intentional message.
-- Screen-reader labels, focus order, contrast, light/dark themes, browser zoom,
-  and narrow desktop layouts meet the frontend accessibility requirements.
-
-### Task Agents
-
-- Spawned workers do not appear in the named-agent list or consume its quota.
-- Parent death does not silently transfer authority or ownership.
-- Lost spawn acknowledgment never causes an automatic duplicate child.
-- Completed/stopped/expired workers cannot send or spawn again.
-- Lateral worker communication is allowed only inside the exact active session.
-- Result references are reauthorized when opened or applied.
-
-## Observability And Evaluation
-
-Measure whether the primitive helps rather than assuming swarm size is success.
-Aggregate, privacy-preserving metrics should include:
-
-- session creation, size, lifetime, and project count;
-- direct sends, replies, broadcasts, and messages per useful completion;
-- accepted, rejected, and unknown rates and admission latency;
-- queue delay and time to first useful peer response;
-- spawned/completed/failed/stopped workers, depth, and concurrency;
-- token, runtime, and cost overhead relative to single-agent baselines;
-- duplicate work after explicit unknown retries;
-- human pauses, stops, expansions, and inspector use;
-- rate-limit, fanout, capability, and authority denials; and
-- task success/latency comparisons for domains with different parallelizability.
-
-Do not use message content or private chain of thought in routine telemetry.
-Qualitative, opt-in studies can examine whether agents clarify, share discoveries,
-challenge incorrect answers, converge, or merely duplicate work.
-
-## Decisions Required Before Stage 1
-
-1. Is the human-facing object called a **session**, **team**, or **group**? Keep
-   `coordination session` as the technical term unless a better contract emerges.
-2. Does creating a session always require fresh auth, or only sessions crossing
-   projects or adding egress? The first implementation should choose the stricter
-   behavior if the boundary is uncertain.
-3. What is the authoritative storage and permit mechanism for a session spanning
-   multiple owning bays?
-4. Which exact chat-row fields hold the trusted `agent-message` reference and
-   which authorized endpoint supplies inspector details?
-5. What qualified defaults apply to participant count, TTL, messages, fanout,
-   rate, queue admission, and retained evidence?
-6. Which runtime subagent API can supply an exact execution identity, ancestry,
-   bounded context manifest, and stop/recovery semantics for Stage 2?
-7. Which membership tiers control simultaneous task agents and aggregate spend?
-   Named-agent limits and task-agent concurrency should remain separate products.
-
-## Acceptance Criteria For The Minimal Product
-
-The minimal coordination layer is ready for a controlled experiment when:
-
-1. One human can authorize a finite group of existing named agents without
-   creating every directional personal link.
-2. Every agent gets a discoverable direct-message primitive and no required
-   coordinator.
-3. Busy recipients are not interrupted, and every submission has honest bounded
-   outcomes with no automatic retry.
-4. Session membership cannot be used to browse projects, acquire tools, widen
-   permissions, or contact outsiders.
-5. Humans can pause/close the session and inspect every intentionally sent message
-   through a compact, accessible transcript card.
-6. Cross-project and cross-bay routing follows authoritative ownership and fails
-   closed when current authorization cannot be established.
-7. Resource limits and overload behavior survive fault and load tests.
-8. Existing personal-agent messaging, named-agent quotas, `.chat` collaboration,
-   and normal project execution continue to behave unchanged.
-9. Telemetry can answer whether direct lateral communication improves outcomes,
-   latency, or human effort enough to justify Stage 2.
-
-The strategic bet is deliberately small: future models may arrive already good
-at organizing themselves, so CoCalc should provide a secure place to do that
-rather than hard-code today's preferred organization. The platform's durable
-value is the surrounding boundary: identity, scope, execution, artifacts,
-collaboration, observability, and human control.
+An arbitrary user-authored fence renders only as an **Unverified agent-message
+quote**. It cannot display authenticated badges, delivery state, session
+membership, or a working inspector without a matching authorized control-plane
+record.
+
+The Slate node stores only presentation/reference data needed for rendering. It
+does not duplicate credentials or make chat/syncdoc state authoritative.
+
+### Session Management UI
+
+Add an **Agent Sessions** view reachable from the Agents navigation menu and the
+agent-specific overflow menu. It provides:
+
+- create-session modal with named-agent search and project grouping;
+- explicit cross-project/fresh-auth confirmation when required;
+- session title, active/paused/closed state, members, projects, creator, and age;
+- add/remove, pause/resume, and close controls;
+- recent message activity with source, target, outcome, and time;
+- per-member sent/received counts and last activity;
+- direct links to member agents and inspectable message cards; and
+- aggregate Codex subagent activity counts already reported for each named agent.
+
+Do not build a visual workflow editor. A compact member list and chronological
+activity view are sufficient for the first release; a complete graph diagram
+adds little information and becomes noisy quickly.
+
+All interactive cards and controls require semantic roles, accessible names,
+keyboard operation, visible focus, focus restoration, theme-aware `UI_COLORS`,
+and usable layout at browser zoom and narrow widths. Status must never be
+communicated by color alone.
+
+## Implementation Sequence
+
+### Stage 1: Observable Existing Messages
+
+- [ ] Add the Slate `agent-message` renderer and safe unverified-fence fallback.
+- [ ] Add bounded authoritative message inspection.
+- [ ] Render current personal/RPC messages with source/target attribution and
+      honest admission/execution labels.
+- [ ] Add focused accessibility, light/dark theme, edit, legacy, missing-evidence,
+      and static-renderer tests.
+
+Exit criterion: existing agent messages are pleasant to read and every displayed
+security/delivery claim can be inspected or is explicitly labeled unverified.
+
+### Stage 2: Same-Project Agent Sessions
+
+- [ ] Add home-bay session/member schema and management API.
+- [ ] Add `max_agent_session_members` to membership tiers and presentation.
+- [ ] Build create/list/inspect/pause/close/add/remove UI.
+- [ ] Authorize complete-graph direct sends without N-squared grant rows.
+- [ ] Extend peer discovery and message metadata with session authorization.
+- [ ] Add bounded explicit broadcast with per-target outcomes.
+
+Exit criterion: one human can put at least three named agents in one project into
+an Agent Session, and every pair can communicate bidirectionally with complete
+observable history and no fresh-auth prompt.
+
+### Stage 3: Cross-Project And Multibay Qualification
+
+- [ ] Add fresh-auth creation, expansion, and resume flows for cross-project
+      sessions.
+- [ ] Route session checks through the account home bay and target admission
+      through the current project owning bay/host.
+- [ ] Test project movement, account-home changes, route staleness, host restart,
+      collaborator removal, agent retirement/recovery, pause, and close.
+- [ ] Load-test effective tier limits, broadcast fanout, and failure isolation.
+
+Exit criterion: a cross-project session works across different owning bays with
+no copied human credential, no stale-authority fallback, and truthful partial or
+unknown outcomes during failures.
+
+### Stage 4: UX Polish And Measurement
+
+- [ ] Add session activity summaries to the Agents page without making it a
+      second transcript.
+- [ ] Tune grouping, labels, and empty/error states using real message traffic.
+- [ ] Measure direct sends, replies, broadcast fanout, outcomes, queue delay,
+      human inspection, session size, and aggregate runtime/cost.
+- [ ] Compare coordinated results and latency against ordinary independent named
+      agents before raising limits.
+
+## Test And Release Gates
+
+### Authorization
+
+- Same-project session creation does not require fresh auth.
+- Cross-project create/add/resume requires fresh auth and lists bridged projects.
+- Pause/remove/close does not require fresh auth and blocks subsequent session
+  authorizations without claiming to cancel an in-flight or admitted send.
+- Both directions work for active member pairs without permanent personal links.
+- Nonmembers, retired agents, wrong humans, external agents, forged session IDs,
+  stale generations, and removed collaborators are rejected.
+- Closing a session leaves unrelated personal links unchanged.
+
+### Delivery
+
+- Idle targets wake and busy targets queue without guidance.
+- Accepted, rejected, and unknown remain distinct in API, CLI, and UI.
+- Inspection never submits work; no mutating operation is automatically retried.
+- Broadcast returns independent per-target outcomes and tolerates partial failure.
+- One unavailable target does not block unrelated targets beyond bounded
+  deadlines.
+
+### Codex Subagents
+
+- Session membership does not create, rename, enumerate, or credential subagents.
+- Codex subagent activity remains attached to the parent named agent.
+- A message initiated inside a parent runtime is attributed to the named agent,
+  never presented as an independently authenticated worker.
+- Existing concurrent-subagent, ACP, AI usage, and spending limits still apply.
+- Existing stop-all and runtime reconciliation behavior is unchanged.
+
+### Observability And Accessibility
+
+- Verified cards resolve exact source, target, authorization source, and attempt.
+- Forged/edited/legacy metadata cannot produce a trusted badge or authority.
+- Missing or expired evidence degrades to an honest unverified state.
+- Editable, static, and server-rendered views preserve readable content.
+- Keyboard users can open/close inspectors and regain focus correctly.
+- Screen-reader labels, status announcements, contrast, dark/light themes, 200%
+  zoom, and narrow layouts pass focused checks.
+- Routine logs and metrics contain no message body, credential, hidden prompt,
+  or private file content.
+
+### Multibay And Recovery
+
+- Account home bay is the sole session-policy authority.
+- Project owning bay and current host remain authoritative for identity/access and
+  execution admission.
+- Project move, host replacement, restore, route epoch change, and account rehome
+  never revive stale session authorization.
+- Lost acknowledgment after possible admission returns unknown and is not blindly
+  retried.
+
+## Acceptance Criteria
+
+The plan is complete when:
+
+1. A human can create an Agent Session from registered named agents with one
+   clear complete-graph authorization action.
+2. Same-project setup is lightweight and cross-project setup uses fresh auth.
+3. Every active member can directly message every other member in both directions
+   without N-squared grant rows or manager relay.
+4. Existing personal links, named-agent limits, ACP admission, and Codex subagent
+   behavior remain intact.
+5. Agent messages are compact, readable, keyboard-accessible, and inspectable,
+   with trusted and unverified states clearly distinguished.
+6. The account home bay, project owning bay, and host enforce their existing
+   authority boundaries with no reusable human credentials crossing bays.
+7. One session-member entitlement plus existing platform limits bounds cost and
+   abuse without a new worker-agent quota system.
+8. Tests cover authorization, unknown outcomes, revocation, multibay movement,
+   overload, forged presentation metadata, and accessibility.
+
+## Future Ideas Explicitly Excluded From This Plan
+
+The following may be reconsidered only after named-agent sessions are deployed,
+measured, and shown to need them. They are not hidden requirements or later
+stages of this plan:
+
+- unnamed, ephemeral, or platform-managed worker-agent identities;
+- adding Codex subagents as Agent Session members or message destinations;
+- independent subagent credentials, aliases, inboxes, quotas, billing, routing,
+  persistence, or cross-project communication;
+- a CoCalc `spawn`, `fork`, `merge`, or worker-recovery protocol;
+- automatic context cloning or shared global agent memory;
+- cross-account or cross-human Agent Sessions;
+- externally installed agents as session members;
+- autonomous agent-created sessions or agent-controlled membership changes;
+- session guidance/steering that interrupts active turns;
+- automatic delivery retry, offline store-and-forward, or exactly-once claims;
+- unbounded broadcast, account-wide discovery, or 1,000-agent swarm support;
+- coordinator agents, role systems, voting, task DAGs, workflow builders, or
+  distributed schedulers;
+- artifact, Markdown, or chat prose that grants authority;
+- chain-of-thought collection or supervision; and
+- a mandatory complete-graph visualization.
+
+Codex can continue improving its native subagent implementation independently.
+CoCalc's stable contract remains deliberately smaller: named agents communicate
+inside human-authorized Agent Sessions, and humans can clearly see what happened.
