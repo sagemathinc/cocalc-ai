@@ -25,7 +25,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
-import { initChat } from "@cocalc/frontend/chat/register";
+import { getChatActions, initChat } from "@cocalc/frontend/chat/register";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -554,7 +554,7 @@ function AgentProjectContext({
 
   useEffect(() => {
     if (!ready) return;
-    const actions: any = redux.getEditorActions(
+    const actions: any = getChatActions(
       agent.endpoint.project_id,
       agent.path,
     );
@@ -829,13 +829,11 @@ function AgentWorkspace({
   } = resolvedTheme;
   const openAppearanceEditor = () => {
     if (!selectedThread) return;
-    const actions: any = redux.getEditorActions(
+    const actions: any = getChatActions(
       agent.endpoint.project_id,
       agent.path,
     );
-    const metadata = actions?.getThreadMetadata?.(selectedThread, {
-      threadId: selectedThread,
-    });
+    const metadata = readAgentThreadAppearance(actions, selectedThread);
     setAppearanceDraft({
       title: metadata?.name?.trim() || title,
       description: "",
@@ -849,7 +847,7 @@ function AgentWorkspace({
   };
   const saveAppearance = () => {
     if (!appearanceThreadId || !appearanceDraft) return;
-    const actions: any = redux.getEditorActions(
+    const actions: any = getChatActions(
       agent.endpoint.project_id,
       agent.path,
     );
