@@ -364,6 +364,10 @@ Create a tiny Python dashboard backed by synthetic measurements, register it as
 a managed project app, and open it with a collaborator. Python's standard
 library supplies the server; no web-framework installation is needed.
 
+For an interactive chart with scenario controls, use the
+[energy scenario explorer](#try-the-energy-scenario-explorer) below. The first
+example introduces the same managed-app workflow with a smaller program.
+
 Use a project in which you are an owner or collaborator with runtime access.
 Viewer access cannot start or open project app servers. Managed apps use the
 project's shared trust model: other code and collaborators in that project are
@@ -635,4 +639,173 @@ The uploaded Python and CSV files remain research files. Inspect and remove only
 \`research-dashboard-demo\` in **Files** if no longer needed;
 retain your local copies for reproduction. Stopping the app does not stop the
 project itself.
+
+
+## Try the energy scenario explorer
+
+Run the interactive dashboard pictured on the CoCalc homepage. Change demand or
+solar generation, compare the chart and summary figures, and inspect all 24
+hourly values. This is a Python application with invented data, served privately
+through your project's **Apps** page. It is not a forecast or a demonstration
+of an AI agent generating the application.
+
+Use a **new scratch project** with Python 3 and runtime access. The example
+needs no extra Python packages. Running the project uses its normal compute
+resources; stopping the app alone does not stop the project.
+
+### Get the example and check the connection
+
+Download \`energy-dashboard.py\` from the repository's
+[research example directory](https://github.com/sagemathinc/cocalc-ai/tree/main/src/packages/docs/examples/research-workflows).
+Use GitHub's **Download raw file** action so you save Python source rather than
+the HTML page. Keep the filename unchanged.
+
+Complete the [CLI quickstart](/docs/cli/getting-started). In **Bash on your own
+computer**, change to the directory containing the downloaded script, then set
+the profile you configured and your new project's full ID:
+
+~~~bash
+export CLI_PROFILE=cocalc-ai
+export PROJECT_ID='REPLACE_WITH_FULL_PROJECT_ID'
+export ENERGY_DIR='/home/user/energy-scenario-demo'
+
+cocalc --profile "$CLI_PROFILE" --json auth status --check
+cocalc --profile "$CLI_PROFILE" project get --project "$PROJECT_ID"
+cocalc --profile "$CLI_PROFILE" project exec --project "$PROJECT_ID" -- python3 --version
+cocalc --profile "$CLI_PROFILE" project app list --project "$PROJECT_ID"
+python3 energy-dashboard.py --self-test
+~~~
+
+Check the account and project in the responses. Replace \`cocalc-ai\` if your
+existing CLI profile has another name. The self-test should report **7 tests**
+and **OK**. Confirm that app ID \`energy-scenario-demo\`, the destination directory
+and port \`8765\` are unused. If you ran the measurements example in this project,
+stop it first; it uses the same port.
+
+### Upload and run the private app
+
+The following commands still run on your computer. \`project exec\` runs the
+specified Python process **inside CoCalc**:
+
+~~~bash
+cocalc --profile "$CLI_PROFILE" project file put --project "$PROJECT_ID" \\
+  energy-dashboard.py "$ENERGY_DIR/energy-dashboard.py"
+cocalc --profile "$CLI_PROFILE" project exec --project "$PROJECT_ID" \\
+  --path "$ENERGY_DIR" -- python3 energy-dashboard.py --self-test
+
+python3 - <<'PYTHON'
+import json
+import os
+from pathlib import Path
+spec = {
+    "version": 1,
+    "id": "energy-scenario-demo",
+    "title": "Energy scenario explorer",
+    "kind": "service",
+    "lifecycle": {"mode": "managed"},
+    "command": {
+        "exec": "python3",
+        "args": ["-u", "energy-dashboard.py"],
+        "cwd": os.environ["ENERGY_DIR"],
+    },
+    "network": {"listen_host": "127.0.0.1", "port": 8765, "protocol": "http"},
+    "proxy": {
+        "base_path": "/apps/energy-scenario-demo",
+        "strip_prefix": True,
+        "websocket": False,
+        "open_mode": "proxy",
+        "readiness_timeout_s": 30,
+    },
+    "wake": {"enabled": False, "keep_warm_s": 1800, "startup_timeout_s": 30},
+}
+Path("energy-app.json").write_text(json.dumps(spec, indent=2) + "\\n")
+PYTHON
+
+cocalc --profile "$CLI_PROFILE" --json project app upsert \\
+  --project "$PROJECT_ID" --file energy-app.json
+cocalc --profile "$CLI_PROFILE" --json project app start energy-scenario-demo \\
+  --project "$PROJECT_ID" --wait --timeout 30s
+cocalc --profile "$CLI_PROFILE" --json project app status energy-scenario-demo \\
+  --project "$PROJECT_ID"
+~~~
+
+Require the remote self-test to pass, followed by app \`state: "running"\` and
+\`ready: true\`. These are different checks: port readiness does not establish
+correct scenario results. Verify the running app's response separately:
+
+~~~bash
+cocalc --profile "$CLI_PROFILE" project exec --project "$PROJECT_ID" -- \\
+  python3 -c 'import json; from urllib.request import urlopen; data=json.load(urlopen("http://127.0.0.1:8765/api/scenario?mode=efficient", timeout=5)); assert data["metrics"]["grid_kwh"] == 536; print("PASS: lower-demand scenario uses 536 kWh from the grid")'
+~~~
+
+### Explore and inspect the result
+
+Open your project in CoCalc, choose **Apps** (under **More** if hidden), refresh
+the app list if needed, and open **Energy scenario explorer**. Use CoCalc's open
+action rather than copying a temporary authentication URL.
+
+1. Select each scenario with a mouse or with **Tab** and **Enter**.
+2. Check the figures against the table below and confirm that the plot changes.
+3. Expand **Inspect the 24 hourly values** and check that the table changes too.
+4. Return to **Base case** and confirm the original figures return.
+
+| Scenario | Expected result |
+|---|---|
+| Base case | Grid energy: **726 kWh**. Demand met by solar: **47.0%**. Peak grid draw: **86 kW**. |
+| Lower demand | Grid energy: **536 kWh**. Demand met by solar: **51.1%**. Peak grid draw: **67.2 kW**. |
+| More solar | Grid energy: **637 kWh**. Demand met by solar: **53.5%**. Peak grid draw: **84 kW**. |
+
+**Lower demand** reduces every hourly demand value by 20%. **More solar**
+increases every solar value by 50%. For each interval, grid draw in kW is \`max(demand - solar, 0)\`;
+multiply by the one-hour interval to obtain energy in kWh. Surplus solar is
+not carried to another hour.
+The model omits batteries, weather, prices, export credits and losses.
+
+The Python file contains the inputs, calculations, HTML and browser controls.
+After editing it, rerun the self-test and restart the managed app. If you change
+the intended model, update the expected values deliberately and retain the old
+source for comparison. The app computes responses in memory; it does not write
+a result file or save the selected scenario.
+
+### Diagnose failures and clean up
+
+A wrong result or a failing self-test means the example is not verified.
+Check the downloaded source and its inputs. If opening fails, inspect this
+app's status and logs before retrying:
+
+~~~bash
+cocalc --profile "$CLI_PROFILE" --json project app logs energy-scenario-demo \\
+  --project "$PROJECT_ID" --tail 50
+~~~
+
+Use the earlier startup diagnostics for a missing Python interpreter, occupied
+port or timeout. This test confirms your own private app access; use the
+collaborator check above separately if another person needs to open it.
+
+When finished, close the app tab, stop this app and verify it is stopped before
+removing its registration:
+
+~~~bash
+cocalc --profile "$CLI_PROFILE" --json project app stop energy-scenario-demo \\
+  --project "$PROJECT_ID"
+cocalc --profile "$CLI_PROFILE" --json project app status energy-scenario-demo \\
+  --project "$PROJECT_ID"
+cocalc --profile "$CLI_PROFILE" project app delete energy-scenario-demo \\
+  --project "$PROJECT_ID"
+~~~
+
+In **Files**, remove only the scratch directory \`energy-scenario-demo\` when
+you no longer need it. Keep the downloaded source and local \`energy-app.json\`
+if you want to reproduce the example. Stop the **new scratch project** when no
+other work is running in it:
+
+~~~bash
+cocalc --profile "$CLI_PROFILE" project stop --project "$PROJECT_ID" --wait
+~~~
+
+Validation evidence: the original example was executed in a fresh CoCalc.ai
+project on 2026-09-17 with Python 3.14.4. Its seven self-tests, running HTTP
+response, scenario controls and hourly table were checked. This does not
+establish access for a second account, public publishing or agent authorship.
+
 `;

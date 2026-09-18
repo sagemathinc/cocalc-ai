@@ -90,7 +90,9 @@ describe("PublicHomeApp", () => {
     ]);
     expectHomepageSectionsLabeled(container);
     expect(
-      screen.getByText("Persistent shared projects").closest(".ant-typography"),
+      screen
+        .getByText("A workspace for people and AI agents")
+        .closest(".ant-typography"),
     ).toHaveStyle({ color: PUBLIC_COLORS.linkHover });
 
     // Section identity + order are canaried by the aria-label array above.
@@ -108,7 +110,7 @@ describe("PublicHomeApp", () => {
     const heroHeadings = within(hero).getAllByRole("heading", { level: 1 });
     expect(heroHeadings).toHaveLength(1);
     expect(heroHeadings[0]).toHaveTextContent(
-      "Keep people, AI agents, and project work together.",
+      "Analyze data and build apps with AI.",
     );
     expect(textLength(heroHeadings[0])).toBeLessThanOrEqual(HERO_H1_MAX);
     expect(
@@ -150,10 +152,14 @@ describe("PublicHomeApp", () => {
     const heroLead = hero.querySelector(".cocalc-public-home-hero-title + *");
     expect(heroLead).not.toBeNull();
     expect(textLength(heroLead as Element)).toBeLessThanOrEqual(210);
-    expect(hero.textContent ?? "").toMatch(/Persistent shared projects/i);
-    expect(hero.textContent ?? "").toMatch(/shared Linux project/i);
     expect(hero.textContent ?? "").toMatch(
-      /work can continue, be reviewed, and be handed off/i,
+      /A workspace for people and AI agents/i,
+    );
+    expect(hero.textContent ?? "").toMatch(
+      /code, data and running applications/i,
+    );
+    expect(hero.textContent ?? "").toMatch(
+      /Review the results, invite collaborators/i,
     );
     expect(hero.textContent ?? "").not.toMatch(
       /collaborative technical computing online since 2013/i,
@@ -166,13 +172,13 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero)
         .getByRole("img", {
-          name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
+          name: "Energy scenario dashboard running in CoCalc, with synthetic demand and solar plots, summary figures and hourly grid use",
         })
         .getAttribute("src"),
-    ).toBe("/public/landing/project-notebook-20260916.jpg");
+    ).toBe("/public/landing/energy-dashboard-20260917.jpg");
     expect(
       within(hero).getByText(
-        /saved Jupyter notebook in a fresh CoCalc\.ai project/i,
+        /Python dashboard running in CoCalc\. All data is synthetic/i,
       ),
     ).not.toBeNull();
     expect(
@@ -183,16 +189,25 @@ describe("PublicHomeApp", () => {
     expect(
       within(hero).getByRole("link", { name: "Explore AI workflows" }),
     ).toHaveAttribute("href", "/features/ai");
+    expect(
+      within(hero).getByRole("link", { name: "Run this example" }),
+    ).toHaveAttribute(
+      "href",
+      "/docs/research/private-dashboard#try-the-energy-scenario-explorer",
+    );
+    expect(
+      within(hero).getByRole("link", { name: "View full-size screenshot" }),
+    ).toHaveAttribute("href", "/public/landing/energy-dashboard-20260917.jpg");
     expect(within(hero).queryByRole("link", { name: "SageMath" })).toBeNull();
     expect(
       within(hero).queryByText(/keeps technical work collaborative/i),
     ).toBeNull();
-    // No chip/tag row in the hero; the only links are the two CTAs.
+    // Keep two primary navigation choices; the figure has its own proof links.
     expect(hero.querySelectorAll(".ant-tag")).toHaveLength(0);
-    expect(within(hero).getAllByRole("link")).toHaveLength(2);
     // The hero CTA panel must stay a light panel.
     const heroCtaPanel = hero.querySelector(".cocalc-public-home-actions");
     expect(heroCtaPanel).not.toBeNull();
+    expect(heroCtaPanel?.querySelectorAll("a")).toHaveLength(2);
     expect(
       (heroCtaPanel as HTMLElement).getAttribute("style") ?? "",
     ).not.toMatch(DARK_FEATURE_CARD_STYLE);

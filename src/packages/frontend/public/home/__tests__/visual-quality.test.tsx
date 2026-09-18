@@ -215,9 +215,7 @@ describe("PublicHomeApp visual quality contract", () => {
 
     const h1 = container.querySelectorAll("h1");
     expect(h1).toHaveLength(1);
-    expect(h1[0]).toHaveTextContent(
-      "Keep people, AI agents, and project work together.",
-    );
+    expect(h1[0]).toHaveTextContent("Analyze data and build apps with AI.");
     expect(textLength(h1[0])).toBeLessThanOrEqual(HERO_H1_MAX);
 
     // Section identity and order are canaried by the aria-label array in
@@ -247,16 +245,16 @@ describe("PublicHomeApp visual quality contract", () => {
     const heroImage = within(
       screen.getByRole("region", { name: "CoCalc hero" }),
     ).getByRole("img", {
-      name: "A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls",
+      name: "Energy scenario dashboard running in CoCalc, with synthetic demand and solar plots, summary figures and hourly grid use",
     });
     expect(heroImage.getAttribute("src")).toBe(
-      "/public/landing/project-notebook-20260916.jpg",
+      "/public/landing/energy-dashboard-20260917.jpg",
     );
     expect(heroImage.getAttribute("style") ?? "").toContain(
-      "aspect-ratio: 1050 / 650;",
+      "aspect-ratio: 1512 / 760;",
     );
     expect(heroImage.getAttribute("style") ?? "").toContain(
-      "object-fit: contain;",
+      "object-fit: cover;",
     );
 
     const workflowImage = within(

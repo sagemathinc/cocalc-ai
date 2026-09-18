@@ -31,7 +31,10 @@ interface HomeConfig extends PublicConfig {
   site_description?: string;
 }
 
-const HERO_IMAGE_URL = appPath("public/landing/project-notebook-20260916.jpg");
+const HERO_IMAGE_URL = appPath("public/landing/energy-dashboard-20260917.jpg");
+const DASHBOARD_GUIDE_URL = appPath(
+  "docs/research/private-dashboard#try-the-energy-scenario-explorer",
+);
 const WORKFLOW_IMAGE_URL = appPath(
   "public/landing/project-terminal-20260916.jpg",
 );
@@ -73,32 +76,24 @@ const HOME_PAGE_CSS = `
 
   .cocalc-public-home-hero-visual {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 525px);
-    align-items: center;
-    gap: clamp(24px, 5vw, 64px);
-    padding: clamp(20px, 4vw, 48px);
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+    padding: clamp(16px, 3vw, 32px);
     background: ${PUBLIC_COLORS.surface};
     border-top: 3px solid ${PUBLIC_COLORS.accent};
   }
 
   .cocalc-public-home-hero-visual figcaption {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .cocalc-public-home-hero-visual img {
-    grid-column: 2;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
   }
 
   @media (max-width: 760px) {
-    .cocalc-public-home-hero-visual {
-      grid-template-columns: minmax(0, 1fr);
-    }
-
-    .cocalc-public-home-hero-visual img {
-      grid-column: 1;
-      width: min(100%, 525px) !important;
-      justify-self: center;
+    .cocalc-public-home-hero-visual figcaption {
+      align-items: flex-start;
+      flex-direction: column;
     }
   }
 
@@ -577,27 +572,27 @@ function Hero({
       className="cocalc-public-home-hero"
       style={{
         display: "grid",
-        gap: 48,
-        padding: "64px 0 12px",
+        gap: 36,
+        padding: "48px 0 12px",
       }}
     >
-      <Flex vertical gap={24} style={{ maxWidth: 860 }}>
-        <Eyebrow>Persistent shared projects</Eyebrow>
+      <Flex vertical gap={24} style={{ maxWidth: 1040 }}>
+        <Eyebrow>A workspace for people and AI agents</Eyebrow>
         <div>
           <Title
             className="cocalc-public-home-hero-title"
             level={1}
             style={{
               color: PUBLIC_COLORS.heading,
-              fontSize: 68,
+              fontSize: 64,
               fontWeight: 500,
               letterSpacing: "-0.04em",
               lineHeight: 1.06,
               margin: 0,
-              maxWidth: 860,
+              maxWidth: 1040,
             }}
           >
-            Keep people, AI agents, and project work together.
+            Analyze data and build apps with AI.
           </Title>
           <Paragraph
             style={{
@@ -608,8 +603,9 @@ function Hero({
               maxWidth: 620,
             }}
           >
-            Files, notebooks, terminals, services, and history stay in a shared
-            Linux project so work can continue, be reviewed, and be handed off.
+            Work with AI agents alongside your code, data and running
+            applications. Review the results, invite collaborators and keep
+            improving your work.
           </Paragraph>
         </div>
         <Flex className="cocalc-public-home-actions" gap={12} wrap>
@@ -631,32 +627,41 @@ function Hero({
         </Flex>
       </Flex>
       <figure className="cocalc-public-home-hero-visual" style={{ margin: 0 }}>
+        <figcaption>
+          <div style={{ maxWidth: 650 }}>
+            <Text strong style={{ fontSize: 24, color: PUBLIC_COLORS.heading }}>
+              Explore an idea. See what changes.
+            </Text>
+            <Paragraph style={{ margin: "8px 0 0", fontSize: 16 }}>
+              Change demand or solar generation to compare energy use in this
+              Python dashboard running in CoCalc. All data is synthetic.
+            </Paragraph>
+          </div>
+          <Flex vertical gap={8} style={{ flexShrink: 0 }}>
+            <Button href={DASHBOARD_GUIDE_URL}>Run this example</Button>
+            <a href={HERO_IMAGE_URL} target="_blank" rel="noopener noreferrer">
+              View full-size screenshot
+            </a>
+          </Flex>
+        </figcaption>
         <img
-          alt="A saved CoCalc Jupyter notebook with synthetic runtime results and TimeTravel and Agent controls"
+          alt="Energy scenario dashboard running in CoCalc, with synthetic demand and solar plots, summary figures and hourly grid use"
           className="cocalc-public-home-hero-image"
           decoding="async"
+          width={1512}
+          height={1245}
           src={HERO_IMAGE_URL}
           style={{
-            aspectRatio: "1050 / 650",
+            aspectRatio: "1512 / 760",
             border: `1px solid ${PUBLIC_COLORS.border}`,
             borderRadius: 4,
             display: "block",
-            objectFit: "contain",
+            height: "auto",
+            objectFit: "cover",
+            objectPosition: "center",
             width: "100%",
-            maxWidth: 525,
           }}
         />
-        <figcaption
-          style={{
-            color: PUBLIC_COLORS.text,
-            fontSize: 18,
-            lineHeight: 1.65,
-            maxWidth: 360,
-          }}
-        >
-          A saved Jupyter notebook in a fresh CoCalc.ai project, using only
-          synthetic data.
-        </figcaption>
       </figure>
     </section>
   );

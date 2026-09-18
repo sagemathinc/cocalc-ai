@@ -63,11 +63,54 @@ export async function init(): Promise<void> {
     }, []);
 
     useEffect(() => {
-      if (!didMount.current) {
-        didMount.current = true;
+      const initialMount = !didMount.current;
+      didMount.current = true;
+      const hash = window.location.hash;
+      if (!hash) {
+        if (!initialMount) window.scrollTo({ top: 0 });
         return;
       }
-      window.scrollTo({ top: 0 });
+
+      let id: string;
+      try {
+        id = decodeURIComponent(hash.slice(1));
+      } catch {
+        return;
+      }
+      function scrollToFragment(): boolean {
+        if (window.location.hash !== hash) return true;
+        const target = document.getElementById(id);
+        if (target == null) return false;
+        const header = document.querySelector(".cocalc-public-header");
+        const headerHeight = header?.getBoundingClientRect().height ?? 0;
+        window.scrollTo({
+          top: Math.max(
+            0,
+            target.getBoundingClientRect().top +
+              window.scrollY -
+              headerHeight -
+              16,
+          ),
+        });
+        return true;
+      }
+      if (scrollToFragment()) return;
+
+      // Public configuration and article content can arrive after the route
+      // mounts. Stop watching on success, navigation, unmount, or timeout.
+      const observer = new MutationObserver(() => {
+        if (scrollToFragment()) cleanup();
+      });
+      const timeout = window.setTimeout(cleanup, 30_000);
+      function cleanup() {
+        observer.disconnect();
+        window.clearTimeout(timeout);
+      }
+      observer.observe(document.getElementById("cocalc-webapp-container")!, {
+        childList: true,
+        subtree: true,
+      });
+      return cleanup;
     }, [routePath]);
 
     return <PublicApp initialRoute={route} redirectToPath={redirectToPath} />;
