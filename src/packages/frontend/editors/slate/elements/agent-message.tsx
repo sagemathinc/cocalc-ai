@@ -12,6 +12,8 @@ import {
 } from "@ant-design/icons";
 import { useState } from "react";
 import type { AgentSessionActivity } from "@cocalc/conat/agents/personal";
+import { useNamedAgents, sameEndpoint } from "@cocalc/frontend/agents/api";
+import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { markdown_to_slate } from "../markdown-to-slate";
 import {
@@ -25,6 +27,8 @@ export interface AgentMessage extends SlateElement {
   agent_session_id?: string;
   attempt_id?: string;
   source_label?: string;
+  source_agent_id?: string;
+  source_project_id?: string;
 }
 
 function deliveryLabel(activity: AgentSessionActivity): string {
@@ -82,31 +86,44 @@ export function agentMessageFromMarkdownFence({
   info: string;
   value: string;
 }): AgentMessage | undefined {
-  const [kind, agent_session_id, attempt_id, source, extra] = info
-    .trim()
-    .split(/\s+/);
-  if (kind.toLowerCase() !== "agent-message" || extra !== undefined) return;
+  const [kind, ...tokens] = info.trim().split(/\s+/);
+  if (kind.toLowerCase() !== "agent-message") return;
   const uuid =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  if (
-    (agent_session_id !== undefined || attempt_id !== undefined) &&
-    (!uuid.test(agent_session_id ?? "") || !uuid.test(attempt_id ?? ""))
-  )
-    return;
+  let agent_session_id: string | undefined;
+  let attempt_id: string | undefined;
+  if (tokens[0] && !tokens[0].includes("=")) {
+    [agent_session_id, attempt_id] = tokens.splice(0, 2);
+    if (!uuid.test(agent_session_id ?? "") || !uuid.test(attempt_id ?? ""))
+      return;
+  }
   let source_label: string | undefined;
-  if (source !== undefined) {
-    if (!source.startsWith("from=")) return;
-    try {
-      source_label = decodeURIComponent(source.slice(5)).trim();
-    } catch {
+  let source_agent_id: string | undefined;
+  let source_project_id: string | undefined;
+  for (const token of tokens) {
+    if (token.startsWith("from=")) {
+      try {
+        source_label = decodeURIComponent(token.slice(5)).trim();
+      } catch {
+        return;
+      }
+      if (!source_label || source_label.length > 120) return;
+    } else if (token.startsWith("source=")) {
+      source_agent_id = token.slice(7);
+      if (!uuid.test(source_agent_id)) return;
+    } else if (token.startsWith("project=")) {
+      source_project_id = token.slice(8);
+      if (!uuid.test(source_project_id)) return;
+    } else {
       return;
     }
-    if (!source_label || source_label.length > 120) return;
   }
   return {
     type: "agent-message",
     ...(agent_session_id && attempt_id ? { agent_session_id, attempt_id } : {}),
     ...(source_label ? { source_label } : {}),
+    ...(source_agent_id ? { source_agent_id } : {}),
+    ...(source_project_id ? { source_project_id } : {}),
     children: markdown_to_slate(value, true),
   };
 }
@@ -123,7 +140,24 @@ export function AgentMessageElement({
   if (element.type !== "agent-message")
     throw new Error("Expected agent-message element");
   const message = element as AgentMessage;
-  const sourceLabel = message.source_label ?? "Agent";
+  const { directory } = useNamedAgents(!!message.source_agent_id);
+  const namedSource =
+    message.source_agent_id && message.source_project_id
+      ? directory?.agents.find((agent) =>
+          sameEndpoint(agent.endpoint, {
+            agent_id: message.source_agent_id!,
+            project_id: message.source_project_id!,
+          }),
+        )
+      : undefined;
+  const sourceLabel = namedSource?.name
+    ? `@${namedSource.name}`
+    : namedSource?.thread_title
+      ? namedSource.thread_title
+      : message.source_label &&
+          !/\b[0-9a-f]{8}(?:-[0-9a-f-]+)?\b/i.test(message.source_label)
+        ? message.source_label
+        : "Agent";
   const inspectable = !!(message.agent_session_id && message.attempt_id);
   const outcome = activity ? outcomePresentation(activity) : undefined;
   async function inspect() {
@@ -193,7 +227,33 @@ export function AgentMessageElement({
         >
           <RobotOutlined />
         </span>
-        {sourceLabel}:
+        {sourceLabel}
+      </span>
+      {message.source_project_id && (
+        <span
+          contentEditable={false}
+          style={{
+            color: UI_COLORS.secondary,
+            fontSize: 12,
+            whiteSpace: "nowrap",
+            flex: "0 1 auto",
+            minWidth: 0,
+          }}
+        >
+          <span aria-hidden="true">· </span>
+          <ProjectTitle
+            project_id={message.source_project_id}
+            noClick
+            trunc={28}
+          />
+        </span>
+      )}
+      <span
+        contentEditable={false}
+        aria-hidden="true"
+        style={{ color: UI_COLORS.muted }}
+      >
+        :
       </span>
       <div
         className="cocalc-slate-agent-message-body"
@@ -337,14 +397,18 @@ register({
     const body = children.trimEnd();
     let fence = "```";
     while (body.includes(fence)) fence += "`";
-    const info =
+    const correlation =
       node.agent_session_id && node.attempt_id
-        ? `agent-message ${node.agent_session_id} ${node.attempt_id}${
-            node.source_label
-              ? ` from=${encodeURIComponent(node.source_label)}`
-              : ""
-          }`
-        : "agent-message";
+        ? ` ${node.agent_session_id} ${node.attempt_id}`
+        : "";
+    const metadata = [
+      node.source_label
+        ? `from=${encodeURIComponent(node.source_label)}`
+        : undefined,
+      node.source_agent_id ? `source=${node.source_agent_id}` : undefined,
+      node.source_project_id ? `project=${node.source_project_id}` : undefined,
+    ].filter(Boolean);
+    const info = `agent-message${correlation}${metadata.length ? ` ${metadata.join(" ")}` : ""}`;
     return `${fence}${info}\n${body}\n${fence}\n\n`;
   },
 });

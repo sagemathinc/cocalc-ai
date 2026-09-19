@@ -383,6 +383,8 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   | {
       label: string;
       source_label: string;
+      source_agent_id: string;
+      source_project_id?: string;
       agent_session_id?: string;
       attempt_id?: string;
     }
@@ -399,6 +401,9 @@ function rpcSourceAttribution(message: ChatMessageTyped):
         : source.kind === "external"
           ? `External agent ${agentId.slice(0, 8)}`
           : `Agent ${agentId.slice(0, 8)}`,
+    source_agent_id: agentId,
+    source_project_id:
+      typeof source.project_id === "string" ? source.project_id : undefined,
     agent_session_id:
       typeof rpc.agent_session_id === "string"
         ? rpc.agent_session_id
@@ -423,14 +428,28 @@ function agentMessageFence(
     agent_session_id?: string;
     attempt_id?: string;
     source_label?: string;
+    source_agent_id?: string;
+    source_project_id?: string;
   },
 ): string {
   let fence = "```";
   while (value.includes(fence)) fence += "`";
-  const info =
+  const correlation =
     evidence?.agent_session_id && evidence.attempt_id
-      ? `agent-message ${evidence.agent_session_id} ${evidence.attempt_id} from=${encodeURIComponent(evidence.source_label ?? "Agent")}`
-      : "agent-message";
+      ? ` ${evidence.agent_session_id} ${evidence.attempt_id}`
+      : "";
+  const metadata = [
+    evidence?.source_label
+      ? `from=${encodeURIComponent(evidence.source_label)}`
+      : undefined,
+    evidence?.source_agent_id
+      ? `source=${evidence.source_agent_id}`
+      : undefined,
+    evidence?.source_project_id
+      ? `project=${evidence.source_project_id}`
+      : undefined,
+  ].filter(Boolean);
+  const info = `agent-message${correlation}${metadata.length ? ` ${metadata.join(" ")}` : ""}`;
   return `${fence}${info}\n${value}\n${fence}`;
 }
 

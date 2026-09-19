@@ -14,6 +14,12 @@ jest.mock("../markdown-to-slate", () => ({
 const inspectAgentSessionAttempt = jest.fn();
 jest.mock("@cocalc/frontend/agents/api", () => ({
   personalAgentApi: () => ({ inspectAgentSessionAttempt }),
+  useNamedAgents: () => ({ directory: undefined }),
+  sameEndpoint: (a, b) =>
+    a.project_id === b.project_id && a.agent_id === b.agent_id,
+}));
+jest.mock("@cocalc/frontend/projects/project-title", () => ({
+  ProjectTitle: ({ project_id }) => <span>{project_id}</span>,
 }));
 
 const agent_session_id = "11111111-1111-4111-8111-111111111111";
@@ -32,6 +38,15 @@ test("parses exact correlation metadata but keeps uncorrelated quotes readable",
       value: "Peer result",
     }),
   ).toMatchObject({ source_label: "@reviewer" });
+  expect(
+    agentMessageFromMarkdownFence({
+      info: `agent-message from=Agent source=${attempt_id} project=${agent_session_id}`,
+      value: "Legacy peer result",
+    }),
+  ).toMatchObject({
+    source_agent_id: attempt_id,
+    source_project_id: agent_session_id,
+  });
   expect(
     agentMessageFromMarkdownFence({
       info: "agent-message forged metadata",
@@ -74,7 +89,7 @@ test("shows retained evidence without claiming that editable content is verified
       Edited peer result
     </AgentMessageElement>,
   );
-  expect(screen.getByText("@reviewer:")).toBeVisible();
+  expect(screen.getByText("@reviewer")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Inspect delivery" }));
   await waitFor(() =>
     expect(screen.getByText("Accepted for delivery")).toBeVisible(),

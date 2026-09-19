@@ -10,8 +10,30 @@ import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 
 export const personalAgentApi = () => webapp_client.conat_client.hub.agent;
 const listeners = new Set<() => void>();
+const directoryRequests = new Map<string, Promise<NamedAgentDirectory>>();
 export function refreshNamedAgents() {
+  directoryRequests.clear();
   for (const listener of listeners) listener();
+}
+
+function loadNamedAgents(accountId: string): Promise<NamedAgentDirectory> {
+  let request = directoryRequests.get(accountId);
+  if (!request) {
+    request = personalAgentApi()
+      .listNamedAgents({})
+      .catch((err) => {
+        directoryRequests.delete(accountId);
+        throw err;
+      });
+    directoryRequests.set(accountId, request);
+    const clear = () => {
+      if (directoryRequests.get(accountId) === request) {
+        directoryRequests.delete(accountId);
+      }
+    };
+    void request.then(clear, clear);
+  }
+  return request;
 }
 
 export function sameEndpoint(a: AgentEndpoint, b: AgentEndpoint): boolean {
@@ -50,8 +72,7 @@ export function useNamedAgents(enabled = true) {
       return;
     }
     setState((old) => ({ ...old, loading: true }));
-    void personalAgentApi()
-      .listNamedAgents({})
+    void loadNamedAgents(accountId)
       .then((directory) => {
         if (!disposed) setState({ accountId, directory, loading: false });
       })
