@@ -9,7 +9,6 @@ import type {
 } from "@cocalc/conat/hub/api/system";
 
 const MAX_REVIEW_AGE_MS = 60 * 60 * 1000;
-const MAX_OBSERVATION_AGE_MS = 60 * 60 * 1000;
 
 export function classifyHostIntrusionReviewHealth(
   report: HostIntrusionReviewReport,
@@ -27,12 +26,11 @@ export function classifyHostIntrusionReviewHealth(
   ) {
     return "warning";
   }
-  if (report.retention.latest_observation_at == null) return "unknown";
+  if (report.collector_coverage.overdue_hosts > 0) return "warning";
   if (
-    (report.retention.latest_observation_age_ms ?? Number.POSITIVE_INFINITY) >
-    MAX_OBSERVATION_AGE_MS
-  ) {
-    return "warning";
-  }
+    report.collector_coverage.active_hosts > 0 &&
+    report.collector_coverage.observed_hosts === 0
+  )
+    return "unknown";
   return "healthy";
 }

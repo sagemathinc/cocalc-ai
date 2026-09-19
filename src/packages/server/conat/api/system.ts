@@ -2255,17 +2255,21 @@ export async function getLaunchHealth({
           ? "Unable to read the local host intrusion reviewer projection."
           : !intrusionReview
             ? "Host intrusion reviewer state is unavailable."
-            : intrusionReview.retention.latest_observation_at == null
-              ? "Host intrusion reviewer is running, but no collector observations are retained; coverage is unknown."
-              : `${intrusionReview.reviewer.backlog} observation${intrusionReview.reviewer.backlog === 1 ? "" : "s"} await review; ${intrusionReview.incidents.length} bounded open or suppressed incident record${intrusionReview.incidents.length === 1 ? "" : "s"} returned.`,
+            : `${intrusionReview.reviewer.backlog} observation${intrusionReview.reviewer.backlog === 1 ? "" : "s"} await review; ${intrusionReview.collector_coverage.overdue_hosts} of ${intrusionReview.collector_coverage.active_hosts} active host${intrusionReview.collector_coverage.active_hosts === 1 ? "" : "s"} overdue for collection; ${intrusionReview.incidents.length} bounded open or suppressed incident record${intrusionReview.incidents.length === 1 ? "" : "s"} returned.`,
       details:
         intrusionReviewResult.status === "rejected"
           ? [`${intrusionReviewResult.reason}`]
           : intrusionReview
             ? [
                 `last_success=${intrusionReview.reviewer.last_success_at ?? "never"}`,
-                `latest_observation=${intrusionReview.retention.latest_observation_at ?? "never"}`,
-                `latest_observation_age_ms=${intrusionReview.retention.latest_observation_age_ms ?? "unknown"}`,
+                `collector_interval_ms=${intrusionReview.collector_coverage.expected_interval_ms} collector_max_age_ms=${intrusionReview.collector_coverage.max_observation_age_ms}`,
+                `active_hosts=${intrusionReview.collector_coverage.active_hosts} observed_hosts=${intrusionReview.collector_coverage.observed_hosts} overdue_hosts=${intrusionReview.collector_coverage.overdue_hosts}`,
+                ...intrusionReview.collector_coverage.overdue
+                  .slice(0, 10)
+                  .map(
+                    (host) =>
+                      `overdue_host=${host.host_name ?? host.host_id} host_id=${host.host_id} latest_observation=${host.latest_observation_at ?? "never"} age_ms=${host.latest_observation_age_ms ?? "unknown"}`,
+                  ),
                 `oldest_unreviewed_age_ms=${intrusionReview.reviewer.oldest_unreviewed_age_ms ?? "none"}`,
                 `notifications_pending=${intrusionReview.notifications.pending} failed=${intrusionReview.notifications.failed}`,
               ]

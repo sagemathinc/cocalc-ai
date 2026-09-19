@@ -645,6 +645,22 @@ export interface HostIntrusionReviewReport {
     truncated: number;
   }>;
   hosts_truncated: boolean;
+  collector_coverage: {
+    expected_interval_ms: number;
+    max_observation_age_ms: number;
+    active_hosts: number;
+    observed_hosts: number;
+    overdue_hosts: number;
+    oldest_observation_at: string | null;
+    oldest_observation_age_ms: number | null;
+    overdue: Array<{
+      host_id: string;
+      host_name: string | null;
+      latest_observation_at: string | null;
+      latest_observation_age_ms: number | null;
+    }>;
+    overdue_truncated: boolean;
+  };
   findings_24h: Array<{
     rule_id: string;
     rule_version: number;
