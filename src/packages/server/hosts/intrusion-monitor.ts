@@ -960,7 +960,8 @@ export async function getHostIntrusionObservationSummary(): Promise<HostIntrusio
        hosts.id AS host_id, hosts.name AS host_name,
        snapshots.created_at, snapshots.coverage
      FROM project_hosts AS hosts
-     LEFT JOIN ${TABLE} AS snapshots ON snapshots.host_id = hosts.id
+     LEFT JOIN ${TABLE} AS snapshots
+       ON snapshots.host_id = hosts.id AND snapshots.bay_id = $2
      WHERE hosts.deleted IS NULL
        AND hosts.status = 'running'
        AND hosts.last_seen >= NOW() - ($1::double precision * INTERVAL '1 millisecond')

@@ -443,12 +443,13 @@ describe("project-host intrusion monitor normalization", () => {
     }
   });
 
-  it("summarizes retained observations without exposing evidence values", async () => {
+  it("summarizes only local-bay observations without exposing evidence values", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
     const hostId = "6cb50c44-5bf5-42a2-8484-7283f09ed5db";
     const snapshotId = "92c9f21b-6724-4b69-b176-7a81250f44e0";
     const unchangedSnapshotId = "4cc033b0-ef9d-4a64-a9a1-d61d53ebdc35";
+    const wrongBaySnapshotId = "ac4af625-7c74-4bef-bc37-e7f21304ac88";
     const pool = getPool();
     await pool.query(
       `INSERT INTO project_hosts
@@ -477,6 +478,14 @@ describe("project-host intrusion monitor normalization", () => {
                2, '{}'::jsonb, '{"added":{},"removed":{}}'::jsonb,
                NOW() + INTERVAL '1 second')`,
       [unchangedSnapshotId, hostId],
+    );
+    await pool.query(
+      `INSERT INTO project_host_intrusion_snapshots
+         (id, host_id, bay_id, captured_at, duration_ms, coverage,
+          normalization_version, normalized, created_at)
+       VALUES ($1, $2, 'another-bay', NOW(), 1, 'unavailable',
+               2, '{}'::jsonb, NOW() + INTERVAL '2 seconds')`,
+      [wrongBaySnapshotId, hostId],
     );
     try {
       const summary = await getHostIntrusionObservationSummary();
