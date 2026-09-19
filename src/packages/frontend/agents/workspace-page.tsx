@@ -535,7 +535,9 @@ function NewAgentPanel({
         reply_thread_id: created.threadId,
         acpConfigOverride: config,
       });
-      if (!sent) {
+      if (sent) {
+        await actions.syncdb?.save();
+      } else {
         await writeChatComposerDraft({
           account_id: boundAccount.accountId,
           project_id: created.projectId,
