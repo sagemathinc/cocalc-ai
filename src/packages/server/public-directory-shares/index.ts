@@ -1134,24 +1134,6 @@ async function assertCanCreatePublicDirectoryShare(
   }
 }
 
-async function assertStudentProjectPublishingAllowed(
-  project_id: string,
-): Promise<void> {
-  const { rows } = await getPool().query<{ course?: Record<string, any> }>(
-    "SELECT course FROM projects WHERE project_id=$1 LIMIT 1",
-    [project_id],
-  );
-  const course = rows[0]?.course;
-  if (
-    course?.type === "student" &&
-    course.student_project_functionality?.disableSharing === true
-  ) {
-    throw Error(
-      "publishing is disabled by this course's student project settings",
-    );
-  }
-}
-
 function normalizeSiteLicenseDurationDays(value: unknown): number {
   if (!Number.isFinite(Number(value))) {
     return 30;
@@ -2508,9 +2490,6 @@ export async function update(
     account_id: opts.account_id,
     project_id: current.project_id,
   });
-  if (opts.disabled === false) {
-    await assertStudentProjectPublishingAllowed(current.project_id);
-  }
 
   let siteLicenseGrant: SiteLicenseGrantConfig | null | undefined;
   if (opts.site_license_grant_on_copy === true) {
@@ -2605,7 +2584,6 @@ export async function create(
     account_id: opts.account_id,
     project_id: opts.project_id,
   });
-  await assertStudentProjectPublishingAllowed(opts.project_id);
   await assertCanCreatePublicDirectoryShare(opts.account_id);
   const slug = normalizePublicDirectoryShareSlug(opts.slug);
   const path = normalizePublicDirectorySharePath(opts.path);

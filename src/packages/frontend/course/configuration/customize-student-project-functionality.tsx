@@ -141,7 +141,7 @@ const OPTIONS: Option[] = [
     description: defineMessage({
       id: "course.customize-student-project-functionality.disableSharing.description",
       defaultMessage:
-        "Prevents students from publishing files or directories from their course project.",
+        "Hides publishing actions in the course project to reduce confusion. This is not an access-control restriction.",
     }),
   },
   {
