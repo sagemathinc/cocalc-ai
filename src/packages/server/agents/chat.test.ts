@@ -11,9 +11,9 @@ jest.mock("@cocalc/server/conat/route-client", () => ({
   conatWithProjectRoutingForAccount: jest.fn(() => ({ client: true })),
 }));
 
-import { agentChatMetadataPath, withAgentChat } from "./chat";
+import { withAgentChat } from "./chat";
 
-test("agent chat validation opens and releases the hidden metadata document", async () => {
+test("agent chat validation opens and releases the registered chat document", async () => {
   const project_id = randomUUID();
   const thread_id = randomUUID();
   const path = "/home/user/.local/share/cocalc/agents/example.chat";
@@ -32,12 +32,8 @@ test("agent chat validation opens and releases the hidden metadata document", as
     ),
   ).resolves.toBe(thread);
 
-  const metadataPath = agentChatMetadataPath(path);
-  expect(metadataPath).toBe(
-    "/home/user/.local/share/cocalc/agents/.example.chat.chat",
-  );
   expect(acquire).toHaveBeenCalledWith(
-    expect.objectContaining({ project_id, path: metadataPath }),
+    expect.objectContaining({ project_id, path }),
   );
-  expect(release).toHaveBeenCalledWith(project_id, metadataPath);
+  expect(release).toHaveBeenCalledWith(project_id, path);
 });

@@ -30,7 +30,6 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
-import { chatMetaFile } from "@cocalc/frontend/chat/paths";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -470,7 +469,7 @@ function NewAgentPanel({
     );
     await projectActions.ensureContainingDirectoryExists(path);
     await fs.writeFile(path, "");
-    const chatActions = initChat(targetProjectId, chatMetaFile(path));
+    const chatActions = initChat(targetProjectId, path);
     await waitForChatReady(chatActions);
     const threadId = chatActions.createEmptyThread({
       name: name.trim(),
@@ -529,7 +528,7 @@ function NewAgentPanel({
           | undefined,
         thread_title: name.trim(),
       });
-      const actions = initChat(created.projectId, chatMetaFile(created.path));
+      const actions = initChat(created.projectId, created.path);
       await waitForChatReady(actions);
       const sent = actions.sendChat({
         input: firstRequest.trim(),
@@ -543,7 +542,7 @@ function NewAgentPanel({
         await writeChatComposerDraft({
           account_id: boundAccount.accountId,
           project_id: created.projectId,
-          path: chatMetaFile(created.path),
+          path: created.path,
           composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
           text: firstRequest,
         });
@@ -1745,7 +1744,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     try {
       const actions = initChat(
         copyingAgent.endpoint.project_id,
-        chatMetaFile(copyingAgent.path),
+        copyingAgent.path,
       );
       await waitForChatReady(actions);
       const threadId = await actions.forkThread({
