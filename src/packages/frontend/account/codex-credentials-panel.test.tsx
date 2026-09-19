@@ -9,6 +9,7 @@ import {
   CodexCredentialsPanel,
   CodexUsageMeters,
   reconcileCredentialOrder,
+  scrollCodexCredentialsModalToTop,
   sortCredentialIdsByLastUsed,
 } from "./codex-credentials-panel";
 import {
@@ -45,6 +46,21 @@ describe("Codex subscription credential ordering", () => {
     expect(
       reconcileCredentialOrder(["older", "newer"], [newer, older]),
     ).toEqual(["older", "newer"]);
+  });
+});
+
+describe("Codex credential modal scrolling", () => {
+  it("scrolls only the modal containing the credential panel", () => {
+    const modalBody = document.createElement("div");
+    modalBody.className = "ant-modal-body";
+    const root = document.createElement("div");
+    modalBody.appendChild(root);
+    const scrollTo = jest.fn();
+    modalBody.scrollTo = scrollTo;
+
+    scrollCodexCredentialsModalToTop(root);
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
   });
 });
 

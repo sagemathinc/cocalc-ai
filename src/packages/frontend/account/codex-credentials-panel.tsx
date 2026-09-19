@@ -339,6 +339,13 @@ export function reconcileCredentialOrder(
   return next;
 }
 
+export function scrollCodexCredentialsModalToTop(
+  root: HTMLElement | null,
+): void {
+  const modalBody = root?.closest<HTMLElement>(".ant-modal-body");
+  modalBody?.scrollTo({ top: 0, behavior: "auto" });
+}
+
 const DEVICE_AUTH_ALERT_TYPE: Record<
   DeviceAuthState,
   "info" | "success" | "error" | "warning"
@@ -403,6 +410,7 @@ function CodexCredentialsPanelBody({
     uploadedAt: number;
   } | null>(null);
   const authFileInputRef = useRef<HTMLInputElement | null>(null);
+  const panelRootRef = useRef<HTMLDivElement | null>(null);
   const subscriptionCredentialsOpenRef = useRef(false);
   const previousProjectKeyRef = useRef(selectedProjectId.trim());
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
@@ -626,6 +634,9 @@ function CodexCredentialsPanelBody({
       }
       setDeviceAuthActionPending(true);
       setDeviceAuthError("");
+      requestAnimationFrame(() =>
+        scrollCodexCredentialsModalToTop(panelRootRef.current),
+      );
       try {
         const status =
           await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
@@ -1184,7 +1195,12 @@ function CodexCredentialsPanelBody({
         : "Could not verify your ChatGPT sign-in";
 
   const content = (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space
+      ref={panelRootRef}
+      orientation="vertical"
+      size="middle"
+      style={{ width: "100%" }}
+    >
       <div style={recommendedCardStyle}>
         <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           {paymentSource?.source === "subscription" ? (
