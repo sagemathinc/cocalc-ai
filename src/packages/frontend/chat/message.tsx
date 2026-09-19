@@ -388,6 +388,7 @@ function rpcSourceAttribution(message: ChatMessageTyped):
       source_label: string;
       source_agent_id: string;
       source_project_id?: string;
+      direction: "incoming";
       agent_session_id?: string;
       attempt_id?: string;
     }
@@ -398,6 +399,7 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   const agentId = `${source?.agent_id ?? ""}`.trim();
   if (!agentId) return;
   const evidence = {
+    direction: "incoming" as const,
     source_label:
       typeof rpc.source_label === "string" && rpc.source_label.trim()
         ? rpc.source_label.trim()

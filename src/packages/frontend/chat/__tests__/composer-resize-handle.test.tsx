@@ -3,7 +3,7 @@
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ChatRoomComposer } from "../composer";
+import { allowAgentMentionsInComposer, ChatRoomComposer } from "../composer";
 
 let lastChatInputProps: any;
 
@@ -85,6 +85,27 @@ function renderComposer(
 describe("ChatRoomComposer resize handle", () => {
   beforeEach(() => {
     lastChatInputProps = undefined;
+  });
+
+  it("allows agent mentions only in AI or new Codex threads", () => {
+    expect(
+      allowAgentMentionsInComposer({
+        isSelectedThreadAI: false,
+        isNewThreadCodex: false,
+      }),
+    ).toBe(false);
+    expect(
+      allowAgentMentionsInComposer({
+        isSelectedThreadAI: true,
+        isNewThreadCodex: false,
+      }),
+    ).toBe(true);
+    expect(
+      allowAgentMentionsInComposer({
+        isSelectedThreadAI: false,
+        isNewThreadCodex: true,
+      }),
+    ).toBe(true);
   });
 
   it("prepares naming before the first turn using the latest private editor draft, without sending", async () => {

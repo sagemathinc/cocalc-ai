@@ -2,6 +2,7 @@ import { React } from "@cocalc/frontend/app-framework";
 import { render } from "@testing-library/react";
 import {
   groupThreadsByRecency,
+  threadMetadataAgentClassification,
   type ThreadMeta,
   useThreadSections,
 } from "../threads";
@@ -53,6 +54,25 @@ describe("groupThreadsByRecency", () => {
     expect(sections[1].threads.map((thread) => thread.key)).toEqual([
       "automation-thread",
     ]);
+  });
+});
+
+describe("threadMetadataAgentClassification", () => {
+  it("lets an explicit human thread override stale ACP configuration", () => {
+    expect(
+      threadMetadataAgentClassification({
+        agent_kind: "none",
+        acp_config: { model: "stale" },
+      }),
+    ).toBe(false);
+  });
+
+  it("recognizes explicit and legacy agent threads", () => {
+    expect(threadMetadataAgentClassification({ agent_kind: "acp" })).toBe(true);
+    expect(
+      threadMetadataAgentClassification({ acp_config: { model: "codex" } }),
+    ).toBe(true);
+    expect(threadMetadataAgentClassification(undefined)).toBeUndefined();
   });
 });
 

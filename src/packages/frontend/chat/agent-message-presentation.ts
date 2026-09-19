@@ -18,6 +18,7 @@ export type AgentRpcPresentationMetadata = {
 };
 
 type AgentMessageEvidence = {
+  direction?: "incoming" | "outgoing";
   agent_session_id?: string;
   attempt_id?: string;
   source_label?: string;
@@ -36,8 +37,9 @@ export function agentMessageFence(
       ? ` ${evidence.agent_session_id} ${evidence.attempt_id}`
       : "";
   const metadata = [
+    evidence?.direction ? `direction=${evidence.direction}` : undefined,
     evidence?.source_label
-      ? `from=${encodeURIComponent(evidence.source_label)}`
+      ? `${evidence.direction === "outgoing" ? "to" : "from"}=${encodeURIComponent(evidence.source_label)}`
       : undefined,
     evidence?.source_agent_id
       ? `source=${evidence.source_agent_id}`
@@ -108,6 +110,7 @@ export function agentRpcMessageMarkdown(
   if (!agentId) return value;
   const sourceLabel = `${rpc?.source_label ?? ""}`.trim();
   return agentMessageFence(stripAgentRpcPrompt(value, rpc), {
+    direction: "incoming",
     agent_session_id: rpc?.agent_session_id,
     attempt_id: rpc?.attempt_id,
     source_label:

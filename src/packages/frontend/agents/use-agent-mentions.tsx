@@ -35,7 +35,7 @@ export function useAgentMentions({
 }) {
   const accountId = useTypedRedux("account", "account_id");
   const enabled = useAgentMessagingUI();
-  const { directory } = useNamedAgents(enabled);
+  const { directory } = useNamedAgents(enabled && runnable);
   const [approval, setApproval] = useState<SessionApprovalTarget>();
   const [error, setError] = useState("");
   const [states, setStates] = useState<Record<string, string>>({});
@@ -262,7 +262,7 @@ export function useAgentMentions({
 
   return {
     accountId,
-    agents: enabled ? (directory?.agents ?? []) : [],
+    agents: enabled && runnable ? (directory?.agents ?? []) : [],
     context: {
       allowAgentMentions: enabled && runnable,
       onSelect: (reference: AgentMentionReference) => {

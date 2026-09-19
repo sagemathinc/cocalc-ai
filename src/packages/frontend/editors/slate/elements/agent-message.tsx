@@ -4,11 +4,12 @@
  */
 
 import {
+  ArrowLeftOutlined,
+  ArrowRightOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   InfoCircleOutlined,
   QuestionCircleOutlined,
-  RobotOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
 import type { AgentSessionActivity } from "@cocalc/conat/agents/personal";
@@ -24,6 +25,7 @@ import {
 
 export interface AgentMessage extends SlateElement {
   type: "agent-message";
+  direction?: "incoming" | "outgoing";
   agent_session_id?: string;
   attempt_id?: string;
   source_label?: string;
@@ -100,10 +102,15 @@ export function agentMessageFromMarkdownFence({
   let source_label: string | undefined;
   let source_agent_id: string | undefined;
   let source_project_id: string | undefined;
+  let direction: "incoming" | "outgoing" | undefined;
   for (const token of tokens) {
-    if (token.startsWith("from=")) {
+    if (token === "direction=incoming" || token === "direction=outgoing") {
+      direction = token.slice(10) as "incoming" | "outgoing";
+    } else if (token.startsWith("from=") || token.startsWith("to=")) {
       try {
-        source_label = decodeURIComponent(token.slice(5)).trim();
+        source_label = decodeURIComponent(
+          token.slice(token.indexOf("=") + 1),
+        ).trim();
       } catch {
         return;
       }
@@ -124,6 +131,7 @@ export function agentMessageFromMarkdownFence({
     ...(source_label ? { source_label } : {}),
     ...(source_agent_id ? { source_agent_id } : {}),
     ...(source_project_id ? { source_project_id } : {}),
+    ...(direction ? { direction } : {}),
     children: markdown_to_slate(value, true),
   };
 }
@@ -140,6 +148,10 @@ export function AgentMessageElement({
   if (element.type !== "agent-message")
     throw new Error("Expected agent-message element");
   const message = element as AgentMessage;
+  const direction = message.direction ?? "incoming";
+  const outgoing = direction === "outgoing";
+  const directionColor = outgoing ? UI_COLORS.success : UI_COLORS.info;
+  const directionBackground = outgoing ? UI_COLORS.successBg : UI_COLORS.infoBg;
   const { directory } = useNamedAgents(!!message.source_agent_id);
   const namedSource =
     message.source_agent_id && message.source_project_id
@@ -205,7 +217,7 @@ export function AgentMessageElement({
           display: "inline-flex",
           alignItems: "center",
           gap: 6,
-          color: UI_COLORS.info,
+          color: directionColor,
           fontSize: 13,
           fontWeight: 650,
           whiteSpace: "nowrap",
@@ -221,13 +233,13 @@ export function AgentMessageElement({
             width: 22,
             height: 22,
             borderRadius: 999,
-            color: UI_COLORS.info,
-            background: UI_COLORS.infoBg,
+            color: directionColor,
+            background: directionBackground,
           }}
         >
-          <RobotOutlined />
+          {outgoing ? <ArrowRightOutlined /> : <ArrowLeftOutlined />}
         </span>
-        {sourceLabel}
+        {outgoing ? "To" : "From"} {sourceLabel}
       </span>
       {message.source_project_id && (
         <span
@@ -402,8 +414,9 @@ register({
         ? ` ${node.agent_session_id} ${node.attempt_id}`
         : "";
     const metadata = [
+      node.direction ? `direction=${node.direction}` : undefined,
       node.source_label
-        ? `from=${encodeURIComponent(node.source_label)}`
+        ? `${node.direction === "outgoing" ? "to" : "from"}=${encodeURIComponent(node.source_label)}`
         : undefined,
       node.source_agent_id ? `source=${node.source_agent_id}` : undefined,
       node.source_project_id ? `project=${node.source_project_id}` : undefined,

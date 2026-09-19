@@ -59,12 +59,14 @@ describe("static guidance rendering", () => {
       />,
     );
 
-    const guidance = screen.getByRole("region", { name: "Guidance sent" });
+    const guidance = screen.getByRole("region", {
+      name: "Agent guidance received",
+    });
     const message = screen.getByRole("region", {
       name: "Agent-message quote",
     });
     expect(guidance).toContainElement(message);
-    expect(screen.getByText("@illustrator")).toBeVisible();
+    expect(screen.getByText(/From @illustrator/)).toBeVisible();
     expect(screen.getByText("Use the revised diagram.")).toBeVisible();
   });
 });

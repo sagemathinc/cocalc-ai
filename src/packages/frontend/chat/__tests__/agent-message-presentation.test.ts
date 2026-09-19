@@ -72,6 +72,7 @@ test("renders live agent guidance as an inspectable agent-message block", () => 
     `agent-message ${rpc.agent_session_id} ${rpc.attempt_id}`,
   );
   expect(markdown).toContain("from=%40illustrator");
+  expect(markdown).toContain("direction=incoming");
   expect(markdown).toContain(`source=${rpc.source.agent_id}`);
   expect(markdown).toContain(`project=${rpc.source.project_id}`);
   expect(markdown).toContain("Please use the revised diagram.");

@@ -85,6 +85,16 @@ export interface ChatRoomComposerProps {
 
 export { findChatComposerFocusTarget, refocusChatComposerInput };
 
+export function allowAgentMentionsInComposer({
+  isSelectedThreadAI,
+  isNewThreadCodex,
+}: {
+  isSelectedThreadAI: boolean;
+  isNewThreadCodex: boolean;
+}): boolean {
+  return isSelectedThreadAI || isNewThreadCodex;
+}
+
 export function ChatRoomComposer({
   actions,
   project_id,
@@ -373,7 +383,10 @@ export function ChatRoomComposer({
     path,
     threadId: selectedThread?.key,
     threadTitle: threadLabel,
-    runnable: showGoal || isNewThreadCodex,
+    runnable: allowAgentMentionsInComposer({
+      isSelectedThreadAI,
+      isNewThreadCodex,
+    }),
     restoreFocus: refocusComposerInput,
   });
   const pendingPreparation = useRef<
