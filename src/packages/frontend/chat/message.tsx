@@ -148,7 +148,10 @@ import {
   ChatReadAloudButton,
   CodexFinalResponseCopy,
 } from "./codex-final-response-copy";
-import { stripAgentRpcPrompt } from "./agent-message-presentation";
+import {
+  agentMessageFence,
+  stripAgentRpcPrompt,
+} from "./agent-message-presentation";
 
 const EDIT_MARKDOWN_MIN_HEIGHT = 120;
 
@@ -420,37 +423,6 @@ function rpcSourceAttribution(message: ChatMessageTyped):
     ...evidence,
     label: "Agent message",
   };
-}
-
-function agentMessageFence(
-  value: string,
-  evidence?: {
-    agent_session_id?: string;
-    attempt_id?: string;
-    source_label?: string;
-    source_agent_id?: string;
-    source_project_id?: string;
-  },
-): string {
-  let fence = "```";
-  while (value.includes(fence)) fence += "`";
-  const correlation =
-    evidence?.agent_session_id && evidence.attempt_id
-      ? ` ${evidence.agent_session_id} ${evidence.attempt_id}`
-      : "";
-  const metadata = [
-    evidence?.source_label
-      ? `from=${encodeURIComponent(evidence.source_label)}`
-      : undefined,
-    evidence?.source_agent_id
-      ? `source=${evidence.source_agent_id}`
-      : undefined,
-    evidence?.source_project_id
-      ? `project=${evidence.source_project_id}`
-      : undefined,
-  ].filter(Boolean);
-  const info = `agent-message${correlation}${metadata.length ? ` ${metadata.join(" ")}` : ""}`;
-  return `${fence}${info}\n${value}\n${fence}`;
 }
 
 export default function Message({

@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-type AgentRpcPresentationMetadata = {
+export type AgentRpcPresentationMetadata = {
   version?: number;
   source?: {
     kind?: string;
@@ -16,6 +16,39 @@ type AgentRpcPresentationMetadata = {
   agent_session_id?: string;
   attempt_id?: string;
 };
+
+type AgentMessageEvidence = {
+  agent_session_id?: string;
+  attempt_id?: string;
+  source_label?: string;
+  source_agent_id?: string;
+  source_project_id?: string;
+};
+
+export function agentMessageFence(
+  value: string,
+  evidence?: AgentMessageEvidence,
+): string {
+  let fence = "```";
+  while (value.includes(fence)) fence += "`";
+  const correlation =
+    evidence?.agent_session_id && evidence.attempt_id
+      ? ` ${evidence.agent_session_id} ${evidence.attempt_id}`
+      : "";
+  const metadata = [
+    evidence?.source_label
+      ? `from=${encodeURIComponent(evidence.source_label)}`
+      : undefined,
+    evidence?.source_agent_id
+      ? `source=${evidence.source_agent_id}`
+      : undefined,
+    evidence?.source_project_id
+      ? `project=${evidence.source_project_id}`
+      : undefined,
+  ].filter(Boolean);
+  const info = `agent-message${correlation}${metadata.length ? ` ${metadata.join(" ")}` : ""}`;
+  return `${fence}${info}\n${value}\n${fence}`;
+}
 
 export function agentRpcPromptPrefix(
   rpc: AgentRpcPresentationMetadata | undefined,
@@ -63,4 +96,27 @@ export function stripAgentRpcPrompt(
     if (prefix && value.startsWith(prefix)) return value.slice(prefix.length);
   }
   return value;
+}
+
+/** Render authorized agent guidance with the same compact card as queued messages. */
+export function agentRpcMessageMarkdown(
+  value: string,
+  rpc: AgentRpcPresentationMetadata | undefined,
+): string {
+  const source = rpc?.source;
+  const agentId = `${source?.agent_id ?? ""}`.trim();
+  if (!agentId) return value;
+  const sourceLabel = `${rpc?.source_label ?? ""}`.trim();
+  return agentMessageFence(stripAgentRpcPrompt(value, rpc), {
+    agent_session_id: rpc?.agent_session_id,
+    attempt_id: rpc?.attempt_id,
+    source_label:
+      sourceLabel ||
+      (source?.kind === "external"
+        ? `External agent ${agentId.slice(0, 8)}`
+        : `Agent ${agentId.slice(0, 8)}`),
+    source_agent_id: agentId,
+    source_project_id:
+      typeof source?.project_id === "string" ? source.project_id : undefined,
+  });
 }

@@ -1,4 +1,5 @@
 import {
+  agentRpcMessageMarkdown,
   agentRpcPromptPrefix,
   stripAgentRpcPrompt,
 } from "../agent-message-presentation";
@@ -58,4 +59,21 @@ test("supports the external-agent warning exactly", () => {
   expect(stripAgentRpcPrompt(`${prefix}External result`, external)).toBe(
     "External result",
   );
+});
+
+test("renders live agent guidance as an inspectable agent-message block", () => {
+  const named = { ...rpc, source_label: "@illustrator" };
+  const prefix = agentRpcPromptPrefix(named)!;
+  const markdown = agentRpcMessageMarkdown(
+    `${prefix}Please use the revised diagram.`,
+    named,
+  );
+  expect(markdown).toContain(
+    `agent-message ${rpc.agent_session_id} ${rpc.attempt_id}`,
+  );
+  expect(markdown).toContain("from=%40illustrator");
+  expect(markdown).toContain(`source=${rpc.source.agent_id}`);
+  expect(markdown).toContain(`project=${rpc.source.project_id}`);
+  expect(markdown).toContain("Please use the revised diagram.");
+  expect(markdown).not.toContain("Agent-provided content");
 });

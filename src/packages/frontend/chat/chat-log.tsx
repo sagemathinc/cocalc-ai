@@ -60,6 +60,7 @@ import {
 import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
+import { agentRpcMessageMarkdown } from "./agent-message-presentation";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -305,8 +306,11 @@ function collectSteers({
     const messageKey = `${messageDate.valueOf()}`;
     if (visibleKeys && !visibleKeys.has(messageKey)) continue;
     const messageId = `${field<string>(message, "message_id") ?? ""}`.trim();
-    const text = newest_content(message)?.trim();
-    if (!messageId || !text) continue;
+    const rawText = newest_content(message)?.trim();
+    if (!messageId || !rawText) continue;
+    const rawRpc = field<any>(message, "agent_rpc");
+    const rpc = typeof rawRpc?.toJS === "function" ? rawRpc.toJS() : rawRpc;
+    const text = rpc ? agentRpcMessageMarkdown(rawText, rpc) : rawText;
     const anchoredParentId = resolveSteerAnchorMessageId({
       message,
       byMessageId,

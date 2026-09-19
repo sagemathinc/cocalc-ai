@@ -34,9 +34,10 @@ export function useMentionableUsers(): (
 ) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
-  const enabled = useAgentMessagingUI();
+  const messagingEnabled = useAgentMessagingUI();
+  const { allowAgentMentions, states } = useAgentMentionContext();
+  const enabled = messagingEnabled && allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
-  const { states } = useAgentMentionContext();
 
   return useMemo(() => {
     return (search: string | undefined, opts?: Opts) => {

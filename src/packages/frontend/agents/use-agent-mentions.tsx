@@ -264,6 +264,7 @@ export function useAgentMentions({
     accountId,
     agents: enabled ? (directory?.agents ?? []) : [],
     context: {
+      allowAgentMentions: enabled && runnable,
       onSelect: (reference: AgentMentionReference) => {
         void onSelect(reference);
       },
