@@ -117,6 +117,7 @@ import {
   getCodexPaymentSourceOptions,
   useCodexPaymentSource,
 } from "@cocalc/frontend/chat/use-codex-payment-source";
+
 import {
   cachedAccountCodexModels,
   discoverAccountCodexModels,
@@ -131,6 +132,7 @@ import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
+import { relativeAgentWorkingDirectory } from "./workspace-path";
 
 const { Text, Title } = Typography;
 
@@ -1246,6 +1248,18 @@ function AgentWorkspace({
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions>();
+  const [, setChatVersion] = useState(0);
+  useEffect(() => {
+    const syncdb = chatActions?.syncdb;
+    if (!syncdb) return;
+    const changed = () => setChatVersion((version) => version + 1);
+    syncdb.on("change", changed);
+    syncdb.on("ready", changed);
+    return () => {
+      syncdb.removeListener("change", changed);
+      syncdb.removeListener("ready", changed);
+    };
+  }, [chatActions]);
   const selectedAgent = findWorkspaceAgentForThread(
     workspaceAgents,
     agent.endpoint.project_id,
@@ -1300,6 +1314,16 @@ function AgentWorkspace({
         threadId: selectedThread,
       })
     : undefined;
+  const selectedThreadConfig = selectedThreadMetadata?.acp_config as
+    | CodexThreadConfig
+    | undefined;
+  const selectedWorkingDirectory =
+    (selectedThreadConfig as any)?.get?.("workingDirectory") ??
+    selectedThreadConfig?.workingDirectory;
+  const workingDirectoryLabel = relativeAgentWorkingDirectory(
+    selectedWorkingDirectory,
+    getProjectHomeDirectory(agent.endpoint.project_id),
+  );
   const canRegisterSelectedThread =
     !!unregistered && selectedThreadMetadata?.agent_kind === "acp";
   const threadTitle = unregistered
@@ -1498,6 +1522,14 @@ function AgentWorkspace({
             >
               {displayedAgent.project_title || agent.endpoint.project_id}
             </Button>
+            {workingDirectoryLabel ? (
+              <>
+                <span aria-hidden="true">&nbsp;·&nbsp;</span>
+                <span title={selectedWorkingDirectory}>
+                  {workingDirectoryLabel}
+                </span>
+              </>
+            ) : null}
             {sharing ? (
               <>
                 <span aria-hidden="true">&nbsp;·&nbsp;</span>

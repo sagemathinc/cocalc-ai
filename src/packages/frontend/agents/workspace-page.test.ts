@@ -12,6 +12,7 @@ import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
+import { relativeAgentWorkingDirectory } from "./workspace-path";
 
 function agent(name: string): NamedAgent {
   return {
@@ -66,5 +67,16 @@ describe("new agent defaults", () => {
         threadId: "new-thread",
       }),
     ).toBe("credential-2");
+  });
+});
+
+describe("agent workspace paths", () => {
+  it("shows working directories relative to the project home", () => {
+    expect(
+      relativeAgentWorkingDirectory("/home/user/scratch", "/home/user"),
+    ).toBe("scratch/");
+    expect(relativeAgentWorkingDirectory("/home/user", "/home/user")).toBe(
+      "~/",
+    );
   });
 });

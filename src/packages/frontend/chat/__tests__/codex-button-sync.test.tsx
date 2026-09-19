@@ -284,6 +284,7 @@ describe("CodexConfigButton", () => {
         threadConfig={{
           model: "gpt-5.4",
           reasoning: "medium",
+          serviceTier: "fast",
           paymentSource: "subscription",
           workingDirectory: "/home/user/work",
         }}
@@ -318,6 +319,9 @@ describe("CodexConfigButton", () => {
       "thread-1",
       expect.objectContaining({ model: "gpt-6-astra" }),
     );
+    expect(
+      screen.getByRole("button", { name: "Change speed. Current speed: Fast" }),
+    ).toBeTruthy();
     expect(
       screen.getByRole("button", { name: "More agent settings" }),
     ).toBeTruthy();

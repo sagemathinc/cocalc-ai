@@ -1204,6 +1204,17 @@ export function CodexConfigButton({
       applyQuickConfigPatch(paymentSourcePatch(next));
     },
   };
+  const serviceTierMenu: MenuProps = {
+    selectedKeys: [effectiveServiceTier],
+    items: [
+      { key: "standard", label: "Standard" },
+      { key: "fast", label: "Fast", disabled: !fastModeSupported },
+    ],
+    onClick: ({ domEvent, key }) => {
+      domEvent.stopPropagation();
+      applyQuickConfigPatch({ serviceTier: key as CodexServiceTier });
+    },
+  };
 
   const pillSegmentStyle = (segment: PillSegment): React.CSSProperties => ({
     ...pillSegmentBaseStyle,
@@ -1309,12 +1320,28 @@ export function CodexConfigButton({
                 >
                   <span
                     style={{
+                      flex: "0 1 110px",
+                      minWidth: 24,
                       overflow: "hidden",
                       textOverflow: "ellipsis",
                       whiteSpace: "nowrap",
                     }}
                   >
-                    {projectTitle ?? "Project"} / {displayedWorkingDirectory}
+                    {projectTitle ?? "Project"}
+                  </span>
+                  <Text type="secondary" style={{ flex: "0 0 auto" }}>
+                    &nbsp;/&nbsp;
+                  </Text>
+                  <span
+                    style={{
+                      flex: "1 1 70px",
+                      minWidth: 50,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {displayedWorkingDirectory}
                   </span>
                 </Button>
               </Popover>
@@ -1385,40 +1412,70 @@ export function CodexConfigButton({
                   </button>
                 </Dropdown>
               )}
+              {displayedServiceTier ? (
+                <>
+                  <Text type="secondary">·</Text>
+                  <Dropdown menu={serviceTierMenu} trigger={["click"]}>
+                    <button
+                      type="button"
+                      aria-label={`Change speed. Current speed: ${displayedServiceTier}`}
+                      style={pillSegmentBaseStyle}
+                    >
+                      {displayedServiceTier}
+                    </button>
+                  </Dropdown>
+                </>
+              ) : null}
               <Text type="secondary">·</Text>
               {lite ? (
-                <button
-                  type="button"
-                  aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
-                  aria-haspopup="dialog"
-                  onClick={() => setPaymentOpen(true)}
-                  style={{
-                    ...pillSegmentBaseStyle,
-                    color: paymentNeedsAttention
-                      ? UI_COLORS.danger
-                      : UI_COLORS.secondary,
-                  }}
+                <Tooltip
+                  allow_touch
+                  ignore_hide_setting
+                  title={sourceTooltipDetails}
+                  styles={{ root: { maxWidth: 420 } }}
                 >
-                  {sourceShortLabel}
-                </button>
-              ) : (
-                <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
                   <button
                     type="button"
                     aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
+                    aria-haspopup="dialog"
+                    onMouseEnter={() => setCodexUsageRequested(true)}
+                    onClick={() => setPaymentOpen(true)}
                     style={{
                       ...pillSegmentBaseStyle,
                       color: paymentNeedsAttention
                         ? UI_COLORS.danger
                         : UI_COLORS.secondary,
-                      maxWidth: 120,
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
                     }}
                   >
                     {sourceShortLabel}
                   </button>
-                </Dropdown>
+                </Tooltip>
+              ) : (
+                <Tooltip
+                  allow_touch
+                  ignore_hide_setting
+                  title={sourceTooltipDetails}
+                  styles={{ root: { maxWidth: 420 } }}
+                >
+                  <Dropdown menu={paymentSourceMenu} trigger={["click"]}>
+                    <button
+                      type="button"
+                      aria-label={`Change payment source. Current source: ${sourceShortLabel}`}
+                      onMouseEnter={() => setCodexUsageRequested(true)}
+                      style={{
+                        ...pillSegmentBaseStyle,
+                        color: paymentNeedsAttention
+                          ? UI_COLORS.danger
+                          : UI_COLORS.secondary,
+                        maxWidth: 120,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {sourceShortLabel}
+                    </button>
+                  </Dropdown>
+                </Tooltip>
               )}
             </span>
             <Tooltip title="More agent settings">

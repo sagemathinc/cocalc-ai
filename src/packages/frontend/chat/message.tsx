@@ -58,6 +58,7 @@ import {
   getLiveResponseMarkdown,
   getMountedIntermediateResponseBlocks,
   type InlineCodeLink,
+  type CodexThreadConfig,
 } from "@cocalc/chat";
 import { ChatActions } from "./actions";
 import ContextualReply from "./contextual-reply";
@@ -66,7 +67,6 @@ import { isCodexAgentMessageAuthor } from "./message-author";
 import { codexEventsToMarkdown } from "./codex-activity";
 import {
   cancelQueuedAcpTurn,
-  resetAcpThreadState,
   resendCanceledAcpTurn,
   sendQueuedAcpTurnImmediately,
 } from "./acp-api";
@@ -602,9 +602,9 @@ export default function Message({
   const [elapsedMs, setElapsedMs] = useState<number>(0);
   const [showZenMessage, setShowZenMessage] = useState<boolean>(false);
   const messageRowRef = useRef<HTMLDivElement>(null);
-  const zenTriggerRef = useRef<HTMLButtonElement | null>(null);
-  const openZenMessage = (event: React.MouseEvent<HTMLButtonElement>) => {
-    zenTriggerRef.current = event.currentTarget;
+  const zenTriggerRef = useRef<HTMLElement | null>(null);
+  const openZenMessage = (event?: React.MouseEvent<HTMLElement>) => {
+    zenTriggerRef.current = event?.currentTarget ?? null;
     setShowZenMessage(true);
   };
   const closeZenMessage = () => {
@@ -1620,6 +1620,7 @@ export default function Message({
   }
 
   function renderMessageHeader(lighten) {
+    if (isCodexAgentMessage) return null;
     return (
       <div
         style={{
@@ -1871,72 +1872,52 @@ export default function Message({
       effectiveGenerating,
       isLastMessageInThread,
     });
-    const buttons: ReactNode[] = [
-      <Tooltip key="focus" placement="top" title="Focus this message">
-        <Button
-          size="small"
-          type="text"
-          style={getFocusMessageButtonStyle()}
-          aria-label="Focus this message"
-          aria-haspopup="dialog"
-          onClick={openZenMessage}
-        >
-          <Icon name="expand-arrows" />
-        </Button>
-      </Tooltip>,
-    ];
+    const buttons: ReactNode[] = [];
     const readAloud = renderReadAloudButton();
-    if (readAloud) buttons.unshift(readAloud);
-    if (!read_only) {
-      buttons.unshift(
-        <Tooltip key="git-browser" placement="bottom" title="Open git browser">
-          <Button
-            size="small"
-            type="text"
-            style={{ color: UI_COLORS.muted }}
-            onClick={() => void openGitBrowserFromMessage()}
-            icon={<Icon name="git" />}
-          />
-        </Tooltip>,
-      );
-    }
-
-    if (showShowActivityButton && onExpandedCodexActivityChange) {
-      buttons.splice(
-        0,
-        0,
-        <span key="show-activity" style={{ marginTop: "-5px" }}>
-          <Tip
-            placement="bottom"
-            title={
-              showActivityButtonState.disabled &&
-              showActivityButtonState.label === "Activity not available"
-                ? "No saved agent activity is available for this turn"
-                : "Show the full agent activity for this turn"
-            }
-          >
-            <Button
-              size="small"
-              type="text"
-              disabled={showActivityButtonState.disabled}
-              loading={showActivityButtonState.loading}
-              style={{
-                color: UI_COLORS.muted,
-                fontSize: "12px",
-              }}
-              onClick={() => {
-                if (showActivityButtonState.disabled) return;
-                onExpandedCodexActivityChange(true);
-              }}
-            >
-              {showActivityButtonState.label}
-            </Button>
-          </Tip>
-        </span>,
-      );
-    }
+    if (readAloud) buttons.push(readAloud);
 
     const overflowItems: MenuItems = [
+      {
+        key: "info",
+        label: "Info",
+        onClick: () => {
+          const configValue = (key: keyof CodexThreadConfig) =>
+            (threadCodexConfig as any)?.get?.(key) ?? threadCodexConfig?.[key];
+          const details = [
+            ["Model", configValue("model") ?? isLLMThread],
+            ["Thinking", configValue("reasoning")],
+            [
+              "Speed",
+              configValue("serviceTier") === "fast" ? "Fast" : "Standard",
+            ],
+            ["Payment", configValue("paymentSource") ?? "Automatic"],
+            ["Working directory", configValue("workingDirectory")],
+          ].filter((entry) => entry[1]);
+          Modal.info({
+            title: "Agent response info",
+            content: (
+              <dl
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "auto 1fr",
+                  gap: "6px 14px",
+                }}
+              >
+                <dt>Started</dt>
+                <dd style={{ margin: 0 }}>
+                  <TimeAgo date={new Date(acpStartedAtMs ?? date)} />
+                </dd>
+                {details.flatMap(([label, value]) => [
+                  <dt key={`${label}-label`}>{label}</dt>,
+                  <dd key={`${label}-value`} style={{ margin: 0 }}>
+                    {`${value}`}
+                  </dd>,
+                ])}
+              </dl>
+            ),
+          });
+        },
+      },
       {
         key: "copy-whole",
         label: "Copy whole message",
@@ -1952,6 +1933,40 @@ export default function Message({
         },
       },
     ];
+
+    if (showShowActivityButton && onExpandedCodexActivityChange) {
+      overflowItems.push({
+        key: "show-activity",
+        label: showActivityButtonState.loading
+          ? "Loading activity…"
+          : showActivityButtonState.label,
+        disabled:
+          showActivityButtonState.disabled || showActivityButtonState.loading,
+        onClick: () => {
+          if (
+            showActivityButtonState.disabled ||
+            showActivityButtonState.loading
+          ) {
+            return;
+          }
+          onExpandedCodexActivityChange(true);
+        },
+      });
+    }
+
+    if (!read_only) {
+      overflowItems.push({
+        key: "git-browser",
+        label: "Open git browser",
+        onClick: () => void openGitBrowserFromMessage(),
+      });
+    }
+
+    overflowItems.push({
+      key: "focus",
+      label: "Focus message",
+      onClick: () => openZenMessage(),
+    });
 
     if (acpPrompt.trim()) {
       overflowItems.push({
@@ -2367,20 +2382,6 @@ export default function Message({
               ? stopRetainedWork
               : undefined
           }
-          onContinue={
-            !effectiveGenerating &&
-            !acpInterrupted &&
-            !read_only &&
-            isLastMessageInThread &&
-            actions != null
-              ? () =>
-                  actions.sendReply({
-                    message,
-                    reply: "continue",
-                    noNotification: true,
-                  })
-              : undefined
-          }
           openDrawerToken={openActivityDrawerToken}
           focusAttentionId={focusAttentionId}
           jumpText={undefined}
@@ -2617,49 +2618,6 @@ export default function Message({
     );
   }
 
-  function renderInterruptedControls() {
-    if (
-      actions == null ||
-      !acpInterrupted ||
-      effectiveGenerating ||
-      !isCodexThread ||
-      !isLastMessageInThread
-    ) {
-      return null;
-    }
-    if (!messageThreadId) return null;
-    return (
-      <div
-        style={{
-          marginTop: "8px",
-          display: "flex",
-          justifyContent: "flex-start",
-          alignItems: "center",
-          gap: "8px",
-          flexWrap: "wrap",
-        }}
-      >
-        <Button
-          size="small"
-          onClick={() => {
-            resetAcpThreadState({
-              actions,
-              threadId: messageThreadId,
-            });
-            actions.sendReply({
-              message,
-              reply: "continue",
-              noNotification: true,
-            });
-          }}
-          title="Ask Codex to continue from this interrupted turn"
-        >
-          <Icon name="step-forward" /> Continue
-        </Button>
-      </div>
-    );
-  }
-
   function renderForkNotice() {
     const navigation = resolveForkThreadNavigation({ actions, message });
     if (!navigation.fragment) return null;
@@ -2697,10 +2655,7 @@ export default function Message({
     const marginTop =
       !is_prev_sender && is_viewers_message ? MARGIN_TOP_VIEWER : "5px";
 
-    const padding = selected
-      ? { paddingTop: 6, paddingLeft: 6, paddingRight: 6 }
-      : { paddingTop: 9, paddingLeft: 9, paddingRight: 9 };
-    const baseBottomPadding = selected ? 6 : 9;
+    const padding = { paddingTop: 9, paddingLeft: 9, paddingRight: 9 };
     const messageStyle: CSSProperties = {
       color,
       background,
@@ -2708,7 +2663,7 @@ export default function Message({
       borderRadius: "5px",
       marginTop,
       fontSize: `${font_size}px`,
-      paddingBottom: baseBottomPadding,
+      paddingBottom: 9,
       ...padding,
       ...(is_viewers_message && mode === "standalone" && !narrow
         ? { marginLeft: VIEWER_MESSAGE_LEFT_MARGIN }
@@ -2716,12 +2671,15 @@ export default function Message({
       ...(mode === "sidechat"
         ? { marginLeft: "5px", marginRight: "5px" }
         : undefined),
-      ...(selected ? { border: "3px solid #66bb6a" } : undefined),
+      ...(selected
+        ? { boxShadow: `inset 3px 0 0 ${UI_COLORS.success}` }
+        : undefined),
     } as const;
 
     return (
       <Col key={1} xs={mainXS}>
         {!rpcAttribution &&
+        !isCodexAgentMessage &&
         !is_prev_sender &&
         !is_viewers_message &&
         senderId ? (
@@ -2747,7 +2705,6 @@ export default function Message({
             threadId={field<string>(message, "thread_id")}
             messageId={field<string>(message, "message_id")}
           />
-          {renderInterruptedControls()}
           {renderMessageActions()}
         </div>
         {renderHistory()}

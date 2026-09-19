@@ -442,7 +442,7 @@ export function hasActiveAcpTurnForComposer({
   if (!isSelectedThreadAI) return false;
   if (selectedThreadId) {
     const byThread = acpState?.get?.(`thread:${selectedThreadId}`);
-    if (byThread === "running") {
+    if (isActiveAcpState(byThread)) {
       return true;
     }
   }

@@ -589,7 +589,9 @@ export function ChatRoomComposer({
     background: UI_COLORS.surface,
     border: `1px solid ${isInputFocused ? UI_COLORS.link : UI_COLORS.border}`,
     borderRadius: isZenMode && isFullscreen ? 0 : 16,
-    boxShadow: isInputFocused ? `0 0 0 2px ${UI_COLORS.focus}` : undefined,
+    boxShadow: isInputFocused
+      ? `inset 0 0 0 1px ${UI_COLORS.focus}`
+      : undefined,
     boxSizing: "border-box",
     ...(mobile && isZenMode
       ? {
