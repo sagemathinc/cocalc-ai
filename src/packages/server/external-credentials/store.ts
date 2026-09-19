@@ -508,8 +508,8 @@ WHERE ${ownershipClause(1)}
   AND ((metadata->>$7 = 'true') OR revoked IS NULL)
 ORDER BY (metadata->>$7 = 'true') DESC,
          (revoked IS NULL) DESC,
-         updated DESC NULLS LAST,
-         created DESC NULLS LAST
+         created ASC NULLS LAST,
+         updated ASC NULLS LAST
 FOR UPDATE
       `,
       [...selectorValues(normalized), metadataKey],
@@ -523,6 +523,17 @@ FOR UPDATE
       await client.query("COMMIT");
       return undefined;
     }
+    await client.query(
+      `
+UPDATE external_credentials
+SET metadata = COALESCE(metadata, '{}'::jsonb) - $8::text
+WHERE ${ownershipClause(1)}
+  AND id <> $7
+  AND revoked IS NULL
+  AND metadata->>$8 = 'true'
+      `,
+      [...selectorValues(normalized), row.id, metadataKey],
+    );
     if (row.metadata?.[metadataKey] !== true) {
       await client.query(
         `

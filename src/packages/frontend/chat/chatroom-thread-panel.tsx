@@ -290,6 +290,23 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
 
+export function getNewThreadPaymentSourceOptions(
+  paymentSource?: CodexPaymentSourceInfo,
+) {
+  return getCodexPaymentSourceOptions(paymentSource).flatMap((option) => {
+    if (option.value !== "subscription") return [option];
+    const subscriptions = paymentSource?.subscriptions ?? [];
+    if (!subscriptions.length) return [option];
+    return subscriptions.map((credential) => ({
+      value: `subscription:${credential.id}`,
+      label: `ChatGPT: ${credential.label ?? credential.email ?? credential.plan ?? credential.id.slice(0, 8)}`,
+      description: credential.plan
+        ? `${credential.email ?? "ChatGPT subscription"} - ${credential.plan}`
+        : (credential.email ?? option.description),
+    }));
+  });
+}
+
 export function reconcileNewThreadSetupWithCodexCatalog({
   setup,
   catalog,
@@ -485,6 +502,8 @@ interface ChatRoomThreadPanelProps {
   onNewChat: () => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
+  codexCredentialId?: string;
+  onCodexCredentialIdChange?: (credentialId: string) => void;
   refreshCodexPaymentSource?: () => void;
   newThreadSetup: NewThreadSetup;
   onNewThreadSetupChange: React.Dispatch<React.SetStateAction<NewThreadSetup>>;
@@ -536,6 +555,8 @@ export function ChatRoomThreadPanel({
   onNewChat,
   codexPaymentSource,
   codexPaymentSourceLoading,
+  codexCredentialId,
+  onCodexCredentialIdChange,
   refreshCodexPaymentSource,
   newThreadSetup,
   onNewThreadSetupChange,
@@ -694,6 +715,7 @@ export function ChatRoomThreadPanel({
       projectId: project_id,
       includeModels: true,
       refreshModels: forceRefresh,
+      credentialId: codexPaymentSource.credentialId,
     })
       .then((status) => {
         if (cancelled || !status.models?.length) return;
@@ -1437,8 +1459,13 @@ export function ChatRoomThreadPanel({
         .find(({ value }) => value === codexModel)
         ?.serviceTiers?.includes("fast") ??
       codexModelSupportsFastMode(codexModel);
-    const paymentSourceOptions =
-      getCodexPaymentSourceOptions(codexPaymentSource);
+    const exactPaymentSourceOptions =
+      getNewThreadPaymentSourceOptions(codexPaymentSource);
+    const selectedPaymentSource =
+      (newThreadSetup.codexConfig.paymentSource ?? "auto") === "subscription" &&
+      codexCredentialId
+        ? `subscription:${codexCredentialId}`
+        : (newThreadSetup.codexConfig.paymentSource ?? "auto");
     const siteFundedPolicy =
       codexPaymentSource?.source === "site-api-key" &&
       codexPaymentSource.siteFundedCodex?.enabled
@@ -1727,23 +1754,36 @@ export function ChatRoomThreadPanel({
                     Payment source
                   </div>
                   <Select
-                    value={newThreadSetup.codexConfig.paymentSource ?? "auto"}
+                    value={selectedPaymentSource}
                     style={{ width: "100%" }}
-                    options={paymentSourceOptions}
+                    options={exactPaymentSourceOptions}
                     optionRender={(option) =>
                       renderOptionWithDescription({
                         title: `${option.data.label}`,
                         description: option.data.description,
                       })
                     }
-                    onChange={(value: CodexPaymentSourcePreference) =>
+                    onChange={(value: string) => {
+                      if (value.startsWith("subscription:")) {
+                        const credentialId = value.slice(
+                          "subscription:".length,
+                        );
+                        onCodexCredentialIdChange?.(credentialId);
+                        update({
+                          codexConfig: {
+                            ...newThreadSetup.codexConfig,
+                            paymentSource: "subscription",
+                          },
+                        });
+                        return;
+                      }
                       update({
                         codexConfig: {
                           ...newThreadSetup.codexConfig,
-                          paymentSource: value,
+                          paymentSource: value as CodexPaymentSourcePreference,
                         },
-                      })
-                    }
+                      });
+                    }}
                   />
                   {siteFundedPolicy ? (
                     <Alert

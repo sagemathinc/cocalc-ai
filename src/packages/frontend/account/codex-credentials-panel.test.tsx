@@ -8,6 +8,8 @@ import {
 import {
   CodexCredentialsPanel,
   CodexUsageMeters,
+  reconcileCredentialOrder,
+  sortCredentialIdsByLastUsed,
 } from "./codex-credentials-panel";
 import {
   readCachedCodexModelCatalog,
@@ -19,6 +21,32 @@ const getCodexUsageStatus = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
 const mockClipboardWriteText = jest.fn();
+
+describe("Codex subscription credential ordering", () => {
+  const older = {
+    id: "older",
+    updated: new Date("2026-09-19T02:00:00Z"),
+    last_used: new Date("2026-09-18T12:00:00Z"),
+  } as any;
+  const newer = {
+    id: "newer",
+    updated: new Date("2026-09-18T12:00:00Z"),
+    last_used: new Date("2026-09-19T01:00:00Z"),
+  } as any;
+
+  it("sorts an expanded table by last use rather than label update time", () => {
+    expect(sortCredentialIdsByLastUsed([older, newer])).toEqual([
+      "newer",
+      "older",
+    ]);
+  });
+
+  it("preserves the visible order across refreshed row data", () => {
+    expect(
+      reconcileCredentialOrder(["older", "newer"], [newer, older]),
+    ).toEqual(["older", "newer"]);
+  });
+});
 
 jest.mock("antd", () => {
   const Button = ({ children, disabled, href, loading, onClick }: any) =>

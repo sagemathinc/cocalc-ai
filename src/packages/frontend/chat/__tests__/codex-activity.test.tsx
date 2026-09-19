@@ -217,6 +217,7 @@ describe("CodexActivity terminal rows", () => {
               sessionMode: "full-access",
               sandbox: "danger-full-access",
               workingDirectory: "/home/user/demo",
+              authSource: "subscription",
             },
           } as any,
         ],
@@ -229,6 +230,7 @@ describe("CodexActivity terminal rows", () => {
     expect(screen.getByText("Reasoning low")).not.toBeNull();
     expect(screen.getByText("Session full-access")).not.toBeNull();
     expect(screen.getByText("Sandbox danger-full-access")).not.toBeNull();
+    expect(screen.getByText("Funding ChatGPT Plan")).not.toBeNull();
     expect(screen.getByText("/home/user/demo")).not.toBeNull();
   });
 

@@ -2869,6 +2869,15 @@ function ChatPanelContent({
         }}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
+        codexCredentialId={codexCredentialId}
+        onCodexCredentialIdChange={(credentialId) => {
+          writeCodexSubscriptionSelection({
+            accountId: account_id,
+            projectId: project_id,
+            threadKey: "",
+            credentialId,
+          });
+        }}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}

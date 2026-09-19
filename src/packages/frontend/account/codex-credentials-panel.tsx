@@ -255,6 +255,36 @@ type DeviceAuthStatus = {
   create?: boolean;
 };
 
+function credentialLastUsed(row: ExternalCredentialInfo): number {
+  const value = row.last_used ? new Date(row.last_used).getTime() : 0;
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function sortCredentialIdsByLastUsed(
+  rows: ExternalCredentialInfo[],
+): string[] {
+  return [...rows]
+    .sort((a, b) => {
+      const byLastUsed = credentialLastUsed(b) - credentialLastUsed(a);
+      if (byLastUsed !== 0) return byLastUsed;
+      return `${a.id}`.localeCompare(`${b.id}`);
+    })
+    .map(({ id }) => id);
+}
+
+export function reconcileCredentialOrder(
+  order: string[],
+  rows: ExternalCredentialInfo[],
+): string[] {
+  const currentIds = new Set(rows.map(({ id }) => id));
+  const next = order.filter((id) => currentIds.has(id));
+  const orderedIds = new Set(next);
+  for (const id of sortCredentialIdsByLastUsed(rows)) {
+    if (!orderedIds.has(id)) next.push(id);
+  }
+  return next;
+}
+
 const DEVICE_AUTH_ALERT_TYPE: Record<
   DeviceAuthState,
   "info" | "success" | "error" | "warning"
@@ -290,6 +320,7 @@ function CodexCredentialsPanelBody({
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
   const [apiKeyStatus, setApiKeyStatus] = useState<any>(undefined);
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
+  const [credentialOrder, setCredentialOrder] = useState<string[]>([]);
   const [revokingId, setRevokingId] = useState<string>("");
   const [savingLabelId, setSavingLabelId] = useState<string>("");
   const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
@@ -316,6 +347,7 @@ function CodexCredentialsPanelBody({
     uploadedAt: number;
   } | null>(null);
   const authFileInputRef = useRef<HTMLInputElement | null>(null);
+  const subscriptionCredentialsOpenRef = useRef(false);
   const previousProjectKeyRef = useRef(selectedProjectId.trim());
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
@@ -350,9 +382,14 @@ function CodexCredentialsPanelBody({
       ) {
         nextKeys = [SUBSCRIPTION_AUTH_PANEL_KEY, ...nextKeys];
       }
+      const credentialsOpen = nextKeys.includes("credentials");
+      if (credentialsOpen && !subscriptionCredentialsOpenRef.current) {
+        setCredentialOrder(sortCredentialIdsByLastUsed(credentials));
+      }
+      subscriptionCredentialsOpenRef.current = credentialsOpen;
       setOpenCredentialPanelKeys(nextKeys);
     },
-    [deviceAuthPending, embedded],
+    [credentials, deviceAuthPending, embedded],
   );
 
   const recentProjectId = useMemo(() => {
@@ -422,6 +459,7 @@ function CodexCredentialsPanelBody({
         if (!isMounted()) return;
         setPaymentSource(payment as CodexPaymentSourceInfo);
         setCredentials(list);
+        setCredentialOrder((order) => reconcileCredentialOrder(order, list));
         setApiKeyStatus(keyStatus ?? {});
       } catch (err) {
         if (!isMounted()) return;
@@ -668,6 +706,13 @@ function CodexCredentialsPanelBody({
       startDeviceAuth,
     ],
   );
+
+  const orderedCredentials = useMemo(() => {
+    const byId = new Map(credentials.map((row) => [row.id, row]));
+    return reconcileCredentialOrder(credentialOrder, credentials)
+      .map((id) => byId.get(id))
+      .filter((row): row is ExternalCredentialInfo => row != null);
+  }, [credentialOrder, credentials]);
 
   const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
@@ -1606,7 +1651,7 @@ function CodexCredentialsPanelBody({
                     <Table
                       rowKey="id"
                       size="small"
-                      dataSource={credentials}
+                      dataSource={orderedCredentials}
                       columns={columns as any}
                       pagination={false}
                       locale={{

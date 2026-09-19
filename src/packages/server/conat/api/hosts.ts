@@ -2828,6 +2828,9 @@ export async function upsertExternalCredential({
       metadata: safeMetadata,
       maxActive: max_active,
       deduplicateMetadata: deduplicate_metadata,
+      defaultMetadataKey: isAccountSubscription
+        ? CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY
+        : undefined,
     });
   }
   if (isAccountSubscription) {

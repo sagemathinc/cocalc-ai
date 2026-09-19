@@ -2,6 +2,7 @@ import {
   DEFAULT_NEW_THREAD_SETUP,
   applyNewThreadSetupPatch,
   getReasoningForModel,
+  getNewThreadPaymentSourceOptions,
   reconcileNewThreadSetupWithCodexCatalog,
   resolveNewThreadCodexServiceTier,
   resolveActiveThreadSearchMatchDate,
@@ -13,6 +14,46 @@ import immutable from "immutable";
 import { COLORS } from "@cocalc/util/theme";
 
 describe("new thread setup patching", () => {
+  it("lists each ChatGPT subscription as an exact new-chat source", () => {
+    const options = getNewThreadPaymentSourceOptions({
+      source: "subscription",
+      hasSubscription: true,
+      hasProjectApiKey: false,
+      hasAccountApiKey: false,
+      hasSiteApiKey: false,
+      sharedHomeMode: "disabled",
+      subscriptions: [
+        {
+          id: "credential-normal",
+          email: "normal@example.com",
+          plan: "pro",
+          updatedAt: "2026-09-19T00:00:00Z",
+        },
+        {
+          id: "credential-security",
+          label: "Security review",
+          email: "security@example.com",
+          plan: "pro",
+          updatedAt: "2026-09-19T00:00:00Z",
+        },
+      ],
+    });
+
+    expect(options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: "subscription:credential-normal",
+          label: "ChatGPT: normal@example.com",
+        }),
+        expect.objectContaining({
+          value: "subscription:credential-security",
+          label: "ChatGPT: Security review",
+        }),
+      ]),
+    );
+    expect(options.some(({ value }) => value === "subscription")).toBe(false);
+  });
+
   it("preserves a chosen codex model when a later patch changes execution mode", () => {
     const withModel = applyNewThreadSetupPatch(DEFAULT_NEW_THREAD_SETUP, {
       model: "gpt-5.4",
