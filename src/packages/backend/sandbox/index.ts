@@ -363,6 +363,7 @@ const INTERNAL_METHODS = new Set([
   "cpUnsupportedTypeError",
   "cpDestNotDirectoryError",
   "cpFileToDirectoryError",
+  "cpInstallNoReplace",
   "cpSafeSymlink",
   "cpSafeDirectoryRecursive",
   "cpSafeOne",
@@ -1768,10 +1769,17 @@ export class SandboxedFilesystem {
       dirname(dest),
       `.${basename(dest)}.copy.${process.pid}.${randomUUID()}`,
     );
+    let temporaryIdentity:
+      | { dev: number | bigint; ino: number | bigint }
+      | undefined;
+    let installed = false;
     try {
       await this.copyFile(source, temporary);
+      const stat = await this.lstat(temporary);
+      temporaryIdentity = { dev: stat.dev, ino: stat.ino };
       try {
-        await this.move(temporary, dest);
+        await this.cpInstallNoReplace(temporary, dest);
+        installed = true;
         return;
       } catch (err: any) {
         if (err?.code !== "EEXIST") {
@@ -1798,13 +1806,51 @@ export class SandboxedFilesystem {
         }
       }
     } finally {
-      try {
-        await this.unlink(temporary);
-      } catch (err: any) {
-        if (err?.code !== "ENOENT") {
-          throw err;
+      if (!installed && temporaryIdentity != null) {
+        try {
+          const current = await this.lstat(temporary);
+          if (
+            current.dev === temporaryIdentity.dev &&
+            current.ino === temporaryIdentity.ino
+          ) {
+            await this.unlink(temporary);
+          }
+        } catch (err: any) {
+          if (err?.code !== "ENOENT") {
+            throw err;
+          }
         }
       }
+    }
+  };
+
+  private cpInstallNoReplace = async (
+    source: string,
+    dest: string,
+  ): Promise<void> => {
+    await Promise.all([this.safeAbsPath(source), this.safeAbsPath(dest)]);
+    const target = await this.getOpenAt2DualPathTarget(source, dest);
+    if (target == null || typeof target.root.renameNoReplace !== "function") {
+      const err: NodeJS.ErrnoException = new Error(
+        "atomic no-replace copy installation is not supported",
+      );
+      err.code = "ENOTSUP";
+      err.path = dest;
+      throw err;
+    }
+    try {
+      target.root.renameNoReplace(target.srcRel, target.destRel);
+    } catch (err) {
+      const { code } = this.parseOpenAt2Error(err);
+      if (code === "ENOSYS" || code === "EINVAL") {
+        const unsupported: NodeJS.ErrnoException = new Error(
+          "atomic no-replace copy installation is not supported",
+        );
+        unsupported.code = "ENOTSUP";
+        unsupported.path = dest;
+        throw unsupported;
+      }
+      this.throwOpenAt2PathError(dest, err);
     }
   };
 
