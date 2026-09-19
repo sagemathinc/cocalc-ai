@@ -49,6 +49,22 @@ function chatRowToAcpState({
 }): string | undefined {
   const state = (record as any)?.acp_state;
   switch (state) {
+    case "sending":
+    case "sent": {
+      const threadId = `${(record as any)?.thread_id ?? ""}`.trim();
+      const messageId = `${(record as any)?.message_id ?? ""}`.trim();
+      const threadState =
+        threadId && getThreadStateRecord
+          ? getThreadStateRecord(threadId)
+          : undefined;
+      const activeMessageId =
+        `${(threadState as any)?.active_message_id ?? ""}`.trim();
+      if (messageId && activeMessageId === messageId) {
+        return threadStateToAcpState((threadState as any)?.state) ?? state;
+      }
+      return state;
+    }
+    case "queue":
     case "queued":
       return "queue";
     case "not-sent":
@@ -183,7 +199,7 @@ export function initFromSyncDB({ syncdb, store }: { syncdb: any; store: any }) {
     });
   }
   for (const threadId of chatThreadIdsFromRows(rows)) {
-    acpState = clearRepliedPromptQueuedAcpState({
+    acpState = clearRepliedPromptTransientAcpState({
       acpState,
       syncdb,
       threadId,
@@ -303,7 +319,7 @@ function clearStartedPromptQueuedAcpState({
   return acpState.delete(key);
 }
 
-function clearRepliedPromptQueuedAcpState({
+function clearRepliedPromptTransientAcpState({
   acpState,
   syncdb,
   threadId,
@@ -329,7 +345,7 @@ function clearRepliedPromptQueuedAcpState({
     if (!parentMessageId || !messageIds.has(parentMessageId)) continue;
     if (!`${(row as any)?.acp_account_id ?? ""}`.trim()) continue;
     const key = `message:${parentMessageId}`;
-    if (next?.get?.(key) === "queue") {
+    if (["queue", "sending", "sent"].includes(next?.get?.(key))) {
       next = next.delete(key);
     }
   }
@@ -423,7 +439,7 @@ export function handleSyncDBChange({
         syncdb,
         threadState: getThreadStateRecord(syncdb, threadId),
       });
-      acpState = clearRepliedPromptQueuedAcpState({
+      acpState = clearRepliedPromptTransientAcpState({
         acpState,
         syncdb,
         threadId,
@@ -459,7 +475,7 @@ export function handleSyncDBChange({
         syncdb,
         threadState: record ?? obj,
       });
-      next = clearRepliedPromptQueuedAcpState({
+      next = clearRepliedPromptTransientAcpState({
         acpState: next,
         syncdb,
         threadId: (record ?? obj)?.thread_id,

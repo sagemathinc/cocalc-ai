@@ -140,8 +140,17 @@ describe("processAcpLLM", () => {
     expect(actions.syncdb.set).toHaveBeenCalledWith(
       expect.objectContaining({
         message_id: "user-msg-47",
+        acp_state: "sending",
+      }),
+    );
+    expect(actions.syncdb.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        message_id: "user-msg-47",
         acp_state: "sent",
       }),
+    );
+    expect(actions.syncdb.set.mock.invocationCallOrder[0]).toBeLessThan(
+      actions.syncdb.save.mock.invocationCallOrder[0],
     );
   });
 

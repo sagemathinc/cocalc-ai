@@ -382,7 +382,7 @@ export async function processAcpLLM({
 
   const setState = (
     state: string,
-    { persist = false }: { persist?: boolean } = {},
+    { persist = true }: { persist?: boolean } = {},
   ) => {
     const messageIdKey = `message:${user_message_id}`;
     let next = store.get("acpState");
@@ -450,6 +450,10 @@ export async function processAcpLLM({
   })?.name;
   chatMetadata.workbench = actions.workbenchEnabled === true;
   let acknowledged = false;
+  // Persist the pre-acknowledgement state before waiting for the chat file or
+  // backend. This keeps the truthful "submitting" status visible when a newly
+  // created Agent switches from its bootstrap actions to the mounted editor.
+  setState("sending");
   try {
     await ensureChatStatePersisted();
     markCodexResponseTrace(user_message_id, "chat_state_persisted");
