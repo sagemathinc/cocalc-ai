@@ -93,8 +93,14 @@ type ObservationRow = {
 
 type CandidateFinding = {
   observation_id: string;
+  source_created_at: Date | string;
   evidence: JsonObject;
 };
+
+type ObservationBoundary = Pick<
+  ObservationRow,
+  "id" | "host_id" | "created_at" | "normalization_version"
+>;
 
 type IncidentRow = {
   id: string;
@@ -314,24 +320,6 @@ function normalizedSignals(
   return signals as Record<string, string[]>;
 }
 
-function allChangesRemain(delta: Delta, normalized: unknown): boolean {
-  const signals = normalizedSignals(normalized);
-  if (!signals) return false;
-  for (const [category, entries] of Object.entries(delta.added ?? {})) {
-    const current = new Set(
-      Array.isArray(signals[category]) ? signals[category] : [],
-    );
-    if (entries.some((entry) => !current.has(entry))) return false;
-  }
-  for (const [category, entries] of Object.entries(delta.removed ?? {})) {
-    const current = new Set(
-      Array.isArray(signals[category]) ? signals[category] : [],
-    );
-    if (entries.some((entry) => current.has(entry))) return false;
-  }
-  return true;
-}
-
 function anyChangeRemains(delta: Delta, normalized: unknown): boolean {
   const signals = normalizedSignals(normalized);
   if (!signals) return false;
@@ -352,7 +340,7 @@ function anyChangeRemains(delta: Delta, normalized: unknown): boolean {
 
 async function remainingDeltaAfterLaterCompleteStates(
   client: { query: (sql: string, values?: unknown[]) => Promise<any> },
-  observation: ObservationRow,
+  observation: ObservationBoundary,
   delta: Delta,
 ): Promise<Delta | undefined> {
   const { rows } = await client.query(
@@ -952,6 +940,29 @@ async function resolveIncidents(
   }
 }
 
+async function reopenSuppressedIncident(
+  client: { query: (sql: string, values?: unknown[]) => Promise<any> },
+  incident: { id: string; rule_id: string; occurrence_count: number },
+  result: HostIntrusionReviewerResult,
+): Promise<void> {
+  const { rowCount } = await client.query(
+    `UPDATE ${INCIDENTS}
+        SET state='open', opened_at=NOW(), resolved_at=NULL, updated_at=NOW(),
+            occurrence_count=occurrence_count+1,
+            suppression_ref=NULL, suppression_expires_at=NULL
+      WHERE id=$1 AND state='suppressed'`,
+    [incident.id],
+  );
+  if (rowCount !== 1) return;
+  result.reopened += 1;
+  await queueIncidentTransition(
+    client,
+    incident.id,
+    `reopen:${incident.occurrence_count + 1}`,
+    incident.rule_id,
+  );
+}
+
 async function reviewSuppressedIncidents(
   client: { query: (sql: string, values?: unknown[]) => Promise<any> },
   observation: ObservationRow,
@@ -959,7 +970,7 @@ async function reviewSuppressedIncidents(
   result: HostIntrusionReviewerResult,
 ): Promise<void> {
   const { rows } = await client.query(
-    `SELECT rule_id, severity, evidence
+    `SELECT id, rule_id, severity, evidence, occurrence_count
        FROM ${INCIDENTS}
       WHERE bay_id=$1 AND host_id=$2 AND state='suppressed'
         AND last_seen_at <= $3
@@ -967,28 +978,41 @@ async function reviewSuppressedIncidents(
     [getConfiguredBayId(), observation.host_id, observation.created_at],
   );
   for (const incident of rows as Array<{
+    id: string;
     rule_id: string;
     severity: "warning" | "critical";
     evidence: JsonObject;
+    occurrence_count: number;
   }>) {
+    const delta = boundedDelta(incident.evidence.delta);
+    const expected =
+      delta == null
+        ? undefined
+        : matchExpectedChange({
+            bayId: getConfiguredBayId(),
+            hostId: observation.host_id,
+            categories: deltaCategories(delta),
+            at: new Date(observation.created_at),
+          });
+    const remainsExpected =
+      expected != null && Date.parse(expected.expires_at) >= Date.now();
     if (
       incident.rule_id === "persistent-host-state" &&
       incident.evidence.normalization_version !==
         observation.normalization_version
     ) {
+      if (!remainsExpected) {
+        await reopenSuppressedIncident(client, incident, result);
+      }
       continue;
     }
-    const delta = boundedDelta(incident.evidence.delta);
-    if (delta == null || !anyChangeRemains(delta, normalized)) continue;
-    const expected = matchExpectedChange({
-      bayId: getConfiguredBayId(),
-      hostId: observation.host_id,
-      categories: deltaCategories(delta),
-      at: new Date(observation.created_at),
-    });
-    if (expected != null && Date.parse(expected.expires_at) >= Date.now()) {
+    if (delta == null) {
+      if (!remainsExpected) {
+        await reopenSuppressedIncident(client, incident, result);
+      }
       continue;
     }
+    if (!anyChangeRemains(delta, normalized) || remainsExpected) continue;
     await openIncident(client, {
       observation,
       ruleId: incident.rule_id,
@@ -997,6 +1021,98 @@ async function reviewSuppressedIncidents(
       result,
     });
   }
+}
+
+async function findReviewedLaterConfirmation(
+  client: { query: (sql: string, values?: unknown[]) => Promise<any> },
+  candidate: ObservationRow,
+): Promise<ObservationRow | undefined> {
+  const { rows } = await client.query(
+    `SELECT later.id, later.host_id, later.created_at, later.coverage,
+            later.normalization_version, later.decision, later.normalized,
+            FALSE AS evidence_oversized
+       FROM ${OBSERVATIONS} AS later
+      WHERE later.bay_id=$1 AND later.host_id=$2
+        AND later.coverage='complete'
+        AND later.normalization_version=$5
+        AND (later.created_at, later.id) > ($3::timestamptz, $4::uuid)
+        AND later.created_at <=
+            $3::timestamptz + ($6::double precision * INTERVAL '1 millisecond')
+        AND later.decision IS NOT NULL AND later.normalized IS NOT NULL
+        AND jsonb_typeof(later.normalized->'signals')='object'
+        AND pg_column_size(later.decision) <= $7
+        AND pg_column_size(later.normalized) <= $7
+        AND octet_length(later.decision::text) <= $8
+        AND octet_length(later.normalized::text) <= $8
+        AND COALESCE(jsonb_typeof(later.decision->'actionable_delta'), 'null')='null'
+        AND EXISTS (
+          SELECT 1 FROM ${FINDINGS} AS reviewed
+           WHERE reviewed.observation_id=later.id
+        )
+      ORDER BY later.created_at, later.id
+      LIMIT 1`,
+    [
+      getConfiguredBayId(),
+      candidate.host_id,
+      candidate.created_at,
+      candidate.id,
+      candidate.normalization_version,
+      PERSISTENCE_WINDOW_MS,
+      MAX_STORED_PHYSICAL_BYTES,
+      MAX_STORED_JSON_BYTES,
+    ],
+  );
+  return (rows as ObservationRow[])[0];
+}
+
+async function recordPersistenceCorrelation(
+  client: { query: (sql: string, values?: unknown[]) => Promise<any> },
+  {
+    observation,
+    candidates,
+    classification,
+    severity,
+    evidence,
+    result,
+  }: {
+    observation: ObservationRow;
+    candidates: CandidateFinding[];
+    classification: "diagnostic" | "actionable";
+    severity: "informational" | "warning" | "critical";
+    evidence: JsonObject;
+    result: HostIntrusionReviewerResult;
+  },
+): Promise<boolean> {
+  const inserted = await insertFinding(client, {
+    observation,
+    ruleId: "persistent-host-state",
+    classification,
+    severity,
+    evidence,
+  });
+  if (inserted) {
+    result.findings += 1;
+    return true;
+  }
+  const { rowCount } = await client.query(
+    `UPDATE ${FINDINGS}
+        SET classification=$2, severity=$3, evidence=$4::jsonb,
+            correlated_at=$5
+      WHERE observation_id = ANY($1::uuid[])
+        AND rule_id='persistent-host-state'
+        AND rule_version=$6
+        AND classification='diagnostic'
+        AND correlated_at IS NULL`,
+    [
+      candidates.map((candidate) => candidate.observation_id),
+      classification,
+      severity,
+      JSON.stringify(evidence),
+      observation.created_at,
+      RULE_VERSION,
+    ],
+  );
+  return (rowCount ?? 0) > 0;
 }
 
 async function reviewObservation(
@@ -1080,20 +1196,30 @@ async function reviewObservation(
       omitted_category_count: boundedActionableDelta.omitted_category_count,
       truncated_string_count: boundedActionableDelta.truncated_string_count,
     };
-    if (
-      await insertFinding(client, {
-        observation,
-        ruleId: "persistent-host-state",
-        classification: "diagnostic",
-        severity: "warning",
-        evidence,
-      })
-    ) {
+    const inserted = await insertFinding(client, {
+      observation,
+      ruleId: "persistent-host-state",
+      classification: "diagnostic",
+      severity: "warning",
+      evidence,
+    });
+    if (inserted) {
       result.findings += 1;
+      const confirmation = await findReviewedLaterConfirmation(
+        client,
+        observation,
+      );
+      if (confirmation) {
+        await reviewObservation(client, confirmation, result);
+      }
     }
-  } else if (observation.coverage === "complete" && observation.normalized) {
+  } else if (
+    observation.coverage === "complete" &&
+    normalizedSignals(observation.normalized) != null
+  ) {
     const { rows } = await client.query(
-      `SELECT findings.observation_id, findings.evidence
+      `SELECT findings.observation_id, source.created_at AS source_created_at,
+              findings.evidence
          FROM ${FINDINGS} AS findings
          JOIN ${OBSERVATIONS} AS source
            ON source.id=findings.observation_id
@@ -1118,10 +1244,7 @@ async function reviewObservation(
         observation.normalization_version,
       ],
     );
-    const candidates = (rows as CandidateFinding[]).filter((row) => {
-      const delta = boundedDelta(row.evidence.delta);
-      return delta != null && allChangesRemain(delta, observation.normalized);
-    });
+    const candidates = rows as CandidateFinding[];
     if (candidates.length) {
       const activeCandidates: Array<{
         candidate: CandidateFinding;
@@ -1132,7 +1255,12 @@ async function reviewObservation(
         if (delta == null) continue;
         const activeDelta = await remainingDeltaAfterLaterCompleteStates(
           client,
-          observation,
+          {
+            id: candidate.observation_id,
+            host_id: observation.host_id,
+            created_at: candidate.source_created_at,
+            normalization_version: observation.normalization_version,
+          },
           delta,
         );
         if (activeDelta != null) {
@@ -1140,21 +1268,22 @@ async function reviewObservation(
         }
       }
       if (!activeCandidates.length) {
-        const inserted = await insertFinding(client, {
+        const evidence = {
+          status: "superseded",
+          reason: "newer_complete_observation_recovered_candidate_evidence",
+          candidate_observation_ids: candidates.map(
+            (candidate) => candidate.observation_id,
+          ),
+        };
+        const recorded = await recordPersistenceCorrelation(client, {
           observation,
-          ruleId: "persistent-host-state",
+          candidates,
           classification: "diagnostic",
           severity: "informational",
-          evidence: {
-            status: "superseded",
-            reason: "newer_complete_observation_recovered_candidate_evidence",
-            candidate_observation_ids: candidates.map(
-              (candidate) => candidate.observation_id,
-            ),
-          },
+          evidence,
+          result,
         });
-        if (inserted) {
-          result.findings += 1;
+        if (recorded) {
           await client.query(
             `UPDATE ${FINDINGS}
                 SET correlated_at=$2
@@ -1222,16 +1351,15 @@ async function reviewObservation(
             0,
           ),
       };
-      if (
-        await insertFinding(client, {
-          observation,
-          ruleId: "persistent-host-state",
-          classification: "actionable",
-          severity,
-          evidence,
-        })
-      ) {
-        result.findings += 1;
+      const recorded = await recordPersistenceCorrelation(client, {
+        observation,
+        candidates,
+        classification: "actionable",
+        severity,
+        evidence,
+        result,
+      });
+      if (recorded) {
         await client.query(
           `UPDATE ${FINDINGS}
               SET correlated_at=$2
@@ -1786,7 +1914,11 @@ export async function getHostIntrusionReviewReport({
          COUNT(*) FILTER (
            WHERE state='suppressed' AND suppression_expires_at >= NOW() AND
                  suppression_expires_at < NOW() + INTERVAL '24 hours'
-         )::integer AS expiring_suppressions
+         )::integer AS expiring_suppressions,
+         COUNT(*) FILTER (
+           WHERE state='suppressed' AND
+                 (suppression_expires_at IS NULL OR suppression_expires_at < NOW())
+         )::integer AS expired_suppressions
        FROM ${INCIDENTS}
        WHERE bay_id=$1`,
       [bayId],
@@ -1906,6 +2038,7 @@ export async function getHostIntrusionReviewReport({
       critical: Number(incidentCounts.critical ?? 0),
       stale: Number(incidentCounts.stale ?? 0),
       expiring_suppressions: Number(incidentCounts.expiring_suppressions ?? 0),
+      expired_suppressions: Number(incidentCounts.expired_suppressions ?? 0),
     },
     incidents: incidents.rows
       .slice(0, MAX_REPORT_INCIDENTS)

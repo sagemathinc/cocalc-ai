@@ -700,6 +700,7 @@ export interface HostIntrusionReviewReport {
     critical: number;
     stale: number;
     expiring_suppressions: number;
+    expired_suppressions: number;
   };
   incidents: Array<{
     id: string;

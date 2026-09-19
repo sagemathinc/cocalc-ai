@@ -27,6 +27,7 @@ export function classifyHostIntrusionReviewHealth(
     return "warning";
   }
   if (report.collector_coverage.overdue_hosts > 0) return "warning";
+  if (report.incident_summary.expired_suppressions > 0) return "warning";
   if (
     report.collector_coverage.active_hosts > 0 &&
     report.collector_coverage.observed_hosts === 0

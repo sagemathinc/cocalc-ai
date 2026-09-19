@@ -30,6 +30,15 @@ function report(
       latest_observation_at: new Date().toISOString(),
       latest_observation_age_ms: 1000,
     },
+    incident_summary: {
+      open: 0,
+      acknowledged: 0,
+      suppressed: 0,
+      critical: 0,
+      stale: 0,
+      expiring_suppressions: 0,
+      expired_suppressions: 0,
+    },
     ...overrides,
   } as HostIntrusionReviewReport;
 }
@@ -73,6 +82,18 @@ describe("host intrusion review health", () => {
             observed_hosts: 2,
             overdue_hosts: 1,
           } as HostIntrusionReviewReport["collector_coverage"],
+        }),
+      ),
+    ).toBe("warning");
+  });
+
+  it("warns when a suppression has expired without lifecycle review", () => {
+    expect(
+      classifyHostIntrusionReviewHealth(
+        report({
+          incident_summary: {
+            expired_suppressions: 1,
+          } as HostIntrusionReviewReport["incident_summary"],
         }),
       ),
     ).toBe("warning");
