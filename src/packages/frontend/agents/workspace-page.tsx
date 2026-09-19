@@ -482,6 +482,7 @@ function NewAgentPanel({
     });
     if (!threadId) throw new Error("Unable to create the agent thread");
     await chatActions.syncdb?.save();
+    await chatActions.save_to_disk();
     const created = { projectId: targetProjectId, path, threadId };
     writeAgentSubscriptionSelection({
       accountId: boundAccount.accountId,
@@ -537,6 +538,7 @@ function NewAgentPanel({
       });
       if (sent) {
         await actions.syncdb?.save();
+        await actions.save_to_disk();
       } else {
         await writeChatComposerDraft({
           account_id: boundAccount.accountId,
@@ -1754,6 +1756,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         selectNewThread: false,
       });
       await actions.syncdb?.save();
+      await actions.save_to_disk();
       writeAgentSubscriptionSelection({
         accountId,
         projectId: copyingAgent.endpoint.project_id,
