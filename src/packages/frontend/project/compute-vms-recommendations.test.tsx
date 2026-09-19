@@ -1,11 +1,5 @@
 import "@testing-library/jest-dom";
-import {
-  act,
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { VmCreateModal } from "./compute-vms";
 import {
@@ -104,12 +98,8 @@ it("carries a selected recommendation through the real create form without chang
     },
     { timeout: 5_000 },
   );
-  act(() => select.focus());
-  fireEvent.keyDown(select, { key: "ArrowDown", keyCode: 40, which: 40 });
-  await screen.findAllByText("Notebook CPU");
-  fireEvent.keyDown(select, { key: "ArrowDown", keyCode: 40, which: 40 });
-  fireEvent.keyDown(select, { key: "Enter", keyCode: 13, which: 13 });
   await waitFor(() => expect(mockGetCatalog).toHaveBeenCalledTimes(1));
+  expect(select.closest(".ant-select")).toHaveTextContent("Notebook CPU");
   expect(
     screen.getByRole("button", { name: "Create VM", exact: true }),
   ).toBeDisabled();

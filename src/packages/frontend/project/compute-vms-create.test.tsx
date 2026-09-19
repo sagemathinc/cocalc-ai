@@ -67,6 +67,10 @@ it("distinguishes loading, unknown failure, and a ready catalog", async () => {
   expect(
     screen.getByRole("button", { name: "Create VM", exact: true }),
   ).toBeEnabled();
+  expect(screen.getByRole("checkbox", { name: "Stop after" })).toBeChecked();
+  expect(
+    screen.getByRole("spinbutton", { name: "Stop after hours" }),
+  ).toHaveValue("6");
 });
 
 it("opens the real VM form without a catalog but blocks creation", () => {

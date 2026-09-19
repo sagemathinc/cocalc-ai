@@ -21,6 +21,7 @@ export function CourseVmTemplateSelect({
   onApply,
   onPendingChange,
   resetKey,
+  defaultToFirst = false,
   getCatalog = () => webapp_client.conat_client.hub.compute.getCatalog({}),
 }: {
   templates: CourseVmTemplate[];
@@ -30,6 +31,7 @@ export function CourseVmTemplateSelect({
   onApply: (config: CourseVmTemplateConfig, catalog: ComputeCatalog) => void;
   onPendingChange?: (pending: boolean) => void;
   resetKey?: number;
+  defaultToFirst?: boolean;
   getCatalog?: () => Promise<ComputeCatalog>;
 }) {
   const [selected, setSelected] = useState<string>("");
@@ -39,24 +41,15 @@ export function CourseVmTemplateSelect({
     useState<ReturnType<typeof quoteCourseVmTemplate>>();
   const [checkedAt, setCheckedAt] = useState<Date>();
   const request = useRef(0);
-  const pricing = useHostPricingSettings();
   const templateVersion = JSON.stringify(templates);
+  const selectionIdentity = `${sourceKey}:${templateVersion}`;
+  const previousSelectionIdentity = useRef(selectionIdentity);
+  const previousResetKey = useRef(resetKey);
+  const pricing = useHostPricingSettings();
   useEffect(() => {
     onPendingChange?.(busy);
   }, [busy, onPendingChange]);
   useEffect(() => () => onPendingChange?.(false), [onPendingChange]);
-  useEffect(() => {
-    request.current++;
-    setSelected("");
-    setError("");
-    setQuote(undefined);
-    setCheckedAt(undefined);
-    setBusy(false);
-    return () => {
-      request.current++;
-    };
-  }, [sourceKey, templateVersion, resetKey]);
-
   async function choose(id: string, alternative?: CourseVmTemplateConfig) {
     const version = ++request.current;
     setSelected(id);
@@ -98,6 +91,36 @@ export function CourseVmTemplateSelect({
       if (request.current === version) setBusy(false);
     }
   }
+  const chooseRef = useRef(choose);
+  chooseRef.current = choose;
+  useEffect(() => {
+    request.current++;
+    setSelected("");
+    setError("");
+    setQuote(undefined);
+    setCheckedAt(undefined);
+    setBusy(false);
+    const first = templates[0];
+    if (defaultToFirst && first) void chooseRef.current(first.id);
+    return () => {
+      request.current++;
+    };
+  }, [defaultToFirst, selectionIdentity]);
+  useEffect(() => {
+    if (previousSelectionIdentity.current !== selectionIdentity) {
+      previousSelectionIdentity.current = selectionIdentity;
+      previousResetKey.current = resetKey;
+      return;
+    }
+    if (Object.is(previousResetKey.current, resetKey)) return;
+    previousResetKey.current = resetKey;
+    request.current++;
+    setSelected("");
+    setError("");
+    setQuote(undefined);
+    setCheckedAt(undefined);
+    setBusy(false);
+  }, [resetKey, selectionIdentity]);
   const recommendation = templates.find((item) => item.id === selected);
   return (
     <section

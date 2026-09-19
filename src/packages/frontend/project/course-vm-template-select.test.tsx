@@ -28,6 +28,40 @@ async function choose(user: ReturnType<typeof userEvent.setup>) {
   fireEvent.keyDown(select, { key: "ArrowDown", keyCode: 40, which: 40 });
   fireEvent.keyDown(select, { key: "Enter", keyCode: 13, which: 13 });
 }
+it("defaults once to the first recommendation and preserves custom edits", async () => {
+  const onApply = jest.fn();
+  const getCatalog = jest.fn().mockResolvedValue(catalog);
+  const props = {
+    templates: [template],
+    sourceKey: "course",
+    defaultToFirst: true,
+    onApply,
+    getCatalog,
+  };
+  const view = render(<CourseVmTemplateSelect {...props} />);
+  await waitFor(() => expect(onApply).toHaveBeenCalledTimes(1));
+  const select = screen.getByRole("combobox", {
+    name: "Recommended VM configuration",
+  });
+  expect(select.closest(".ant-select")).toHaveTextContent("Notebook CPU");
+
+  act(() => select.focus());
+  fireEvent.keyDown(select, { key: "ArrowDown", keyCode: 40, which: 40 });
+  fireEvent.keyDown(select, { key: "ArrowUp", keyCode: 38, which: 38 });
+  fireEvent.keyDown(select, { key: "Enter", keyCode: 13, which: 13 });
+  await waitFor(() =>
+    expect(select.closest(".ant-select")).toHaveTextContent(
+      "Custom configuration",
+    ),
+  );
+  expect(onApply).toHaveBeenCalledTimes(1);
+
+  view.rerender(<CourseVmTemplateSelect {...props} resetKey={1} />);
+  expect(select.closest(".ant-select")).toHaveTextContent(
+    "Custom configuration",
+  );
+  expect(getCatalog).toHaveBeenCalledTimes(1);
+});
 it("selects by keyboard, fetches a fresh quote and applies hardware only", async () => {
   const user = userEvent.setup();
   const onApply = jest.fn();

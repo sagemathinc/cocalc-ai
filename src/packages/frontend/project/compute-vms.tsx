@@ -939,6 +939,7 @@ export function VmCreateModal({
               sourceKey={`${recommendedSource.payer_account_id}:${recommendedSource.pool_id}:${recommendedSource.grant_id}`}
               fundingMode={draft.funding_mode}
               disabled={saving}
+              defaultToFirst
               onPendingChange={setRecommendationPending}
               resetKey={recommendationEditVersion}
               onApply={(config, freshCatalog) => {
@@ -1716,6 +1717,11 @@ export function VmCreateModal({
               : "Price estimate unavailable for this selection"}
           </Button>
         </Popover>
+        {!recommendationMode && (
+          <Form.Item name="stop_after_minutes" style={{ marginBottom: 8 }}>
+            <VmStopAfter />
+          </Form.Item>
+        )}
         <Collapse
           ghost
           items={[
@@ -1757,35 +1763,27 @@ export function VmCreateModal({
                       </Form.Item>
                     )}
                     {!recommendationMode && (
-                      <>
-                        <Form.Item
-                          name="stop_after_minutes"
-                          style={{ flex: "1 1 260px" }}
-                        >
-                          <VmStopAfter />
-                        </Form.Item>
-                        <Form.Item
-                          name="ttl_minutes"
-                          label="Optional deletion deadline"
-                          extra="Deletion is separate from scheduled stop. Retained disks remain billable after stopping."
-                          style={{ flex: "1 1 260px" }}
-                        >
-                          <Select
-                            allowClear
-                            placeholder="No deadline"
-                            options={[
-                              { value: 30, label: "30 minutes" },
-                              { value: 60, label: "1 hour" },
-                              { value: 240, label: "4 hours" },
-                              { value: 480, label: "8 hours" },
-                              { value: 1440, label: "1 day" },
-                            ].filter(
-                              ({ value }) =>
-                                value <= catalog.limits.max_ttl_minutes,
-                            )}
-                          />
-                        </Form.Item>
-                      </>
+                      <Form.Item
+                        name="ttl_minutes"
+                        label="Optional deletion deadline"
+                        extra="Deletion is separate from scheduled stop. Retained disks remain billable after stopping."
+                        style={{ flex: "1 1 260px" }}
+                      >
+                        <Select
+                          allowClear
+                          placeholder="No deadline"
+                          options={[
+                            { value: 30, label: "30 minutes" },
+                            { value: 60, label: "1 hour" },
+                            { value: 240, label: "4 hours" },
+                            { value: 480, label: "8 hours" },
+                            { value: 1440, label: "1 day" },
+                          ].filter(
+                            ({ value }) =>
+                              value <= catalog.limits.max_ttl_minutes,
+                          )}
+                        />
+                      </Form.Item>
                     )}
                   </Flex>
                   {!recommendationMode && draft.pricing_model === "spot" && (
