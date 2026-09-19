@@ -2,6 +2,7 @@ import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
+import type { AgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 
 export interface AcpAutomationConfig {
   enabled?: boolean;
@@ -505,6 +506,10 @@ export type AcpStreamEvent =
       };
       output?: string;
     }
+  | ({ type: "peerMessage" } & Omit<
+      AgentMessageRuntimeEvent,
+      "type" | "version"
+    >)
   | {
       type: "attention";
       request: AcpAttentionRecord;

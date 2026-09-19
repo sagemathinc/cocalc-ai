@@ -4,6 +4,7 @@ import { randomUUID } from "node:crypto";
 import { Command } from "commander";
 import type { ProjectCommandDeps } from "../project";
 import { registerProjectChatCommands } from "./chat";
+import { parseAgentMessageRuntimeEvents } from "@cocalc/conat/agents/runtime-events";
 
 test("named send uses one scoped attempt and never the human send path", async () => {
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
@@ -39,7 +40,18 @@ test("named send uses one scoped attempt and never the human send path", async (
     },
   } as any);
   const oldExit = process.exitCode;
+  const oldAgentMode = process.env.COCALC_CLI_AGENT_MODE;
+  const oldChatPath = process.env.COCALC_CODEX_CHAT_PATH;
+  const oldThreadId = process.env.COCALC_CODEX_THREAD_ID;
+  let stderr = "";
+  const stderrWrite = mock.method(process.stderr, "write", (chunk: any) => {
+    stderr += `${chunk}`;
+    return true;
+  });
   try {
+    process.env.COCALC_CLI_AGENT_MODE = "1";
+    process.env.COCALC_CODEX_CHAT_PATH = "agent.chat";
+    process.env.COCALC_CODEX_THREAD_ID = randomUUID();
     await program.parseAsync(
       [
         "project",
@@ -59,6 +71,10 @@ test("named send uses one scoped attempt and never the human send path", async (
     assert.equal(attempts[0].action, "send");
     assert.equal(attempts[0].body, "Review this");
     assert.equal(output.outcome, "accepted");
+    const [event] = parseAgentMessageRuntimeEvents(stderr);
+    assert.equal(event.target_name, "reviewer");
+    assert.equal(event.body, "Review this");
+    assert.equal(event.outcome, "accepted");
     await assert.rejects(
       program.parseAsync(
         [
@@ -77,6 +93,13 @@ test("named send uses one scoped attempt and never the human send path", async (
     assert.equal(attempts.length, 1);
   } finally {
     process.exitCode = oldExit;
+    if (oldAgentMode == null) delete process.env.COCALC_CLI_AGENT_MODE;
+    else process.env.COCALC_CLI_AGENT_MODE = oldAgentMode;
+    if (oldChatPath == null) delete process.env.COCALC_CODEX_CHAT_PATH;
+    else process.env.COCALC_CODEX_CHAT_PATH = oldChatPath;
+    if (oldThreadId == null) delete process.env.COCALC_CODEX_THREAD_ID;
+    else process.env.COCALC_CODEX_THREAD_ID = oldThreadId;
+    stderrWrite.mock.restore();
     resolver.mock.restore();
     transport.mock.restore();
   }

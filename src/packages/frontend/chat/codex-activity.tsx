@@ -35,6 +35,7 @@ import { lite } from "@cocalc/frontend/lite";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
 import { ActivityDiff } from "./activity-diff";
 import { activityPathContexts } from "./activity-path-context";
+import { PeerMessageCard, type PeerMessageEvent } from "./peer-message-card";
 
 const { Text } = Typography;
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
@@ -149,6 +150,13 @@ type ActivityEntry =
       time?: number;
       text: string;
       state: AttachedSteerMessage["state"];
+    }
+  | {
+      kind: "peer-message";
+      id: string;
+      seq: number;
+      time?: number;
+      event: PeerMessageEvent;
     };
 
 export interface CodexActivityProps {
@@ -745,6 +753,12 @@ function ActivityRow({
           </div>
         </div>
       );
+    case "peer-message":
+      return (
+        <div data-codex-activity-entry-index={rowIndex}>
+          <PeerMessageCard event={entry.event} />
+        </div>
+      );
     case "diff":
       return (
         <div data-codex-activity-entry-index={rowIndex}>
@@ -1243,6 +1257,15 @@ function createEventEntry({
       entry.time = time ?? entry.time;
     }
     return undefined;
+  }
+  if (event?.type === "peerMessage") {
+    return {
+      kind: "peer-message",
+      id: `peer-message-${event.attempt_id}`,
+      seq,
+      time,
+      event,
+    };
   }
   if (event?.type === "file") {
     return {
@@ -2205,6 +2228,11 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
         break;
       case "steer":
         lines.push(`- Guidance: ${entry.text}`);
+        break;
+      case "peer-message":
+        lines.push(
+          `- Message to ${entry.event.target_name ? `@${entry.event.target_name}` : "agent"} (${entry.event.outcome}): ${entry.event.body}`,
+        );
         break;
       case "subagents":
         lines.push(

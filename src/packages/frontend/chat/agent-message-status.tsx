@@ -27,6 +27,7 @@ import {
 import type { ActivityLogContext } from "./actions/activity-logs";
 import type { CodexLiveLogStatus } from "./use-codex-log";
 import "./agent-message-status.css";
+import { PeerMessageList, type PeerMessageEvent } from "./peer-message-card";
 
 const activityScrollPositions = new Map<string, number>();
 const SCROLL_BOTTOM_SENTINEL = Number.POSITIVE_INFINITY;
@@ -748,6 +749,11 @@ export function AgentMessageStatus({
     activeDescendantThreadIds != null
       ? new Set(activeDescendantThreadIds).size
       : summarizeSubagentEvents(effectiveLogEvents ?? []).active;
+  const peerMessages = (effectiveLogEvents ?? []).flatMap((message) =>
+    message.type === "event" && message.event.type === "peerMessage"
+      ? [message.event as PeerMessageEvent]
+      : [],
+  );
   const backgroundCommands = Math.max(
     0,
     Number.isFinite(backgroundTerminalProcesses)
@@ -822,6 +828,7 @@ export function AgentMessageStatus({
         </div>
       ) : null}
       <AttachedSteerStatusList attachedSteers={attachedSteers} />
+      <PeerMessageList events={peerMessages} />
 
       <Drawer
         title={

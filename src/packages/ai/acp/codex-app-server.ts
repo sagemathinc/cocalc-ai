@@ -24,6 +24,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
+import { parseAgentMessageRuntimeEvents } from "@cocalc/conat/agents/runtime-events";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type {
@@ -2809,6 +2810,7 @@ export class CodexAppServerAgent implements AcpAgent {
     const agentMessageTextById = new Map<string, string>();
     const emittedAsyncAttentionItems = new Set<string>();
     const emittedSubagentEventSignatures = new Set<string>();
+    const emittedPeerMessageAttempts = new Set<string>();
     const latestSubagentEvents = new Map<string, SubagentStreamEvent>();
     const completedTerminals = new Set<string>();
     const emittedFileWrites = new Set<string>();
@@ -3168,6 +3170,30 @@ export class CodexAppServerAgent implements AcpAgent {
         await stream({ type: "event", event });
       };
 
+      const emitPeerMessageEvents = async (output?: string): Promise<void> => {
+        if (!output) return;
+        for (const event of parseAgentMessageRuntimeEvents(output)) {
+          if (emittedPeerMessageAttempts.has(event.attempt_id)) continue;
+          emittedPeerMessageAttempts.add(event.attempt_id);
+          await stream({
+            type: "event",
+            event: {
+              type: "peerMessage",
+              direction: event.direction,
+              target: event.target,
+              target_name: event.target_name,
+              body: event.body,
+              agent_session_id: event.agent_session_id,
+              attempt_id: event.attempt_id,
+              outcome: event.outcome,
+              observed_at: event.observed_at,
+              reason: event.reason,
+              chat_effect: event.chat_effect,
+            },
+          });
+        }
+      };
+
       const reconcileSubagentStates = async (): Promise<void> => {
         if (latestSubagentEvents.size === 0) return;
         let descendants: any[];
@@ -3420,6 +3446,9 @@ export class CodexAppServerAgent implements AcpAgent {
               item.status === "failed" ||
               item.status === "declined"
             ) {
+              await emitPeerMessageEvents(
+                terminalOutputs.get(terminalId) ?? item.aggregatedOutput,
+              );
               completedTerminals.add(terminalId);
               await stream({
                 type: "event",

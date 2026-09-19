@@ -20,6 +20,7 @@ import type {
   AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
 import type { AgentSessionDiscovery } from "@cocalc/conat/agents/personal";
+import { encodeAgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 import {
   isExternalAgentSource,
   validateAgentRpcPreparation,
@@ -389,6 +390,7 @@ export function registerProjectChatCommands(
               ? sendExternalAgentMessage(opts.externalAgent, request)
               : sendIdentityMessage(request, globals.api);
           let target: AgentRpcTarget;
+          let targetName: string | undefined;
           let agent_session_id = opts.agentSession!;
           if (opts.to) {
             const resolved = opts.externalAgent
@@ -403,6 +405,7 @@ export function registerProjectChatCommands(
                   agent_session_id,
                 );
             target = resolved.target;
+            targetName = opts.to.trim().replace(/^@/, "");
             agent_session_id = resolved.agent_session_id;
           } else {
             const destinations = (await send({
@@ -422,6 +425,7 @@ export function registerProjectChatCommands(
                 "Target is not a registered member of the exact Agent Session; no submission attempted",
               );
             target = destination.member.endpoint;
+            targetName = destination.member.name;
           }
           process.stderr.write(
             `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
@@ -489,6 +493,30 @@ export function registerProjectChatCommands(
             ...(snapshots ? { snapshot_payload: snapshots.files } : {}),
           })) as AgentRpcOutcome;
           deps.emitSuccess({ globals }, "project chat send", result);
+          if (
+            process.env.COCALC_CLI_AGENT_MODE === "1" &&
+            process.env.COCALC_CODEX_CHAT_PATH &&
+            process.env.COCALC_CODEX_THREAD_ID
+          ) {
+            process.stderr.write(
+              encodeAgentMessageRuntimeEvent({
+                version: 1,
+                type: "agent-message",
+                direction: "outgoing",
+                target,
+                ...(targetName ? { target_name: targetName } : {}),
+                body: prompt,
+                agent_session_id,
+                attempt_id,
+                outcome: result.outcome,
+                observed_at: result.observed_at,
+                ...(result.reason ? { reason: result.reason } : {}),
+                ...(result.chat_effect
+                  ? { chat_effect: result.chat_effect }
+                  : {}),
+              }),
+            );
+          }
           process.exitCode =
             result.outcome === "accepted"
               ? 0

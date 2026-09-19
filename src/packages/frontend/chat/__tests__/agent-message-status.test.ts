@@ -314,6 +314,39 @@ describe("AgentMessageStatus", () => {
     expect(screen.getByText("Codex activity")).toBeTruthy();
     expect(screen.getByText("use the smaller API")).toBeTruthy();
   });
+
+  it("shows outgoing peer messages while activity is collapsed", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:10",
+        date: 1000,
+        logRefs: {},
+        activityContext: {} as any,
+        logEvents: [
+          {
+            type: "event",
+            seq: 1,
+            event: {
+              type: "peerMessage",
+              direction: "outgoing",
+              target: { project_id: "project", agent_id: "agent" },
+              target_name: "reviewer",
+              body: "Please check the proof.",
+              agent_session_id: "session",
+              attempt_id: "attempt",
+              outcome: "accepted",
+              observed_at: 1,
+            },
+          },
+        ] as any,
+      }),
+    );
+
+    expect(screen.getByText("To @reviewer")).toBeTruthy();
+    expect(screen.getByText("Please check the proof.")).toBeTruthy();
+  });
 });
 
 describe("AttachedSteerStatusList", () => {

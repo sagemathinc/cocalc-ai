@@ -4319,6 +4319,10 @@ export class ChatStreamWriter {
       this.livePreviewBatcher.add(event, { flush: true });
       return;
     }
+    if (event.type === "event" && event.event.type === "peerMessage") {
+      this.livePreviewBatcher.add(event, { flush: true });
+      return;
+    }
     if (event.type === "event" && this.livePreviewText) {
       // The complete activity stream can publish tool and reasoning events
       // independently. Flush text queued before that activity so the inline
