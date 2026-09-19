@@ -306,6 +306,12 @@ import {
 import { buildCodexRuntimeEnv } from "./runtime-env";
 import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
+import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
+
+export {
+  pinCodexCredentialAtAdmission,
+  setCodexCredentialAdmissionResolver,
+} from "./codex-credential-admission";
 
 export {
   acpAdmissionLimitsFromEffectiveLimits,
@@ -8218,7 +8224,7 @@ async function enqueueAutomationRun(
     automation_title: row.title ?? undefined,
     automation_revision: automationSettingsRevision(row),
   };
-  const request: AcpJobRequest =
+  let request: AcpJobRequest =
     row.run_kind === "command"
       ? {
           request_kind: "command",
@@ -8240,6 +8246,8 @@ async function enqueueAutomationRun(
           config: automationConfig,
           chat,
         };
+
+  request = await pinCodexCredentialAtAdmission(request);
 
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(request, admissionLimits),
@@ -10829,11 +10837,12 @@ async function enqueueChatAcpTurn({
   request: AcpRequest;
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<void> {
-  if (!request.chat) {
-    throw new Error("chat metadata is required to enqueue an ACP turn");
-  }
   if (!conatClient) {
     throw new Error("conat client must be initialized");
+  }
+  request = await pinCodexCredentialAtAdmission(request);
+  if (!request.chat) {
+    throw new Error("chat metadata is required to enqueue an ACP turn");
   }
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(

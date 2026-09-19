@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
 import { type ChildProcess } from "node:child_process";
+import { rm } from "node:fs/promises";
 import getLogger from "@cocalc/backend/logger";
 import {
   ensureCodexAuthFileExists,
   ensureCodexCredentialsStoreFile,
-  resolveSubscriptionCodexHome,
+  resolveSubscriptionStagingHome,
   subscriptionRuntime,
 } from "./codex-auth";
-import { pushSubscriptionAuthToRegistry } from "./codex-auth-registry";
+import {
+  acquireCodexDeviceAuthLease,
+  pushSubscriptionAuthToRegistry,
+  releaseCodexDeviceAuthLease,
+} from "./codex-auth-registry";
 import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 import { spawnCodexInProjectContainer } from "./codex-project";
 import { PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME } from "./codex-runtime-paths";
@@ -25,6 +30,8 @@ type DeviceAuthSession = {
   id: string;
   projectId: string;
   accountId: string;
+  credentialId?: string;
+  create: boolean;
   codexHome: string;
   proc: ChildProcess;
   startedAt: number;
@@ -38,13 +45,15 @@ type DeviceAuthSession = {
   userCode?: string;
   syncedToRegistry?: boolean;
   syncError?: string;
+  leaseId: string;
 };
 
 type DeviceAuthVerifier = (opts: {
   projectId: string;
   accountId: string;
   codexHome: string;
-}) => Promise<void>;
+  credentialId?: string;
+}) => Promise<{ descriptorMetadata?: { email?: string } } | void>;
 
 const MAX_OUTPUT_CHARS = 50_000;
 const sessions = new Map<string, DeviceAuthSession>();
@@ -161,10 +170,31 @@ function appendOutput(session: DeviceAuthSession, chunk: string): void {
   updateParsedHints(session);
 }
 
+async function cleanupPendingAuthHome(
+  session: DeviceAuthSession,
+): Promise<void> {
+  try {
+    await rm(session.codexHome, { recursive: true, force: true });
+  } catch (err) {
+    logger.warn("failed to remove pending codex auth directory", {
+      id: session.id,
+      projectId: session.projectId,
+      accountId: session.accountId,
+      err: `${err}`,
+    });
+  }
+  await releaseCodexDeviceAuthLease({
+    projectId: session.projectId,
+    accountId: session.accountId,
+    leaseId: session.leaseId,
+  });
+}
+
 export async function startCodexDeviceAuth(
   projectId: string,
   accountId: string,
   verifySubscriptionAuth?: DeviceAuthVerifier,
+  options: { credentialId?: string; create?: boolean } = {},
 ): Promise<ReturnType<typeof snapshot>> {
   pruneSessions();
   if (sessions.size >= DEVICE_AUTH_MAX_SESSIONS) {
@@ -172,42 +202,80 @@ export async function startCodexDeviceAuth(
       "Too many codex device-auth sessions are active on this host; please retry shortly.",
     );
   }
+  if (
+    [...sessions.values()].some(
+      (session) =>
+        session.accountId === accountId && !isTerminal(session.state),
+    )
+  ) {
+    throw new Error(
+      "A ChatGPT sign-in is already in progress for this CoCalc account.",
+    );
+  }
 
-  const codexHome = resolveSubscriptionCodexHome(accountId);
-  await ensureCodexCredentialsStoreFile(codexHome);
-  await ensureCodexAuthFileExists(codexHome);
+  const id = randomUUID();
+  const create = options.create === true;
+  const credentialId = options.credentialId?.trim() || undefined;
+  if (create && credentialId) {
+    throw new Error("a new sign-in cannot target an existing credential");
+  }
+  const leaseId = await acquireCodexDeviceAuthLease({
+    projectId,
+    accountId,
+    sessionId: id,
+  });
+  // Reconnects must not mutate the live cache until the provider identity has
+  // been checked and the central authority accepts the replacement.
+  const codexHome = resolveSubscriptionStagingHome(accountId, id);
+  try {
+    await ensureCodexCredentialsStoreFile(codexHome);
+    await ensureCodexAuthFileExists(codexHome);
+  } catch (err) {
+    await releaseCodexDeviceAuthLease({ projectId, accountId, leaseId });
+    throw err;
+  }
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
   // while performing device login.
   const authRuntime = subscriptionRuntime({
     projectId,
     accountId,
     codexHome,
+    credentialId,
   });
 
-  const spawned = await spawnCodexInProjectContainer({
-    projectId,
-    accountId,
-    args: ["login", "--device-auth"],
-    // Keep this process-specific. Normal Codex turns retain project-local
-    // sessions, while device login writes only to the protected host cache.
-    execOnlyEnv: {
-      CODEX_HOME: PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME,
-    },
-    authRuntime,
-    touchReason: "codex-device-auth",
-  });
-  const id = randomUUID();
+  let spawned;
+  try {
+    spawned = await spawnCodexInProjectContainer({
+      projectId,
+      accountId,
+      args: ["login", "--device-auth"],
+      // Keep this process-specific. Normal Codex turns retain project-local
+      // sessions, while device login writes only to the protected host cache.
+      execOnlyEnv: {
+        CODEX_HOME: PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME,
+      },
+      authRuntime,
+      touchReason: "codex-device-auth",
+    });
+  } catch (err) {
+    await rm(codexHome, { recursive: true, force: true }).catch(() => {});
+    await releaseCodexDeviceAuthLease({ projectId, accountId, leaseId });
+    throw err;
+  }
   const proc = spawned.proc;
   const session: DeviceAuthSession = {
     id,
     projectId,
     accountId,
+    credentialId,
+    create,
     codexHome,
     proc,
     startedAt: Date.now(),
     updatedAt: Date.now(),
     state: "pending",
     output: "",
+    leaseId,
   };
   sessions.set(id, session);
 
@@ -223,6 +291,7 @@ export async function startCodexDeviceAuth(
       accountId,
       err: `${err}`,
     });
+    void cleanupPendingAuthHome(session);
   });
   proc.on("exit", (code, signal) => {
     session.exitCode = code;
@@ -241,12 +310,24 @@ export async function startCodexDeviceAuth(
       });
       void (async () => {
         try {
+          const verification = verifySubscriptionAuth
+            ? await verifySubscriptionAuth({
+                projectId: session.projectId,
+                accountId: session.accountId,
+                codexHome: session.codexHome,
+                credentialId: session.credentialId,
+              })
+            : undefined;
+          if (sessions.get(session.id)?.state === "canceled") return;
           const result = await pushSubscriptionAuthToRegistry({
             projectId: session.projectId,
             accountId: session.accountId,
+            credentialId: session.credentialId,
+            create: session.create,
             codexHome: session.codexHome,
+            descriptorMetadata: verification?.descriptorMetadata,
           });
-          if (session.state === "canceled") return;
+          if (sessions.get(session.id)?.state === "canceled") return;
           session.syncedToRegistry = result.ok;
           if (!result.ok) {
             session.state = "failed";
@@ -257,16 +338,8 @@ export async function startCodexDeviceAuth(
             session.updatedAt = Date.now();
             return;
           }
+          session.credentialId = result.id;
           session.syncError = undefined;
-          if (verifySubscriptionAuth) {
-            await verifySubscriptionAuth({
-              projectId: session.projectId,
-              accountId: session.accountId,
-              codexHome: session.codexHome,
-            });
-            const current = sessions.get(session.id);
-            if (!current || current.state === "canceled") return;
-          }
           session.state = "completed";
           session.updatedAt = Date.now();
         } catch (err) {
@@ -285,6 +358,8 @@ export async function startCodexDeviceAuth(
           session.error =
             "ChatGPT sign-in succeeded, but CoCalc could not verify that Codex can use the saved credential. Please try signing in again.";
           session.updatedAt = Date.now();
+        } finally {
+          await cleanupPendingAuthHome(session);
         }
       })();
     } else {
@@ -296,6 +371,7 @@ export async function startCodexDeviceAuth(
           session.error = `codex login exited with code=${code} signal=${signal}`;
         }
       }
+      void cleanupPendingAuthHome(session);
     }
     logger.debug("codex device auth exited", {
       id,
@@ -315,6 +391,8 @@ function snapshot(session: DeviceAuthSession) {
     id: session.id,
     projectId: session.projectId,
     accountId: session.accountId,
+    credentialId: session.credentialId,
+    create: session.create,
     codexHome: session.codexHome,
     state: session.state,
     verificationUrl: session.verificationUrl,
@@ -353,5 +431,6 @@ export function cancelCodexDeviceAuth(id: string): boolean {
       err: `${err}`,
     });
   }
+  void cleanupPendingAuthHome(session);
   return true;
 }

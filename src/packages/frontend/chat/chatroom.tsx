@@ -89,6 +89,11 @@ import {
   useCodexPaymentSource,
 } from "./use-codex-payment-source";
 import {
+  CODEX_SUBSCRIPTION_SELECTION_EVENT,
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "./codex-subscription-selection";
+import {
   acknowledgeThreadAutomation,
   deleteThreadAutomation,
   pauseThreadAutomation,
@@ -1887,6 +1892,24 @@ function ChatPanelContent({
     ? selectedThreadMetadata?.acp_config?.paymentSource
     : newThreadSetup.codexConfig.paymentSource) ??
     "auto") as CodexPaymentSourcePreference;
+  const selectionThreadKey = selectedThreadKey ?? "";
+  const [codexCredentialId, setCodexCredentialId] = useState<
+    string | undefined
+  >();
+  useEffect(() => {
+    const load = () =>
+      setCodexCredentialId(
+        readCodexSubscriptionSelection({
+          accountId: account_id,
+          projectId: project_id,
+          threadKey: selectionThreadKey,
+        }),
+      );
+    load();
+    window.addEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
+    return () =>
+      window.removeEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
+  }, [account_id, project_id, selectionThreadKey]);
   const {
     paymentSource: codexPaymentSource,
     loading: codexPaymentSourceLoading,
@@ -1894,6 +1917,8 @@ function ChatPanelContent({
   } = useCodexPaymentSource({
     projectId: project_id,
     preference: codexPaymentPreference,
+    credentialId:
+      codexPaymentPreference === "subscription" ? codexCredentialId : undefined,
     enabled:
       aiAgentPolicyAllowed &&
       !readOnly &&
@@ -2081,9 +2106,19 @@ function ChatPanelContent({
             fetchCodexPaymentSourceForSubmit({
               projectId: project_id,
               preference: paymentPreference,
+              credentialId:
+                paymentPreference === "subscription"
+                  ? codexCredentialId
+                  : undefined,
             }),
           fetchUsageStatus: () =>
-            getLiveCodexUsageStatus({ projectId: project_id }),
+            getLiveCodexUsageStatus({
+              projectId: project_id,
+              credentialId:
+                paymentPreference === "subscription"
+                  ? codexCredentialId
+                  : undefined,
+            }),
         })
           .then((needsAttention) => {
             if (!needsAttention) return;
@@ -2202,6 +2237,14 @@ function ChatPanelContent({
             actions.getCodexConfig?.(reply_thread_id) ??
             undefined)
           : undefined;
+    if (!reply_thread_id && codexCredentialId) {
+      writeCodexSubscriptionSelection({
+        accountId: account_id,
+        projectId: project_id,
+        threadKey: chatIdentity.thread_id,
+        credentialId: codexCredentialId,
+      });
+    }
     const pendingChatSend: PendingChatSend = {
       project_id,
       path,
@@ -2826,6 +2869,15 @@ function ChatPanelContent({
         }}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
+        codexCredentialId={codexCredentialId}
+        onCodexCredentialIdChange={(credentialId) => {
+          writeCodexSubscriptionSelection({
+            accountId: account_id,
+            projectId: project_id,
+            threadKey: "",
+            credentialId,
+          });
+        }}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}

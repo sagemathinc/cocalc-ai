@@ -87,12 +87,14 @@ import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
+  ensureDefaultExternalCredentialRouted,
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   listAccountExternalCredentialsRouted,
   revokeAccountExternalCredentialRouted,
   revokeExternalCredentialBySelectorRouted,
   upsertExternalCredentialRouted,
+  updateExternalCredentialLabelByIdRouted,
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -6433,6 +6435,34 @@ export async function revokeExternalCredential({
   return { revoked };
 }
 
+export async function updateCodexSubscriptionLabel({
+  account_id,
+  id,
+  label,
+}: {
+  account_id?: string;
+  id: string;
+  label?: string;
+}) {
+  if (!account_id) throw Error("must be signed in");
+  if (!id) throw Error("id must be specified");
+  const normalizedLabel = `${label ?? ""}`.trim();
+  if (normalizedLabel.length > 60) {
+    throw Error("label must be at most 60 characters");
+  }
+  const updated = await updateExternalCredentialLabelByIdRouted({
+    id,
+    selector: {
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    label: normalizedLabel || undefined,
+  });
+  return { updated };
+}
+
 export async function setOpenAiApiKey({
   account_id,
   browser_id,
@@ -6677,10 +6707,12 @@ export async function getCodexPaymentSource({
   account_id,
   project_id,
   preference = "auto",
+  credential_id,
 }: {
   account_id?: string;
   project_id?: string;
   preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credential_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -6693,6 +6725,9 @@ export async function getCodexPaymentSource({
   );
   if (project_id) {
     await assertProjectCollaborator(account_id, project_id);
+  }
+  if (credential_id && preference !== "subscription") {
+    throw Error("credential_id requires the subscription payment source");
   }
 
   const settings = await getServerSettings();
@@ -6795,7 +6830,20 @@ export async function getCodexPaymentSource({
       },
     }),
   ]);
-  const subscriptionCredential = subscriptionCredentials[0];
+  const defaultSubscription = await ensureDefaultExternalCredentialRouted({
+    selector: {
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    metadataKey: "cocalc_default",
+  });
+  const activeDefaultSubscription =
+    defaultSubscription?.revoked == null ? defaultSubscription : undefined;
+  const subscriptionCredential = credential_id
+    ? subscriptionCredentials.find(({ id }) => id === credential_id)
+    : activeDefaultSubscription;
   const hasSubscription = subscriptionCredential != null;
   const subscriptionUpdatedAt = subscriptionCredential
     ? new Date(subscriptionCredential.updated).toISOString()
@@ -6830,8 +6878,10 @@ export async function getCodexPaymentSource({
   } as const;
   let unavailableReason: string | undefined;
   if (preference !== "auto") {
-    if (sourceAvailable[preference]) {
-      source = preference;
+    const requestedSource =
+      preference === "subscription-credential" ? "subscription" : preference;
+    if (sourceAvailable[requestedSource]) {
+      source = requestedSource;
     } else {
       source = "none";
       unavailableReason = `The selected Codex payment source (${preference}) is not configured.`;
@@ -6854,6 +6904,24 @@ export async function getCodexPaymentSource({
     source,
     hasSubscription,
     subscriptionRevision,
+    credentialId: subscriptionCredential?.id,
+    subscriptions: subscriptionCredentials.map((credential) => ({
+      id: credential.id,
+      label:
+        typeof credential.metadata?.label === "string"
+          ? credential.metadata.label
+          : undefined,
+      email:
+        typeof credential.metadata?.email === "string"
+          ? credential.metadata.email
+          : undefined,
+      plan:
+        typeof credential.metadata?.plan_type === "string"
+          ? credential.metadata.plan_type
+          : undefined,
+      isDefault: credential.id === activeDefaultSubscription?.id,
+      updatedAt: new Date(credential.updated).toISOString(),
+    })),
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,
@@ -6891,12 +6959,14 @@ export async function getSiteFundedCodexAdminStatus({
 export async function getCodexUsageStatus({
   account_id,
   project_id,
+  credential_id,
 }: {
   account_id?: string;
   project_id?: string;
   include_models?: boolean;
   refresh_models?: boolean;
   timeout?: number;
+  credential_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -6905,6 +6975,8 @@ export async function getCodexUsageStatus({
   const paymentSource = await getCodexPaymentSource({
     account_id,
     project_id,
+    preference: credential_id ? "subscription" : "auto",
+    credential_id,
   });
   if (paymentSource.source !== "subscription") {
     return {

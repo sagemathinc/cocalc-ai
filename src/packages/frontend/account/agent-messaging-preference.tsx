@@ -3,6 +3,7 @@ import { Alert, Switch } from "antd";
 import { redux } from "@cocalc/frontend/app-framework";
 import { useAgentMessagingUI } from "@cocalc/frontend/agents/use-ui-preference";
 import { AGENT_MESSAGING_UI_SETTING } from "@cocalc/frontend/agents/ui-preference";
+import { Panel } from "@cocalc/frontend/antd-bootstrap";
 
 export function AgentMessagingPreference() {
   const enabled = useAgentMessagingUI();
@@ -10,8 +11,7 @@ export function AgentMessagingPreference() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <section aria-labelledby={`${id}-title`} style={{ marginBlock: 24 }}>
-      <h3 id={`${id}-title`}>Experimental agent messaging</h3>
+    <Panel header="Experimental agent messaging">
       <label id={`${id}-label`} htmlFor={id}>
         Enable experimental agent messaging
       </label>{" "}
@@ -46,6 +46,6 @@ export function AgentMessagingPreference() {
       </p>
       <a href="/settings/my-agents">Inspect, pause or revoke in My Agents</a>
       {error && <Alert role="alert" type="error" title={error} />}
-    </section>
+    </Panel>
   );
 }

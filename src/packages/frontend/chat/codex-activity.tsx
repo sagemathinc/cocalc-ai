@@ -76,6 +76,7 @@ type ActivityEntry =
       sessionMode?: string;
       sandbox?: string;
       workingDirectory?: string;
+      authSource?: string;
     }
   | {
       kind: "diff";
@@ -1167,6 +1168,8 @@ function createEventEntry({
         typeof event.workingDirectory === "string"
           ? event.workingDirectory
           : undefined,
+      authSource:
+        typeof event.authSource === "string" ? event.authSource : undefined,
     };
   }
   if (event?.type === "diff") {
@@ -1639,7 +1642,28 @@ function buildConfigTags(entry: Extract<ActivityEntry, { kind: "config" }>) {
   if (entry.sandbox) {
     tags.push({ key: "sandbox", label: `Sandbox ${entry.sandbox}` });
   }
+  const funding = formatFundingSource(entry.authSource);
+  if (funding) {
+    tags.push({ key: "funding", label: `Funding ${funding}`, color: "green" });
+  }
   return tags;
+}
+
+function formatFundingSource(source?: string): string | undefined {
+  switch (source) {
+    case "subscription":
+      return "ChatGPT Plan";
+    case "site-api-key":
+      return "CoCalc Membership";
+    case "project-api-key":
+      return "Project API key";
+    case "account-api-key":
+      return "Account API key";
+    case "shared-home":
+      return "Shared Codex home";
+    default:
+      return source ? source.replaceAll("-", " ") : undefined;
+  }
 }
 
 function formatConfigSummary(
@@ -1665,6 +1689,10 @@ function formatConfigSummary(
   }
   if (entry.sandbox) {
     parts.push(`sandbox ${entry.sandbox}`);
+  }
+  const funding = formatFundingSource(entry.authSource);
+  if (funding) {
+    parts.push(`funding ${funding}`);
   }
   if (entry.workingDirectory) {
     parts.push(`cwd ${formatPathMarkdown(entry.workingDirectory)}`);
