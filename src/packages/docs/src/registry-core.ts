@@ -130,7 +130,8 @@ export function createDocsRegistry(entries: readonly DocsEntry[]) {
     limit = 8,
     access: DocsAccess = {},
   ): DocsSearchResult[] {
-    const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const normalizedQuery = query.trim().toLowerCase();
+    const terms = normalizedQuery.split(/\s+/).filter(Boolean);
     const entries = listDocsEntries(access);
 
     if (terms.length === 0) {
@@ -153,7 +154,7 @@ export function createDocsRegistry(entries: readonly DocsEntry[]) {
       );
       return (
         termScore +
-        (phraseWeight && haystack.includes(query) ? phraseWeight : 0)
+        (phraseWeight && haystack.includes(normalizedQuery) ? phraseWeight : 0)
       );
     };
 
