@@ -10837,13 +10837,13 @@ async function enqueueChatAcpTurn({
   request: AcpRequest;
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<void> {
-  if (!request.chat) {
-    throw new Error("chat metadata is required to enqueue an ACP turn");
-  }
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
   request = await pinCodexCredentialAtAdmission(request);
+  if (!request.chat) {
+    throw new Error("chat metadata is required to enqueue an ACP turn");
+  }
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(
       request,
