@@ -18,6 +18,7 @@ import type {
 } from "@cocalc/util/db-schema/api-keys";
 import { type UserSearchResult } from "@cocalc/util/db-schema/accounts";
 import type { AccountEntitlementOverride } from "./purchases";
+import type { FundingApprovalReadiness } from "./compute-funding";
 import type {
   ProjectRootfsStateEntry,
   ProjectRootfsPublishLroRef,
@@ -70,6 +71,7 @@ export const system = {
   recordUxLatencyEvent: authFirstRequireAccount,
   getUxLatencySummary: authFirstRequireAccount,
   getLaunchHealth: authFirstRequireAccount,
+  getFundingApprovalReadiness: authFirstRequireAccount,
   getBillingAuthorityStatus: authFirstRequireAccount,
   drainBillingAuthority: authFirstRequireAccount,
   resumeBillingAuthority: authFirstRequireAccount,
@@ -2214,6 +2216,11 @@ export interface System {
     alert_window_hours?: number;
     window_minutes?: number;
   }) => Promise<LaunchHealthStatus>;
+
+  getFundingApprovalReadiness: (opts?: {
+    account_id?: string;
+    force?: boolean;
+  }) => Promise<FundingApprovalReadiness>;
 
   getBillingAuthorityStatus: (opts?: {
     account_id?: string;

@@ -3,6 +3,9 @@
  * License: MS-RSL - see LICENSE.md for details
  */
 
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
+import { normalizeCloudflareHostname } from "@cocalc/server/cloud/derived-domains";
+
 export interface FundingApprovalListenerConfig {
   origin: string;
   listen_host: "127.0.0.2";
@@ -11,6 +14,44 @@ export interface FundingApprovalListenerConfig {
   trusted_proxy_ip?: "127.0.0.1" | "127.0.0.2";
   application_origins: string[];
   webauthn_rp_id?: string;
+}
+
+export type FundingApprovalConfiguration =
+  | {
+      state: "configured";
+      source: "environment" | "managed-cloudflare";
+      config: FundingApprovalListenerConfig;
+    }
+  | {
+      state: "disabled" | "configuration_required";
+      source: "environment" | "managed-cloudflare";
+      reason: string;
+    };
+
+const DEFAULT_FUNDING_APPROVAL_PORT = 19212;
+export const FUNDING_APPROVAL_HEALTH_PATH =
+  "/.well-known/cocalc-financial-approval-health";
+export const FUNDING_APPROVAL_HEALTH_SERVICE = "cocalc-financial-approval";
+
+function clean(value: unknown): string | undefined {
+  const text = `${value ?? ""}`.trim();
+  return text || undefined;
+}
+
+function enabled(value: unknown): boolean {
+  if (value === true) return true;
+  const text = clean(value)?.toLowerCase();
+  return !!text && !["0", "false", "no", "off"].includes(text);
+}
+
+export function deriveFundingApprovalHostname(
+  siteHostname: string,
+): string | undefined {
+  const hostname = normalizeCloudflareHostname(siteHostname);
+  if (!hostname) return;
+  const labels = hostname.split(".");
+  if (labels.length <= 2) return `authorize.${hostname}`;
+  return `${labels[0]}-authorize.${labels.slice(1).join(".")}`;
 }
 
 export function fundingApprovalRelatedOrigin(
@@ -114,4 +155,80 @@ export function fundingApprovalConfigFromEnv():
   };
   validateFundingListener(config);
   return config;
+}
+
+export async function resolveFundingApprovalConfiguration(): Promise<FundingApprovalConfiguration> {
+  const explicit = clean(process.env.COCALC_FUNDING_APPROVAL_ENABLED);
+  if (explicit != null) {
+    if (explicit !== "1") {
+      return {
+        state: "disabled",
+        source: "environment",
+        reason: "Secure financial authorization is explicitly disabled.",
+      };
+    }
+    const config = fundingApprovalConfigFromEnv();
+    if (!config) throw new Error("Financial approval configuration is missing");
+    return { state: "configured", source: "environment", config };
+  }
+
+  const settings = await getServerSettings();
+  const stripeConfigured =
+    !!clean(settings.stripe_publishable_key) &&
+    !!clean(settings.stripe_secret_key);
+  if (!stripeConfigured) {
+    return {
+      state: "disabled",
+      source: "managed-cloudflare",
+      reason: "Purchasing is not configured on this site.",
+    };
+  }
+
+  const cloudflareMode = clean(settings.cloudflare_mode)?.toLowerCase();
+  const managedCloudflare =
+    cloudflareMode === "self" ||
+    enabled(settings.project_hosts_cloudflare_tunnel_enabled);
+  const siteHostname = normalizeCloudflareHostname(settings.dns);
+  const cloudflareCredentials =
+    !!clean(settings.project_hosts_cloudflare_tunnel_account_id) &&
+    !!clean(settings.project_hosts_cloudflare_tunnel_api_token);
+  if (!managedCloudflare || !siteHostname || !cloudflareCredentials) {
+    return {
+      state: "configuration_required",
+      source: "managed-cloudflare",
+      reason:
+        "Purchasing requires managed Cloudflare DNS and tunnel credentials for secure financial authorization.",
+    };
+  }
+
+  const originOverride = clean(process.env.COCALC_FUNDING_APPROVAL_ORIGIN);
+  const approvalHostname = deriveFundingApprovalHostname(siteHostname);
+  if (!approvalHostname) {
+    return {
+      state: "configuration_required",
+      source: "managed-cloudflare",
+      reason: "The site domain is invalid for financial authorization.",
+    };
+  }
+  const config: FundingApprovalListenerConfig = {
+    origin: originOverride ?? `https://${approvalHostname}`,
+    listen_host: "127.0.0.2",
+    listen_port: Number(
+      clean(process.env.COCALC_FUNDING_APPROVAL_PORT) ??
+        DEFAULT_FUNDING_APPROVAL_PORT,
+    ),
+    trusted_proxy_ip: (clean(process.env.COCALC_FUNDING_APPROVAL_PROXY_IP) ??
+      "127.0.0.1") as FundingApprovalListenerConfig["trusted_proxy_ip"],
+    application_origins: (
+      clean(process.env.COCALC_FUNDING_APPROVAL_APPLICATION_ORIGINS) ??
+      `https://${siteHostname}`
+    )
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean),
+    webauthn_rp_id:
+      clean(process.env.COCALC_FUNDING_APPROVAL_WEBAUTHN_RP_ID) ?? siteHostname,
+  };
+  validateFundingListener(config);
+  return { state: "configured", source: "managed-cloudflare", config };
 }

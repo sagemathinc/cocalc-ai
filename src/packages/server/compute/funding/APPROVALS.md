@@ -1,15 +1,27 @@
 # Trusted Financial Approval
 
-Disabled unless `COCALC_FUNDING_APPROVAL_ENABLED=1`. This is a dedicated HTTP
-listener, not an Express router installed on the application origin.
+This is a dedicated HTTP listener, not an Express router installed on the
+application origin. When Stripe purchasing and CoCalc-managed Cloudflare are
+configured, the service is enabled automatically. It derives a
+certificate-friendly approval hostname from the External Domain Name, creates
+the proxied tunnel DNS record, and uses the isolated loopback listener on port 19212. For example, `cocalc.ai` uses `authorize.cocalc.ai`, while
+`staging.cocalc.ai` uses `staging-authorize.cocalc.ai`.
+
+`COCALC_FUNDING_APPROVAL_ENABLED=1` remains the explicit configuration path for
+manual reverse proxies and local development. Setting it to any other value
+explicitly disables automatic configuration. The other
+`COCALC_FUNDING_APPROVAL_*` variables override individual automatic defaults.
 `server/conat/index.ts:initConatApi` awaits `initCourseFundingApprovalService`.
 With centralized billing enabled, only seed-bay API workers register the
 Postgres-backed proposal/status service and its primary worker listens;
 attached bays route financial commands to the seed. Without centralized
 billing, each payer-home bay registers the service and its primary worker
 listens.
-`stopCourseFundingApprovalService` closes the listener and unregisters the service;
-normal process exit also closes its sockets. Restart the hub after changing config.
+`stopCourseFundingApprovalService` closes the listener and unregisters the
+service; normal process exit also closes its sockets. The admin **Verify**
+action and `cocalc admin financial-approval status --force` initialize a
+previously inactive listener after first-time settings changes. Restart the hub
+after changing an already active approval origin or listener configuration.
 
 ## RPC Contract
 
@@ -151,12 +163,12 @@ forwarded headers, and requests delivered through the normal hub listener.
 
 ## Isolated HTTPS
 
-Example configuration, only after deployment/security review:
+Manual proxy configuration, only after deployment/security review:
 
 ```sh
 export COCALC_FUNDING_APPROVAL_ENABLED=1
 export COCALC_FUNDING_APPROVAL_ORIGIN=https://approve-bay0.example.org
-export COCALC_FUNDING_APPROVAL_PORT=19202
+export COCALC_FUNDING_APPROVAL_PORT=19212
 export COCALC_FUNDING_APPROVAL_PROXY_IP=127.0.0.1
 export COCALC_FUNDING_APPROVAL_APPLICATION_ORIGINS=https://bay0.example.org
 export COCALC_FUNDING_APPROVAL_WEBAUTHN_RP_ID=bay0.example.org
@@ -171,7 +183,7 @@ certificate-compatible sibling hostnames without weakening server-side RP ID
 or origin verification. Older browsers without Related Origin Requests can use
 password, email code, authenticator code, or recovery code instead. Provision
 DNS and a TLS certificate for the dedicated origin. Route **all** its
-traffic to `http://127.0.0.2:19202` using a trusted, same-machine proxy connecting
+traffic to `http://127.0.0.2:19212` using a trusted, same-machine proxy connecting
 from the configured loopback IP. Preserve `Host: approve-bay0.example.org`, strip
 `Forwarded` and `X-Forwarded-Host`, and replace `X-Forwarded-Proto` with `https`.
 Never preserve a client-supplied forwarding header. No user files, notebook
@@ -256,6 +268,17 @@ complete section-9 financial workflow before release. In particular, downstream
 receipt delivery, supported passwordless auth methods, account portability,
 and policy/retention changes across outstanding intents require coordinated
 verification. These are not reasons to permit same-origin approval.
+
+Before release, verify the live listener, TLS certificate, public tunnel route,
+and isolated health response with:
+
+```sh
+cocalc admin financial-approval status --force
+```
+
+The command exits unsuccessfully unless the public approval origin reaches the
+expected isolated listener. It does not create an intent, authorize spending,
+or call Stripe.
 
 Focused verification:
 

@@ -20,6 +20,12 @@ describe("billing authority operation classification", () => {
     expect(
       isBillingAuthorityHubApiRead("computeFunding.proposeAllocation"),
     ).toBe(false);
+    expect(
+      isBillingAuthorityHubApiCall("system.getFundingApprovalReadiness"),
+    ).toBe(true);
+    expect(
+      isBillingAuthorityHubApiRead("system.getFundingApprovalReadiness"),
+    ).toBe(true);
     expect(isBillingAuthorityHubApiCall("computeFunding.notARealMethod")).toBe(
       false,
     );

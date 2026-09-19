@@ -17,6 +17,8 @@ const mockStatus = jest.fn();
 const mockPreviewChange = jest.fn();
 const mockProposeChange = jest.fn();
 const mockHasPoolChangeApproval = jest.fn();
+let mockApprovalAvailable = true;
+const mockApprovalReadiness = jest.fn();
 const mockGetPoolChangeOperation = jest.fn();
 const mockApplyPoolChange = jest.fn();
 const mockPrepareRecipients = jest.fn();
@@ -92,11 +94,15 @@ jest.mock("@cocalc/server/compute/funding/policy", () => ({
   getComputeFundingPolicyInTransaction: (...args) => mockPolicy(...args),
 }));
 jest.mock("@cocalc/server/compute/funding/approvals", () => ({
+  courseFundingApprovalAvailable: () => mockApprovalAvailable,
   proposeCourseFundingAllocation: (...args) => mockPropose(...args),
   getCourseFundingAllocationStatus: (...args) => mockStatus(...args),
   proposeCourseFundingPoolChange: (...args) => mockProposeChange(...args),
   hasCourseFundingPoolChangeApproval: (...args) =>
     mockHasPoolChangeApproval(...args),
+}));
+jest.mock("@cocalc/server/compute/funding/approval-startup", () => ({
+  getFundingApprovalReadiness: (...args) => mockApprovalReadiness(...args),
 }));
 jest.mock("@cocalc/server/compute/funding/pool-changes", () => ({
   ...jest.requireActual("@cocalc/server/compute/funding/pool-changes"),
@@ -161,6 +167,8 @@ beforeEach(() => {
   jest.resetAllMocks();
   mockMultiBay = false;
   mockBillingAuthority = false;
+  mockApprovalAvailable = true;
+  mockApprovalReadiness.mockResolvedValue({ state: "ready" });
   mockCatalog = [{ bay_id: "home" }];
   mockHome.mockResolvedValue({ home_bay_id: "home" });
   mockRegistry.mockResolvedValue([{ bay_id: "home" }, { bay_id: "remote" }]);
@@ -504,6 +512,7 @@ describe("read-only funding projections", () => {
     expect(result).toEqual({
       as_of: now.toISOString(),
       sponsorship: undefined,
+      financial_approval: { state: "ready" },
       pools: [
         {
           id: "pool",
@@ -618,6 +627,17 @@ describe("read-only funding projections", () => {
       }),
     );
     expect(mockProjectBay).not.toHaveBeenCalled();
+  });
+
+  it("applies a within-envelope change when new approval is unavailable", async () => {
+    mockApprovalAvailable = false;
+    await client().proposePoolChange({
+      operation_id: operation,
+      terms: change,
+    });
+    expect(mockHasPoolChangeApproval).not.toHaveBeenCalled();
+    expect(mockPreviewChange).toHaveBeenCalled();
+    expect(mockApplyPoolChange).toHaveBeenCalled();
   });
 
   it("blocks expanded pool previews when the owning project denies access", async () => {

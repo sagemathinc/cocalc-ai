@@ -15,6 +15,7 @@ import type {
   CourseFundingSummary,
   CourseFundingOwnedPools,
 } from "@cocalc/conat/hub/api/compute-funding";
+import { getFundingApprovalReadiness } from "@cocalc/server/compute/funding/approval-startup";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import {
   getConfiguredBayId,
@@ -37,6 +38,7 @@ import {
 import { withFundingAccountTransaction } from "@cocalc/server/compute/funding/backing";
 import { getComputeFundingPolicyInTransaction } from "@cocalc/server/compute/funding/policy";
 import {
+  courseFundingApprovalAvailable,
   proposeCourseFundingAllocation,
   getCourseFundingAllocationStatus,
   hasCourseFundingPoolChangeApproval,
@@ -121,10 +123,11 @@ export async function proposePoolChange(
   // A retry of an approval-backed expansion must recover its existing intent
   // even when the applied operation has already advanced the pool version.
   if (
-    await hasCourseFundingPoolChangeApproval({
+    courseFundingApprovalAvailable() &&
+    (await hasCourseFundingPoolChangeApproval({
       payer_account_id: account_id,
       operation_id,
-    })
+    }))
   ) {
     return await proposeCourseFundingPoolChange({
       payer_account_id: account_id,
@@ -243,7 +246,10 @@ async function readPayerSummary(
     course?.course_project_id ?? null,
     course?.course_instance_id ?? null,
   ];
-  const sponsorship = await getSponsorshipAvailability();
+  const [sponsorship, financial_approval] = await Promise.all([
+    getSponsorshipAvailability(),
+    getFundingApprovalReadiness(),
+  ]);
   return await withFundingAccountTransaction(account_id, async (client) => {
     const { rows: pools } = await client.query<
       Omit<CourseFundingPoolSummary, "grants" | "starts_at" | "ends_at"> & {
@@ -346,6 +352,7 @@ async function readPayerSummary(
     return {
       as_of: clock.as_of.toISOString(),
       sponsorship,
+      financial_approval,
       pools: pools.map((pool) => ({
         id: pool.id,
         course_project_id: pool.course_project_id,

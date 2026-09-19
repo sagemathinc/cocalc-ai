@@ -50,6 +50,7 @@ function api(): jest.Mocked<ComputeFundingApi & CourseVmRecommendationsApi> {
       as_of: new Date().toISOString(),
       pools: [],
       sponsorship: { enabled: true, available: true },
+      financial_approval: { state: "ready" },
     }),
     listSources: jest.fn(),
     previewAllocation: jest.fn().mockImplementation(async ({ terms }) => ({

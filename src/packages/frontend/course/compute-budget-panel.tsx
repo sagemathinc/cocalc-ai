@@ -182,7 +182,13 @@ export function ComputeBudget({
     undefined,
   );
   async function propose() {
-    if (!preview || busy || summary?.sponsorship?.available !== true) return;
+    if (
+      !preview ||
+      busy ||
+      summary?.sponsorship?.available !== true ||
+      summary.financial_approval?.state !== "ready"
+    )
+      return;
     const version = ++generation.current;
     const terms = JSON.stringify(preview.terms);
     if (operation.current?.terms !== terms)
@@ -243,6 +249,7 @@ export function ComputeBudget({
   }
 
   const pending = intent?.status === "pending";
+  const financialApprovalReady = summary?.financial_approval?.state === "ready";
   const stale = summary && now - Date.parse(summary.as_of) > 45_000;
   return (
     <div
@@ -295,6 +302,17 @@ export function ComputeBudget({
             summary.sponsorship?.enabled === false
               ? "You can configure VM recommendations, but instructors cannot allocate course credit until this service is enabled."
               : "CoCalc could not verify that course credit can be allocated safely. Try again later or contact support."
+          }
+        />
+      )}
+      {summary?.sponsorship?.available === true && !financialApprovalReady && (
+        <Alert
+          type="warning"
+          showIcon
+          title="Secure financial authorization is not ready"
+          description={
+            summary.financial_approval?.reason ??
+            "An administrator must finish configuring the secure authorization service before new course credit can be allocated."
           }
         />
       )}
@@ -424,6 +442,7 @@ export function ComputeBudget({
             course_instance_id={course_instance_id}
             students={students}
             api={api}
+            financialApproval={summary.financial_approval}
             onUpdated={() => refreshRef.current()}
           />
         </section>
@@ -660,7 +679,10 @@ export function ComputeBudget({
             type="primary"
             icon={<Icon name="external-link" />}
             loading={busy}
-            disabled={summary?.sponsorship?.available !== true}
+            disabled={
+              summary?.sponsorship?.available !== true ||
+              !financialApprovalReady
+            }
             onClick={() => void propose()}
           >
             Authorize

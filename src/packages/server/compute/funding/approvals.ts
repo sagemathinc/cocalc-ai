@@ -539,8 +539,36 @@ export type FinancialApprovalResult =
 let active:
   | CourseFundingApprovals<CourseFundingApprovalTerms, FinancialApprovalResult>
   | undefined;
+let checkReadiness: (() => Promise<void>) | undefined;
+
+export function registerFundingApprovalReadinessCheck(
+  check: () => Promise<void>,
+): () => void {
+  checkReadiness = check;
+  return () => {
+    if (checkReadiness === check) checkReadiness = undefined;
+  };
+}
+
+async function requireFundingApprovalReadiness(): Promise<void> {
+  await checkReadiness?.();
+}
 
 export function monthlyCollectionApprovalAvailable(): boolean {
+  return active != null;
+}
+
+export async function fundingApprovalPubliclyReady(): Promise<boolean> {
+  if (!active) return false;
+  try {
+    await requireFundingApprovalReadiness();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function courseFundingApprovalAvailable(): boolean {
   return active != null;
 }
 // Server-only dispatcher. The independent session is revalidated after queuing;
@@ -562,6 +590,7 @@ export async function proposeMonthlyCollectionApproval(opts: {
 }) {
   if (!active)
     throw Error("Trusted financial approval is not configured on this bay");
+  await requireFundingApprovalReadiness();
   return active.propose(opts);
 }
 export async function getMonthlyCollectionApproval(opts: {
@@ -609,6 +638,7 @@ export async function proposeCourseFundingAllocation(opts: {
 }): Promise<CourseFundingAllocationStatus> {
   if (!active)
     throw new Error("Trusted financial approval is not configured on this bay");
+  await requireFundingApprovalReadiness();
   return allocationStatus(await active.propose(opts));
 }
 
@@ -628,6 +658,7 @@ export async function proposeCourseFundingPoolChange(opts: {
 }): Promise<CourseFundingAllocationStatus> {
   if (!active)
     throw new Error("Trusted financial approval is not configured on this bay");
+  await requireFundingApprovalReadiness();
   return allocationStatus(await active.propose(opts));
 }
 
@@ -647,6 +678,7 @@ export async function proposeVmPersonalFundingApproval(opts: {
 }): Promise<FundingIntentStatus<FinancialApprovalResult>> {
   if (!active)
     throw new Error("Trusted financial approval is not configured on this bay");
+  await requireFundingApprovalReadiness();
   return await active.propose({
     ...opts,
     terms: { ...opts.terms, kind: "personalVMfallback" },
@@ -660,6 +692,7 @@ export async function proposeVolumePersonalFundingApproval(opts: {
 }): Promise<FundingIntentStatus<FinancialApprovalResult>> {
   if (!active)
     throw Error("Trusted financial approval is not configured on this bay");
+  await requireFundingApprovalReadiness();
   return active.propose({
     ...opts,
     terms: { ...opts.terms, kind: "personalVolumeFunding" },

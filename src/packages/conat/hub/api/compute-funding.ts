@@ -18,6 +18,19 @@ import type {
 
 export type { CourseFundingDraft } from "@cocalc/util/compute-funding";
 
+export interface FundingApprovalReadiness {
+  state:
+    | "disabled"
+    | "configuration_required"
+    | "starting"
+    | "ready"
+    | "unreachable"
+    | "error";
+  source?: "environment" | "managed-cloudflare";
+  origin?: string;
+  reason?: string;
+}
+
 // All money is decimal USD strings; all timestamps are ISO strings.
 export interface CourseFundingRuntimeSummary {
   usage_as_of?: string;
@@ -71,6 +84,7 @@ export interface CourseFundingSummary {
   pools: CourseFundingPoolSummary[];
   // Missing on old hubs means unavailable, never permission to create funding.
   sponsorship?: import("@cocalc/util/compute-funding-rollout").SponsorshipAvailability;
+  financial_approval?: FundingApprovalReadiness;
 }
 
 export interface CourseFundingOwnedPools extends Omit<

@@ -100,6 +100,7 @@ function fixture() {
     course_project_id: project,
     course_instance_id: instance,
     pollIntervalMs: 50,
+    financialApproval: { state: "ready" as const },
   };
   return {
     api,

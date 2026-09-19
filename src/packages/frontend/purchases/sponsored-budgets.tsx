@@ -112,6 +112,7 @@ export default function SponsoredBudgets({
                     course_instance_id={pool.course_instance_id}
                     students={[]}
                     api={api}
+                    financialApproval={summary.financial_approval}
                     onUpdated={async () => {
                       await refresh();
                       await onApplied?.();

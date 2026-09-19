@@ -13,12 +13,17 @@ import {
   normalizeCourseFundingDraft,
 } from "@cocalc/util/compute-funding";
 import type { CourseFundingDraft } from "@cocalc/util/compute-funding";
-import { fundingApprovalConfigFromEnv } from "./approval-config";
+import {
+  FUNDING_APPROVAL_HEALTH_PATH,
+  FUNDING_APPROVAL_HEALTH_SERVICE,
+  resolveFundingApprovalConfiguration,
+} from "./approval-config";
 import { initFundingRolloutVerifiers } from "./rollout-startup";
 import {
   createCourseFundingApprovals,
   ensureCourseFundingApprovalSchema,
   registerCourseFundingApprovalService,
+  registerFundingApprovalReadinessCheck,
 } from "./approvals";
 import type { ApplyFundingIntent, FinancialApprovalResult } from "./approvals";
 import { prepareFundingApprovalRecipients } from "./approval-recipients";
@@ -56,12 +61,100 @@ import {
 } from "@cocalc/server/purchases/monthly-collection";
 
 const logger = getLogger("compute:funding:approval-startup");
+let initializing: Promise<void> | undefined;
 let starting: Promise<void> | undefined;
 let server: Server | undefined;
 let unregister: (() => void) | undefined;
 let unregisterTransfers: (() => void) | undefined;
+let unregisterReadinessCheck: (() => void) | undefined;
 
-export function initCourseFundingApprovalService({
+export type FundingApprovalReadiness = {
+  state:
+    | "disabled"
+    | "configuration_required"
+    | "starting"
+    | "ready"
+    | "unreachable"
+    | "error";
+  source?: "environment" | "managed-cloudflare";
+  origin?: string;
+  reason?: string;
+};
+
+let readiness: FundingApprovalReadiness = {
+  state: "starting",
+  reason: "Secure financial authorization is starting.",
+};
+let readinessProbe:
+  | { checked_at: number; value: FundingApprovalReadiness }
+  | undefined;
+
+export async function getFundingApprovalReadiness({
+  force = false,
+}: { force?: boolean } = {}): Promise<FundingApprovalReadiness> {
+  if (readiness.state !== "ready" || !readiness.origin) return readiness;
+  const origin = new URL(readiness.origin);
+  if (origin.protocol === "http:") return readiness;
+  const now = Date.now();
+  if (!force && readinessProbe && now - readinessProbe.checked_at < 30_000) {
+    return readinessProbe.value;
+  }
+  let value: FundingApprovalReadiness;
+  try {
+    const response = await fetch(
+      `${origin.origin}${FUNDING_APPROVAL_HEALTH_PATH}`,
+      {
+        headers: { Accept: "application/json" },
+        redirect: "error",
+        signal: AbortSignal.timeout(5_000),
+      },
+    );
+    const body = response.ok
+      ? ((await response.json()) as { service?: unknown; status?: unknown })
+      : undefined;
+    if (
+      !response.ok ||
+      body?.service !== FUNDING_APPROVAL_HEALTH_SERVICE ||
+      body.status !== "ready"
+    ) {
+      throw new Error(`public health check returned HTTP ${response.status}`);
+    }
+    value = readiness;
+  } catch (err) {
+    value = {
+      ...readiness,
+      state: "unreachable",
+      reason: `Secure financial authorization is configured but its public HTTPS endpoint is not ready: ${err instanceof Error ? err.message : err}`,
+    };
+  }
+  readinessProbe = { checked_at: now, value };
+  return value;
+}
+
+async function requirePublicFundingApprovalReadiness(): Promise<void> {
+  const status = await getFundingApprovalReadiness();
+  if (status.state !== "ready") {
+    throw Object.assign(
+      new Error(
+        status.reason ?? "Secure financial authorization is not ready.",
+      ),
+      { code: "funding_approval_unavailable", status: 503 },
+    );
+  }
+}
+
+export function initCourseFundingApprovalService(
+  options: { listen?: boolean } = {},
+): Promise<void> {
+  if (starting) return starting;
+  if (initializing) return initializing;
+  initializing = initializeCourseFundingApprovalService(options).finally(() => {
+    initializing = undefined;
+  });
+  return initializing;
+}
+
+async function initializeCourseFundingApprovalService({
   listen = true,
 }: { listen?: boolean } = {}): Promise<void> {
   if (starting) return starting;
@@ -74,8 +167,23 @@ export function initCourseFundingApprovalService({
   ) {
     return Promise.resolve();
   }
-  const config = fundingApprovalConfigFromEnv();
-  if (!config) return Promise.resolve();
+  const resolved = await resolveFundingApprovalConfiguration();
+  if (resolved.state !== "configured") {
+    readiness = {
+      state: resolved.state,
+      source: resolved.source,
+      reason: resolved.reason,
+    };
+    return;
+  }
+  const { config } = resolved;
+  readiness = {
+    state: "starting",
+    source: resolved.source,
+    origin: config.origin,
+    reason: "Secure financial authorization is starting.",
+  };
+  readinessProbe = undefined;
   starting = (async () => {
     await ensureCourseFundingApprovalSchema();
     const apply = async (
@@ -228,41 +336,73 @@ export function initCourseFundingApprovalService({
         config,
       });
     unregister = registerCourseFundingApprovalService(approvals);
-    unregisterTransfers = registerTransferApprovals(approvals);
+    unregisterReadinessCheck = registerFundingApprovalReadinessCheck(
+      requirePublicFundingApprovalReadiness,
+    );
+    unregisterTransfers = registerTransferApprovals({
+      ...approvals,
+      propose: async (opts) => {
+        await requirePublicFundingApprovalReadiness();
+        return await approvals.propose(opts);
+      },
+    });
     server?.once("close", () => {
       unregisterTransfers?.();
       unregisterTransfers = undefined;
       unregister?.();
       unregister = undefined;
+      unregisterReadinessCheck?.();
+      unregisterReadinessCheck = undefined;
     });
     logger.info("trusted financial approval configured", {
       origin: config.origin,
       listen,
     });
+    readiness = {
+      state: "ready",
+      source: resolved.source,
+      origin: config.origin,
+    };
   })().catch(async (error) => {
     starting = undefined;
     unregisterTransfers?.();
     unregisterTransfers = undefined;
     unregister?.();
     unregister = undefined;
+    unregisterReadinessCheck?.();
+    unregisterReadinessCheck = undefined;
     if (server)
       await new Promise<void>((resolve) => server!.close(() => resolve()));
     server = undefined;
-    throw error;
+    readiness = {
+      state: "error",
+      source: resolved.source,
+      origin: config.origin,
+      reason: error instanceof Error ? error.message : `${error}`,
+    };
+    logger.error("trusted financial approval failed to start", { error });
   });
-  return starting;
+  return await starting;
 }
 
 export async function stopCourseFundingApprovalService(): Promise<void> {
+  await initializing;
   await starting;
   unregister?.();
   unregister = undefined;
   unregisterTransfers?.();
   unregisterTransfers = undefined;
+  unregisterReadinessCheck?.();
+  unregisterReadinessCheck = undefined;
   if (server)
     await new Promise<void>((resolve, reject) =>
       server!.close((err) => (err ? reject(err) : resolve())),
     );
   server = undefined;
   starting = undefined;
+  readiness = {
+    state: "starting",
+    reason: "Secure financial authorization is stopped.",
+  };
+  readinessProbe = undefined;
 }

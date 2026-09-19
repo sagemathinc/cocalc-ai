@@ -29,6 +29,7 @@ import {
 } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
+import { resolveFundingApprovalConfiguration } from "@cocalc/server/compute/funding/approval-config";
 import { ensureLocalCloudflaredBinary } from "./cloudflared-installer";
 import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 
@@ -519,11 +520,11 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
     }
   }
   const additionalIngress: Array<{ hostname: string; origin: string }> = [];
-  if (process.env.COCALC_FUNDING_APPROVAL_ENABLED === "1") {
-    const approvalOrigin = clean(process.env.COCALC_FUNDING_APPROVAL_ORIGIN);
-    const approvalPort = parsePort(process.env.COCALC_FUNDING_APPROVAL_PORT);
-    if (approvalOrigin && approvalPort) {
-      const approvalUrl = new URL(approvalOrigin);
+  const fundingApproval = await resolveFundingApprovalConfiguration();
+  if (fundingApproval.state === "configured") {
+    const approvalUrl = new URL(fundingApproval.config.origin);
+    const approvalPort = fundingApproval.config.listen_port;
+    {
       if (approvalUrl.protocol !== "https:") {
         throw new Error(
           "Public financial approval ingress requires an HTTPS origin.",
@@ -537,6 +538,7 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
         tunnel,
         hostname: approvalUrl.hostname,
         allowOutsideConfiguredDns: true,
+        protectExisting: true,
       });
     }
   }

@@ -138,6 +138,10 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
+import {
+  getFundingApprovalReadiness as getFundingApprovalReadiness0,
+  initCourseFundingApprovalService,
+} from "@cocalc/server/compute/funding/approval-startup";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { ensureStarInviteRegistrationToken } from "@cocalc/server/auth/bootstrap-admin";
 import { getNebiusRegionConfigFromSettings } from "@cocalc/server/cloud/nebius-credentials";
@@ -2433,6 +2437,18 @@ export async function getLaunchHealth({
     counts,
     checks,
   };
+}
+
+export async function getFundingApprovalReadiness({
+  account_id,
+  force,
+}: {
+  account_id?: string;
+  force?: boolean;
+} = {}) {
+  await assertAdmin(account_id);
+  if (force === true) await initCourseFundingApprovalService();
+  return await getFundingApprovalReadiness0({ force: force === true });
 }
 
 export async function getBillingAuthorityStatus({

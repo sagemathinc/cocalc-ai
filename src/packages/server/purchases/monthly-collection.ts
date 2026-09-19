@@ -22,6 +22,7 @@ import { createNotificationEventGraphInTransaction } from "@cocalc/database/post
 import { requireFundingAccountTransaction } from "@cocalc/server/compute/funding/backing";
 import {
   monthlyCollectionApprovalAvailable,
+  fundingApprovalPubliclyReady,
   proposeMonthlyCollectionApproval,
   getMonthlyCollectionApproval,
 } from "@cocalc/server/compute/funding/approvals";
@@ -80,7 +81,9 @@ export const getMonthlyCollection: MonthlyCollectionApi["getMonthlyCollection"] 
     const { account_id, remote } = await actorHome(opts.account_id);
     if (remote) return remote.getMonthlyCollection({ account_id });
     const state = await readMonthlyCollection(account_id);
-    const available = monthlyCollectionApprovalAvailable();
+    const available =
+      monthlyCollectionApprovalAvailable() &&
+      (await fundingApprovalPubliclyReady());
     const pending = [] as Awaited<
       ReturnType<MonthlyCollectionApi["getMonthlyCollection"]>
     >["pending"];

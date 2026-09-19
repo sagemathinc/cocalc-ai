@@ -33,19 +33,23 @@ function fixture() {
         available: false,
         reason: "New course sponsorship is disabled.",
       },
+      financial_approval: {
+        state: "configuration_required",
+        reason: "Secure authorization is not configured.",
+      },
     }),
     previewPoolChange: jest.fn().mockImplementation(async ({ terms }) => ({
       terms,
       pool: { ...pool, state: "closed", released_usd: "50" },
       requires_course_access: false,
-      requires_financial_approval: true,
+      requires_financial_approval: false,
       as_of: new Date().toISOString(),
     })),
     proposePoolChange: jest.fn().mockResolvedValue({
-      id: "intent",
-      status: "pending",
-      approval_url: "https://approve.example.test/funding/intent",
-      expires_at: "2030-01-01T00:00:00Z",
+      id: "operation",
+      status: "approved",
+      pool_id: pool.id,
+      completed_at: new Date().toISOString(),
     }),
     getAllocationStatus: jest.fn().mockResolvedValue({
       id: "intent",
@@ -85,12 +89,9 @@ it("reaches payer closure by keyboard without course access or sponsorship enabl
       course_instance_id: pool.course_instance_id,
     },
   });
-  await user.click(screen.getByRole("button", { name: "Authorize" }));
-  expect(
-    await screen.findByRole("link", {
-      name: "Authorize",
-    }),
-  ).toHaveAttribute("href", "https://approve.example.test/funding/intent");
+  await user.click(screen.getByRole("button", { name: "Save changes" }));
+  expect(await screen.findByText("Pool updated")).toBeVisible();
+  expect(screen.queryByRole("link", { name: "Authorize" })).toBeNull();
   expect(api.proposePoolChange).toHaveBeenCalledTimes(1);
 });
 

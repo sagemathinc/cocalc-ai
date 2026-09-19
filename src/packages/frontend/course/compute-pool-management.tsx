@@ -14,6 +14,7 @@ import type {
   CourseFundingAllocationStatus,
   CourseFundingPoolChangePreview,
   CourseFundingPoolSummary,
+  FundingApprovalReadiness,
 } from "@cocalc/conat/hub/api/compute-funding";
 import { Icon } from "@cocalc/frontend/components/icon";
 import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
@@ -44,6 +45,7 @@ export function ComputePoolManagement({
   students,
   api,
   onUpdated,
+  financialApproval,
   pollIntervalMs = 5000,
 }: {
   pool: CourseFundingPoolSummary;
@@ -52,6 +54,7 @@ export function ComputePoolManagement({
   students: BudgetStudent[];
   api: Api;
   onUpdated: () => Promise<void>;
+  financialApproval?: FundingApprovalReadiness;
   pollIntervalMs?: number;
 }) {
   const [snapshot, setSnapshot] = useState(pool);
@@ -183,7 +186,14 @@ export function ComputePoolManagement({
     }
   }
   async function propose() {
-    if (!preview || busy || stale) return;
+    if (
+      !preview ||
+      busy ||
+      stale ||
+      (preview.requires_financial_approval &&
+        financialApproval?.state !== "ready")
+    )
+      return;
     const version = ++generation.current,
       terms = JSON.stringify(preview.terms);
     if (operation.current?.terms !== terms)
@@ -550,7 +560,11 @@ export function ComputePoolManagement({
                     />
                   }
                   loading={busy}
-                  disabled={stale}
+                  disabled={
+                    stale ||
+                    (preview.requires_financial_approval &&
+                      financialApproval?.state !== "ready")
+                  }
                   onClick={() => void propose()}
                 >
                   {preview.requires_financial_approval
@@ -559,7 +573,10 @@ export function ComputePoolManagement({
                 </Button>
                 <Typography.Paragraph type="secondary">
                   {preview.requires_financial_approval
-                    ? "This increases the course spending envelope and requires secure authorization."
+                    ? financialApproval?.state === "ready"
+                      ? "This increases the course spending envelope and requires secure authorization."
+                      : (financialApproval?.reason ??
+                        "Secure financial authorization is not ready. You can still reduce or close this budget.")
                     : "This stays within the amount and dates you already authorized."}
                 </Typography.Paragraph>
               </section>

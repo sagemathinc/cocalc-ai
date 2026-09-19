@@ -31,6 +31,8 @@ import {
   type FundingApprovalReadyAuth,
 } from "./approval-auth";
 import {
+  FUNDING_APPROVAL_HEALTH_PATH,
+  FUNDING_APPROVAL_HEALTH_SERVICE,
   fundingApprovalRelatedOrigin,
   validateFundingListener,
 } from "./approval-config";
@@ -529,6 +531,12 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   });
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
   app.use(express.json({ limit: "32kb" }));
+  app.get(FUNDING_APPROVAL_HEALTH_PATH, (_req, res) => {
+    res.status(200).json({
+      service: FUNDING_APPROVAL_HEALTH_SERVICE,
+      status: "ready",
+    });
+  });
   app.param("id", (_req, res, next, value) => {
     if (/^[0-9a-f-]{36}$/i.test(String(value)))
       res.locals.fundingIntentId = value;

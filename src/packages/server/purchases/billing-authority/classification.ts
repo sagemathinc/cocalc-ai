@@ -84,6 +84,7 @@ export function isBillingAuthorityHubApiCall(name: string): boolean {
     group === "purchases" ||
     group === "computeFunding" ||
     group === "commercialOrders" ||
+    (group === "system" && method === "getFundingApprovalReadiness") ||
     (group === "adminCrm" && ADMIN_CRM_FINANCIAL_METHODS.has(method)) ||
     (group === "legacyMigration" &&
       LEGACY_MIGRATION_FINANCIAL_METHODS.has(method))
@@ -92,6 +93,9 @@ export function isBillingAuthorityHubApiCall(name: string): boolean {
 
 export function isBillingAuthorityHubApiRead(name: string): boolean {
   const [group, method] = name.split(".");
+  if (group === "system") {
+    return method === "getFundingApprovalReadiness";
+  }
   if (group === "purchases") return PURCHASE_READ_METHODS.has(method);
   if (group === "commercialOrders") {
     return COMMERCIAL_ORDER_READ_METHODS.has(method);

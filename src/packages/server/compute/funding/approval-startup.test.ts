@@ -4,11 +4,12 @@
  */
 
 import { EventEmitter } from "node:events";
-import { fundingApprovalConfigFromEnv } from "./approval-config";
+import { resolveFundingApprovalConfiguration } from "./approval-config";
 import {
   createCourseFundingApprovals,
   ensureCourseFundingApprovalSchema,
   registerCourseFundingApprovalService,
+  registerFundingApprovalReadinessCheck,
 } from "./approvals";
 import { startCourseFundingApprovalServer } from "./approval-server";
 import {
@@ -34,12 +35,15 @@ jest.mock("./rollout-startup", () => ({
 }));
 
 jest.mock("./approval-config", () => ({
-  fundingApprovalConfigFromEnv: jest.fn(),
+  resolveFundingApprovalConfiguration: jest.fn(),
+  FUNDING_APPROVAL_HEALTH_PATH: "/.well-known/cocalc-financial-approval-health",
+  FUNDING_APPROVAL_HEALTH_SERVICE: "cocalc-financial-approval",
 }));
 jest.mock("./approvals", () => ({
   createCourseFundingApprovals: jest.fn(),
   ensureCourseFundingApprovalSchema: jest.fn(),
   registerCourseFundingApprovalService: jest.fn(),
+  registerFundingApprovalReadinessCheck: jest.fn(),
 }));
 jest.mock("./approval-server", () => ({
   startCourseFundingApprovalServer: jest.fn(),
@@ -71,7 +75,11 @@ afterEach(async () => {
 });
 
 it("does nothing when disabled", async () => {
-  (fundingApprovalConfigFromEnv as jest.Mock).mockReturnValue(undefined);
+  (resolveFundingApprovalConfiguration as jest.Mock).mockResolvedValue({
+    state: "disabled",
+    source: "environment",
+    reason: "disabled",
+  });
   await initCourseFundingApprovalService();
   expect(ensureCourseFundingApprovalSchema).not.toHaveBeenCalled();
   expect(startCourseFundingApprovalServer).not.toHaveBeenCalled();
@@ -87,7 +95,7 @@ it("leaves centralized approval to the seed bay", async () => {
   process.env.COCALC_CLUSTER_ROLE = "attached";
   try {
     await initCourseFundingApprovalService();
-    expect(fundingApprovalConfigFromEnv).not.toHaveBeenCalled();
+    expect(resolveFundingApprovalConfiguration).not.toHaveBeenCalled();
     expect(ensureCourseFundingApprovalSchema).not.toHaveBeenCalled();
     expect(startCourseFundingApprovalServer).not.toHaveBeenCalled();
     expect(registerCourseFundingApprovalService).not.toHaveBeenCalled();
@@ -101,14 +109,20 @@ it("leaves centralized approval to the seed bay", async () => {
 });
 
 it("registers the same process service only after listening and cleans up on stop", async () => {
-  (fundingApprovalConfigFromEnv as jest.Mock).mockReturnValue({
-    origin: "http://127.0.0.2:19202",
+  (resolveFundingApprovalConfiguration as jest.Mock).mockResolvedValue({
+    state: "configured",
+    source: "environment",
+    config: { origin: "http://127.0.0.2:19202" },
   });
   const service = { propose: jest.fn(), status: jest.fn() };
   (createCourseFundingApprovals as jest.Mock).mockReturnValue(service);
   const unregister = jest.fn();
+  const unregisterReadiness = jest.fn();
   (registerCourseFundingApprovalService as jest.Mock).mockReturnValue(
     unregister,
+  );
+  (registerFundingApprovalReadinessCheck as jest.Mock).mockReturnValue(
+    unregisterReadiness,
   );
   const server = new EventEmitter() as EventEmitter & { close: jest.Mock };
   server.close = jest.fn((done) => {
@@ -121,10 +135,14 @@ it("registers the same process service only after listening and cleans up on sto
       return server;
     },
   );
-  await initCourseFundingApprovalService();
+  await Promise.all([
+    initCourseFundingApprovalService(),
+    initCourseFundingApprovalService(),
+  ]);
   await initCourseFundingApprovalService();
   expect(startCourseFundingApprovalServer).toHaveBeenCalledTimes(1);
   expect(registerCourseFundingApprovalService).toHaveBeenCalledWith(service);
+  expect(registerFundingApprovalReadinessCheck).toHaveBeenCalledTimes(1);
   const { prepare, apply: uncheckedApply } = (
     createCourseFundingApprovals as jest.Mock
   ).mock.calls[0][0];
@@ -198,24 +216,27 @@ it("registers the same process service only after listening and cleans up on sto
   await stopCourseFundingApprovalService();
   expect(server.close).toHaveBeenCalledTimes(1);
   expect(unregister).toHaveBeenCalledTimes(1);
+  expect(unregisterReadiness).toHaveBeenCalledTimes(1);
 });
 
-it("does not register a fallback when the port is occupied", async () => {
-  (fundingApprovalConfigFromEnv as jest.Mock).mockReturnValue({
-    origin: "http://127.0.0.2:19202",
+it("fails closed without taking down the hub when the port is occupied", async () => {
+  (resolveFundingApprovalConfiguration as jest.Mock).mockResolvedValue({
+    state: "configured",
+    source: "environment",
+    config: { origin: "http://127.0.0.2:19202" },
   });
   (startCourseFundingApprovalServer as jest.Mock).mockRejectedValue(
     new Error("EADDRINUSE"),
   );
-  await expect(initCourseFundingApprovalService()).rejects.toThrow(
-    "EADDRINUSE",
-  );
+  await expect(initCourseFundingApprovalService()).resolves.toBeUndefined();
   expect(registerCourseFundingApprovalService).not.toHaveBeenCalled();
 });
 
 it("dispatches personal consent to its registered core using the exact approval transaction and snapshot", async () => {
-  (fundingApprovalConfigFromEnv as jest.Mock).mockReturnValue({
-    origin: "http://127.0.0.2:19212",
+  (resolveFundingApprovalConfiguration as jest.Mock).mockResolvedValue({
+    state: "configured",
+    source: "environment",
+    config: { origin: "http://127.0.0.2:19212" },
   });
   const handler = {
     resolveReview: jest.fn(),

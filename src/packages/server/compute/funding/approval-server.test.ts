@@ -10,6 +10,8 @@ import { readFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { startCourseFundingApprovalServer } from "./approval-server";
 import {
+  FUNDING_APPROVAL_HEALTH_PATH,
+  FUNDING_APPROVAL_HEALTH_SERVICE,
   fundingApprovalRelatedOrigin,
   validateFundingListener,
   fundingApprovalConfigFromEnv,
@@ -306,6 +308,17 @@ describe("isolated financial browser approval", () => {
     );
     await page.getByRole("heading", { name: heading }).waitFor();
   }
+  it("exposes an isolated public readiness marker", async () => {
+    const response = await context.request.get(
+      `${origin}${FUNDING_APPROVAL_HEALTH_PATH}`,
+    );
+    expect(response.status()).toBe(200);
+    expect(await response.json()).toEqual({
+      service: FUNDING_APPROVAL_HEALTH_SERVICE,
+      status: "ready",
+    });
+    expect(response.headers()["cache-control"]).toBe("no-store");
+  });
   it("renders escaped identities and financial terms, with keyboard approval", async () => {
     await page.goto(`${origin}/funding/${id}`);
     expect(await page.locator(":focus").getAttribute("id")).toBe("email");
