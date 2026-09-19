@@ -149,6 +149,7 @@ function usesDefaultProjectConnection(): boolean {
 
 const PROJECT_HOST_ROUTED_HUB_METHODS = new Set<string>([
   "projects.codexDeviceAuthStart",
+  "projects.getCodexCredentialSelectionCapability",
   "projects.codexDeviceAuthStatus",
   "projects.codexDeviceAuthCancel",
   "projects.codexUploadAuthFile",

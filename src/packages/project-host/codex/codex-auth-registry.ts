@@ -14,6 +14,8 @@ const SUBSCRIPTION_CREDENTIAL_SELECTOR = {
   scope: "account" as const,
 };
 const OPENAI_API_KEY_KIND = "openai-api-key";
+const DEVICE_AUTH_LEASE_KIND = "codex-device-auth-lease";
+const DEVICE_AUTH_LEASE_MS = 60 * 60 * 1000;
 
 type PullResult = {
   pulled: boolean;
@@ -24,9 +26,7 @@ type PullResult = {
   registryUpdatedAt?: string;
 };
 
-const existenceCache = new Map<string, { has: boolean; expires: number }>();
 const syncedSubscriptionAuthSignatures = new Map<string, string>();
-const EXISTENCE_CACHE_TTL_MS = 30_000;
 const SITE_OPENAI_KEY_CACHE_TTL_MS = Math.max(
   60_000,
   Number(process.env.COCALC_CODEX_SITE_KEY_CACHE_TTL_MS ?? 60 * 60_000),
@@ -60,6 +60,94 @@ function getHubCaller():
     return;
   }
   return { client, host_id };
+}
+
+export async function acquireCodexDeviceAuthLease({
+  projectId,
+  accountId,
+  sessionId,
+}: {
+  projectId: string;
+  accountId: string;
+  sessionId: string;
+}): Promise<string> {
+  const caller = getHubCaller();
+  if (!caller) {
+    throw new Error(
+      "ChatGPT sign-in cannot start while the project host is disconnected from the hub.",
+    );
+  }
+  try {
+    const result = await callHub({
+      ...caller,
+      name: "hosts.upsertExternalCredential",
+      args: [
+        {
+          project_id: projectId,
+          selector: {
+            provider: "openai",
+            kind: DEVICE_AUTH_LEASE_KIND,
+            scope: "account",
+            owner_account_id: accountId,
+          },
+          payload: sessionId,
+          metadata: {
+            lease_expires_at: new Date(
+              Date.now() + DEVICE_AUTH_LEASE_MS,
+            ).toISOString(),
+          },
+          create: true,
+          max_active: 1,
+        },
+      ],
+      timeout: 15_000,
+    });
+    if (!result?.id) throw new Error("device-auth lease was not created");
+    return result.id;
+  } catch (err) {
+    logger.debug("failed to acquire codex device-auth lease", {
+      projectId,
+      accountId,
+      err: `${err}`,
+    });
+    throw new Error(
+      "A ChatGPT sign-in is already in progress for this CoCalc account, or its status could not be verified.",
+    );
+  }
+}
+
+export async function releaseCodexDeviceAuthLease({
+  projectId,
+  accountId,
+  leaseId,
+}: {
+  projectId: string;
+  accountId: string;
+  leaseId: string;
+}): Promise<void> {
+  const caller = getHubCaller();
+  if (!caller) return;
+  try {
+    await callHub({
+      ...caller,
+      name: "hosts.releaseCodexDeviceAuthLease",
+      args: [
+        {
+          project_id: projectId,
+          owner_account_id: accountId,
+          lease_id: leaseId,
+        },
+      ],
+      timeout: 10_000,
+    });
+  } catch (err) {
+    logger.warn("failed to release codex device-auth lease", {
+      projectId,
+      accountId,
+      leaseId,
+      err: `${err}`,
+    });
+  }
 }
 
 function siteKeyTtlMs(): number {
@@ -358,57 +446,6 @@ export async function syncSubscriptionAuthToRegistryIfChanged({
   };
 }
 
-export async function hasSubscriptionAuthInRegistry({
-  projectId,
-  accountId,
-  credentialId,
-}: {
-  projectId: string;
-  accountId: string;
-  credentialId?: string;
-}): Promise<boolean | undefined> {
-  const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
-  const now = Date.now();
-  const cached = existenceCache.get(key);
-  if (cached && cached.expires > now) {
-    return cached.has;
-  }
-  const caller = getHubCaller();
-  if (!caller) {
-    return undefined;
-  }
-  try {
-    const has = await callHub({
-      ...caller,
-      name: "hosts.hasExternalCredential",
-      args: [
-        {
-          project_id: projectId,
-          selector: {
-            ...SUBSCRIPTION_CREDENTIAL_SELECTOR,
-            owner_account_id: accountId,
-          },
-          credential_id: credentialId,
-        },
-      ],
-      timeout: 10000,
-    });
-    const hasValue = !!has;
-    existenceCache.set(key, {
-      has: hasValue,
-      expires: now + EXISTENCE_CACHE_TTL_MS,
-    });
-    return hasValue;
-  } catch (err) {
-    logger.debug("hasSubscriptionAuthInRegistry failed", {
-      projectId,
-      accountId,
-      err: `${err}`,
-    });
-    return undefined;
-  }
-}
-
 export async function touchSubscriptionAuthInRegistry({
   projectId,
   accountId,
@@ -438,15 +475,7 @@ export async function touchSubscriptionAuthInRegistry({
       ],
       timeout: 10_000,
     });
-    const has = !!touched;
-    if (has) {
-      const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
-      existenceCache.set(key, {
-        has: true,
-        expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
-      });
-    }
-    return has;
+    return !!touched;
   } catch (err) {
     logger.debug("touchSubscriptionAuthInRegistry failed", {
       projectId,
@@ -463,15 +492,22 @@ export async function pullSubscriptionAuthFromRegistry({
   credentialId,
   codexHome,
   onlyIfNewer = false,
+  requireAuthority = false,
 }: {
   projectId: string;
   accountId: string;
   credentialId?: string;
   codexHome: string;
   onlyIfNewer?: boolean;
+  requireAuthority?: boolean;
 }): Promise<PullResult> {
   const caller = getHubCaller();
   if (!caller) {
+    if (requireAuthority) {
+      throw new Error(
+        "ChatGPT Plan authorization is temporarily unavailable. Please retry when this project host is connected.",
+      );
+    }
     return { pulled: false };
   }
   try {
@@ -496,18 +532,8 @@ export async function pullSubscriptionAuthFromRegistry({
         ? new Date(result.updated).toISOString()
         : undefined;
     if (typeof payload !== "string" || !payload.trim()) {
-      const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
-      existenceCache.set(key, {
-        has: false,
-        expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
-      });
       return { pulled: false, missing: true };
     }
-    const key = `${projectId}:${accountId}:${credentialId ?? "default"}`;
-    existenceCache.set(key, {
-      has: true,
-      expires: Date.now() + EXISTENCE_CACHE_TTL_MS,
-    });
     if (onlyIfNewer && registryUpdatedAt) {
       const registryUpdatedMs = new Date(registryUpdatedAt).getTime();
       const localMtimeMs = await localAuthMtimeMs(codexHome);
@@ -537,6 +563,11 @@ export async function pullSubscriptionAuthFromRegistry({
       accountId,
       err: `${err}`,
     });
+    if (requireAuthority) {
+      throw new Error(
+        "ChatGPT Plan authorization could not be verified. Please retry shortly.",
+      );
+    }
     return { pulled: false };
   }
 }

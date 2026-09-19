@@ -23,12 +23,12 @@ describe("buildCodexAcpConfig", () => {
       buildCodexAcpConfig({
         config: {
           paymentSource: "subscription",
-          credentialId: "credential-a",
+          credentialId: "00000000-0000-4000-8000-000000000001",
         },
       }),
     ).toMatchObject({
-      paymentSource: "subscription",
-      credentialId: "credential-a",
+      paymentSource: "subscription-credential",
+      credentialId: "00000000-0000-4000-8000-000000000001",
     });
   });
 

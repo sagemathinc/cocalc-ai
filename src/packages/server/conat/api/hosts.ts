@@ -156,6 +156,7 @@ import {
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   refreshCodexSubscriptionAuthRouted,
+  revokeExternalCredentialByIdAndSelectorRouted,
   touchExternalCredentialByIdRouted,
   touchExternalCredentialRouted,
   updateExternalCredentialByIdRouted,
@@ -2715,6 +2716,12 @@ function normalizeExternalCredentialSelector({
   };
 }
 
+function assertExternalCredentialId(id: string | undefined): void {
+  if (id != null && !isValidUUID(id)) {
+    throw new Error("credential_id must be a UUID");
+  }
+}
+
 export async function upsertExternalCredential({
   host_id,
   project_id,
@@ -2743,6 +2750,7 @@ export async function upsertExternalCredential({
   max_active?: number;
   deduplicate_metadata?: { key: string; value: string };
 }): Promise<{ id: string; created: boolean }> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -2899,6 +2907,7 @@ export async function getExternalCredential({
     }
   | undefined
 > {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -2995,6 +3004,7 @@ export async function refreshCodexSubscriptionAuth({
   updated: Date;
   refreshed: boolean;
 }> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) throw new Error("host_id must be specified");
   if (!project_id) throw new Error("project_id must be specified");
   if (!owner_account_id) {
@@ -3033,6 +3043,7 @@ export async function hasExternalCredential({
   };
   credential_id?: string;
 }): Promise<boolean> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -3106,6 +3117,7 @@ export async function touchExternalCredential({
   };
   credential_id?: string;
 }): Promise<boolean> {
+  assertExternalCredentialId(credential_id);
   if (!host_id) {
     throw new Error("host_id must be specified");
   }
@@ -3157,6 +3169,39 @@ export async function touchExternalCredential({
         selector: routedSelector,
       })
     : await touchExternalCredentialRouted({ selector: routedSelector });
+}
+
+export async function releaseCodexDeviceAuthLease({
+  host_id,
+  project_id,
+  owner_account_id,
+  lease_id,
+}: {
+  host_id?: string;
+  project_id: string;
+  owner_account_id: string;
+  lease_id: string;
+}): Promise<boolean> {
+  if (!host_id) throw new Error("host_id must be specified");
+  if (!isValidUUID(project_id)) throw new Error("invalid project_id");
+  if (!isValidUUID(owner_account_id)) {
+    throw new Error("invalid owner_account_id");
+  }
+  assertExternalCredentialId(lease_id);
+  await assertHostCredentialProjectAccess({
+    host_id,
+    project_id,
+    owner_account_id,
+  });
+  return await revokeExternalCredentialByIdAndSelectorRouted({
+    id: lease_id,
+    selector: {
+      provider: "openai",
+      kind: "codex-device-auth-lease",
+      scope: "account",
+      owner_account_id,
+    },
+  });
 }
 
 export async function getSiteOpenAiApiKey({

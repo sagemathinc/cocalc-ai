@@ -1296,6 +1296,8 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(resolveCodexAuthRuntime).toHaveBeenCalledWith({
       projectId: project_id,
       accountId: "acct-1",
+      preference: "auto",
+      credentialId: undefined,
     });
     expect(getCodexAppServerAccountStatus).toHaveBeenCalledWith({
       projectId: project_id,

@@ -5,10 +5,14 @@ import getLogger from "@cocalc/backend/logger";
 import {
   ensureCodexAuthFileExists,
   ensureCodexCredentialsStoreFile,
-  resolveSubscriptionCodexHome,
+  resolveSubscriptionStagingHome,
   subscriptionRuntime,
 } from "./codex-auth";
-import { pushSubscriptionAuthToRegistry } from "./codex-auth-registry";
+import {
+  acquireCodexDeviceAuthLease,
+  pushSubscriptionAuthToRegistry,
+  releaseCodexDeviceAuthLease,
+} from "./codex-auth-registry";
 import { touchSubscriptionCacheUsage } from "./codex-subscription-cache-gc";
 import { spawnCodexInProjectContainer } from "./codex-project";
 import { PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME } from "./codex-runtime-paths";
@@ -41,6 +45,7 @@ type DeviceAuthSession = {
   userCode?: string;
   syncedToRegistry?: boolean;
   syncError?: string;
+  leaseId: string;
 };
 
 type DeviceAuthVerifier = (opts: {
@@ -168,7 +173,6 @@ function appendOutput(session: DeviceAuthSession, chunk: string): void {
 async function cleanupPendingAuthHome(
   session: DeviceAuthSession,
 ): Promise<void> {
-  if (!session.create) return;
   try {
     await rm(session.codexHome, { recursive: true, force: true });
   } catch (err) {
@@ -179,6 +183,11 @@ async function cleanupPendingAuthHome(
       err: `${err}`,
     });
   }
+  await releaseCodexDeviceAuthLease({
+    projectId: session.projectId,
+    accountId: session.accountId,
+    leaseId: session.leaseId,
+  });
 }
 
 export async function startCodexDeviceAuth(
@@ -210,12 +219,21 @@ export async function startCodexDeviceAuth(
   if (create && credentialId) {
     throw new Error("a new sign-in cannot target an existing credential");
   }
-  const codexHome = resolveSubscriptionCodexHome(
+  const leaseId = await acquireCodexDeviceAuthLease({
+    projectId,
     accountId,
-    credentialId ?? (create ? `.pending-${id}` : undefined),
-  );
-  await ensureCodexCredentialsStoreFile(codexHome);
-  await ensureCodexAuthFileExists(codexHome);
+    sessionId: id,
+  });
+  // Reconnects must not mutate the live cache until the provider identity has
+  // been checked and the central authority accepts the replacement.
+  const codexHome = resolveSubscriptionStagingHome(accountId, id);
+  try {
+    await ensureCodexCredentialsStoreFile(codexHome);
+    await ensureCodexAuthFileExists(codexHome);
+  } catch (err) {
+    await releaseCodexDeviceAuthLease({ projectId, accountId, leaseId });
+    throw err;
+  }
   // Ensure we run in subscription auth mode (not key/shared-home fallback)
   // while performing device login.
   const authRuntime = subscriptionRuntime({
@@ -225,18 +243,25 @@ export async function startCodexDeviceAuth(
     credentialId,
   });
 
-  const spawned = await spawnCodexInProjectContainer({
-    projectId,
-    accountId,
-    args: ["login", "--device-auth"],
-    // Keep this process-specific. Normal Codex turns retain project-local
-    // sessions, while device login writes only to the protected host cache.
-    execOnlyEnv: {
-      CODEX_HOME: PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME,
-    },
-    authRuntime,
-    touchReason: "codex-device-auth",
-  });
+  let spawned;
+  try {
+    spawned = await spawnCodexInProjectContainer({
+      projectId,
+      accountId,
+      args: ["login", "--device-auth"],
+      // Keep this process-specific. Normal Codex turns retain project-local
+      // sessions, while device login writes only to the protected host cache.
+      execOnlyEnv: {
+        CODEX_HOME: PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME,
+      },
+      authRuntime,
+      touchReason: "codex-device-auth",
+    });
+  } catch (err) {
+    await rm(codexHome, { recursive: true, force: true }).catch(() => {});
+    await releaseCodexDeviceAuthLease({ projectId, accountId, leaseId });
+    throw err;
+  }
   const proc = spawned.proc;
   const session: DeviceAuthSession = {
     id,
@@ -250,6 +275,7 @@ export async function startCodexDeviceAuth(
     updatedAt: Date.now(),
     state: "pending",
     output: "",
+    leaseId,
   };
   sessions.set(id, session);
 

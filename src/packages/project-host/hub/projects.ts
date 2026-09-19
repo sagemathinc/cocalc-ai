@@ -2865,6 +2865,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     if (!isValidUUID(project_id)) {
       throw Error("invalid project_id");
     }
+    if (credential_id != null && !isValidUUID(credential_id)) {
+      throw Error("invalid credential_id");
+    }
     if (!getProject(project_id)) {
       throw Error("project is not hosted on this project-host");
     }
@@ -2874,6 +2877,17 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       verifyCodexSubscriptionAuth,
       { credentialId: credential_id, create },
     );
+  }
+
+  async function getCodexCredentialSelectionCapability({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }): Promise<{ version: 1 }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    return { version: 1 };
   }
 
   async function verifyCodexSubscriptionAuth({
@@ -3055,6 +3069,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     credential_id?: string;
   }): Promise<CodexUsageStatusInfo> {
     assertHostedProjectAccess({ account_id, project_id });
+    if (credential_id != null && !isValidUUID(credential_id)) {
+      throw Error("invalid credential_id");
+    }
     const accountId = account_id!;
     const checkedAt = new Date().toISOString();
     let source: CodexUsageStatusInfo["paymentSource"]["source"];
@@ -3512,6 +3529,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.getBackupFiles = getBackupFiles;
   hubApi.projects.getBackupQuota = getBackupQuota;
   hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
+  hubApi.projects.getCodexCredentialSelectionCapability =
+    getCodexCredentialSelectionCapability;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;

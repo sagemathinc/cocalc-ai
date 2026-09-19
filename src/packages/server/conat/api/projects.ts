@@ -6924,6 +6924,19 @@ export async function codexDeviceAuthStart({
   );
 }
 
+export async function getCodexCredentialSelectionCapability({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  throw Error(
+    "credential selection capability is not implemented on the central hub; call a project-host endpoint via project routing",
+  );
+}
+
 export async function codexDeviceAuthStatus({
   account_id,
   project_id,

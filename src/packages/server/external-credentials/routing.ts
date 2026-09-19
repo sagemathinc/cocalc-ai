@@ -429,3 +429,34 @@ export async function revokeExternalCredentialBySelectorRouted({
     },
   });
 }
+
+export async function revokeExternalCredentialByIdAndSelectorRouted({
+  id,
+  selector,
+}: {
+  id: string;
+  selector: ExternalCredentialSelector;
+}): Promise<boolean> {
+  return await withExternalCredentialAuthority({
+    selector,
+    local: async () => {
+      const existing = await getExternalCredentialById({
+        id,
+        selector,
+        touchLastUsed: false,
+      });
+      if (!existing) return false;
+      return await revokeExternalCredential({ id });
+    },
+    remote: async (dest_bay) => {
+      const client = remoteCredentialsClient(dest_bay);
+      const existing = await client.getById({
+        id,
+        selector,
+        touch_last_used: false,
+      });
+      if (!existing) return false;
+      return await client.revoke({ id });
+    },
+  });
+}

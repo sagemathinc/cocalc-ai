@@ -5,6 +5,7 @@ import {
 } from "../codex-subscription-selection";
 
 describe("Codex subscription selection", () => {
+  const credentialId = "00000000-0000-4000-8000-000000000001";
   beforeEach(() => localStorage.clear());
 
   it("isolates selections by account, project, and thread", () => {
@@ -12,7 +13,7 @@ describe("Codex subscription selection", () => {
       accountId: "account-a",
       projectId: "project-a",
       threadKey: "thread-a",
-      credentialId: "credential-a",
+      credentialId,
     });
     expect(
       readCodexSubscriptionSelection({
@@ -20,7 +21,7 @@ describe("Codex subscription selection", () => {
         projectId: "project-a",
         threadKey: "thread-a",
       }),
-    ).toBe("credential-a");
+    ).toBe(credentialId);
     expect(
       readCodexSubscriptionSelection({
         accountId: "account-b",
@@ -43,7 +44,7 @@ describe("Codex subscription selection", () => {
     writeCodexSubscriptionSelection({
       accountId: "account-a",
       projectId: "project-a",
-      credentialId: "credential-a",
+      credentialId,
     });
     writeCodexSubscriptionSelection({
       accountId: "account-a",
@@ -57,5 +58,19 @@ describe("Codex subscription selection", () => {
       }),
     ).toBeUndefined();
     window.removeEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, listener);
+  });
+
+  it("does not persist malformed credential selectors", () => {
+    writeCodexSubscriptionSelection({
+      accountId: "account-a",
+      projectId: "project-a",
+      credentialId: "..",
+    });
+    expect(
+      readCodexSubscriptionSelection({
+        accountId: "account-a",
+        projectId: "project-a",
+      }),
+    ).toBeUndefined();
   });
 });

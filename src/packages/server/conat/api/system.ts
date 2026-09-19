@@ -6847,8 +6847,10 @@ export async function getCodexPaymentSource({
   } as const;
   let unavailableReason: string | undefined;
   if (preference !== "auto") {
-    if (sourceAvailable[preference]) {
-      source = preference;
+    const requestedSource =
+      preference === "subscription-credential" ? "subscription" : preference;
+    if (sourceAvailable[requestedSource]) {
+      source = requestedSource;
     } else {
       source = "none";
       unavailableReason = `The selected Codex payment source (${preference}) is not configured.`;

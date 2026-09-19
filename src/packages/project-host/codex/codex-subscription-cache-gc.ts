@@ -5,6 +5,7 @@ import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
 import { podmanEnv } from "@cocalc/backend/podman/env";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
+import { isValidUUID } from "@cocalc/util/misc";
 import { PROJECT_RUNTIME_SUBSCRIPTION_CODEX_HOME } from "./codex-runtime-paths";
 
 const logger = getLogger("project-host:codex-subscription-cache-gc");
@@ -125,23 +126,57 @@ async function lastUsedMs(homePath: string): Promise<number> {
   return 0;
 }
 
-async function listSubscriptionHomes(root: string): Promise<string[]> {
+type SubscriptionHome = {
+  path: string;
+  accountRoot: string;
+  credential: boolean;
+};
+
+async function listSubscriptionHomes(
+  root: string,
+): Promise<SubscriptionHome[]> {
   try {
     const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries
-      .filter((e) => e.isDirectory())
-      .map((e) => join(root, e.name));
+    const homes: SubscriptionHome[] = [];
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isValidUUID(entry.name)) continue;
+      const accountRoot = join(root, entry.name);
+      if (
+        (await pathExists(join(accountRoot, "auth.json"))) ||
+        (await pathExists(join(accountRoot, "config.toml")))
+      ) {
+        homes.push({ path: accountRoot, accountRoot, credential: false });
+      }
+      const credentialEntries = await fs.readdir(accountRoot, {
+        withFileTypes: true,
+      });
+      for (const credential of credentialEntries) {
+        if (!credential.isDirectory() || !isValidUUID(credential.name)) {
+          continue;
+        }
+        homes.push({
+          path: join(accountRoot, credential.name),
+          accountRoot,
+          credential: true,
+        });
+      }
+    }
+    return homes;
   } catch (err: any) {
     if (err?.code === "ENOENT") return [];
     throw err;
   }
 }
 
-async function sweepOnce(ttlMs: number): Promise<void> {
+export async function sweepCodexSubscriptionCacheOnce(
+  ttlMs: number,
+  activeHomesOverride?: Set<string>,
+): Promise<void> {
   const root = resolveRoot();
   if (!(await pathExists(root))) return;
 
-  const activeHomes = await getActiveSubscriptionHomes();
+  const activeHomes =
+    activeHomesOverride ?? (await getActiveSubscriptionHomes());
   if (!activeHomes) {
     return;
   }
@@ -151,14 +186,28 @@ async function sweepOnce(ttlMs: number): Promise<void> {
 
   const now = Date.now();
   let removed = 0;
-  for (const homePath of homes) {
+  for (const home of homes) {
+    const homePath = home.path;
     const normalized = await normalizePath(homePath);
     if (activeHomes.has(normalized)) continue;
     const used = await lastUsedMs(homePath);
     if (!used) continue;
     if (now - used <= ttlMs) continue;
     try {
-      await fs.rm(homePath, { recursive: true, force: true });
+      if (home.credential) {
+        await fs.rm(homePath, { recursive: true, force: true });
+      } else {
+        // The account root can contain independent credential directories.
+        // Remove only legacy/default cache files, never the parent recursively.
+        await Promise.all(
+          [LAST_USED_MARKER, "auth.json", "config.toml"].map((name) =>
+            fs.rm(join(home.accountRoot, name), { force: true }),
+          ),
+        );
+        await fs.rmdir(home.accountRoot).catch((err: any) => {
+          if (err?.code !== "ENOTEMPTY" && err?.code !== "ENOENT") throw err;
+        });
+      }
       removed += 1;
       logger.info("removed stale codex subscription cache", {
         homePath,
@@ -211,7 +260,7 @@ export function startCodexSubscriptionCacheGc(): () => void {
     if (running) return;
     running = true;
     try {
-      await sweepOnce(ttlMs);
+      await sweepCodexSubscriptionCacheOnce(ttlMs);
     } catch (err) {
       logger.warn("codex subscription cache GC tick failed", {
         err: `${err}`,

@@ -5,12 +5,12 @@ import getLogger from "@cocalc/backend/logger";
 import { codexSubscriptionsPath } from "@cocalc/backend/data";
 import { codexAuthJsonToAppServerLogin } from "@cocalc/ai/acp";
 import { DEFAULT_PROJECT_RUNTIME_HOME } from "@cocalc/util/project-runtime";
+import { isValidUUID } from "@cocalc/util/misc";
 import type { CodexPaymentSourcePreference } from "@cocalc/util/ai/codex";
 import {
   getAccountOpenAiApiKeyFromRegistry,
   getProjectOpenAiApiKeyFromRegistry,
   getSiteOpenAiApiKeyFromHub,
-  hasSubscriptionAuthInRegistry,
   pullSubscriptionAuthFromRegistry,
   syncSubscriptionAuthToRegistryIfChanged,
   touchSubscriptionAuthInRegistry,
@@ -134,12 +134,29 @@ export function resolveSubscriptionCodexHome(
   accountId: string,
   credentialId?: string,
 ): string {
+  if (!isValidUUID(accountId)) {
+    throw new Error("invalid account id for subscription credential cache");
+  }
+  const normalizedCredentialId = `${credentialId ?? ""}`.trim() || undefined;
+  if (normalizedCredentialId && !isValidUUID(normalizedCredentialId)) {
+    throw new Error("invalid subscription credential id");
+  }
   const subscriptionRoot =
     process.env.COCALC_CODEX_AUTH_SUBSCRIPTION_HOME_ROOT ??
     codexSubscriptionsPath;
-  return credentialId
-    ? join(subscriptionRoot, accountId, credentialId)
+  return normalizedCredentialId
+    ? join(subscriptionRoot, accountId, normalizedCredentialId)
     : join(subscriptionRoot, accountId);
+}
+
+export function resolveSubscriptionStagingHome(
+  accountId: string,
+  sessionId: string,
+): string {
+  if (!isValidUUID(sessionId)) {
+    throw new Error("invalid subscription sign-in session id");
+  }
+  return join(resolveSubscriptionCodexHome(accountId), ".pending", sessionId);
 }
 
 export function subscriptionRuntime({
@@ -256,8 +273,15 @@ export async function resolveCodexAuthRuntime({
   preference?: CodexPaymentSourcePreference;
   credentialId?: string;
 }): Promise<CodexAuthRuntime> {
-  if (credentialId && preference !== "subscription") {
+  if (
+    credentialId &&
+    preference !== "subscription" &&
+    preference !== "subscription-credential"
+  ) {
     throw Error("credentialId requires the subscription payment source");
+  }
+  if (preference === "subscription-credential" && !credentialId) {
+    throw Error("an explicit subscription credential is required");
   }
   const sharedHome = resolveSharedCodexHome();
   const sharedHomeMode = resolveSharedHomeMode();
@@ -277,59 +301,44 @@ export async function resolveCodexAuthRuntime({
     return sharedHomeRuntime({ projectId, accountId, sharedHome });
   }
 
-  if (accountId && (preference === "auto" || preference === "subscription")) {
+  if (
+    accountId &&
+    (preference === "auto" ||
+      preference === "subscription" ||
+      preference === "subscription-credential")
+  ) {
     let resolvedCredentialId = credentialId;
     const codexHome = resolveSubscriptionCodexHome(accountId, credentialId);
     const authFile = join(codexHome, "auth.json");
-    if (await pathExists(authFile)) {
-      const hasInRegistry = await hasSubscriptionAuthInRegistry({
+    const hasLocalAuth = await pathExists(authFile);
+    // Every new subscription turn consults the account authority. A local
+    // cache is only a data-plane copy, never proof that a credential remains
+    // authorized after revocation.
+    const pulled = await pullSubscriptionAuthFromRegistry({
+      projectId,
+      accountId,
+      credentialId,
+      codexHome,
+      onlyIfNewer: hasLocalAuth,
+      requireAuthority: preference !== "auto" || hasLocalAuth,
+    });
+    resolvedCredentialId = pulled.credentialId ?? resolvedCredentialId;
+    if (pulled.missing) {
+      try {
+        await fs.unlink(authFile);
+      } catch {}
+      logger.debug("removed local subscription auth after central revoke", {
         projectId,
         accountId,
-        credentialId,
-      });
-      if (hasInRegistry === false) {
-        try {
-          await fs.unlink(authFile);
-        } catch {}
-        logger.debug("removed local subscription auth after central revoke", {
-          projectId,
-          accountId,
-          codexHome,
-        });
-      }
-    }
-    if (!(await pathExists(authFile))) {
-      const pulled = await pullSubscriptionAuthFromRegistry({
-        projectId,
-        accountId,
-        credentialId,
         codexHome,
       });
-      resolvedCredentialId = pulled.credentialId ?? resolvedCredentialId;
-      if (pulled.pulled) {
-        logger.debug("loaded subscription auth from central registry", {
-          projectId,
-          accountId,
-          codexHome,
-        });
-      }
-    } else {
-      const pulled = await pullSubscriptionAuthFromRegistry({
+    } else if (pulled.pulled) {
+      logger.debug("loaded subscription auth from central registry", {
         projectId,
         accountId,
-        credentialId,
         codexHome,
-        onlyIfNewer: true,
+        registryUpdatedAt: pulled.registryUpdatedAt,
       });
-      resolvedCredentialId = pulled.credentialId ?? resolvedCredentialId;
-      if (pulled.pulled) {
-        logger.debug("refreshed local subscription auth from newer registry", {
-          projectId,
-          accountId,
-          codexHome,
-          registryUpdatedAt: pulled.registryUpdatedAt,
-        });
-      }
     }
     if (await pathExists(authFile)) {
       // Best-effort usage signal so account settings can show recent activity.
@@ -366,7 +375,10 @@ export async function resolveCodexAuthRuntime({
       });
     }
   }
-  if (preference === "subscription") {
+  if (
+    preference === "subscription" ||
+    preference === "subscription-credential"
+  ) {
     throw Error("The selected ChatGPT Plan needs to be connected again");
   }
 

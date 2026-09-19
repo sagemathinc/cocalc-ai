@@ -314,6 +314,27 @@ export async function createExternalCredential({
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       `external-credential:${selectorValues(normalized).join(":")}`,
     ]);
+    // Short-lived operation leases share this table so admission follows the
+    // same home-bay authority and transaction lock as credentials. Expired
+    // leases must not permanently consume maxActive capacity after host loss.
+    if (normalized.kind === "codex-device-auth-lease") {
+      await client.query(
+        `
+UPDATE external_credentials
+SET revoked=NOW(), updated=NOW()
+WHERE ${ownershipClause(1)}
+  AND revoked IS NULL
+  AND metadata ? 'lease_expires_at'
+  AND CASE
+        WHEN metadata->>'lease_expires_at' ~
+             '^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$'
+          THEN (metadata->>'lease_expires_at')::timestamptz <= NOW()
+        ELSE TRUE
+      END
+        `,
+        [...selectorValues(normalized)],
+      );
+    }
     if (deduplicateMetadata) {
       const { rows } = await client.query<{ id: string }>(
         `

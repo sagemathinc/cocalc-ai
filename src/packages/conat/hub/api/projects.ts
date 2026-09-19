@@ -1267,6 +1267,7 @@ export const projects = {
   reconcileProjectRehome: authFirstRequireAccount,
   drainProjectRehome: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
+  getCodexCredentialSelectionCapability: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
@@ -2432,6 +2433,11 @@ export interface Projects {
     credentialId?: string;
     create?: boolean;
   }>;
+
+  getCodexCredentialSelectionCapability: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<{ version: 1 }>;
 
   codexDeviceAuthStatus: (opts: {
     account_id?: string;

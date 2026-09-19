@@ -2469,6 +2469,14 @@ export class CodexAppServerAgent implements AcpAgent {
     request: AcpEvaluateRequest,
     cwd: string,
   ): boolean {
+    // Subscription authority is checked when a runtime is created. Never let a
+    // retained process turn that check into an unbounded authorization lease.
+    if (
+      request.config?.paymentSource === "subscription" ||
+      request.config?.paymentSource === "subscription-credential"
+    ) {
+      return false;
+    }
     // The subagent limit configures a Codex thread, not its owning process.
     // Never replace a live manager (and its retained work) merely because a
     // recovered or older client omitted the limit that a newer client sends.

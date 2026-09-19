@@ -49,6 +49,16 @@ const ACP_ACK_TIMEOUT_MS = 2 * 60 * 1000;
 const ACP_ACK_MAX_ATTEMPTS = 5;
 const ACP_ACK_BACKOFF_MS = 2000;
 
+export function sanitizeSharedCodexConfig(
+  config: Partial<CodexThreadConfig> & { credentialId?: string },
+): Partial<CodexThreadConfig> & { credentialId?: string } {
+  const sanitized = { ...config };
+  // Chat metadata is shared with project collaborators. Credential selection
+  // is account-local state and must never be accepted from persisted config.
+  delete sanitized.credentialId;
+  return sanitized;
+}
+
 function chatMetadataCompletionNotificationEnabled(
   actions: ChatActions,
   threadId: string,
@@ -338,16 +348,32 @@ export async function processAcpLLM({
     project_id,
     send_mode: sendMode,
   });
-  const config: Partial<CodexThreadConfig> & { credentialId?: string } = {
+  const config = sanitizeSharedCodexConfig({
     ...(actions.getCodexConfig?.(thread_id) ?? {}),
     ...(acpConfigOverride ?? {}),
-  };
+  });
   const selectedCredentialId = readCodexSubscriptionSelection({
     accountId: redux.getStore("account")?.get("account_id"),
     projectId: project_id,
     threadKey: thread_id,
   });
   if (selectedCredentialId && config.paymentSource === "subscription") {
+    let capability: { version?: number } | undefined;
+    try {
+      capability =
+        await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
+          { project_id: project_id! },
+        );
+    } catch {
+      throw new Error(
+        "This project host must be updated before a specific ChatGPT subscription can be selected.",
+      );
+    }
+    if (capability?.version !== 1) {
+      throw new Error(
+        "This project host does not support selecting a specific ChatGPT subscription.",
+      );
+    }
     config.credentialId = selectedCredentialId;
   }
   const maxConcurrentSubagents = normalizeCodexMaxConcurrentSubagents(

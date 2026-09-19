@@ -1,3 +1,5 @@
+import { isValidUUID } from "@cocalc/util/misc";
+
 const PREFIX = "cocalc:codex-subscription:v1";
 export const CODEX_SUBSCRIPTION_SELECTION_EVENT =
   "cocalc:codex-subscription-selection";
@@ -16,10 +18,10 @@ export function readCodexSubscriptionSelection({
   threadKey?: string;
 }): string | undefined {
   if (typeof localStorage === "undefined" || !accountId || !projectId) return;
-  return (
+  const value =
     localStorage.getItem(key(accountId, projectId, threadKey ?? "")) ??
-    undefined
-  );
+    undefined;
+  return value && isValidUUID(value) ? value : undefined;
 }
 
 export function writeCodexSubscriptionSelection({
@@ -34,7 +36,8 @@ export function writeCodexSubscriptionSelection({
   credentialId?: string;
 }): void {
   const storageKey = key(accountId, projectId, threadKey ?? "");
-  if (credentialId) localStorage.setItem(storageKey, credentialId);
-  else localStorage.removeItem(storageKey);
+  if (credentialId && isValidUUID(credentialId)) {
+    localStorage.setItem(storageKey, credentialId);
+  } else localStorage.removeItem(storageKey);
   window.dispatchEvent(new Event(CODEX_SUBSCRIPTION_SELECTION_EVENT));
 }

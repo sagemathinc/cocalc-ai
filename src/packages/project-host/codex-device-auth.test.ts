@@ -1,7 +1,13 @@
 import { EventEmitter } from "node:events";
 
 const pushSubscriptionAuthToRegistryMock = jest.fn();
+const acquireCodexDeviceAuthLeaseMock = jest.fn();
+const releaseCodexDeviceAuthLeaseMock = jest.fn();
 const spawnCodexInProjectContainerMock = jest.fn();
+const resolveSubscriptionStagingHomeMock = jest.fn(
+  (accountId: string, sessionId: string) =>
+    `/tmp/codex-${accountId}/.pending/${sessionId}`,
+);
 
 jest.mock("@cocalc/backend/logger", () => ({
   __esModule: true,
@@ -14,8 +20,12 @@ jest.mock("@cocalc/backend/logger", () => ({
 }));
 
 jest.mock("./codex/codex-auth-registry", () => ({
+  acquireCodexDeviceAuthLease: (...args) =>
+    acquireCodexDeviceAuthLeaseMock(...args),
   pushSubscriptionAuthToRegistry: (...args) =>
     pushSubscriptionAuthToRegistryMock(...args),
+  releaseCodexDeviceAuthLease: (...args) =>
+    releaseCodexDeviceAuthLeaseMock(...args),
 }));
 
 jest.mock("./codex/codex-subscription-cache-gc", () => ({
@@ -25,8 +35,8 @@ jest.mock("./codex/codex-subscription-cache-gc", () => ({
 jest.mock("./codex/codex-auth", () => ({
   ensureCodexAuthFileExists: jest.fn(async () => undefined),
   ensureCodexCredentialsStoreFile: jest.fn(async () => undefined),
-  resolveSubscriptionCodexHome: (accountId: string) =>
-    `/tmp/codex-${accountId}`,
+  resolveSubscriptionStagingHome: (...args) =>
+    resolveSubscriptionStagingHomeMock(...args),
   subscriptionRuntime: ({ projectId, accountId, codexHome }) => ({
     source: "subscription",
     contextId: `${projectId}:${accountId}`,
@@ -60,7 +70,36 @@ describe("codex device auth", () => {
   beforeEach(() => {
     jest.resetModules();
     pushSubscriptionAuthToRegistryMock.mockReset();
+    acquireCodexDeviceAuthLeaseMock.mockReset().mockResolvedValue("lease-1");
+    releaseCodexDeviceAuthLeaseMock.mockReset().mockResolvedValue(undefined);
+    resolveSubscriptionStagingHomeMock.mockClear();
     spawnCodexInProjectContainerMock.mockReset();
+  });
+
+  it("stages reconnect login outside the permanent credential cache", async () => {
+    const proc = new FakeProc();
+    spawnCodexInProjectContainerMock.mockResolvedValue({ proc });
+    const { startCodexDeviceAuth } = await import("./codex/codex-device-auth");
+
+    const started = await startCodexDeviceAuth(
+      "00000000-0000-4000-8000-000000000010",
+      "00000000-0000-4000-8000-000000000011",
+      undefined,
+      { credentialId: "00000000-0000-4000-8000-000000000012" },
+    );
+
+    expect(resolveSubscriptionStagingHomeMock).toHaveBeenCalledWith(
+      "00000000-0000-4000-8000-000000000011",
+      started.id,
+    );
+    expect(spawnCodexInProjectContainerMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        authRuntime: expect.objectContaining({
+          codexHome: expect.stringContaining(`/.pending/${started.id}`),
+        }),
+      }),
+    );
+    proc.emit("exit", 1, null);
   });
 
   it("does not report completed until subscription auth is synced to registry", async () => {

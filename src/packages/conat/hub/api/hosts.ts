@@ -1817,6 +1817,7 @@ export const hosts = {
   getExternalCredential: authFirstRequireHost,
   touchExternalCredential: authFirstRequireHost,
   upsertExternalCredential: authFirstRequireHost,
+  releaseCodexDeviceAuthLease: authFirstRequireHost,
   refreshCodexSubscriptionAuth: authFirstRequireHost,
   getSiteOpenAiApiKey: authFirstRequireHost,
   checkCodexSiteUsageAllowance: authFirstRequireHostWithAccountTarget,
@@ -2252,6 +2253,12 @@ export interface Hosts {
     max_active?: number;
     deduplicate_metadata?: { key: string; value: string };
   }) => Promise<{ id: string; created: boolean }>;
+  releaseCodexDeviceAuthLease: (opts: {
+    host_id?: string;
+    project_id: string;
+    owner_account_id: string;
+    lease_id: string;
+  }) => Promise<boolean>;
   refreshCodexSubscriptionAuth: (opts: {
     host_id?: string;
     project_id: string;
