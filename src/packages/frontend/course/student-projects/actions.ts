@@ -9,6 +9,7 @@ Actions specific to manipulating the student projects that students have in a co
 
 import { delay, map as awaitMap } from "awaiting";
 import { redux } from "@cocalc/frontend/app-framework";
+import { isFreshAuthRequiredError } from "@cocalc/frontend/auth/fresh-auth";
 import { markdown_to_html } from "@cocalc/frontend/markdown";
 import { setProjectRootfsImage } from "@cocalc/frontend/rootfs/manifest";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -1389,6 +1390,9 @@ export class StudentProjectsActions {
         await this.delete_student_project(student_id);
       }
     } catch (err) {
+      if (isFreshAuthRequiredError(err)) {
+        throw err;
+      }
       this.course_actions.set_error(
         `error deleting a student project... ${err}`,
       );
