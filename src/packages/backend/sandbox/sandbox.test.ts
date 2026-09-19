@@ -156,6 +156,54 @@ describeIfLinux("baseline mutator parity behavior", () => {
     );
   });
 
+  it("does not stage data when a no-clobber destination already exists", async () => {
+    await fs.writeFile("cp-fast-path-source.txt", "new");
+    await fs.writeFile("cp-fast-path-target.txt", "existing");
+    const copyFile = fs.copyFile;
+    fs.copyFile = jest.fn(copyFile);
+
+    try {
+      await fs.cp("cp-fast-path-source.txt", "cp-fast-path-target.txt", {
+        force: false,
+      });
+      expect(fs.copyFile).not.toHaveBeenCalled();
+    } finally {
+      fs.copyFile = copyFile;
+    }
+  });
+
+  it("rejects a no-clobber copy onto the same inode", async () => {
+    await fs.writeFile("cp-same-file.txt", "data");
+
+    await expect(
+      fs.cp("cp-same-file.txt", "cp-same-file.txt", {
+        force: false,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EINVAL" });
+  });
+
+  it("treats a destination symlink as an existing entry", async () => {
+    await fs.writeFile("cp-symlink-source.txt", "data");
+    await symlink(
+      "cp-symlink-source.txt",
+      join(tempDir, "test-mutators", "cp-symlink-target.txt"),
+    );
+
+    await fs.cp("cp-symlink-source.txt", "cp-symlink-target.txt", {
+      force: false,
+    });
+    expect(await fs.readlink("cp-symlink-target.txt")).toBe(
+      "cp-symlink-source.txt",
+    );
+
+    await expect(
+      fs.cp("cp-symlink-source.txt", "cp-symlink-target.txt", {
+        force: false,
+        errorOnExist: true,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+  });
+
   it("does not overwrite nested regular files during recursive cp", async () => {
     await fs.mkdir("cp-no-clobber-source/nested", { recursive: true });
     await fs.mkdir("cp-no-clobber-target/nested", { recursive: true });

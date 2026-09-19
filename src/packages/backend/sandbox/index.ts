@@ -363,6 +363,7 @@ const INTERNAL_METHODS = new Set([
   "cpUnsupportedTypeError",
   "cpDestNotDirectoryError",
   "cpFileToDirectoryError",
+  "cpSameFileError",
   "cpInstallNoReplace",
   "cpSafeSymlink",
   "cpSafeDirectoryRecursive",
@@ -1690,6 +1691,18 @@ export class SandboxedFilesystem {
     return err;
   };
 
+  private cpSameFileError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `Invalid src or dest: cp returned EINVAL (src and dest cannot be the same) '${src}' -> '${dest}'`,
+    );
+    err.code = "ERR_FS_CP_EINVAL";
+    err.path = dest;
+    return err;
+  };
+
   private cpSafeSymlink = async (
     source: string,
     dest: string,
@@ -1765,24 +1778,56 @@ export class SandboxedFilesystem {
       return;
     }
 
+    const sourceStat = await this.stat(source);
+    try {
+      const destStat = await this.lstat(dest);
+      if (sourceStat.dev === destStat.dev && sourceStat.ino === destStat.ino) {
+        throw this.cpSameFileError(source, dest);
+      }
+      if (destStat.isDirectory()) {
+        throw this.cpFileToDirectoryError(source, dest);
+      }
+      if (options?.errorOnExist) {
+        const err: NodeJS.ErrnoException = new Error(
+          "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+        );
+        err.code = "ERR_FS_CP_EEXIST";
+        err.path = dest;
+        throw err;
+      }
+      return;
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        throw err;
+      }
+    }
+
     const temporary = join(
       dirname(dest),
       `.${basename(dest)}.copy.${process.pid}.${randomUUID()}`,
     );
-    let temporaryIdentity:
-      | { dev: number | bigint; ino: number | bigint }
-      | undefined;
     let temporaryHandle: Awaited<ReturnType<typeof open>> | undefined;
     let installed = false;
     try {
-      await this.copyFile(source, temporary);
       const opened = await this.openVerifiedHandle({
         path: temporary,
-        flags: constants.O_RDONLY,
+        flags: constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
+        mode: 0o600,
       });
       temporaryHandle = opened.handle;
-      const stat = await temporaryHandle.stat();
-      temporaryIdentity = { dev: stat.dev, ino: stat.ino };
+      await this.copyFile(source, temporary);
+      const [handleStat, pathStat] = await Promise.all([
+        temporaryHandle.stat(),
+        this.lstat(temporary),
+      ]);
+      if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
+        const err: NodeJS.ErrnoException = new Error(
+          `Copy staging path changed during operation: '${temporary}'`,
+        );
+        err.code = "ESTALE";
+        err.path = temporary;
+        throw err;
+      }
       try {
         await this.cpInstallNoReplace(temporary, dest);
         installed = true;
@@ -1812,23 +1857,12 @@ export class SandboxedFilesystem {
         }
       }
     } finally {
-      if (!installed && temporaryIdentity != null) {
-        try {
-          const current = await this.lstat(temporary);
-          if (
-            current.dev === temporaryIdentity.dev &&
-            current.ino === temporaryIdentity.ino
-          ) {
-            await this.unlink(temporary);
-          }
-        } catch (err: any) {
-          if (err?.code !== "ENOENT") {
-            logger.warn("unable to remove no-clobber copy staging file", {
-              path: temporary,
-              err: String(err),
-            });
-          }
-        }
+      if (!installed && temporaryHandle != null) {
+        // Identity-check-then-unlink is racy. Retain the rare failed staging
+        // file rather than risk deleting a path another process recreated.
+        logger.warn("retaining failed no-clobber copy staging file", {
+          path: temporary,
+        });
       }
       if (temporaryHandle != null) {
         try {
