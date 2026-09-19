@@ -647,7 +647,7 @@ function NewAgentPanel({
             onChange={(event) => setDirectory(event.target.value)}
           />
           <Button
-            style={{ height: 32 }}
+            style={{ height: 31 }}
             disabled={!projectId || busy || !!pending}
             onClick={() => {
               setSettingsOpen(false);
