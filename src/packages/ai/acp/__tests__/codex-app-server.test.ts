@@ -11,6 +11,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { PassThrough } from "node:stream";
 import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
+import { encodeAgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 const getCodexSiteKeyGovernorMock: jest.Mock<any, []> = jest.fn(() => null);
 const loggerMock = {
   debug: jest.fn(),
@@ -242,6 +243,23 @@ describe("CodexAppServerAgent", () => {
     const loginRequests: any[] = [];
     const threadStartRequests: any[] = [];
     const turnStartRequests: any[] = [];
+    const peerMessage = {
+      version: 1 as const,
+      type: "agent-message" as const,
+      direction: "outgoing" as const,
+      target: {
+        project_id: "00000000-0000-4000-8000-000000000010",
+        agent_id: "00000000-0000-4000-8000-000000000011",
+      },
+      target_name: "reviewer",
+      body: "Review this",
+      agent_session_id: "00000000-0000-4000-8000-000000000012",
+      attempt_id: "00000000-0000-4000-8000-000000000013",
+      outcome: "accepted" as const,
+      observed_at: 1234,
+      chat_effect: "saved" as const,
+    };
+    const peerMessageRecord = encodeAgentMessageRuntimeEvent(peerMessage);
     const proc = new FakeCodexAppServerProc((fake, message) => {
       switch (message.method) {
         case "initialize":
@@ -291,7 +309,7 @@ describe("CodexAppServerAgent", () => {
               threadId: "thr-shared-1",
               turnId: "turn-1",
               itemId: "cmd-1",
-              delta: "hi\n",
+              delta: `hi\n${peerMessageRecord}`,
             });
             fake.sendNotification("item/completed", {
               threadId: "thr-shared-1",
@@ -304,7 +322,7 @@ describe("CodexAppServerAgent", () => {
                 processId: null,
                 status: "completed",
                 commandActions: [],
-                aggregatedOutput: "hi\n",
+                aggregatedOutput: `hi\n${peerMessageRecord}`,
                 exitCode: 0,
                 durationMs: 5,
               },
@@ -470,6 +488,22 @@ describe("CodexAppServerAgent", () => {
         {
           type: "event",
           event: {
+            type: "peerMessage",
+            direction: "outgoing",
+            target: peerMessage.target,
+            target_name: "reviewer",
+            body: "Review this",
+            agent_session_id: peerMessage.agent_session_id,
+            attempt_id: peerMessage.attempt_id,
+            outcome: "accepted",
+            observed_at: 1234,
+            reason: undefined,
+            chat_effect: "saved",
+          },
+        },
+        {
+          type: "event",
+          event: {
             type: "subagent",
             operationId: "spawn-1",
             threadId: "thr-child-1",
@@ -520,6 +554,9 @@ describe("CodexAppServerAgent", () => {
         delta: false,
       },
     });
+    expect(JSON.stringify(streamPayloads)).not.toContain(
+      "::cocalc-agent-message::",
+    );
     expect(
       streamPayloads.filter(
         (payload) =>

@@ -3,7 +3,6 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { ArtifactSearchResults } from "./artifact-discovery";
 import {
   Alert,
   Button,
@@ -363,6 +362,22 @@ export function resolveThreadSearchHighlightQuery({
   threadSearchQuery: string;
 }): string {
   return threadSearchOpen ? threadSearchQuery : "";
+}
+
+export function threadSearchExcerpt(
+  content: string,
+  query: string,
+  maxLength = 180,
+): string {
+  const text = content
+    .replace(/<[^>]*>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text.length <= maxLength) return text;
+  const match = text.toLowerCase().indexOf(query.trim().toLowerCase());
+  const start = Math.max(0, match < 0 ? 0 : match - Math.floor(maxLength / 3));
+  const end = Math.min(text.length, start + maxLength);
+  return `${start > 0 ? "…" : ""}${text.slice(start, end).trim()}${end < text.length ? "…" : ""}`;
 }
 
 export function resolveCompactThreadBadgeAppearance({
@@ -867,21 +882,32 @@ export function ChatRoomThreadPanel({
     selectedThreadMeta,
   ]);
   const [interruptRequested, setInterruptRequested] = useState(false);
-  const threadSearchMatches = useMemo(() => {
+  const threadSearchResults = useMemo(() => {
     const needle = threadSearchQuery.trim().toLowerCase();
-    if (!needle) return [] as string[];
-    const matches: string[] = [];
+    if (!needle) return [] as Array<{ date: string; excerpt: string }>;
+    const matches: Array<{ date: string; excerpt: string }> = [];
     for (const message of selectedThreadMessages) {
-      const text = newest_content(message)
-        .replace(/<[^>]*>/g, " ")
-        .toLowerCase();
-      if (!text.includes(needle)) continue;
+      const content = newest_content(message);
+      if (
+        !content
+          .replace(/<[^>]*>/g, " ")
+          .toLowerCase()
+          .includes(needle)
+      )
+        continue;
       const d = dateValue(message);
       if (!d) continue;
-      matches.push(`${d.valueOf()}`);
+      matches.push({
+        date: `${d.valueOf()}`,
+        excerpt: threadSearchExcerpt(content, threadSearchQuery),
+      });
     }
     return matches;
   }, [threadSearchQuery, selectedThreadMessages]);
+  const threadSearchMatches = useMemo(
+    () => threadSearchResults.map(({ date }) => date),
+    [threadSearchResults],
+  );
   const matchCount = threadSearchMatches.length;
   const normalizedCursor = useMemo(() => {
     if (!matchCount) return 0;
@@ -2487,13 +2513,42 @@ export function ChatRoomThreadPanel({
               </span>
             ) : null}
           </div>
-          {selectedThreadId && (
-            <ArtifactSearchResults
-              actions={actions}
-              threadId={selectedThreadId}
-              query={threadSearchQuery}
-            />
-          )}
+          {selectedThreadId && threadSearchResults.length > 0 ? (
+            <section
+              aria-label="Matching messages"
+              style={{
+                maxHeight: 190,
+                overflowY: "auto",
+                borderTop: `1px solid ${UI_COLORS.border}`,
+                paddingTop: 4,
+              }}
+            >
+              {threadSearchResults.map((result, index) => (
+                <Button
+                  key={result.date}
+                  type="text"
+                  aria-label={`Open matching message ${index + 1}`}
+                  onClick={() => setThreadSearchCursor(index)}
+                  style={{
+                    display: "block",
+                    height: "auto",
+                    minHeight: 30,
+                    padding: "5px 7px",
+                    textAlign: "left",
+                    whiteSpace: "normal",
+                    width: "100%",
+                    background:
+                      index === normalizedCursor
+                        ? UI_COLORS.selected
+                        : undefined,
+                    color: UI_COLORS.text,
+                  }}
+                >
+                  {result.excerpt || "(empty message)"}
+                </Button>
+              ))}
+            </section>
+          ) : null}
           {selectedThreadId && threadSearchQuery.trim().length > 0 ? (
             <div
               style={{

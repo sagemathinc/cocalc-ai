@@ -24,7 +24,10 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
-import { parseAgentMessageRuntimeEvents } from "@cocalc/conat/agents/runtime-events";
+import {
+  parseAgentMessageRuntimeEvents,
+  stripAgentMessageRuntimeEvents,
+} from "@cocalc/conat/agents/runtime-events";
 import { resolveCodexSessionMode } from "@cocalc/util/ai/codex";
 import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
 import type {
@@ -3427,7 +3430,8 @@ export class CodexAppServerAgent implements AcpAgent {
               if (item.aggregatedOutput !== previous) {
                 const delta = item.aggregatedOutput.slice(previous.length);
                 terminalOutputs.set(terminalId, item.aggregatedOutput);
-                if (delta) {
+                const visibleDelta = stripAgentMessageRuntimeEvents(delta);
+                if (visibleDelta) {
                   await stream({
                     type: "event",
                     event: {
@@ -3435,7 +3439,7 @@ export class CodexAppServerAgent implements AcpAgent {
                       terminalId,
                       phase: "data",
                       cwd: cwdForEvent,
-                      chunk: delta,
+                      chunk: visibleDelta,
                     },
                   });
                 }
@@ -3457,8 +3461,11 @@ export class CodexAppServerAgent implements AcpAgent {
                   terminalId,
                   phase: "exit",
                   cwd: cwdForEvent,
-                  output:
-                    terminalOutputs.get(terminalId) ?? item.aggregatedOutput,
+                  output: stripAgentMessageRuntimeEvents(
+                    terminalOutputs.get(terminalId) ??
+                      item.aggregatedOutput ??
+                      "",
+                  ),
                   exitStatus: {
                     exitCode:
                       typeof item.exitCode === "number"
@@ -3696,6 +3703,8 @@ export class CodexAppServerAgent implements AcpAgent {
               terminalId,
               `${terminalOutputs.get(terminalId) ?? ""}${delta}`,
             );
+            const visibleDelta = stripAgentMessageRuntimeEvents(delta);
+            if (!visibleDelta) break;
             await stream({
               type: "event",
               event: {
@@ -3703,7 +3712,7 @@ export class CodexAppServerAgent implements AcpAgent {
                 terminalId,
                 phase: "data",
                 cwd,
-                chunk: delta,
+                chunk: visibleDelta,
               },
             });
             break;
