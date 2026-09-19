@@ -14,14 +14,14 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 const STALE_MS = 120000;
 
-export function runningGpuSummary(
+export function runningVmSummary(
   vms: ComputeVm[] | undefined,
   now = Date.now(),
 ) {
   let running = 0;
   let unknown = vms === undefined;
   for (const vm of vms ?? []) {
-    if (!(vm.gpu_count > 0) || vm.deleted_at) continue;
+    if (vm.deleted_at) continue;
     const observed = vm.provider_observed_at
       ? new Date(vm.provider_observed_at).valueOf()
       : NaN;
@@ -100,17 +100,16 @@ export function RunningGpuIndicator({ narrow = false }: { narrow?: boolean }) {
   }, [accountId, refresh]);
   if (!accountId) return null;
   const current = snapshot?.accountId === accountId ? snapshot : undefined;
-  const summary = runningGpuSummary(failed ? undefined : current?.rows, now);
+  const summary = runningVmSummary(failed ? undefined : current?.rows, now);
   const unknown =
     summary.unknown || (current != null && now - current.at > STALE_MS);
   const label = unknown
-    ? "GPU status unknown"
-    : `${summary.running} GPU VMs running`;
+    ? "VM status unknown"
+    : `${summary.running} ${summary.running === 1 ? "VM" : "VMs"} running`;
   const reminderKey = JSON.stringify(
     (current?.rows ?? [])
       .filter(
         (vm) =>
-          vm.gpu_count > 0 &&
           !vm.deleted_at &&
           (vm.provider_state === "running" || vm.provider_state === "starting"),
       )
@@ -137,15 +136,15 @@ export function RunningGpuIndicator({ narrow = false }: { narrow?: boolean }) {
             background: summary.running > 0 ? UI_COLORS.warningBg : undefined,
           }}
         >
-          {expanded ? label : `GPU ${unknown ? "?" : summary.running}`}
+          {expanded ? label : `VM ${unknown ? "?" : summary.running}`}
         </Button>
         {expanded && (
           <Button
             size="small"
             type="text"
             icon={<CloseOutlined />}
-            aria-label="Collapse GPU reminder"
-            title="Collapse GPU reminder"
+            aria-label="Collapse VM status"
+            title="Collapse VM status"
             onClick={() => {
               setDismissedSnapshot(reminderKey);
               trigger.current?.focus();
@@ -154,7 +153,7 @@ export function RunningGpuIndicator({ narrow = false }: { narrow?: boolean }) {
         )}
       </Space>
       <Modal
-        title="Account GPU virtual machines"
+        title="Account virtual machines"
         open={open}
         onCancel={() => setOpen(false)}
         modalRender={(modal) => (
@@ -181,11 +180,10 @@ export function RunningGpuIndicator({ narrow = false }: { narrow?: boolean }) {
             </Button>
             <Button
               onClick={() => {
-                setDismissedSnapshot(reminderKey);
                 setOpen(false);
               }}
             >
-              Dismiss reminder
+              Close
             </Button>
           </Space>
         }

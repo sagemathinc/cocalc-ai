@@ -22,6 +22,33 @@ const source = {
   available_usd: "5",
 };
 
+it("defaults a new VM to the first usable course allowance", async () => {
+  const onChange = jest.fn();
+  const onLaneChange = jest.fn();
+  render(
+    <ComputeFundingSelect
+      defaultToCourseFunding
+      api={{
+        listSources: async () => ({
+          as_of: new Date().toISOString(),
+          sources: [source],
+        }),
+      }}
+      onChange={onChange}
+      onLaneChange={onLaneChange}
+    />,
+  );
+  await waitFor(() =>
+    expect(onChange).toHaveBeenCalledWith({
+      kind: "course",
+      pool_id: "pool",
+      grant_id: "grant",
+      payer_account_id: "payer",
+    }),
+  );
+  expect(onLaneChange).toHaveBeenCalledWith("account-prepaid");
+});
+
 it("selects a named course source by keyboard without altering its payer", async () => {
   const user = userEvent.setup();
   const onChange = jest.fn();

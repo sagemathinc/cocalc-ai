@@ -15,6 +15,35 @@ export interface VmCreationAttempt {
   volumeKey: string;
 }
 
+export async function prepareCourseFundedVmValues<T extends VmCreateCliValues>({
+  values,
+  project_id,
+  projectSshPublicKey,
+  generateProjectSshKey,
+}: {
+  values: T;
+  project_id?: string;
+  projectSshPublicKey: string | null;
+  generateProjectSshKey: () => Promise<string>;
+}): Promise<{ values: T; projectSshPublicKey: string | null }> {
+  if (!values.funding_source) return { values, projectSshPublicKey };
+  if (!project_id) {
+    throw new Error("Course-funded VMs must be created from a CoCalc project.");
+  }
+  const publicKey =
+    projectSshPublicKey ?? (await generateProjectSshKey()).trim();
+  if (!publicKey) throw new Error("The project SSH public key is empty.");
+  return {
+    values: {
+      ...values,
+      allow_on_demand_fallback: false,
+      configure_project_ssh: true,
+      ssh_public_key: publicKey,
+    },
+    projectSshPublicKey: publicKey,
+  };
+}
+
 /** Preserve both resource identities when an unchanged submission is retried
  * after a lost response or a failed fresh-auth attempt. */
 export function vmCreationAttempt(

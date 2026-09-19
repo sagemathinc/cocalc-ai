@@ -2,10 +2,7 @@ import "@testing-library/jest-dom";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComputeVm } from "@cocalc/conat/hub/api/compute";
-import {
-  RunningGpuIndicator,
-  runningGpuSummary,
-} from "./running-gpu-indicator";
+import { RunningGpuIndicator, runningVmSummary } from "./running-gpu-indicator";
 
 let mockAccountId = "account-one";
 const mockListVms = jest.fn();
@@ -48,45 +45,46 @@ afterEach(() => {
 });
 
 it("distinguishes unknown observations from confirmed zero and counts observed rather than desired state", () => {
-  expect(runningGpuSummary(undefined)).toEqual({ running: 0, unknown: true });
-  expect(runningGpuSummary([])).toEqual({ running: 0, unknown: false });
-  expect(runningGpuSummary([vm({ desired_state: "stopped" })])).toEqual({
+  expect(runningVmSummary(undefined)).toEqual({ running: 0, unknown: true });
+  expect(runningVmSummary([])).toEqual({ running: 0, unknown: false });
+  expect(runningVmSummary([vm({ desired_state: "stopped" })])).toEqual({
     running: 1,
     unknown: false,
   });
-  expect(runningGpuSummary([vm({ provider_state: "stopped" })])).toEqual({
+  expect(runningVmSummary([vm({ provider_state: "stopped" })])).toEqual({
     running: 0,
     unknown: false,
   });
   expect(
-    runningGpuSummary([vm({ provider_observed_at: new Date(0).toISOString() })])
+    runningVmSummary([vm({ provider_observed_at: new Date(0).toISOString() })])
       .unknown,
   ).toBe(true);
-  expect(
-    runningGpuSummary([vm({ gpu_count: 0, provider_observed_at: null })]),
-  ).toEqual({ running: 0, unknown: false });
+  expect(runningVmSummary([vm({ gpu_count: 0 })])).toEqual({
+    running: 1,
+    unknown: false,
+  });
 });
 
 it("keeps a keyboard-discoverable indicator after dismissing, restores focus, and links the account VM page", async () => {
   const user = userEvent.setup();
   render(<RunningGpuIndicator />);
   const trigger = await screen.findByRole("button", {
-    name: "1 GPU VMs running",
+    name: "1 VM running",
   });
   expect(mockListVms).toHaveBeenCalledWith({});
   await user.tab();
   expect(trigger).toHaveFocus();
   await user.tab();
   expect(
-    screen.getByRole("button", { name: "Collapse GPU reminder" }),
+    screen.getByRole("button", { name: "Collapse VM status" }),
   ).toHaveFocus();
   await user.keyboard("{Enter}");
   expect(trigger).toHaveFocus();
-  expect(trigger).toHaveTextContent("GPU 1");
+  expect(trigger).toHaveTextContent("VM 1");
   await user.keyboard("{Enter}");
   await waitFor(() =>
     expect(
-      screen.getByRole("dialog", { name: "Account GPU virtual machines" }),
+      screen.getByRole("dialog", { name: "Account virtual machines" }),
     ).toBeVisible(),
   );
   const link = screen.getByRole("link", { name: "View VMs" });
@@ -101,56 +99,50 @@ it("keeps a keyboard-discoverable indicator after dismissing, restores focus, an
 
 it("does not leak another account's count or render failed loads as zero", async () => {
   const view = render(<RunningGpuIndicator narrow />);
-  await screen.findByRole("button", { name: "1 GPU VMs running" });
+  await screen.findByRole("button", { name: "1 VM running" });
   mockListVms.mockRejectedValue(new Error("offline"));
   mockAccountId = "account-two";
   view.rerender(<RunningGpuIndicator narrow />);
   expect(
-    screen.getByRole("button", { name: "GPU status unknown" }),
-  ).toHaveTextContent("GPU ?");
+    screen.getByRole("button", { name: "VM status unknown" }),
+  ).toHaveTextContent("VM ?");
   await waitFor(() => expect(mockListVms).toHaveBeenCalledTimes(2));
-  expect(
-    screen.queryByRole("button", { name: "0 GPU VMs running" }),
-  ).toBeNull();
+  expect(screen.queryByRole("button", { name: "0 VMs running" })).toBeNull();
 });
 
 it("ages a successful snapshot to unknown even if the next request hangs", async () => {
   jest.useFakeTimers();
   render(<RunningGpuIndicator />);
   await act(async () => {});
-  expect(
-    screen.getByRole("button", { name: "1 GPU VMs running" }),
-  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "1 VM running" })).toBeVisible();
   mockListVms.mockImplementation(() => new Promise(() => {}));
   await act(async () => {
     jest.advanceTimersByTime(150000);
   });
   expect(
-    screen.getByRole("button", { name: "GPU status unknown" }),
+    screen.getByRole("button", { name: "VM status unknown" }),
   ).toBeVisible();
   expect(mockListVms).toHaveBeenCalledTimes(2);
 });
 
-it("expands again when another GPU VM starts after dismissal", async () => {
+it("keeps the compact VM entry and expands again when another VM starts", async () => {
   jest.useFakeTimers();
   const user = userEvent.setup({ advanceTimers: jest.advanceTimersByTime });
   mockListVms.mockResolvedValue([vm({ id: "first" })]);
   render(<RunningGpuIndicator />);
   await act(async () => {});
-  await user.click(
-    screen.getByRole("button", { name: "Collapse GPU reminder" }),
-  );
+  await user.click(screen.getByRole("button", { name: "Collapse VM status" }));
   expect(
-    screen.queryByRole("button", { name: "Collapse GPU reminder" }),
+    screen.queryByRole("button", { name: "Collapse VM status" }),
   ).toBeNull();
   mockListVms.mockResolvedValue([vm({ id: "first" }), vm({ id: "second" })]);
   await act(async () => {
     jest.advanceTimersByTime(15000);
   });
   expect(
-    screen.getByRole("button", { name: "2 GPU VMs running" }),
-  ).toHaveTextContent("2 GPU VMs running");
+    screen.getByRole("button", { name: "2 VMs running" }),
+  ).toHaveTextContent("2 VMs running");
   expect(
-    screen.getByRole("button", { name: "Collapse GPU reminder" }),
+    screen.getByRole("button", { name: "Collapse VM status" }),
   ).toBeVisible();
 });

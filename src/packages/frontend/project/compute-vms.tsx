@@ -28,6 +28,7 @@ import {
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useComputeVmCatalog } from "./use-compute-vm-catalog";
 
@@ -97,6 +98,7 @@ import {
 } from "./compute-vms-cli";
 import {
   createVmWithHomeVolume,
+  prepareCourseFundedVmValues,
   vmCreationAttempt,
   type VmCreationAttempt,
 } from "./compute-vm-create-workflow";
@@ -209,7 +211,7 @@ import CourseCreditSummary from "./course-credit-summary";
 import { CourseVmTemplateSelect } from "./course-vm-template-select";
 import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-funding";
 
-interface VmDraft extends VmCreateCliValues {
+export interface VmDraft extends VmCreateCliValues {
   use_project_ssh_key: boolean;
 }
 
@@ -456,6 +458,8 @@ export function VmCreateModal({
   onGenerateProjectSshKey,
   onCancel,
   onCreate,
+  mode = "create",
+  intro,
 }: {
   open: boolean;
   project_id?: string;
@@ -469,11 +473,14 @@ export function VmCreateModal({
   sshKeys: Array<{ label: string; value: string }>;
   saving: boolean;
   error?: string;
-  preferredR2Region: ReturnType<typeof mapCountryRegionToR2Region>;
+  preferredR2Region?: ReturnType<typeof mapCountryRegionToR2Region>;
   onGenerateProjectSshKey?: () => Promise<string | undefined>;
   onCancel: () => void;
   onCreate: (values: VmDraft) => Promise<void>;
+  mode?: "create" | "recommendation";
+  intro?: ReactNode;
 }) {
+  const recommendationMode = mode === "recommendation";
   const [form] = Form.useForm<VmDraft>();
   const [recommendationCatalog, setRecommendationCatalog] =
     useState<ComputeCatalog>();
@@ -718,118 +725,143 @@ export function VmCreateModal({
   return (
     <Modal
       open={open}
-      title={initial.name ? `Create ${initial.name}` : "Create virtual machine"}
+      title={
+        recommendationMode
+          ? "Configure recommended virtual machine"
+          : initial.name
+            ? `Create ${initial.name}`
+            : "Create virtual machine"
+      }
       onCancel={onCancel}
       footer={
-        <Flex vertical gap={12}>
-          {error && (
-            <Alert
-              showIcon
-              type="error"
-              title="Unable to create VM"
-              description={error}
-              style={{ textAlign: "left" }}
-            />
-          )}
+        recommendationMode ? (
           <Flex justify="flex-end" gap={8}>
             <Button disabled={saving} onClick={onCancel}>
               Cancel
             </Button>
-            <Popconfirm
-              open={!creationBlocked && confirmedDraft != null}
-              title={`Create ${confirmedDraft?.name ?? "this VM"}?`}
-              description={
-                confirmedDraft && (
-                  <Space direction="vertical" size={2}>
-                    <Text>
-                      {confirmedDraft.operating_system === "windows"
-                        ? "Windows Server 2022"
-                        : "Ubuntu 24.04"}{" "}
-                      · {confirmedDraft.machine_type} ·{" "}
-                      {confirmedDraft.zone ?? confirmedDraft.region}
-                    </Text>
-                    <Text strong>
-                      Boot disk: {confirmedDraft.boot_disk_gb} GB
-                    </Text>
-                    {confirmedDraft.funding_source && (
-                      <>
-                        <Text strong>
-                          VM compute paid from your selected course allowance.
-                          No automatic charge to your personal account.
-                        </Text>
-                        <Text>
-                          Course funding reserves up to 72 hours of stopped boot
-                          storage. An earlier deletion deadline still applies.
-                          Deletion permanently removes software and data on this
-                          VM, not notebooks saved in your CoCalc project. VM
-                          files are not backed up automatically.
-                        </Text>
-                      </>
-                    )}
-                    <Text>
-                      Pricing: {pricingLabel(confirmedDraft.pricing_model)}
-                      {price
-                        ? ` · ${price.hourly_label} (${price.monthly_label})`
-                        : " · price unavailable"}
-                    </Text>
-                    <Text>
-                      Home:{" "}
-                      {confirmedDraft.create_home_volume
-                        ? `new ${confirmedDraft.new_home_volume_size_gb} GB persistent volume`
-                        : confirmedDraft.home_volume
-                          ? `persistent volume ${confirmedDraft.home_volume}`
-                          : "boot disk"}
-                    </Text>
-                    <Text type="secondary">
-                      The boot disk size cannot currently be changed after
-                      creation.
-                    </Text>
-                    {selectedVolume && (
-                      <VolumeFundingStatus volume={selectedVolume} />
-                    )}
-                    {confirmedDraft.create_home_volume &&
-                      confirmedDraft.funding_source && (
-                        <VolumeRetentionNotice />
-                      )}
-                  </Space>
-                )
+            <Button
+              type="primary"
+              loading={saving}
+              disabled={creationBlocked || saving || !price}
+              onClick={() =>
+                void form.validateFields().then((values) => onCreate(values))
               }
-              okText="Create VM"
-              cancelText="Review"
-              okButtonProps={{ loading: saving }}
-              onConfirm={() => {
-                if (
-                  creationBlocked ||
-                  !confirmedDraft ||
-                  (selectedVolume && volumeFundingUnavailable(selectedVolume))
-                )
-                  return;
-                const values = confirmedDraft;
-                setConfirmedDraft(undefined);
-                void onCreate(values);
-              }}
-              onCancel={() => setConfirmedDraft(undefined)}
             >
-              <Button
-                type="primary"
-                loading={saving}
-                disabled={
-                  creationBlocked ||
-                  saving ||
-                  (selectedVolume != null &&
-                    volumeFundingUnavailable(selectedVolume)) ||
-                  (!!draft.funding_source &&
-                    !!draft.create_home_volume &&
-                    !draft.accept_course_retention) ||
-                  (draft.create_home_volume && !newVolumePrice)
-                }
-                onClick={reviewCreate}
-              >
-                Create VM
-              </Button>
-            </Popconfirm>
+              Apply recommendation
+            </Button>
           </Flex>
-        </Flex>
+        ) : (
+          <Flex vertical gap={12}>
+            {error && (
+              <Alert
+                showIcon
+                type="error"
+                title="Unable to create VM"
+                description={error}
+                style={{ textAlign: "left" }}
+              />
+            )}
+            <Flex justify="flex-end" gap={8}>
+              <Button disabled={saving} onClick={onCancel}>
+                Cancel
+              </Button>
+              <Popconfirm
+                open={!creationBlocked && confirmedDraft != null}
+                title={`Create ${confirmedDraft?.name ?? "this VM"}?`}
+                description={
+                  confirmedDraft && (
+                    <Space direction="vertical" size={2}>
+                      <Text>
+                        {confirmedDraft.operating_system === "windows"
+                          ? "Windows Server 2022"
+                          : "Ubuntu 24.04"}{" "}
+                        · {confirmedDraft.machine_type} ·{" "}
+                        {confirmedDraft.zone ?? confirmedDraft.region}
+                      </Text>
+                      <Text strong>
+                        Boot disk: {confirmedDraft.boot_disk_gb} GB
+                      </Text>
+                      {confirmedDraft.funding_source && (
+                        <>
+                          <Text strong>
+                            VM compute paid from your selected course allowance.
+                            No automatic charge to your personal account.
+                          </Text>
+                          <Text>
+                            Course funding reserves up to 72 hours of stopped
+                            boot storage. An earlier deletion deadline still
+                            applies. Deletion permanently removes software and
+                            data on this VM, not notebooks saved in your CoCalc
+                            project. VM files are not backed up automatically.
+                          </Text>
+                        </>
+                      )}
+                      <Text>
+                        Pricing: {pricingLabel(confirmedDraft.pricing_model)}
+                        {price
+                          ? ` · ${price.hourly_label} (${price.monthly_label})`
+                          : " · price unavailable"}
+                      </Text>
+                      <Text>
+                        Home:{" "}
+                        {confirmedDraft.create_home_volume
+                          ? `new ${confirmedDraft.new_home_volume_size_gb} GB persistent volume`
+                          : confirmedDraft.home_volume
+                            ? `persistent volume ${confirmedDraft.home_volume}`
+                            : "boot disk"}
+                      </Text>
+                      <Text type="secondary">
+                        The boot disk size cannot currently be changed after
+                        creation.
+                      </Text>
+                      {selectedVolume && (
+                        <VolumeFundingStatus volume={selectedVolume} />
+                      )}
+                      {confirmedDraft.create_home_volume &&
+                        confirmedDraft.funding_source && (
+                          <VolumeRetentionNotice />
+                        )}
+                    </Space>
+                  )
+                }
+                okText="Create VM"
+                cancelText="Review"
+                okButtonProps={{ loading: saving }}
+                styles={{ root: { maxWidth: 480 } }}
+                onConfirm={() => {
+                  if (
+                    creationBlocked ||
+                    !confirmedDraft ||
+                    (selectedVolume && volumeFundingUnavailable(selectedVolume))
+                  )
+                    return;
+                  const values = confirmedDraft;
+                  setConfirmedDraft(undefined);
+                  void onCreate(values);
+                }}
+                onCancel={() => setConfirmedDraft(undefined)}
+              >
+                <Button
+                  type="primary"
+                  loading={saving}
+                  disabled={
+                    creationBlocked ||
+                    saving ||
+                    (selectedVolume != null &&
+                      volumeFundingUnavailable(selectedVolume)) ||
+                    (!!draft.funding_source &&
+                      !!draft.create_home_volume &&
+                      !draft.accept_course_retention) ||
+                    (draft.create_home_volume && !newVolumePrice)
+                  }
+                  onClick={reviewCreate}
+                >
+                  Create VM
+                </Button>
+              </Popconfirm>
+            </Flex>
+          </Flex>
+        )
       }
       styles={{ body: { maxHeight: "calc(100vh - 190px)", overflowY: "auto" } }}
       width={920}
@@ -882,15 +914,25 @@ export function VmCreateModal({
           setRecommendationEditVersion((version) => version + 1);
         }}
       >
-        <Form.Item name="funding_source" label="Course funding">
-          <ComputeFundingSelect
-            disabled={saving}
-            onLaneChange={(funding_mode) => patchDraft({ funding_mode })}
-            onUnavailable={setFundingUnavailable}
-            onSourceLoaded={setRecommendedSource}
-          />
-        </Form.Item>
-        {recommendedSource?.grant_id === draft.funding_source?.grant_id &&
+        {intro}
+        {!recommendationMode && (
+          <Form.Item name="funding_source" label="Course funding">
+            <ComputeFundingSelect
+              disabled={saving}
+              defaultToCourseFunding={open}
+              onLaneChange={(funding_mode) =>
+                patchDraft({
+                  funding_mode,
+                  allow_on_demand_fallback: false,
+                })
+              }
+              onUnavailable={setFundingUnavailable}
+              onSourceLoaded={setRecommendedSource}
+            />
+          </Form.Item>
+        )}
+        {!recommendationMode &&
+          recommendedSource?.grant_id === draft.funding_source?.grant_id &&
           !!recommendedSource?.recommended_vm_templates?.length && (
             <CourseVmTemplateSelect
               templates={recommendedSource.recommended_vm_templates}
@@ -906,43 +948,54 @@ export function VmCreateModal({
               }}
             />
           )}
-        <Flex gap={12} wrap>
-          <Form.Item
-            name="name"
-            label="VM title"
-            rules={[
-              {
-                required: true,
-                whitespace: true,
-                message: "Enter a descriptive title for this VM.",
-              },
-              {
-                pattern: /^[a-z][a-z0-9-]{0,31}$/,
-                message:
-                  "Use at most 32 lowercase letters, digits, or hyphens.",
-              },
-            ]}
-            style={{ flex: "1 1 220px" }}
-          >
-            <Input autoFocus placeholder="e.g. llama-benchmark" />
-          </Form.Item>
-          <Form.Item
-            name="funding_mode"
-            label="Funding"
-            hidden={!!draft.funding_source}
-            rules={[{ required: true }]}
-            style={{ flex: "1 1 320px" }}
-          >
-            <Select
-              options={catalog.funding_modes.map((mode) => ({
-                value: mode.value,
-                label: mode.label,
-                disabled: !mode.allowed,
-                title: mode.reason,
-              }))}
-            />
-          </Form.Item>
-        </Flex>
+        {!recommendationMode ? (
+          <Flex gap={12} wrap>
+            <Form.Item
+              name="name"
+              label="VM title"
+              rules={[
+                {
+                  required: true,
+                  whitespace: true,
+                  message: "Enter a descriptive title for this VM.",
+                },
+                {
+                  pattern: /^[a-z][a-z0-9-]{0,31}$/,
+                  message:
+                    "Use at most 32 lowercase letters, digits, or hyphens.",
+                },
+              ]}
+              style={{ flex: "1 1 220px" }}
+            >
+              <Input autoFocus placeholder="e.g. llama-benchmark" />
+            </Form.Item>
+            <Form.Item
+              name="funding_mode"
+              label="Funding"
+              hidden={!!draft.funding_source}
+              rules={[{ required: true }]}
+              style={{ flex: "1 1 320px" }}
+            >
+              <Select
+                options={catalog.funding_modes.map((mode) => ({
+                  value: mode.value,
+                  label: mode.label,
+                  disabled: !mode.allowed,
+                  title: mode.reason,
+                }))}
+              />
+            </Form.Item>
+          </Flex>
+        ) : (
+          <>
+            <Form.Item name="name" hidden>
+              <Input />
+            </Form.Item>
+            <Form.Item name="funding_mode" hidden>
+              <Input />
+            </Form.Item>
+          </>
+        )}
         <Flex gap={12} wrap>
           <Form.Item
             name="operating_system"
@@ -1418,7 +1471,7 @@ export function VmCreateModal({
             Boot disks cannot currently be enlarged after VM creation.
           </Text>
         </Flex>
-        {operatingSystem === "linux" && (
+        {!recommendationMode && operatingSystem === "linux" && (
           <>
             <Form.Item name="create_home_volume" hidden valuePropName="checked">
               <Checkbox />
@@ -1672,7 +1725,9 @@ export function VmCreateModal({
               forceRender: true,
               children: (
                 <>
-                  <Title level={5}>Pricing and lifetime</Title>
+                  <Title level={5}>
+                    {recommendationMode ? "Pricing" : "Pricing and lifetime"}
+                  </Title>
                   <Flex gap={12} wrap>
                     {provider !== "nebius" && (
                       <Form.Item
@@ -1701,35 +1756,39 @@ export function VmCreateModal({
                         </Radio.Group>
                       </Form.Item>
                     )}
-                    <Form.Item
-                      name="stop_after_minutes"
-                      style={{ flex: "1 1 260px" }}
-                    >
-                      <VmStopAfter />
-                    </Form.Item>
-                    <Form.Item
-                      name="ttl_minutes"
-                      label="Optional deletion deadline"
-                      extra="Deletion is separate from scheduled stop. Retained disks remain billable after stopping."
-                      style={{ flex: "1 1 260px" }}
-                    >
-                      <Select
-                        allowClear
-                        placeholder="No deadline"
-                        options={[
-                          { value: 30, label: "30 minutes" },
-                          { value: 60, label: "1 hour" },
-                          { value: 240, label: "4 hours" },
-                          { value: 480, label: "8 hours" },
-                          { value: 1440, label: "1 day" },
-                        ].filter(
-                          ({ value }) =>
-                            value <= catalog.limits.max_ttl_minutes,
-                        )}
-                      />
-                    </Form.Item>
+                    {!recommendationMode && (
+                      <>
+                        <Form.Item
+                          name="stop_after_minutes"
+                          style={{ flex: "1 1 260px" }}
+                        >
+                          <VmStopAfter />
+                        </Form.Item>
+                        <Form.Item
+                          name="ttl_minutes"
+                          label="Optional deletion deadline"
+                          extra="Deletion is separate from scheduled stop. Retained disks remain billable after stopping."
+                          style={{ flex: "1 1 260px" }}
+                        >
+                          <Select
+                            allowClear
+                            placeholder="No deadline"
+                            options={[
+                              { value: 30, label: "30 minutes" },
+                              { value: 60, label: "1 hour" },
+                              { value: 240, label: "4 hours" },
+                              { value: 480, label: "8 hours" },
+                              { value: 1440, label: "1 day" },
+                            ].filter(
+                              ({ value }) =>
+                                value <= catalog.limits.max_ttl_minutes,
+                            )}
+                          />
+                        </Form.Item>
+                      </>
+                    )}
                   </Flex>
-                  {draft.pricing_model === "spot" && (
+                  {!recommendationMode && draft.pricing_model === "spot" && (
                     <Form.Item
                       name="allow_on_demand_fallback"
                       valuePropName="checked"
@@ -1741,122 +1800,129 @@ export function VmCreateModal({
                       </Checkbox>
                     </Form.Item>
                   )}
-                  <Divider />
-                  <Title level={5}>SSH access</Title>
-                  {project_id && (
+                  {!recommendationMode && (
                     <>
-                      <Form.Item
-                        name="configure_project_ssh"
-                        valuePropName="checked"
-                      >
-                        <Checkbox disabled={!draft.use_project_ssh_key}>
-                          Add a managed SSH alias to this project&apos;s{" "}
-                          <Text code>~/.ssh/config</Text> when the VM is ready
-                        </Checkbox>
-                      </Form.Item>
-                      {projectSshPublicKey ? (
-                        <Form.Item
-                          name="use_project_ssh_key"
-                          valuePropName="checked"
-                        >
-                          <Checkbox>
-                            Add this project&apos;s SSH key from{" "}
-                            <Text code>.ssh/id_ed25519.pub</Text>
-                          </Checkbox>
-                        </Form.Item>
-                      ) : (
+                      <Divider />
+                      <Title level={5}>SSH access</Title>
+                      {project_id && (
+                        <>
+                          <Form.Item
+                            name="configure_project_ssh"
+                            valuePropName="checked"
+                          >
+                            <Checkbox disabled={!draft.use_project_ssh_key}>
+                              Add a managed SSH alias to this project&apos;s{" "}
+                              <Text code>~/.ssh/config</Text> when the VM is
+                              ready
+                            </Checkbox>
+                          </Form.Item>
+                          {projectSshPublicKey ? (
+                            <Form.Item
+                              name="use_project_ssh_key"
+                              valuePropName="checked"
+                            >
+                              <Checkbox>
+                                Add this project&apos;s SSH key from{" "}
+                                <Text code>.ssh/id_ed25519.pub</Text>
+                              </Checkbox>
+                            </Form.Item>
+                          ) : (
+                            <Alert
+                              showIcon
+                              type="info"
+                              title="This project does not have an SSH keypair yet."
+                              description="Create an encrypted project SSH keypair, then use its public key for this VM. The project does not need to restart."
+                              action={
+                                <Button
+                                  size="small"
+                                  loading={saving}
+                                  onClick={() => {
+                                    setSshKeyError(undefined);
+                                    void onGenerateProjectSshKey?.()
+                                      .then((publicKey) => {
+                                        if (publicKey) {
+                                          patchDraft({
+                                            use_project_ssh_key: true,
+                                          });
+                                        }
+                                      })
+                                      .catch((err) =>
+                                        setSshKeyError(String(err)),
+                                      );
+                                  }}
+                                >
+                                  Create project SSH keypair
+                                </Button>
+                              }
+                              style={{ marginBottom: 16 }}
+                            />
+                          )}
+                        </>
+                      )}
+                      {sshKeyError && (
                         <Alert
                           showIcon
-                          type="info"
-                          title="This project does not have an SSH keypair yet."
-                          description="Create an encrypted project SSH keypair, then use its public key for this VM. The project does not need to restart."
-                          action={
-                            <Button
-                              size="small"
-                              loading={saving}
-                              onClick={() => {
-                                setSshKeyError(undefined);
-                                void onGenerateProjectSshKey?.()
-                                  .then((publicKey) => {
-                                    if (publicKey) {
-                                      patchDraft({
-                                        use_project_ssh_key: true,
-                                      });
-                                    }
-                                  })
-                                  .catch((err) => setSshKeyError(String(err)));
-                              }}
-                            >
-                              Create project SSH keypair
-                            </Button>
-                          }
+                          type="warning"
+                          title="Unable to create project SSH keypair"
+                          description={sshKeyError}
                           style={{ marginBottom: 16 }}
                         />
                       )}
+                      <Form.Item
+                        name="ssh_public_key"
+                        label={
+                          project_id && projectSshPublicKey
+                            ? "Other SSH public key (optional)"
+                            : "SSH public key (optional)"
+                        }
+                        extra={
+                          draft.use_project_ssh_key
+                            ? "Uncheck the project key above to select a different initial key."
+                            : sshKeys.length
+                              ? "Select an account key, or leave blank. The CoCalc CLI can authorize your local key later when you run cocalc vm ssh."
+                              : "Leave blank to authorize your local key later with cocalc vm ssh, or paste a public key now."
+                        }
+                      >
+                        {sshKeys.length ? (
+                          <Select
+                            allowClear
+                            disabled={draft.use_project_ssh_key}
+                            options={sshKeys}
+                            placeholder="No initial key"
+                          />
+                        ) : (
+                          <Input.TextArea
+                            autoSize={{ minRows: 2, maxRows: 4 }}
+                            disabled={draft.use_project_ssh_key}
+                          />
+                        )}
+                      </Form.Item>
+                      <Divider />
+                      <Text strong>Equivalent CLI command</Text>
+                      <Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
+                        The command reproduces the form exactly, including an
+                        initial SSH key or an explicitly keyless VM.
+                      </Paragraph>
+                      {volumeUnsupported || vmCreateCliProblem(draft) ? (
+                        <Alert
+                          type="warning"
+                          title={
+                            volumeUnsupported
+                              ? SPONSORED_VOLUME_UNSUPPORTED
+                              : vmCreateCliProblem(draft)
+                          }
+                        />
+                      ) : (
+                        <CopyToClipBoard
+                          value={vmCreateCli({
+                            api,
+                            project_id,
+                            values: withResolvedSshKey(draft as VmDraft),
+                          })}
+                          {...COPYABLE_PROPS}
+                        />
+                      )}
                     </>
-                  )}
-                  {sshKeyError && (
-                    <Alert
-                      showIcon
-                      type="warning"
-                      title="Unable to create project SSH keypair"
-                      description={sshKeyError}
-                      style={{ marginBottom: 16 }}
-                    />
-                  )}
-                  <Form.Item
-                    name="ssh_public_key"
-                    label={
-                      project_id && projectSshPublicKey
-                        ? "Other SSH public key (optional)"
-                        : "SSH public key (optional)"
-                    }
-                    extra={
-                      draft.use_project_ssh_key
-                        ? "Uncheck the project key above to select a different initial key."
-                        : sshKeys.length
-                          ? "Select an account key, or leave blank. The CoCalc CLI can authorize your local key later when you run cocalc vm ssh."
-                          : "Leave blank to authorize your local key later with cocalc vm ssh, or paste a public key now."
-                    }
-                  >
-                    {sshKeys.length ? (
-                      <Select
-                        allowClear
-                        disabled={draft.use_project_ssh_key}
-                        options={sshKeys}
-                        placeholder="No initial key"
-                      />
-                    ) : (
-                      <Input.TextArea
-                        autoSize={{ minRows: 2, maxRows: 4 }}
-                        disabled={draft.use_project_ssh_key}
-                      />
-                    )}
-                  </Form.Item>
-                  <Divider />
-                  <Text strong>Equivalent CLI command</Text>
-                  <Paragraph type="secondary" style={{ margin: "4px 0 0" }}>
-                    The command reproduces the form exactly, including an
-                    initial SSH key or an explicitly keyless VM.
-                  </Paragraph>
-                  {volumeUnsupported || vmCreateCliProblem(draft) ? (
-                    <Alert
-                      type="warning"
-                      title={
-                        volumeUnsupported
-                          ? SPONSORED_VOLUME_UNSUPPORTED
-                          : vmCreateCliProblem(draft)
-                      }
-                    />
-                  ) : (
-                    <CopyToClipBoard
-                      value={vmCreateCli({
-                        api,
-                        project_id,
-                        values: withResolvedSshKey(draft as VmDraft),
-                      })}
-                      {...COPYABLE_PROPS}
-                    />
                   )}
                 </>
               ),
@@ -3377,9 +3443,26 @@ export function ProjectComputeVms({
     const { vmKey, volumeKey } = attempt;
     try {
       const completed = await runFreshAuthAction(async () => {
+        const prepared = await prepareCourseFundedVmValues({
+          values,
+          project_id: projectId,
+          projectSshPublicKey,
+          generateProjectSshKey: async () =>
+            (
+              await webapp_client.conat_client.hub.projects.generateProjectSshKeySecret(
+                {
+                  browser_id: webapp_client.browser_id,
+                  project_id: projectId!,
+                },
+              )
+            ).public_key,
+        });
+        if (prepared.projectSshPublicKey !== projectSshPublicKey) {
+          setProjectSshPublicKey(prepared.projectSshPublicKey);
+        }
         await createVmWithHomeVolume({
           api: webapp_client.conat_client.hub.compute,
-          values,
+          values: prepared.values,
           project_id: projectId,
           browser_id: webapp_client.browser_id,
           vmKey,

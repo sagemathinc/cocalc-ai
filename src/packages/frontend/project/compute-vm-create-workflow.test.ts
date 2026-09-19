@@ -1,6 +1,7 @@
 import type { ComputeVolume } from "@cocalc/conat/hub/api/compute";
 import {
   createVmWithHomeVolume,
+  prepareCourseFundedVmValues,
   vmCreationAttempt,
 } from "./compute-vm-create-workflow";
 import type { VmCreateCliValues } from "./compute-vms-cli";
@@ -65,6 +66,51 @@ function harness() {
     });
   return { volume, values, api, onVolumeCreated, run };
 }
+
+it("forces managed project access for course-funded VMs and creates a key when needed", async () => {
+  const h = harness();
+  h.values.allow_on_demand_fallback = true;
+  h.values.configure_project_ssh = false;
+  const generateProjectSshKey = jest
+    .fn()
+    .mockResolvedValue(" ssh-ed25519 AAAAPROJECT project ");
+  const prepared = await prepareCourseFundedVmValues({
+    values: h.values,
+    project_id: "project",
+    projectSshPublicKey: null,
+    generateProjectSshKey,
+  });
+  expect(prepared.projectSshPublicKey).toBe("ssh-ed25519 AAAAPROJECT project");
+  expect(prepared.values).toMatchObject({
+    allow_on_demand_fallback: false,
+    configure_project_ssh: true,
+    ssh_public_key: "ssh-ed25519 AAAAPROJECT project",
+  });
+  expect(generateProjectSshKey).toHaveBeenCalledTimes(1);
+  await expect(
+    prepareCourseFundedVmValues({
+      values: h.values,
+      projectSshPublicKey: null,
+      generateProjectSshKey,
+    }),
+  ).rejects.toThrow("CoCalc project");
+});
+
+it("leaves personally funded VM access choices unchanged", async () => {
+  const h = harness();
+  h.values.funding_source = undefined;
+  h.values.allow_on_demand_fallback = true;
+  h.values.configure_project_ssh = false;
+  const generateProjectSshKey = jest.fn();
+  const prepared = await prepareCourseFundedVmValues({
+    values: h.values,
+    project_id: "project",
+    projectSshPublicKey: null,
+    generateProjectSshKey,
+  });
+  expect(prepared.values).toBe(h.values);
+  expect(generateProjectSshKey).not.toHaveBeenCalled();
+});
 
 it("retains both request identities through a lost VM reply and resets on changed terms", async () => {
   const h = harness();

@@ -742,6 +742,15 @@ describePg(
       const provider = await import("../provider");
       const hosts = await import("@cocalc/server/conat/api/hosts");
       const spend = await import("@cocalc/server/project-host/spend");
+      const managedSsh =
+        await import("@cocalc/server/projects/managed-vm-ssh-config");
+      const projectKey = "ssh-ed25519 AAAACOURSEPROJECT course-project";
+      await pools
+        .get(courseBay)!
+        .query(
+          "UPDATE projects SET users=users || jsonb_build_object($2::text,jsonb_build_object('group','collaborator')) WHERE project_id=$1",
+          [f.project, f.student],
+        );
       const spies = [
         jest
           .spyOn(provider, "getProviderComputeRegions")
@@ -764,6 +773,9 @@ describePg(
           hourly_cost_usd: "0.02",
           pricing_snapshot: { provider: "gcp", components: [] },
         } as any),
+        jest
+          .spyOn(managedSsh, "getManagedVmProjectSshPublicKey")
+          .mockResolvedValue(projectKey),
       ];
       try {
         mockComputeMode = "enabled";
@@ -782,6 +794,7 @@ describePg(
           ttl_minutes: 10,
           stop_after_minutes: 5,
           ssh_public_key: "ssh-ed25519 AAAAREHOMETEST rehome-test",
+          project_id: f.project,
           funding_source: f.request.source,
         };
         await onBay(courseBay, async () =>
@@ -830,6 +843,13 @@ describePg(
             )
           ).n,
         ).toBe(1);
+        expect(
+          await row(
+            resourceBay,
+            "SELECT project_id,ssh_public_key FROM compute_vm_project_access WHERE vm_id=$1",
+            [created.id],
+          ),
+        ).toEqual({ project_id: f.project, ssh_public_key: projectKey });
       } finally {
         for (const spy of spies) spy.mockRestore();
       }

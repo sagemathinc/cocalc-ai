@@ -34,15 +34,16 @@ it("connects load, keyboard editing and explicit versioned save without financia
   await user.keyboard("{Enter}");
   await waitFor(() =>
     expect(
-      screen.getByRole("heading", { name: "Edit recommendation" }),
-    ).toHaveFocus(),
+      screen.getByRole("dialog", {
+        name: "Configure recommended virtual machine",
+      }),
+    ).toBeVisible(),
   );
-  const cancel = screen.getByRole("button", { name: "Cancel edit" });
+  const cancel = screen.getByRole("button", { name: "Cancel" });
   const apply = screen.getByRole("button", { name: "Apply recommendation" });
   expect(
     cancel.compareDocumentPosition(apply) & Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
-  await user.tab();
   await user.type(
     screen.getByRole("textbox", { name: "Recommendation label" }),
     "Notebook CPU",

@@ -824,10 +824,14 @@ export async function createVm(
   const fundingSource = normalizeVmFundingSource(opts.funding_source);
   if (fundingSource) {
     await requireSponsoredVmAdmission();
-    if (opts.funding_mode === "site-funded" || opts.allow_on_demand_fallback)
+    if (opts.funding_mode === "site-funded")
+      throw new Error("Course-funded VMs require an account funding lane");
+    if (opts.allow_on_demand_fallback)
       throw new Error(
-        "Course funding requires an account lane, independently funded volumes, and no unreserved price fallback",
+        "Course funding does not allow unreserved Standard price fallback",
       );
+    if (!opts.project_id)
+      throw new Error("Course-funded VMs require a CoCalc project context");
   }
   const stopSchedule = createStopSchedule(
     opts.stop_after_minutes,
@@ -1105,9 +1109,12 @@ export async function createVm(
     },
     require_fresh_auth: true,
   });
+  const configureProjectAccess = fundingSource
+    ? true
+    : opts.configure_project_ssh;
   const projectKey =
     opts.project_id &&
-    (opts.configure_project_ssh === true || opts.ssh_public_key == null)
+    (configureProjectAccess === true || opts.ssh_public_key == null)
       ? await getManagedVmProjectSshPublicKey({
           account_id: accountId,
           project_id: opts.project_id,
@@ -1117,8 +1124,10 @@ export async function createVm(
     ssh_public_key: sshPublicKey,
     configure_project_ssh: configureProjectSsh,
   } = resolveManagedVmCreateSshAuthorization({
-    requested_key: opts.ssh_public_key,
-    configure_project_ssh: opts.configure_project_ssh,
+    requested_key: fundingSource
+      ? (projectKey ?? undefined)
+      : opts.ssh_public_key,
+    configure_project_ssh: configureProjectAccess,
     project_key: projectKey,
   });
   const providerInstanceId = managedComputeVmProviderName(

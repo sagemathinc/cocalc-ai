@@ -3,7 +3,7 @@
  *  License: MS-RSL - see LICENSE.md for details
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Alert, Select, Typography } from "antd";
 import type {
   ComputeFundingApi,
@@ -33,6 +33,7 @@ export default function ComputeFundingSelect({
   onSourceLoaded,
   id,
   disabled,
+  defaultToCourseFunding = false,
   api = webapp_client.conat_client.hub.computeFunding,
 }: {
   id?: string;
@@ -42,11 +43,16 @@ export default function ComputeFundingSelect({
   onUnavailable?: (unavailable: boolean) => void;
   onSourceLoaded?: (source?: CourseFundingSourceSummary) => void;
   disabled?: boolean;
+  defaultToCourseFunding?: boolean;
   api?: Pick<ComputeFundingApi, "listSources">;
 }) {
   const [data, setData] = useState<CourseFundingSources>();
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
+  const automaticSelectionHandled = useRef(false);
+  useEffect(() => {
+    if (!defaultToCourseFunding) automaticSelectionHandled.current = false;
+  }, [defaultToCourseFunding]);
   useEffect(() => {
     let active = true;
     let fetching = false;
@@ -84,6 +90,39 @@ export default function ComputeFundingSelect({
     !Number.isFinite(asOf) || now - asOf > 45_000 || asOf - now > 5_000;
   const unavailable =
     !!value && (!!error || !selected || stale || !usableSource(selected, now));
+  useEffect(() => {
+    if (
+      !defaultToCourseFunding ||
+      automaticSelectionHandled.current ||
+      value ||
+      error ||
+      stale
+    )
+      return;
+    const source = data?.sources.find((candidate) =>
+      usableSource(candidate, now),
+    );
+    if (!source) return;
+    automaticSelectionHandled.current = true;
+    onChange?.({
+      kind: "course",
+      pool_id: source.pool_id,
+      grant_id: source.grant_id,
+      payer_account_id: source.payer_account_id,
+    });
+    onLaneChange?.(
+      source.lane === "prepaid" ? "account-prepaid" : "account-postpaid",
+    );
+  }, [
+    data,
+    defaultToCourseFunding,
+    error,
+    now,
+    onChange,
+    onLaneChange,
+    stale,
+    value,
+  ]);
   useEffect(() => onUnavailable?.(unavailable), [onUnavailable, unavailable]);
   useEffect(
     () => onSourceLoaded?.(unavailable ? undefined : selected),
@@ -108,6 +147,7 @@ export default function ComputeFundingSelect({
         ]}
         onChange={(key) => {
           if (key === "personal") {
+            automaticSelectionHandled.current = true;
             onChange?.(undefined);
             return;
           }
