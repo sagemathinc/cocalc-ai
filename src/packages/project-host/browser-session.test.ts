@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+import { conatPassword } from "@cocalc/backend/data";
 import {
   buildProjectHostBrowserSessionCookie,
   buildProjectHostBrowserSessionCookieDeletion,
@@ -5,6 +7,7 @@ import {
   issueProjectHostBrowserSessionFromBearer,
   restrictedBrowserSessionTtlSeconds,
   resolveProjectHostBrowserSessionFromCookieHeader,
+  verifyProjectHostBrowserSessionToken,
 } from "./browser-session";
 
 const mockVerifyProjectHostAuthToken = jest.fn();
@@ -31,6 +34,14 @@ function createResponse() {
     }),
     headers,
   } as any;
+}
+
+function createLegacySessionToken(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", conatPassword)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
 }
 
 describe("project-host shared browser session", () => {
@@ -120,12 +131,26 @@ describe("project-host shared browser session", () => {
     });
   });
 
+  it("rejects pre-cutover full-lifetime browser session tokens", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const legacyToken = createLegacySessionToken({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      iat: now_s,
+      exp: now_s + 30 * 24 * 60 * 60,
+      nonce: "legacy-full-lifetime-token",
+    });
+
+    expect(
+      verifyProjectHostBrowserSessionToken(legacyToken, now_s * 1000),
+    ).toBeUndefined();
+  });
+
   it("bounds an exam browser session token and cookie to the requested ttl", () => {
     const now = Date.now();
     const token = createProjectHostBrowserSessionToken({
       account_id: "00000000-1000-4000-8000-000000000001",
       now_ms: now,
-      ttl_seconds: 600,
+      restricted_exp_s: Math.floor(now / 1000) + 600,
     });
     expect(
       resolveProjectHostBrowserSessionFromCookieHeader(
@@ -135,6 +160,7 @@ describe("project-host shared browser session", () => {
       account_id: "00000000-1000-4000-8000-000000000001",
       iat_s: Math.floor(now / 1000),
       exp_s: Math.floor(now / 1000) + 600,
+      restricted_exp_s: Math.floor(now / 1000) + 600,
     });
     expect(
       buildProjectHostBrowserSessionCookie({

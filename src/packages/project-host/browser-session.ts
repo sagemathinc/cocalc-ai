@@ -21,6 +21,7 @@ const BROWSER_SESSION_TTL_SECONDS = Math.max(
   ),
 );
 const MIN_BROWSER_SESSION_TTL_SECONDS = 1;
+const BROWSER_SESSION_TOKEN_VERSION = "project-host-browser-session-v2";
 
 function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return {};
@@ -151,6 +152,7 @@ export function createProjectHostBrowserSessionToken({
   );
   const exp = now_s + ttl;
   const payload = JSON.stringify({
+    v: BROWSER_SESSION_TOKEN_VERSION,
     account_id,
     iat: now_s,
     exp,
@@ -190,6 +192,7 @@ export function verifyProjectHostBrowserSessionToken(
   } catch {
     return;
   }
+  if (payload?.v !== BROWSER_SESSION_TOKEN_VERSION) return;
   const account_id = `${payload?.account_id ?? ""}`;
   const iat = Number(payload?.iat ?? 0);
   const exp = Number(payload?.exp ?? 0);
@@ -208,16 +211,13 @@ export function verifyProjectHostBrowserSessionToken(
     return;
   }
   if (exp < Math.floor(now_ms / 1000)) return;
-  // Before restricted_exp_s was added, bounded browser sessions could still
-  // be identified by their shorter-than-default signed lifetime.
-  const restricted_exp_s =
-    explicitRestrictedExp ??
-    (exp - iat < BROWSER_SESSION_TTL_SECONDS ? exp : undefined);
   return {
     account_id,
     iat_s: iat,
     exp_s: exp,
-    ...(restricted_exp_s == null ? {} : { restricted_exp_s }),
+    ...(explicitRestrictedExp == null
+      ? {}
+      : { restricted_exp_s: explicitRestrictedExp }),
   };
 }
 

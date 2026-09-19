@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+import { conatPassword } from "@cocalc/backend/data";
 import {
   buildProjectHostSessionCookie,
   buildProjectHostSessionCookieDeletion,
@@ -43,6 +45,7 @@ import {
   createProjectHostHttpProxyAuth,
   createProjectHostHttpSessionToken,
   resolveProjectHostHttpSessionFromCookieHeader,
+  verifyProjectHostHttpSessionToken,
 } from "./http-proxy-auth";
 import { EventEmitter } from "node:events";
 import { createProjectHostBrowserSessionToken } from "./browser-session";
@@ -61,6 +64,14 @@ function createResponse() {
     }),
     headers,
   } as any;
+}
+
+function createLegacySessionToken(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", conatPassword)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
 }
 
 describe("project-host HTTP session cookie", () => {
@@ -154,6 +165,46 @@ describe("project-host HTTP session cookie", () => {
     });
   });
 
+  it("rejects pre-cutover full-lifetime HTTP session tokens", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const legacyToken = createLegacySessionToken({
+      account_id,
+      iat: now_s,
+      exp: now_s + 30 * 24 * 60 * 60,
+      nonce: "legacy-full-lifetime-token",
+    });
+
+    expect(
+      verifyProjectHostHttpSessionToken(legacyToken, now_s * 1000),
+    ).toBeUndefined();
+  });
+
+  it("does not refresh a pre-cutover browser session token", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const browserSession = createLegacySessionToken({
+      account_id,
+      iat: now_s,
+      exp: now_s + 30 * 24 * 60 * 60,
+      nonce: "legacy-widened-browser-session",
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+      },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+    const res = createResponse();
+
+    await expect(
+      auth.authorizeHttpRequest(req, res, project_id),
+    ).rejects.toThrow("missing project-host HTTP auth token");
+    expect(res.headers.get("Set-Cookie")).toBeUndefined();
+  });
+
   it("authorizes HTTP requests from the shared browser session cookie and mints a scoped HTTP session cookie", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",
@@ -191,7 +242,7 @@ describe("project-host HTTP session cookie", () => {
       const browserSession = createProjectHostBrowserSessionToken({
         account_id,
         now_ms: now.getTime(),
-        ttl_seconds: 60,
+        restricted_exp_s: Math.floor(now.getTime() / 1000) + 60,
       });
       const req = {
         headers: {
@@ -634,7 +685,7 @@ describe("project-host HTTP session cookie", () => {
       const browserSession = createProjectHostBrowserSessionToken({
         account_id,
         now_ms: now.getTime(),
-        ttl_seconds: 1,
+        restricted_exp_s: Math.floor(now.getTime() / 1000) + 1,
       });
       const req = {
         headers: {

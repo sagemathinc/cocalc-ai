@@ -60,6 +60,7 @@ const HTTP_SESSION_TTL_SECONDS = Math.max(
   300,
   envNumber("COCALC_PROJECT_HOST_HTTP_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60),
 );
+const HTTP_SESSION_TOKEN_VERSION = "project-host-http-session-v2";
 const HTTP_UPGRADE_REVOKE_SWEEP_MS = Math.max(
   5_000,
   envNumber("COCALC_PROJECT_HOST_HTTP_REVOKE_SWEEP_MS", 30_000),
@@ -176,6 +177,7 @@ export function createProjectHostHttpSessionToken({
   );
   const exp = now_s + ttl;
   const payload = JSON.stringify({
+    v: HTTP_SESSION_TOKEN_VERSION,
     account_id,
     iat: now_s,
     exp,
@@ -215,6 +217,7 @@ export function verifyProjectHostHttpSessionToken(
   } catch {
     return;
   }
+  if (payload?.v !== HTTP_SESSION_TOKEN_VERSION) return;
   const account_id = `${payload?.account_id ?? ""}`;
   const iat = Number(payload?.iat ?? 0);
   const exp = Number(payload?.exp ?? 0);
