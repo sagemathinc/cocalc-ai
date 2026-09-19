@@ -105,7 +105,7 @@ test("previews saved text, opens the real file, and keeps the preview mounted on
   expect(screen.getByRole("note")).toHaveTextContent(
     "not a historical snapshot",
   );
-  const open = screen.getByRole("button", { name: "Open file" });
+  const open = screen.getByRole("button", { name: "Open in project" });
   open.focus();
   expect(document.activeElement).toBe(open);
   fireEvent.click(open);
@@ -135,6 +135,13 @@ test.each(["x.html", "x.svg", "x.ipynb"])(
   "does not select active renderer for %s",
   async (path) => {
     expect(fileArtifactPreviewSupported(path)).toBe(false);
+  },
+);
+
+test.each(["module.mjs", "legacy.cjs", "typed.mts", "typed.cts"])(
+  "supports module source preview for %s",
+  (path) => {
+    expect(fileArtifactPreviewSupported(path)).toBe(true);
   },
 );
 
@@ -241,7 +248,7 @@ test("large readable files explain why snapshot feedback is unavailable", async 
   await screen.findByTestId("preview");
   expect(screen.getByText(/snapshot of at most 32 KiB/)).toBeTruthy();
   expect(screen.getByRole("button", { name: "Comment" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Open file" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Open in project" })).toBeEnabled();
 });
 
 test("missing initial file shows the error without displaying another path's preview", async () => {

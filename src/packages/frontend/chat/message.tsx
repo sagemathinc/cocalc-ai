@@ -107,6 +107,9 @@ import { sendGitCommitAgentTurn } from "./git-commit-agent-turn";
 import { getDefaultNewThreadSetup } from "./chatroom-thread-panel";
 import { setChatOverlayOpen } from "./drawer-overlay-state";
 import { formatTurnDuration } from "./turn-duration";
+import { useChatEmbeddingOptions } from "./embedding-options";
+import { openProjectFileResult } from "./open-result";
+import { projectFileTargetFromHref } from "./project-file-target";
 import { CodexQuotaHelp } from "./codex-quota-help";
 import { formatCodexErrorMarkdown } from "./codex-error-presentation";
 import {
@@ -466,6 +469,7 @@ export default function Message({
 }: Props) {
   const intl = useIntl();
   const narrow = useNarrowChatViewport();
+  const embeddingOptions = useChatEmbeddingOptions();
   const fullWidthContent = narrow && (mode === "sidechat" || !show_avatar);
   const editorTheme = useEffectiveEditorThemeForPath(project_id, path);
 
@@ -2257,14 +2261,31 @@ export default function Message({
       shouldRenderInterleavedCodexActivityBody &&
       !suppressPlaceholderBody &&
       value.trim().length > 0;
-    const openCommitFromMessage = (e: any) => {
+    const openResultFromMessage = (e: any) => {
       const target = e.target as HTMLElement | null;
       const anchor = target?.closest?.("a[href]") as HTMLAnchorElement | null;
-      const hash = parseGitCommitLink(anchor?.getAttribute("href"));
-      if (!hash) return;
+      const href = anchor?.getAttribute("href");
+      const hash = parseGitCommitLink(href);
+      if (hash) {
+        e.preventDefault();
+        e.stopPropagation();
+        void openGitBrowserFromMessage(hash);
+        return;
+      }
+      if (!embeddingOptions.openFilesInWorkbench || !actions) return;
+      const file = projectFileTargetFromHref({
+        href,
+        projectId: project_id,
+        basePath: activityBasePath,
+      });
+      if (!file) return;
       e.preventDefault();
       e.stopPropagation();
-      void openGitBrowserFromMessage(hash);
+      openProjectFileResult(actions, {
+        kind: "file",
+        ...file,
+        threadId: messageThreadId,
+      });
     };
     const retainedSessionId = field<string>(message, "acp_thread_id");
     const stopRetainedWork = async () => {
@@ -2398,7 +2419,7 @@ export default function Message({
           ? renderInterleavedCodexBody({
               blocks: activityBlocksToRender,
               message_class,
-              openCommitFromMessage,
+              openCommitFromMessage: openResultFromMessage,
               showHeader: inlineCodexActivityMode === "completed",
               showQuotaHelp: !shouldRenderCompletedFinalResponse,
               onHideActivity:
@@ -2441,7 +2462,7 @@ export default function Message({
                   title: "Assistant response",
                 }}
               >
-                <div onClickCapture={openCommitFromMessage}>
+                <div onClickCapture={openResultFromMessage}>
                   {messageBodyMode === "select" ? (
                     renderSelectableMarkdownBody({
                       value,
@@ -2493,7 +2514,7 @@ export default function Message({
               title: "Assistant response",
             }}
           >
-            <div onClickCapture={openCommitFromMessage}>
+            <div onClickCapture={openResultFromMessage}>
               {messageBodyMode === "select" ? (
                 renderSelectableMarkdownBody({
                   value,

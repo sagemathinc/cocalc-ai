@@ -23,8 +23,12 @@ const TEXT_EXTENSIONS = new Set([
   "txt",
   "py",
   "ts",
+  "mts",
+  "cts",
   "tsx",
   "js",
+  "mjs",
+  "cjs",
   "jsx",
   "json",
   "yaml",
@@ -263,7 +267,17 @@ export function FileArtifact({
               .catch((err) => setError(String(err)));
           }}
         >
-          Open file
+          Open in project
+        </Button>
+        <Button
+          disabled={!actions}
+          onClick={() => {
+            void actions
+              ?.download_file({ path, log: true })
+              .catch((err) => setError(String(err)));
+          }}
+        >
+          Download
         </Button>
         <Button
           disabled={loading || !supported}
@@ -350,7 +364,8 @@ export function FileArtifact({
       )}
       {!supported && (
         <div role="status">
-          Preview is not yet supported for this file type. Use Open file.
+          Preview is not yet supported for this file type. Use Open in project
+          or Download.
         </div>
       )}
       <div

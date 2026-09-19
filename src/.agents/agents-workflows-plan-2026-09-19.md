@@ -2,7 +2,8 @@
 
 Date: 2026-09-19
 
-Status: proposed; implementation and live acceptance remain outstanding.
+Status: implementation in progress. The first file/code workflow slice is live
+and accepted; the reusable resource picker and later workflow slices remain.
 
 ## Objective
 
@@ -44,9 +45,11 @@ the project. These are concrete gaps to address, not capabilities to assume.
 Related documents: [Workbench objects](chat-workbench-objects.md),
 [contextual replies](chat-contextual-replies.md),
 [publication smoke tests](workbench-publication-smoke.md), and
-[earlier release evidence](workbench-first-release.md). Reuse their machinery
-and unresolved applicable checks. Historical evidence is not proof that the
-current Agents integration passes.
+[earlier release evidence](workbench-first-release.md). Resource selection must
+also align with the grouped picker and narrow provider authority in the
+[agent connectors plan](agent-connectors-implementation-plan-2026-09-19.md).
+Reuse their machinery and unresolved applicable checks. Historical evidence is
+not proof that the current Agents integration passes.
 
 ## Workflow Scope
 
@@ -89,23 +92,42 @@ reuse the real CoCalc applications.
 
 ### 1. Complete One File And One Code Workflow
 
-- [ ] Audit existing link handlers, artifact controls, Git review, download,
+- [x] Audit existing link handlers, artifact controls, Git review, download,
       upload/attachment, and project-file selection from the Agents surface.
-- [ ] Add a shared open-result action that carries project, path or artifact,
+- [x] Add a shared open-result action that carries project, path or artifact,
       source agent/thread, and any exact revision available.
-- [ ] Route supported files and diffs into the existing Workbench beside chat.
+- [x] Route supported files and diffs into the existing Workbench beside chat.
       Keep explicit `Open in project` and usable download actions.
-- [ ] Make input selection practical: choose an existing project file or upload
+- [x] Make input selection practical: choose an existing project file or upload
       one, and show exactly which file the request references. Reuse existing
       upload and attachment services.
-- [ ] Keep result panes scoped to the agent conversation, with Agents-specific
+- [ ] Treat the first project-file control as a bridge to a reusable resource
+      picker, not as the final discovery UI. Expose resources from `@` through a
+      clear submenu/group. Define a provider boundary so project files are the
+      first provider and authorized Google Drive or later connector resources
+      can use the same interaction without granting broader access or copying
+      remote data into the project merely to make it selectable.
+- [x] Keep result panes scoped to the agent conversation, with Agents-specific
       layout preferences independent of the normal project desktop. Reuse an
       already-open result rather than creating duplicate panes on every click.
-- [ ] Verify a report-to-PDF workflow and a failing-test-to-reviewed-fix workflow
+- [x] Verify a report-to-PDF workflow and a failing-test-to-reviewed-fix workflow
       through one revision each before expanding the result UI.
 
 This first slice delivers useful workflows even before automatic result
 collection is complete. It also exposes which evidence is actually missing.
+
+Live acceptance on `lite1b.cocalc.ai` used the Agents page without a refresh:
+
+- The document workflow created LaTeX and PDF files, diagnosed an initially
+  unavailable build dependency, built the PDF, opened it beside chat, downloaded
+  it, requested a title revision, and refreshed the existing result pane.
+- The code workflow began with a failing Node test, fixed the implementation,
+  displayed the source beside chat, requested input validation and another test,
+  reran successfully, and preserved a pre-existing unrelated file byte-for-byte.
+- Existing-file selection and upload both insert an explicit project-file link
+  into the draft. This control is intentionally an interim bridge. The unchecked
+  resource-picker item above remains required for `@` discovery and later narrow
+  connector providers.
 
 ### 2. Collect And Render Observed Turn Results
 
@@ -212,7 +234,9 @@ its failure behavior before the next is called complete.
   card, including sending email, merging PRs, or deploying applications.
 - A workflow language, task scheduler, manager-agent hierarchy, or a rewrite of
   Agent Sessions and messaging.
-- New connector integrations, public artifact sharing, cross-project artifact
-  references, or an application-preview hosting platform.
+- Implementing new connector backends, public artifact sharing, cross-project
+  artifact references, or an application-preview hosting platform. The shared
+  resource-picker boundary and `@` entry point are in scope so later connector
+  providers do not require another composer UI.
 - A second history/versioning system or a claim that editable project chat
   history is an immutable audit record.

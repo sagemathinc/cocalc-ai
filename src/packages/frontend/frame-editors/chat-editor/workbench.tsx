@@ -44,6 +44,7 @@ import { GitHubPRArtifact } from "./github-pr-artifact";
 import { ActionListArtifact } from "./action-list-artifact";
 import { CommitArtifact } from "./commit-artifact";
 import { ArtifactIdentity } from "@cocalc/frontend/chat/artifact-card";
+import { path_split } from "@cocalc/util/misc";
 const AppearanceEditor = lazyWithRetry(
   () => import("@cocalc/frontend/chat/artifact-appearance-editor"),
   "artifact appearance",
@@ -82,7 +83,11 @@ export function WorkbenchSurface(props: EditorComponentProps) {
   } catch {
     /* Loading or removed. */
   }
-  const title = record?.theme?.title || record?.title;
+  const directPath = props.desc.get("data-path");
+  const title =
+    record?.theme?.title ||
+    record?.title ||
+    (directPath ? path_split(directPath).tail || directPath : undefined);
   const theme = record?.theme;
   useEffect(() => {
     if (!title) return;
@@ -102,7 +107,7 @@ export function WorkbenchSurface(props: EditorComponentProps) {
   }, [title, theme?.color, theme?.icon, props.desc, props.id, actions]);
   return (
     <div className="smc-vfill" style={{ minHeight: 0 }}>
-      {record && (
+      {(record || directPath) && (
         <div
           style={{
             padding: "8px 12px",
@@ -113,9 +118,13 @@ export function WorkbenchSurface(props: EditorComponentProps) {
           }}
         >
           <div style={{ flex: 1, minWidth: 0 }}>
-            <ArtifactIdentity title={record.title} theme={theme} />
+            {record ? (
+              <ArtifactIdentity title={record.title} theme={theme} />
+            ) : (
+              <strong>{title}</strong>
+            )}
           </div>
-          {!props.read_only && (
+          {!props.read_only && record && (
             <Button
               size="small"
               onClick={() => setEdit(true)}
@@ -126,7 +135,15 @@ export function WorkbenchSurface(props: EditorComponentProps) {
           )}
         </div>
       )}
-      <Workbench {...props} />
+      {directPath && !props.desc.get("data-artifact") ? (
+        <DirectFileWorkbench
+          path={directPath}
+          projectId={props.project_id}
+          threadId={props.desc.get("data-thread")}
+        />
+      ) : (
+        <Workbench {...props} />
+      )}
       {edit && record && (
         <Suspense fallback={<div role="status">Loading appearance...</div>}>
           <AppearanceEditor
@@ -138,6 +155,34 @@ export function WorkbenchSurface(props: EditorComponentProps) {
         </Suspense>
       )}
     </div>
+  );
+}
+
+function DirectFileWorkbench({
+  path,
+  projectId,
+  threadId,
+}: {
+  path: string;
+  projectId: string;
+  threadId?: string;
+}) {
+  const artifact = {
+    event: "chat-artifact",
+    schema_version: 1,
+    thread_id: threadId ?? "project-file",
+    artifact_id: `project-file:${path}`,
+    title: path_split(path).tail || path,
+    kind: "file",
+    input: "",
+    file: { path },
+  } as ArtifactRecord;
+  return (
+    <FileArtifact
+      projectId={projectId}
+      artifact={artifact}
+      historical={false}
+    />
   );
 }
 

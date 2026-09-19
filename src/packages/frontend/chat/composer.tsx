@@ -48,6 +48,7 @@ import {
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { useChatEmbeddingOptions } from "./embedding-options";
+import { AgentFileAttachment } from "./agent-file-attachment";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -868,6 +869,18 @@ export function ChatRoomComposer({
           }}
         >
           {!mobile && <div style={{ flex: 1 }} />}
+          {embeddingOptions.agentFileAttachments ? (
+            <AgentFileAttachment
+              projectId={project_id}
+              workingDirectory={
+                actions.getCodexConfig?.(selectedThread?.key)?.workingDirectory
+              }
+              onInsert={(markdown) => {
+                chatInputControlRef.current?.insertText(markdown);
+                refocusComposerInput();
+              }}
+            />
+          ) : null}
           {hasInput && (
             <>
               {hasAcpPrompt ? (
