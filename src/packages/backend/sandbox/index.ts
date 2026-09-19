@@ -1822,7 +1822,11 @@ export class SandboxedFilesystem {
     }
 
     try {
-      if ((await this.lstat(dest)).isDirectory()) {
+      const destStat = await this.lstat(dest);
+      if (sourceStat.dev === destStat.dev && sourceStat.ino === destStat.ino) {
+        throw this.cpSameFileError(source, dest);
+      }
+      if (destStat.isDirectory()) {
         throw this.cpFileToDirectoryError(source, dest);
       }
     } catch (statErr: any) {

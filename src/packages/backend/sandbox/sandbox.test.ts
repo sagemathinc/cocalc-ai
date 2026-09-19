@@ -14,7 +14,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { linkSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -270,6 +270,30 @@ describeIfLinux("baseline mutator parity behavior", () => {
     }
 
     expect(await fs.readFile("cp-race-target.txt", "utf8")).toBe("user-data");
+  });
+
+  it("rejects a destination raced into a hard link to the source", async () => {
+    await fs.writeFile("cp-race-hardlink-source.txt", "source");
+    const target = await fs.getOpenAt2DualPathTarget(
+      "cp-race-hardlink-source.txt",
+      "cp-race-hardlink-target.txt",
+    );
+    expect(target).not.toBeNull();
+    const copyFileNoReplace = target.root.copyFileNoReplace;
+    target.root.copyFileNoReplace = (src: string, dest: string) => {
+      linkSync(join(fs.path, src), join(fs.path, dest));
+      return copyFileNoReplace.call(target.root, src, dest);
+    };
+
+    try {
+      await expect(
+        fs.cp("cp-race-hardlink-source.txt", "cp-race-hardlink-target.txt", {
+          force: false,
+        }),
+      ).rejects.toMatchObject({ code: "ERR_FS_CP_EINVAL" });
+    } finally {
+      target.root.copyFileNoReplace = copyFileNoReplace;
+    }
   });
 
   it("fails closed when atomic no-replace copy is unavailable", async () => {
