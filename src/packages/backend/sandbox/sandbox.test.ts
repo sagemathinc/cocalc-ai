@@ -206,6 +206,15 @@ describeIfLinux("baseline mutator parity behavior", () => {
     ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
   });
 
+  it("supports a no-clobber destination at NAME_MAX", async () => {
+    const destination = "d".repeat(255);
+    await fs.writeFile("cp-name-max-source.txt", "data");
+
+    await fs.cp("cp-name-max-source.txt", destination, { force: false });
+
+    expect(await fs.readFile(destination, "utf8")).toBe("data");
+  });
+
   it("does not overwrite nested regular files during recursive cp", async () => {
     await fs.mkdir("cp-no-clobber-source/nested", { recursive: true });
     await fs.mkdir("cp-no-clobber-target/nested", { recursive: true });
@@ -320,15 +329,21 @@ describeIfLinux("baseline mutator parity behavior", () => {
     await fs.writeFile("cp-pinned-source.txt", "source-data");
     await fs.writeFile("cp-pinned-victim.txt", "victim-data");
     const openVerifiedHandle = fs.openVerifiedHandle;
+    const sandboxRoot = join(tempDir, "test-mutators");
+    const initialEntries = new Set(await readdir(sandboxRoot));
     let stagingPath: string | undefined;
     fs.openVerifiedHandle = async (options) => {
       const opened = await openVerifiedHandle(options);
-      if (String(options.path).includes(".copy.")) {
-        stagingPath = String(options.path);
-        const absoluteStage = join(tempDir, "test-mutators", stagingPath);
+      if (options.path === "cp-pinned-source.txt") {
+        const stagingDirectory = (await readdir(sandboxRoot)).find(
+          (name) => name.startsWith(".copy.") && !initialEntries.has(name),
+        );
+        expect(stagingDirectory).toBeDefined();
+        stagingPath = join(stagingDirectory!, "data");
+        const absoluteStage = join(sandboxRoot, stagingPath);
         await unlinkNative(absoluteStage);
         await linkNative(
-          join(tempDir, "test-mutators", "cp-pinned-victim.txt"),
+          join(sandboxRoot, "cp-pinned-victim.txt"),
           absoluteStage,
         );
       }

@@ -1802,19 +1802,37 @@ export class SandboxedFilesystem {
       }
     }
 
-    const temporary = join(
+    const stagingDirectory = join(
       dirname(dest),
-      `.${basename(dest)}.copy.${process.pid}.${randomUUID()}`,
+      `.copy.${process.pid}.${randomUUID()}`,
     );
+    const temporary = join(stagingDirectory, "data");
+    let stagingDirectoryCreated = false;
+    let stagingDirectoryFd: number | undefined;
     let temporaryHandle: Awaited<ReturnType<typeof open>> | undefined;
     let installed = false;
     try {
-      const opened = await this.openVerifiedHandle({
-        path: temporary,
-        flags: constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
-        mode: 0o600,
-      });
-      temporaryHandle = opened.handle;
+      const target = await this.getOpenAt2PathTarget(stagingDirectory);
+      if (target == null || typeof target.root.openRead !== "function") {
+        const err: NodeJS.ErrnoException = new Error(
+          "anchored no-clobber copy staging is not supported",
+        );
+        err.code = "ENOTSUP";
+        err.path = dest;
+        throw err;
+      }
+      try {
+        target.root.mkdir(target.rel, false, 0o700);
+        stagingDirectoryCreated = true;
+        stagingDirectoryFd = target.root.openRead(target.rel);
+      } catch (err) {
+        this.throwOpenAt2PathError(stagingDirectory, err);
+      }
+      temporaryHandle = await open(
+        `/proc/${process.pid}/fd/${stagingDirectoryFd}/data`,
+        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
+        0o600,
+      );
       const sourceHandle = (
         await this.openVerifiedHandle({
           path: source,
@@ -1833,7 +1851,24 @@ export class SandboxedFilesystem {
             position,
           );
           if (bytesRead === 0) break;
-          await temporaryHandle.write(buffer, 0, bytesRead, position);
+          let written = 0;
+          while (written < bytesRead) {
+            const { bytesWritten } = await temporaryHandle.write(
+              buffer,
+              written,
+              bytesRead - written,
+              position + written,
+            );
+            if (bytesWritten === 0) {
+              const err: NodeJS.ErrnoException = new Error(
+                `Unable to make progress writing copy staging file: '${temporary}'`,
+              );
+              err.code = "EIO";
+              err.path = temporary;
+              throw err;
+            }
+            written += bytesWritten;
+          }
           position += bytesRead;
         }
         await temporaryHandle.truncate(position);
@@ -1897,6 +1932,21 @@ export class SandboxedFilesystem {
             path: temporary,
             err: String(err),
           });
+        }
+      }
+      if (stagingDirectoryFd != null) {
+        await closeFd(stagingDirectoryFd).catch(() => {});
+      }
+      if (installed && stagingDirectoryCreated) {
+        try {
+          await this.rmdir(stagingDirectory);
+        } catch (err: any) {
+          if (err?.code !== "ENOENT") {
+            logger.warn("unable to remove no-clobber staging directory", {
+              path: stagingDirectory,
+              err: String(err),
+            });
+          }
         }
       }
     }
