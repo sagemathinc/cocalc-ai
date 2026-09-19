@@ -100,6 +100,7 @@ import {
   startEmailAuthChallengeDirect,
 } from "@cocalc/server/auth/email/challenge-store";
 import { getArchiveLifecycleAccountStatusesLocal } from "@cocalc/server/accounts/archive-lifecycle-status";
+import { getClusterAccountByIdDirect } from "@cocalc/server/accounts/cluster-directory";
 import adminVerifyEmailAddressLocal from "@cocalc/server/accounts/admin-verify-email-address";
 import sendEmailVerificationLocal from "@cocalc/server/accounts/send-email-verification";
 import {
@@ -1118,11 +1119,13 @@ async function startAccountDirectoryService(): Promise<void> {
       id: await createPasswordResetLocal(email_address, ip_address, ttl_s),
     }),
     redeemPasswordReset: async ({ password_reset_id }) => {
-      const { email_address } =
+      const { email_address, account_id } =
         await redeemPasswordResetLocal(password_reset_id);
-      const account = await getClusterAccountByEmail(email_address);
-      const account_id = account?.account_id;
-      if (!account_id) {
+      const account = await getClusterAccountByIdDirect(account_id);
+      if (
+        !account?.account_id ||
+        `${account.email_address ?? ""}`.trim().toLowerCase() !== email_address
+      ) {
         throw Error("Password reset no longer valid.");
       }
       return {

@@ -4,10 +4,22 @@
  */
 
 let queryMock: jest.Mock;
+const getClusterAccountByEmailDirectMock = jest.fn();
+const getClusterAccountByIdDirectMock = jest.fn();
+const getFinancialApprovalIdentityDirectMock = jest.fn();
 
 jest.mock("@cocalc/database/pool", () => ({
   __esModule: true,
   default: () => ({ query: (...args: any[]) => queryMock(...args) }),
+}));
+
+jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
+  getClusterAccountByEmailDirect: (...args: any[]) =>
+    getClusterAccountByEmailDirectMock(...args),
+  getClusterAccountByIdDirect: (...args: any[]) =>
+    getClusterAccountByIdDirectMock(...args),
+  getFinancialApprovalIdentityDirect: (...args: any[]) =>
+    getFinancialApprovalIdentityDirectMock(...args),
 }));
 
 describe("password reset throttling", () => {
@@ -38,7 +50,12 @@ describe("password reset redemption", () => {
   beforeEach(() => {
     jest.resetModules();
     queryMock = jest.fn().mockResolvedValue({
-      rows: [{ email_address: "USER@example.COM" }],
+      rows: [
+        {
+          account_id: "00000000-2000-4000-8000-000000000002",
+          email_address: "USER@example.COM",
+        },
+      ],
     });
   });
 
@@ -47,17 +64,24 @@ describe("password reset redemption", () => {
 
     await expect(
       redeemResetLocal("00000000-1000-4000-8000-000000000001"),
-    ).resolves.toEqual({ email_address: "user@example.com" });
+    ).resolves.toEqual({
+      account_id: "00000000-2000-4000-8000-000000000002",
+      email_address: "user@example.com",
+    });
 
-    expect(queryMock).toHaveBeenCalledTimes(1);
-    const sql = queryMock.mock.calls[0][0];
+    expect(queryMock).toHaveBeenCalledTimes(2);
+    const sql = queryMock.mock.calls[1][0];
     expect(sql).toContain("UPDATE password_reset");
-    expect(sql).toContain("AND expire > NOW()");
-    expect(sql).toContain("RETURNING email_address");
+    expect(sql).toContain("reset.expire > NOW()");
+    expect(sql).toContain("identity.generation=reset.identity_generation");
+    expect(sql).toContain("RETURNING reset.email_address, reset.account_id");
   });
 
   it("rejects already-consumed or expired reset tokens", async () => {
-    queryMock = jest.fn().mockResolvedValue({ rows: [] });
+    queryMock = jest
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [] });
     const { redeemResetLocal } = await import("./password-reset");
 
     await expect(
