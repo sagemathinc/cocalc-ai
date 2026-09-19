@@ -46,9 +46,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason: INTERNAL_AUTH_ONLY,
   },
   "agent.registerIdentity": {
-    decision: "fresh-auth-required",
+    decision: "fresh-auth-not-required",
     reason:
-      "binds an agent identity and execution account to an existing thread",
+      "registers an existing Codex thread after ordinary project authorization",
   },
   "agent.disableIdentity": {
     decision: "fresh-auth-required",

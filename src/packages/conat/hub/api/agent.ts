@@ -50,7 +50,7 @@ export const agent = {
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
-  registerIdentity: authFirstRequireAccountWithBoundSession,
+  registerIdentity: authFirstRequireAccount,
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
   resolveIdentity: authFirstRequireAccount,

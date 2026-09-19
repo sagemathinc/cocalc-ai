@@ -35,13 +35,7 @@ export interface InterBayAgentIdentityApi {
   list(opts: AgentIdentityReadRequest): Promise<AgentIdentity[]>;
   resolve(opts: AgentIdentityThreadRequest): Promise<AgentIdentity | undefined>;
   get(opts: AgentIdentityLookupRequest): Promise<AgentIdentity>;
-  register(
-    opts: AgentIdentityThreadRequest & {
-      // Entry hub verified fresh, non-impersonated human auth for this operation.
-      // Valid only on the trusted fabric, never a public request argument.
-      fresh_auth_at: number;
-    },
-  ): Promise<AgentIdentity>;
+  register(opts: AgentIdentityThreadRequest): Promise<AgentIdentity>;
   recover(
     opts: AgentIdentityLookupRequest & {
       fresh_auth_at: number;

@@ -3,10 +3,6 @@ import { Alert, Button, Input, Modal, Space } from "antd";
 import type { ButtonProps } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
@@ -56,7 +52,6 @@ function EnabledNameAgent({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const lock = useRef(false);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const problem = agentNameProblem(
     name,
     directory?.agents ?? [],
@@ -82,12 +77,8 @@ function EnabledNameAgent({
         let identity = await api.resolveIdentity(locator);
         boundAccount.assertCurrent();
         if (!identity) {
-          const completed = await runFreshAuthAction(async () => {
-            boundAccount.assertCurrent();
-            identity = await api.registerIdentity(locator);
-            boundAccount.assertCurrent();
-          });
-          if (!completed) return;
+          identity = await api.registerIdentity(locator);
+          boundAccount.assertCurrent();
         }
         if (!identity) throw new Error("Unable to register this agent thread");
         endpoint = { project_id: projectId, agent_id: identity.agent_id };
@@ -179,7 +170,6 @@ function EnabledNameAgent({
           )}
         </Space>
       </Modal>
-      <FreshAuthModal {...freshAuthModalProps} />
     </>
   );
 }

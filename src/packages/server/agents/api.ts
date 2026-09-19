@@ -21,22 +21,22 @@ async function human(opts: AgentHumanAuth): Promise<string> {
 }
 
 export const registerIdentity: AgentApi["registerIdentity"] = async (opts) => {
-  const account_id = await human(opts);
+  requireUuid(opts.account_id, "account_id");
+  const account_id = opts.account_id;
   const request = {
     account_id,
     project_id: opts.project_id,
     path: opts.path,
     thread_id: opts.thread_id,
   };
-  const fresh_auth_at = Date.now();
   return await withAgentIdentityOwner({
     project_id: opts.project_id,
     local: () => registerIdentityLocal(request),
-    remote: (api, route) => api.register({ ...request, route, fresh_auth_at }),
+    remote: (api, route) => api.register({ ...request, route }),
   });
 };
 
-// Internal implementation; callers must establish fresh human auth first.
+// Internal implementation; callers must establish the authenticated account.
 export const registerIdentityLocal: AgentApi["registerIdentity"] = async (
   opts,
 ) => {

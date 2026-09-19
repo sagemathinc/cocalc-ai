@@ -20,10 +20,6 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { useAppContext } from "@cocalc/frontend/app/context";
-import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
 import type { CodexThreadConfig } from "@cocalc/chat";
 import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
 import {
@@ -362,7 +358,6 @@ function NewAgentPanel({
   const [pending, setPending] = useState<PendingAgent>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const paymentPreference = (config.paymentSource ??
     "auto") as CodexPaymentSourcePreference;
   const {
@@ -486,6 +481,7 @@ function NewAgentPanel({
       },
     });
     if (!threadId) throw new Error("Unable to create the agent thread");
+    await chatActions.syncdb?.save();
     const created = { projectId: targetProjectId, path, threadId };
     writeAgentSubscriptionSelection({
       accountId: boundAccount.accountId,
@@ -515,11 +511,7 @@ function NewAgentPanel({
       };
       let identity = await api.resolveIdentity(locator);
       if (!identity) {
-        const completed = await runFreshAuthAction(async () => {
-          boundAccount.assertCurrent();
-          identity = await api.registerIdentity(locator);
-        });
-        if (!completed) return;
+        identity = await api.registerIdentity(locator);
       }
       if (!identity) throw new Error("Unable to register this agent thread");
       boundAccount.assertCurrent();
@@ -655,8 +647,12 @@ function NewAgentPanel({
             onChange={(event) => setDirectory(event.target.value)}
           />
           <Button
+            style={{ height: 32 }}
             disabled={!projectId || busy || !!pending}
-            onClick={() => setDirectorySelectorOpen(true)}
+            onClick={() => {
+              setSettingsOpen(false);
+              setDirectorySelectorOpen(true);
+            }}
           >
             Choose…
           </Button>
@@ -720,7 +716,7 @@ function NewAgentPanel({
             style={{ fontSize: 16, resize: "none" }}
             onChange={(event) => setFirstRequest(event.target.value)}
             onKeyDown={(event) => {
-              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+              if (event.shiftKey && event.key === "Enter") {
                 event.preventDefault();
                 void create();
               }
@@ -826,7 +822,7 @@ function NewAgentPanel({
           }}
         >
           <Text type="secondary">
-            @{name} · {paymentLabel} · Ctrl/⌘ Enter to start
+            @{name} · {paymentLabel} · Shift+Enter to start
           </Text>
           <Space>
             <NamedAgentUsage directory={namedAgentDirectory} />
@@ -851,7 +847,7 @@ function NewAgentPanel({
             type="info"
             showIcon
             title="Agent storage prepared"
-            description="Complete approval to finish registration. Retrying reuses this thread."
+            description="Registration did not finish. Retrying reuses this thread."
           />
         )}
         {error && <Alert role="alert" type="error" title={error} />}
@@ -876,7 +872,6 @@ function NewAgentPanel({
           />
         )}
       </Modal>
-      <FreshAuthModal {...freshAuthModalProps} />
     </div>
   );
 }
@@ -1598,7 +1593,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     Map<string, AgentHeaderAppearance>
   >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   const boundAccount = useBoundAgentAccount();
 
   const toggleAgentSidebar = useCallback(() => {
@@ -1757,6 +1751,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         isAI: true,
         selectNewThread: false,
       });
+      await actions.syncdb?.save();
       writeAgentSubscriptionSelection({
         accountId,
         projectId: copyingAgent.endpoint.project_id,
@@ -1775,11 +1770,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       const api = personalAgentApi();
       let identity = await api.resolveIdentity(locator);
       if (!identity) {
-        const completed = await runFreshAuthAction(async () => {
-          boundAccount.assertCurrent();
-          identity = await api.registerIdentity(locator);
-        });
-        if (!completed) return;
+        boundAccount.assertCurrent();
+        identity = await api.registerIdentity(locator);
       }
       if (!identity) throw new Error("Unable to register the copied agent");
       await api.nameAgent({
@@ -2342,7 +2334,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           )}
         </Space>
       </Modal>
-      <FreshAuthModal {...freshAuthModalProps} />
     </main>
   );
 }

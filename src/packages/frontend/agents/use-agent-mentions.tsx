@@ -4,10 +4,6 @@ import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
-  FreshAuthModal,
-  useFreshAuthAction,
-} from "@cocalc/frontend/auth/fresh-auth";
-import {
   agentMentionReferenceMap,
   extractAgentMentions,
 } from "@cocalc/util/agent-mentions";
@@ -43,7 +39,6 @@ export function useAgentMentions({
   const selectionLock = useRef(false);
   const sendLock = useRef(false);
   const generation = useRef(0);
-  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
   useEffect(() => {
     generation.current += 1;
     setApproval(undefined);
@@ -79,15 +74,12 @@ export function useAgentMentions({
       thread_id: threadId,
     });
     if (!identity) {
-      const completed = await runFreshAuthAction(async () => {
-        if (epoch !== generation.current) return;
-        identity = await api.registerIdentity({
-          project_id: projectId,
-          path,
-          thread_id: threadId,
-        });
+      if (epoch !== generation.current) return;
+      identity = await api.registerIdentity({
+        project_id: projectId,
+        path,
+        thread_id: threadId,
       });
-      if (!completed) return;
     }
     if (!identity || epoch !== generation.current) return;
     return { project_id: projectId, agent_id: identity.agent_id };
@@ -320,7 +312,6 @@ export function useAgentMentions({
         {approval && (
           <SessionApproval value={approval} onClose={closeApproval} />
         )}
-        <FreshAuthModal {...freshAuthModalProps} />
       </>
     ),
   };

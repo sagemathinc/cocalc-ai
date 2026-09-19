@@ -55,11 +55,6 @@ export const agentIdentityControl: InterBayAgentIdentityApi = {
   },
   register: async (opts) => {
     await assertOwner(opts);
-    const age = Date.now() - opts.fresh_auth_at;
-    if (!Number.isFinite(opts.fresh_auth_at) || age < -5000 || age > 30_000)
-      throw new Error(
-        "agent registration fresh-auth attestation expired or missing",
-      );
     return await registerIdentityLocal({
       account_id: opts.account_id,
       project_id: opts.project_id,

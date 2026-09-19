@@ -237,27 +237,17 @@ test("remote reads use exact project ownership and whitelist arguments", async (
   expect(find).not.toHaveBeenCalled();
 });
 
-test("remote registration verifies fresh auth and replaces caller attestation", async () => {
-  const before = Date.now();
+test("remote registration uses ordinary project authorization", async () => {
   await registerIdentity({
     ...request,
     session_hash: "bound-session",
     fresh_auth_at: 1,
   } as any);
-  expect(fresh).toHaveBeenCalledWith(
-    expect.objectContaining({
-      account_id,
-      session_hash: "bound-session",
-      allow_actor_impersonation: false,
-    }),
-  );
-  const forwarded = remote.register.mock.calls[0][0];
-  expect(forwarded).toEqual({
+  expect(fresh).not.toHaveBeenCalled();
+  expect(remote.register).toHaveBeenCalledWith({
     ...request,
     route: { bay_id: "owner", epoch: 3 },
-    fresh_auth_at: expect.any(Number),
   });
-  expect(forwarded.fresh_auth_at).toBeGreaterThanOrEqual(before);
   expect(query).not.toHaveBeenCalled();
 });
 
@@ -288,13 +278,12 @@ test("remote recovery verifies fresh auth and forwards only the identity locator
   expect(forwarded.fresh_auth_at).toBeGreaterThanOrEqual(before);
 });
 
-test("failed human auth never routes registration", async () => {
-  fresh.mockRejectedValue(new Error("fresh auth required"));
-  await expect(registerIdentity(request)).rejects.toThrow(
-    "fresh auth required",
-  );
-  expect(owner).not.toHaveBeenCalled();
-  expect(fabric).not.toHaveBeenCalled();
+test("failed project authorization never completes registration", async () => {
+  bay = "owner";
+  actor.mockRejectedValue(new Error("not a collaborator"));
+  await expect(registerIdentity(request)).rejects.toThrow("not a collaborator");
+  expect(owner).toHaveBeenCalledWith(project_id);
+  expect(query).not.toHaveBeenCalled();
 });
 
 test.each([
@@ -348,9 +337,9 @@ test("owner rechecks local access before identity reads and registration", async
   const opts = { ...request, route: { bay_id: "owner", epoch: 3 } };
   await agentIdentityControl.list(opts);
   await agentIdentityControl.resolve(opts);
-  await agentIdentityControl.register({ ...opts, fresh_auth_at: Date.now() });
+  await agentIdentityControl.register(opts);
   expect(actor).toHaveBeenCalledTimes(4); // registration also checks after chat readiness
-  expect(fresh).not.toHaveBeenCalled(); // attested on entry; no remote session copy
+  expect(fresh).not.toHaveBeenCalled();
   expect(remoteClient).not.toHaveBeenCalled();
 });
 
@@ -427,18 +416,3 @@ test.each([
   expect(query).not.toHaveBeenCalled();
   expect(fabric).not.toHaveBeenCalled();
 });
-
-test.each([undefined, NaN, 0, Date.now() + 60_000])(
-  "invalid fresh attestation %s cannot register",
-  async (fresh_auth_at) => {
-    bay = "owner";
-    await expect(
-      agentIdentityControl.register({
-        ...request,
-        route: { bay_id: "owner", epoch: 3 },
-        fresh_auth_at,
-      } as any),
-    ).rejects.toThrow("attestation");
-    expect(query).not.toHaveBeenCalled();
-  },
-);
