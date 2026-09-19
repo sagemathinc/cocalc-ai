@@ -1741,6 +1741,32 @@ export class SandboxedFilesystem {
     await symlink(target, destPath);
   };
 
+  private cpSafeFile = async (
+    source: string,
+    dest: string,
+    options?: CopyOptions,
+  ): Promise<void> => {
+    if (!(options?.force ?? true)) {
+      try {
+        await this.lstat(dest);
+        if (options?.errorOnExist) {
+          const err: NodeJS.ErrnoException = new Error(
+            "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+          );
+          err.code = "ERR_FS_CP_EEXIST";
+          err.path = dest;
+          throw err;
+        }
+        return;
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") {
+          throw err;
+        }
+      }
+    }
+    await this.copyFile(source, dest);
+  };
+
   private cpSafeDirectoryRecursive = async (
     sourceDir: string,
     destDir: string,
@@ -1768,7 +1794,7 @@ export class SandboxedFilesystem {
       if (childStat.isDirectory()) {
         await this.cpSafeDirectoryRecursive(childSource, childDest, options);
       } else if (childStat.isFile()) {
-        await this.copyFile(childSource, childDest);
+        await this.cpSafeFile(childSource, childDest, options);
       } else if (childStat.isSymbolicLink() && !options?.dereference) {
         await this.cpSafeSymlink(childSource, childDest, options);
       } else {
@@ -1787,7 +1813,7 @@ export class SandboxedFilesystem {
       ? await this.stat(source)
       : await this.lstat(source);
     if (sourceStat.isFile()) {
-      await this.copyFile(source, destInput);
+      await this.cpSafeFile(source, destInput, options);
       return;
     }
     if (sourceStat.isDirectory()) {

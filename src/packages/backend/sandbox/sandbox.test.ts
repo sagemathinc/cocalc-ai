@@ -143,6 +143,54 @@ describeIfLinux("baseline mutator parity behavior", () => {
     expect(await fs.readFile("cp-dir/cp-source.txt", "utf8")).toBe("cp-data");
   });
 
+  it("does not overwrite regular files when cp force is false", async () => {
+    await fs.writeFile("cp-no-clobber-source.txt", "new");
+    await fs.writeFile("cp-no-clobber-target.txt", "existing");
+
+    await fs.cp("cp-no-clobber-source.txt", "cp-no-clobber-target.txt", {
+      force: false,
+    });
+
+    expect(await fs.readFile("cp-no-clobber-target.txt", "utf8")).toBe(
+      "existing",
+    );
+  });
+
+  it("does not overwrite nested regular files during recursive cp", async () => {
+    await fs.mkdir("cp-no-clobber-source/nested", { recursive: true });
+    await fs.mkdir("cp-no-clobber-target/nested", { recursive: true });
+    await fs.writeFile("cp-no-clobber-source/nested/existing.txt", "new");
+    await fs.writeFile("cp-no-clobber-source/nested/added.txt", "added");
+    await fs.writeFile("cp-no-clobber-target/nested/existing.txt", "existing");
+
+    await fs.cp("cp-no-clobber-source", "cp-no-clobber-target", {
+      recursive: true,
+      force: false,
+    });
+
+    expect(
+      await fs.readFile("cp-no-clobber-target/nested/existing.txt", "utf8"),
+    ).toBe("existing");
+    expect(
+      await fs.readFile("cp-no-clobber-target/nested/added.txt", "utf8"),
+    ).toBe("added");
+  });
+
+  it("reports existing regular files when cp errorOnExist is set", async () => {
+    await fs.writeFile("cp-existing-source.txt", "new");
+    await fs.writeFile("cp-existing-target.txt", "existing");
+
+    await expect(
+      fs.cp("cp-existing-source.txt", "cp-existing-target.txt", {
+        force: false,
+        errorOnExist: true,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+    expect(await fs.readFile("cp-existing-target.txt", "utf8")).toBe(
+      "existing",
+    );
+  });
+
   it("preserves dangling symlinks during recursive cp", async () => {
     await fs.mkdir("cp-links");
     await symlink("missing-target", join(fs.path, "cp-links", "doc"));
