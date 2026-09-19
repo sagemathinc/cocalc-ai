@@ -252,6 +252,7 @@ async function hostFor(endpoint: AgentEndpoint) {
 }
 
 async function sessionProof(
+  account_id: string,
   source: AgentRpcSource,
   run_id: string | undefined,
   target: AgentRpcTarget,
@@ -260,9 +261,9 @@ async function sessionProof(
   validateAgentRpcSource(source, run_id);
   validateAgentRpcTarget(target);
   requireUuid(agent_session_id, "agent_session_id");
-  const account_id = isExternalAgentSource(source)
-    ? source.account_id
-    : (await sourceRun(source, run_id!)).account_id;
+  requireUuid(account_id, "account_id");
+  if (isExternalAgentSource(source) && source.account_id !== account_id)
+    throw new PersonalAgentAuthorizationError("principal_mismatch");
   return (await withPersonalHome(account_id, {
     action: "checkSession",
     options: {
@@ -343,6 +344,7 @@ async function submitAgentRpcOperation(
     | undefined;
   try {
     const checked = await sessionProof(
+      opts.account_id,
       opts.source,
       opts.run_id,
       opts.request.target,
@@ -516,6 +518,7 @@ export const agentRpcControl: AgentRpcControlApi = {
     await local(opts, opts.request.target);
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
     const proof = await sessionProof(
+      opts.account_id,
       opts.source,
       opts.run_id,
       opts.request.target,
@@ -546,6 +549,7 @@ export const agentRpcControl: AgentRpcControlApi = {
 async function reauthorizeEnvelope(e: AgentRpcEnvelope) {
   if (Date.now() >= e.deadline) throw new Error("submission deadline expired");
   const proof = await sessionProof(
+    e.account_id,
     e.source,
     e.run_id,
     e.target,
@@ -619,6 +623,7 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
   )
     throw new Error("target identity changed");
   const proof = await sessionProof(
+    account_id,
     authorization.source,
     authorization.source_run_id,
     authorization.target,
@@ -637,6 +642,7 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
 };
 
 async function submitExternalInbox(
+  account_id: string,
   source: AgentRpcSource,
   run_id: string | undefined,
   request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
@@ -654,6 +660,7 @@ async function submitExternalInbox(
       reason: "External inbox attachments are not available",
     });
   const checked = await sessionProof(
+    account_id,
     source,
     run_id,
     request.target,
@@ -737,7 +744,7 @@ export async function acceptAgentRpc(
         chat_effect: "none",
         reason: "External inbox supports direct send only",
       });
-    return submitExternalInbox(source, run_id, request);
+    return submitExternalInbox(run.account_id, source, run_id, request);
   }
   const target = request.target;
   if (
@@ -750,12 +757,14 @@ export async function acceptAgentRpc(
       action === "prepare-attachments"
         ? api.prepareAttachments({
             ...route,
+            account_id: run.account_id,
             source,
             run_id,
             request: registeredSend,
           })
         : api.cancelAttachments({
             ...route,
+            account_id: run.account_id,
             source,
             run_id,
             request: registeredSend,
@@ -767,6 +776,7 @@ export async function acceptAgentRpc(
     return routed(target.project_id, (api, route) =>
       api.inspect({
         ...route,
+        account_id: run.account_id,
         source,
         run_id,
         request: { ...attempt, target },
@@ -781,6 +791,7 @@ export async function acceptAgentRpc(
   return routed(target.project_id, (api, route) =>
     api.submit({
       ...route,
+      account_id: run.account_id,
       source,
       run_id,
       request: registeredAttempt,
@@ -838,7 +849,7 @@ export async function acceptExternalAgentRpc(
         chat_effect: "none",
         reason: "External inbox supports direct send only",
       });
-    return submitExternalInbox(source, undefined, request);
+    return submitExternalInbox(account_id, source, undefined, request);
   }
   const target = request.target;
   if (request.action === "inspect") {
@@ -846,6 +857,7 @@ export async function acceptExternalAgentRpc(
     return routed(target.project_id, (api, route) =>
       api.inspect({
         ...route,
+        account_id,
         source,
         request: { ...attempt, target },
       }),
@@ -857,7 +869,12 @@ export async function acceptExternalAgentRpc(
   };
   const registeredAttempt = { ...attempt, target };
   return routed(target.project_id, (api, route) => {
-    const opts = { ...route, source, request: registeredAttempt };
+    const opts = {
+      ...route,
+      account_id,
+      source,
+      request: registeredAttempt,
+    };
     const sendOpts = {
       ...opts,
       request: registeredAttempt,

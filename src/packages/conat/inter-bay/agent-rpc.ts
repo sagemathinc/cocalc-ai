@@ -104,6 +104,8 @@ export interface RpcSource {
   run_id: string;
 }
 export interface RpcSubmissionSource {
+  /** Authenticated at the source bay; the account home independently rechecks it. */
+  account_id: string;
   source: import("@cocalc/conat/agents/rpc").AgentRpcSource;
   run_id?: string;
 }

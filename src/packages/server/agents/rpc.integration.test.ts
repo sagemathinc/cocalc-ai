@@ -32,11 +32,16 @@ const identities = new Map([
 ]);
 const checkSession = jest.fn();
 const assertHost = jest.fn(async () => {});
+const submitAgentRpc = jest.fn();
+const query = jest.fn(async () => ({
+  rows: [{ host_id: host, state: "running" }],
+}));
 
 jest.mock("./store", () => ({
   agentStore: () => ({
     get: async (agent_id: string) => identities.get(agent_id),
     activeRun: async () => ({ account_id: account }),
+    query,
   }),
 }));
 jest.mock("./access", () => ({
@@ -57,8 +62,28 @@ jest.mock("@cocalc/server/accounts/security-state", () => ({
   isAccountBannedCached: () => false,
   getAccountRevokedBeforeCached: () => undefined,
 }));
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "target-bay",
+}));
+jest.mock("@cocalc/server/inter-bay/directory", () => ({
+  resolveProjectBay: async () => ({ bay_id: "target-bay", epoch: 1 }),
+  resolveHostBayAcrossCluster: async () => ({ bay_id: "target-bay" }),
+}));
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  getExplicitHostControlClient: async () => ({}),
+}));
+jest.mock("@cocalc/conat/project-host/api", () => ({
+  createHostControlClient: () => ({ submitAgentRpc }),
+}));
+jest.mock("./admission-state", () => ({
+  createAgentRpcAdmissionState: async () => {},
+  deleteAgentRpcAdmissionState: async () => {},
+  claimAgentRpcAdmissionState: async () => undefined,
+  getAgentRpcAdmissionState: async () => undefined,
+  hashAgentRpcAdmissionBinding: () => "binding",
+}));
 
-import { authorizeRpcExecution } from "./rpc";
+import { agentRpcControl, authorizeRpcExecution } from "./rpc";
 
 const source = { project_id: sourceProject, agent_id: sourceAgent };
 const target = { project_id: targetProject, agent_id: targetAgent };
@@ -96,6 +121,15 @@ function authorization() {
 
 beforeEach(() => {
   assertHost.mockClear();
+  query.mockClear();
+  submitAgentRpc.mockReset().mockImplementation(async (envelope) => ({
+    version: 3,
+    target: envelope.target,
+    attempt_id: envelope.attempt_id,
+    agent_session_id: envelope.agent_session_id,
+    outcome: "accepted",
+    observed_at: Date.now(),
+  }));
   checkSession.mockReset().mockResolvedValue({
     agent_session_id: session,
     session_generation: generation,
@@ -105,6 +139,32 @@ beforeEach(() => {
     source: sourceMember,
     target: targetMember,
   });
+});
+
+test("cross-bay submission does not require the source identity in the target bay", async () => {
+  const sourceIdentity = identities.get(sourceAgent)!;
+  identities.delete(sourceAgent);
+  try {
+    await expect(
+      agentRpcControl.submit({
+        account_id: account,
+        project_id: targetProject,
+        route: { bay_id: "target-bay", epoch: 1 },
+        source,
+        run_id: runId,
+        request: {
+          version: 3,
+          attempt_id: randomUUID(),
+          agent_session_id: session,
+          target,
+          body: "hello",
+        },
+      }),
+    ).resolves.toMatchObject({ outcome: "accepted" });
+    expect(submitAgentRpc).toHaveBeenCalledTimes(1);
+  } finally {
+    identities.set(sourceAgent, sourceIdentity);
+  }
 });
 
 test("queued execution rechecks the exact session authority and host principal", async () => {
