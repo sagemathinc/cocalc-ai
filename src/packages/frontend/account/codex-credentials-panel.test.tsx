@@ -210,6 +210,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         projects: {
           codexDeviceAuthStart: (...args: any[]) =>
             codexDeviceAuthStart(...args),
+          codexDeviceAuthStartV2: (...args: any[]) =>
+            codexDeviceAuthStart(...args),
           codexDeviceAuthStatus: (...args: any[]) =>
             codexDeviceAuthStatus(...args),
           getCodexCredentialSelectionCapability: (...args: any[]) =>
@@ -390,6 +392,7 @@ describe("CodexCredentialsPanel", () => {
 
     expect(codexDeviceAuthStart).toHaveBeenCalledWith({
       project_id: "project-1",
+      create: true,
     });
     expect(getCodexCredentialSelectionCapability).toHaveBeenCalledWith({
       project_id: "project-1",

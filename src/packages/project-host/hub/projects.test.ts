@@ -23,6 +23,8 @@ const prepareOciPullReservationEstimate = jest.fn(async () => undefined);
 const readFile = jest.fn(async () => "");
 const rm = jest.fn(async () => undefined);
 const pushSubscriptionAuthToRegistry = jest.fn();
+const acquireCodexDeviceAuthLease = jest.fn();
+const releaseCodexDeviceAuthLease = jest.fn();
 const callHub = jest.fn();
 const getLocalHostId = jest.fn(() => "host-1");
 const getMasterConatClient = jest.fn();
@@ -107,8 +109,12 @@ jest.mock("node:fs/promises", () => ({
   rm: (...args: any[]) => rm(...args),
 }));
 jest.mock("../codex/codex-auth-registry", () => ({
+  acquireCodexDeviceAuthLease: (...args: any[]) =>
+    acquireCodexDeviceAuthLease(...args),
   pushSubscriptionAuthToRegistry: (...args: any[]) =>
     pushSubscriptionAuthToRegistry(...args),
+  releaseCodexDeviceAuthLease: (...args: any[]) =>
+    releaseCodexDeviceAuthLease(...args),
 }));
 jest.mock("../sqlite/projects", () => ({
   deleteProjectLocal: (...args: any[]) => deleteProjectLocal(...args),
@@ -329,6 +335,8 @@ describe("project host start ACP rehydrate ordering", () => {
     readFile.mockResolvedValue("");
     rm.mockClear();
     pushSubscriptionAuthToRegistry.mockReset();
+    acquireCodexDeviceAuthLease.mockReset().mockResolvedValue("lease-1");
+    releaseCodexDeviceAuthLease.mockReset().mockResolvedValue(undefined);
     callHub.mockReset();
     fileServerCreateBackup.mockReset();
     getMasterConatClient.mockReturnValue(undefined);
@@ -2667,18 +2675,19 @@ describe("project host start ACP rehydrate ordering", () => {
     });
     pushSubscriptionAuthToRegistry.mockResolvedValue({
       ok: true,
-      id: "credential-1",
+      id: "00000000-0000-4000-8000-000000000009",
     });
 
     const { wireProjectsApi } = await import("./projects");
     wireProjectsApi({} as any);
 
     await expect(
-      hubApi.projects.codexUploadAuthFile({
+      hubApi.projects.codexUploadAuthFileV2({
         account_id: "account-1",
         project_id,
         filename: "auth.json",
         content: '{"tokens":true}',
+        credential_id: "00000000-0000-4000-8000-000000000009",
       }),
     ).resolves.toMatchObject({ ok: true, synced: true, bytes: 42 });
 
@@ -2693,6 +2702,7 @@ describe("project host start ACP rehydrate ordering", () => {
     expect(pushSubscriptionAuthToRegistry).toHaveBeenCalledWith(
       expect.objectContaining({
         codexHome: "/tmp/staged-codex-auth",
+        credentialId: "00000000-0000-4000-8000-000000000009",
         descriptorMetadata: { email: "person@example.com" },
       }),
     );
@@ -2700,6 +2710,55 @@ describe("project host start ACP rehydrate ordering", () => {
       recursive: true,
       force: true,
     });
+    expect(acquireCodexDeviceAuthLease).toHaveBeenCalledWith({
+      projectId: project_id,
+      accountId: "account-1",
+      sessionId: expect.any(String),
+    });
+    expect(releaseCodexDeviceAuthLease).toHaveBeenCalledWith({
+      projectId: project_id,
+      accountId: "account-1",
+      leaseId: "lease-1",
+    });
+  });
+
+  it("requires V2 credential lifecycle mutations to name one exact intent", async () => {
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi({} as any);
+
+    await expect(
+      hubApi.projects.codexDeviceAuthStartV2({
+        account_id: "account-1",
+        project_id,
+      }),
+    ).rejects.toThrow("either create a credential or target one credential_id");
+    await expect(
+      hubApi.projects.codexDeviceAuthStartV2({
+        account_id: "account-1",
+        project_id,
+        credential_id: "00000000-0000-4000-8000-000000000009",
+        create: true,
+      }),
+    ).rejects.toThrow("either create a credential or target one credential_id");
+    await expect(
+      hubApi.projects.codexUploadAuthFileV2({
+        account_id: "account-1",
+        project_id,
+        content: '{"tokens":true}',
+      }),
+    ).rejects.toThrow("either create a credential or target one credential_id");
+    await expect(
+      hubApi.projects.codexUploadAuthFileV2({
+        account_id: "account-1",
+        project_id,
+        content: '{"tokens":true}',
+        credential_id: "00000000-0000-4000-8000-000000000009",
+        create: true,
+      }),
+    ).rejects.toThrow("either create a credential or target one credential_id");
+
+    expect(acquireCodexDeviceAuthLease).not.toHaveBeenCalled();
+    expect(uploadSubscriptionAuthFile).not.toHaveBeenCalled();
   });
 
   it("does not publish an uploaded Codex credential that fails verification", async () => {
@@ -2715,11 +2774,12 @@ describe("project host start ACP rehydrate ordering", () => {
     wireProjectsApi({} as any);
 
     await expect(
-      hubApi.projects.codexUploadAuthFile({
+      hubApi.projects.codexUploadAuthFileV2({
         account_id: "account-1",
         project_id,
         filename: "auth.json",
         content: '{"tokens":true}',
+        create: true,
       }),
     ).rejects.toThrow("authentication failed");
 

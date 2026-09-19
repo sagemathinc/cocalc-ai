@@ -6924,6 +6924,22 @@ export async function codexDeviceAuthStart({
   );
 }
 
+export async function codexDeviceAuthStartV2({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  credential_id?: string;
+  create?: boolean;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  await assertAccountTrustedForProductAccess(account_id!, "use Codex");
+  throw Error(
+    "codex device auth is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}
+
 export async function getCodexCredentialSelectionCapability({
   account_id,
   project_id,
@@ -6973,6 +6989,24 @@ export async function codexUploadAuthFile({
   project_id: string;
   filename?: string;
   content: string;
+}): Promise<never> {
+  await assertCollab({ account_id, project_id });
+  await assertAccountTrustedForProductAccess(account_id!, "upload Codex auth");
+  throw Error(
+    "codex auth-file upload is not implemented on central hub; call a project-host endpoint via project routing",
+  );
+}
+
+export async function codexUploadAuthFileV2({
+  account_id,
+  project_id,
+}: {
+  account_id?: string;
+  project_id: string;
+  filename?: string;
+  content: string;
+  credential_id?: string;
+  create?: boolean;
 }): Promise<never> {
   await assertCollab({ account_id, project_id });
   await assertAccountTrustedForProductAccess(account_id!, "upload Codex auth");

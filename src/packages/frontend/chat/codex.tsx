@@ -1557,7 +1557,7 @@ export function CodexConfigButton({
           </>
         )}
         {configChangedForNextTurn ? (
-          <Tooltip title="These settings changed while a turn is running. They will apply when the next turn starts, including an automatic retry.">
+          <Tooltip title="These settings changed while a turn is running. They will apply to the next admitted turn, including recovery of a pending message that was not admitted.">
             <Tag color="orange" role="status" style={{ marginInlineEnd: 0 }}>
               Next turn
             </Tag>
@@ -1597,7 +1597,7 @@ export function CodexConfigButton({
               type="info"
               showIcon
               title="Changes apply to the next turn"
-              description="The running turn keeps the settings it started with. The current settings will be used when the next turn starts, including an automatic retry."
+              description="The running turn and its internal retries keep the settings with which they were admitted. The current settings will be used for the next admitted turn, including recovery of a pending message that never started."
             />
           ) : null}
           <div

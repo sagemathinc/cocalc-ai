@@ -21,8 +21,10 @@ In scope:
 - Show email, plan when available, and an optional short user label.
 - Select a particular subscription for the next manually submitted chat turn,
   including continuing an existing thread with its context intact.
-- Carry that choice through queueing, retry/recovery, token refresh, and the
-  existing runtime lifecycle without selecting another credential implicitly.
+- Resolve the choice at execution admission and preserve it through that
+  admitted execution's internal retries, token refresh, and runtime lifecycle.
+  Recovery of an unsent browser-outbox message is a new admission and uses the
+  thread's current next-turn choice.
 - Preserve existing implicit/default subscription behavior for older callers.
 
 Deferred: multiple API keys, new project/organization/shared credentials, credential
@@ -100,11 +102,13 @@ project-host data path.
 
 At admission, resolve and record the exact credential ID with the authenticated
 principal in the existing trusted job/request record. Validate again before queued
-execution or recovery and before fetching/refreshing credential material. A queued
+execution and before fetching/refreshing credential material. A queued
 turn must not reread the composer's current selection. Allow token rotation for
 the same saved identity; do not pin an old access token. Reconnecting must preserve
 that logical identity or require a new entry. Subagents retain their parent
-runtime's credential. Agent messages and automations gain no new ability to select
+runtime's credential. Browser-outbox recovery of a message that was never
+admitted intentionally reads the current thread selection; it does not alter an
+already-admitted execution or its internal retries. Agent messages and automations gain no new ability to select
 or inherit somebody else's personal credential.
 
 Return only a bounded, allowlisted descriptor to the owner's UI: ID, label,
@@ -227,7 +231,9 @@ Required review evidence:
   Scope lookup to the owner and use non-revealing unavailable errors for other
   accounts' IDs. Test direct RPCs, not only menu filtering, including the
   cross-bay path.
-- Queue/recovery and host refresh preserve the admitted principal and credential;
+- Admitted execution retries and host refresh preserve the admitted principal
+  and credential; unadmitted browser-outbox recovery performs a new admission
+  using the current thread selection;
   an ID is not a new delegation mechanism. Revocation and login cancellation
   cannot be undone by delayed writes or stale cached auth.
 - Concurrent logins/turns/refreshes do not overwrite another subscription, mutate

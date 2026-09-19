@@ -576,6 +576,20 @@ async function codexDeviceAuthStartLite(opts: {
   });
 }
 
+async function codexDeviceAuthStartV2Lite(opts: {
+  account_id?: string;
+  project_id?: string;
+  credential_id?: string;
+  create?: boolean;
+}) {
+  if (opts.credential_id || opts.create !== true) {
+    throw new Error(
+      "Selecting or reconnecting multiple ChatGPT subscriptions requires a project host.",
+    );
+  }
+  return await codexDeviceAuthStartLite(opts);
+}
+
 async function codexDeviceAuthStatusLite(opts: {
   account_id?: string;
   project_id?: string;
@@ -655,6 +669,23 @@ async function codexUploadAuthFileLite(opts: {
   });
   clearLiteCodexModelCatalog(accountId);
   return { ok: true as const, ...result };
+}
+
+async function codexUploadAuthFileV2Lite(opts: {
+  account_id?: string;
+  project_id?: string;
+  filename?: string;
+  content: string;
+  credential_id?: string;
+  create?: boolean;
+}) {
+  if (opts.credential_id || opts.create !== true) {
+    throw new Error(
+      "Targeted ChatGPT auth-file upload requires a project host.",
+    );
+  }
+  const result = await codexUploadAuthFileLite(opts);
+  return { ...result, synced: true as const, credentialId: "lite-default" };
 }
 
 async function getLocalSubscriptionAuthRevision(
@@ -1447,9 +1478,11 @@ export const hubApi: HubApi = {
     getProjectBackupSchedule: getProjectBackupScheduleLite,
     getProjectActiveOperation: getProjectActiveOperationLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
+    codexDeviceAuthStartV2: codexDeviceAuthStartV2Lite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
     codexUploadAuthFile: codexUploadAuthFileLite,
+    codexUploadAuthFileV2: codexUploadAuthFileV2Lite,
     chatStoreStats: async (opts: { chat_path: string; db_path?: string }) => {
       return await getChatStoreStats({
         chat_path: opts.chat_path,

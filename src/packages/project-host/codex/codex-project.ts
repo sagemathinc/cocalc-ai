@@ -2111,6 +2111,7 @@ async function spawnCodexAppServerInProjectRuntime({
           await syncSubscriptionAuthToRegistryIfChanged({
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
           });
         } catch (err) {

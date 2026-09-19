@@ -1267,10 +1267,12 @@ export const projects = {
   reconcileProjectRehome: authFirstRequireAccount,
   drainProjectRehome: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
+  codexDeviceAuthStartV2: authFirstRequireAccount,
   getCodexCredentialSelectionCapability: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
+  codexUploadAuthFileV2: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   chatStoreStats: authFirstRequireAccount,
   chatStoreRotate: authFirstRequireAccount,
@@ -2434,6 +2436,29 @@ export interface Projects {
     create?: boolean;
   }>;
 
+  codexDeviceAuthStartV2: (opts: {
+    account_id?: string;
+    project_id: string;
+    credential_id?: string;
+    create?: boolean;
+  }) => Promise<{
+    id: string;
+    accountId: string;
+    state: "pending" | "syncing" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    userCode?: string;
+    output: string;
+    startedAt: number;
+    updatedAt: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    error?: string;
+    syncedToRegistry?: boolean;
+    syncError?: string;
+    credentialId?: string;
+    create?: boolean;
+  }>;
+
   getCodexCredentialSelectionCapability: (opts: {
     account_id?: string;
     project_id: string;
@@ -2476,6 +2501,20 @@ export interface Projects {
     filename?: string;
     content: string;
   }) => Promise<{ ok: true; synced: true; bytes: number }>;
+
+  codexUploadAuthFileV2: (opts: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+    credential_id?: string;
+    create?: boolean;
+  }) => Promise<{
+    ok: true;
+    synced: true;
+    bytes: number;
+    credentialId: string;
+  }>;
 
   getCodexUsageStatus: (opts: {
     account_id?: string;

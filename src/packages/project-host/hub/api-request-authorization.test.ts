@@ -143,6 +143,11 @@ describe("project-host hub API request authorization", () => {
         accountRequest("projects.codexDeviceAuthStart"),
       ),
     );
+    expectForbidden(() =>
+      authorizeProjectHostHubApiRequest(
+        accountRequest("projects.codexDeviceAuthStartV2"),
+      ),
+    );
     expect(() =>
       authorizeProjectHostHubApiRequest({
         ...accountRequest("system.ping"),

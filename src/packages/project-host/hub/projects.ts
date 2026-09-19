@@ -112,7 +112,11 @@ import {
   resolveCodexAuthRuntime,
   uploadSubscriptionAuthFile,
 } from "../codex/codex-auth";
-import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
+import {
+  acquireCodexDeviceAuthLease,
+  pushSubscriptionAuthToRegistry,
+  releaseCodexDeviceAuthLease,
+} from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { getImage } from "@cocalc/project-runner/run/podman";
@@ -2890,6 +2894,21 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     return { version: 2, credentialLifecycle: true };
   }
 
+  async function codexDeviceAuthStartV2(opts: {
+    account_id?: string;
+    project_id: string;
+    credential_id?: string;
+    create?: boolean;
+  }) {
+    const hasCredentialId = !!opts.credential_id?.trim();
+    if ((opts.create === true) === hasCredentialId) {
+      throw new Error(
+        "sign-in must either create a credential or target one credential_id",
+      );
+    }
+    return await codexDeviceAuthStart(opts);
+  }
+
   async function verifyCodexSubscriptionAuth({
     projectId,
     accountId,
@@ -2995,11 +3014,15 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     project_id,
     filename,
     content,
+    credential_id,
+    create,
   }: {
     account_id?: string;
     project_id: string;
     filename?: string;
     content: string;
+    credential_id?: string;
+    create?: boolean;
   }) {
     if (!account_id) {
       throw Error("user must be signed in");
@@ -3013,37 +3036,79 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     if (filename && !/auth\.json$/i.test(filename.trim())) {
       throw Error("only auth.json uploads are supported");
     }
+    if (credential_id != null && !isValidUUID(credential_id)) {
+      throw Error("invalid credential_id");
+    }
     const sessionId = uuid();
-    const result = await uploadSubscriptionAuthFile({
+    const leaseId = await acquireCodexDeviceAuthLease({
+      projectId: project_id,
       accountId: account_id,
       sessionId,
-      content,
     });
     try {
-      const verification = await verifyCodexSubscriptionAuth({
-        projectId: project_id,
+      const result = await uploadSubscriptionAuthFile({
         accountId: account_id,
-        codexHome: result.codexHome,
-      });
-      const synced = await pushSubscriptionAuthToRegistry({
-        projectId: project_id,
-        accountId: account_id,
-        codexHome: result.codexHome,
+        sessionId,
         content,
-        descriptorMetadata: verification.descriptorMetadata,
       });
-      if (!synced.ok) {
-        throw new Error("unable to save uploaded credential");
+      try {
+        const verification = await verifyCodexSubscriptionAuth({
+          projectId: project_id,
+          accountId: account_id,
+          codexHome: result.codexHome,
+          credentialId: credential_id,
+        });
+        const synced = await pushSubscriptionAuthToRegistry({
+          projectId: project_id,
+          accountId: account_id,
+          credentialId: credential_id,
+          create,
+          codexHome: result.codexHome,
+          content,
+          descriptorMetadata: verification.descriptorMetadata,
+        });
+        if (
+          !synced.ok ||
+          typeof synced.id !== "string" ||
+          !isValidUUID(synced.id)
+        ) {
+          throw new Error("unable to save uploaded credential");
+        }
+        const credentialId = synced.id;
+        invalidateCodexModelCatalog(account_id);
+        return {
+          ok: true as const,
+          synced: true as const,
+          bytes: result.bytes,
+          credentialId,
+        };
+      } finally {
+        await rm(result.codexHome, { recursive: true, force: true });
       }
-      invalidateCodexModelCatalog(account_id);
-      return {
-        ok: true as const,
-        synced: true as const,
-        bytes: result.bytes,
-      };
     } finally {
-      await rm(result.codexHome, { recursive: true, force: true });
+      await releaseCodexDeviceAuthLease({
+        projectId: project_id,
+        accountId: account_id,
+        leaseId,
+      });
     }
+  }
+
+  async function codexUploadAuthFileV2(opts: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+    credential_id?: string;
+    create?: boolean;
+  }) {
+    const hasCredentialId = !!opts.credential_id?.trim();
+    if ((opts.create === true) === hasCredentialId) {
+      throw new Error(
+        "auth-file upload must either create a credential or target one credential_id",
+      );
+    }
+    return await codexUploadAuthFile(opts);
   }
 
   function assertHostedProjectAccess({
@@ -3540,11 +3605,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.getBackupFiles = getBackupFiles;
   hubApi.projects.getBackupQuota = getBackupQuota;
   hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
+  hubApi.projects.codexDeviceAuthStartV2 = codexDeviceAuthStartV2;
   hubApi.projects.getCodexCredentialSelectionCapability =
     getCodexCredentialSelectionCapability;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
+  hubApi.projects.codexUploadAuthFileV2 = codexUploadAuthFileV2;
   hubApi.projects.getCodexUsageStatus = getCodexUsageStatus;
   hubApi.projects.chatStoreStats = chatStoreStats;
   hubApi.projects.chatStoreRotate = chatStoreRotate;

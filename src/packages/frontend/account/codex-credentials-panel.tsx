@@ -399,6 +399,10 @@ function CodexCredentialsPanelBody({
   const [deviceAuthError, setDeviceAuthError] = useState<string>("");
   const [deviceAuthActionPending, setDeviceAuthActionPending] =
     useState<boolean>(false);
+  const [credentialMutationTarget, setCredentialMutationTarget] = useState<{
+    credentialId?: string;
+    create: boolean;
+  }>();
   const [openCredentialPanelKeys, setOpenCredentialPanelKeys] = useState<
     string[]
   >([]);
@@ -637,6 +641,19 @@ function CodexCredentialsPanelBody({
         scrollCodexCredentialsModalToTop(panelRootRef.current),
       );
       try {
+        const subscriptions = paymentSource?.subscriptions ?? [];
+        const targetCredentialId = create
+          ? undefined
+          : (credentialId ??
+            paymentSource?.credentialId ??
+            (subscriptions.length === 1 ? subscriptions[0].id : undefined));
+        const targetCreate =
+          create || (!targetCredentialId && !subscriptions.length);
+        if (!targetCreate && !targetCredentialId) {
+          throw new Error(
+            "Choose the ChatGPT subscription to reconnect, or add a new subscription.",
+          );
+        }
         const capability =
           await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
             { project_id: authProjectId },
@@ -649,11 +666,16 @@ function CodexCredentialsPanelBody({
             "This project host must be updated before ChatGPT subscriptions can be added or reconnected.",
           );
         }
+        setCredentialMutationTarget({
+          credentialId: targetCredentialId,
+          create: targetCreate,
+        });
         const status =
-          await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
+          await webapp_client.conat_client.hub.projects.codexDeviceAuthStartV2({
             project_id: authProjectId,
-            ...(credentialId ? { credential_id: credentialId } : {}),
-            ...(create ? { create: true } : {}),
+            ...(targetCredentialId
+              ? { credential_id: targetCredentialId }
+              : { create: true }),
           });
         setDeviceAuth(status as DeviceAuthStatus);
         refresh();
@@ -668,7 +690,14 @@ function CodexCredentialsPanelBody({
         setDeviceAuthActionPending(false);
       }
     },
-    [authProjectId, embedded, openSubscriptionAuthPanel, refresh],
+    [
+      authProjectId,
+      embedded,
+      openSubscriptionAuthPanel,
+      paymentSource?.credentialId,
+      paymentSource?.subscriptions,
+      refresh,
+    ],
   );
 
   const saveCredentialLabel = useCallback(
@@ -1144,6 +1173,19 @@ function CodexCredentialsPanelBody({
     setDeviceAuthError("");
     try {
       const content = await file.text();
+      const subscriptions = paymentSource?.subscriptions ?? [];
+      const targetCredentialId =
+        credentialMutationTarget?.credentialId ??
+        paymentSource?.credentialId ??
+        (subscriptions.length === 1 ? subscriptions[0].id : undefined);
+      const targetCreate =
+        credentialMutationTarget?.create ??
+        (!targetCredentialId && !subscriptions.length);
+      if (!targetCreate && !targetCredentialId) {
+        throw new Error(
+          "Choose Reconnect on the target subscription, or choose Add, before uploading auth.json.",
+        );
+      }
       const capability =
         await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
           { project_id: authProjectId },
@@ -1157,10 +1199,13 @@ function CodexCredentialsPanelBody({
         );
       }
       const result =
-        await webapp_client.conat_client.hub.projects.codexUploadAuthFile({
+        await webapp_client.conat_client.hub.projects.codexUploadAuthFileV2({
           project_id: authProjectId,
           filename: file.name,
           content,
+          ...(targetCredentialId
+            ? { credential_id: targetCredentialId }
+            : { create: true }),
         });
       setUploadedAuthFileStatus({
         bytes: result.bytes,
