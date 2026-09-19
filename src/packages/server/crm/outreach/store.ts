@@ -1417,13 +1417,35 @@ export async function activeSuppressions(
   return rows.map(suppressionRow);
 }
 
-async function deliveryPreflight(
+export interface OutreachRecipientEligibility {
+  person_active: boolean;
+  organization_active: boolean;
+  relationship_active: boolean;
+  email_verified: boolean;
+  email_primary: boolean;
+  suppression_reasons: string[];
+  cooldown_last_contact: Date | null;
+  same_kind_nonterminal_count: number;
+}
+
+export type OutreachInitialSendIneligibility =
+  | "person_inactive"
+  | "organization_inactive"
+  | "relationship_inactive"
+  | "email_unverified"
+  | "email_not_primary"
+  | "suppressed"
+  | "same_kind_nonterminal_duplicate"
+  | "contact_cooldown_active_no_override";
+
+// Review and delivery must evaluate the same recipient facts. Accepting the
+// queryable makes claim-time checks part of the worker's existing transaction.
+export async function loadOutreachRecipientEligibility(
+  db: Db,
   delivery: CrmOutreachDelivery,
-): Promise<{ blocking_errors: string[]; warnings: string[] }> {
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const config = await loadOutreachConfiguration();
-  const relations = await getPool().query(
+  contactCooldownDays: number,
+): Promise<OutreachRecipientEligibility> {
+  const relations = await db.query(
     `SELECT p.status AS person_status,e.verified,e.is_primary,op.state AS relationship_state,o.status AS organization_status
        FROM crm_people p JOIN crm_person_emails e ON e.person_id=p.id
        JOIN crm_organizations o ON o.id=$2
@@ -1432,26 +1454,78 @@ async function deliveryPreflight(
     [delivery.person_id, delivery.organization_id, delivery.person_email_id],
   );
   const relation = relations.rows[0];
-  if (!relation || relation.person_status !== "active")
-    errors.push("CRM person is not active");
-  if (relation?.organization_status !== "active")
-    errors.push("CRM organization is not active");
-  if (relation?.relationship_state !== "active")
-    errors.push("person is not actively linked to this organization");
-  if (relation?.verified !== true)
-    errors.push("recipient email relation is not reviewed and verified");
-  if (relation?.is_primary !== true)
-    errors.push("recipient email relation is not the reviewed primary email");
   const suppressions = await activeSuppressions(
-    getPool(),
+    db,
     delivery.organization_id,
     delivery.person_id,
     delivery.person_email_id,
     delivery.normalized_email,
   );
-  if (suppressions.length)
+  const recent = await db.query(
+    `SELECT max(notification_requested_at) AS last_contact FROM crm_outreach_deliveries
+      WHERE normalized_email=$1 AND id<>$2 AND notification_requested_at >= NOW()-($3::int * INTERVAL '1 day')`,
+    [delivery.normalized_email, delivery.id, contactCooldownDays],
+  );
+  const duplicate = await db.query(
+    `SELECT count(*)::int AS count FROM crm_outreach_deliveries
+      WHERE id<>$1 AND normalized_email=$2 AND kind=$3 AND state IN ('approved','queued','creating_ticket','notification_requested')`,
+    [delivery.id, delivery.normalized_email, delivery.kind],
+  );
+  return {
+    person_active: relation?.person_status === "active",
+    organization_active: relation?.organization_status === "active",
+    relationship_active: relation?.relationship_state === "active",
+    email_verified: relation?.verified === true,
+    email_primary: relation?.is_primary === true,
+    suppression_reasons: suppressions.map((item) => item.reason),
+    cooldown_last_contact: recent.rows[0]?.last_contact
+      ? new Date(recent.rows[0].last_contact)
+      : null,
+    same_kind_nonterminal_count: Number(duplicate.rows[0]?.count ?? 0),
+  };
+}
+
+export function outreachInitialSendIneligibility(
+  eligibility: OutreachRecipientEligibility,
+  overrideReason: string | null | undefined,
+): OutreachInitialSendIneligibility[] {
+  const reasons: OutreachInitialSendIneligibility[] = [];
+  if (!eligibility.person_active) reasons.push("person_inactive");
+  if (!eligibility.organization_active) reasons.push("organization_inactive");
+  if (!eligibility.relationship_active) reasons.push("relationship_inactive");
+  if (!eligibility.email_verified) reasons.push("email_unverified");
+  if (!eligibility.email_primary) reasons.push("email_not_primary");
+  if (eligibility.suppression_reasons.length) reasons.push("suppressed");
+  if (eligibility.same_kind_nonterminal_count > 0)
+    reasons.push("same_kind_nonterminal_duplicate");
+  if (eligibility.cooldown_last_contact && !overrideReason?.trim())
+    reasons.push("contact_cooldown_active_no_override");
+  return reasons;
+}
+
+async function deliveryPreflight(
+  delivery: CrmOutreachDelivery,
+): Promise<{ blocking_errors: string[]; warnings: string[] }> {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const config = await loadOutreachConfiguration();
+  const eligibility = await loadOutreachRecipientEligibility(
+    getPool(),
+    delivery,
+    config.contact_cooldown_days,
+  );
+  if (!eligibility.person_active) errors.push("CRM person is not active");
+  if (!eligibility.organization_active)
+    errors.push("CRM organization is not active");
+  if (!eligibility.relationship_active)
+    errors.push("person is not actively linked to this organization");
+  if (!eligibility.email_verified)
+    errors.push("recipient email relation is not reviewed and verified");
+  if (!eligibility.email_primary)
+    errors.push("recipient email relation is not the reviewed primary email");
+  if (eligibility.suppression_reasons.length)
     errors.push(
-      `recipient is suppressed (${suppressions.map((item) => item.reason).join(", ")})`,
+      `recipient is suppressed (${eligibility.suppression_reasons.join(", ")})`,
     );
   if (!delivery.subject.trim() || !delivery.body_plain_text.trim())
     errors.push("subject and body are required");
@@ -1465,23 +1539,13 @@ async function deliveryPreflight(
   ) {
     errors.push("required postal address and opt-out footer are missing");
   }
-  const recent = await getPool().query(
-    `SELECT max(notification_requested_at) AS last_contact FROM crm_outreach_deliveries
-      WHERE normalized_email=$1 AND id<>$2 AND notification_requested_at >= NOW()-($3::int * INTERVAL '1 day')`,
-    [delivery.normalized_email, delivery.id, config.contact_cooldown_days],
-  );
-  if (recent.rows[0]?.last_contact)
+  if (eligibility.cooldown_last_contact)
     warnings.push(
-      `contact cooldown has not elapsed since ${isoRequired(recent.rows[0].last_contact)}`,
+      `contact cooldown has not elapsed since ${isoRequired(eligibility.cooldown_last_contact)}`,
     );
-  const duplicate = await getPool().query(
-    `SELECT count(*)::int AS count FROM crm_outreach_deliveries
-      WHERE id<>$1 AND normalized_email=$2 AND kind=$3 AND state IN ('approved','queued','creating_ticket','notification_requested')`,
-    [delivery.id, delivery.normalized_email, delivery.kind],
-  );
-  if (duplicate.rows[0].count)
+  if (eligibility.same_kind_nonterminal_count)
     errors.push(
-      "same-purpose nonterminal outreach already exists for this contact",
+      "same-kind nonterminal outreach already exists for this contact",
     );
   return { blocking_errors: errors, warnings };
 }
