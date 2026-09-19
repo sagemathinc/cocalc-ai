@@ -835,6 +835,13 @@ function AgentWorkspace({
     ],
   );
   const unregistered = selectedThread && !selectedAgent;
+  const selectedThreadMetadata = selectedThread
+    ? chatActions?.getThreadMetadata?.(selectedThread, {
+        threadId: selectedThread,
+      })
+    : undefined;
+  const canRegisterSelectedThread =
+    !!unregistered && selectedThreadMetadata?.agent_kind === "acp";
   const threadTitle = unregistered
     ? cachedAgentNameContext({
         project_id: agent.endpoint.project_id,
@@ -932,8 +939,7 @@ function AgentWorkspace({
           color: headerTextColor,
           display: "flex",
           gap: 12,
-          minHeight: 58,
-          padding: "8px 12px",
+          padding: "2px 12px",
         }}
       >
         {onShowList && (
@@ -1000,9 +1006,9 @@ function AgentWorkspace({
               whiteSpace: "nowrap",
             }}
           >
-            {unregistered ? (
+            {canRegisterSelectedThread ? (
               <Text style={{ color: "inherit" }}>Not yet registered</Text>
-            ) : (
+            ) : !unregistered ? (
               <NameAgent
                 agent={displayedAgent}
                 projectId={agent.endpoint.project_id}
@@ -1020,8 +1026,10 @@ function AgentWorkspace({
                   },
                 }}
               />
-            )}
-            <span aria-hidden="true">&nbsp;·&nbsp;</span>
+            ) : null}
+            {!unregistered || canRegisterSelectedThread ? (
+              <span aria-hidden="true">&nbsp;·&nbsp;</span>
+            ) : null}
             <Button
               type="link"
               size="small"
@@ -1045,7 +1053,7 @@ function AgentWorkspace({
             ) : null}
           </div>
         </div>
-        {unregistered && (
+        {canRegisterSelectedThread && (
           <NameAgent
             projectId={agent.endpoint.project_id}
             path={agent.path}

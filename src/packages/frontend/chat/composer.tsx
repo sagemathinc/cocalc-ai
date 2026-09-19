@@ -87,12 +87,14 @@ export { findChatComposerFocusTarget, refocusChatComposerInput };
 
 export function allowAgentMentionsInComposer({
   agentKind,
+  hasSelectedThread,
   isNewThreadCodex,
 }: {
   agentKind?: string | null;
+  hasSelectedThread: boolean;
   isNewThreadCodex: boolean;
 }): boolean {
-  return agentKind === "acp" || isNewThreadCodex;
+  return agentKind === "acp" || (!hasSelectedThread && isNewThreadCodex);
 }
 
 export function approvedDraftIsCurrent({
@@ -397,6 +399,7 @@ export function ChatRoomComposer({
     threadTitle: threadLabel,
     runnable: allowAgentMentionsInComposer({
       agentKind: threadMetadata?.agent_kind,
+      hasSelectedThread: selectedThread != null,
       isNewThreadCodex,
     }),
     restoreFocus: refocusComposerInput,

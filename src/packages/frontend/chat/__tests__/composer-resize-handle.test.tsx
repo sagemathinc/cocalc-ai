@@ -95,27 +95,38 @@ describe("ChatRoomComposer resize handle", () => {
     expect(
       allowAgentMentionsInComposer({
         agentKind: "none",
+        hasSelectedThread: true,
         isNewThreadCodex: false,
       }),
     ).toBe(false);
     expect(
       allowAgentMentionsInComposer({
         agentKind: undefined,
+        hasSelectedThread: true,
         isNewThreadCodex: false,
       }),
     ).toBe(false);
     expect(
       allowAgentMentionsInComposer({
         agentKind: "acp",
+        hasSelectedThread: true,
         isNewThreadCodex: false,
       }),
     ).toBe(true);
     expect(
       allowAgentMentionsInComposer({
         agentKind: "none",
+        hasSelectedThread: false,
         isNewThreadCodex: true,
       }),
     ).toBe(true);
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: "none",
+        hasSelectedThread: true,
+        isNewThreadCodex: true,
+      }),
+    ).toBe(false);
   });
 
   it("checks approved sends against the live editor instead of debounced state", () => {
