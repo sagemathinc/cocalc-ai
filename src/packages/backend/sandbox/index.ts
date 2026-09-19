@@ -1772,10 +1772,16 @@ export class SandboxedFilesystem {
     let temporaryIdentity:
       | { dev: number | bigint; ino: number | bigint }
       | undefined;
+    let temporaryHandle: Awaited<ReturnType<typeof open>> | undefined;
     let installed = false;
     try {
       await this.copyFile(source, temporary);
-      const stat = await this.lstat(temporary);
+      const opened = await this.openVerifiedHandle({
+        path: temporary,
+        flags: constants.O_RDONLY,
+      });
+      temporaryHandle = opened.handle;
+      const stat = await temporaryHandle.stat();
       temporaryIdentity = { dev: stat.dev, ino: stat.ino };
       try {
         await this.cpInstallNoReplace(temporary, dest);
@@ -1822,6 +1828,16 @@ export class SandboxedFilesystem {
               err: String(err),
             });
           }
+        }
+      }
+      if (temporaryHandle != null) {
+        try {
+          await temporaryHandle.close();
+        } catch (err) {
+          logger.warn("unable to close no-clobber copy staging file", {
+            path: temporary,
+            err: String(err),
+          });
         }
       }
     }
