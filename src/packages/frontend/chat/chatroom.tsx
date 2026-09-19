@@ -2876,6 +2876,7 @@ function ChatPanelContent({
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
         hideTopControls={hideTopControls}
+        codexConfigInComposer={!effectiveReadOnly}
         hideCompactThreadHeader={hideCompactThreadHeader || narrow}
         mobile={narrow}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
@@ -2947,6 +2948,7 @@ function ChatPanelContent({
             onComposerReady={onComposerReady}
             codexPaymentSource={codexPaymentSource}
             codexPaymentSourceLoading={codexPaymentSourceLoading}
+            refreshCodexPaymentSource={refreshCodexPaymentSource}
             onOpenCodexPaymentConfig={() => {
               refreshCodexPaymentSource?.();
               setCodexPaymentConfigOpen(true);
@@ -3054,7 +3056,7 @@ function ChatPanelContent({
                 "New chat",
             )}
           </span>
-          {!effectiveReadOnly &&
+          {effectiveReadOnly &&
             selectedThreadKey &&
             selectedThreadId &&
             (threadSupportsCodexAutomation(selectedThreadMetadata) ||

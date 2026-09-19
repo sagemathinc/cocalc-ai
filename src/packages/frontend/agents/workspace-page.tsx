@@ -33,6 +33,7 @@ import { initChat } from "@cocalc/frontend/chat/register";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
+import { AgentFileAttachment } from "@cocalc/frontend/chat/agent-file-attachment";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
@@ -743,6 +744,29 @@ function NewAgentPanel({
               paddingTop: 10,
             }}
           >
+            {projectId ? (
+              <AgentFileAttachment
+                projectId={projectId}
+                workingDirectory={directory}
+                disabled={busy || !!pending}
+                onInsert={(markdown) =>
+                  setFirstRequest(
+                    (current) =>
+                      `${current}${current && !/\s$/.test(current) ? " " : ""}${markdown}`,
+                  )
+                }
+              />
+            ) : (
+              <Button
+                aria-label="Add files and more"
+                disabled
+                icon={<Icon name="plus" />}
+                shape="circle"
+                style={{ height: 32, minWidth: 32, width: 32 }}
+                title="Choose a project before adding files"
+                type="text"
+              />
+            )}
             <Popover
               content={advancedSettings}
               open={settingsOpen}
@@ -750,11 +774,23 @@ function NewAgentPanel({
               trigger="click"
               onOpenChange={setSettingsOpen}
             >
-              <Button icon={<Icon name="sliders" />}>Settings</Button>
+              <Button
+                icon={<Icon name="folder-open" />}
+                style={{ maxWidth: 240, overflow: "hidden" }}
+                title={`${projectTitle} / ${directory}`}
+              >
+                <span
+                  style={{
+                    display: "block",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {projectTitle} / {directory || "~"}
+                </span>
+              </Button>
             </Popover>
-            <Tag style={{ alignContent: "center", minHeight: 30 }}>
-              {projectTitle}
-            </Tag>
             <Select
               aria-label="Payment source"
               value={selectedPaymentValue}
@@ -818,6 +854,7 @@ function NewAgentPanel({
               aria-label="Start agent"
               title="Start agent (Shift+Enter)"
               icon={<Icon name="arrow-up" />}
+              style={{ height: 32, minWidth: 32, width: 32 }}
               loading={busy}
               disabled={!!problem || !firstRequest.trim() || atLimit}
               onClick={() => void create()}
@@ -1136,8 +1173,6 @@ function AgentProjectContext({
     <ProjectContext.Provider value={projectContext}>
       <ChatEmbeddingOptionsProvider
         value={{
-          agentFileAttachments: true,
-          compactSubmitButton: true,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,

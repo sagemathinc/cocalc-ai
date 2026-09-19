@@ -31,6 +31,14 @@ jest.mock("../input", () => ({
   },
 }));
 
+jest.mock("../codex", () => ({
+  CodexConfigButton: () => (
+    <button type="button" aria-label="Codex settings">
+      Codex settings
+    </button>
+  ),
+}));
+
 jest.mock("@cocalc/frontend/components", () => ({
   Icon: () => null,
   Tooltip: ({ children }: { children: React.ReactNode }) => children,
@@ -222,7 +230,12 @@ describe("ChatRoomComposer resize handle", () => {
       expect(onEditThreadAppearance).toHaveBeenCalledTimes(3);
       expect(onSend).not.toHaveBeenCalled();
       if (isAI) {
-        expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+        await user.click(
+          screen.getByRole("button", { name: "Add files and more" }),
+        );
+        expect(
+          await screen.findByRole("menuitem", { name: "Set goal" }),
+        ).not.toBeNull();
       }
     },
   );
@@ -238,18 +251,19 @@ describe("ChatRoomComposer resize handle", () => {
     expect(container.querySelector('[style*="row-resize"]')).toBeNull();
   });
 
-  it("keeps dictation above the composer instead of adjacent to Send", () => {
+  it("keeps dictation in the composer control rail", () => {
     renderComposer({ hasInput: true, input: "draft" });
 
     const dictate = screen.getByRole("button", { name: "Dictate message" });
     const actions = screen.getByTestId("chat-composer-actions");
-    expect(actions.contains(dictate)).toBe(false);
+    expect(actions.contains(dictate)).toBe(true);
     expect(actions.contains(screen.getByRole("button", { name: "Send" }))).toBe(
       true,
     );
   });
 
-  it("shows goal controls for legacy Codex thread metadata", () => {
+  it("offers goal controls for legacy Codex thread metadata", async () => {
+    const user = userEvent.setup();
     renderComposer({
       selectedThread: {
         key: "thread-legacy",
@@ -275,10 +289,15 @@ describe("ChatRoomComposer resize handle", () => {
       } as any,
     });
 
-    expect(screen.getByRole("button", { name: "Set goal" })).not.toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: "Add files and more" }),
+    );
+    expect(
+      await screen.findByRole("menuitem", { name: "Set goal" }),
+    ).not.toBeNull();
   });
 
-  it("keeps the thread title clear of its accent line", () => {
+  it("does not add a divider beside the thread title", () => {
     renderComposer({
       selectedThread: {
         key: "thread-accent",
@@ -299,10 +318,62 @@ describe("ChatRoomComposer resize handle", () => {
       onEditThreadAppearance: jest.fn(),
     });
 
+    const title = screen.getByRole("button", {
+      name: "Edit Thread Appearance: hi",
+    });
+    expect(title.style.borderLeft).toBe("0px");
+    expect(title.style.paddingLeft).toBe("4px");
+  });
+
+  it("uses the shared attachment and submit controls for human chats", () => {
+    renderComposer({
+      selectedThread: {
+        key: "thread-human",
+        label: "Human thread",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: false,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+    });
+
     expect(
-      screen.getByRole("button", { name: "Edit Thread Appearance: hi" }).style
-        .paddingLeft,
-    ).toBe("12px");
+      screen.getByRole("button", { name: "Add files and more" }),
+    ).not.toBeNull();
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).toBeDisabled();
+    expect(send.style.width).toBe("32px");
+    expect(send.style.height).toBe("32px");
+  });
+
+  it("keeps execution settings available for AI threads without ACP metadata", () => {
+    renderComposer({
+      isSelectedThreadAI: true,
+      selectedThread: {
+        key: "thread-ai",
+        label: "AI thread",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: true,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+    });
+
+    expect(
+      screen.getByRole("button", { name: "Codex settings" }),
+    ).not.toBeNull();
   });
 
   it("shows a proactive Codex setup banner for unconfigured AI chats", () => {

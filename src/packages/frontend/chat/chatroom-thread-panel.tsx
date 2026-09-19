@@ -500,6 +500,7 @@ interface ChatRoomThreadPanelProps {
   shortcutEnabled?: boolean;
   isVisible?: boolean;
   hideTopControls?: boolean;
+  codexConfigInComposer?: boolean;
   hideCompactThreadHeader?: boolean;
   allowSidebarToggle?: boolean;
   sidebarHidden?: boolean;
@@ -551,6 +552,7 @@ export function ChatRoomThreadPanel({
   shortcutEnabled = true,
   isVisible = true,
   hideTopControls = false,
+  codexConfigInComposer = false,
   hideCompactThreadHeader = false,
   allowSidebarToggle = false,
   sidebarHidden = false,
@@ -2032,11 +2034,10 @@ export function ChatRoomThreadPanel({
       isCodexModelName(`${selectedThreadMeta?.agent_model ?? ""}`) ||
       actions?.getCodexConfig?.(selectedThreadId) != null),
   );
+  const showCodexConfig = shouldShowCodexConfig && !codexConfigInComposer;
   const showTopControls =
     !hideTopControls &&
-    (shouldShowCodexConfig ||
-      allowSidebarToggle ||
-      topRightControlsPrefix != null);
+    (showCodexConfig || allowSidebarToggle || topRightControlsPrefix != null);
   const selectedThreadForLog = selectedThreadKey ?? undefined;
   const threadMeta =
     selectedThread && "displayLabel" in selectedThread
@@ -2207,7 +2208,7 @@ export function ChatRoomThreadPanel({
                 />
               </Tooltip>
             ) : null}
-            {shouldShowCodexConfig ? (
+            {showCodexConfig ? (
               <CodexConfigButton
                 threadKey={selectedThreadKey}
                 chatPath={path ?? ""}

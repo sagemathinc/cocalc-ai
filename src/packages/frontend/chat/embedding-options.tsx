@@ -6,8 +6,6 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 export interface ChatEmbeddingOptions {
-  agentFileAttachments?: boolean;
-  compactSubmitButton?: boolean;
   openFilesInWorkbench?: boolean;
   sidebarHiddenByDefault?: boolean;
   sidebarPreferenceKey?: string;

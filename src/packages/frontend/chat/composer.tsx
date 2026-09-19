@@ -47,8 +47,8 @@ import {
   bindAgentName,
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
-import { useChatEmbeddingOptions } from "./embedding-options";
 import { AgentFileAttachment } from "./agent-file-attachment";
+import { CodexConfigButton } from "./codex";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -81,6 +81,7 @@ export interface ChatRoomComposerProps {
   ) => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
+  refreshCodexPaymentSource?: () => void;
   onOpenCodexPaymentConfig?: () => void;
   mobile?: boolean;
 }
@@ -139,11 +140,11 @@ export function ChatRoomComposer({
   onComposerReady,
   codexPaymentSource,
   codexPaymentSourceLoading = false,
+  refreshCodexPaymentSource,
   onOpenCodexPaymentConfig,
   mobile = false,
 }: ChatRoomComposerProps) {
   const visualViewport = useChatVisualViewport(mobile);
-  const embeddingOptions = useChatEmbeddingOptions();
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
   const ZEN_MAX_VH = 1.0;
@@ -165,7 +166,11 @@ export function ChatRoomComposer({
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
     isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
-  const themeLineColor = threadColor ?? threadAccentColor;
+  const showComposerCodexConfig =
+    isSelectedThreadAI ||
+    showGoal ||
+    (selectedThread != null &&
+      actions.getCodexConfig?.(selectedThread.key) != null);
   const contextThread = useMemo(
     () => selectedThread ?? undefined,
     [selectedThread],
@@ -216,6 +221,7 @@ export function ChatRoomComposer({
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isInputFocused, setIsInputFocused] = useState<boolean>(false);
   const [acpPromptModalOpen, setAcpPromptModalOpen] = useState<boolean>(false);
+  const [goalOpenRequest, setGoalOpenRequest] = useState(0);
   const zenContainerRef = useRef<HTMLDivElement | null>(null);
   const inputContainerRef = useRef<HTMLDivElement | null>(null);
   const chatInputControlRef = useRef<ChatInputControl | null>(null);
@@ -574,13 +580,16 @@ export function ChatRoomComposer({
 
   const composerStyle: CSSProperties = {
     display: "flex",
-    flexDirection: mobile ? "column" : "row",
-    marginBottom: isZenMode && isFullscreen ? 0 : "5px",
+    flexDirection: "column",
+    margin: isZenMode && isFullscreen ? 0 : "0 8px 8px",
     overflow: "hidden",
-    width: "100%",
+    width: isZenMode && isFullscreen ? "100%" : "calc(100% - 16px)",
     height: isZenMode && isFullscreen ? "100%" : undefined,
-    padding: isZenMode && isFullscreen ? "12px" : undefined,
-    background: isZenMode && isFullscreen ? UI_COLORS.surface : undefined,
+    padding: isZenMode && isFullscreen ? "12px" : "8px 10px 7px",
+    background: UI_COLORS.surface,
+    border: `1px solid ${isInputFocused ? UI_COLORS.link : UI_COLORS.border}`,
+    borderRadius: isZenMode && isFullscreen ? 0 : 16,
+    boxShadow: isInputFocused ? `0 0 0 2px ${UI_COLORS.focus}` : undefined,
     boxSizing: "border-box",
     ...(mobile && isZenMode
       ? {
@@ -591,7 +600,6 @@ export function ChatRoomComposer({
           height: visualViewport.height || "100dvh",
           zIndex: 950,
           padding: "8px",
-          background: UI_COLORS.surface,
           justifyContent: "flex-end",
         }
       : {}),
@@ -608,8 +616,8 @@ export function ChatRoomComposer({
           style={{
             flex: mobile ? "0 1 auto" : "1",
             order: mobile ? 1 : undefined,
-            width: mobile ? "100%" : undefined,
-            padding: mobile ? 0 : "0px 5px 0px 2px",
+            width: "100%",
+            padding: 0,
             // Critical flexbox quirk: without minWidth: 0, long unbroken input text
             // forces this flex item to grow instead of shrinking, so the send/toolbar
             // buttons get pushed off-screen. Allow the item to shrink (and text to wrap)
@@ -659,19 +667,6 @@ export function ChatRoomComposer({
             }}
           >
             {showGoal && selectedThread && (
-              <div style={{ flex: "1 1 180px", minWidth: 0 }}>
-                <CodexGoalControl
-                  key={selectedThread.key}
-                  snapshot={threadMetadata?.acp_goal}
-                  request={threadMetadata?.acp_goal_request}
-                  ack={threadMetadata?.acp_goal_ack}
-                  onChange={(change) =>
-                    actions.setCodexGoal(selectedThread.key, change)
-                  }
-                />
-              </div>
-            )}
-            {showGoal && selectedThread && (
               <NameAgent
                 key={agentMentions.accountId}
                 agent={agentMentions.namedAgent}
@@ -703,7 +698,6 @@ export function ChatRoomComposer({
                 style={{
                   background: "none",
                   border: 0,
-                  padding: 0,
                   cursor: onEditThreadAppearance ? "pointer" : "default",
                   fontFamily: "inherit",
                   display: "flex",
@@ -714,10 +708,7 @@ export function ChatRoomComposer({
                   gap: "8px",
                   color: UI_COLORS.secondary,
                   fontSize: "12px",
-                  borderLeft: themeLineColor
-                    ? `3px solid ${themeLineColor}`
-                    : undefined,
-                  paddingLeft: themeLineColor ? 12 : 0,
+                  padding: "1px 4px",
                 }}
               >
                 <ThreadBadge
@@ -739,17 +730,6 @@ export function ChatRoomComposer({
                 </span>
               </button>
             )}
-            <div
-              style={{ flex: "0 0 auto", marginLeft: threadLabel ? 0 : "auto" }}
-            >
-              <DictateButton
-                inputControlRef={chatInputControlRef}
-                path={path}
-                projectId={project_id}
-                session={composerSession}
-                threadId={selectedThread?.key}
-              />
-            </div>
           </div>
           {showCodexPaymentSourceBanner && (
             <Alert
@@ -854,133 +834,132 @@ export function ChatRoomComposer({
               }
             />
           </div>
+          {showGoal && selectedThread && (
+            <CodexGoalControl
+              key={selectedThread.key}
+              snapshot={threadMetadata?.acp_goal}
+              request={threadMetadata?.acp_goal_request}
+              ack={threadMetadata?.acp_goal_ack}
+              openRequest={goalOpenRequest}
+              hideEmptyTrigger
+              onChange={(change) =>
+                actions.setCodexGoal(selectedThread.key, change)
+              }
+            />
+          )}
         </div>
         <div
           data-testid="chat-composer-actions"
           style={{
+            alignItems: "center",
+            borderTop: `1px solid ${UI_COLORS.border}`,
             display: "flex",
-            flexDirection: mobile ? "row" : "column",
-            flexWrap: mobile ? "wrap" : undefined,
-            justifyContent: mobile ? "flex-end" : undefined,
-            gap: mobile ? 6 : undefined,
+            flexDirection: "row",
+            flexWrap: "nowrap",
+            gap: 4,
             flexShrink: 0,
-            padding: "0",
-            marginBottom: mobile && hasInput ? 4 : 0,
+            minWidth: 0,
+            paddingTop: 7,
           }}
         >
-          {!mobile && <div style={{ flex: 1 }} />}
-          {embeddingOptions.agentFileAttachments ? (
-            <AgentFileAttachment
-              projectId={project_id}
-              workingDirectory={
-                actions.getCodexConfig?.(selectedThread?.key)?.workingDirectory
-              }
-              onInsert={(markdown) => {
-                chatInputControlRef.current?.insertText(markdown);
-                refocusComposerInput();
+          <AgentFileAttachment
+            projectId={project_id}
+            workingDirectory={
+              actions.getCodexConfig?.(selectedThread?.key)?.workingDirectory
+            }
+            onSetGoal={
+              showGoal && selectedThread
+                ? () => setGoalOpenRequest((request) => request + 1)
+                : undefined
+            }
+            onInsert={(markdown) => {
+              chatInputControlRef.current?.insertText(markdown);
+              refocusComposerInput();
+            }}
+          />
+          <DictateButton
+            inputControlRef={chatInputControlRef}
+            path={path}
+            projectId={project_id}
+            session={composerSession}
+            threadId={selectedThread?.key}
+          />
+          {showComposerCodexConfig && selectedThread ? (
+            <div
+              style={{
+                display: "flex",
+                flex: "1 1 auto",
+                minWidth: 0,
+                overflow: "hidden",
               }}
-            />
-          ) : null}
-          {hasInput && (
-            <>
-              {hasAcpPrompt ? (
-                <Tooltip title="View or edit the full prompt that will be sent to the agent">
-                  <Button
-                    size="small"
-                    onClick={() => setAcpPromptModalOpen(true)}
-                    style={{ marginBottom: "5px" }}
-                  >
-                    Agent Prompt
-                  </Button>
-                </Tooltip>
-              ) : null}
-              {hasRunningCodexTurn ? (
-                <Tooltip
-                  title={
-                    <FormattedMessage
-                      id="chatroom.chat_input.steer_button.tooltip"
-                      defaultMessage={"Steer running turn (Shift+Enter)"}
-                    />
-                  }
-                >
-                  <Button
-                    onClick={handleSendImmediately}
-                    disabled={!hasInput}
-                    type="primary"
-                    data-testid="chat-composer-send"
-                    icon={<Icon name="bolt" />}
-                  >
-                    Steer
-                  </Button>
-                </Tooltip>
-              ) : (
-                <Tooltip
-                  title={
-                    <FormattedMessage
-                      id="chatroom.chat_input.send_button.tooltip"
-                      defaultMessage={"Send message (Shift+Enter)"}
-                    />
-                  }
-                >
-                  <Button
-                    onClick={handleSend}
-                    disabled={!hasInput}
-                    type="primary"
-                    shape={
-                      embeddingOptions.compactSubmitButton
-                        ? "circle"
-                        : undefined
-                    }
-                    aria-label={
-                      embeddingOptions.compactSubmitButton ? "Send" : undefined
-                    }
-                    data-testid="chat-composer-send"
-                    icon={
-                      <Icon
-                        name={
-                          embeddingOptions.compactSubmitButton
-                            ? "arrow-up"
-                            : "paper-plane"
-                        }
-                      />
-                    }
-                  >
-                    {!embeddingOptions.compactSubmitButton && (
-                      <FormattedMessage
-                        id="chatroom.chat_input.send_button.label"
-                        defaultMessage={"Send"}
-                      />
-                    )}
-                  </Button>
-                </Tooltip>
-              )}
-              {hasRunningCodexTurn ? (
-                <>
-                  {!mobile && <div style={{ height: "5px" }} />}
-                  <Tooltip
-                    title={
-                      <FormattedMessage
-                        id="chatroom.chat_input.queue_button.tooltip"
-                        defaultMessage={"Queue after the running turn"}
-                      />
-                    }
-                  >
-                    <Button
-                      onClick={handleSend}
-                      disabled={!hasInput}
-                      type="default"
-                      icon={<Icon name="paper-plane" />}
-                    >
-                      <FormattedMessage
-                        id="chatroom.chat_input.queue_button.label"
-                        defaultMessage={"Queue"}
-                      />
-                    </Button>
-                  </Tooltip>
-                </>
-              ) : null}
-            </>
+            >
+              <CodexConfigButton
+                compact="composer"
+                threadKey={selectedThread.key}
+                chatPath={path}
+                projectId={project_id}
+                actions={actions}
+                threadConfig={threadMetadata?.acp_config ?? null}
+                paymentSource={codexPaymentSource}
+                paymentSourceLoading={codexPaymentSourceLoading}
+                refreshPaymentSource={refreshCodexPaymentSource}
+              />
+            </div>
+          ) : (
+            <span style={{ flex: 1 }} />
           )}
+          {hasAcpPrompt ? (
+            <Tooltip title="View or edit the full prompt that will be sent to the agent">
+              <Button size="small" onClick={() => setAcpPromptModalOpen(true)}>
+                Agent Prompt
+              </Button>
+            </Tooltip>
+          ) : null}
+          {hasRunningCodexTurn ? (
+            <Tooltip
+              title={
+                <FormattedMessage
+                  id="chatroom.chat_input.queue_button.tooltip"
+                  defaultMessage={"Queue after the running turn"}
+                />
+              }
+            >
+              <Button
+                onClick={handleSend}
+                disabled={!hasInput}
+                size="small"
+                type="text"
+              >
+                Queue
+              </Button>
+            </Tooltip>
+          ) : null}
+          <Tooltip
+            title={
+              hasRunningCodexTurn ? (
+                <FormattedMessage
+                  id="chatroom.chat_input.steer_button.tooltip"
+                  defaultMessage={"Steer running turn (Shift+Enter)"}
+                />
+              ) : (
+                <FormattedMessage
+                  id="chatroom.chat_input.send_button.tooltip"
+                  defaultMessage={"Send message (Shift+Enter)"}
+                />
+              )
+            }
+          >
+            <Button
+              onClick={hasRunningCodexTurn ? handleSendImmediately : handleSend}
+              disabled={!hasInput}
+              type="primary"
+              shape="circle"
+              aria-label={hasRunningCodexTurn ? "Steer" : "Send"}
+              data-testid="chat-composer-send"
+              icon={<Icon name="arrow-up" />}
+              style={{ height: 32, minWidth: 32, width: 32 }}
+            />
+          </Tooltip>
         </div>
         <AcpPromptModal
           open={acpPromptModalOpen}

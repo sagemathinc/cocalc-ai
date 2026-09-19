@@ -4,7 +4,8 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Space, Spin } from "antd";
+import { Alert, Button, Dropdown, Input, Modal, Space, Spin } from "antd";
+import type { MenuProps } from "antd";
 import { Buffer } from "buffer";
 import { redux } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
@@ -24,10 +25,14 @@ export function AgentFileAttachment({
   projectId,
   workingDirectory,
   onInsert,
+  onSetGoal,
+  disabled = false,
 }: {
   projectId: string;
   workingDirectory?: string;
   onInsert: (markdown: string) => void;
+  onSetGoal?: () => void;
+  disabled?: boolean;
 }) {
   const home = getProjectHomeDirectory(projectId);
   const initialDirectory = normalizeAbsolutePath(
@@ -87,29 +92,44 @@ export function AgentFileAttachment({
     };
   }, [directory, open, projectId]);
 
+  const insertPaths = (paths: string[]) => {
+    if (!paths.length) return;
+    onInsert(
+      paths
+        .map((path) => {
+          const name = path.split("/").pop() || path;
+          return `[${name}](sandbox:${path})`;
+        })
+        .join(" "),
+    );
+  };
+
   const choose = (path: string) => {
-    const name = path.split("/").pop() || path;
-    onInsert(`[${name}](sandbox:${path})`);
+    insertPaths([path]);
     setOpen(false);
   };
 
   const upload = async (files: FileList | null) => {
-    const file = files?.[0];
-    if (!file) return;
+    if (!files?.length) return;
     setLoading(true);
     setError("");
     try {
       const fs = redux.getProjectActions(projectId)?.fs?.();
       if (!fs) throw Error("Project filesystem unavailable");
-      let target = joinAbsolutePath(directory, file.name);
-      if (await fs.exists(target)) {
-        const dot = file.name.lastIndexOf(".");
-        const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
-        const ext = dot > 0 ? file.name.slice(dot) : "";
-        target = joinAbsolutePath(directory, `${stem}-${Date.now()}${ext}`);
+      const targets: string[] = [];
+      for (const file of Array.from(files)) {
+        let target = joinAbsolutePath(directory, file.name);
+        if (await fs.exists(target)) {
+          const dot = file.name.lastIndexOf(".");
+          const stem = dot > 0 ? file.name.slice(0, dot) : file.name;
+          const ext = dot > 0 ? file.name.slice(dot) : "";
+          target = joinAbsolutePath(directory, `${stem}-${Date.now()}${ext}`);
+        }
+        await fs.writeFile(target, Buffer.from(await file.arrayBuffer()));
+        targets.push(target);
       }
-      await fs.writeFile(target, Buffer.from(await file.arrayBuffer()));
-      choose(target);
+      insertPaths(targets);
+      setOpen(false);
     } catch (err) {
       setError(String(err));
     } finally {
@@ -118,21 +138,66 @@ export function AgentFileAttachment({
     }
   };
 
+  const menu: MenuProps = {
+    items: [
+      {
+        key: "upload",
+        icon: <Icon name="upload" />,
+        label: "Upload files",
+      },
+      {
+        key: "choose",
+        icon: <Icon name="folder-open" />,
+        label: "Choose project files",
+      },
+      ...(onSetGoal
+        ? [
+            { type: "divider" as const },
+            {
+              key: "goal",
+              icon: <Icon name="list" />,
+              label: "Set goal",
+            },
+          ]
+        : []),
+    ],
+    onClick: ({ key }) => {
+      if (key === "upload") uploadRef.current?.click();
+      if (key === "choose") setOpen(true);
+      if (key === "goal") onSetGoal?.();
+    },
+  };
+
   return (
     <>
-      <Tooltip title="Add a project file">
-        <Button
-          aria-label="Add project file"
-          icon={<Icon name="upload" />}
-          onClick={() => {
+      <Tooltip title="Add files and more">
+        <Dropdown
+          menu={menu}
+          trigger={["click"]}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) return;
             setDirectory(initialDirectory);
             setPathInput(initialDirectory);
-            setOpen(true);
           }}
-          size="small"
-          type="text"
-        />
+        >
+          <Button
+            aria-label="Add files and more"
+            aria-haspopup="menu"
+            disabled={disabled}
+            icon={<Icon name="plus" />}
+            shape="circle"
+            style={{ height: 32, minWidth: 32, width: 32 }}
+            type="text"
+          />
+        </Dropdown>
       </Tooltip>
+      <input
+        ref={uploadRef}
+        type="file"
+        hidden
+        multiple
+        onChange={(event) => void upload(event.target.files)}
+      />
       <Modal
         title="Add project file"
         open={open}
@@ -175,12 +240,6 @@ export function AgentFileAttachment({
           <Button onClick={() => uploadRef.current?.click()}>
             <Icon name="upload" /> Upload here
           </Button>
-          <input
-            ref={uploadRef}
-            type="file"
-            hidden
-            onChange={(event) => void upload(event.target.files)}
-          />
         </Space>
         {error && (
           <Alert type="error" title={error} style={{ marginBottom: 8 }} />

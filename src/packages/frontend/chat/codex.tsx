@@ -124,7 +124,7 @@ function getModeOptions(): ModeOption[] {
 }
 
 export interface CodexConfigButtonProps {
-  compact?: boolean | "summary";
+  compact?: boolean | "summary" | "composer";
   threadKey: string;
   chatPath: string;
   projectId?: string;
@@ -510,6 +510,7 @@ export function CodexConfigButton({
     "state",
     "tools_version",
   ]);
+  const projectTitle = useProjectMapField<string>(projectId, ["title"]);
   const workspaceWorkingDirectory = useWorkspaceChatWorkingDirectory(chatPath);
   const [open, setOpen] = useState(false);
   const [membershipHelpOpen, setMembershipHelpOpen] = useState(false);
@@ -657,6 +658,15 @@ export function CodexConfigButton({
     Form.useWatch("sessionMode", form) ?? value?.sessionMode;
   const selectedPaymentSource =
     Form.useWatch("paymentSource", form) ?? value?.paymentSource ?? "auto";
+  const selectedWorkingDirectory =
+    Form.useWatch("workingDirectory", form) ??
+    value?.workingDirectory ??
+    threadConfig?.workingDirectory ??
+    defaultWorkingDir(
+      chatPath,
+      workspaceWorkingDirectory,
+      getProjectHomeDirectory(projectId),
+    );
   const activeSessionId = normalizeCodexSessionId(
     Form.useWatch("sessionId", form) ?? value?.sessionId,
   );
@@ -910,6 +920,14 @@ export function CodexConfigButton({
       )?.label ?? siteFundedPolicy.reasoning)
     : reasoningLabel;
   const displayedServiceTier = siteFundedPolicy ? undefined : serviceTierLabel;
+  const displayedWorkingDirectory = (() => {
+    const home = getProjectHomeDirectory(projectId);
+    if (selectedWorkingDirectory === home) return "~";
+    if (selectedWorkingDirectory.startsWith(`${home}/`)) {
+      return `~/${selectedWorkingDirectory.slice(home.length + 1)}`;
+    }
+    return selectedWorkingDirectory;
+  })();
   const paymentNeedsAttention =
     paymentSourceLoading || paymentSource?.source === "none" || !paymentSource;
   const toggleControlsCollapsed = () => {
@@ -1173,7 +1191,72 @@ export function CodexConfigButton({
           maxWidth: "min(760px, calc(100vw - 32px))",
         }}
       >
-        {compact ? (
+        {compact === "composer" ? (
+          <>
+            <Tooltip
+              title={`${projectTitle ?? "Project"} / ${selectedWorkingDirectory}`}
+            >
+              <Button
+                aria-label={`Working directory: ${projectTitle ?? "Project"} / ${selectedWorkingDirectory}. Open Codex settings`}
+                aria-haspopup="dialog"
+                icon={<Icon name="folder-open" />}
+                onClick={() => setOpen(true)}
+                size="small"
+                type="text"
+                style={{
+                  color: UI_COLORS.secondary,
+                  display: "inline-flex",
+                  flex: "0 1 auto",
+                  maxWidth: 260,
+                  minWidth: 0,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {projectTitle ?? "Project"} / {displayedWorkingDirectory}
+                </span>
+              </Button>
+            </Tooltip>
+            <Tooltip
+              title={`${displayedModel} · ${displayedReasoning} · ${sourceShortLabel}`}
+            >
+              <Button
+                aria-label={`Codex settings: ${displayedModel}, ${displayedReasoning}, ${sourceShortLabel}`}
+                aria-haspopup="dialog"
+                onClick={() => setOpen(true)}
+                size="small"
+                type="text"
+                style={{
+                  color: paymentNeedsAttention
+                    ? UI_COLORS.danger
+                    : UI_COLORS.secondary,
+                  display: "inline-flex",
+                  flex: "0 1 auto",
+                  maxWidth: 300,
+                  minWidth: 0,
+                  overflow: "hidden",
+                }}
+              >
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {displayedModel} · {displayedReasoning} · {sourceShortLabel}
+                </span>
+              </Button>
+            </Tooltip>
+          </>
+        ) : compact ? (
           <Button
             className={
               compact === "summary" ? "cocalc-chat-model-summary" : undefined
