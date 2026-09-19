@@ -55,6 +55,7 @@ jest.mock("@cocalc/server/conat/api/util", () => ({
 const ACCOUNT_ID = "11111111-1111-4111-8111-111111111111";
 const OWNER_ID = "22222222-2222-4222-8222-222222222222";
 const PROJECT_ID = "33333333-3333-4333-8333-333333333333";
+const RESTRICTED_PROJECT_ID = "33333333-3333-4333-8333-444444444444";
 const SHARE_ID = "44444444-4444-4444-8444-444444444444";
 const ASSIGNMENT_ID = "55555555-5555-4555-8555-555555555555";
 const PACKAGE_ID = "66666666-6666-4666-8666-666666666666";
@@ -361,6 +362,33 @@ describe("public directory temporary viewer grants", () => {
       account_id: OWNER_ID,
       project_id: PROJECT_ID,
     });
+  });
+
+  it("rejects publishing from restricted course student projects", async () => {
+    await getPool().query(
+      `INSERT INTO projects (project_id, title, users, course, last_edited)
+       VALUES ($1, 'Restricted student project', '{}'::jsonb, $2::jsonb, NOW())
+       ON CONFLICT (project_id) DO UPDATE SET course=EXCLUDED.course`,
+      [
+        RESTRICTED_PROJECT_ID,
+        JSON.stringify({
+          type: "student",
+          project_id: PROJECT_ID,
+          path: "course.course",
+          student_project_functionality: { disableSharing: true },
+        }),
+      ],
+    );
+
+    await expect(
+      create({
+        account_id: OWNER_ID,
+        project_id: RESTRICTED_PROJECT_ID,
+        path: "share",
+        slug: "restricted-share",
+      }),
+    ).rejects.toThrow("publishing is disabled");
+    expect(mockGetProjectFsClient).not.toHaveBeenCalled();
   });
 
   it("resolves account-wide reader instructions without copying them into the share", async () => {
@@ -1077,5 +1105,30 @@ describe("public directory temporary viewer grants", () => {
     expect(enabled.site_license_pool_id).toBe(ASSIGNMENT_ID);
     expect(enabled.site_license_duration_days).toBe(90);
     expect(enabled.site_license_copy_requires_grant).toBe(true);
+  });
+
+  it("rejects re-enabling a share after course publishing is disabled", async () => {
+    const shareId = await insertShare();
+    await update({
+      account_id: OWNER_ID,
+      id: shareId,
+      disabled: true,
+    });
+    await getPool().query(
+      `UPDATE projects SET course=$2::jsonb WHERE project_id=$1`,
+      [
+        PROJECT_ID,
+        JSON.stringify({
+          type: "student",
+          project_id: RESTRICTED_PROJECT_ID,
+          path: "course.course",
+          student_project_functionality: { disableSharing: true },
+        }),
+      ],
+    );
+
+    await expect(
+      update({ account_id: OWNER_ID, id: shareId, disabled: false }),
+    ).rejects.toThrow("publishing is disabled");
   });
 });
