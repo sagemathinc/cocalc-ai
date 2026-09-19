@@ -1817,7 +1817,10 @@ export class SandboxedFilesystem {
           }
         } catch (err: any) {
           if (err?.code !== "ENOENT") {
-            throw err;
+            logger.warn("unable to remove no-clobber copy staging file", {
+              path: temporary,
+              err: String(err),
+            });
           }
         }
       }
