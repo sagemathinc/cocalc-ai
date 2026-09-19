@@ -9031,6 +9031,17 @@ export function automationRecordFromThreadProjection({
   };
 }
 
+export function recoveredAutomationRequiresActiveAdmission(
+  row: AcpAutomationRow,
+): boolean {
+  return (
+    row.enabled &&
+    (row.status === "active" ||
+      row.status === "running" ||
+      row.status === "error")
+  );
+}
+
 async function recoverAcpAutomationFromThreadProjection({
   project_id,
   path,
@@ -9080,6 +9091,26 @@ async function recoverAcpAutomationFromThreadProjection({
   });
   const row = normalizeAcpAutomationRecord(record);
   if (!row) return;
+  if (recoveredAutomationRequiresActiveAdmission(row)) {
+    throwIfAcpAdmissionDenied(
+      admitActiveAcpAutomationForProject(
+        {
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+          automation_id: row.automation_id,
+        },
+        await resolveAcpAdmissionLimits({
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+        }),
+      ),
+      "automation",
+    );
+  }
   const restored = upsertAcpAutomation(row);
   await publishAutomationRecordToProjectIndex(restored);
   logger.warn("recovered ACP automation from thread projection", {

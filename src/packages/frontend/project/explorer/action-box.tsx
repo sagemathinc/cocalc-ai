@@ -44,6 +44,7 @@ import { SelectProject } from "@cocalc/frontend/projects/select-project";
 import { listSiteLicenseOverviews } from "@cocalc/frontend/purchases/api";
 import { normalizeUserFacingError } from "@cocalc/frontend/components/user-facing-error";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { useStudentProjectFunctionality } from "@cocalc/frontend/course/configuration/customize-student-project-functionality";
 import type { PublicDirectoryShareSummary } from "@cocalc/conat/hub/api/public-directory-shares";
 import type { SiteLicenseOverview } from "@cocalc/conat/hub/api/purchases";
 import * as misc from "@cocalc/util/misc";
@@ -236,6 +237,7 @@ export function ActionBox({
   const user_type = useTypedRedux("account", "user_type");
   const account_id = useTypedRedux("account", "account_id");
   const isAdmin = !!useTypedRedux("account", "is_admin");
+  const { disableSharing } = useStudentProjectFunctionality(project_id);
   const project_map = useTypedRedux("projects", "project_map");
   const project = project_map?.get?.(project_id);
   const projectGroup = account_id
@@ -1194,6 +1196,13 @@ export function ActionBox({
       return (
         <Alert bsStyle="warning">
           View-only project access cannot publish files or directories.
+        </Alert>
+      );
+    }
+    if (disableSharing) {
+      return (
+        <Alert bsStyle="warning">
+          Publishing is disabled by this course's student project settings.
         </Alert>
       );
     }

@@ -1,6 +1,7 @@
 import {
   automationRecordFromThreadProjection,
   normalizeAcpAutomationRecord,
+  recoveredAutomationRequiresActiveAdmission,
 } from "../index";
 
 describe("ACP automation projection recovery", () => {
@@ -156,5 +157,61 @@ describe("ACP automation projection recovery", () => {
         },
       }),
     ).toBeUndefined();
+  });
+
+  it("requires active-limit admission before restoring enabled schedules", () => {
+    const base = {
+      automation_id: "automation-1",
+      project_id: "project-1",
+      path: "repo/agent.chat",
+      thread_id: "thread-1",
+      account_id: "account-1",
+      settings_revision: "revision-1",
+      enabled: true,
+      title: null,
+      run_kind: "codex" as const,
+      prompt: "Review pull requests",
+      command: null,
+      command_cwd: null,
+      command_timeout_ms: null,
+      command_max_output_bytes: null,
+      schedule_type: "daily" as const,
+      days_of_week: null,
+      local_time: "07:00",
+      interval_minutes: null,
+      window_start_local_time: null,
+      window_end_local_time: null,
+      timezone: "UTC",
+      pause_after_unacknowledged_runs: 7,
+      next_run_at: 1234,
+      last_run_started_at: null,
+      last_run_finished_at: null,
+      last_acknowledged_at: null,
+      unacknowledged_runs: 0,
+      paused_reason: null,
+      last_error: null,
+      last_job_op_id: null,
+      last_message_id: null,
+      created_at: 1234,
+      updated_at: 1234,
+    };
+    for (const status of ["active", "running", "error"] as const) {
+      expect(
+        recoveredAutomationRequiresActiveAdmission({ ...base, status }),
+      ).toBe(true);
+    }
+    expect(
+      recoveredAutomationRequiresActiveAdmission({
+        ...base,
+        status: "paused",
+      }),
+    ).toBe(false);
+    expect(
+      recoveredAutomationRequiresActiveAdmission({
+        ...base,
+        enabled: false,
+        status: "active",
+      }),
+    ).toBe(false);
   });
 });

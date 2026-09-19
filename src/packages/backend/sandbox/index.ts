@@ -127,6 +127,7 @@ interface OpenAt2SandboxRoot {
   chmod(path: string, mode: number): void;
   truncate(path: string, len: number): void;
   copyFile(src: string, dest: string, mode?: number | null): void;
+  copyFileNoReplace(src: string, dest: string): void;
   openRead?(path: string): number;
   openWrite?(
     path: string,
@@ -362,6 +363,8 @@ const INTERNAL_METHODS = new Set([
   "cpDirectoryRequiresRecursiveError",
   "cpUnsupportedTypeError",
   "cpDestNotDirectoryError",
+  "cpFileToDirectoryError",
+  "cpSameFileError",
   "cpSafeSymlink",
   "cpSafeDirectoryRecursive",
   "cpSafeOne",
@@ -1676,6 +1679,30 @@ export class SandboxedFilesystem {
     return err;
   };
 
+  private cpFileToDirectoryError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `Cannot overwrite directory '${dest}' with non-directory '${src}'`,
+    );
+    err.code = "ERR_FS_CP_NON_DIR_TO_DIR";
+    err.path = dest;
+    return err;
+  };
+
+  private cpSameFileError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `Invalid src or dest: cp returned EINVAL (src and dest cannot be the same) '${src}' -> '${dest}'`,
+    );
+    err.code = "ERR_FS_CP_EINVAL";
+    err.path = dest;
+    return err;
+  };
+
   private cpSafeSymlink = async (
     source: string,
     dest: string,
@@ -1741,6 +1768,83 @@ export class SandboxedFilesystem {
     await symlink(target, destPath);
   };
 
+  private cpSafeFile = async (
+    source: string,
+    dest: string,
+    options?: CopyOptions,
+  ): Promise<void> => {
+    if (options?.force ?? true) {
+      await this.copyFile(source, dest);
+      return;
+    }
+
+    const sourceStat = await this.stat(source);
+    try {
+      const destStat = await this.lstat(dest);
+      if (sourceStat.dev === destStat.dev && sourceStat.ino === destStat.ino) {
+        throw this.cpSameFileError(source, dest);
+      }
+      if (destStat.isDirectory()) {
+        throw this.cpFileToDirectoryError(source, dest);
+      }
+      if (options?.errorOnExist) {
+        const err: NodeJS.ErrnoException = new Error(
+          "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+        );
+        err.code = "ERR_FS_CP_EEXIST";
+        err.path = dest;
+        throw err;
+      }
+      return;
+    } catch (err: any) {
+      if (err?.code !== "ENOENT") {
+        throw err;
+      }
+    }
+
+    const target = await this.getOpenAt2DualPathTarget(source, dest);
+    if (target == null || typeof target.root.copyFileNoReplace !== "function") {
+      const err: NodeJS.ErrnoException = new Error(
+        "atomic no-replace copy is not supported",
+      );
+      err.code = "ENOTSUP";
+      err.path = dest;
+      throw err;
+    }
+
+    try {
+      target.root.copyFileNoReplace(target.srcRel, target.destRel);
+      return;
+    } catch (err) {
+      if (this.parseOpenAt2Error(err).code !== "EEXIST") {
+        this.throwOpenAt2PathError(dest, err);
+      }
+    }
+
+    try {
+      const destStat = await this.lstat(dest);
+      if (sourceStat.dev === destStat.dev && sourceStat.ino === destStat.ino) {
+        throw this.cpSameFileError(source, dest);
+      }
+      if (destStat.isDirectory()) {
+        throw this.cpFileToDirectoryError(source, dest);
+      }
+    } catch (statErr: any) {
+      if (statErr?.code !== "ENOENT") {
+        throw statErr;
+      }
+    }
+
+    if (options?.errorOnExist) {
+      const existsErr: NodeJS.ErrnoException = new Error(
+        "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+      );
+      existsErr.code = "ERR_FS_CP_EEXIST";
+      existsErr.path = dest;
+      throw existsErr;
+    }
+  };
+
   private cpSafeDirectoryRecursive = async (
     sourceDir: string,
     destDir: string,
@@ -1768,7 +1872,7 @@ export class SandboxedFilesystem {
       if (childStat.isDirectory()) {
         await this.cpSafeDirectoryRecursive(childSource, childDest, options);
       } else if (childStat.isFile()) {
-        await this.copyFile(childSource, childDest);
+        await this.cpSafeFile(childSource, childDest, options);
       } else if (childStat.isSymbolicLink() && !options?.dereference) {
         await this.cpSafeSymlink(childSource, childDest, options);
       } else {
@@ -1787,7 +1891,7 @@ export class SandboxedFilesystem {
       ? await this.stat(source)
       : await this.lstat(source);
     if (sourceStat.isFile()) {
-      await this.copyFile(source, destInput);
+      await this.cpSafeFile(source, destInput, options);
       return;
     }
     if (sourceStat.isDirectory()) {

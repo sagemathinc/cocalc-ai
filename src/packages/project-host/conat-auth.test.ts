@@ -103,6 +103,29 @@ describe("project-host Conat auth", () => {
     expect(mockGetProject).not.toHaveBeenCalled();
   });
 
+  it("rejects a direct account bearer after its browser session expires", async () => {
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      act: "account",
+      sub: account_id,
+      iat: 1000,
+      auth_actor: "account",
+      browser_session_exp_s: Math.floor(Date.now() / 1000) - 1,
+    });
+    const { getUser } = createProjectHostConatAuth({ host_id });
+
+    await expect(
+      getUser(
+        {
+          handshake: {
+            auth: { bearer: "expired-restricted-session-token" },
+            headers: {},
+          },
+        } as any,
+        undefined as any,
+      ),
+    ).rejects.toThrow("browser session authorization expired");
+  });
+
   it("still rejects project-scoped auth when project_secret is missing", async () => {
     const { getUser } = createProjectHostConatAuth({ host_id });
 
