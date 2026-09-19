@@ -32,7 +32,9 @@ let mockAgents: NamedAgent[];
 const mockApi = {
   nameAgent: jest.fn(),
   getIdentity: jest.fn(),
+  listAgentSessions: jest.fn(),
   createAgentSession: jest.fn(),
+  updateAgentSession: jest.fn(),
 };
 const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
@@ -80,6 +82,13 @@ beforeEach(() => {
     endpoint,
   }));
   mockApi.createAgentSession.mockResolvedValue({});
+  mockApi.updateAgentSession.mockResolvedValue({});
+  mockApi.listAgentSessions.mockResolvedValue({
+    enabled: true,
+    controls: { paused: false, generation: 0 },
+    usage: { active_sessions: 0, session_limit: 100, member_limit: 8 },
+    sessions: [],
+  });
   mockRunFreshAuthAction.mockImplementation(async (action) => {
     await action();
     return true;
@@ -100,7 +109,7 @@ test("an unnamed source is named before its two-way session is created", async (
       onClose={jest.fn()}
     />,
   );
-  const create = screen.getByRole("button", { name: "Create session" });
+  const create = await screen.findByRole("button", { name: "Create session" });
   expect(create).toBeDisabled();
   const input = screen.getByRole("textbox", { name: "Source agent name" });
   await user.type(input, "reviewer");
@@ -108,6 +117,10 @@ test("an unnamed source is named before its two-way session is created", async (
   expect(create).toBeDisabled();
   await user.clear(input);
   await user.type(input, "builder");
+  await user.type(
+    screen.getByRole("textbox", { name: "Session topic" }),
+    "Review work",
+  );
   await user.click(create);
   await waitFor(() => expect(mockApi.createAgentSession).toHaveBeenCalled());
   expect(mockApi.nameAgent).toHaveBeenCalledWith({
@@ -119,7 +132,7 @@ test("an unnamed source is named before its two-way session is created", async (
   );
   expect(mockApi.createAgentSession).toHaveBeenCalledWith({
     request_id: expect.any(String),
-    title: "This agent and reviewer",
+    title: "Review work",
     delivery_mode: "queued",
     members: [
       { kind: "registered", endpoint: source },
@@ -153,11 +166,15 @@ test("session creation preserves cached source context while naming", async () =
     />,
   );
   expect(
-    screen.getByText("From: Current draft thread / Build project"),
+    screen.getByText(/Current draft thread \/ Build project/),
   ).toBeInTheDocument();
   await user.type(
     screen.getByRole("textbox", { name: "Source agent name" }),
     "builder",
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Session topic" }),
+    "Build review",
   );
   await user.click(screen.getByRole("button", { name: "Create session" }));
   await waitFor(() => expect(mockApi.createAgentSession).toHaveBeenCalled());
@@ -188,12 +205,92 @@ test("an already named source creates a session without renaming", async () => {
   expect(
     screen.queryByRole("textbox", { name: "Source agent name" }),
   ).toBeNull();
+  await user.type(
+    await screen.findByRole("textbox", { name: "Session topic" }),
+    "Review work",
+  );
   await user.click(screen.getByRole("button", { name: "Create session" }));
   await waitFor(() =>
     expect(mockApi.createAgentSession).toHaveBeenCalledTimes(1),
   );
   expect(mockApi.nameAgent).not.toHaveBeenCalled();
   expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
+});
+
+test("an agent joins a target's existing topic session", async () => {
+  const builder = { ...reviewer, name: "builder", endpoint: source };
+  const illustrator = {
+    ...reviewer,
+    name: "illustrator",
+    endpoint: {
+      project_id: target.project_id,
+      agent_id: "66666666-6666-4666-8666-666666666666",
+    },
+  };
+  mockAgents.push(builder, illustrator);
+  mockApi.listAgentSessions.mockResolvedValue({
+    enabled: true,
+    controls: { paused: false, generation: 0 },
+    usage: { active_sessions: 1, session_limit: 100, member_limit: 8 },
+    sessions: [
+      {
+        agent_session_id: "77777777-7777-4777-8777-777777777777",
+        account_id: account,
+        title: "Illustration work",
+        state: "active",
+        delivery_mode: "queued",
+        generation: "3",
+        created_by: account,
+        created_at: "2026-09-19T00:00:00Z",
+        updated_at: "2026-09-19T00:00:00Z",
+        members: [
+          {
+            kind: "registered",
+            member_id: "member-reviewer",
+            endpoint: target,
+            name: "reviewer",
+            available: true,
+            added_at: "2026-09-19T00:00:00Z",
+          },
+          {
+            kind: "registered",
+            member_id: "member-illustrator",
+            endpoint: illustrator.endpoint,
+            name: "illustrator",
+            available: true,
+            added_at: "2026-09-19T00:00:00Z",
+          },
+        ],
+      },
+    ],
+  });
+  const user = userEvent.setup();
+  render(
+    <SessionApproval
+      value={{
+        source,
+        target,
+        sourceLabel: "@builder",
+        targetLabel: "@reviewer",
+        targetName: reviewer,
+      }}
+      onClose={jest.fn()}
+    />,
+  );
+
+  expect(await screen.findByText("Illustration work")).toBeInTheDocument();
+  expect(screen.getByText("@illustrator")).toBeInTheDocument();
+  await user.click(screen.getByRole("button", { name: "Join session" }));
+
+  await waitFor(() =>
+    expect(mockApi.updateAgentSession).toHaveBeenCalledWith({
+      request_id: expect.any(String),
+      agent_session_id: "77777777-7777-4777-8777-777777777777",
+      action: "add-member",
+      member: { kind: "registered", endpoint: source },
+    }),
+  );
+  expect(mockApi.createAgentSession).not.toHaveBeenCalled();
 });
 
 test("rename dialog checks current names without submitting", async () => {
