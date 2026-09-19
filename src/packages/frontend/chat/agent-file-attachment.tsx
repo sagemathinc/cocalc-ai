@@ -209,7 +209,7 @@ export function AgentFileAttachment({
                   role="listitem"
                   type="text"
                   block
-                  style={{ textAlign: "left" }}
+                  style={{ justifyContent: "flex-start", textAlign: "left" }}
                   icon={<Icon name={entry.directory ? "folder" : "file"} />}
                   onClick={() => {
                     if (entry.directory) {
