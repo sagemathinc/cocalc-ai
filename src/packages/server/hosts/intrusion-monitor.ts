@@ -29,6 +29,8 @@ const COVERAGE_FAILURE_ALERT_THRESHOLD = 3;
 const MAX_ALERT_HOSTS = 20;
 const MAX_ALERT_ENTRIES_PER_CATEGORY = 10;
 const MAX_ALERT_BODY_CHARS = 60_000;
+const HEALTH_CHANGE_WINDOW_MS = 24 * 60 * 60 * 1000;
+const MAX_HEALTH_DETAILS = 20;
 const LOCK_KEY = "project_host_intrusion_monitor";
 
 type TransitionAlertMode = "actionable" | "all" | "off";
@@ -885,9 +887,10 @@ export function selectActionableHostIntrusionChanges(
 }
 
 function transitionAlertMode(): TransitionAlertMode {
-  // `off` keeps collection and coverage alerts; `all` is useful for diagnosis.
+  // Collection is report-only by default. Notifications are a legacy,
+  // explicit opt-in while operators evaluate retained observations.
   const configured = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
-  if (configured == null || configured === "") return "actionable";
+  if (configured == null || configured === "") return "off";
   if (
     configured === "actionable" ||
     configured === "all" ||
@@ -897,9 +900,125 @@ function transitionAlertMode(): TransitionAlertMode {
   }
   logger.warn("invalid project-host intrusion monitor alert mode", {
     configured,
-    fallback: "actionable",
+    fallback: "off",
   });
-  return "actionable";
+  return "off";
+}
+
+export interface HostIntrusionObservationSummary {
+  active_hosts: number;
+  observed_hosts: number;
+  missing_hosts: number;
+  stale_hosts: number;
+  incomplete_hosts: number;
+  recently_changed_hosts: number;
+  details: string[];
+}
+
+interface HealthSnapshotRow {
+  host_id: string;
+  host_name: string | null;
+  created_at: Date | string | null;
+  coverage: string | null;
+}
+
+interface HealthChangeRow {
+  host_id: string;
+  host_name: string | null;
+  delta: HostIntrusionSnapshotDelta;
+}
+
+function healthHostLabel(row: {
+  host_id: string;
+  host_name: string | null;
+}): string {
+  return row.host_name ? `${row.host_name} (${row.host_id})` : row.host_id;
+}
+
+function healthChangeCategories(delta: HostIntrusionSnapshotDelta): string {
+  return MONITORED_CATEGORIES.flatMap((category) => {
+    const added = delta.added?.[category]?.length ?? 0;
+    const removed = delta.removed?.[category]?.length ?? 0;
+    if (!added && !removed) return [];
+    return `${category} (+${added}/-${removed})`;
+  }).join(", ");
+}
+
+export async function getHostIntrusionObservationSummary(): Promise<HostIntrusionObservationSummary> {
+  await ensureHostIntrusionMonitorSchema();
+  const bayId = getConfiguredBayId();
+  const pool = getPool();
+  const staleAfterMs =
+    2 *
+    envNumberAtLeast(
+      "COCALC_HOST_INTRUSION_MONITOR_INTERVAL_MS",
+      DEFAULT_INTERVAL_MS,
+      MIN_INTERVAL_MS,
+    );
+  const { rows: snapshots } = await pool.query<HealthSnapshotRow>(
+    `SELECT DISTINCT ON (hosts.id)
+       hosts.id AS host_id, hosts.name AS host_name,
+       snapshots.created_at, snapshots.coverage
+     FROM project_hosts AS hosts
+     LEFT JOIN ${TABLE} AS snapshots ON snapshots.host_id = hosts.id
+     WHERE hosts.deleted IS NULL
+       AND hosts.status = 'running'
+       AND hosts.last_seen >= NOW() - ($1::double precision * INTERVAL '1 millisecond')
+       AND COALESCE(NULLIF(hosts.bay_id, ''), $2) = $2
+     ORDER BY hosts.id, snapshots.created_at DESC`,
+    [HOST_ONLINE_WINDOW_MS, bayId],
+  );
+  const { rows: changes } = await pool.query<HealthChangeRow>(
+    `SELECT DISTINCT ON (snapshots.host_id)
+       snapshots.host_id, hosts.name AS host_name, snapshots.delta
+     FROM ${TABLE} AS snapshots
+     INNER JOIN project_hosts AS hosts ON hosts.id = snapshots.host_id
+     WHERE snapshots.bay_id = $1
+       AND snapshots.created_at >= NOW() - ($2::double precision * INTERVAL '1 millisecond')
+       AND snapshots.delta IS NOT NULL
+       AND (
+         COALESCE(snapshots.delta->'added', '{}'::jsonb) <> '{}'::jsonb
+         OR COALESCE(snapshots.delta->'removed', '{}'::jsonb) <> '{}'::jsonb
+       )
+       AND hosts.deleted IS NULL
+       AND hosts.status = 'running'
+       AND hosts.last_seen >= NOW() - ($3::double precision * INTERVAL '1 millisecond')
+       AND COALESCE(NULLIF(hosts.bay_id, ''), $1) = $1
+     ORDER BY snapshots.host_id, snapshots.created_at DESC`,
+    [bayId, HEALTH_CHANGE_WINDOW_MS, HOST_ONLINE_WINDOW_MS],
+  );
+  const now = Date.now();
+  const missing = snapshots.filter(({ created_at }) => created_at == null);
+  const stale = snapshots.filter(
+    ({ created_at }) =>
+      created_at != null && now - new Date(created_at).getTime() > staleAfterMs,
+  );
+  const incomplete = snapshots.filter(
+    ({ coverage }) => coverage != null && coverage !== "complete",
+  );
+  const changed = changes.filter(({ delta }) =>
+    hasHostIntrusionSnapshotChanges(delta),
+  );
+  const details = [
+    ...missing.map((row) => `${healthHostLabel(row)}: no observation`),
+    ...stale.map((row) => `${healthHostLabel(row)}: observation is stale`),
+    ...incomplete.map(
+      (row) => `${healthHostLabel(row)}: coverage=${row.coverage}`,
+    ),
+    ...changed.map(
+      (row) =>
+        `${healthHostLabel(row)}: recent changes: ${healthChangeCategories(row.delta)}`,
+    ),
+  ].slice(0, MAX_HEALTH_DETAILS);
+  return {
+    active_hosts: snapshots.length,
+    observed_hosts: snapshots.length - missing.length,
+    missing_hosts: missing.length,
+    stale_hosts: stale.length,
+    incomplete_hosts: incomplete.length,
+    recently_changed_hosts: changed.length,
+    details,
+  };
 }
 
 export function diffHostIntrusionSnapshotAgainstFleet(
@@ -1574,7 +1693,7 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
       errorOnFail: true,
     });
   }
-  if (coverageFailures.length) {
+  if (coverageFailures.length && alertMode !== "off") {
     await adminAlert({
       subject: "Project host intrusion monitoring has incomplete coverage",
       body: formatCoverageAlert(coverageFailures),
