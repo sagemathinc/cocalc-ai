@@ -171,7 +171,7 @@ describe("project-host HTTP session cookie", () => {
       account_id,
       iat: now_s,
       exp: now_s + 30 * 24 * 60 * 60,
-      nonce: "legacy-full-lifetime-token",
+      nonce: "33".repeat(12),
     });
 
     expect(
@@ -185,7 +185,7 @@ describe("project-host HTTP session cookie", () => {
       account_id,
       iat: now_s,
       exp: now_s + 30 * 24 * 60 * 60,
-      nonce: "legacy-widened-browser-session",
+      nonce: "44".repeat(12),
     });
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",

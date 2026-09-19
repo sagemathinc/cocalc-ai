@@ -221,6 +221,60 @@ export function verifyProjectHostBrowserSessionToken(
   };
 }
 
+export function verifyLegacyProjectHostBrowserSessionTokenForExamMigration(
+  token: string,
+  now_ms = Date.now(),
+):
+  | {
+      account_id: string;
+      iat_s: number;
+      exp_s: number;
+    }
+  | undefined {
+  const [encoded, sig] = token.split(".");
+  if (!encoded || !sig) return;
+  const expected = sessionSignature(encoded);
+  const gotBuf = Buffer.from(sig, "utf8");
+  const expBuf = Buffer.from(expected, "utf8");
+  if (gotBuf.length !== expBuf.length || !timingSafeEqual(gotBuf, expBuf)) {
+    return;
+  }
+  let payload: any;
+  try {
+    payload = JSON.parse(base64UrlDecode(encoded));
+  } catch {
+    return;
+  }
+  // This is only the exact browser credential shape issued by the old exam
+  // admission path. Callers must additionally bind the account to a live exam.
+  if (payload?.v != null || payload?.restricted_exp_s != null) return;
+  if (!/^[0-9a-f]{24}$/.test(`${payload?.nonce ?? ""}`)) return;
+  const account_id = `${payload?.account_id ?? ""}`;
+  const iat = Number(payload?.iat ?? 0);
+  const exp = Number(payload?.exp ?? 0);
+  if (!isValidUUID(account_id)) return;
+  if (!Number.isSafeInteger(iat) || !Number.isSafeInteger(exp)) return;
+  if (exp < Math.floor(now_ms / 1000)) return;
+  return { account_id, iat_s: iat, exp_s: exp };
+}
+
+export function resolveLegacyProjectHostBrowserSessionForExamMigration(
+  header: string | undefined,
+): { account_id: string; iat_s: number; exp_s: number } | undefined {
+  const tokens = readCookieValues(
+    header,
+    PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME,
+  )
+    .map((token) => token.trim())
+    .filter(Boolean);
+  for (const token of tokens) {
+    const session =
+      verifyLegacyProjectHostBrowserSessionTokenForExamMigration(token);
+    if (session) return session;
+  }
+  return;
+}
+
 export function resolveProjectHostBrowserSessionFromCookieHeader(
   header: string | undefined,
 ):

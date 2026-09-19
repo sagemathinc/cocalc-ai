@@ -6,6 +6,7 @@ import {
   createProjectHostBrowserSessionToken,
   issueProjectHostBrowserSessionFromBearer,
   restrictedBrowserSessionTtlSeconds,
+  resolveLegacyProjectHostBrowserSessionForExamMigration,
   resolveProjectHostBrowserSessionFromCookieHeader,
   verifyProjectHostBrowserSessionToken,
 } from "./browser-session";
@@ -137,12 +138,33 @@ describe("project-host shared browser session", () => {
       account_id: "00000000-1000-4000-8000-000000000001",
       iat: now_s,
       exp: now_s + 30 * 24 * 60 * 60,
-      nonce: "legacy-full-lifetime-token",
+      nonce: "11".repeat(12),
     });
 
     expect(
       verifyProjectHostBrowserSessionToken(legacyToken, now_s * 1000),
     ).toBeUndefined();
+  });
+
+  it("exposes exact legacy browser tokens only to exam migration", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const legacyToken = createLegacySessionToken({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      iat: now_s,
+      exp: now_s + 60,
+      nonce: "22".repeat(12),
+    });
+    const header = `cocalc_project_host_session=${encodeURIComponent(legacyToken)}`;
+
+    expect(
+      resolveProjectHostBrowserSessionFromCookieHeader(header),
+    ).toBeUndefined();
+    expect(
+      resolveLegacyProjectHostBrowserSessionForExamMigration(header),
+    ).toMatchObject({
+      account_id: "00000000-1000-4000-8000-000000000001",
+      exp_s: now_s + 60,
+    });
   });
 
   it("bounds an exam browser session token and cookie to the requested ttl", () => {
