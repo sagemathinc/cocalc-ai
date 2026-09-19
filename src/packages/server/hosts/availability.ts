@@ -1331,6 +1331,7 @@ export async function runHostPressureAlertCheck(): Promise<number> {
       subject: "Project hosts have no eligible pressure stop candidates",
       body: formatHostPressureAlertBody(noCandidateRows),
       dedupMinutes: 4 * 60,
+      dedupBySubject: true,
     });
   }
   if (stopFailedRows.length) {
@@ -1338,6 +1339,7 @@ export async function runHostPressureAlertCheck(): Promise<number> {
       subject: "Project hosts failed pressure stop actions",
       body: formatHostPressureAlertBody(stopFailedRows),
       dedupMinutes: 60,
+      dedupBySubject: true,
     });
   }
   return rows.length;
