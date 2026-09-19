@@ -32,6 +32,9 @@ const DEFAULT_MAX_BATCHES_PER_TICK = 5;
 const MAX_STORED_JSON_BYTES = 1024 * 1024;
 const MAX_STORED_PHYSICAL_BYTES = 256 * 1024;
 const MAX_EVIDENCE_VALUES = 200;
+const MAX_EVIDENCE_CATEGORIES = 50;
+const MAX_CLEANUP_ROWS = 1000;
+const DELIVERED_OUTBOX_RETENTION_DAYS = 90;
 const MAX_REPORT_INCIDENTS = 50;
 const MAX_REPORT_HOSTS = 100;
 const MAX_REPORT_OBSERVATION_GROUPS = 100;
@@ -92,6 +95,8 @@ type IncidentRow = {
   state: "open" | "acknowledged" | "resolved" | "suppressed";
   severity: "warning" | "critical";
   suppression_expires_at: Date | string | null;
+  last_seen_at: Date | string;
+  resolved_at: Date | string | null;
   occurrence_count: number;
 };
 
@@ -116,6 +121,8 @@ export type HostIntrusionReviewerResult = {
   suppressed: number;
   notifications_delivered: number;
   notifications_failed: number;
+  findings_pruned: number;
+  outbox_pruned: number;
 };
 
 let schemaReady: Promise<void> | undefined;
@@ -130,6 +137,13 @@ function boundedInteger(
   const parsed = Number(process.env[name]);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(maximum, Math.max(minimum, Math.floor(parsed)));
+}
+
+function boundedEvidenceCount(value: unknown): number {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0
+    ? Math.min(parsed, MAX_EVIDENCE_VALUES * 100)
+    : 0;
 }
 
 function sha256(value: string): string {
@@ -147,41 +161,132 @@ function stableJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function boundedDelta(value: unknown): Delta | undefined {
+type BoundedDeltaResult = {
+  delta?: Delta;
+  truncated: boolean;
+  omitted_value_count: number;
+  omitted_category_count: number;
+  truncated_string_count: number;
+};
+
+function boundedDeltaEvidence(value: unknown): BoundedDeltaResult {
   if (value == null || typeof value !== "object" || Array.isArray(value)) {
-    return;
+    return {
+      truncated: false,
+      omitted_value_count: 0,
+      omitted_category_count: 0,
+      truncated_string_count: 0,
+    };
   }
-  let remaining = MAX_EVIDENCE_VALUES;
-  const result: Delta = {};
+  type CategoryEvidence = {
+    direction: "added" | "removed";
+    category: string;
+    values: string[];
+    critical: boolean;
+  };
+  const categories: CategoryEvidence[] = [];
   for (const direction of ["added", "removed"] as const) {
     const source = (value as JsonObject)[direction];
     if (source == null || typeof source !== "object" || Array.isArray(source)) {
       continue;
     }
-    const selected: Record<string, string[]> = {};
-    for (const [category, entries] of Object.entries(source as JsonObject)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .slice(0, 50)) {
-      if (!Array.isArray(entries) || remaining <= 0) continue;
-      const strings = entries
-        .filter((entry): entry is string => typeof entry === "string")
-        .map((entry) => entry.slice(0, 4096))
-        .slice(0, remaining);
-      remaining -= strings.length;
-      if (strings.length) selected[category.slice(0, 200)] = strings;
+    for (const [category, entries] of Object.entries(source as JsonObject)) {
+      if (!Array.isArray(entries)) continue;
+      const values = entries.filter(
+        (entry): entry is string => typeof entry === "string",
+      );
+      if (!values.length) continue;
+      categories.push({
+        direction,
+        category,
+        values,
+        critical:
+          direction === "added" &&
+          CRITICAL_PERSISTENCE_CATEGORIES.has(category),
+      });
     }
-    if (Object.keys(selected).length) result[direction] = selected;
   }
-  return result.added || result.removed ? result : undefined;
+  categories.sort((a, b) => {
+    if (a.critical !== b.critical) return a.critical ? -1 : 1;
+    if (a.direction !== b.direction) return a.direction === "added" ? -1 : 1;
+    return a.category.localeCompare(b.category);
+  });
+  const selectedCategories = categories.slice(0, MAX_EVIDENCE_CATEGORIES);
+  const omittedCategoryCount = Math.max(
+    0,
+    categories.length - selectedCategories.length,
+  );
+  let omittedValueCount = categories
+    .slice(MAX_EVIDENCE_CATEGORIES)
+    .reduce((sum, category) => sum + category.values.length, 0);
+  let truncatedStringCount = 0;
+  let remaining = MAX_EVIDENCE_VALUES;
+  const accepted = new Map<CategoryEvidence, string[]>();
+
+  // Preserve breadth first, especially across critical categories, before a
+  // single noisy category is allowed to consume the remaining value budget.
+  for (const category of selectedCategories) {
+    if (remaining <= 0) break;
+    accepted.set(category, [category.values[0]!]);
+    remaining -= 1;
+  }
+  for (const category of selectedCategories) {
+    if (remaining <= 0) break;
+    const current = accepted.get(category) ?? [];
+    const extra = category.values.slice(
+      current.length,
+      current.length + remaining,
+    );
+    current.push(...extra);
+    accepted.set(category, current);
+    remaining -= extra.length;
+  }
+
+  const result: Delta = {};
+  for (const category of selectedCategories) {
+    const kept = accepted.get(category) ?? [];
+    omittedValueCount += category.values.length - kept.length;
+    if (!kept.length) continue;
+    const strings = kept.map((entry) => {
+      if (entry.length > 4096) truncatedStringCount += 1;
+      return entry.slice(0, 4096);
+    });
+    const direction = (result[category.direction] ??= {});
+    direction[category.category.slice(0, 200)] = strings;
+  }
+  return {
+    ...(result.added || result.removed ? { delta: result } : {}),
+    truncated:
+      omittedValueCount > 0 ||
+      omittedCategoryCount > 0 ||
+      truncatedStringCount > 0,
+    omitted_value_count: omittedValueCount,
+    omitted_category_count: omittedCategoryCount,
+    truncated_string_count: truncatedStringCount,
+  };
+}
+
+function boundedDelta(value: unknown): Delta | undefined {
+  return boundedDeltaEvidence(value).delta;
 }
 
 function persistenceSeverity(
-  delta: Delta,
+  delta: unknown,
   reasonCodes: string[],
 ): "warning" | "critical" {
   if (reasonCodes.includes("critical_host_boundary_change")) return "critical";
-  return Object.keys(delta.added ?? {}).some((category) =>
-    CRITICAL_PERSISTENCE_CATEGORIES.has(category),
+  if (delta == null || typeof delta !== "object" || Array.isArray(delta)) {
+    return "warning";
+  }
+  const added = (delta as JsonObject).added;
+  if (added == null || typeof added !== "object" || Array.isArray(added)) {
+    return "warning";
+  }
+  return Object.entries(added as JsonObject).some(
+    ([category, entries]) =>
+      Array.isArray(entries) &&
+      entries.some((entry) => typeof entry === "string") &&
+      CRITICAL_PERSISTENCE_CATEGORIES.has(category),
   )
     ? "critical"
     : "warning";
@@ -246,6 +351,30 @@ function deltaCategories(delta: Delta): string[] {
       ...Object.keys(delta.removed ?? {}),
     ]),
   ].sort();
+}
+
+function mergeBoundedDeltas(deltas: Delta[]): BoundedDeltaResult {
+  const merged: Delta = {};
+  for (const direction of ["added", "removed"] as const) {
+    const values: Record<string, Set<string>> = {};
+    for (const delta of deltas) {
+      for (const [category, entries] of Object.entries(
+        delta[direction] ?? {},
+      )) {
+        const selected = (values[category] ??= new Set());
+        for (const entry of entries) selected.add(entry);
+      }
+    }
+    if (Object.keys(values).length) {
+      merged[direction] = Object.fromEntries(
+        Object.entries(values).map(([category, entries]) => [
+          category,
+          [...entries],
+        ]),
+      );
+    }
+  }
+  return boundedDeltaEvidence(merged);
 }
 
 function severityRank(severity: "warning" | "critical"): number {
@@ -361,13 +490,23 @@ export async function ensureHostIntrusionReviewerSchema(): Promise<void> {
         classification TEXT NOT NULL,
         severity TEXT NOT NULL,
         evidence JSONB NOT NULL,
+        correlated_at TIMESTAMPTZ,
         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         UNIQUE (observation_id, rule_id, rule_version)
       )
     `);
+    await pool.query(
+      `ALTER TABLE ${FINDINGS}
+       ADD COLUMN IF NOT EXISTS correlated_at TIMESTAMPTZ`,
+    );
     await pool.query(`
       CREATE INDEX IF NOT EXISTS ${FINDINGS}_host_rule_created_idx
       ON ${FINDINGS} (host_id, rule_id, created_at DESC)
+    `);
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS ${FINDINGS}_uncorrelated_idx
+      ON ${FINDINGS} (bay_id, host_id, rule_id, created_at DESC)
+      WHERE correlated_at IS NULL
     `);
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ${INCIDENTS} (
@@ -511,11 +650,27 @@ async function openIncident(
   );
   const incidentId = uuidv5(fingerprint, INCIDENT_NAMESPACE);
   const { rows } = await client.query(
-    `SELECT id, state, severity, suppression_expires_at, occurrence_count
+    `SELECT id, state, severity, suppression_expires_at, occurrence_count,
+            last_seen_at, resolved_at
        FROM ${INCIDENTS} WHERE fingerprint=$1 FOR UPDATE`,
     [fingerprint],
   );
   const existing = rows[0] as IncidentRow | undefined;
+  if (existing) {
+    const observationTime = new Date(observation.created_at).getTime();
+    const lifecycleWatermark = Math.max(
+      new Date(existing.last_seen_at).getTime(),
+      existing.resolved_at == null
+        ? Number.NEGATIVE_INFINITY
+        : new Date(existing.resolved_at).getTime(),
+    );
+    if (
+      !Number.isFinite(observationTime) ||
+      observationTime < lifecycleWatermark
+    ) {
+      return;
+    }
+  }
   const now = new Date();
   const suppressed =
     expected != null && Date.parse(expected.expires_at) >= now.getTime();
@@ -655,6 +810,46 @@ async function resolveIncidents(
   }
 }
 
+async function reviewSuppressedIncidents(
+  client: { query: (sql: string, values?: unknown[]) => Promise<any> },
+  observation: ObservationRow,
+  normalized: unknown,
+  result: HostIntrusionReviewerResult,
+): Promise<void> {
+  const { rows } = await client.query(
+    `SELECT rule_id, severity, evidence
+       FROM ${INCIDENTS}
+      WHERE bay_id=$1 AND host_id=$2 AND state='suppressed'
+        AND last_seen_at <= $3
+      ORDER BY updated_at DESC LIMIT 50 FOR UPDATE`,
+    [getConfiguredBayId(), observation.host_id, observation.created_at],
+  );
+  for (const incident of rows as Array<{
+    rule_id: string;
+    severity: "warning" | "critical";
+    evidence: JsonObject;
+  }>) {
+    const delta = boundedDelta(incident.evidence.delta);
+    if (delta == null || !anyChangeRemains(delta, normalized)) continue;
+    const expected = matchExpectedChange({
+      bayId: getConfiguredBayId(),
+      hostId: observation.host_id,
+      categories: deltaCategories(delta),
+      at: new Date(observation.created_at),
+    });
+    if (expected != null && Date.parse(expected.expires_at) >= Date.now()) {
+      continue;
+    }
+    await openIncident(client, {
+      observation,
+      ruleId: incident.rule_id,
+      severity: incident.severity,
+      evidence: incident.evidence,
+      result,
+    });
+  }
+}
+
 async function reviewObservation(
   client: { query: (sql: string, values?: unknown[]) => Promise<any> },
   observation: ObservationRow,
@@ -679,10 +874,18 @@ async function reviewObservation(
   const reasonCodes = Array.isArray(observation.decision.reason_codes)
     ? observation.decision.reason_codes.map(String).slice(0, 20)
     : [];
-  const actionableDelta = boundedDelta(observation.decision.actionable_delta);
+  const rawActionableDelta = observation.decision.actionable_delta;
+  const boundedActionableDelta = boundedDeltaEvidence(rawActionableDelta);
+  const actionableDelta = boundedActionableDelta.delta;
 
   if (observation.coverage === "complete") {
     await resolveIncidents(client, observation, observation.normalized, result);
+    await reviewSuppressedIncidents(
+      client,
+      observation,
+      observation.normalized,
+      result,
+    );
   }
 
   if (
@@ -712,13 +915,20 @@ async function reviewObservation(
   }
 
   if (actionableDelta) {
-    const candidateSeverity = persistenceSeverity(actionableDelta, reasonCodes);
+    const candidateSeverity = persistenceSeverity(
+      rawActionableDelta,
+      reasonCodes,
+    );
     const evidence = {
       status: "candidate",
       candidate_severity: candidateSeverity,
       delta_fingerprint: sha256(stableJson(actionableDelta)),
       delta: actionableDelta,
       categories: deltaCategories(actionableDelta),
+      delta_truncated: boundedActionableDelta.truncated,
+      omitted_value_count: boundedActionableDelta.omitted_value_count,
+      omitted_category_count: boundedActionableDelta.omitted_category_count,
+      truncated_string_count: boundedActionableDelta.truncated_string_count,
     };
     if (
       await insertFinding(client, {
@@ -741,10 +951,13 @@ async function reviewObservation(
           AND findings.rule_id='persistent-host-state'
           AND findings.rule_version=$3
           AND findings.classification='diagnostic'
+          AND findings.correlated_at IS NULL
           AND source.created_at BETWEEN
               $4::timestamptz - ($5::double precision * INTERVAL '1 millisecond')
               AND $4::timestamptz
-        ORDER BY source.created_at DESC LIMIT 20`,
+        ORDER BY (findings.evidence->>'candidate_severity'='critical') DESC,
+                 source.created_at, findings.observation_id
+        LIMIT 20`,
       [
         getConfiguredBayId(),
         observation.host_id,
@@ -753,29 +966,80 @@ async function reviewObservation(
         PERSISTENCE_WINDOW_MS,
       ],
     );
-    const candidate = (rows as CandidateFinding[]).find((row) => {
+    const candidates = (rows as CandidateFinding[]).filter((row) => {
       const delta = boundedDelta(row.evidence.delta);
       return delta != null && allChangesRemain(delta, observation.normalized);
     });
-    if (candidate) {
-      const delta = boundedDelta(candidate.evidence.delta)!;
+    if (candidates.length) {
+      const merged = mergeBoundedDeltas(
+        candidates.map((candidate) => boundedDelta(candidate.evidence.delta)!),
+      );
+      const delta = merged.delta!;
+      const severity = candidates.some(
+        (candidate) => candidate.evidence.candidate_severity === "critical",
+      )
+        ? "critical"
+        : "warning";
+      const candidateEvidenceTruncated = candidates.some(
+        (candidate) => candidate.evidence.delta_truncated === true,
+      );
       const evidence = {
         status: "confirmed",
-        candidate_observation_id: candidate.observation_id,
-        delta_fingerprint: candidate.evidence.delta_fingerprint,
+        candidate_observation_ids: candidates.map(
+          (candidate) => candidate.observation_id,
+        ),
+        delta_fingerprint: sha256(stableJson(delta)),
         delta,
         categories: deltaCategories(delta),
+        delta_truncated: candidateEvidenceTruncated || merged.truncated,
+        omitted_value_count:
+          merged.omitted_value_count +
+          candidates.reduce(
+            (sum, candidate) =>
+              sum +
+              boundedEvidenceCount(candidate.evidence.omitted_value_count),
+            0,
+          ),
+        omitted_category_count:
+          merged.omitted_category_count +
+          candidates.reduce(
+            (sum, candidate) =>
+              sum +
+              boundedEvidenceCount(candidate.evidence.omitted_category_count),
+            0,
+          ),
+        truncated_string_count:
+          merged.truncated_string_count +
+          candidates.reduce(
+            (sum, candidate) =>
+              sum +
+              boundedEvidenceCount(candidate.evidence.truncated_string_count),
+            0,
+          ),
       };
       if (
         await insertFinding(client, {
           observation,
           ruleId: "persistent-host-state",
           classification: "actionable",
-          severity: "warning",
+          severity,
           evidence,
         })
       ) {
         result.findings += 1;
+        await client.query(
+          `UPDATE ${FINDINGS}
+              SET correlated_at=$2
+            WHERE observation_id = ANY($1::uuid[])
+              AND rule_id='persistent-host-state'
+              AND rule_version=$3
+              AND correlated_at IS NULL`,
+          [
+            candidates.map((candidate) => candidate.observation_id),
+            observation.created_at,
+            RULE_VERSION,
+          ],
+        );
         const expected = matchExpectedChange({
           bayId: getConfiguredBayId(),
           hostId: observation.host_id,
@@ -785,10 +1049,7 @@ async function reviewObservation(
         await openIncident(client, {
           observation,
           ruleId: "persistent-host-state",
-          severity:
-            candidate.evidence.candidate_severity === "critical"
-              ? "critical"
-              : "warning",
+          severity,
           evidence,
           expected,
           result,
@@ -875,6 +1136,49 @@ async function dispatchOutbox(
   }
 }
 
+async function pruneReviewerRecords(
+  client: { query: (sql: string, values?: unknown[]) => Promise<any> },
+  bayId: string,
+): Promise<{ findings: number; outbox: number }> {
+  const orphanedFindings = await client.query(
+    `DELETE FROM ${FINDINGS}
+      WHERE id IN (
+        SELECT findings.id
+          FROM ${FINDINGS} AS findings
+          LEFT JOIN ${OBSERVATIONS} AS observations
+            ON observations.id=findings.observation_id
+         WHERE findings.bay_id=$1 AND observations.id IS NULL
+         ORDER BY findings.created_at
+         LIMIT $2
+      )`,
+    [bayId, MAX_CLEANUP_ROWS],
+  );
+  const retentionDays = boundedInteger(
+    "COCALC_HOST_INTRUSION_REVIEW_OUTBOX_RETENTION_DAYS",
+    DELIVERED_OUTBOX_RETENTION_DAYS,
+    7,
+    3650,
+  );
+  const deliveredOutbox = await client.query(
+    `DELETE FROM ${OUTBOX}
+      WHERE id IN (
+        SELECT outbox.id
+          FROM ${OUTBOX} AS outbox
+          JOIN ${INCIDENTS} AS incidents ON incidents.id=outbox.incident_id
+         WHERE incidents.bay_id=$1 AND outbox.state='delivered'
+           AND outbox.delivered_at <
+               NOW() - ($2::double precision * INTERVAL '1 day')
+         ORDER BY outbox.delivered_at
+         LIMIT $3
+      )`,
+    [bayId, retentionDays, MAX_CLEANUP_ROWS],
+  );
+  return {
+    findings: orphanedFindings.rowCount ?? 0,
+    outbox: deliveredOutbox.rowCount ?? 0,
+  };
+}
+
 export async function runHostIntrusionReviewerPass({
   bayId = getConfiguredBayId(),
   batchLimit = boundedInteger(
@@ -903,6 +1207,8 @@ export async function runHostIntrusionReviewerPass({
     suppressed: 0,
     notifications_delivered: 0,
     notifications_failed: 0,
+    findings_pruned: 0,
+    outbox_pruned: 0,
   };
   const pool = getPool();
   const client = await pool.connect();
@@ -956,6 +1262,9 @@ export async function runHostIntrusionReviewerPass({
       await reviewObservation(client, observation, result);
       result.processed += 1;
     }
+    const pruned = await pruneReviewerRecords(client, bayId);
+    result.findings_pruned = pruned.findings;
+    result.outbox_pruned = pruned.outbox;
     const last = observations.rows.at(-1);
     await client.query(
       `UPDATE ${STATE}
@@ -1130,7 +1439,24 @@ export async function getHostIntrusionReviewReport({
     ),
     boundedQuery(
       `SELECT COUNT(*)::integer AS observations,
-                MIN(created_at) AS oldest_observation_at
+                MIN(created_at) AS oldest_observation_at,
+                MAX(created_at) AS latest_observation_at,
+                (SELECT COUNT(*)::integer FROM ${FINDINGS}
+                  WHERE bay_id=$1) AS findings,
+                (SELECT MIN(created_at) FROM ${FINDINGS}
+                  WHERE bay_id=$1) AS oldest_finding_at,
+                (SELECT COUNT(*)::integer
+                   FROM ${OUTBOX} AS outbox
+                   JOIN ${INCIDENTS} AS incidents
+                     ON incidents.id=outbox.incident_id
+                  WHERE incidents.bay_id=$1 AND outbox.state='delivered')
+                  AS delivered_notifications,
+                (SELECT MIN(outbox.delivered_at)
+                   FROM ${OUTBOX} AS outbox
+                   JOIN ${INCIDENTS} AS incidents
+                     ON incidents.id=outbox.incident_id
+                  WHERE incidents.bay_id=$1 AND outbox.state='delivered')
+                  AS oldest_delivered_notification_at
            FROM ${OBSERVATIONS}
           WHERE bay_id=$1`,
       [bayId],
@@ -1184,6 +1510,11 @@ export async function getHostIntrusionReviewReport({
   const retained = retention.rows[0] ?? {
     observations: 0,
     oldest_observation_at: null,
+    latest_observation_at: null,
+    findings: 0,
+    oldest_finding_at: null,
+    delivered_notifications: 0,
+    oldest_delivered_notification_at: null,
   };
   const incidentCounts = incidentSummary.rows[0] ?? {};
   const now = Date.now();
@@ -1224,6 +1555,18 @@ export async function getHostIntrusionReviewReport({
       observations: Number(retained.observations ?? 0),
       oldest_observation_at: iso(retained.oldest_observation_at),
       oldest_observation_age_ms: age(retained.oldest_observation_at),
+      latest_observation_at: iso(retained.latest_observation_at),
+      latest_observation_age_ms: age(retained.latest_observation_at),
+      findings: Number(retained.findings ?? 0),
+      oldest_finding_at: iso(retained.oldest_finding_at),
+      oldest_finding_age_ms: age(retained.oldest_finding_at),
+      delivered_notifications: Number(retained.delivered_notifications ?? 0),
+      oldest_delivered_notification_at: iso(
+        retained.oldest_delivered_notification_at,
+      ),
+      oldest_delivered_notification_age_ms: age(
+        retained.oldest_delivered_notification_at,
+      ),
     },
     rules: RULE_CATALOG.map((rule) => ({
       ...rule,
@@ -1282,6 +1625,8 @@ async function runLockedPass(): Promise<void> {
         suppressed: 0,
         notifications_delivered: 0,
         notifications_failed: 0,
+        findings_pruned: 0,
+        outbox_pruned: 0,
       };
       for (let batch = 0; batch < maxBatches; batch++) {
         const current = await runHostIntrusionReviewerPass({ batchLimit });

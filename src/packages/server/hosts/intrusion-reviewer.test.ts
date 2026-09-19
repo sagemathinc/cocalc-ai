@@ -113,6 +113,7 @@ describe("project-host intrusion reviewer", () => {
   beforeEach(async () => {
     delete process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES;
     delete process.env.COCALC_HOST_INTRUSION_EXPECTED_CHANGES;
+    delete process.env.COCALC_HOST_INTRUSION_REVIEW_OUTBOX_RETENTION_DAYS;
     mockAdminAlert.mockReset();
     mockAdminAlert.mockResolvedValue(undefined);
     await clearData();
@@ -164,6 +165,12 @@ describe("project-host intrusion reviewer", () => {
       observations: 1,
       oldest_observation_at: expect.any(String),
       oldest_observation_age_ms: expect.any(Number),
+      latest_observation_at: expect.any(String),
+      latest_observation_age_ms: expect.any(Number),
+      findings: 1,
+      oldest_finding_at: expect.any(String),
+      oldest_finding_age_ms: expect.any(Number),
+      delivered_notifications: 0,
     });
     expect(report.rules).toEqual([
       expect.objectContaining({
@@ -323,6 +330,126 @@ describe("project-host intrusion reviewer", () => {
       rows: [{ severity: "critical", state: "open" }],
     });
     expect(mockAdminAlert).toHaveBeenCalledTimes(1);
+  });
+
+  it("aggregates unconsumed candidates without masking critical evidence", async () => {
+    const base = Date.now();
+    const criticalValue = '["root-equivalent",0]';
+    const criticalDelta = {
+      added: { "accounts.uid_zero": [criticalValue] },
+    };
+    const warningDelta = {
+      added: { "services.enabled": [ADDED_VALUE] },
+    };
+    const changed = normalized({
+      "accounts.uid_zero": [criticalValue],
+      "services.enabled": [ADDED_VALUE],
+    });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: criticalDelta,
+      state: changed,
+      createdAt: new Date(base),
+    });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: warningDelta,
+      state: changed,
+      createdAt: new Date(base + 1),
+    });
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(base + 2),
+    });
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 3,
+      opened: 1,
+    });
+    await expect(
+      getPool().query(
+        `SELECT severity, evidence FROM project_host_intrusion_incidents`,
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          severity: "critical",
+          evidence: expect.objectContaining({
+            candidate_observation_ids: expect.arrayContaining([
+              expect.any(String),
+              expect.any(String),
+            ]),
+            categories: ["accounts.uid_zero", "services.enabled"],
+          }),
+        },
+      ],
+    });
+    await expect(
+      getPool().query(
+        `SELECT COUNT(*)::integer AS count
+           FROM project_host_intrusion_findings
+          WHERE rule_id='persistent-host-state'
+            AND classification='diagnostic' AND correlated_at IS NOT NULL`,
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 2 }] });
+  });
+
+  it("prioritizes and marks critical evidence when bounding a large delta", async () => {
+    const warnings = Array.from(
+      { length: 200 },
+      (_, index) => `["process-${index}"]`,
+    );
+    const criticalValue = '["/etc/security-boundary",511]';
+    const delta = {
+      added: {
+        "host_processes.findings": warnings,
+        "privileged_files.writable": [criticalValue],
+      },
+    };
+    const changed = normalized({
+      "host_processes.findings": warnings,
+      "privileged_files.writable": [criticalValue],
+    });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      opened: 1,
+    });
+    await expect(
+      getPool().query(
+        `SELECT incidents.severity, incidents.evidence,
+                findings.severity AS finding_severity
+           FROM project_host_intrusion_incidents AS incidents
+           JOIN project_host_intrusion_findings AS findings
+             ON findings.observation_id=incidents.observation_ids[1]
+          WHERE findings.classification='actionable'`,
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          severity: "critical",
+          finding_severity: "critical",
+          evidence: expect.objectContaining({
+            delta_truncated: true,
+            omitted_value_count: 1,
+            delta: {
+              added: expect.objectContaining({
+                "privileged_files.writable": [criticalValue],
+              }),
+            },
+          }),
+        },
+      ],
+    });
   });
 
   it("does not correlate observations outside the source-time window", async () => {
@@ -561,6 +688,50 @@ describe("project-host intrusion reviewer", () => {
     await expect(
       getPool().query("SELECT state FROM project_host_intrusion_incidents"),
     ).resolves.toMatchObject({ rows: [{ state: "open" }] });
+  });
+
+  it("does not reopen or overwrite a resolved incident from older evidence", async () => {
+    const base = Date.now();
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    const candidate = async (createdAt: number) =>
+      await insertObservation({
+        classification: "actionable",
+        reasonCodes: ["actionable_selector_match"],
+        actionableDelta: delta,
+        state: changed,
+        createdAt: new Date(createdAt),
+      });
+    await candidate(base);
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(base + 1000),
+    });
+    await runHostIntrusionReviewerPass();
+    await insertObservation({
+      state: normalized(),
+      createdAt: new Date(base + 3000),
+    });
+    await runHostIntrusionReviewerPass();
+    const resolved = await getPool().query(
+      `SELECT state, occurrence_count, evidence, resolved_at
+         FROM project_host_intrusion_incidents`,
+    );
+
+    await candidate(base + 1500);
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(base + 2000),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      reopened: 0,
+    });
+    await expect(
+      getPool().query(
+        `SELECT state, occurrence_count, evidence, resolved_at
+           FROM project_host_intrusion_incidents`,
+      ),
+    ).resolves.toEqual(resolved);
   });
 
   it("keeps a multi-signal incident open until every signal recovers", async () => {
@@ -934,5 +1105,62 @@ describe("project-host intrusion reviewer", () => {
       observations_24h: [{ collector_version: null }],
       hosts_24h: [{ collector_version: null }],
     });
+  });
+
+  it("prunes orphaned findings after observation retention", async () => {
+    const observationId = await insertObservation();
+    await runHostIntrusionReviewerPass();
+    await getPool().query(
+      "DELETE FROM project_host_intrusion_snapshots WHERE id=$1",
+      [observationId],
+    );
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      findings_pruned: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT COUNT(*)::integer AS count FROM project_host_intrusion_findings",
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] });
+  });
+
+  it("prunes only old delivered outbox records", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
+      "persistent-host-state";
+    process.env.COCALC_HOST_INTRUSION_REVIEW_OUTBOX_RETENTION_DAYS = "7";
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+    await runHostIntrusionReviewerPass();
+    await getPool().query(
+      `INSERT INTO project_host_intrusion_notification_outbox
+         (id, incident_id, transition, state, created_at)
+       VALUES ($1, $2, 'pending-regression', 'pending', NOW() - INTERVAL '8 days')`,
+      [randomUUID(), randomUUID()],
+    );
+    await getPool().query(
+      `UPDATE project_host_intrusion_notification_outbox
+          SET delivered_at=NOW() - INTERVAL '8 days'
+        WHERE state='delivered'`,
+    );
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      outbox_pruned: 1,
+    });
+    await expect(
+      getPool().query(
+        `SELECT state, COUNT(*)::integer AS count
+           FROM project_host_intrusion_notification_outbox
+          GROUP BY state`,
+      ),
+    ).resolves.toMatchObject({ rows: [{ state: "pending", count: 1 }] });
   });
 });

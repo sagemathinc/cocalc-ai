@@ -658,6 +658,14 @@ export interface HostIntrusionReviewReport {
     observations: number;
     oldest_observation_at: string | null;
     oldest_observation_age_ms: number | null;
+    latest_observation_at: string | null;
+    latest_observation_age_ms: number | null;
+    findings: number;
+    oldest_finding_at: string | null;
+    oldest_finding_age_ms: number | null;
+    delivered_notifications: number;
+    oldest_delivered_notification_at: string | null;
+    oldest_delivered_notification_age_ms: number | null;
   };
   rules: Array<{
     id: string;

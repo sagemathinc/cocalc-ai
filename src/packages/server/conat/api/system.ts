@@ -316,6 +316,7 @@ import {
   MAX_ADMIN_ALERT_WINDOW_HOURS,
 } from "@cocalc/server/monitoring/recent-admin-alerts";
 import { getHostIntrusionReviewReport as getHostIntrusionReviewReportLocal } from "@cocalc/server/hosts/intrusion-reviewer";
+import { classifyHostIntrusionReviewHealth } from "@cocalc/server/hosts/intrusion-review-health";
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
@@ -2248,27 +2249,23 @@ export async function getLaunchHealth({
           ? "critical"
           : !intrusionReview
             ? "unknown"
-            : intrusionReview.reviewer.last_error_at != null ||
-                intrusionReview.notifications.failed > 0
-              ? "critical"
-              : intrusionReview.reviewer.last_success_at == null ||
-                  intrusionReview.reviewer.backlog > 1000 ||
-                  (intrusionReview.reviewer.last_success_age_ms ?? 0) >
-                    60 * 60 * 1000
-                ? "warning"
-                : "healthy",
+            : classifyHostIntrusionReviewHealth(intrusionReview),
       summary:
         intrusionReviewResult.status === "rejected"
           ? "Unable to read the local host intrusion reviewer projection."
           : !intrusionReview
             ? "Host intrusion reviewer state is unavailable."
-            : `${intrusionReview.reviewer.backlog} observation${intrusionReview.reviewer.backlog === 1 ? "" : "s"} await review; ${intrusionReview.incidents.length} bounded open or suppressed incident record${intrusionReview.incidents.length === 1 ? "" : "s"} returned.`,
+            : intrusionReview.retention.latest_observation_at == null
+              ? "Host intrusion reviewer is running, but no collector observations are retained; coverage is unknown."
+              : `${intrusionReview.reviewer.backlog} observation${intrusionReview.reviewer.backlog === 1 ? "" : "s"} await review; ${intrusionReview.incidents.length} bounded open or suppressed incident record${intrusionReview.incidents.length === 1 ? "" : "s"} returned.`,
       details:
         intrusionReviewResult.status === "rejected"
           ? [`${intrusionReviewResult.reason}`]
           : intrusionReview
             ? [
                 `last_success=${intrusionReview.reviewer.last_success_at ?? "never"}`,
+                `latest_observation=${intrusionReview.retention.latest_observation_at ?? "never"}`,
+                `latest_observation_age_ms=${intrusionReview.retention.latest_observation_age_ms ?? "unknown"}`,
                 `oldest_unreviewed_age_ms=${intrusionReview.reviewer.oldest_unreviewed_age_ms ?? "none"}`,
                 `notifications_pending=${intrusionReview.notifications.pending} failed=${intrusionReview.notifications.failed}`,
               ]
