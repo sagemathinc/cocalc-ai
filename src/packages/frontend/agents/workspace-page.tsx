@@ -24,7 +24,14 @@ import {
   FreshAuthModal,
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
-import { DEFAULT_CODEX_MODEL_NAME } from "@cocalc/util/ai/codex";
+import type { CodexThreadConfig } from "@cocalc/chat";
+import type { CodexModelCapabilityInfo } from "@cocalc/conat/hub/api/system";
+import {
+  DEFAULT_CODEX_MODEL_NAME,
+  DEFAULT_CODEX_MODELS,
+  type CodexPaymentSourcePreference,
+  type CodexReasoningId,
+} from "@cocalc/util/ai/codex";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { chatMetaFile } from "@cocalc/frontend/chat/paths";
@@ -64,7 +71,9 @@ import {
   Empty,
   Input,
   Modal,
+  Popover,
   Segmented,
+  Select,
   Space,
   Tag,
   Typography,
@@ -103,6 +112,28 @@ import {
   NamedAgentLimitAlert,
   NamedAgentUsage,
 } from "./agent-limit";
+import {
+  getDefaultCodexNewChatDefaults,
+  getDefaultCodexSessionMode,
+} from "@cocalc/frontend/chat/codex-defaults";
+import {
+  getCodexPaymentSourceOptions,
+  useCodexPaymentSource,
+} from "@cocalc/frontend/chat/use-codex-payment-source";
+import {
+  cachedAccountCodexModels,
+  discoverAccountCodexModels,
+} from "@cocalc/frontend/chat/codex-model-discovery";
+import { codexModelOptionsForCatalog } from "@cocalc/frontend/chat/codex";
+import {
+  freshAgentExecutionConfig,
+  rememberAgentName,
+  suggestedAgentName,
+} from "./new-agent-defaults";
+import {
+  readAgentSubscriptionSelection,
+  writeAgentSubscriptionSelection,
+} from "./agent-subscription-selection";
 
 const { Text, Title } = Typography;
 
@@ -139,14 +170,103 @@ interface PendingAgent {
   threadId: string;
 }
 
-function suggestedAgentName(agents: NamedAgent[]): string {
-  const used = new Set(agents.map(({ name }) => name));
-  if (!used.has("agent")) return "agent";
-  for (let index = 2; index < 1000; index += 1) {
-    const candidate = `agent-${index}`;
-    if (!used.has(candidate)) return candidate;
+function mostRecentlyEditedWritableProject(
+  projectMap: any,
+): string | undefined {
+  const projectStore: any = redux.getStore("projects");
+  const ids = projectMap?.keySeq?.().toArray?.() ?? [];
+  return ids
+    .filter(
+      (id: string) =>
+        !projectMap.getIn?.([id, "deleted"]) &&
+        projectStore?.get_my_group?.(id) !== "viewer",
+    )
+    .sort((left: string, right: string) => {
+      const value = (id: string) => {
+        const date = projectMap.getIn?.([id, "last_edited"]);
+        return date instanceof Date
+          ? date.valueOf()
+          : new Date(date ?? 0).valueOf() || 0;
+      };
+      return value(right) - value(left);
+    })[0];
+}
+
+function selectedAgentCodexConfig(
+  agent?: NamedAgent,
+): CodexThreadConfig | undefined {
+  if (!agent) return;
+  return redux
+    .getEditorActions(agent.endpoint.project_id, agent.path)
+    ?.getChatActions?.()
+    ?.getCodexConfig?.(agent.thread_id);
+}
+
+type NewAgentModelOption = {
+  value: string;
+  label: string;
+  reasoning?: { id: CodexReasoningId; label: string; default?: boolean }[];
+  disabled?: boolean;
+  default?: boolean;
+};
+
+type NewAgentCodexConfig = CodexThreadConfig & { credentialId?: string };
+
+type PaymentSourceWithSubscriptions = NonNullable<
+  ReturnType<typeof useCodexPaymentSource>["paymentSource"]
+> & {
+  subscriptions?: {
+    id: string;
+    label?: string;
+    email?: string;
+    plan?: string;
+  }[];
+};
+
+function defaultModelOptions(
+  catalog?: CodexModelCapabilityInfo[],
+  selectedModel?: string,
+): NewAgentModelOption[] {
+  if (catalog?.length) {
+    return codexModelOptionsForCatalog(catalog, selectedModel).map(
+      (option) => ({
+        ...option,
+        reasoning: option.reasoning?.map(
+          ({ id, label, default: isDefault }) => ({
+            id,
+            label,
+            default: isDefault,
+          }),
+        ),
+      }),
+    );
   }
-  return `agent-${Date.now()}`;
+  return DEFAULT_CODEX_MODELS.map((model) => ({
+    value: model.name,
+    label: model.name,
+    reasoning: model.reasoning,
+  }));
+}
+
+function reconcileAgentConfig(
+  config: CodexThreadConfig,
+  options: NewAgentModelOption[],
+): CodexThreadConfig {
+  const available = options.filter(({ disabled }) => !disabled);
+  const selected = available.find(({ value }) => value === config.model);
+  const model =
+    selected?.value ??
+    available.find(({ default: isDefault }) => isDefault)?.value ??
+    available[0]?.value ??
+    config.model ??
+    DEFAULT_CODEX_MODEL_NAME;
+  const reasoningOptions =
+    options.find(({ value }) => value === model)?.reasoning ?? [];
+  const reasoning =
+    reasoningOptions.find(({ id }) => id === config.reasoning)?.id ??
+    reasoningOptions.find(({ default: isDefault }) => isDefault)?.id ??
+    reasoningOptions[0]?.id;
+  return { ...config, model, reasoning };
 }
 
 async function waitForChatReady(actions: any): Promise<void> {
@@ -177,32 +297,93 @@ async function waitForChatReady(actions: any): Promise<void> {
 function NewAgentPanel({
   agents,
   namedAgentDirectory,
+  sourceAgent,
   onCancel,
   onCreated,
 }: {
   agents: NamedAgent[];
   namedAgentDirectory?: NamedAgentDirectory;
+  sourceAgent?: NamedAgent;
   onCancel: () => void;
   onCreated: (agentId: string) => void;
 }) {
   const projectMap = useTypedRedux("projects", "project_map");
-  const activeTopTab = useTypedRedux("page", "active_top_tab") as
-    | string
-    | undefined;
-  const lastProjectTab = useTypedRedux("page", "last_project_tab") as
-    | string
-    | undefined;
-  const [projectId, setProjectId] = useState<string>();
-  const [directory, setDirectory] = useState("");
-  const [name, setName] = useState(() => suggestedAgentName(agents));
+  const boundAccount = useBoundAgentAccount();
+  const sourceConfig = useMemo(
+    () => freshAgentExecutionConfig(selectedAgentCodexConfig(sourceAgent)),
+    [sourceAgent?.endpoint.agent_id],
+  );
+  const accountDefaults = useMemo(() => getDefaultCodexNewChatDefaults(), []);
+  const [projectId, setProjectId] = useState<string | undefined>(
+    () =>
+      sourceAgent?.endpoint.project_id ||
+      mostRecentlyEditedWritableProject(projectMap),
+  );
+  const [directory, setDirectory] = useState(
+    () =>
+      sourceConfig?.workingDirectory?.trim() ||
+      (sourceAgent
+        ? getProjectHomeDirectory(sourceAgent.endpoint.project_id)
+        : projectId
+          ? getProjectHomeDirectory(projectId)
+          : ""),
+  );
+  const [config, setConfig] = useState<NewAgentCodexConfig>(() => ({
+    ...(sourceConfig ?? {}),
+    model: sourceConfig?.model || accountDefaults.model,
+    reasoning: sourceConfig?.reasoning ?? accountDefaults.reasoning,
+    serviceTier: sourceConfig?.serviceTier ?? accountDefaults.serviceTier,
+    sessionMode:
+      sourceConfig?.sessionMode ??
+      accountDefaults.sessionMode ??
+      getDefaultCodexSessionMode(),
+    allowWrite:
+      (sourceConfig?.sessionMode ?? accountDefaults.sessionMode) !==
+      "read-only",
+    paymentSource: sourceConfig?.paymentSource ?? "auto",
+    credentialId: sourceAgent
+      ? readAgentSubscriptionSelection({
+          accountId: boundAccount.accountId,
+          projectId: sourceAgent.endpoint.project_id,
+          threadId: sourceAgent.thread_id,
+        })
+      : undefined,
+  }));
+  const [name, setName] = useState(() =>
+    suggestedAgentName(agents, boundAccount.accountId),
+  );
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [modelCatalog, setModelCatalog] = useState<
+    CodexModelCapabilityInfo[] | undefined
+  >();
   const [pending, setPending] = useState<PendingAgent>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
-  const boundAccount = useBoundAgentAccount();
+  const paymentPreference = (config.paymentSource ??
+    "auto") as CodexPaymentSourcePreference;
+  const {
+    paymentSource,
+    loading: paymentSourceLoading,
+    error: paymentSourceError,
+  } = useCodexPaymentSource({
+    projectId,
+    preference: paymentPreference,
+    enabled: !!projectId,
+    credentialId:
+      paymentPreference === "subscription" ? config.credentialId : undefined,
+  } as Parameters<typeof useCodexPaymentSource>[0] & {
+    credentialId?: string;
+  });
+  const modelOptions = useMemo(
+    () => defaultModelOptions(modelCatalog, config.model),
+    [config.model, modelCatalog],
+  );
+  const reasoningOptions =
+    modelOptions.find(({ value }) => value === config.model)?.reasoning ?? [];
   const problem = agentNameProblem(
     name,
     agents,
@@ -218,71 +399,109 @@ function NewAgentPanel({
 
   useEffect(() => {
     if (projectId || !projectMap) return;
-    const projectStore: any = redux.getStore("projects");
-    const ids = [
-      lastProjectTab,
-      activeTopTab,
-      ...(projectMap.keySeq?.().toArray?.() ?? []),
-    ];
-    const preferred = ids.find(
-      (id) =>
-        typeof id === "string" &&
-        projectMap.has?.(id) &&
-        !projectMap.getIn?.([id, "deleted"]) &&
-        projectStore?.get_my_group?.(id) !== "viewer",
-    );
-    if (preferred) setProjectId(preferred);
-  }, [activeTopTab, lastProjectTab, projectId, projectMap]);
+    const preferred = mostRecentlyEditedWritableProject(projectMap);
+    if (preferred) {
+      setProjectId(preferred);
+      setDirectory(getProjectHomeDirectory(preferred));
+    }
+  }, [projectId, projectMap]);
 
   useEffect(() => {
-    if (!projectId) return;
-    setDirectory(getProjectHomeDirectory(projectId));
-  }, [projectId]);
+    let disposed = false;
+    setModelCatalog(undefined);
+    if (!projectId || paymentSource?.source !== "subscription") return;
+    const cached = cachedAccountCodexModels(projectId, paymentSource);
+    if (cached?.length) setModelCatalog(cached);
+    void discoverAccountCodexModels(projectId, paymentSource)
+      .then((catalog) => {
+        if (!disposed && catalog?.length) setModelCatalog(catalog);
+      })
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+    };
+  }, [paymentSource?.source, paymentSource?.subscriptionRevision, projectId]);
+
+  useEffect(() => {
+    const policy =
+      paymentSource?.source === "site-api-key" &&
+      paymentSource.siteFundedCodex?.enabled
+        ? paymentSource.siteFundedCodex.policy
+        : undefined;
+    setConfig((current) => {
+      const next = policy
+        ? {
+            ...current,
+            model: policy.model,
+            reasoning: policy.reasoning as CodexReasoningId,
+          }
+        : reconcileAgentConfig(
+            current,
+            defaultModelOptions(modelCatalog, current.model),
+          );
+      return next.model === current.model &&
+        next.reasoning === current.reasoning
+        ? current
+        : next;
+    });
+  }, [modelCatalog, paymentSource?.source, paymentSource?.siteFundedCodex]);
 
   async function prepare(): Promise<PendingAgent> {
     if (pending) return pending;
-    if (!projectId) throw new Error("Select a project");
+    let targetProjectId = projectId;
+    if (!targetProjectId) {
+      targetProjectId = await redux.getActions("projects").create_project({
+        title: "Agents",
+        description: "Workspace for CoCalc agents",
+        start: true,
+      });
+      setProjectId(targetProjectId);
+    }
     await ensureProjectReduxRuntime();
-    const projectActions = redux.getProjectActions(projectId);
+    const projectActions = redux.getProjectActions(targetProjectId);
     const fs = projectActions?.fs?.();
     if (!projectActions || !fs) {
       throw new Error("The selected project filesystem is unavailable");
     }
     const workingDirectory =
-      directory.trim() || getProjectHomeDirectory(projectId);
+      directory.trim() || getProjectHomeDirectory(targetProjectId);
     const stat = await fs.stat(workingDirectory);
     if (!stat.isDirectory()) {
       throw new Error("The working directory is not a directory");
     }
     const path = joinAbsolutePath(
-      getProjectHomeDirectory(projectId),
+      getProjectHomeDirectory(targetProjectId),
       `.local/share/cocalc/agents/${uuid()}.chat`,
     );
     await projectActions.ensureContainingDirectoryExists(path);
     await fs.writeFile(path, "");
-    const chatActions = initChat(projectId, chatMetaFile(path));
+    const chatActions = initChat(targetProjectId, chatMetaFile(path));
     await waitForChatReady(chatActions);
     const threadId = chatActions.createEmptyThread({
       name: name.trim(),
       threadAgent: {
         mode: "codex",
-        model: DEFAULT_CODEX_MODEL_NAME,
-        codexConfig: {
-          model: DEFAULT_CODEX_MODEL_NAME,
-          sessionMode: "workspace-write",
-          allowWrite: true,
-          workingDirectory,
-        },
+        model: config.model,
+        codexConfig: { ...config, workingDirectory },
       },
     });
     if (!threadId) throw new Error("Unable to create the agent thread");
-    const created = { projectId, path, threadId };
+    const created = { projectId: targetProjectId, path, threadId };
+    writeAgentSubscriptionSelection({
+      accountId: boundAccount.accountId,
+      projectId: targetProjectId,
+      threadId,
+      credentialId:
+        config.paymentSource === "subscription"
+          ? config.credentialId
+          : undefined,
+    });
     setPending(created);
     return created;
   }
 
   async function create() {
-    if (busy || problem || atLimit) return;
+    if (busy || problem || atLimit || !firstRequest.trim()) return;
     setBusy(true);
     setError("");
     try {
@@ -317,7 +536,14 @@ function NewAgentPanel({
           | undefined,
         thread_title: name.trim(),
       });
-      if (firstRequest.trim()) {
+      const actions = initChat(created.projectId, chatMetaFile(created.path));
+      await waitForChatReady(actions);
+      const sent = actions.sendChat({
+        input: firstRequest.trim(),
+        reply_thread_id: created.threadId,
+        acpConfigOverride: config,
+      });
+      if (!sent) {
         await writeChatComposerDraft({
           account_id: boundAccount.accountId,
           project_id: created.projectId,
@@ -325,7 +551,11 @@ function NewAgentPanel({
           composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
           text: firstRequest,
         });
+        antdMessage.warning(
+          "The agent was created, but the first request could not start. It is preserved as a draft.",
+        );
       }
+      rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
       refreshNamedAgents();
       onCreated(identity.agent_id);
     } catch (err) {
@@ -340,36 +570,82 @@ function NewAgentPanel({
     }
   }
 
-  return (
-    <div style={{ margin: "auto", maxWidth: 720, padding: 32, width: "100%" }}>
-      <Title level={2}>New Agent</Title>
-      <Text type="secondary">
-        Choose where this agent works. Creating it does not start a turn or
-        grant messaging connections.
-      </Text>
-      <Space
-        direction="vertical"
-        size={14}
-        style={{ marginTop: 24, width: "100%" }}
-      >
-        <NamedAgentLimitAlert directory={namedAgentDirectory} />
-        <NamedAgentUsage directory={namedAgentDirectory} />
-        {projectMap?.size === 0 && (
-          <Alert
-            type="info"
-            showIcon
-            title="Create a project first"
-            description="Agents need an existing project for files and compute."
-            action={<a href="/projects">Open Projects</a>}
-          />
-        )}
+  const projectTitle = projectId
+    ? ((projectMap?.getIn([projectId, "title"]) as string | undefined) ??
+      "Project")
+    : "New project";
+  const subscriptions =
+    (paymentSource as PaymentSourceWithSubscriptions | undefined)
+      ?.subscriptions ?? [];
+  const paymentOptions = getCodexPaymentSourceOptions(paymentSource).flatMap(
+    (option) => {
+      if (option.value !== "subscription" || subscriptions.length === 0) {
+        return [option];
+      }
+      return subscriptions.map((subscription) => ({
+        value: `subscription:${subscription.id}`,
+        label:
+          subscription.label?.trim() ||
+          (() => {
+            const index = [...subscriptions]
+              .sort((left, right) => left.id.localeCompare(right.id))
+              .findIndex(({ id }) => id === subscription.id);
+            return index > 0 ? `ChatGPT ${index + 1}` : "ChatGPT";
+          })(),
+        description: subscription.plan
+          ? `Use this ChatGPT ${subscription.plan} subscription.`
+          : option.description,
+      }));
+    },
+  );
+  const selectedPaymentValue =
+    paymentPreference === "subscription" && config.credentialId
+      ? `subscription:${config.credentialId}`
+      : paymentPreference;
+  const paymentLabel =
+    paymentOptions.find(({ value }) => value === selectedPaymentValue)?.label ??
+    "Automatic";
+  const siteFundedPolicy =
+    paymentSource?.source === "site-api-key" &&
+    paymentSource.siteFundedCodex?.enabled
+      ? paymentSource.siteFundedCodex.policy
+      : undefined;
+  const advancedSettings = (
+    <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
+      <Space orientation="vertical" size={10} style={{ width: "100%" }}>
+        <label htmlFor="new-agent-name">Agent name</label>
+        <AgentNameInput
+          id="new-agent-name"
+          value={name}
+          onChange={setName}
+          problem={name.trim() ? problem : undefined}
+          busy={busy || !!pending}
+          onEnter={() => undefined}
+        />
+        <label htmlFor="new-agent-description">Description (optional)</label>
+        <Input.TextArea
+          id="new-agent-description"
+          value={description}
+          maxLength={500}
+          disabled={busy}
+          autoSize={{ minRows: 2, maxRows: 5 }}
+          onChange={(event) => setDescription(event.target.value)}
+        />
         <label>Project</label>
         <SelectProject
           fullCollaboratorOnly
           value={projectId}
           disabled={busy || !!pending}
-          onChange={setProjectId}
+          onChange={(nextProjectId) => {
+            setProjectId(nextProjectId);
+            setDirectory(getProjectHomeDirectory(nextProjectId));
+          }}
         />
+        {!projectId && (
+          <Text type="secondary">
+            A project named “Agents” will be created when you start.
+          </Text>
+        )}
         <label htmlFor="new-agent-directory">Working directory</label>
         <Space.Compact style={{ width: "100%" }}>
           <Input
@@ -382,41 +658,194 @@ function NewAgentPanel({
             disabled={!projectId || busy || !!pending}
             onClick={() => setDirectorySelectorOpen(true)}
           >
-            Choose...
+            Choose…
           </Button>
         </Space.Compact>
-        <AgentNameInput
-          id="new-agent-name"
-          value={name}
-          onChange={setName}
-          problem={name.trim() ? problem : undefined}
-          busy={busy || !!pending}
-          onEnter={() => void create()}
-        />
-        <label htmlFor="new-agent-description">Description (optional)</label>
-        <Input.TextArea
-          id="new-agent-description"
-          value={description}
-          maxLength={500}
-          disabled={busy}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-        <label htmlFor="new-agent-first-request">
-          First request (optional)
-        </label>
-        <Input.TextArea
-          id="new-agent-first-request"
-          value={firstRequest}
-          autoFocus
-          autoSize={{ minRows: 4, maxRows: 12 }}
-          disabled={busy}
-          placeholder="What should this agent work on?"
-          onChange={(event) => setFirstRequest(event.target.value)}
-        />
-        <Text type="secondary">
-          Your request opens as a draft in the registered agent. Review it and
-          press Send there to start project compute.
-        </Text>
+      </Space>
+    </div>
+  );
+
+  return (
+    <div
+      style={{
+        alignItems: "center",
+        boxSizing: "border-box",
+        display: "flex",
+        height: "100%",
+        justifyContent: "center",
+        overflowY: "auto",
+        padding: "48px 20px",
+        width: "100%",
+      }}
+    >
+      <Space
+        orientation="vertical"
+        size={16}
+        style={{ maxWidth: 820, minWidth: 0, width: "100%" }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <Title level={2} style={{ marginBottom: 4 }}>
+            What should your new agent do?
+          </Title>
+          <Text type="secondary">
+            Starting from{" "}
+            {sourceAgent ? `@${sourceAgent.name}` : "your defaults"}. You can
+            change any setting below.
+          </Text>
+        </div>
+        <NamedAgentLimitAlert directory={namedAgentDirectory} />
+        <div
+          style={{
+            background: UI_COLORS.surface,
+            border: `1px solid ${UI_COLORS.border}`,
+            borderRadius: 18,
+            boxSizing: "border-box",
+            boxShadow: `0 12px 40px ${UI_COLORS.shadow}`,
+            maxWidth: "100%",
+            padding: 12,
+          }}
+        >
+          <label htmlFor="new-agent-first-request" style={{ display: "none" }}>
+            First request
+          </label>
+          <Input.TextArea
+            id="new-agent-first-request"
+            aria-label="First request"
+            value={firstRequest}
+            autoFocus
+            autoSize={{ minRows: 5, maxRows: 16 }}
+            variant="borderless"
+            disabled={busy}
+            placeholder="Ask your agent to build, research, debug, or explain…"
+            style={{ fontSize: 16, resize: "none" }}
+            onChange={(event) => setFirstRequest(event.target.value)}
+            onKeyDown={(event) => {
+              if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+                event.preventDefault();
+                void create();
+              }
+            }}
+          />
+          <div
+            style={{
+              alignItems: "center",
+              borderTop: `1px solid ${UI_COLORS.border}`,
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              paddingTop: 10,
+            }}
+          >
+            <Popover
+              content={advancedSettings}
+              open={settingsOpen}
+              placement="bottomLeft"
+              trigger="click"
+              onOpenChange={setSettingsOpen}
+            >
+              <Button icon={<Icon name="sliders" />}>Settings</Button>
+            </Popover>
+            <Tag style={{ alignContent: "center", minHeight: 30 }}>
+              {projectTitle}
+            </Tag>
+            <Select
+              aria-label="Payment source"
+              value={selectedPaymentValue}
+              loading={paymentSourceLoading}
+              disabled={busy || !!pending}
+              options={paymentOptions}
+              style={{ minWidth: 150 }}
+              onChange={(value: string) => {
+                if (value.startsWith("subscription:")) {
+                  setConfig((current) => ({
+                    ...current,
+                    paymentSource: "subscription",
+                    credentialId: value.slice("subscription:".length),
+                  }));
+                  return;
+                }
+                setConfig((current) => ({
+                  ...current,
+                  paymentSource: value as CodexPaymentSourcePreference,
+                  credentialId: undefined,
+                }));
+              }}
+            />
+            <Select
+              aria-label="Model"
+              value={config.model}
+              disabled={busy || !!pending || !!siteFundedPolicy}
+              options={modelOptions}
+              showSearch
+              optionFilterProp="label"
+              style={{ minWidth: 150 }}
+              onChange={(model) =>
+                setConfig((current) =>
+                  reconcileAgentConfig({ ...current, model }, modelOptions),
+                )
+              }
+            />
+            <Select
+              aria-label="Reasoning level"
+              value={config.reasoning}
+              disabled={
+                busy ||
+                !!pending ||
+                !!siteFundedPolicy ||
+                reasoningOptions.length === 0
+              }
+              options={reasoningOptions.map(({ id, label }) => ({
+                value: id,
+                label,
+              }))}
+              placeholder="Reasoning"
+              style={{ minWidth: 120 }}
+              onChange={(reasoning: CodexReasoningId) =>
+                setConfig((current) => ({ ...current, reasoning }))
+              }
+            />
+            <span style={{ flex: 1 }} />
+            <Button
+              type="primary"
+              shape="round"
+              loading={busy}
+              disabled={!!problem || !firstRequest.trim() || atLimit}
+              onClick={() => void create()}
+            >
+              Start agent
+            </Button>
+          </div>
+        </div>
+        <div
+          style={{
+            alignItems: "center",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 8,
+            justifyContent: "space-between",
+          }}
+        >
+          <Text type="secondary">
+            @{name} · {paymentLabel} · Ctrl/⌘ Enter to start
+          </Text>
+          <Space>
+            <NamedAgentUsage directory={namedAgentDirectory} />
+            {agents.length > 0 && (
+              <Button type="text" disabled={busy} onClick={onCancel}>
+                Cancel
+              </Button>
+            )}
+          </Space>
+        </div>
+        {paymentSourceError && (
+          <Alert
+            role="alert"
+            type="error"
+            showIcon
+            title="Unable to determine an available payment source"
+            description={paymentSourceError}
+          />
+        )}
         {pending && (
           <Alert
             type="info"
@@ -426,19 +855,6 @@ function NewAgentPanel({
           />
         )}
         {error && <Alert role="alert" type="error" title={error} />}
-        <Space>
-          <Button
-            type="primary"
-            loading={busy}
-            disabled={!!problem || !projectId || atLimit}
-            onClick={() => void create()}
-          >
-            {firstRequest.trim() ? "Create agent with draft" : "Create agent"}
-          </Button>
-          <Button disabled={busy} onClick={onCancel}>
-            Cancel
-          </Button>
-        </Space>
       </Space>
       <Modal
         open={directorySelectorOpen}
@@ -1160,6 +1576,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | undefined;
   const [search, setSearch] = useState("");
   const [creating, setCreating] = useState(false);
+  const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
+  const [copyName, setCopyName] = useState("");
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyError, setCopyError] = useState("");
   const [mobileList, setMobileList] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
@@ -1178,6 +1598,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     Map<string, AgentHeaderAppearance>
   >(() => new Map());
   const rootRef = useRef<HTMLElement>(null);
+  const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
+  const boundAccount = useBoundAgentAccount();
 
   const toggleAgentSidebar = useCallback(() => {
     setAgentSidebarHidden((hidden) => {
@@ -1307,6 +1729,82 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     set_url(getPageUrlPath({ page: "agents", agent_id: agentId }));
   }
 
+  function openCopyAgent(agent: NamedAgent) {
+    setCopyingAgent(agent);
+    setCopyName(suggestedAgentName(agents, accountId));
+    setCopyError("");
+  }
+
+  async function copyAgent() {
+    if (!copyingAgent || copyBusy) return;
+    const problem = agentNameProblem(copyName, agents);
+    if (problem) {
+      setCopyError(problem);
+      return;
+    }
+    setCopyBusy(true);
+    setCopyError("");
+    try {
+      const actions = initChat(
+        copyingAgent.endpoint.project_id,
+        chatMetaFile(copyingAgent.path),
+      );
+      await waitForChatReady(actions);
+      const threadId = await actions.forkThread({
+        threadKey: copyingAgent.thread_id,
+        title: copyName.trim(),
+        sourceTitle: copyingAgent.thread_title || copyingAgent.name,
+        isAI: true,
+        selectNewThread: false,
+      });
+      writeAgentSubscriptionSelection({
+        accountId,
+        projectId: copyingAgent.endpoint.project_id,
+        threadId,
+        credentialId: readAgentSubscriptionSelection({
+          accountId,
+          projectId: copyingAgent.endpoint.project_id,
+          threadId: copyingAgent.thread_id,
+        }),
+      });
+      const locator = {
+        project_id: copyingAgent.endpoint.project_id,
+        path: copyingAgent.path,
+        thread_id: threadId,
+      };
+      const api = personalAgentApi();
+      let identity = await api.resolveIdentity(locator);
+      if (!identity) {
+        const completed = await runFreshAuthAction(async () => {
+          boundAccount.assertCurrent();
+          identity = await api.registerIdentity(locator);
+        });
+        if (!completed) return;
+      }
+      if (!identity) throw new Error("Unable to register the copied agent");
+      await api.nameAgent({
+        endpoint: {
+          project_id: copyingAgent.endpoint.project_id,
+          agent_id: identity.agent_id,
+        },
+        name: normalizeAgentName(copyName),
+        description: "",
+        ...cachedAgentNameContext(locator),
+        project_title: copyingAgent.project_title,
+        thread_title: copyName.trim(),
+      });
+      rememberAgentName(normalizeAgentName(copyName), accountId);
+      refreshNamedAgents();
+      setCopyingAgent(undefined);
+      selectAgentId(identity.agent_id);
+      antdMessage.success(`Copied @${copyingAgent.name} to @${copyName}.`);
+    } catch (err) {
+      setCopyError(`${err}`);
+    } finally {
+      setCopyBusy(false);
+    }
+  }
+
   function renderAgentRow(
     agent: NamedAgent,
     pinned: boolean,
@@ -1407,13 +1905,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           menu={{
             items: [
               {
+                key: "copy",
+                icon: <Icon name="copy" />,
+                label: "Copy agent…",
+              },
+              {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
                 label: hidden ? "Show in Agents" : "Hide from Agents",
               },
             ],
-            onClick: ({ domEvent }) => {
+            onClick: ({ key, domEvent }) => {
               domEvent.stopPropagation();
+              if (key === "copy") {
+                openCopyAgent(agent);
+                return;
+              }
               agentOrganization.setHidden(id, !hidden);
             },
           }}
@@ -1689,10 +2196,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               <AgentsWorkspaceNavigation />
             </div>
           )}
-        {creating ? (
+        {creating || agents.length === 0 ? (
           <NewAgentPanel
             agents={agents}
             namedAgentDirectory={directory}
+            sourceAgent={selected}
             onCancel={() => {
               setCreating(false);
               setMobileList(true);
@@ -1797,6 +2305,44 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           </>
         )}
       </section>
+      <Modal
+        title={`Copy @${copyingAgent?.name ?? "agent"}`}
+        open={!!copyingAgent}
+        okText="Copy agent"
+        okButtonProps={{
+          loading: copyBusy,
+          disabled: copyBusy || !!agentNameProblem(copyName, agents),
+        }}
+        cancelButtonProps={{ disabled: copyBusy }}
+        destroyOnHidden
+        onOk={() => void copyAgent()}
+        onCancel={() => {
+          setCopyingAgent(undefined);
+          setCopyError("");
+        }}
+      >
+        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
+          <Text>
+            Copy the complete conversation and Codex context into a new named
+            agent. Project, working directory, model, reasoning, and payment
+            source are preserved. The description starts blank.
+          </Text>
+          <AgentNameInput
+            id="copy-agent-name"
+            value={copyName}
+            onChange={setCopyName}
+            problem={
+              copyName.trim() ? agentNameProblem(copyName, agents) : undefined
+            }
+            busy={copyBusy}
+            onEnter={() => void copyAgent()}
+          />
+          {copyError && (
+            <Alert role="alert" type="error" showIcon title={copyError} />
+          )}
+        </Space>
+      </Modal>
+      <FreshAuthModal {...freshAuthModalProps} />
     </main>
   );
 }
