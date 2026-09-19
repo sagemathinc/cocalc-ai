@@ -14,6 +14,7 @@ import {
   Input,
   message,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -26,13 +27,12 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import {
-  CODEX_USAGE_LABEL,
-  CODEX_USAGE_URL,
   clearCachedCodexModelCatalog,
   getChatGptAccountInfo,
   getCodexSubscriptionConnection,
   getLiveCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
+import { getCodexSubscriptionDisplayName } from "@cocalc/frontend/chat/codex-subscription-label";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -206,6 +206,60 @@ export function CodexUsageMeters({
   );
 }
 
+function MembershipUsageMeters({
+  paymentSource,
+}: {
+  paymentSource?: CodexPaymentSourceInfo;
+}) {
+  const status = paymentSource?.siteFundedCodex?.status?.account;
+  if (!status) {
+    return (
+      <Text type="secondary">
+        CoCalc Membership usage is not available for this account.
+      </Text>
+    );
+  }
+  const windows = [
+    {
+      key: "5h",
+      label: "5-hour limit",
+      limit: status.limit5hMicrousd,
+      remaining: status.remaining5hMicrousd,
+      resetAt: status.reset5hAt,
+    },
+    {
+      key: "7d",
+      label: "7-day limit",
+      limit: status.limit7dMicrousd,
+      remaining: status.remaining7dMicrousd,
+      resetAt: status.reset7dAt,
+    },
+  ]
+    .filter(
+      ({ limit, remaining }) =>
+        typeof limit === "number" &&
+        Number.isFinite(limit) &&
+        limit > 0 &&
+        typeof remaining === "number" &&
+        Number.isFinite(remaining),
+    )
+    .map(({ key, label, limit = 0, remaining = 0, resetAt }) => ({
+      key,
+      label,
+      remainingPercent: Math.max(
+        0,
+        Math.min(100, Math.round((remaining / limit) * 100)),
+      ),
+      resetAt: resetAt ? new Date(resetAt) : undefined,
+    }));
+  return (
+    <UsageWindowMeters
+      windows={windows}
+      statusLabel="CoCalc Membership usage"
+    />
+  );
+}
+
 function formatCodexUsageReason(reason?: string): string | undefined {
   if (!reason) return undefined;
   if (
@@ -251,7 +305,46 @@ type DeviceAuthStatus = {
   error?: string;
   syncedToRegistry?: boolean;
   syncError?: string;
+  credentialId?: string;
+  create?: boolean;
 };
+
+function credentialLastUsed(row: ExternalCredentialInfo): number {
+  const value = row.last_used ? new Date(row.last_used).getTime() : 0;
+  return Number.isFinite(value) ? value : 0;
+}
+
+export function sortCredentialIdsByLastUsed(
+  rows: ExternalCredentialInfo[],
+): string[] {
+  return [...rows]
+    .sort((a, b) => {
+      const byLastUsed = credentialLastUsed(b) - credentialLastUsed(a);
+      if (byLastUsed !== 0) return byLastUsed;
+      return `${a.id}`.localeCompare(`${b.id}`);
+    })
+    .map(({ id }) => id);
+}
+
+export function reconcileCredentialOrder(
+  order: string[],
+  rows: ExternalCredentialInfo[],
+): string[] {
+  const currentIds = new Set(rows.map(({ id }) => id));
+  const next = order.filter((id) => currentIds.has(id));
+  const orderedIds = new Set(next);
+  for (const id of sortCredentialIdsByLastUsed(rows)) {
+    if (!orderedIds.has(id)) next.push(id);
+  }
+  return next;
+}
+
+export function scrollCodexCredentialsModalToTop(
+  root: HTMLElement | null,
+): void {
+  const modalBody = root?.closest<HTMLElement>(".ant-modal-body");
+  modalBody?.scrollTo({ top: 0, behavior: "auto" });
+}
 
 const DEVICE_AUTH_ALERT_TYPE: Record<
   DeviceAuthState,
@@ -285,10 +378,15 @@ function CodexCredentialsPanelBody({
   const [codexUsageStatus, setCodexUsageStatus] = useState<
     CodexUsageStatusInfo | undefined
   >(undefined);
+  const [codexUsageCredentialId, setCodexUsageCredentialId] = useState("");
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
+  const [usageSource, setUsageSource] = useState("");
   const [apiKeyStatus, setApiKeyStatus] = useState<any>(undefined);
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
+  const [credentialOrder, setCredentialOrder] = useState<string[]>([]);
   const [revokingId, setRevokingId] = useState<string>("");
+  const [savingLabelId, setSavingLabelId] = useState<string>("");
+  const [labelDrafts, setLabelDrafts] = useState<Record<string, string>>({});
   const [accountApiKey, setAccountApiKey] = useState<string>("");
   const [projectApiKey, setProjectApiKey] = useState<string>("");
   const [savingScope, setSavingScope] = useState<"" | "account" | "project">(
@@ -301,17 +399,22 @@ function CodexCredentialsPanelBody({
   const [deviceAuthError, setDeviceAuthError] = useState<string>("");
   const [deviceAuthActionPending, setDeviceAuthActionPending] =
     useState<boolean>(false);
+  const [credentialMutationTarget, setCredentialMutationTarget] = useState<{
+    credentialId?: string;
+    create: boolean;
+  }>();
   const [openCredentialPanelKeys, setOpenCredentialPanelKeys] = useState<
     string[]
   >([]);
   const [authFileUploadPending, setAuthFileUploadPending] =
     useState<boolean>(false);
   const [uploadedAuthFileStatus, setUploadedAuthFileStatus] = useState<{
-    codexHome: string;
     bytes: number;
     uploadedAt: number;
   } | null>(null);
   const authFileInputRef = useRef<HTMLInputElement | null>(null);
+  const panelRootRef = useRef<HTMLDivElement | null>(null);
+  const subscriptionCredentialsOpenRef = useRef(false);
   const previousProjectKeyRef = useRef(selectedProjectId.trim());
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction();
 
@@ -346,9 +449,14 @@ function CodexCredentialsPanelBody({
       ) {
         nextKeys = [SUBSCRIPTION_AUTH_PANEL_KEY, ...nextKeys];
       }
+      const credentialsOpen = nextKeys.includes("credentials");
+      if (credentialsOpen && !subscriptionCredentialsOpenRef.current) {
+        setCredentialOrder(sortCredentialIdsByLastUsed(credentials));
+      }
+      subscriptionCredentialsOpenRef.current = credentialsOpen;
       setOpenCredentialPanelKeys(nextKeys);
     },
-    [deviceAuthPending, embedded],
+    [credentials, deviceAuthPending, embedded],
   );
 
   const recentProjectId = useMemo(() => {
@@ -379,6 +487,7 @@ function CodexCredentialsPanelBody({
         setCredentials([]);
         setApiKeyStatus(undefined);
         setCodexUsageStatus(undefined);
+        setCodexUsageCredentialId("");
         setDeviceAuth(null);
         setDeviceAuthError("");
         setUploadedAuthFileStatus(null);
@@ -418,6 +527,7 @@ function CodexCredentialsPanelBody({
         if (!isMounted()) return;
         setPaymentSource(payment as CodexPaymentSourceInfo);
         setCredentials(list);
+        setCredentialOrder((order) => reconcileCredentialOrder(order, list));
         setApiKeyStatus(keyStatus ?? {});
       } catch (err) {
         if (!isMounted()) return;
@@ -431,12 +541,13 @@ function CodexCredentialsPanelBody({
 
   useAsyncEffect(
     async (isMounted) => {
-      if (paymentSource?.source !== "subscription") {
-        setCodexUsageStatus(undefined);
+      if (!usageSource.startsWith("subscription:")) {
         setCodexUsageLoading(false);
         return;
       }
+      if (!paymentSource) return;
       if (!authProjectId && !lite) {
+        const credentialId = usageSource.slice("subscription:".length);
         setCodexUsageStatus({
           available: false,
           checkedAt: new Date().toISOString(),
@@ -444,16 +555,20 @@ function CodexCredentialsPanelBody({
           reason:
             "Open a project before checking live ChatGPT Codex usage in CoCalc.",
         });
+        setCodexUsageCredentialId(credentialId);
         setCodexUsageLoading(false);
         return;
       }
       setCodexUsageLoading(true);
+      const credentialId = usageSource.slice("subscription:".length);
       try {
         const result = await getLiveCodexUsageStatus({
           projectId: authProjectId || undefined,
+          credentialId: credentialId || undefined,
         });
         if (!isMounted()) return;
         setCodexUsageStatus(result as CodexUsageStatusInfo);
+        setCodexUsageCredentialId(credentialId);
       } catch (err) {
         if (!isMounted()) return;
         setCodexUsageStatus({
@@ -463,11 +578,167 @@ function CodexCredentialsPanelBody({
           project_id: authProjectId || undefined,
           reason: formatCodexUsageReason(getErrorMessage(err)),
         });
+        setCodexUsageCredentialId(credentialId);
       } finally {
         if (isMounted()) setCodexUsageLoading(false);
       }
     },
-    [authProjectId, paymentSource?.source, usageRefreshToken],
+    [authProjectId, usageRefreshToken, usageSource],
+  );
+
+  const usageSourceOptions = useMemo(() => {
+    const subscriptions = paymentSource?.subscriptions ?? [];
+    return [
+      ...subscriptions.map((credential) => ({
+        value: `subscription:${credential.id}`,
+        label: getCodexSubscriptionDisplayName(credential, subscriptions),
+      })),
+      ...(subscriptions.length === 0 &&
+      (paymentSource?.hasSubscription ||
+        paymentSource?.source === "subscription")
+        ? [{ value: "subscription:", label: "ChatGPT" }]
+        : []),
+      ...(paymentSource?.hasSiteApiKey
+        ? [{ value: "site-api-key", label: "CoCalc Membership" }]
+        : []),
+      ...(paymentSource?.hasProjectApiKey
+        ? [{ value: "project-api-key", label: "Project OpenAI API key" }]
+        : []),
+      ...(paymentSource?.hasAccountApiKey
+        ? [{ value: "account-api-key", label: "Account OpenAI API key" }]
+        : []),
+    ];
+  }, [paymentSource]);
+
+  useEffect(() => {
+    if (!usageSourceOptions.length) {
+      setUsageSource("");
+      return;
+    }
+    if (usageSourceOptions.some(({ value }) => value === usageSource)) return;
+    const selectedCredential = paymentSource?.credentialId;
+    const exact = selectedCredential
+      ? `subscription:${selectedCredential}`
+      : undefined;
+    setUsageSource(
+      usageSourceOptions.find(({ value }) => value === exact)?.value ??
+        usageSourceOptions[0].value,
+    );
+  }, [paymentSource?.credentialId, usageSource, usageSourceOptions]);
+
+  const startDeviceAuth = useCallback(
+    async (credentialId?: string, create = false) => {
+      if (!embedded) openSubscriptionAuthPanel();
+      if (!authProjectId) {
+        setDeviceAuthError(
+          "No project available. Create or open a project, then retry.",
+        );
+        return;
+      }
+      setDeviceAuthActionPending(true);
+      setDeviceAuthError("");
+      requestAnimationFrame(() =>
+        scrollCodexCredentialsModalToTop(panelRootRef.current),
+      );
+      try {
+        const subscriptions = paymentSource?.subscriptions ?? [];
+        const targetCredentialId = create
+          ? undefined
+          : (credentialId ??
+            paymentSource?.credentialId ??
+            (subscriptions.length === 1 ? subscriptions[0].id : undefined));
+        const targetCreate =
+          create || (!targetCredentialId && !subscriptions.length);
+        if (!targetCreate && !targetCredentialId) {
+          throw new Error(
+            "Choose the ChatGPT subscription to reconnect, or add a new subscription.",
+          );
+        }
+        const capability =
+          await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
+            { project_id: authProjectId },
+          );
+        if (
+          (capability?.version ?? 0) < 2 ||
+          capability?.credentialLifecycle !== true
+        ) {
+          throw new Error(
+            "This project host must be updated before ChatGPT subscriptions can be added or reconnected.",
+          );
+        }
+        setCredentialMutationTarget({
+          credentialId: targetCredentialId,
+          create: targetCreate,
+        });
+        const status =
+          await webapp_client.conat_client.hub.projects.codexDeviceAuthStartV2({
+            project_id: authProjectId,
+            ...(targetCredentialId
+              ? { credential_id: targetCredentialId }
+              : { create: true }),
+          });
+        setDeviceAuth(status as DeviceAuthStatus);
+        refresh();
+      } catch (err) {
+        const error = err instanceof Error ? err.message : `${err}`;
+        setDeviceAuthError(
+          /\b(?:timed? out|timeout)\b/i.test(error)
+            ? "Starting ChatGPT sign-in timed out. Codex may still be starting in the selected project. Wait a few seconds, then click Sign in again; CoCalc will not retry automatically because that could start a duplicate login."
+            : error,
+        );
+      } finally {
+        setDeviceAuthActionPending(false);
+      }
+    },
+    [
+      authProjectId,
+      embedded,
+      openSubscriptionAuthPanel,
+      paymentSource?.credentialId,
+      paymentSource?.subscriptions,
+      refresh,
+    ],
+  );
+
+  const saveCredentialLabel = useCallback(
+    async (row: ExternalCredentialInfo, value: string) => {
+      const label = value.trim();
+      if (label === `${row.metadata?.label ?? ""}`.trim()) return;
+      setSavingLabelId(row.id);
+      try {
+        const result =
+          await webapp_client.conat_client.hub.system.updateCodexSubscriptionLabel(
+            { id: row.id, label: label || undefined },
+          );
+        if (!result.updated) {
+          throw Error("ChatGPT subscription is no longer available");
+        }
+        setCredentials((items) =>
+          items.map((item) => {
+            if (item.id !== row.id) return item;
+            const metadata = { ...item.metadata };
+            if (label) metadata.label = label;
+            else delete metadata.label;
+            return { ...item, metadata };
+          }),
+        );
+        setLabelDrafts((drafts) => {
+          const next = { ...drafts };
+          delete next[row.id];
+          return next;
+        });
+        refreshAfterPaymentSourceChange();
+      } catch (err) {
+        setError(`${err}`);
+        setLabelDrafts((drafts) => ({
+          ...drafts,
+          [row.id]: `${row.metadata?.label ?? ""}`,
+        }));
+      } finally {
+        setSavingLabelId("");
+      }
+    },
+    [refreshAfterPaymentSourceChange],
   );
 
   const columns = useMemo(
@@ -475,7 +746,46 @@ function CodexCredentialsPanelBody({
       {
         title: "Credential",
         key: "credential",
-        render: () => <Tag color="blue">ChatGPT subscription</Tag>,
+        render: (_: any, row: ExternalCredentialInfo) => {
+          const subscriptions = paymentSource?.subscriptions ?? [];
+          const subscription = subscriptions.find(({ id }) => id === row.id);
+          const displayName = subscription
+            ? getCodexSubscriptionDisplayName(subscription, subscriptions)
+            : row.metadata?.label || "ChatGPT";
+          return (
+            <Space orientation="vertical" size={0}>
+              <Text strong>{displayName}</Text>
+              {row.metadata?.email ? (
+                <Text type="secondary">{row.metadata.email}</Text>
+              ) : null}
+              <Text type="secondary">
+                {formatPlanType(row.metadata?.plan_type) ??
+                  row.metadata?.provider_account_id?.slice?.(0, 12) ??
+                  "Connected plan"}
+                {row.metadata?.cocalc_default ? " (default)" : ""}
+              </Text>
+              <Input
+                size="small"
+                aria-label={`Label for ${row.metadata?.email || "ChatGPT subscription"}`}
+                placeholder="Optional label"
+                maxLength={60}
+                value={labelDrafts[row.id] ?? row.metadata?.label ?? ""}
+                disabled={savingLabelId === row.id}
+                onChange={(event) =>
+                  setLabelDrafts((drafts) => ({
+                    ...drafts,
+                    [row.id]: event.target.value,
+                  }))
+                }
+                onBlur={(event) =>
+                  void saveCredentialLabel(row, event.target.value)
+                }
+                onPressEnter={(event) => event.currentTarget.blur()}
+                style={{ width: 180, marginTop: 4 }}
+              />
+            </Space>
+          );
+        },
       },
       {
         title: "Updated",
@@ -498,59 +808,76 @@ function CodexCredentialsPanelBody({
         title: "Action",
         key: "action",
         render: (_: any, row: ExternalCredentialInfo) => (
-          <Popconfirm
-            title="Delete external credential?"
-            description="This revokes it for future Codex turns."
-            okText="Delete"
-            okButtonProps={{ danger: true }}
-            onConfirm={async () => {
-              setRevokingId(row.id);
-              try {
-                const completed = await runFreshAuthAction(async () => {
-                  await webapp_client.conat_client.hub.system.revokeExternalCredential(
-                    {
-                      id: row.id,
-                      browser_id: webapp_client.browser_id,
-                    },
-                  );
-                });
-                if (!completed) {
-                  return;
-                }
-                refreshAfterPaymentSourceChange();
-              } catch (err) {
-                setError(`${err}`);
-              } finally {
-                setRevokingId("");
-              }
-            }}
-          >
+          <Space>
             <Button
               size="small"
-              danger
-              loading={revokingId === row.id}
-              disabled={!!row.revoked}
+              onClick={() => void startDeviceAuth(row.id)}
+              disabled={deviceAuth?.state === "pending"}
             >
-              Delete
+              Reconnect
             </Button>
-          </Popconfirm>
+            <Popconfirm
+              title="Delete external credential?"
+              description="This revokes it for future Codex turns."
+              okText="Delete"
+              okButtonProps={{ danger: true }}
+              onConfirm={async () => {
+                setRevokingId(row.id);
+                try {
+                  const completed = await runFreshAuthAction(async () => {
+                    await webapp_client.conat_client.hub.system.revokeExternalCredential(
+                      {
+                        id: row.id,
+                        browser_id: webapp_client.browser_id,
+                      },
+                    );
+                  });
+                  if (!completed) {
+                    return;
+                  }
+                  refreshAfterPaymentSourceChange();
+                } catch (err) {
+                  setError(`${err}`);
+                } finally {
+                  setRevokingId("");
+                }
+              }}
+            >
+              <Button
+                size="small"
+                danger
+                loading={revokingId === row.id}
+                disabled={!!row.revoked}
+              >
+                Delete
+              </Button>
+            </Popconfirm>
+          </Space>
         ),
       },
     ],
-    [refreshAfterPaymentSourceChange, revokingId],
+    [
+      deviceAuth?.state,
+      refreshAfterPaymentSourceChange,
+      revokingId,
+      labelDrafts,
+      paymentSource?.subscriptions,
+      saveCredentialLabel,
+      savingLabelId,
+      startDeviceAuth,
+    ],
   );
+
+  const orderedCredentials = useMemo(() => {
+    const byId = new Map(credentials.map((row) => [row.id, row]));
+    return reconcileCredentialOrder(credentialOrder, credentials)
+      .map((id) => byId.get(id))
+      .filter((row): row is ExternalCredentialInfo => row != null);
+  }, [credentialOrder, credentials]);
 
   const getErrorMessage = (err: unknown): string => {
     if (err instanceof Error) return err.message;
     return `${err}`;
-  };
-
-  const getDeviceAuthStartError = (err: unknown): string => {
-    const error = getErrorMessage(err);
-    if (/\b(?:timed? out|timeout)\b/i.test(error)) {
-      return "Starting ChatGPT sign-in timed out. Codex may still be starting in the selected project. Wait a few seconds, then click Sign in again; CoCalc will not retry automatically because that could start a duplicate login.";
-    }
-    return error;
   };
 
   const copyText = async (text: string, label: string): Promise<void> => {
@@ -592,32 +919,6 @@ function CodexCredentialsPanelBody({
       }
     } catch (err) {
       setDeviceAuthError(getErrorMessage(err));
-    }
-  };
-
-  const startDeviceAuth = async () => {
-    if (!embedded) {
-      openSubscriptionAuthPanel();
-    }
-    if (!authProjectId) {
-      setDeviceAuthError(
-        "No project available. Create or open a project, then retry.",
-      );
-      return;
-    }
-    setDeviceAuthActionPending(true);
-    setDeviceAuthError("");
-    try {
-      const status =
-        await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
-          project_id: authProjectId,
-        });
-      setDeviceAuth(status as DeviceAuthStatus);
-      refresh();
-    } catch (err) {
-      setDeviceAuthError(getDeviceAuthStartError(err));
-    } finally {
-      setDeviceAuthActionPending(false);
     }
   };
 
@@ -806,47 +1107,57 @@ function CodexCredentialsPanelBody({
   };
 
   const renderCodexUsageStatusDetails = () => {
-    if (paymentSource?.source !== "subscription") return null;
-    const chatgptAccount = getChatGptAccountInfo(codexUsageStatus);
-    const rateLimit = getCodexRateLimit(codexUsageStatus);
+    if (!usageSourceOptions.length) return null;
+    const selectedCredentialId = usageSource.slice("subscription:".length);
+    const selectedUsageStatus =
+      selectedCredentialId === codexUsageCredentialId
+        ? codexUsageStatus
+        : undefined;
+    const rateLimit = getCodexRateLimit(selectedUsageStatus);
     const planType =
-      formatPlanType(chatgptAccount?.planType) ??
+      formatPlanType(getChatGptAccountInfo(selectedUsageStatus)?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
-    const reason = formatCodexUsageReason(codexUsageStatus?.reason);
+    const reason = formatCodexUsageReason(selectedUsageStatus?.reason);
     return (
       <Space orientation="vertical" size={6} style={{ width: "100%" }}>
-        <Text strong>ChatGPT Codex usage</Text>
-        {codexUsageLoading && !codexUsageStatus ? (
+        <Text strong>Codex usage</Text>
+        <Select
+          aria-label="Codex usage payment source"
+          value={usageSource}
+          options={usageSourceOptions}
+          onChange={setUsageSource}
+          style={{ width: "100%", maxWidth: 360 }}
+        />
+        {usageSource === "site-api-key" ? (
+          <MembershipUsageMeters paymentSource={paymentSource} />
+        ) : usageSource.endsWith("-api-key") ? (
+          <Text type="secondary">
+            OpenAI does not provide a subscription-style remaining usage view
+            for API keys. Review API usage and billing in your OpenAI account.
+          </Text>
+        ) : codexUsageLoading && !selectedUsageStatus ? (
           <Text type="secondary">Checking ChatGPT Codex usage...</Text>
-        ) : !codexUsageStatus ? (
+        ) : !selectedUsageStatus ? (
           <Text type="secondary">Usage status has not been checked yet.</Text>
         ) : null}
-        <Space wrap>
-          {chatgptAccount?.email ? (
-            <Tag color="blue">{chatgptAccount.email}</Tag>
-          ) : null}
-          {planType ? <Tag color="green">{planType}</Tag> : null}
-        </Space>
-        <CodexUsageMeters status={codexUsageStatus} />
-        {reason ? <Text type="secondary">{reason}</Text> : null}
-        <Space wrap>
-          <Button
-            size="small"
-            onClick={refreshUsage}
-            loading={codexUsageLoading}
-            disabled={codexUsageLoading}
-          >
-            Refresh usage
-          </Button>
-          <Button
-            size="small"
-            href={CODEX_USAGE_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {CODEX_USAGE_LABEL}
-          </Button>
-        </Space>
+        {usageSource.startsWith("subscription:") ? (
+          <>
+            <Space wrap>
+              {planType ? <Tag color="green">{planType}</Tag> : null}
+            </Space>
+            <CodexUsageMeters status={selectedUsageStatus} />
+            {reason ? <Text type="secondary">{reason}</Text> : null}
+            <Button
+              size="small"
+              onClick={refreshUsage}
+              loading={codexUsageLoading}
+              disabled={codexUsageLoading}
+              style={{ alignSelf: "flex-start" }}
+            >
+              Refresh usage
+            </Button>
+          </>
+        ) : null}
       </Space>
     );
   };
@@ -862,14 +1173,41 @@ function CodexCredentialsPanelBody({
     setDeviceAuthError("");
     try {
       const content = await file.text();
+      const subscriptions = paymentSource?.subscriptions ?? [];
+      const targetCredentialId =
+        credentialMutationTarget?.credentialId ??
+        paymentSource?.credentialId ??
+        (subscriptions.length === 1 ? subscriptions[0].id : undefined);
+      const targetCreate =
+        credentialMutationTarget?.create ??
+        (!targetCredentialId && !subscriptions.length);
+      if (!targetCreate && !targetCredentialId) {
+        throw new Error(
+          "Choose Reconnect on the target subscription, or choose Add, before uploading auth.json.",
+        );
+      }
+      const capability =
+        await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
+          { project_id: authProjectId },
+        );
+      if (
+        (capability?.version ?? 0) < 2 ||
+        capability?.credentialLifecycle !== true
+      ) {
+        throw new Error(
+          "This project host must be updated before a ChatGPT auth file can be uploaded.",
+        );
+      }
       const result =
-        await webapp_client.conat_client.hub.projects.codexUploadAuthFile({
+        await webapp_client.conat_client.hub.projects.codexUploadAuthFileV2({
           project_id: authProjectId,
           filename: file.name,
           content,
+          ...(targetCredentialId
+            ? { credential_id: targetCredentialId }
+            : { create: true }),
         });
       setUploadedAuthFileStatus({
-        codexHome: result.codexHome,
         bytes: result.bytes,
         uploadedAt: Date.now(),
       });
@@ -924,7 +1262,12 @@ function CodexCredentialsPanelBody({
         : "Could not verify your ChatGPT sign-in";
 
   const content = (
-    <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
+    <Space
+      ref={panelRootRef}
+      orientation="vertical"
+      size="middle"
+      style={{ width: "100%" }}
+    >
       <div style={recommendedCardStyle}>
         <Space orientation="vertical" size={10} style={{ width: "100%" }}>
           {paymentSource?.source === "subscription" ? (
@@ -949,7 +1292,7 @@ function CodexCredentialsPanelBody({
                 {codexUsageAuthProblem
                   ? "Your ChatGPT plan is selected for Codex, but the stored sign-in needs to be refreshed before Codex can use it."
                   : codexConnectionVerified
-                    ? "CoCalc is using your ChatGPT subscription for Codex. ChatGPT shows your exact plan and remaining Codex usage."
+                    ? "CoCalc is using your ChatGPT subscription for Codex. Usage for each configured payment source is shown below."
                     : codexConnectionChecking
                       ? "CoCalc found a stored ChatGPT credential and is checking whether Codex can use it."
                       : "CoCalc found a stored ChatGPT credential, but the live check did not confirm that Codex can use it. Refresh usage or sign in again."}
@@ -965,8 +1308,12 @@ function CodexCredentialsPanelBody({
                     ? "Getting sign-in code..."
                     : "Sign in again with ChatGPT"}
                 </Button>
-                <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                  {CODEX_USAGE_LABEL}
+                <Button
+                  onClick={() => void startDeviceAuth(undefined, true)}
+                  loading={deviceAuthActionPending}
+                  disabled={deviceAuth?.state === "pending"}
+                >
+                  Add ChatGPT subscription
                 </Button>
               </Space>
               {!authProjectId ? (
@@ -986,8 +1333,7 @@ function CodexCredentialsPanelBody({
               </Space>
               <Text type="secondary">
                 Sign in once to use your ChatGPT Codex subscription in CoCalc.
-                No API key is needed. ChatGPT shows your exact plan and
-                remaining Codex usage.
+                No API key is needed.
               </Text>
               <Space wrap>
                 <Button
@@ -999,9 +1345,6 @@ function CodexCredentialsPanelBody({
                   {deviceAuthActionPending
                     ? "Getting sign-in code..."
                     : "Sign in with ChatGPT"}
-                </Button>
-                <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                  {CODEX_USAGE_LABEL}
                 </Button>
               </Space>
               {!authProjectId ? (
@@ -1049,13 +1392,6 @@ function CodexCredentialsPanelBody({
                     Codex will prefer your ChatGPT Plan. Use an OpenAI API key
                     only as a fallback.
                   </Text>
-                  <Text type="secondary">
-                    To see the exact ChatGPT plan and remaining Codex usage,{" "}
-                    <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                      {CODEX_USAGE_LABEL}
-                    </a>
-                    .
-                  </Text>
                   {renderCodexUsageStatusDetails()}
                 </Space>
               ) : (
@@ -1097,19 +1433,6 @@ function CodexCredentialsPanelBody({
                     </Tag>
                     <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
                   </Space>
-                  {paymentSource.hasSubscription ? (
-                    <Text type="secondary">
-                      To see the exact ChatGPT plan and remaining Codex usage,{" "}
-                      <a
-                        href={CODEX_USAGE_URL}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {CODEX_USAGE_LABEL}
-                      </a>
-                      .
-                    </Text>
-                  ) : null}
                   {renderCodexUsageStatusDetails()}
                 </Space>
               )
@@ -1199,7 +1522,7 @@ function CodexCredentialsPanelBody({
                     type="success"
                     showIcon
                     title="Auth file uploaded"
-                    description={`Saved ${uploadedAuthFileStatus.bytes} bytes to ${uploadedAuthFileStatus.codexHome}`}
+                    description={`Saved ${uploadedAuthFileStatus.bytes} bytes to your CoCalc account credential registry.`}
                   />
                 ) : null}
                 {deviceAuthError ? (
@@ -1504,12 +1827,22 @@ function CodexCredentialsPanelBody({
                     <Table
                       rowKey="id"
                       size="small"
-                      dataSource={credentials}
+                      dataSource={orderedCredentials}
                       columns={columns as any}
                       pagination={false}
                       locale={{
                         emptyText: "No saved subscription credentials.",
                       }}
+                      footer={() => (
+                        <Button
+                          size="small"
+                          onClick={() => void startDeviceAuth(undefined, true)}
+                          loading={deviceAuthActionPending}
+                          disabled={deviceAuth?.state === "pending"}
+                        >
+                          Add
+                        </Button>
+                      )}
                     />
                   ),
                 },

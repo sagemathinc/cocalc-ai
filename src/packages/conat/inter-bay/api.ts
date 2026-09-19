@@ -3042,9 +3042,15 @@ export type ProjectSecretsMethod =
   | "remove-course-managed";
 export type ExternalCredentialMethod =
   | "upsert"
+  | "create"
+  | "update-by-id"
+  | "update-label-by-id"
   | "get"
+  | "get-by-id"
+  | "ensure-default"
   | "has"
   | "touch"
+  | "touch-by-id"
   | "list"
   | "revoke"
   | "refresh-codex-subscription";
@@ -3383,12 +3389,45 @@ export interface InterBayExternalCredentialsApi {
     payload: string;
     metadata?: Record<string, any>;
   }) => Promise<{ id: string; created: boolean }>;
+  create: (opts: {
+    selector: ExternalCredentialSelector;
+    payload: string;
+    metadata?: Record<string, any>;
+    max_active?: number;
+    deduplicate_metadata?: { key: string; value: string };
+    default_metadata_key?: string;
+  }) => Promise<{ id: string; created: boolean }>;
+  updateById: (opts: {
+    id: string;
+    selector: ExternalCredentialSelector;
+    payload: string;
+    metadata?: Record<string, any>;
+    revive?: boolean;
+  }) => Promise<boolean>;
+  updateLabelById: (opts: {
+    id: string;
+    selector: ExternalCredentialSelector;
+    label?: string;
+  }) => Promise<boolean>;
   get: (opts: {
     selector: ExternalCredentialSelector;
     touch_last_used?: boolean;
   }) => Promise<InterBayExternalCredentialRecord | undefined>;
+  getById: (opts: {
+    id: string;
+    selector: ExternalCredentialSelector;
+    touch_last_used?: boolean;
+  }) => Promise<InterBayExternalCredentialRecord | undefined>;
+  ensureDefault: (opts: {
+    selector: ExternalCredentialSelector;
+    metadata_key: string;
+  }) => Promise<InterBayExternalCredentialInfo | undefined>;
   has: (opts: { selector: ExternalCredentialSelector }) => Promise<boolean>;
   touch: (opts: { selector: ExternalCredentialSelector }) => Promise<boolean>;
+  touchById: (opts: {
+    id: string;
+    selector: ExternalCredentialSelector;
+  }) => Promise<boolean>;
   list: (opts: {
     owner_account_id: string;
     include_revoked?: boolean;
@@ -3399,6 +3438,7 @@ export interface InterBayExternalCredentialsApi {
   revoke: (opts: { id: string; owner_account_id?: string }) => Promise<boolean>;
   refreshCodexSubscription: (opts: {
     owner_account_id: string;
+    credential_id?: string;
     previous_access_token_hash: string;
   }) => Promise<{
     payload: string;
@@ -5124,9 +5164,15 @@ type ExternalCredentialName = keyof InterBayExternalCredentialsApi;
 
 const EXTERNAL_CREDENTIAL_METHOD_SPECS = [
   { name: "upsert", method: "upsert" },
+  { name: "create", method: "create" },
+  { name: "updateById", method: "update-by-id" },
+  { name: "updateLabelById", method: "update-label-by-id" },
   { name: "get", method: "get" },
+  { name: "getById", method: "get-by-id" },
+  { name: "ensureDefault", method: "ensure-default" },
   { name: "has", method: "has" },
   { name: "touch", method: "touch" },
+  { name: "touchById", method: "touch-by-id" },
   { name: "list", method: "list" },
   { name: "revoke", method: "revoke" },
   {

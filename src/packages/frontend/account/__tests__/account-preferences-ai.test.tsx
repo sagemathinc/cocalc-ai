@@ -7,6 +7,15 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: (...args: any[]) => useTypedRedux(...args),
 }));
 
+jest.mock("@cocalc/frontend/antd-bootstrap", () => ({
+  Panel: ({ children, header }: any) => (
+    <section>
+      <h2>{header}</h2>
+      {children}
+    </section>
+  ),
+}));
+
 jest.mock("antd", () => ({
   Alert: ({ children }: any) => <div>{children}</div>,
   Button: ({ children, onClick }: any) => (

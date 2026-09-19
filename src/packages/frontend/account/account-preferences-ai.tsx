@@ -24,6 +24,7 @@ import LiteAISettings from "./lite-ai-settings";
 import { AIUsageStatus } from "@cocalc/frontend/misc/ai-usage-status";
 import type { SettingsPageDefinition } from "./settings-page";
 import { AgentMessagingPreference } from "./agent-messaging-preference";
+import { Panel } from "@cocalc/frontend/antd-bootstrap";
 
 const CODEX_SESSIONS_TITLE = "Codex sessions";
 
@@ -54,10 +55,7 @@ export function AccountPreferencesAI() {
   const stripe_customer = useTypedRedux("account", "stripe_customer");
   const [codexSessionsOpen, setCodexSessionsOpen] = useState(false);
   const codexSessionsSection = (
-    <div style={{ marginTop: 24, marginBottom: 8 }}>
-      <Typography.Title level={2} style={{ marginBottom: 6, fontSize: 18 }}>
-        {CODEX_SESSIONS_TITLE}
-      </Typography.Title>
+    <Panel header={CODEX_SESSIONS_TITLE}>
       <Typography.Paragraph type="secondary" style={{ marginBottom: 10 }}>
         Review current and recent Codex sessions, jump back to their chat files,
         and stop any turns that might still be using AI resources.
@@ -74,7 +72,7 @@ export function AccountPreferencesAI() {
       >
         <CodexSessionsPanel />
       </Modal>
-    </div>
+    </Panel>
   );
 
   if (lite) {
@@ -113,14 +111,13 @@ export function AccountPreferencesAI() {
         }
         mode="ai"
       />
-      <Typography.Title level={2} style={{ marginBottom: 8, fontSize: 18 }}>
-        AI usage
-      </Typography.Title>
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
-        Current 5-hour and 7-day AI usage for your account. These limits apply
-        even when you use CoCalc&apos;s shared API access.
-      </Typography.Paragraph>
-      <AIUsageStatus variant="full" showHelp />
+      <Panel header="AI usage">
+        <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+          Current 5-hour and 7-day AI usage for your account. These limits apply
+          even when you use CoCalc&apos;s shared API access.
+        </Typography.Paragraph>
+        <AIUsageStatus variant="full" showHelp />
+      </Panel>
       <CodexCredentialsPanel />
       <CodexSubagentConcurrencyField />
       <CodexDefaultsPanel other_settings={other_settings} />

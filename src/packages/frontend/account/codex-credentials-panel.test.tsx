@@ -8,6 +8,9 @@ import {
 import {
   CodexCredentialsPanel,
   CodexUsageMeters,
+  reconcileCredentialOrder,
+  scrollCodexCredentialsModalToTop,
+  sortCredentialIdsByLastUsed,
 } from "./codex-credentials-panel";
 import {
   readCachedCodexModelCatalog,
@@ -18,7 +21,49 @@ const getCodexPaymentSource = jest.fn();
 const getCodexUsageStatus = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
+const getCodexCredentialSelectionCapability = jest.fn();
 const mockClipboardWriteText = jest.fn();
+
+describe("Codex subscription credential ordering", () => {
+  const older = {
+    id: "older",
+    updated: new Date("2026-09-19T02:00:00Z"),
+    last_used: new Date("2026-09-18T12:00:00Z"),
+  } as any;
+  const newer = {
+    id: "newer",
+    updated: new Date("2026-09-18T12:00:00Z"),
+    last_used: new Date("2026-09-19T01:00:00Z"),
+  } as any;
+
+  it("sorts an expanded table by last use rather than label update time", () => {
+    expect(sortCredentialIdsByLastUsed([older, newer])).toEqual([
+      "newer",
+      "older",
+    ]);
+  });
+
+  it("preserves the visible order across refreshed row data", () => {
+    expect(
+      reconcileCredentialOrder(["older", "newer"], [newer, older]),
+    ).toEqual(["older", "newer"]);
+  });
+});
+
+describe("Codex credential modal scrolling", () => {
+  it("scrolls only the modal containing the credential panel", () => {
+    const modalBody = document.createElement("div");
+    modalBody.className = "ant-modal-body";
+    const root = document.createElement("div");
+    modalBody.appendChild(root);
+    const scrollTo = jest.fn();
+    modalBody.scrollTo = scrollTo;
+
+    scrollCodexCredentialsModalToTop(root);
+
+    expect(scrollTo).toHaveBeenCalledWith({ top: 0, behavior: "auto" });
+  });
+});
 
 jest.mock("antd", () => {
   const Button = ({ children, disabled, href, loading, onClick }: any) =>
@@ -76,6 +121,24 @@ jest.mock("antd", () => {
   const Progress = ({ percent }: any) => (
     <div role="progressbar" aria-valuenow={percent} />
   );
+  const Select = ({
+    "aria-label": ariaLabel,
+    onChange,
+    options,
+    value,
+  }: any) => (
+    <select
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) => onChange?.(event.target.value)}
+    >
+      {options?.map((option: any) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
   return {
     Alert: Div,
     Button,
@@ -83,8 +146,9 @@ jest.mock("antd", () => {
     Input: { TextArea },
     Popconfirm: Div,
     Progress,
+    Select,
     Space: Div,
-    Table: Div,
+    Table: ({ footer }: any) => <div>{footer?.()}</div>,
     Tag: Div,
     Typography: {
       Text: ({ children, style }: any) => <span style={style}>{children}</span>,
@@ -146,8 +210,12 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
         projects: {
           codexDeviceAuthStart: (...args: any[]) =>
             codexDeviceAuthStart(...args),
+          codexDeviceAuthStartV2: (...args: any[]) =>
+            codexDeviceAuthStart(...args),
           codexDeviceAuthStatus: (...args: any[]) =>
             codexDeviceAuthStatus(...args),
+          getCodexCredentialSelectionCapability: (...args: any[]) =>
+            getCodexCredentialSelectionCapability(...args),
         },
         system: {
           getCodexPaymentSource: (...args: any[]) =>
@@ -172,6 +240,10 @@ describe("CodexCredentialsPanel", () => {
     jest.clearAllMocks();
     jest.useRealTimers();
     window.localStorage.clear();
+    getCodexCredentialSelectionCapability.mockResolvedValue({
+      version: 2,
+      credentialLifecycle: true,
+    });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: mockClipboardWriteText },
@@ -248,10 +320,8 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(screen.getAllByText("ChatGPT Plan").length).toBeGreaterThan(0);
       expect(screen.getByText("Current Codex payment source:")).toBeTruthy();
-      expect(
-        screen.getAllByText("Open ChatGPT Codex Usage").length,
-      ).toBeGreaterThan(0);
-      expect(screen.getByText("user@example.com")).toBeTruthy();
+      expect(screen.queryByText("Open ChatGPT Codex Usage")).toBeNull();
+      expect(screen.queryByText("user@example.com")).toBeNull();
       expect(screen.getByText("5-hour limit")).toBeTruthy();
       expect(screen.getByText("58%")).toBeTruthy();
       expect(screen.getAllByText("Remaining").length).toBeGreaterThan(0);
@@ -322,10 +392,33 @@ describe("CodexCredentialsPanel", () => {
 
     expect(codexDeviceAuthStart).toHaveBeenCalledWith({
       project_id: "project-1",
+      create: true,
+    });
+    expect(getCodexCredentialSelectionCapability).toHaveBeenCalledWith({
+      project_id: "project-1",
     });
     await waitFor(() => {
       expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
     });
+  });
+
+  it("does not start sign-in on a host without credential lifecycle support", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      paymentSource: { source: "subscription" },
+      reason: "authentication required",
+    });
+    getCodexCredentialSelectionCapability.mockResolvedValue({ version: 1 });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    fireEvent.click(await screen.findByText("Sign in again with ChatGPT"));
+
+    await screen.findByText((text) =>
+      text.includes("must be updated before ChatGPT subscriptions"),
+    );
+    expect(codexDeviceAuthStart).not.toHaveBeenCalled();
   });
 
   it("explains how to recover when starting device auth times out", async () => {
@@ -782,6 +875,50 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(mockClipboardWriteText).toHaveBeenCalledWith("WXYZ-1234");
     });
+  });
+  it("checks usage for the exact subscription selected by the user", async () => {
+    getCodexPaymentSource.mockResolvedValue({
+      source: "subscription",
+      hasSubscription: true,
+      credentialId: "credential-a",
+      subscriptions: [
+        {
+          id: "credential-a",
+          label: "Normal",
+          updatedAt: "2026-09-19T00:00:00Z",
+        },
+        {
+          id: "credential-b",
+          label: "Security review",
+          updatedAt: "2026-09-19T00:00:00Z",
+        },
+      ],
+    });
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      checkedAt: "2026-09-19T00:00:00Z",
+      paymentSource: { source: "subscription" },
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    const selector = await screen.findByRole("combobox", {
+      name: "Codex usage payment source",
+    });
+    await waitFor(() =>
+      expect(getCodexUsageStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ credential_id: "credential-a" }),
+      ),
+    );
+
+    fireEvent.change(selector, {
+      target: { value: "subscription:credential-b" },
+    });
+    await waitFor(() =>
+      expect(getCodexUsageStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ credential_id: "credential-b" }),
+      ),
+    );
   });
 });
 
