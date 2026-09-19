@@ -149,6 +149,7 @@ describe("ChatInput send lifecycle regressions", () => {
     expect(lastMarkdownInputProps.redoMode).toBe("local");
     expect(lastMarkdownInputProps.hideHelp).toBe(true);
     expect(lastMarkdownInputProps.modeSwitchPlacement).toBe("toolbar");
+    expect(lastMarkdownInputProps.reserveModeSwitchSpace).toBe(true);
     expect(lastMarkdownInputProps.disableModeSwitchShortcuts).toBe(true);
     expect(lastMarkdownInputProps.hideModeSwitch).toBe(true);
     expect(lastMarkdownInputProps.clampAutoGrowToHost).toBe(true);

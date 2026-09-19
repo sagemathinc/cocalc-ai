@@ -192,6 +192,28 @@ describe("MultiMarkdownInput wrapper contract", () => {
     expect(screen.queryByTestId("editable-markdown")).not.toBeNull();
   });
 
+  it("reserves the toolbar row while its controls are hidden", () => {
+    const { container } = render(
+      <MultiMarkdownInput
+        value=""
+        onChange={() => {}}
+        height="60px"
+        hideModeSwitch
+        modeSwitchPlacement="toolbar"
+        reserveModeSwitchSpace
+        modeSwitchRightContent={<span>help</span>}
+      />,
+    );
+
+    const shell = container.firstElementChild as HTMLElement;
+    const toolbar = shell.firstElementChild as HTMLElement;
+    expect(shell.style.display).toBe("flex");
+    expect(toolbar.style.minHeight).toBe("28px");
+    expect(screen.queryByText("help")).toBeNull();
+    expect(screen.queryByTestId("mode-switch")).toBeNull();
+    expect(latestEditableProps.height).toBe("100%");
+  });
+
   it("opts unbounded markdown edit cells out of browser scroll anchoring", () => {
     const { container } = render(
       <MultiMarkdownInput

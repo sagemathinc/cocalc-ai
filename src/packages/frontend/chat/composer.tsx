@@ -184,17 +184,17 @@ export function ChatRoomComposer({
       return "Write a message...";
     }
     if (metadata?.agent_kind === "acp") {
-      return "Ask Codex...";
+      return "What would you like to work on?";
     }
     const threadMs = parseInt(contextThread.key, 10);
     if (
       Number.isFinite(threadMs) &&
       actions?.isCodexThread?.(new Date(threadMs))
     ) {
-      return "Ask Codex...";
+      return "What would you like to work on?";
     }
     if (contextThread.isAI) {
-      return "Ask AI...";
+      return "What would you like to work on?";
     }
     return "Write a message...";
   }, [contextThread, actions]);

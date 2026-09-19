@@ -49,6 +49,7 @@ export default function MultiMarkdownInput({
   isFocused,
   minimal,
   modeSwitchPlacement = "float",
+  reserveModeSwitchSpace = false,
   modeSwitchRightContent,
   modeSwitchStyle,
   noVfill,
@@ -133,15 +134,19 @@ export default function MultiMarkdownInput({
   const richTextControlRef = useRef<any>(null);
   const showToolbarModeSwitch =
     modeSwitchPlacement === "toolbar" && !fixedMode && !hideModeSwitch;
-  const toolbarInset = showToolbarModeSwitch ? 28 : 0;
+  const reserveToolbarModeSwitch =
+    modeSwitchPlacement === "toolbar" &&
+    !fixedMode &&
+    (showToolbarModeSwitch || reserveModeSwitchSpace);
+  const toolbarInset = reserveToolbarModeSwitch ? 28 : 0;
   const editorHeight =
-    showToolbarModeSwitch && height != null && height !== "auto"
+    reserveToolbarModeSwitch && height != null && height !== "auto"
       ? "100%" // The flex body already excludes the toolbar height.
       : height;
   const shellHeight =
     unboundedAutoGrow && height === "auto"
       ? "auto"
-      : showToolbarModeSwitch && height != null && height !== "auto"
+      : reserveToolbarModeSwitch && height != null && height !== "auto"
         ? height
         : "100%";
   const {
@@ -253,9 +258,9 @@ export default function MultiMarkdownInput({
         maxWidth: "100%",
         height: shellHeight,
         overflowAnchor: unboundedAutoGrow ? "none" : undefined,
-        display: showToolbarModeSwitch ? "flex" : undefined,
-        flexDirection: showToolbarModeSwitch ? "column" : undefined,
-        minHeight: showToolbarModeSwitch ? 0 : undefined,
+        display: reserveToolbarModeSwitch ? "flex" : undefined,
+        flexDirection: reserveToolbarModeSwitch ? "column" : undefined,
+        minHeight: reserveToolbarModeSwitch ? 0 : undefined,
         ...(minimal
           ? undefined
           : {
@@ -266,7 +271,7 @@ export default function MultiMarkdownInput({
             }),
       }}
     >
-      {showToolbarModeSwitch ? (
+      {reserveToolbarModeSwitch ? (
         <div
           style={{
             display: "flex",
@@ -286,14 +291,14 @@ export default function MultiMarkdownInput({
               flexShrink: 0,
             }}
           >
-            {modeSwitchRightContent}
+            {showToolbarModeSwitch ? modeSwitchRightContent : null}
             <MarkdownInputModeSwitch
               mode={mode}
               layout="inline"
               isFocusedFrame={modeSwitchFrameFocused}
               isVisible={modeSwitchFrameVisible}
               hideHelp={hideHelp}
-              hidden={false}
+              hidden={!showToolbarModeSwitch}
               overflowEllipsis={overflowEllipsis}
               style={modeSwitchStyle}
               editBarContentRef={editBar2}
@@ -342,7 +347,7 @@ export default function MultiMarkdownInput({
       )}
       <div
         style={
-          showToolbarModeSwitch
+          reserveToolbarModeSwitch
             ? {
                 flex: "1 1 auto",
                 minHeight: 0,
@@ -407,7 +412,7 @@ export default function MultiMarkdownInput({
             autoGrowMaxHeight={autoGrowMaxHeight}
             unboundedAutoGrow={unboundedAutoGrow}
             clampAutoGrowToHost={clampAutoGrowToHost}
-            chromeLayout={showToolbarModeSwitch ? "external" : "internal"}
+            chromeLayout={reserveToolbarModeSwitch ? "external" : "internal"}
             style={style}
             autoFocus={focused}
             submitMentionsRef={submitMentionsRef}

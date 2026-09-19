@@ -480,6 +480,7 @@ export default function ChatInput({
       overflowEllipsis={true}
       hideModeSwitch={!showModeSwitch}
       modeSwitchPlacement="toolbar"
+      reserveModeSwitchSpace
       disableModeSwitchShortcuts
       modeSwitchRightContent={
         <>

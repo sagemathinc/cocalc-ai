@@ -376,6 +376,35 @@ describe("ChatRoomComposer resize handle", () => {
     ).not.toBeNull();
   });
 
+  it("uses a product-neutral prompt for agent chats", () => {
+    renderComposer({
+      isSelectedThreadAI: true,
+      selectedThread: {
+        key: "thread-agent",
+        label: "Agent thread",
+        newestTime: 0,
+        messageCount: 1,
+        hasCustomName: false,
+        hasCustomAppearance: false,
+        readCount: 1,
+        unreadCount: 0,
+        isAI: true,
+        isAutomation: false,
+        isPinned: false,
+        isArchived: false,
+      },
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({ agent_kind: "acp" }),
+        isCodexThread: () => true,
+      } as any,
+    });
+
+    expect(lastChatInputProps.placeholder).toBe(
+      "What would you like to work on?",
+    );
+  });
+
   it("shows a proactive Codex setup banner for unconfigured AI chats", () => {
     const onOpenCodexPaymentConfig = jest.fn();
     renderComposer({
