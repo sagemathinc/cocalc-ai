@@ -233,6 +233,41 @@ describe("CodexConfigButton", () => {
     ).toBeTruthy();
   });
 
+  it("labels settings changed during an active turn as next-turn settings", async () => {
+    const actions = {
+      getCodexConfig: () => undefined,
+      setCodexConfig: jest.fn(),
+    } as any;
+    const { rerender } = render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-5.4", reasoning: "medium" }}
+        actions={actions}
+        turnRunning
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Next turn")).toBeNull();
+      expect(stableForm.setFieldsValue).toHaveBeenCalled();
+    });
+
+    rerender(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-5.4", reasoning: "high" }}
+        actions={actions}
+        turnRunning
+      />,
+    );
+
+    expect(await screen.findByText("Next turn")).toBeTruthy();
+  });
+
   it("uses the authenticated catalog and preserves only the selected unavailable model", () => {
     const options = codexModelOptionsForCatalog(
       [

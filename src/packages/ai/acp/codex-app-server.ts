@@ -2043,6 +2043,7 @@ export async function getCodexAppServerAccountStatus(opts: {
   includeModels?: boolean;
   timeoutMs?: number;
   credentialId?: string;
+  codexHome?: string;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
@@ -2065,6 +2066,7 @@ export async function getCodexAppServerAccountStatus(opts: {
           touchReason: false,
           paymentSource: opts.credentialId ? "subscription" : undefined,
           credentialId: opts.credentialId,
+          codexHome: opts.codexHome,
         })
       : await spawnStandaloneAppServer(
           {
@@ -2472,6 +2474,7 @@ export class CodexAppServerAgent implements AcpAgent {
     // Subscription authority is checked when a runtime is created. Never let a
     // retained process turn that check into an unbounded authorization lease.
     if (
+      authSourceForSpawned(runtime.spawned) === "subscription" ||
       request.config?.paymentSource === "subscription" ||
       request.config?.paymentSource === "subscription-credential"
     ) {

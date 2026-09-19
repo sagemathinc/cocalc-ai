@@ -57,6 +57,7 @@ import {
   redactCodexAuthRuntime,
   resolveCodexAuthRuntime,
   resolveSharedCodexHome,
+  subscriptionRuntime,
 } from "./codex-auth";
 import {
   refreshSubscriptionAuthFromRegistry,
@@ -1825,6 +1826,7 @@ type SpawnCodexAppServerInProjectRuntimeOptions = {
   siteFundedTurn?: CodexSiteFundedTurnRequest;
   paymentSource?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
   credentialId?: string;
+  codexHome?: string;
 };
 
 type SpawnCodexAppServerInProjectRuntimeResult = {
@@ -1855,14 +1857,23 @@ async function spawnCodexAppServerInProjectRuntime({
   siteFundedTurn: siteFundedTurnRequest,
   paymentSource = "auto",
   credentialId,
+  codexHome,
 }: SpawnCodexAppServerInProjectRuntimeOptions): Promise<SpawnCodexAppServerInProjectRuntimeResult> {
-  const authRuntime = await resolveCodexAuthRuntime({
-    projectId,
-    accountId,
-    forceRefreshSiteKey,
-    preference: paymentSource,
-    credentialId,
-  });
+  const authRuntime =
+    codexHome && accountId
+      ? subscriptionRuntime({
+          projectId,
+          accountId,
+          codexHome,
+          credentialId,
+        })
+      : await resolveCodexAuthRuntime({
+          projectId,
+          accountId,
+          forceRefreshSiteKey,
+          preference: paymentSource,
+          credentialId,
+        });
   logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
   await ensureProjectContainerRunning({ projectId, accountId });
   const { home, scratch } = await localPath({ project_id: projectId });
@@ -1894,12 +1905,16 @@ async function spawnCodexAppServerInProjectRuntime({
   const appServerLogin = siteFundedTurn
     ? undefined
     : await resolveAppServerLoginHint(authRuntime);
-  const handleAppServerRequest = createAppServerRequestHandler({
-    projectId,
-    accountId,
-    authRuntime,
-    appServerLogin,
-  });
+  // Staged credentials are verification-only. In particular, do not let a
+  // refresh request pull an older authoritative credential into staging.
+  const handleAppServerRequest = codexHome
+    ? undefined
+    : createAppServerRequestHandler({
+        projectId,
+        accountId,
+        authRuntime,
+        appServerLogin,
+      });
   const name = projectContainerName(projectId);
   const cliTokenLease = await createProjectCliTokenLease({
     projectId,
@@ -2089,7 +2104,8 @@ async function spawnCodexAppServerInProjectRuntime({
       if (
         authRuntime.source === "subscription" &&
         accountId &&
-        authRuntime.codexHome
+        authRuntime.codexHome &&
+        !codexHome
       ) {
         try {
           await syncSubscriptionAuthToRegistryIfChanged({
@@ -2194,6 +2210,7 @@ export function initCodexProjectRunner(): void {
       siteFundedTurn,
       paymentSource,
       credentialId,
+      codexHome,
     }) {
       const spawned = await spawnCodexAppServerInProjectRuntime({
         projectId,
@@ -2206,6 +2223,7 @@ export function initCodexProjectRunner(): void {
         siteFundedTurn,
         paymentSource,
         credentialId,
+        codexHome,
       });
       return {
         proc: spawned.proc,

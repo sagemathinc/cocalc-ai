@@ -40,6 +40,10 @@ export type PendingChatSend = {
   shouldMarkNotSent?: boolean;
 };
 
+// Credential selection is intentionally not captured here. Recovery is the
+// next execution attempt, so it uses the thread's current Codex-bar settings;
+// the already-running execution keeps the settings with which it started.
+
 export type PendingChatOutboxEntry = BrowserOutboxEntry<PendingChatSend>;
 
 export function getPendingChatBrowserSessionId(): string {

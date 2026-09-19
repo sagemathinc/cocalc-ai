@@ -242,13 +242,15 @@ function validateUploadedAuthJson(raw: string): void {
 
 export async function uploadSubscriptionAuthFile({
   accountId,
+  sessionId,
   content,
 }: {
   accountId: string;
+  sessionId: string;
   content: string;
 }): Promise<{ codexHome: string; bytes: number }> {
   validateUploadedAuthJson(content);
-  const codexHome = resolveSubscriptionCodexHome(accountId);
+  const codexHome = resolveSubscriptionStagingHome(accountId, sessionId);
   await fs.mkdir(codexHome, { recursive: true, mode: 0o700 });
   const authPath = join(codexHome, "auth.json");
   await fs.writeFile(authPath, content, { mode: 0o600 });

@@ -119,6 +119,7 @@ export type CodexProjectSpawner = {
     siteFundedTurn?: CodexSiteFundedTurnRequest;
     paymentSource?: CodexPaymentSourcePreference;
     credentialId?: string;
+    codexHome?: string;
   }) => Promise<{
     proc: ChildProcess;
     cmd: string;

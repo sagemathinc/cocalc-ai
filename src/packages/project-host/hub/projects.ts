@@ -67,7 +67,7 @@ import {
 } from "../master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-server";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   writeManagedAuthorizedKeys,
@@ -2885,9 +2885,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }: {
     account_id?: string;
     project_id: string;
-  }): Promise<{ version: 1 }> {
+  }): Promise<{ version: 2; credentialLifecycle: true }> {
     assertHostedProjectAccess({ account_id, project_id });
-    return { version: 1 };
+    return { version: 2, credentialLifecycle: true };
   }
 
   async function verifyCodexSubscriptionAuth({
@@ -2900,11 +2900,12 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     accountId: string;
     codexHome: string;
     credentialId?: string;
-  }): Promise<void> {
+  }): Promise<{ descriptorMetadata?: { email?: string } }> {
     const status = await getCodexAppServerAccountStatus({
       projectId,
       accountId,
       credentialId,
+      codexHome,
       timeoutMs: CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS,
     });
     if (status.rateLimits) {
@@ -2912,16 +2913,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       const email = String(
         account?.email ?? account?.account?.email ?? account?.user?.email ?? "",
       ).trim();
-      if (credentialId && email) {
-        await pushSubscriptionAuthToRegistry({
-          projectId,
-          accountId,
-          credentialId,
-          codexHome,
-          descriptorMetadata: { email },
-        });
-      }
-      return;
+      return email ? { descriptorMetadata: { email } } : {};
     }
     throw Error(
       status.errors?.rateLimits ??
@@ -3021,18 +3013,37 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     if (filename && !/auth\.json$/i.test(filename.trim())) {
       throw Error("only auth.json uploads are supported");
     }
+    const sessionId = uuid();
     const result = await uploadSubscriptionAuthFile({
       accountId: account_id,
+      sessionId,
       content,
     });
-    const synced = await pushSubscriptionAuthToRegistry({
-      projectId: project_id,
-      accountId: account_id,
-      codexHome: result.codexHome,
-      content,
-    });
-    invalidateCodexModelCatalog(account_id);
-    return { ok: true as const, synced: synced.ok, ...result };
+    try {
+      const verification = await verifyCodexSubscriptionAuth({
+        projectId: project_id,
+        accountId: account_id,
+        codexHome: result.codexHome,
+      });
+      const synced = await pushSubscriptionAuthToRegistry({
+        projectId: project_id,
+        accountId: account_id,
+        codexHome: result.codexHome,
+        content,
+        descriptorMetadata: verification.descriptorMetadata,
+      });
+      if (!synced.ok) {
+        throw new Error("unable to save uploaded credential");
+      }
+      invalidateCodexModelCatalog(account_id);
+      return {
+        ok: true as const,
+        synced: true as const,
+        bytes: result.bytes,
+      };
+    } finally {
+      await rm(result.codexHome, { recursive: true, force: true });
+    }
   }
 
   function assertHostedProjectAccess({

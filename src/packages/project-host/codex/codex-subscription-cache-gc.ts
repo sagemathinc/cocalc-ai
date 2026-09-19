@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import type { Dirent } from "node:fs";
 import { promises as fs } from "node:fs";
 import { join } from "node:path";
 import getLogger from "@cocalc/backend/logger";
@@ -129,7 +130,7 @@ async function lastUsedMs(homePath: string): Promise<number> {
 type SubscriptionHome = {
   path: string;
   accountRoot: string;
-  credential: boolean;
+  kind: "legacy" | "credential" | "pending";
 };
 
 async function listSubscriptionHomes(
@@ -145,7 +146,7 @@ async function listSubscriptionHomes(
         (await pathExists(join(accountRoot, "auth.json"))) ||
         (await pathExists(join(accountRoot, "config.toml")))
       ) {
-        homes.push({ path: accountRoot, accountRoot, credential: false });
+        homes.push({ path: accountRoot, accountRoot, kind: "legacy" });
       }
       const credentialEntries = await fs.readdir(accountRoot, {
         withFileTypes: true,
@@ -157,7 +158,24 @@ async function listSubscriptionHomes(
         homes.push({
           path: join(accountRoot, credential.name),
           accountRoot,
-          credential: true,
+          kind: "credential",
+        });
+      }
+      const pendingRoot = join(accountRoot, ".pending");
+      let pendingEntries: Dirent[] = [];
+      try {
+        pendingEntries = await fs.readdir(pendingRoot, {
+          withFileTypes: true,
+        });
+      } catch (err: any) {
+        if (err?.code !== "ENOENT") throw err;
+      }
+      for (const pending of pendingEntries) {
+        if (!pending.isDirectory() || !isValidUUID(pending.name)) continue;
+        homes.push({
+          path: join(pendingRoot, pending.name),
+          accountRoot,
+          kind: "pending",
         });
       }
     }
@@ -194,7 +212,7 @@ export async function sweepCodexSubscriptionCacheOnce(
     if (!used) continue;
     if (now - used <= ttlMs) continue;
     try {
-      if (home.credential) {
+      if (home.kind !== "legacy") {
         await fs.rm(homePath, { recursive: true, force: true });
       } else {
         // The account root can contain independent credential directories.

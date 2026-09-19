@@ -135,7 +135,7 @@ describe("codex device auth", () => {
     });
   });
 
-  it("does not report completed until synced subscription auth is verified", async () => {
+  it("does not publish subscription auth until staged auth is verified", async () => {
     const verification = deferred<void>();
     const proc = new FakeProc();
     spawnCodexInProjectContainerMock.mockResolvedValue({ proc });
@@ -153,11 +153,13 @@ describe("codex device auth", () => {
 
     expect(getCodexDeviceAuthStatus(started.id)).toMatchObject({
       state: "syncing",
-      syncedToRegistry: true,
+      syncedToRegistry: undefined,
     });
+    expect(pushSubscriptionAuthToRegistryMock).not.toHaveBeenCalled();
 
     verification.resolve();
     await verification.promise;
+    await Promise.resolve();
     await Promise.resolve();
 
     expect(getCodexDeviceAuthStatus(started.id)).toMatchObject({
@@ -166,7 +168,7 @@ describe("codex device auth", () => {
     });
   });
 
-  it("fails device auth when synced subscription auth cannot be verified", async () => {
+  it("does not publish device auth that cannot be verified", async () => {
     const proc = new FakeProc();
     spawnCodexInProjectContainerMock.mockResolvedValue({ proc });
     pushSubscriptionAuthToRegistryMock.mockResolvedValue({ ok: true });
@@ -186,11 +188,12 @@ describe("codex device auth", () => {
 
     expect(getCodexDeviceAuthStatus(started.id)).toMatchObject({
       state: "failed",
-      syncedToRegistry: true,
+      syncedToRegistry: false,
       syncError: "Error: account/rateLimits/read: auth required",
       error:
         "ChatGPT sign-in succeeded, but CoCalc could not verify that Codex can use the saved credential. Please try signing in again.",
     });
+    expect(pushSubscriptionAuthToRegistryMock).not.toHaveBeenCalled();
   });
 
   it("fails device auth when subscription auth cannot be synced to registry", async () => {

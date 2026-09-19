@@ -405,7 +405,6 @@ function CodexCredentialsPanelBody({
   const [authFileUploadPending, setAuthFileUploadPending] =
     useState<boolean>(false);
   const [uploadedAuthFileStatus, setUploadedAuthFileStatus] = useState<{
-    codexHome: string;
     bytes: number;
     uploadedAt: number;
   } | null>(null);
@@ -638,6 +637,18 @@ function CodexCredentialsPanelBody({
         scrollCodexCredentialsModalToTop(panelRootRef.current),
       );
       try {
+        const capability =
+          await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
+            { project_id: authProjectId },
+          );
+        if (
+          (capability?.version ?? 0) < 2 ||
+          capability?.credentialLifecycle !== true
+        ) {
+          throw new Error(
+            "This project host must be updated before ChatGPT subscriptions can be added or reconnected.",
+          );
+        }
         const status =
           await webapp_client.conat_client.hub.projects.codexDeviceAuthStart({
             project_id: authProjectId,
@@ -1133,6 +1144,18 @@ function CodexCredentialsPanelBody({
     setDeviceAuthError("");
     try {
       const content = await file.text();
+      const capability =
+        await webapp_client.conat_client.hub.projects.getCodexCredentialSelectionCapability(
+          { project_id: authProjectId },
+        );
+      if (
+        (capability?.version ?? 0) < 2 ||
+        capability?.credentialLifecycle !== true
+      ) {
+        throw new Error(
+          "This project host must be updated before a ChatGPT auth file can be uploaded.",
+        );
+      }
       const result =
         await webapp_client.conat_client.hub.projects.codexUploadAuthFile({
           project_id: authProjectId,
@@ -1140,7 +1163,6 @@ function CodexCredentialsPanelBody({
           content,
         });
       setUploadedAuthFileStatus({
-        codexHome: result.codexHome,
         bytes: result.bytes,
         uploadedAt: Date.now(),
       });
@@ -1455,7 +1477,7 @@ function CodexCredentialsPanelBody({
                     type="success"
                     showIcon
                     title="Auth file uploaded"
-                    description={`Saved ${uploadedAuthFileStatus.bytes} bytes to ${uploadedAuthFileStatus.codexHome}`}
+                    description={`Saved ${uploadedAuthFileStatus.bytes} bytes to your CoCalc account credential registry.`}
                   />
                 ) : null}
                 {deviceAuthError ? (

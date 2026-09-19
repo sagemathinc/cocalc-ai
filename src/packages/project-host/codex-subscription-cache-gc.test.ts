@@ -16,6 +16,7 @@ describe("Codex subscription cache GC", () => {
   const accountId = "00000000-0000-4000-8000-000000000001";
   const activeCredentialId = "00000000-0000-4000-8000-000000000002";
   const staleCredentialId = "00000000-0000-4000-8000-000000000003";
+  const stalePendingId = "00000000-0000-4000-8000-000000000004";
   let root: string;
 
   beforeEach(async () => {
@@ -24,13 +25,16 @@ describe("Codex subscription cache GC", () => {
     const accountRoot = path.join(root, accountId);
     const activeHome = path.join(accountRoot, activeCredentialId);
     const staleHome = path.join(accountRoot, staleCredentialId);
+    const stalePendingHome = path.join(accountRoot, ".pending", stalePendingId);
     await fs.mkdir(activeHome, { recursive: true });
     await fs.mkdir(staleHome, { recursive: true });
+    await fs.mkdir(stalePendingHome, { recursive: true });
     for (const file of [
       path.join(accountRoot, "auth.json"),
       path.join(accountRoot, ".last_used"),
       path.join(activeHome, ".last_used"),
       path.join(staleHome, ".last_used"),
+      path.join(stalePendingHome, "auth.json"),
     ]) {
       await fs.writeFile(file, "{}");
       const stale = new Date(Date.now() - 60_000);
@@ -58,6 +62,9 @@ describe("Codex subscription cache GC", () => {
     ).rejects.toMatchObject({ code: "ENOENT" });
     await expect(
       fs.stat(path.join(accountRoot, "auth.json")),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(
+      fs.stat(path.join(accountRoot, ".pending", stalePendingId)),
     ).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

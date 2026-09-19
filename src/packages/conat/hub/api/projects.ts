@@ -2437,7 +2437,10 @@ export interface Projects {
   getCodexCredentialSelectionCapability: (opts: {
     account_id?: string;
     project_id: string;
-  }) => Promise<{ version: 1 }>;
+  }) => Promise<{
+    version: number;
+    credentialLifecycle?: boolean;
+  }>;
 
   codexDeviceAuthStatus: (opts: {
     account_id?: string;
@@ -2472,7 +2475,7 @@ export interface Projects {
     project_id: string;
     filename?: string;
     content: string;
-  }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
+  }) => Promise<{ ok: true; synced: true; bytes: number }>;
 
   getCodexUsageStatus: (opts: {
     account_id?: string;

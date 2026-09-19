@@ -53,7 +53,7 @@ type DeviceAuthVerifier = (opts: {
   accountId: string;
   codexHome: string;
   credentialId?: string;
-}) => Promise<void>;
+}) => Promise<{ descriptorMetadata?: { email?: string } } | void>;
 
 const MAX_OUTPUT_CHARS = 50_000;
 const sessions = new Map<string, DeviceAuthSession>();
@@ -310,14 +310,24 @@ export async function startCodexDeviceAuth(
       });
       void (async () => {
         try {
+          const verification = verifySubscriptionAuth
+            ? await verifySubscriptionAuth({
+                projectId: session.projectId,
+                accountId: session.accountId,
+                codexHome: session.codexHome,
+                credentialId: session.credentialId,
+              })
+            : undefined;
+          if (sessions.get(session.id)?.state === "canceled") return;
           const result = await pushSubscriptionAuthToRegistry({
             projectId: session.projectId,
             accountId: session.accountId,
             credentialId: session.credentialId,
             create: session.create,
             codexHome: session.codexHome,
+            descriptorMetadata: verification?.descriptorMetadata,
           });
-          if (session.state === "canceled") return;
+          if (sessions.get(session.id)?.state === "canceled") return;
           session.syncedToRegistry = result.ok;
           if (!result.ok) {
             session.state = "failed";
@@ -330,16 +340,6 @@ export async function startCodexDeviceAuth(
           }
           session.credentialId = result.id;
           session.syncError = undefined;
-          if (verifySubscriptionAuth) {
-            await verifySubscriptionAuth({
-              projectId: session.projectId,
-              accountId: session.accountId,
-              codexHome: session.codexHome,
-              credentialId: session.credentialId,
-            });
-            const current = sessions.get(session.id);
-            if (!current || current.state === "canceled") return;
-          }
           session.state = "completed";
           session.updatedAt = Date.now();
         } catch (err) {

@@ -21,6 +21,7 @@ const getCodexPaymentSource = jest.fn();
 const getCodexUsageStatus = jest.fn();
 const codexDeviceAuthStart = jest.fn();
 const codexDeviceAuthStatus = jest.fn();
+const getCodexCredentialSelectionCapability = jest.fn();
 const mockClipboardWriteText = jest.fn();
 
 describe("Codex subscription credential ordering", () => {
@@ -211,6 +212,8 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
             codexDeviceAuthStart(...args),
           codexDeviceAuthStatus: (...args: any[]) =>
             codexDeviceAuthStatus(...args),
+          getCodexCredentialSelectionCapability: (...args: any[]) =>
+            getCodexCredentialSelectionCapability(...args),
         },
         system: {
           getCodexPaymentSource: (...args: any[]) =>
@@ -235,6 +238,10 @@ describe("CodexCredentialsPanel", () => {
     jest.clearAllMocks();
     jest.useRealTimers();
     window.localStorage.clear();
+    getCodexCredentialSelectionCapability.mockResolvedValue({
+      version: 2,
+      credentialLifecycle: true,
+    });
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
       value: { writeText: mockClipboardWriteText },
@@ -384,9 +391,31 @@ describe("CodexCredentialsPanel", () => {
     expect(codexDeviceAuthStart).toHaveBeenCalledWith({
       project_id: "project-1",
     });
+    expect(getCodexCredentialSelectionCapability).toHaveBeenCalledWith({
+      project_id: "project-1",
+    });
     await waitFor(() => {
       expect(screen.getByText("ABCD-EFGH")).toBeTruthy();
     });
+  });
+
+  it("does not start sign-in on a host without credential lifecycle support", async () => {
+    getCodexPaymentSource.mockResolvedValue({ source: "subscription" });
+    getCodexUsageStatus.mockResolvedValue({
+      available: false,
+      paymentSource: { source: "subscription" },
+      reason: "authentication required",
+    });
+    getCodexCredentialSelectionCapability.mockResolvedValue({ version: 1 });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    fireEvent.click(await screen.findByText("Sign in again with ChatGPT"));
+
+    await screen.findByText((text) =>
+      text.includes("must be updated before ChatGPT subscriptions"),
+    );
+    expect(codexDeviceAuthStart).not.toHaveBeenCalled();
   });
 
   it("explains how to recover when starting device auth times out", async () => {

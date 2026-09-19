@@ -369,7 +369,7 @@ export async function processAcpLLM({
         "This project host must be updated before a specific ChatGPT subscription can be selected.",
       );
     }
-    if (capability?.version !== 1) {
+    if ((capability?.version ?? 0) < 1) {
       throw new Error(
         "This project host does not support selecting a specific ChatGPT subscription.",
       );

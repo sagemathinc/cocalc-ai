@@ -136,6 +136,7 @@ export interface CodexConfigButtonProps {
   paymentSource?: CodexPaymentSourceInfo;
   paymentSourceLoading?: boolean;
   refreshPaymentSource?: () => void;
+  turnRunning?: boolean;
 }
 
 export interface CodexPaymentCredentialsModalProps {
@@ -494,6 +495,7 @@ export function CodexConfigButton({
   paymentSource,
   paymentSourceLoading = false,
   refreshPaymentSource,
+  turnRunning = false,
 }: CodexConfigButtonProps): React.ReactElement {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountId = useTypedRedux("account", "account_id");
@@ -511,10 +513,14 @@ export function CodexConfigButton({
   const [selectedCredentialId, setSelectedCredentialId] = useState<
     string | undefined
   >();
+  const [credentialSelectionLoaded, setCredentialSelectionLoaded] =
+    useState(false);
   useEffect(() => {
+    setCredentialSelectionLoaded(false);
     setSelectedCredentialId(
       readCodexSubscriptionSelection({ accountId, projectId, threadKey }),
     );
+    setCredentialSelectionLoaded(true);
   }, [accountId, projectId, threadKey]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
@@ -540,6 +546,12 @@ export function CodexConfigButton({
   const lastCodexUsageScopeRef = React.useRef<string | undefined>(undefined);
   const lastCodexModelRefreshRef = React.useRef(0);
   const modelSelectionTouchedRef = React.useRef(false);
+  const runningConfigSnapshotRef = React.useRef<{
+    threadKey: string;
+    key: string;
+  }>(undefined);
+  const [configChangedForNextTurn, setConfigChangedForNextTurn] =
+    useState(false);
 
   useEffect(
     () =>
@@ -668,6 +680,34 @@ export function CodexConfigButton({
     paymentSource.siteFundedCodex?.enabled
       ? paymentSource.siteFundedCodex.policy
       : undefined;
+  const effectiveConfigKey = `${codexThreadConfigKey(
+    threadConfig ?? value,
+  )}\0${selectedCredentialId ?? ""}`;
+
+  useEffect(() => {
+    if (!turnRunning) {
+      runningConfigSnapshotRef.current = undefined;
+      setConfigChangedForNextTurn(false);
+      return;
+    }
+    if (value == null || !credentialSelectionLoaded) return;
+    const snapshot = runningConfigSnapshotRef.current;
+    if (!snapshot || snapshot.threadKey !== threadKey) {
+      runningConfigSnapshotRef.current = {
+        threadKey,
+        key: effectiveConfigKey,
+      };
+      setConfigChangedForNextTurn(false);
+      return;
+    }
+    setConfigChangedForNextTurn(snapshot.key !== effectiveConfigKey);
+  }, [
+    credentialSelectionLoaded,
+    effectiveConfigKey,
+    threadKey,
+    turnRunning,
+    value,
+  ]);
   const siteFundedAccountStatus =
     paymentSource?.siteFundedCodex?.status?.account;
   const allModeOptions = useMemo(() => getModeOptions(), []);
@@ -1516,6 +1556,13 @@ export function CodexConfigButton({
             ) : null}
           </>
         )}
+        {configChangedForNextTurn ? (
+          <Tooltip title="These settings changed while a turn is running. They will apply when the next turn starts, including an automatic retry.">
+            <Tag color="orange" role="status" style={{ marginInlineEnd: 0 }}>
+              Next turn
+            </Tag>
+          </Tooltip>
+        ) : null}
       </div>
       <Modal
         open={membershipHelpOpen}
@@ -1545,6 +1592,14 @@ export function CodexConfigButton({
         }}
       >
         <Space orientation="vertical" style={{ width: "100%" }} size={12}>
+          {configChangedForNextTurn ? (
+            <Alert
+              type="info"
+              showIcon
+              title="Changes apply to the next turn"
+              description="The running turn keeps the settings it started with. The current settings will be used when the next turn starts, including an automatic retry."
+            />
+          ) : null}
           <div
             style={{
               ...sectionStyle,

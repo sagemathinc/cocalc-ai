@@ -5293,6 +5293,76 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
+  it("does not retain an auto runtime that resolved to subscription auth", async () => {
+    const processes: FakeCodexAppServerProc[] = [];
+    const spawnCodexAppServer = jest.fn(async () => {
+      const index = processes.length;
+      const proc = new FakeCodexAppServerProc((fake, message) => {
+        switch (message.method) {
+          case "thread/start":
+          case "thread/resume":
+            fake.sendResponse(message.id, {
+              thread: { id: `subscription-thread-${index}` },
+            });
+            break;
+          case "turn/start":
+            fake.sendResponse(message.id, {
+              turn: { id: `subscription-turn-${index}` },
+            });
+            setImmediate(() =>
+              fake.sendNotification("turn/completed", {
+                turn: {
+                  id: `subscription-turn-${index}`,
+                  status: "completed",
+                },
+              }),
+            );
+            break;
+          case "thread/backgroundTerminals/list":
+            fake.sendResponse(message.id, { data: [], nextCursor: null });
+            break;
+          case "thread/list":
+            fake.sendResponse(message.id, { data: [], nextCursor: null });
+            break;
+          default:
+            if (typeof message.id === "number")
+              fake.sendResponse(message.id, {});
+        }
+      });
+      processes.push(proc);
+      return {
+        proc: proc as any,
+        cmd: "fake",
+        args: [],
+        authSource: "subscription",
+        runtimeEnv: {},
+      };
+    });
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected");
+      },
+      spawnCodexAppServer,
+    });
+    const agent = new CodexAppServerAgent();
+    const request = {
+      project_id: "project",
+      account_id: "Q",
+      session_id: "auto-subscription-thread",
+      stream: async () => {},
+      config: { paymentSource: "auto" as const },
+    };
+    try {
+      await agent.evaluate({ ...request, prompt: "first" });
+      await agent.evaluate({ ...request, prompt: "second" });
+
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(2);
+      expect(processes[0].killed).toBe(true);
+    } finally {
+      await agent.dispose();
+    }
+  });
+
   it("does not charge a later timeout against the refresh retry budget", async () => {
     process.env.COCALC_CODEX_TIMEOUT_MAX_RETRIES = "1";
     process.env.COCALC_CODEX_TIMEOUT_RETRY_DELAY_MS = "1000";

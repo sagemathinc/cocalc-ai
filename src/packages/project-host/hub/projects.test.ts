@@ -21,6 +21,8 @@ const withOciPullReservationIfNeeded = jest.fn(
 );
 const prepareOciPullReservationEstimate = jest.fn(async () => undefined);
 const readFile = jest.fn(async () => "");
+const rm = jest.fn(async () => undefined);
+const pushSubscriptionAuthToRegistry = jest.fn();
 const callHub = jest.fn();
 const getLocalHostId = jest.fn(() => "host-1");
 const getMasterConatClient = jest.fn();
@@ -102,6 +104,11 @@ jest.mock("@cocalc/file-server/btrfs/subvolume-snapshots", () => ({
 }));
 jest.mock("node:fs/promises", () => ({
   readFile: (...args: any[]) => readFile(...args),
+  rm: (...args: any[]) => rm(...args),
+}));
+jest.mock("../codex/codex-auth-registry", () => ({
+  pushSubscriptionAuthToRegistry: (...args: any[]) =>
+    pushSubscriptionAuthToRegistry(...args),
 }));
 jest.mock("../sqlite/projects", () => ({
   deleteProjectLocal: (...args: any[]) => deleteProjectLocal(...args),
@@ -320,6 +327,8 @@ describe("project host start ACP rehydrate ordering", () => {
       async ({ fn }: { fn: () => Promise<any> }) => await fn(),
     );
     readFile.mockResolvedValue("");
+    rm.mockClear();
+    pushSubscriptionAuthToRegistry.mockReset();
     callHub.mockReset();
     fileServerCreateBackup.mockReset();
     getMasterConatClient.mockReturnValue(undefined);
@@ -2645,5 +2654,79 @@ describe("project host start ACP rehydrate ordering", () => {
         limit: 5,
       }),
     );
+  });
+
+  it("verifies an uploaded Codex credential before publishing it", async () => {
+    uploadSubscriptionAuthFile.mockResolvedValue({
+      codexHome: "/tmp/staged-codex-auth",
+      bytes: 42,
+    });
+    getCodexAppServerAccountStatus.mockResolvedValue({
+      account: { email: "person@example.com" },
+      rateLimits: { primary: {} },
+    });
+    pushSubscriptionAuthToRegistry.mockResolvedValue({
+      ok: true,
+      id: "credential-1",
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi({} as any);
+
+    await expect(
+      hubApi.projects.codexUploadAuthFile({
+        account_id: "account-1",
+        project_id,
+        filename: "auth.json",
+        content: '{"tokens":true}',
+      }),
+    ).resolves.toMatchObject({ ok: true, synced: true, bytes: 42 });
+
+    expect(uploadSubscriptionAuthFile).toHaveBeenCalledWith({
+      accountId: "account-1",
+      sessionId: expect.any(String),
+      content: '{"tokens":true}',
+    });
+    expect(getCodexAppServerAccountStatus).toHaveBeenCalledWith(
+      expect.objectContaining({ codexHome: "/tmp/staged-codex-auth" }),
+    );
+    expect(pushSubscriptionAuthToRegistry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        codexHome: "/tmp/staged-codex-auth",
+        descriptorMetadata: { email: "person@example.com" },
+      }),
+    );
+    expect(rm).toHaveBeenCalledWith("/tmp/staged-codex-auth", {
+      recursive: true,
+      force: true,
+    });
+  });
+
+  it("does not publish an uploaded Codex credential that fails verification", async () => {
+    uploadSubscriptionAuthFile.mockResolvedValue({
+      codexHome: "/tmp/rejected-codex-auth",
+      bytes: 42,
+    });
+    getCodexAppServerAccountStatus.mockResolvedValue({
+      errors: { rateLimits: "authentication failed" },
+    });
+
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi({} as any);
+
+    await expect(
+      hubApi.projects.codexUploadAuthFile({
+        account_id: "account-1",
+        project_id,
+        filename: "auth.json",
+        content: '{"tokens":true}',
+      }),
+    ).rejects.toThrow("authentication failed");
+
+    expect(pushSubscriptionAuthToRegistry).not.toHaveBeenCalled();
+    expect(rm).toHaveBeenCalledWith("/tmp/rejected-codex-auth", {
+      recursive: true,
+      force: true,
+    });
   });
 });

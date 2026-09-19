@@ -2256,6 +2256,7 @@ export function ChatRoomThreadPanel({
                 paymentSource={codexPaymentSource}
                 paymentSourceLoading={codexPaymentSourceLoading}
                 refreshPaymentSource={refreshCodexPaymentSource}
+                turnRunning={selectedRunningCodexMessage != null}
               />
             ) : null}
           </Space>
