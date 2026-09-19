@@ -47,6 +47,7 @@ import {
   bindAgentName,
 } from "@cocalc/frontend/agents/unbound-mentions";
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
+import { useChatEmbeddingOptions } from "./embedding-options";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -141,6 +142,7 @@ export function ChatRoomComposer({
   mobile = false,
 }: ChatRoomComposerProps) {
   const visualViewport = useChatVisualViewport(mobile);
+  const embeddingOptions = useChatEmbeddingOptions();
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
   const ZEN_MAX_VH = 1.0;
@@ -911,13 +913,31 @@ export function ChatRoomComposer({
                     onClick={handleSend}
                     disabled={!hasInput}
                     type="primary"
+                    shape={
+                      embeddingOptions.compactSubmitButton
+                        ? "circle"
+                        : undefined
+                    }
+                    aria-label={
+                      embeddingOptions.compactSubmitButton ? "Send" : undefined
+                    }
                     data-testid="chat-composer-send"
-                    icon={<Icon name="paper-plane" />}
+                    icon={
+                      <Icon
+                        name={
+                          embeddingOptions.compactSubmitButton
+                            ? "arrow-up"
+                            : "paper-plane"
+                        }
+                      />
+                    }
                   >
-                    <FormattedMessage
-                      id="chatroom.chat_input.send_button.label"
-                      defaultMessage={"Send"}
-                    />
+                    {!embeddingOptions.compactSubmitButton && (
+                      <FormattedMessage
+                        id="chatroom.chat_input.send_button.label"
+                        defaultMessage={"Send"}
+                      />
+                    )}
                   </Button>
                 </Tooltip>
               )}

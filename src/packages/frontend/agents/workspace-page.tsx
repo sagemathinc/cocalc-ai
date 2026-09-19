@@ -30,6 +30,7 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
+import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
@@ -813,13 +814,14 @@ function NewAgentPanel({
             <span style={{ flex: 1 }} />
             <Button
               type="primary"
-              shape="round"
+              shape="circle"
+              aria-label="Start agent"
+              title="Start agent (Shift+Enter)"
+              icon={<Icon name="arrow-up" />}
               loading={busy}
               disabled={!!problem || !firstRequest.trim() || atLimit}
               onClick={() => void create()}
-            >
-              Start agent
-            </Button>
+            />
           </div>
         </div>
         <div
@@ -850,14 +852,6 @@ function NewAgentPanel({
             showIcon
             title="Unable to determine an available payment source"
             description={paymentSourceError}
-          />
-        )}
-        {pending && (
-          <Alert
-            type="info"
-            showIcon
-            title="Agent storage prepared"
-            description="Registration did not finish. Retrying reuses this thread."
           />
         )}
         {error && <Alert role="alert" type="error" title={error} />}
@@ -1140,7 +1134,15 @@ function AgentProjectContext({
     return <AgentLoadingPreview accountId={accountId} agent={agent} />;
   return (
     <ProjectContext.Provider value={projectContext}>
-      <EmbeddedProjectFile path={agent.path} isVisible={active} />
+      <ChatEmbeddingOptionsProvider
+        value={{
+          compactSubmitButton: true,
+          sidebarHiddenByDefault: true,
+          sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,
+        }}
+      >
+        <EmbeddedProjectFile path={agent.path} isVisible={active} />
+      </ChatEmbeddingOptionsProvider>
     </ProjectContext.Provider>
   );
 }

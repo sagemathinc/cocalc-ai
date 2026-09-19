@@ -47,6 +47,11 @@ import { ChatSpeechPlayer } from "./audio/chat-speech-player";
 import { SpeechPaneContext } from "./audio/speech-pane-context";
 import { ChatRoomLayout } from "./chatroom-layout";
 import { ChatRoomSidebarContent } from "./chatroom-sidebar";
+import {
+  readEmbeddedSidebarHidden,
+  useChatEmbeddingOptions,
+  writeEmbeddedSidebarHidden,
+} from "./embedding-options";
 import { GitCommitDrawer } from "./git-commit-drawer";
 import {
   APP_NAVIGATION_EVENT,
@@ -732,6 +737,7 @@ function ChatPanelContent({
     actionStoreReadStateVersion ??
     editorStoreReadStateVersion;
   const account_id = useTypedRedux("account", "account_id");
+  const embeddingOptions = useChatEmbeddingOptions();
   if (narrow) {
     variant = "compact";
   }
@@ -777,7 +783,9 @@ function ChatPanelContent({
       : DEFAULT_SIDEBAR_WIDTH,
   );
   const [sidebarHidden, setSidebarHidden] = useState<boolean>(
-    asBoolean(storedSidebarHiddenRaw),
+    embeddingOptions.sidebarPreferenceKey
+      ? readEmbeddedSidebarHidden(embeddingOptions)
+      : asBoolean(storedSidebarHiddenRaw),
   );
   const [sidebarVisible, setSidebarVisible] = useState<boolean>(false);
   const isCompact = variant === "compact";
@@ -810,12 +818,24 @@ function ChatPanelContent({
     });
   }, [sidebarWidth, actions?.frameTreeActions, actions?.frameId]);
   useEffect(() => {
+    if (embeddingOptions.sidebarPreferenceKey) {
+      writeEmbeddedSidebarHidden(
+        embeddingOptions.sidebarPreferenceKey,
+        sidebarHidden,
+      );
+      return;
+    }
     if (!actions?.frameTreeActions?.set_frame_data || !actions?.frameId) return;
     actions.frameTreeActions.set_frame_data({
       id: actions.frameId,
       sidebarHidden,
     });
-  }, [sidebarHidden, actions?.frameTreeActions, actions?.frameId]);
+  }, [
+    sidebarHidden,
+    embeddingOptions.sidebarPreferenceKey,
+    actions?.frameTreeActions,
+    actions?.frameId,
+  ]);
 
   const { threads, archivedThreads, threadSections } = useThreadSections({
     messages,
