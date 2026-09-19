@@ -17,7 +17,6 @@ import {
   HOST_INTRUSION_ONLINE_WINDOW_MS,
   hostIntrusionMonitorIntervalMs,
   hostIntrusionObservationMaxAgeMs,
-  hostIntrusionRetentionDays,
 } from "./intrusion-monitor";
 
 const logger = getLogger("server:hosts:intrusion-reviewer");
@@ -350,55 +349,73 @@ function anyChangeRemains(delta: Delta, normalized: unknown): boolean {
   return false;
 }
 
-function remainingDelta(
-  delta: Delta,
-  normalized: unknown,
-): Delta | null | undefined {
-  const signals = normalizedSignals(normalized);
-  if (!signals) return null;
-  const remaining: Delta = {};
-  for (const direction of ["added", "removed"] as const) {
-    const selected: Record<string, string[]> = {};
-    for (const [category, entries] of Object.entries(delta[direction] ?? {})) {
-      const current = new Set(
-        Array.isArray(signals[category]) ? signals[category] : [],
-      );
-      const values = entries.filter((entry) =>
-        direction === "added" ? current.has(entry) : !current.has(entry),
-      );
-      if (values.length) selected[category] = values;
-    }
-    if (Object.keys(selected).length) remaining[direction] = selected;
-  }
-  return remaining.added || remaining.removed ? remaining : undefined;
-}
-
-async function newestLaterCompleteState(
+async function remainingDeltaAfterLaterCompleteStates(
   client: { query: (sql: string, values?: unknown[]) => Promise<any> },
   observation: ObservationRow,
-): Promise<unknown | undefined> {
+  delta: Delta,
+): Promise<Delta | undefined> {
   const { rows } = await client.query(
-    `SELECT CASE
-              WHEN pg_column_size(normalized) > $5 OR
-                   octet_length(normalized::text) > $6
-                THEN NULL
-              ELSE normalized
-            END AS normalized
-       FROM ${OBSERVATIONS}
-      WHERE bay_id=$1 AND host_id=$2 AND coverage='complete'
-        AND (created_at, id) > ($3::timestamptz, $4::uuid)
-      ORDER BY created_at DESC, id DESC
-      LIMIT 1`,
+    `WITH entries AS MATERIALIZED (
+       SELECT direction.key AS direction, category.key AS category,
+              value.value #>> '{}' AS value
+         FROM jsonb_each($5::jsonb) AS direction(key, value)
+         CROSS JOIN LATERAL jsonb_each(direction.value)
+           AS category(key, value)
+         CROSS JOIN LATERAL jsonb_array_elements(category.value)
+           AS value(value)
+        WHERE direction.key IN ('added', 'removed')
+     )
+     SELECT entries.direction, entries.category, entries.value
+       FROM entries
+      WHERE NOT EXISTS (
+        SELECT 1
+          FROM ${OBSERVATIONS} AS later
+         WHERE later.bay_id=$1 AND later.host_id=$2
+           AND later.coverage='complete'
+           AND (later.created_at, later.id) > ($3::timestamptz, $4::uuid)
+           AND later.normalized IS NOT NULL
+           AND pg_column_size(later.normalized) <= $6
+           AND octet_length(later.normalized::text) <= $7
+           AND jsonb_typeof(later.normalized->'signals')='object'
+           AND (
+             NOT ((later.normalized->'signals') ? entries.category) OR
+             jsonb_typeof(
+               later.normalized->'signals'->entries.category
+             )='array'
+           )
+           AND CASE entries.direction
+             WHEN 'added' THEN NOT COALESCE(
+               (later.normalized->'signals'->entries.category) @>
+                 jsonb_build_array(to_jsonb(entries.value)),
+               FALSE
+             )
+             ELSE COALESCE(
+               (later.normalized->'signals'->entries.category) @>
+                 jsonb_build_array(to_jsonb(entries.value)),
+               FALSE
+             )
+           END
+      )`,
     [
       getConfiguredBayId(),
       observation.host_id,
       observation.created_at,
       observation.id,
+      JSON.stringify(delta),
       MAX_STORED_PHYSICAL_BYTES,
       MAX_STORED_JSON_BYTES,
     ],
   );
-  return rows[0]?.normalized ?? undefined;
+  const remaining: Delta = {};
+  for (const { direction, category, value } of rows as Array<{
+    direction: "added" | "removed";
+    category: string;
+    value: string;
+  }>) {
+    const selected = (remaining[direction] ??= {});
+    (selected[category] ??= []).push(value);
+  }
+  return remaining.added || remaining.removed ? remaining : undefined;
 }
 
 function deltaCategories(delta: Delta): string[] {
@@ -533,9 +550,20 @@ export async function ensureHostIntrusionReviewerSchema(): Promise<void> {
         last_success_at TIMESTAMPTZ,
         last_error_at TIMESTAMPTZ,
         last_error TEXT,
+        legacy_findings_cleanup_cursor UUID,
+        legacy_findings_cleanup_complete BOOLEAN NOT NULL DEFAULT FALSE,
         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
       )
     `);
+    await pool.query(
+      `ALTER TABLE ${STATE}
+       ADD COLUMN IF NOT EXISTS legacy_findings_cleanup_cursor UUID`,
+    );
+    await pool.query(
+      `ALTER TABLE ${STATE}
+       ADD COLUMN IF NOT EXISTS legacy_findings_cleanup_complete BOOLEAN
+         NOT NULL DEFAULT FALSE`,
+    );
     await pool.query(`
       CREATE TABLE IF NOT EXISTS ${FINDINGS} (
         id UUID PRIMARY KEY,
@@ -578,8 +606,8 @@ export async function ensureHostIntrusionReviewerSchema(): Promise<void> {
       ON ${FINDINGS} (host_id, rule_id, created_at DESC)
     `);
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS ${FINDINGS}_retention_idx
-      ON ${FINDINGS} (bay_id, created_at, id)
+      CREATE INDEX IF NOT EXISTS ${FINDINGS}_legacy_cleanup_idx
+      ON ${FINDINGS} (bay_id, id)
     `);
     await pool.query(`
       CREATE INDEX IF NOT EXISTS ${FINDINGS}_uncorrelated_idx
@@ -1071,15 +1099,22 @@ async function reviewObservation(
       return delta != null && allChangesRemain(delta, observation.normalized);
     });
     if (candidates.length) {
-      const laterState = await newestLaterCompleteState(client, observation);
-      const activeCandidates = candidates.flatMap((candidate) => {
+      const activeCandidates: Array<{
+        candidate: CandidateFinding;
+        delta: Delta;
+      }> = [];
+      for (const candidate of candidates) {
         const delta = boundedDelta(candidate.evidence.delta);
-        if (delta == null) return [];
-        const remaining =
-          laterState === undefined ? delta : remainingDelta(delta, laterState);
-        const activeDelta = remaining === null ? delta : remaining;
-        return activeDelta == null ? [] : [{ candidate, delta: activeDelta }];
-      });
+        if (delta == null) continue;
+        const activeDelta = await remainingDeltaAfterLaterCompleteStates(
+          client,
+          observation,
+          delta,
+        );
+        if (activeDelta != null) {
+          activeCandidates.push({ candidate, delta: activeDelta });
+        }
+      }
       if (!activeCandidates.length) {
         const inserted = await insertFinding(client, {
           observation,
@@ -1282,18 +1317,51 @@ async function pruneReviewerRecords(
   client: { query: (sql: string, values?: unknown[]) => Promise<any> },
   bayId: string,
 ): Promise<{ findings: number; outbox: number }> {
-  const retainedFindings = await client.query(
-    `DELETE FROM ${FINDINGS}
-      WHERE id IN (
-        SELECT id FROM ${FINDINGS}
-         WHERE bay_id=$1
-           AND created_at <
-               NOW() - ($2::double precision * INTERVAL '1 day')
-         ORDER BY created_at, id
-         LIMIT $3
-      )`,
-    [bayId, hostIntrusionRetentionDays(), MAX_CLEANUP_ROWS],
-  );
+  const cleanupState = (await client.query(
+    `SELECT legacy_findings_cleanup_cursor,
+            legacy_findings_cleanup_complete
+       FROM ${STATE} WHERE bay_id=$1`,
+    [bayId],
+  )) as {
+    rows: Array<{
+      legacy_findings_cleanup_cursor: string | null;
+      legacy_findings_cleanup_complete: boolean;
+    }>;
+  };
+  let findingsPruned = 0;
+  if (!cleanupState.rows[0]?.legacy_findings_cleanup_complete) {
+    const cursor = cleanupState.rows[0]?.legacy_findings_cleanup_cursor ?? null;
+    const legacyBatch = (await client.query(
+      `SELECT findings.id, observations.id IS NULL AS orphaned
+         FROM ${FINDINGS} AS findings
+         LEFT JOIN ${OBSERVATIONS} AS observations
+           ON observations.id=findings.observation_id
+        WHERE findings.bay_id=$1
+          AND ($2::uuid IS NULL OR findings.id > $2::uuid)
+        ORDER BY findings.id
+        LIMIT $3`,
+      [bayId, cursor, MAX_CLEANUP_ROWS],
+    )) as { rows: Array<{ id: string; orphaned: boolean }> };
+    const orphanIds = legacyBatch.rows
+      .filter(({ orphaned }) => orphaned)
+      .map(({ id }) => id);
+    if (orphanIds.length) {
+      const deleted = await client.query(
+        `DELETE FROM ${FINDINGS} WHERE id=ANY($1::uuid[])`,
+        [orphanIds],
+      );
+      findingsPruned = deleted.rowCount ?? 0;
+    }
+    const lastId = legacyBatch.rows.at(-1)?.id ?? cursor;
+    await client.query(
+      `UPDATE ${STATE}
+          SET legacy_findings_cleanup_cursor=$2,
+              legacy_findings_cleanup_complete=$3,
+              updated_at=NOW()
+        WHERE bay_id=$1`,
+      [bayId, lastId, legacyBatch.rows.length < MAX_CLEANUP_ROWS],
+    );
+  }
   const retentionDays = boundedInteger(
     "COCALC_HOST_INTRUSION_REVIEW_OUTBOX_RETENTION_DAYS",
     DELIVERED_OUTBOX_RETENTION_DAYS,
@@ -1315,7 +1383,7 @@ async function pruneReviewerRecords(
     [bayId, retentionDays, MAX_CLEANUP_ROWS],
   );
   return {
-    findings: retainedFindings.rowCount ?? 0,
+    findings: findingsPruned,
     outbox: deliveredOutbox.rowCount ?? 0,
   };
 }

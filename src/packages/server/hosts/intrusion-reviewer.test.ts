@@ -809,6 +809,78 @@ describe("project-host intrusion reviewer", () => {
     });
   });
 
+  it("does not reuse confirmation from before recovery and reintroduction", async () => {
+    const base = Date.now();
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      state: normalized(),
+      createdAt: new Date(base + 2000),
+    });
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(base + 3000),
+    });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(base),
+    });
+    await insertObservation({
+      state: changed,
+      createdAt: new Date(base + 1000),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 2,
+      opened: 0,
+    });
+    await expect(
+      getPool().query(
+        "SELECT COUNT(*)::integer AS count FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] });
+  });
+
+  it("does not reuse removed-state confirmation across restoration", async () => {
+    const base = Date.now();
+    const delta = { removed: { "services.enabled": [ADDED_VALUE] } };
+    const present = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      state: present,
+      createdAt: new Date(base + 2000),
+    });
+    await insertObservation({
+      state: normalized(),
+      createdAt: new Date(base + 3000),
+    });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: normalized(),
+      createdAt: new Date(base),
+    });
+    await insertObservation({
+      state: normalized(),
+      createdAt: new Date(base + 1000),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      processed: 2,
+      opened: 0,
+    });
+    await expect(
+      getPool().query(
+        "SELECT COUNT(*)::integer AS count FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] });
+  });
+
   it("keeps a multi-signal incident open until every signal recovers", async () => {
     const second = '["another.service","enabled"]';
     const delta = {
@@ -1197,16 +1269,26 @@ describe("project-host intrusion reviewer", () => {
     ).resolves.toMatchObject({ rows: [{ count: 0 }] });
   });
 
-  it("prunes expired findings through the retention index", async () => {
+  it("retains an old processing marker until its snapshot is pruned", async () => {
     const observationId = await insertObservation();
     await runHostIntrusionReviewerPass();
     await getPool().query(
+      `UPDATE project_host_intrusion_snapshots
+          SET created_at=NOW() - INTERVAL '91 days',
+              captured_at=NOW() - INTERVAL '91 days'
+        WHERE id=$1`,
+      [observationId],
+    );
+    await getPool().query(
       `UPDATE project_host_intrusion_findings
-          SET created_at=NOW() - INTERVAL '91 days'`,
+          SET created_at=NOW() - INTERVAL '91 days'
+        WHERE observation_id=$1`,
+      [observationId],
     );
 
     await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
-      findings_pruned: 1,
+      processed: 0,
+      findings_pruned: 0,
     });
     await expect(
       getPool().query(
@@ -1217,8 +1299,41 @@ describe("project-host intrusion reviewer", () => {
         [observationId],
       ),
     ).resolves.toMatchObject({
-      rows: [{ findings: 0, observations: 1 }],
+      rows: [{ findings: 1, observations: 1 }],
     });
+  });
+
+  it("removes genuine legacy orphans in a one-way cleanup sweep", async () => {
+    const pool = getPool();
+    await pool.query(
+      `ALTER TABLE project_host_intrusion_findings
+       DROP CONSTRAINT project_host_intrusion_findings_observation_fk`,
+    );
+    await pool.query(
+      `INSERT INTO project_host_intrusion_findings
+         (id, observation_id, bay_id, host_id, rule_id, rule_version,
+          classification, severity, evidence)
+       VALUES ($1,$2,$3,$4,'legacy-orphan',1,'diagnostic','warning','{}')`,
+      [randomUUID(), randomUUID(), BAY_ID, HOST_ID],
+    );
+    await pool.query(
+      `ALTER TABLE project_host_intrusion_findings
+       ADD CONSTRAINT project_host_intrusion_findings_observation_fk
+       FOREIGN KEY (observation_id)
+       REFERENCES project_host_intrusion_snapshots(id)
+       ON DELETE CASCADE NOT VALID`,
+    );
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      findings_pruned: 1,
+    });
+    await expect(
+      pool.query(
+        `SELECT COUNT(*)::integer AS count
+           FROM project_host_intrusion_findings
+          WHERE rule_id='legacy-orphan'`,
+      ),
+    ).resolves.toMatchObject({ rows: [{ count: 0 }] });
   });
 
   it("reports overdue collection per active host at the configured cadence", async () => {
