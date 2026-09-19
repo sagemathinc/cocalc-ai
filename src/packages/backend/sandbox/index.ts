@@ -362,6 +362,8 @@ const INTERNAL_METHODS = new Set([
   "cpDirectoryRequiresRecursiveError",
   "cpUnsupportedTypeError",
   "cpDestNotDirectoryError",
+  "cpFileToDirectoryError",
+  "cpInstallNoReplace",
   "cpSafeSymlink",
   "cpSafeDirectoryRecursive",
   "cpSafeOne",
@@ -1676,6 +1678,18 @@ export class SandboxedFilesystem {
     return err;
   };
 
+  private cpFileToDirectoryError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `Cannot overwrite directory '${dest}' with non-directory '${src}'`,
+    );
+    err.code = "ERR_FS_CP_NON_DIR_TO_DIR";
+    err.path = dest;
+    return err;
+  };
+
   private cpSafeSymlink = async (
     source: string,
     dest: string,
@@ -1741,6 +1755,124 @@ export class SandboxedFilesystem {
     await symlink(target, destPath);
   };
 
+  private cpSafeFile = async (
+    source: string,
+    dest: string,
+    options?: CopyOptions,
+  ): Promise<void> => {
+    if (options?.force ?? true) {
+      await this.copyFile(source, dest);
+      return;
+    }
+
+    const temporary = join(
+      dirname(dest),
+      `.${basename(dest)}.copy.${process.pid}.${randomUUID()}`,
+    );
+    let temporaryIdentity:
+      | { dev: number | bigint; ino: number | bigint }
+      | undefined;
+    let temporaryHandle: Awaited<ReturnType<typeof open>> | undefined;
+    let installed = false;
+    try {
+      await this.copyFile(source, temporary);
+      const opened = await this.openVerifiedHandle({
+        path: temporary,
+        flags: constants.O_RDONLY,
+      });
+      temporaryHandle = opened.handle;
+      const stat = await temporaryHandle.stat();
+      temporaryIdentity = { dev: stat.dev, ino: stat.ino };
+      try {
+        await this.cpInstallNoReplace(temporary, dest);
+        installed = true;
+        return;
+      } catch (err: any) {
+        if (err?.code !== "EEXIST") {
+          throw err;
+        }
+
+        try {
+          if ((await this.lstat(dest)).isDirectory()) {
+            throw this.cpFileToDirectoryError(source, dest);
+          }
+        } catch (statErr: any) {
+          if (statErr?.code !== "ENOENT") {
+            throw statErr;
+          }
+        }
+
+        if (options?.errorOnExist) {
+          const existsErr: NodeJS.ErrnoException = new Error(
+            "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+          );
+          existsErr.code = "ERR_FS_CP_EEXIST";
+          existsErr.path = dest;
+          throw existsErr;
+        }
+      }
+    } finally {
+      if (!installed && temporaryIdentity != null) {
+        try {
+          const current = await this.lstat(temporary);
+          if (
+            current.dev === temporaryIdentity.dev &&
+            current.ino === temporaryIdentity.ino
+          ) {
+            await this.unlink(temporary);
+          }
+        } catch (err: any) {
+          if (err?.code !== "ENOENT") {
+            logger.warn("unable to remove no-clobber copy staging file", {
+              path: temporary,
+              err: String(err),
+            });
+          }
+        }
+      }
+      if (temporaryHandle != null) {
+        try {
+          await temporaryHandle.close();
+        } catch (err) {
+          logger.warn("unable to close no-clobber copy staging file", {
+            path: temporary,
+            err: String(err),
+          });
+        }
+      }
+    }
+  };
+
+  private cpInstallNoReplace = async (
+    source: string,
+    dest: string,
+  ): Promise<void> => {
+    await Promise.all([this.safeAbsPath(source), this.safeAbsPath(dest)]);
+    const target = await this.getOpenAt2DualPathTarget(source, dest);
+    if (target == null || typeof target.root.renameNoReplace !== "function") {
+      const err: NodeJS.ErrnoException = new Error(
+        "atomic no-replace copy installation is not supported",
+      );
+      err.code = "ENOTSUP";
+      err.path = dest;
+      throw err;
+    }
+    try {
+      target.root.renameNoReplace(target.srcRel, target.destRel);
+    } catch (err) {
+      const { code } = this.parseOpenAt2Error(err);
+      if (code === "ENOSYS" || code === "EINVAL") {
+        const unsupported: NodeJS.ErrnoException = new Error(
+          "atomic no-replace copy installation is not supported",
+        );
+        unsupported.code = "ENOTSUP";
+        unsupported.path = dest;
+        throw unsupported;
+      }
+      this.throwOpenAt2PathError(dest, err);
+    }
+  };
+
   private cpSafeDirectoryRecursive = async (
     sourceDir: string,
     destDir: string,
@@ -1768,7 +1900,7 @@ export class SandboxedFilesystem {
       if (childStat.isDirectory()) {
         await this.cpSafeDirectoryRecursive(childSource, childDest, options);
       } else if (childStat.isFile()) {
-        await this.copyFile(childSource, childDest);
+        await this.cpSafeFile(childSource, childDest, options);
       } else if (childStat.isSymbolicLink() && !options?.dereference) {
         await this.cpSafeSymlink(childSource, childDest, options);
       } else {
@@ -1787,7 +1919,7 @@ export class SandboxedFilesystem {
       ? await this.stat(source)
       : await this.lstat(source);
     if (sourceStat.isFile()) {
-      await this.copyFile(source, destInput);
+      await this.cpSafeFile(source, destInput, options);
       return;
     }
     if (sourceStat.isDirectory()) {

@@ -143,6 +143,164 @@ describeIfLinux("baseline mutator parity behavior", () => {
     expect(await fs.readFile("cp-dir/cp-source.txt", "utf8")).toBe("cp-data");
   });
 
+  it("does not overwrite regular files when cp force is false", async () => {
+    await fs.writeFile("cp-no-clobber-source.txt", "new");
+    await fs.writeFile("cp-no-clobber-target.txt", "existing");
+
+    await fs.cp("cp-no-clobber-source.txt", "cp-no-clobber-target.txt", {
+      force: false,
+    });
+
+    expect(await fs.readFile("cp-no-clobber-target.txt", "utf8")).toBe(
+      "existing",
+    );
+  });
+
+  it("does not overwrite nested regular files during recursive cp", async () => {
+    await fs.mkdir("cp-no-clobber-source/nested", { recursive: true });
+    await fs.mkdir("cp-no-clobber-target/nested", { recursive: true });
+    await fs.writeFile("cp-no-clobber-source/nested/existing.txt", "new");
+    await fs.writeFile("cp-no-clobber-source/nested/added.txt", "added");
+    await fs.writeFile("cp-no-clobber-target/nested/existing.txt", "existing");
+
+    await fs.cp("cp-no-clobber-source", "cp-no-clobber-target", {
+      recursive: true,
+      force: false,
+    });
+
+    expect(
+      await fs.readFile("cp-no-clobber-target/nested/existing.txt", "utf8"),
+    ).toBe("existing");
+    expect(
+      await fs.readFile("cp-no-clobber-target/nested/added.txt", "utf8"),
+    ).toBe("added");
+  });
+
+  it("reports existing regular files when cp errorOnExist is set", async () => {
+    await fs.writeFile("cp-existing-source.txt", "new");
+    await fs.writeFile("cp-existing-target.txt", "existing");
+
+    await expect(
+      fs.cp("cp-existing-source.txt", "cp-existing-target.txt", {
+        force: false,
+        errorOnExist: true,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_EEXIST" });
+    expect(await fs.readFile("cp-existing-target.txt", "utf8")).toBe(
+      "existing",
+    );
+  });
+
+  it("does not overwrite a file created concurrently with force false", async () => {
+    await fs.writeFile("cp-race-source.txt", "source");
+    const install = fs.cpInstallNoReplace;
+    fs.cpInstallNoReplace = async (src: string, dest: string) => {
+      await fs.writeFile(dest, "user-data");
+      return await install(src, dest);
+    };
+
+    try {
+      await fs.cp("cp-race-source.txt", "cp-race-target.txt", {
+        force: false,
+      });
+    } finally {
+      fs.cpInstallNoReplace = install;
+    }
+
+    expect(await fs.readFile("cp-race-target.txt", "utf8")).toBe("user-data");
+  });
+
+  it("fails closed when atomic no-replace installation is unavailable", async () => {
+    await fs.writeFile("cp-no-replace-source.txt", "source");
+    const install = fs.cpInstallNoReplace;
+    fs.cpInstallNoReplace = async (src: string, dest: string) => {
+      const getTarget = fs.getOpenAt2DualPathTarget;
+      fs.getOpenAt2DualPathTarget = async () => null;
+      try {
+        return await install(src, dest);
+      } finally {
+        fs.getOpenAt2DualPathTarget = getTarget;
+      }
+    };
+
+    try {
+      await expect(
+        fs.cp("cp-no-replace-source.txt", "cp-no-replace-target.txt", {
+          force: false,
+        }),
+      ).rejects.toMatchObject({ code: "ENOTSUP" });
+    } finally {
+      fs.cpInstallNoReplace = install;
+    }
+
+    expect(await fs.exists("cp-no-replace-target.txt")).toBe(false);
+  });
+
+  it("does not remove a staging path replaced during failed installation", async () => {
+    await fs.writeFile("cp-cleanup-source.txt", "source");
+    const install = fs.cpInstallNoReplace;
+    let stagingPath: string | undefined;
+    fs.cpInstallNoReplace = async (src: string, dest: string) => {
+      stagingPath = src;
+      await fs.unlink(src);
+      await fs.writeFile(src, "replacement");
+      await fs.writeFile(dest, "user-data");
+      const err: NodeJS.ErrnoException = new Error("destination exists");
+      err.code = "EEXIST";
+      throw err;
+    };
+
+    try {
+      await fs.cp("cp-cleanup-source.txt", "cp-cleanup-target.txt", {
+        force: false,
+      });
+    } finally {
+      fs.cpInstallNoReplace = install;
+    }
+
+    expect(stagingPath).toBeDefined();
+    expect(await fs.readFile(stagingPath!, "utf8")).toBe("replacement");
+    expect(await fs.readFile("cp-cleanup-target.txt", "utf8")).toBe(
+      "user-data",
+    );
+    await fs.unlink(stagingPath!);
+  });
+
+  it("does not clean up a staging path recreated after installation", async () => {
+    await fs.writeFile("cp-installed-source.txt", "source");
+    const install = fs.cpInstallNoReplace;
+    let stagingPath: string | undefined;
+    fs.cpInstallNoReplace = async (src: string, dest: string) => {
+      stagingPath = src;
+      await install(src, dest);
+      await fs.writeFile(src, "replacement");
+    };
+
+    try {
+      await fs.cp("cp-installed-source.txt", "cp-installed-target.txt", {
+        force: false,
+      });
+    } finally {
+      fs.cpInstallNoReplace = install;
+    }
+
+    expect(stagingPath).toBeDefined();
+    expect(await fs.readFile("cp-installed-target.txt", "utf8")).toBe("source");
+    expect(await fs.readFile(stagingPath!, "utf8")).toBe("replacement");
+    await fs.unlink(stagingPath!);
+  });
+
+  it("rejects copying a file onto an existing directory", async () => {
+    await fs.writeFile("cp-file-to-dir-source.txt", "source");
+    await fs.mkdir("cp-file-to-dir-target");
+
+    await expect(
+      fs.cp("cp-file-to-dir-source.txt", "cp-file-to-dir-target", {
+        force: false,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_NON_DIR_TO_DIR" });
+  });
+
   it("preserves dangling symlinks during recursive cp", async () => {
     await fs.mkdir("cp-links");
     await symlink("missing-target", join(fs.path, "cp-links", "doc"));
