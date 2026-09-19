@@ -86,13 +86,25 @@ export interface ChatRoomComposerProps {
 export { findChatComposerFocusTarget, refocusChatComposerInput };
 
 export function allowAgentMentionsInComposer({
-  isSelectedThreadAI,
+  agentKind,
   isNewThreadCodex,
 }: {
-  isSelectedThreadAI: boolean;
+  agentKind?: string | null;
   isNewThreadCodex: boolean;
 }): boolean {
-  return isSelectedThreadAI || isNewThreadCodex;
+  return agentKind === "acp" || isNewThreadCodex;
+}
+
+export function approvedDraftIsCurrent({
+  approvedDraft,
+  editorDraft,
+}: {
+  approvedDraft: string;
+  editorDraft?: string;
+}): boolean {
+  // The controlled value is intentionally debounced. If the editor control is
+  // unavailable, do not reject a send based on known-stale React state.
+  return editorDraft == null || editorDraft === approvedDraft;
 }
 
 export function ChatRoomComposer({
@@ -384,7 +396,7 @@ export function ChatRoomComposer({
     threadId: selectedThread?.key,
     threadTitle: threadLabel,
     runnable: allowAgentMentionsInComposer({
-      isSelectedThreadAI,
+      agentKind: threadMetadata?.agent_kind,
       isNewThreadCodex,
     }),
     restoreFocus: refocusComposerInput,
@@ -395,8 +407,6 @@ export function ChatRoomComposer({
   >(undefined);
   const [nameAfterPreparation, setNameAfterPreparation] = useState(false);
   const [preparationError, setPreparationError] = useState("");
-  const latestInput = useRef(input);
-  latestInput.current = input;
   const preparationLock = useRef(false);
   async function prepareAgentThread(
     pending: NonNullable<typeof pendingPreparation.current>,
@@ -447,7 +457,6 @@ export function ChatRoomComposer({
   const handleSend = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
       const effective = typeof value === "string" ? value : input;
-      const draftSnapshot = input;
       if (!effective || !effective.trim()) return;
       if (
         !selectedThread &&
@@ -458,7 +467,12 @@ export function ChatRoomComposer({
         return;
       }
       void agentMentions.preflight(`${effective}\n${acpPrompt}`, () => {
-        if (latestInput.current !== draftSnapshot)
+        if (
+          !approvedDraftIsCurrent({
+            approvedDraft: effective,
+            editorDraft: chatInputControlRef.current?.getValue?.(),
+          })
+        )
           throw new Error(
             "The draft changed during approval. Review it and press Send again.",
           );
@@ -486,7 +500,6 @@ export function ChatRoomComposer({
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
       const effective = typeof value === "string" ? value : input;
-      const draftSnapshot = input;
       if (!effective || !effective.trim()) return;
       if (
         !selectedThread &&
@@ -497,7 +510,12 @@ export function ChatRoomComposer({
         return;
       }
       void agentMentions.preflight(`${effective}\n${acpPrompt}`, () => {
-        if (latestInput.current !== draftSnapshot)
+        if (
+          !approvedDraftIsCurrent({
+            approvedDraft: effective,
+            editorDraft: chatInputControlRef.current?.getValue?.(),
+          })
+        )
           throw new Error(
             "The draft changed during approval. Review it and press Send again.",
           );

@@ -3,7 +3,11 @@
 import React from "react";
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { allowAgentMentionsInComposer, ChatRoomComposer } from "../composer";
+import {
+  allowAgentMentionsInComposer,
+  approvedDraftIsCurrent,
+  ChatRoomComposer,
+} from "../composer";
 
 let lastChatInputProps: any;
 
@@ -87,25 +91,52 @@ describe("ChatRoomComposer resize handle", () => {
     lastChatInputProps = undefined;
   });
 
-  it("allows agent mentions only in AI or new Codex threads", () => {
+  it("allows agent mentions only in explicit ACP or new Codex threads", () => {
     expect(
       allowAgentMentionsInComposer({
-        isSelectedThreadAI: false,
+        agentKind: "none",
         isNewThreadCodex: false,
       }),
     ).toBe(false);
     expect(
       allowAgentMentionsInComposer({
-        isSelectedThreadAI: true,
+        agentKind: undefined,
+        isNewThreadCodex: false,
+      }),
+    ).toBe(false);
+    expect(
+      allowAgentMentionsInComposer({
+        agentKind: "acp",
         isNewThreadCodex: false,
       }),
     ).toBe(true);
     expect(
       allowAgentMentionsInComposer({
-        isSelectedThreadAI: false,
+        agentKind: "none",
         isNewThreadCodex: true,
       }),
     ).toBe(true);
+  });
+
+  it("checks approved sends against the live editor instead of debounced state", () => {
+    expect(
+      approvedDraftIsCurrent({
+        approvedDraft: "latest editor draft",
+        editorDraft: "latest editor draft",
+      }),
+    ).toBe(true);
+    expect(
+      approvedDraftIsCurrent({
+        approvedDraft: "latest editor draft",
+        editorDraft: undefined,
+      }),
+    ).toBe(true);
+    expect(
+      approvedDraftIsCurrent({
+        approvedDraft: "approved draft",
+        editorDraft: "changed during approval",
+      }),
+    ).toBe(false);
   });
 
   it("prepares naming before the first turn using the latest private editor draft, without sending", async () => {
