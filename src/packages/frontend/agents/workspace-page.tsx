@@ -44,6 +44,11 @@ import {
   useProjectContextProvider,
 } from "@cocalc/frontend/project/context";
 import { EmbeddedProjectFile } from "@cocalc/frontend/project/page/content";
+import { ProjectDocsPanel } from "@cocalc/frontend/project/page/flyouts/docs";
+import {
+  PROJECT_DOCS_OPEN_EVENT,
+  type ProjectDocsOpenDetail,
+} from "@cocalc/frontend/docs/navigation";
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
 import {
   DragHandle,
@@ -64,6 +69,7 @@ import { Resizable } from "re-resizable";
 import {
   Alert,
   Button,
+  Drawer,
   Dropdown,
   Empty,
   Input,
@@ -141,6 +147,19 @@ const MIN_AGENT_SIDEBAR_WIDTH = 220;
 const MAX_AGENT_SIDEBAR_WIDTH = 600;
 const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
 const AGENT_SIDEBAR_HIDDEN_STORAGE_KEY = "cocalc-agents-sidebar-hidden-v1";
+const AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY = "cocalc-agents-docs-drawer-open-v1";
+
+function initialAgentDocsDrawerOpen(): boolean {
+  if (typeof window === "undefined") return false;
+  return (
+    window.localStorage.getItem(AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY) === "true"
+  );
+}
+
+function rememberAgentDocsDrawerOpen(open: boolean): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY, `${open}`);
+}
 
 function initialAgentSidebarWidth(): number {
   if (typeof window === "undefined") return DEFAULT_AGENT_SIDEBAR_WIDTH;
@@ -928,6 +947,8 @@ function AgentProjectContext({
   onAgentActivity,
   onThreadAppearance,
   onChatActions,
+  onClose,
+  onOpenDocs,
 }: {
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -940,6 +961,8 @@ function AgentProjectContext({
     appearance: AgentHeaderAppearance,
   ) => void;
   onChatActions: (actions: ChatActions | undefined) => void;
+  onClose: () => void;
+  onOpenDocs: () => void;
 }) {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
@@ -1141,6 +1164,32 @@ function AgentProjectContext({
     onSelectedThread(selectedThread);
   }, [active, onSelectedThread, ready, selectedThread]);
 
+  useEffect(() => {
+    if (!ready) return;
+    const editorActions: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    if (typeof editorActions?.setEmbeddedCloseHandler !== "function") return;
+    editorActions.setEmbeddedCloseHandler(active ? onClose : undefined);
+    return () => {
+      if (active) editorActions.setEmbeddedCloseHandler(undefined);
+    };
+  }, [active, agent.endpoint.project_id, agent.path, onClose, ready]);
+
+  useEffect(() => {
+    if (!active) return;
+    const handleOpenDocs = (event: Event) => {
+      const detail = (event as CustomEvent<ProjectDocsOpenDetail>).detail;
+      if (detail?.projectId !== agent.endpoint.project_id) return;
+      event.preventDefault();
+      onOpenDocs();
+    };
+    window.addEventListener(PROJECT_DOCS_OPEN_EVENT, handleOpenDocs);
+    return () =>
+      window.removeEventListener(PROJECT_DOCS_OPEN_EVENT, handleOpenDocs);
+  }, [active, agent.endpoint.project_id, onOpenDocs]);
+
   if (error) {
     return (
       <Alert
@@ -1175,6 +1224,7 @@ function AgentProjectContext({
     <ProjectContext.Provider value={projectContext}>
       <ChatEmbeddingOptionsProvider
         value={{
+          hideCompactThreadHeader: true,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,
@@ -1248,7 +1298,16 @@ function AgentWorkspace({
   const [appearanceDraft, setAppearanceDraft] =
     useState<ThemeEditorDraft | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions>();
+  const [docsOpen, setDocsOpen] = useState(initialAgentDocsDrawerOpen);
   const [, setChatVersion] = useState(0);
+  const openDocs = useCallback(() => {
+    setDocsOpen(true);
+    rememberAgentDocsDrawerOpen(true);
+  }, []);
+  const closeDocs = useCallback(() => {
+    setDocsOpen(false);
+    rememberAgentDocsDrawerOpen(false);
+  }, []);
   useEffect(() => {
     const syncdb = chatActions?.syncdb;
     if (!syncdb) return;
@@ -1615,6 +1674,8 @@ function AgentWorkspace({
           onSelectedThread={handleSelectedThread}
           onAgentActivity={onAgentActivity}
           onChatActions={setChatActions}
+          onClose={onClose}
+          onOpenDocs={openDocs}
           onThreadAppearance={(threadId, value) => {
             if (threadId === selectedThread) {
               setHeaderAppearance((current) =>
@@ -1636,6 +1697,20 @@ function AgentWorkspace({
           }}
         />
       </div>
+      <Drawer
+        destroyOnHidden={false}
+        open={active && docsOpen}
+        placement="right"
+        title="Documentation"
+        width="min(720px, calc(100vw - 32px))"
+        onClose={closeDocs}
+        styles={{ body: { overflow: "auto", padding: "12px 0 0 14px" } }}
+      >
+        <ProjectDocsPanel
+          layout="flyout"
+          project_id={agent.endpoint.project_id}
+        />
+      </Drawer>
     </div>
   );
 }

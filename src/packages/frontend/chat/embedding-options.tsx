@@ -6,6 +6,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 export interface ChatEmbeddingOptions {
+  hideCompactThreadHeader?: boolean;
   openFilesInWorkbench?: boolean;
   sidebarHiddenByDefault?: boolean;
   sidebarPreferenceKey?: string;

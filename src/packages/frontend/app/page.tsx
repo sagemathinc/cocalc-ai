@@ -182,6 +182,7 @@ export const Page: React.FC = () => {
     surfaceReady,
     work: "modals",
   });
+  const requestedSettingsModal = useTypedRedux("page", "settingsModal");
   const showPostSurfaceBanners = usePostSurfaceWork({
     mode: startupPerformance.mode,
     surfaceReady,
@@ -606,7 +607,7 @@ export const Page: React.FC = () => {
         !isAuthView &&
         fullscreen !== "kiosk" &&
         fullscreen !== "project" && <QuickNavigation />}
-      {showPostSurfaceModals && !examMode ? (
+      {(showPostSurfaceModals || !!requestedSettingsModal) && !examMode ? (
         <PostSurfaceSlot scope="app.post-surface-modals">
           <PostSurfaceModals />
         </PostSurfaceSlot>

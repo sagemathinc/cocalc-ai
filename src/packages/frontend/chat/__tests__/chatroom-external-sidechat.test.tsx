@@ -3,6 +3,7 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import * as immutable from "immutable";
 import { ChatPanel } from "../chatroom";
+import { ChatEmbeddingOptionsProvider } from "../embedding-options";
 
 const persistExternalSideChatSelectedThreadKey = jest.fn();
 const renderChatRoomThreadPanel = jest.fn((props: any) => (
@@ -170,7 +171,11 @@ describe("ChatPanel external side chat persistence", () => {
 
   function renderPanel(
     desc?: Record<string, unknown>,
-    opts?: { isVisible?: boolean; tabIsVisible?: boolean },
+    opts?: {
+      hideCompactThreadHeader?: boolean;
+      isVisible?: boolean;
+      tabIsVisible?: boolean;
+    },
   ) {
     const actions = {
       scrollToIndex: jest.fn(),
@@ -184,17 +189,21 @@ describe("ChatPanel external side chat persistence", () => {
     } as any;
 
     render(
-      <ChatPanel
-        actions={actions}
-        project_id="project-1"
-        path=".notes.ipynb.sage-chat"
-        messages={new Map()}
-        threadIndex={undefined}
-        docVersion={0}
-        desc={desc as any}
-        isVisible={opts?.isVisible}
-        tabIsVisible={opts?.tabIsVisible}
-      />,
+      <ChatEmbeddingOptionsProvider
+        value={{ hideCompactThreadHeader: opts?.hideCompactThreadHeader }}
+      >
+        <ChatPanel
+          actions={actions}
+          project_id="project-1"
+          path=".notes.ipynb.sage-chat"
+          messages={new Map()}
+          threadIndex={undefined}
+          docVersion={0}
+          desc={desc as any}
+          isVisible={opts?.isVisible}
+          tabIsVisible={opts?.tabIsVisible}
+        />
+      </ChatEmbeddingOptionsProvider>,
     );
 
     return actions;
@@ -237,6 +246,14 @@ describe("ChatPanel external side chat persistence", () => {
     expect(
       renderChatRoomThreadPanel.mock.lastCall?.[0]?.allowSidebarToggle,
     ).toBe(false);
+  });
+
+  it("lets an embedded surface suppress the compact thread header", () => {
+    renderPanel(undefined, { hideCompactThreadHeader: true });
+
+    expect(
+      renderChatRoomThreadPanel.mock.lastCall?.[0]?.hideCompactThreadHeader,
+    ).toBe(true);
   });
 
   it("leaves the selected thread viewport to ChatLog", () => {

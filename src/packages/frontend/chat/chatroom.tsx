@@ -2877,7 +2877,11 @@ function ChatPanelContent({
         onOpenGitBrowser={openGitBrowserFromMessage}
         hideTopControls={hideTopControls}
         codexConfigInComposer={!effectiveReadOnly}
-        hideCompactThreadHeader={hideCompactThreadHeader || narrow}
+        hideCompactThreadHeader={
+          hideCompactThreadHeader ||
+          embeddingOptions.hideCompactThreadHeader ||
+          narrow
+        }
         mobile={narrow}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
         allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}

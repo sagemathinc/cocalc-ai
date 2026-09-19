@@ -112,6 +112,11 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   private chatFastOpenToken = 0;
   private chatFastOpenApplied = false;
   private messageCacheRecoveryWarned = false;
+  private embeddedCloseHandler?: () => void;
+
+  setEmbeddedCloseHandler(handler?: () => void): void {
+    this.embeddedCloseHandler = handler;
+  }
 
   private ensureRenderableChatActions(): boolean {
     const frameIds: string[] = [];
@@ -329,6 +334,10 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   }
 
   close_frame(frameId: string): void {
+    if (this._tree_is_single_leaf() && this.embeddedCloseHandler) {
+      this.embeddedCloseHandler();
+      return;
+    }
     super.close_frame(frameId); // actually closes the frame itself
     // now clean up if it is a chat frame:
     if (this.chatActions[frameId] != null) {
