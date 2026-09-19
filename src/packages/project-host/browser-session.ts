@@ -132,19 +132,29 @@ export function createProjectHostBrowserSessionToken({
   account_id,
   now_ms = Date.now(),
   ttl_seconds = BROWSER_SESSION_TTL_SECONDS,
+  restricted_exp_s,
 }: {
   account_id: string;
   now_ms?: number;
   ttl_seconds?: number;
+  restricted_exp_s?: number;
 }): string {
+  const now_s = Math.floor(now_ms / 1000);
+  const requestedTtl =
+    restricted_exp_s == null ? ttl_seconds : restricted_exp_s - now_s;
+  if (!Number.isFinite(requestedTtl) || requestedTtl <= 0) {
+    throw new Error("browser session authorization expired");
+  }
   const ttl = Math.max(
     MIN_BROWSER_SESSION_TTL_SECONDS,
-    Math.min(BROWSER_SESSION_TTL_SECONDS, Math.floor(ttl_seconds)),
+    Math.min(BROWSER_SESSION_TTL_SECONDS, Math.floor(requestedTtl)),
   );
+  const exp = now_s + ttl;
   const payload = JSON.stringify({
     account_id,
-    iat: Math.floor(now_ms / 1000),
-    exp: Math.floor(now_ms / 1000) + ttl,
+    iat: now_s,
+    exp,
+    ...(restricted_exp_s == null ? {} : { restricted_exp_s: exp }),
     nonce: randomBytes(12).toString("hex"),
   });
   const encoded = base64UrlEncode(payload);
@@ -160,6 +170,7 @@ export function verifyProjectHostBrowserSessionToken(
       account_id: string;
       iat_s: number;
       exp_s: number;
+      restricted_exp_s?: number;
     }
   | undefined {
   const [encoded, sig] = token.split(".");
@@ -182,16 +193,44 @@ export function verifyProjectHostBrowserSessionToken(
   const account_id = `${payload?.account_id ?? ""}`;
   const iat = Number(payload?.iat ?? 0);
   const exp = Number(payload?.exp ?? 0);
+  const explicitRestrictedExp =
+    payload?.restricted_exp_s == null
+      ? undefined
+      : Number(payload.restricted_exp_s);
   if (!isValidUUID(account_id)) return;
   if (!Number.isFinite(iat)) return;
   if (!Number.isFinite(exp)) return;
+  if (
+    explicitRestrictedExp != null &&
+    (!Number.isSafeInteger(explicitRestrictedExp) ||
+      explicitRestrictedExp !== exp)
+  ) {
+    return;
+  }
   if (exp < Math.floor(now_ms / 1000)) return;
-  return { account_id, iat_s: iat, exp_s: exp };
+  // Before restricted_exp_s was added, bounded browser sessions could still
+  // be identified by their shorter-than-default signed lifetime.
+  const restricted_exp_s =
+    explicitRestrictedExp ??
+    (exp - iat < BROWSER_SESSION_TTL_SECONDS ? exp : undefined);
+  return {
+    account_id,
+    iat_s: iat,
+    exp_s: exp,
+    ...(restricted_exp_s == null ? {} : { restricted_exp_s }),
+  };
 }
 
 export function resolveProjectHostBrowserSessionFromCookieHeader(
   header: string | undefined,
-): { account_id: string; iat_s: number; exp_s: number } | undefined {
+):
+  | {
+      account_id: string;
+      iat_s: number;
+      exp_s: number;
+      restricted_exp_s?: number;
+    }
+  | undefined {
   const tokens = readCookieValues(
     header,
     PROJECT_HOST_BROWSER_SESSION_COOKIE_NAME,
@@ -270,6 +309,9 @@ export function issueProjectHostBrowserSessionFromBearer({
   if ((claims.act ?? "account") !== "account") {
     throw new Error("invalid actor for project-host browser session");
   }
+  if (claims.auth_actor === "agent") {
+    throw new Error("agent credentials cannot create a browser session");
+  }
   if (!isValidUUID(claims.sub)) {
     throw new Error("invalid account id in auth token");
   }
@@ -286,7 +328,9 @@ export function issueProjectHostBrowserSessionFromBearer({
       req,
       sessionToken: createProjectHostBrowserSessionToken({
         account_id: claims.sub,
-        ...(restrictedTtl == null ? {} : { ttl_seconds: restrictedTtl }),
+        ...(claims.browser_session_exp_s == null
+          ? {}
+          : { restricted_exp_s: claims.browser_session_exp_s }),
       }),
       ...(restrictedTtl == null ? {} : { max_age_seconds: restrictedTtl }),
     }),

@@ -399,7 +399,7 @@ export async function initHttp({
       );
       const sessionToken = createProjectHostBrowserSessionToken({
         account_id: session.account_id,
-        ttl_seconds: ttlSeconds,
+        restricted_exp_s: Math.floor(session.expires_at_ms / 1000),
       });
       appendSetCookie(
         res,

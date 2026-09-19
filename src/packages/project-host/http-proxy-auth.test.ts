@@ -216,6 +216,40 @@ describe("project-host HTTP session cookie", () => {
     }
   });
 
+  it("continues sliding ordinary browser sessions", async () => {
+    jest.useFakeTimers();
+    try {
+      const now = new Date("2026-09-19T04:00:00.000Z");
+      jest.setSystemTime(now);
+      const auth = createProjectHostHttpProxyAuth({
+        host_id: "00000000-1000-4000-8000-000000000099",
+      });
+      const browserSession = createProjectHostBrowserSessionToken({
+        account_id,
+        now_ms: now.getTime() - 24 * 60 * 60 * 1000,
+      });
+      const req = {
+        headers: {
+          cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "x-forwarded-proto": "https",
+        },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      } as any;
+      const res = createResponse();
+
+      await auth.authorizeHttpRequest(req, res, project_id);
+
+      const setCookie = res.headers.get("Set-Cookie");
+      const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+      expect(
+        cookies.filter((cookie) => `${cookie}`.includes("Max-Age=2592000")),
+      ).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it("rejects an expired restricted bearer for HTTP requests", async () => {
     const now_s = Math.floor(Date.now() / 1000);
     mockVerifyProjectHostAuthToken.mockReturnValue({
@@ -237,6 +271,31 @@ describe("project-host HTTP session cookie", () => {
     await expect(
       auth.authorizeHttpRequest(req, createResponse(), project_id),
     ).rejects.toThrow("browser session authorization expired");
+  });
+
+  it("rejects agent bearers at HTTP session redemption", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      auth_actor: "agent",
+      iat: now_s,
+      exp: now_s + 600,
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: { authorization: "Bearer agent-token" },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow(
+      "agent credentials cannot authorize project-host HTTP access",
+    );
   });
 
   it("bounds cookies minted from a restricted bearer", async () => {
@@ -269,6 +328,14 @@ describe("project-host HTTP session cookie", () => {
       expect(
         cookies.filter((cookie) => `${cookie}`.includes("Max-Age=60")),
       ).toHaveLength(2);
+      const httpCookie = cookies.find(
+        (cookie) =>
+          `${cookie}`.startsWith("cocalc_project_host_http_session=") &&
+          `${cookie}`.includes("Max-Age=60"),
+      );
+      expect(
+        resolveProjectHostHttpSessionFromCookieHeader(`${httpCookie}`),
+      ).toMatchObject({ restricted_exp_s: now_s + 60 });
     } finally {
       jest.useRealTimers();
     }
