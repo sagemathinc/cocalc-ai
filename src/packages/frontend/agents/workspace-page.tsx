@@ -207,6 +207,9 @@ type NewAgentModelOption = {
 
 type NewAgentCodexConfig = CodexThreadConfig & { credentialId?: string };
 
+const NEW_AGENT_BOOTSTRAP_INSTANCE_KEY = "agents-workspace-new-agent";
+const COPY_AGENT_BOOTSTRAP_INSTANCE_KEY = "agents-workspace-copy-agent";
+
 type PaymentSourceWithSubscriptions = NonNullable<
   ReturnType<typeof useCodexPaymentSource>["paymentSource"]
 > & {
@@ -469,7 +472,9 @@ function NewAgentPanel({
     );
     await projectActions.ensureContainingDirectoryExists(path);
     await fs.writeFile(path, "");
-    const chatActions = initChat(targetProjectId, path);
+    const chatActions = initChat(targetProjectId, path, {
+      instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+    });
     await waitForChatReady(chatActions);
     const threadId = chatActions.createEmptyThread({
       name: name.trim(),
@@ -528,7 +533,9 @@ function NewAgentPanel({
           | undefined,
         thread_title: name.trim(),
       });
-      const actions = initChat(created.projectId, created.path);
+      const actions = initChat(created.projectId, created.path, {
+        instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+      });
       await waitForChatReady(actions);
       const sent = actions.sendChat({
         input: firstRequest.trim(),
@@ -1745,6 +1752,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       const actions = initChat(
         copyingAgent.endpoint.project_id,
         copyingAgent.path,
+        { instanceKey: COPY_AGENT_BOOTSTRAP_INSTANCE_KEY },
       );
       await waitForChatReady(actions);
       const threadId = await actions.forkThread({
