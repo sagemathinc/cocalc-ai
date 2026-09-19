@@ -32,6 +32,7 @@ import {
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
@@ -2066,6 +2067,7 @@ export async function getLaunchHealth({
     configResult,
     smokeResult,
     adminAlertsResult,
+    intrusionObservationsResult,
   ] = await Promise.allSettled([
     getPool("medium").query("SELECT 1"),
     getServerSettings(),
@@ -2079,6 +2081,7 @@ export async function getLaunchHealth({
     }),
     getLatestLaunchSmokeResult(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
+    getHostIntrusionObservationSummary(),
   ]);
 
   const settings =
@@ -2099,6 +2102,10 @@ export async function getLaunchHealth({
   const adminAlerts =
     adminAlertsResult.status === "fulfilled"
       ? adminAlertsResult.value
+      : undefined;
+  const intrusionObservations =
+    intrusionObservationsResult.status === "fulfilled"
+      ? intrusionObservationsResult.value
       : undefined;
   const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
@@ -2237,6 +2244,28 @@ export async function getLaunchHealth({
           : (adminAlerts?.alerts.map(
               (alert) => `${alert.sent_at} ${alert.subject}`,
             ) ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-host-intrusion-observations",
+      label: "Project host intrusion observations",
+      level:
+        intrusionObservationsResult.status === "rejected" ||
+        !intrusionObservations ||
+        intrusionObservations.missing_hosts > 0 ||
+        intrusionObservations.stale_hosts > 0 ||
+        intrusionObservations.incomplete_hosts > 0
+          ? "unknown"
+          : "healthy",
+      summary:
+        intrusionObservationsResult.status === "rejected"
+          ? "Unable to review retained project-host intrusion observations."
+          : !intrusionObservations
+            ? "No project-host intrusion observation summary is available."
+            : `${intrusionObservations.observed_hosts}/${intrusionObservations.active_hosts} active hosts observed; ${intrusionObservations.recently_changed_hosts} had retained security-state changes in the last 24 hours.`,
+      details:
+        intrusionObservationsResult.status === "rejected"
+          ? [`${intrusionObservationsResult.reason}`]
+          : (intrusionObservations?.details ?? []),
     }),
     launchHealthCheck({
       id: "kill-switches",
