@@ -34,6 +34,18 @@ const mockApi = {
   getIdentity: jest.fn(),
   createAgentSession: jest.fn(),
 };
+const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
+  await action();
+  return true;
+});
+
+jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
+  FreshAuthModal: () => null,
+  useFreshAuthAction: () => ({
+    runFreshAuthAction: mockRunFreshAuthAction,
+    freshAuthModalProps: {},
+  }),
+}));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => account,
@@ -68,6 +80,10 @@ beforeEach(() => {
     endpoint,
   }));
   mockApi.createAgentSession.mockResolvedValue({});
+  mockRunFreshAuthAction.mockImplementation(async (action) => {
+    await action();
+    return true;
+  });
 });
 
 test("an unnamed source is named before its two-way session is created", async () => {
@@ -177,6 +193,7 @@ test("an already named source creates a session without renaming", async () => {
     expect(mockApi.createAgentSession).toHaveBeenCalledTimes(1),
   );
   expect(mockApi.nameAgent).not.toHaveBeenCalled();
+  expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
 });
 
 test("rename dialog checks current names without submitting", async () => {

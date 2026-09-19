@@ -20,6 +20,15 @@ test("hides the exact model-facing agent message envelope", () => {
   );
 });
 
+test("hides the named-agent envelope used by new deliveries", () => {
+  const named = { ...rpc, source_label: "@illustrator" };
+  const prefix = agentRpcPromptPrefix(named);
+  expect(prefix).toContain("Message from @illustrator");
+  expect(stripAgentRpcPrompt(`${prefix}Draft attached.`, named)).toBe(
+    "Draft attached.",
+  );
+});
+
 test("does not hide edited or incomplete attribution text", () => {
   const edited = `Message from agent ${rpc.source.agent_id}.\n\nReview complete.`;
   expect(stripAgentRpcPrompt(edited, rpc)).toBe(edited);

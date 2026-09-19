@@ -34,6 +34,7 @@ import type {
   AgentSessionActivity,
   AgentSessionAuthorization,
   AgentSessionDiscovery,
+  AgentSessionMember,
   PersonalAgentDenial,
 } from "@cocalc/conat/agents/personal";
 import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
@@ -58,6 +59,17 @@ import {
   externalStore,
 } from "./external";
 import { personalControl, withPersonalHome } from "./personal";
+
+function sessionMemberLabel(member: AgentSessionMember): string {
+  if (member.kind === "external") {
+    return (
+      member.label.trim() || `External agent ${member.member_id.slice(0, 8)}`
+    );
+  }
+  return member.name
+    ? `@${member.name}`
+    : member.thread_title?.trim() || `Agent ${member.member_id.slice(0, 8)}`;
+}
 import {
   claimAgentRpcAdmissionState,
   createAgentRpcAdmissionState,
@@ -353,6 +365,8 @@ async function submitAgentRpcOperation(
     const envelope: AgentRpcEnvelope = {
       ...opts.request,
       source: opts.source,
+      source_label: sessionMemberLabel(proof.source),
+      target_label: sessionMemberLabel(proof.target),
       ...(opts.run_id ? { run_id: opts.run_id } : {}),
       permit_id: randomUUID(),
       account_id: proof.account_id,

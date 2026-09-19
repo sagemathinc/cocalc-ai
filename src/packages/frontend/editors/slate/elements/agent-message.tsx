@@ -6,6 +6,7 @@
 import {
   CheckCircleOutlined,
   CloseCircleOutlined,
+  InfoCircleOutlined,
   QuestionCircleOutlined,
   RobotOutlined,
 } from "@ant-design/icons";
@@ -23,6 +24,7 @@ export interface AgentMessage extends SlateElement {
   type: "agent-message";
   agent_session_id?: string;
   attempt_id?: string;
+  source_label?: string;
 }
 
 function deliveryLabel(activity: AgentSessionActivity): string {
@@ -80,7 +82,9 @@ export function agentMessageFromMarkdownFence({
   info: string;
   value: string;
 }): AgentMessage | undefined {
-  const [kind, agent_session_id, attempt_id, extra] = info.trim().split(/\s+/);
+  const [kind, agent_session_id, attempt_id, source, extra] = info
+    .trim()
+    .split(/\s+/);
   if (kind.toLowerCase() !== "agent-message" || extra !== undefined) return;
   const uuid =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -89,9 +93,20 @@ export function agentMessageFromMarkdownFence({
     (!uuid.test(agent_session_id ?? "") || !uuid.test(attempt_id ?? ""))
   )
     return;
+  let source_label: string | undefined;
+  if (source !== undefined) {
+    if (!source.startsWith("from=")) return;
+    try {
+      source_label = decodeURIComponent(source.slice(5)).trim();
+    } catch {
+      return;
+    }
+    if (!source_label || source_label.length > 120) return;
+  }
   return {
     type: "agent-message",
     ...(agent_session_id && attempt_id ? { agent_session_id, attempt_id } : {}),
+    ...(source_label ? { source_label } : {}),
     children: markdown_to_slate(value, true),
   };
 }
@@ -108,6 +123,7 @@ export function AgentMessageElement({
   if (element.type !== "agent-message")
     throw new Error("Expected agent-message element");
   const message = element as AgentMessage;
+  const sourceLabel = message.source_label ?? "Agent";
   const inspectable = !!(message.agent_session_id && message.attempt_id);
   const outcome = activity ? outcomePresentation(activity) : undefined;
   async function inspect() {
@@ -138,79 +154,90 @@ export function AgentMessageElement({
       className="cocalc-slate-agent-message"
       style={{
         margin: "6px 0",
-        padding: "10px 12px 12px",
-        borderRadius: 12,
+        padding: "6px 8px",
+        borderRadius: 9,
         background: UI_COLORS.surface,
         color: UI_COLORS.text,
         border: `1px solid ${UI_COLORS.border}`,
+        display: "flex",
+        alignItems: "center",
+        gap: 7,
+        flexWrap: "wrap",
       }}
     >
-      <div
+      <span
         contentEditable={false}
         style={{
-          display: "flex",
+          display: "inline-flex",
           alignItems: "center",
-          justifyContent: "space-between",
-          gap: 10,
-          flexWrap: "wrap",
-          marginBottom: 8,
+          gap: 6,
+          color: UI_COLORS.info,
+          fontSize: 13,
+          fontWeight: 650,
+          whiteSpace: "nowrap",
+          flex: "0 0 auto",
         }}
       >
         <span
+          aria-hidden="true"
           style={{
             display: "inline-flex",
             alignItems: "center",
-            gap: 7,
-            color: UI_COLORS.secondary,
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          <span
-            aria-hidden="true"
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              width: 25,
-              height: 25,
-              borderRadius: 999,
-              color: UI_COLORS.info,
-              background: UI_COLORS.infoBg,
-            }}
-          >
-            <RobotOutlined />
-          </span>
-          Agent message
-        </span>
-        <button
-          type="button"
-          aria-expanded={expanded}
-          onClick={() => void inspect()}
-          style={{
-            appearance: "none",
-            border: 0,
-            borderRadius: 6,
-            padding: "3px 7px",
-            background: "transparent",
+            justifyContent: "center",
+            width: 22,
+            height: 22,
+            borderRadius: 999,
             color: UI_COLORS.info,
-            cursor: "pointer",
-            fontSize: 12,
-            fontWeight: 600,
+            background: UI_COLORS.infoBg,
           }}
         >
-          {expanded ? "Hide delivery details" : "Inspect delivery"}
-        </button>
+          <RobotOutlined />
+        </span>
+        {sourceLabel}:
+      </span>
+      <div
+        className="cocalc-slate-agent-message-body"
+        style={{
+          flex: "1 1 240px",
+          minWidth: 0,
+          height: "1.5em",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          lineHeight: 1.5,
+        }}
+      >
+        {children}
       </div>
+      <button
+        type="button"
+        aria-label={expanded ? "Hide delivery details" : "Inspect delivery"}
+        aria-expanded={expanded}
+        title={expanded ? "Hide delivery details" : "Inspect delivery"}
+        onClick={() => void inspect()}
+        style={{
+          appearance: "none",
+          border: 0,
+          borderRadius: 6,
+          padding: 4,
+          background: "transparent",
+          color: UI_COLORS.secondary,
+          cursor: "pointer",
+          lineHeight: 1,
+          flex: "0 0 auto",
+        }}
+      >
+        <InfoCircleOutlined />
+      </button>
       {expanded && (
         <div
           contentEditable={false}
           style={{
+            flex: "1 0 100%",
             color: UI_COLORS.secondary,
             background: UI_COLORS.inset,
             borderRadius: 8,
             padding: "9px 10px",
-            marginBottom: 10,
             fontSize: 12,
           }}
         >
@@ -298,15 +325,6 @@ export function AgentMessageElement({
           )}
         </div>
       )}
-      <div
-        style={{
-          minWidth: 0,
-          overflowWrap: "anywhere",
-          lineHeight: 1.5,
-        }}
-      >
-        {children}
-      </div>
     </section>
   );
 }
@@ -321,7 +339,11 @@ register({
     while (body.includes(fence)) fence += "`";
     const info =
       node.agent_session_id && node.attempt_id
-        ? `agent-message ${node.agent_session_id} ${node.attempt_id}`
+        ? `agent-message ${node.agent_session_id} ${node.attempt_id}${
+            node.source_label
+              ? ` from=${encodeURIComponent(node.source_label)}`
+              : ""
+          }`
         : "agent-message";
     return `${fence}${info}\n${body}\n${fence}\n\n`;
   },

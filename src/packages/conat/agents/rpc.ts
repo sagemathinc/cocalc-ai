@@ -354,6 +354,8 @@ export interface AgentRpcEnvelope extends Omit<AgentRpcSend, "target"> {
   target: AgentEndpoint;
   permit_id: string;
   source: AgentRpcSource;
+  source_label: string;
+  target_label: string;
   run_id?: string;
   account_id: string;
   session_generation: string;
@@ -373,8 +375,10 @@ export function agentRpcEnvelopeKey(e: AgentRpcEnvelope): string {
     e.deadline,
     e.source.project_id,
     e.source.agent_id,
+    e.source_label,
     e.target.project_id,
     e.target.agent_id,
+    e.target_label,
     e.run_id,
     e.agent_session_id,
     e.session_generation,

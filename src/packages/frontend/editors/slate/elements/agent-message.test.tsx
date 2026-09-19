@@ -28,6 +28,12 @@ test("parses exact correlation metadata but keeps uncorrelated quotes readable",
   ).toMatchObject({ type: "agent-message", agent_session_id, attempt_id });
   expect(
     agentMessageFromMarkdownFence({
+      info: `agent-message ${agent_session_id} ${attempt_id} from=%40reviewer`,
+      value: "Peer result",
+    }),
+  ).toMatchObject({ source_label: "@reviewer" });
+  expect(
+    agentMessageFromMarkdownFence({
       info: "agent-message forged metadata",
       value: "Peer result",
     }),
@@ -60,6 +66,7 @@ test("shows retained evidence without claiming that editable content is verified
           type: "agent-message",
           agent_session_id,
           attempt_id,
+          source_label: "@reviewer",
           children: [{ text: "Edited peer result" }],
         } as any
       }
@@ -67,7 +74,7 @@ test("shows retained evidence without claiming that editable content is verified
       Edited peer result
     </AgentMessageElement>,
   );
-  expect(screen.getByText("Agent message")).toBeVisible();
+  expect(screen.getByText("@reviewer:")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Inspect delivery" }));
   await waitFor(() =>
     expect(screen.getByText("Accepted for delivery")).toBeVisible(),

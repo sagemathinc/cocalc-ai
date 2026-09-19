@@ -382,6 +382,7 @@ export function getFocusMessageButtonStyle(): CSSProperties {
 function rpcSourceAttribution(message: ChatMessageTyped):
   | {
       label: string;
+      source_label: string;
       agent_session_id?: string;
       attempt_id?: string;
     }
@@ -392,6 +393,12 @@ function rpcSourceAttribution(message: ChatMessageTyped):
   const agentId = `${source?.agent_id ?? ""}`.trim();
   if (!agentId) return;
   const evidence = {
+    source_label:
+      typeof rpc.source_label === "string" && rpc.source_label.trim()
+        ? rpc.source_label.trim()
+        : source.kind === "external"
+          ? `External agent ${agentId.slice(0, 8)}`
+          : `Agent ${agentId.slice(0, 8)}`,
     agent_session_id:
       typeof rpc.agent_session_id === "string"
         ? rpc.agent_session_id
@@ -412,13 +419,17 @@ function rpcSourceAttribution(message: ChatMessageTyped):
 
 function agentMessageFence(
   value: string,
-  evidence?: { agent_session_id?: string; attempt_id?: string },
+  evidence?: {
+    agent_session_id?: string;
+    attempt_id?: string;
+    source_label?: string;
+  },
 ): string {
   let fence = "```";
   while (value.includes(fence)) fence += "`";
   const info =
     evidence?.agent_session_id && evidence.attempt_id
-      ? `agent-message ${evidence.agent_session_id} ${evidence.attempt_id}`
+      ? `agent-message ${evidence.agent_session_id} ${evidence.attempt_id} from=${encodeURIComponent(evidence.source_label ?? "Agent")}`
       : "agent-message";
   return `${fence}${info}\n${value}\n${fence}`;
 }

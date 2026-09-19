@@ -15,7 +15,9 @@ function setup() {
   const envelope: AgentRpcEnvelope = {
     version: 3,
     source: { project_id: randomUUID(), agent_id: randomUUID() },
+    source_label: "@source",
     target: { project_id: randomUUID(), agent_id: randomUUID() },
+    target_label: "@target",
     run_id: randomUUID(),
     account_id: randomUUID(),
     agent_session_id: randomUUID(),
