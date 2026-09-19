@@ -16,6 +16,20 @@ function createConfigurationActions() {
 }
 
 describe("course configuration payment actions", () => {
+  it("stores the compute budget opt-in", () => {
+    const { actions, set } = createConfigurationActions();
+
+    actions.set_compute_budget_enabled(true);
+
+    expect(set).toHaveBeenCalledWith(
+      {
+        compute_budget_enabled: true,
+        table: "settings",
+      },
+      true,
+    );
+  });
+
   it("sets mutually exclusive direct student pay", () => {
     const { actions, set } = createConfigurationActions();
 

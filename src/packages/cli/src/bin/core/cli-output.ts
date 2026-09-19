@@ -6,6 +6,7 @@
  */
 import { AsciiTable3 } from "ascii-table3";
 import { agentGrantApprovalDetails } from "./agent-grant-approval";
+import { computeFundingHint } from "./compute-funding-hint";
 
 type OutputGlobals = {
   json?: boolean;
@@ -314,7 +315,8 @@ export function emitError(
     cookieAuthHint({ code, message, api }) ??
     (approval?.approval_url
       ? `Approve this exact VM request at ${approval.approval_url}, then retry the command.`
-      : undefined);
+      : undefined) ??
+    computeFundingHint(commandName, code, message);
 
   if (ctx.globals?.json || ctx.globals?.output === "json") {
     const payload = {

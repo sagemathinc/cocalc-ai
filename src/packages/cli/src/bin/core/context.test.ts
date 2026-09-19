@@ -3,6 +3,23 @@ import test from "node:test";
 
 import { createHubApiForContext, hubCallByName } from "./context";
 
+test("createHubApiForContext exposes connected course funding commands", async () => {
+  const calls: Array<{ name: string; args: any[] }> = [];
+  const hub = createHubApiForContext(async <T>(name, args = []) => {
+    calls.push({ name, args });
+    return { sources: [] } as T;
+  });
+  await hub.computeFunding.listSources({ include_inactive: true });
+  await hub.computeFunding.audit({ payer_account_id: "payer", bay_id: "home" });
+  assert.deepEqual(calls, [
+    { name: "computeFunding.listSources", args: [{ include_inactive: true }] },
+    {
+      name: "computeFunding.audit",
+      args: [{ payer_account_id: "payer", bay_id: "home" }],
+    },
+  ]);
+});
+
 test("createHubApiForContext exposes the commercialOrders hub group", async () => {
   const calls: Array<{ name: string; args: any[]; timeout?: number }> = [];
   const hub = createHubApiForContext(async <T>(name, args = [], timeout) => {

@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import type { PoolClient } from "@cocalc/database/pool";
 
 export type AccountUsageWindowScope = "membership";
 export type AccountUsageWindowName = "5h" | "7d";
@@ -74,10 +75,12 @@ function mapWindowRow(row: {
   };
 }
 
-export async function ensureAccountUsageWindowSchema(): Promise<void> {
-  if (!ensuredSchema) {
-    ensuredSchema = (async () => {
-      await getPool().query(`
+export async function ensureAccountUsageWindowSchema(
+  client?: Pick<PoolClient, "query">,
+): Promise<void> {
+  if (!ensuredSchema || client) {
+    const pending = (async () => {
+      await (client ?? getPool()).query(`
         CREATE TABLE IF NOT EXISTS ${WINDOWS_TABLE} (
           id UUID PRIMARY KEY,
           account_id UUID NOT NULL,
@@ -89,13 +92,13 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
           created_at TIMESTAMPTZ NOT NULL DEFAULT now()
         )
       `);
-      await getPool().query(
+      await (client ?? getPool()).query(
         `CREATE INDEX IF NOT EXISTS ${WINDOWS_TABLE}_account_family_window_idx ON ${WINDOWS_TABLE}(account_id, family, "window", epoch, resets_at DESC)`,
       );
-      await getPool().query(
+      await (client ?? getPool()).query(
         `CREATE INDEX IF NOT EXISTS ${WINDOWS_TABLE}_resets_idx ON ${WINDOWS_TABLE}(resets_at DESC)`,
       );
-      await getPool().query(`
+      await (client ?? getPool()).query(`
         CREATE TABLE IF NOT EXISTS ${EPOCHS_TABLE} (
           family TEXT NOT NULL,
           "window" TEXT NOT NULL,
@@ -106,7 +109,7 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
           PRIMARY KEY (family, "window")
         )
       `);
-      await getPool().query(`
+      await (client ?? getPool()).query(`
         CREATE TABLE IF NOT EXISTS ${RESET_TABLE} (
           id UUID PRIMARY KEY,
           family TEXT NOT NULL,
@@ -118,21 +121,25 @@ export async function ensureAccountUsageWindowSchema(): Promise<void> {
           reason TEXT NOT NULL
         )
       `);
-      await getPool().query(
+      await (client ?? getPool()).query(
         `CREATE INDEX IF NOT EXISTS ${RESET_TABLE}_family_window_idx ON ${RESET_TABLE}(family, "window", reset_at DESC)`,
       );
     })();
+    if (!client) ensuredSchema = pending;
+    await pending;
   }
   await ensuredSchema;
 }
 
 async function loadAccountUsageEpoch({
   window,
+  client,
 }: {
   window: AccountUsageWindowName;
+  client?: PoolClient;
 }): Promise<AccountUsageEpoch> {
   await ensureAccountUsageWindowSchema();
-  await getPool("medium").query(
+  await (client ?? getPool("medium")).query(
     `
       INSERT INTO ${EPOCHS_TABLE}
         (family, "window", epoch, reason)
@@ -142,7 +149,7 @@ async function loadAccountUsageEpoch({
     `,
     [MEMBERSHIP_USAGE_SCOPE, window],
   );
-  const { rows } = await getPool("short").query<{
+  const { rows } = await (client ?? getPool("short")).query<{
     family: AccountUsageWindowScope;
     window: AccountUsageWindowName;
     epoch: string | number;
@@ -151,6 +158,7 @@ async function loadAccountUsageEpoch({
       SELECT family, "window" AS window, epoch
       FROM ${EPOCHS_TABLE}
       WHERE family = $1 AND "window" = $2
+      ${client ? "FOR SHARE" : ""}
     `,
     [MEMBERSHIP_USAGE_SCOPE, window],
   );
@@ -167,9 +175,14 @@ async function loadAccountUsageEpoch({
 
 export async function getAccountUsageEpoch({
   window,
+  client,
 }: {
   window: AccountUsageWindowName;
+  client?: PoolClient;
 }): Promise<AccountUsageEpoch> {
+  // Financial admission must see the current epoch, and keep it stable through
+  // commit. Never reuse or populate the process cache from a transaction.
+  if (client) return await loadAccountUsageEpoch({ window, client });
   const cached = epochCache.get(window);
   if (cached != null && cached.expires_at > Date.now()) {
     return await cached.value;
@@ -192,25 +205,28 @@ export async function getActiveAccountUsageWindow({
   window,
   at,
   create = false,
+  client,
 }: {
   account_id: string;
   window: AccountUsageWindowName;
   at?: Date | string;
   create?: boolean;
+  client?: PoolClient;
 }): Promise<AccountUsageWindow | undefined> {
   const time = normalizeDate(at);
-  const { epoch } = await getAccountUsageEpoch({ window });
+  const { epoch } = await getAccountUsageEpoch({ window, client });
   const existing = await selectActiveAccountUsageWindow({
     account_id,
     window,
     epoch,
     at: time,
+    client,
   });
   if (existing || !create) return existing;
 
   const startsAt = time;
   const resetsAt = new Date(startsAt.getTime() + WINDOW_MS[window]);
-  const { rows } = await getPool("medium").query<{
+  const { rows } = await (client ?? getPool("medium")).query<{
     id: string;
     account_id: string;
     family: AccountUsageWindowScope;
@@ -236,13 +252,15 @@ async function selectActiveAccountUsageWindow({
   window,
   epoch,
   at,
+  client,
 }: {
   account_id: string;
   window: AccountUsageWindowName;
   epoch: number;
   at: Date;
+  client?: PoolClient;
 }): Promise<AccountUsageWindow | undefined> {
-  const { rows } = await getPool("short").query<{
+  const { rows } = await (client ?? getPool("short")).query<{
     id: string;
     account_id: string;
     family: AccountUsageWindowScope;
@@ -272,12 +290,14 @@ async function selectActiveAccountUsageWindows({
   account_id,
   epochs,
   at,
+  client,
 }: {
   account_id: string;
   epochs: Record<AccountUsageWindowName, number>;
   at: Date;
+  client?: PoolClient;
 }): Promise<Partial<Record<AccountUsageWindowName, AccountUsageWindow>>> {
-  const { rows } = await getPool("short").query<{
+  const { rows } = await (client ?? getPool("short")).query<{
     id: string;
     account_id: string;
     family: AccountUsageWindowScope;
@@ -314,14 +334,18 @@ export async function getActiveAccountUsageWindows({
   account_id,
   at,
   create = false,
+  client,
 }: {
   account_id: string;
   at?: Date | string;
   create?: boolean;
+  client?: PoolClient;
 }): Promise<Partial<Record<AccountUsageWindowName, AccountUsageWindow>>> {
   const time = normalizeDate(at);
   const [epoch5h, epoch7d] = await Promise.all(
-    WINDOWS.map(async (window) => await getAccountUsageEpoch({ window })),
+    WINDOWS.map(
+      async (window) => await getAccountUsageEpoch({ window, client }),
+    ),
   );
   const result = await selectActiveAccountUsageWindows({
     account_id,
@@ -330,6 +354,7 @@ export async function getActiveAccountUsageWindows({
       "5h": epoch5h.epoch,
       "7d": epoch7d.epoch,
     },
+    client,
   });
   if (!create) return result;
   for (const window of WINDOWS) {
@@ -338,6 +363,7 @@ export async function getActiveAccountUsageWindows({
       window,
       at: time,
       create: true,
+      client,
     });
   }
   return result;
@@ -346,14 +372,17 @@ export async function getActiveAccountUsageWindows({
 export async function ensureAccountUsageWindowsForEvent({
   account_id,
   occurred_at,
+  client,
 }: {
   account_id: string;
   occurred_at?: Date | string;
+  client?: PoolClient;
 }): Promise<Record<AccountUsageWindowName, AccountUsageWindow>> {
   const windows = await getActiveAccountUsageWindows({
     account_id,
     at: occurred_at,
     create: true,
+    client,
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];

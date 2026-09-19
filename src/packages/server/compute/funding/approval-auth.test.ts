@@ -1,0 +1,117 @@
+/*
+ * This file is part of CoCalc: Copyright 2026 Sagemath, Inc.
+ * License: MS-RSL - see LICENSE.md for details
+ */
+
+import { randomUUID } from "node:crypto";
+import getPool from "@cocalc/database/pool";
+import {
+  fundingSessionHash,
+  issueFundingApprovalSession,
+  requireFundingApprovalSession,
+} from "./approval-auth";
+
+jest.mock("@cocalc/database/pool", () => ({
+  __esModule: true,
+  default: jest.fn(),
+}));
+jest.mock("@cocalc/server/inter-bay/accounts", () => ({}));
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => "bay-0",
+}));
+
+const account_id = randomUUID();
+const intent_id = randomUUID();
+const origin = "http://127.0.0.2:19200";
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+it("binds the reusable independently verified session to origin and payer", async () => {
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  (getPool as jest.Mock).mockReturnValue({ query });
+  const now = new Date().toISOString();
+  const result = await issueFundingApprovalSession({
+    auth: {
+      state: "ready",
+      account_id,
+      primary_auth_method: "email_code",
+      primary_verified_at: now,
+      factor_level: "passkey",
+      factor_verified_at: now,
+    },
+    intent_id,
+    origin,
+  });
+  expect(query).toHaveBeenCalledWith(
+    expect.stringContaining("INSERT INTO financial_approval_sessions"),
+    expect.arrayContaining([
+      fundingSessionHash(result.token),
+      account_id,
+      origin,
+      "email_code",
+      "passkey",
+      intent_id,
+    ]),
+  );
+  const created = query.mock.calls[0][1];
+  const lifetime = created[8].getTime() - Date.now();
+  expect(lifetime).toBeGreaterThan(7.9 * 60 * 60_000);
+  expect(lifetime).toBeLessThanOrEqual(8 * 60 * 60_000);
+});
+it("accepts the reusable approval session for another exact intent", async () => {
+  const query = jest.fn().mockResolvedValue({
+    rows: [
+      {
+        account_id,
+        approval_origin: origin,
+      },
+    ],
+  });
+  (getPool as jest.Mock).mockReturnValue({ query });
+  await expect(
+    requireFundingApprovalSession({
+      session_hash: "hash",
+      payer_account_id: account_id,
+      intent_id: randomUUID(),
+      origin,
+    }),
+  ).resolves.toBe(account_id);
+});
+it("rejects missing, wrong-payer and wrong-origin sessions", async () => {
+  for (const session of [
+    undefined,
+    { account_id: randomUUID(), approval_origin: origin },
+    { account_id, approval_origin: "http://localhost:9100" },
+  ]) {
+    (getPool as jest.Mock).mockReturnValue({
+      query: jest.fn().mockResolvedValue({ rows: session ? [session] : [] }),
+    });
+    await expect(
+      requireFundingApprovalSession({
+        session_hash: "hash",
+        payer_account_id: account_id,
+        intent_id,
+        origin,
+      }),
+    ).rejects.toThrow("Financial sign-in");
+  }
+});
+
+it("rechecks expiry and revocation under a database lock before committing", async () => {
+  const query = jest.fn().mockResolvedValue({ rows: [] });
+  await expect(
+    requireFundingApprovalSession({
+      session_hash: "hash",
+      payer_account_id: account_id,
+      intent_id,
+      origin,
+      db: { query },
+    }),
+  ).rejects.toThrow("Financial sign-in required");
+  expect(query).toHaveBeenCalledWith(
+    expect.stringMatching(
+      /revoked_at IS NULL[\s\S]*expire > clock_timestamp\(\)[\s\S]*FOR SHARE/,
+    ),
+    ["hash"],
+  );
+});

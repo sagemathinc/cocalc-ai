@@ -751,6 +751,36 @@ export async function ensureCloudflareTunnelForHub(opts?: {
   });
 }
 
+export async function ensureCloudflareTunnelHostname({
+  tunnel,
+  hostname,
+  allowOutsideConfiguredDns = false,
+}: {
+  tunnel: CloudflareTunnel;
+  hostname: string;
+  allowOutsideConfiguredDns?: boolean;
+}): Promise<void> {
+  const config = await getHubConfig();
+  const normalizedHostname = normalizeCloudflareHostname(hostname);
+  if (!config || !normalizedHostname) return;
+  if (
+    !allowOutsideConfiguredDns &&
+    normalizedHostname !== config.zone &&
+    !normalizedHostname.endsWith(`.${config.zone}`)
+  ) {
+    throw new Error(
+      `Cloudflare tunnel hostname '${normalizedHostname}' must be within '${config.zone}'.`,
+    );
+  }
+  const zoneId = await getZoneIdForHostname(config.token, normalizedHostname);
+  await ensureTunnelDns({
+    token: config.token,
+    zoneId,
+    hostname: normalizedHostname,
+    target: `${tunnel.id}.cfargotunnel.com`,
+  });
+}
+
 export async function deleteCloudflareTunnel(opts: {
   host_id?: string;
   tunnel?: CloudflareTunnel;

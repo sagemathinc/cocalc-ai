@@ -17,6 +17,10 @@ import { resolveNotificationDeliveryPolicy } from "@cocalc/util/notification-del
 import type { NotificationDeliveryPolicy } from "@cocalc/util/notification-delivery-policy";
 import { notificationModeSendsEmail } from "@cocalc/util/notification-preferences";
 import { ACCOUNT_NOTIFICATION_REVISION_LOCK } from "./schema/account-notification-revision";
+import {
+  isFinancialReceipt,
+  verifiedFinancialReceiptEmail,
+} from "./financial-receipt-email";
 
 const DEFAULT_SINGLE_BAY_ID = "bay-0";
 const RELEVANT_EVENT_TYPES: NotificationTransportEventType[] = [
@@ -38,6 +42,8 @@ type NotificationTargetOutboxPayload = {
 };
 
 type LocalHomeAccount = {
+  home_bay_id: string | null;
+  banned: boolean | null;
   email_address: string | null;
   email_address_verified: Record<string, any> | null;
   other_settings: Record<string, any> | null;
@@ -170,7 +176,7 @@ async function loadLocalHomeAccount(
   opts: { bay_id: string; account_id: string },
 ): Promise<LocalHomeAccount | undefined> {
   const { rows } = await db.query<LocalHomeAccount>(
-    `SELECT email_address, email_address_verified, other_settings
+    `SELECT email_address, email_address_verified, other_settings, home_bay_id, banned
        FROM accounts
       WHERE account_id = $1::UUID
         AND (deleted IS NULL OR deleted = FALSE)
@@ -392,15 +398,22 @@ async function enqueueProjectedNotificationEmail(opts: {
       [opts.notification_id, snoozedUntil],
     );
   }
-  const recipient_email = resolveRecipientEmail(account);
+  const financial = isFinancialReceipt(payload.summary);
+  const recipient_email = financial
+    ? account.home_bay_id === event.target_home_bay_id
+      ? verifiedFinancialReceiptEmail(account)
+      : null
+    : resolveRecipientEmail(account);
   const status =
-    policy.category === "ai" && !codexNotificationEmailEnabled()
-      ? "skipped_preference"
-      : notificationModeSendsEmail(policy.delivery_mode)
-        ? recipient_email
-          ? "queued"
-          : "skipped_no_recipient"
-        : "skipped_preference";
+    financial && !recipient_email
+      ? "skipped_unverified"
+      : policy.category === "ai" && !codexNotificationEmailEnabled()
+        ? "skipped_preference"
+        : notificationModeSendsEmail(policy.delivery_mode)
+          ? recipient_email
+            ? "queued"
+            : "skipped_no_recipient"
+          : "skipped_preference";
   await enqueueNotificationEmail({
     db,
     notification_id: opts.notification_id,
@@ -426,6 +439,9 @@ async function enqueueProjectedNotificationEmail(opts: {
       source_path: payload.source_path ?? null,
       projection_notification_id: opts.projection_notification_id,
       required: policy.required,
+      ...(financial
+        ? { financial_receipt_home_bay_id: event.target_home_bay_id }
+        : {}),
     },
     status,
     last_error:
@@ -566,6 +582,8 @@ export async function drainAccountNotificationIndexProjection(opts?: {
        FROM notification_target_outbox
        WHERE COALESCE(NULLIF(BTRIM(target_home_bay_id), ''), $1::TEXT) = $1::TEXT
          AND published_at IS NULL
+         AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
+           WHERE f.payer_account_id=notification_target_outbox.target_account_id AND f.state <> 'active')
          AND event_type = ANY($2::TEXT[])
        ORDER BY created_at ASC, outbox_id ASC
        LIMIT $3

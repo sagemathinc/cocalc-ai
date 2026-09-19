@@ -4,6 +4,27 @@
  */
 
 const query = jest.fn();
+let mockMulti = false;
+let mockBay = "resource";
+const mockGrantHome = jest.fn();
+const mockRemoteGrant = jest.fn();
+jest.mock("@cocalc/server/cluster-config", () => ({
+  isMultiBayCluster: () => mockMulti,
+}));
+jest.mock("@cocalc/server/bay-config", () => ({
+  getConfiguredBayId: () => mockBay,
+}));
+jest.mock("@cocalc/server/bay-directory", () => ({
+  resolveAccountHomeBay: (...args) => mockGrantHome(...args),
+}));
+jest.mock("@cocalc/server/inter-bay/fabric", () => ({
+  getInterBayFabricClient: () => ({}),
+}));
+jest.mock("@cocalc/conat/inter-bay/api", () => ({
+  createInterBayAccountLocalClient: () => ({
+    computeOwnerCheckAgentGrant: (...args) => mockRemoteGrant(...args),
+  }),
+}));
 const clientQuery = jest.fn();
 const release = jest.fn();
 const connect = jest.fn(async () => ({ query: clientQuery, release }));
@@ -39,6 +60,7 @@ import {
   approveAgentComputeGrant,
   requireAgentComputeGrant,
   revokeAgentComputeGrant,
+  checkAgentComputeGrantOnHome,
 } from "./turn-grants";
 
 const account_id = "00000000-0000-4000-8000-000000000001";
@@ -124,12 +146,63 @@ function availabilityTurnGrant(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  mockMulti = false;
+  mockBay = "resource";
+  mockGrantHome.mockReset().mockResolvedValue({ home_bay_id: "home" });
+  mockRemoteGrant.mockReset();
   query.mockReset();
   clientQuery.mockReset();
   connect.mockClear();
   release.mockClear();
   centralLog.mockClear();
   publishProjectDetailInvalidationBestEffort.mockClear();
+});
+
+it("checks remote grants at the current account home without local writes", async () => {
+  mockMulti = true;
+  const authorization = { grant_id, project_vm_availability_scope: false };
+  mockRemoteGrant.mockResolvedValue({ authorization });
+  const opts = { auth: auth(), action: "read" as const, project_id };
+  await expect(requireAgentComputeGrant(opts)).resolves.toEqual(authorization);
+  expect(mockRemoteGrant).toHaveBeenCalledWith(opts);
+  expect(query).not.toHaveBeenCalled();
+});
+it("preserves actionable approval fields across the private RPC", async () => {
+  mockMulti = true;
+  const approval_required = {
+    message: "Approval required",
+    code: "agent_grant_required",
+    grant_id,
+    request_id: grant_id,
+    approval_url: "https://cocalc.test/approve",
+    expires_at: new Date().toISOString(),
+    project_id,
+  };
+  mockRemoteGrant.mockResolvedValue({ approval_required });
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth(),
+      action: "availability",
+      project_id,
+      request: request(),
+    }),
+  ).rejects.toMatchObject(approval_required);
+  expect(query).not.toHaveBeenCalled();
+});
+it("rejects a stale private grant authority and invalid capability before routing", async () => {
+  mockMulti = true;
+  await expect(
+    checkAgentComputeGrantOnHome({ auth: auth(), action: "read", project_id }),
+  ).rejects.toThrow(/home changed/);
+  await expect(
+    requireAgentComputeGrant({
+      auth: auth({ expires_at_s: 0 }),
+      action: "read",
+      project_id,
+    }),
+  ).rejects.toThrow(/expired/);
+  expect(mockRemoteGrant).not.toHaveBeenCalled();
+  expect(query).not.toHaveBeenCalled();
 });
 
 it("creates a hash-only read/data-plane grant and touches it", async () => {

@@ -798,6 +798,15 @@ export async function getBayDrainPreflight({
 type SiteSettingUpdate = { name: string; value: string };
 export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
+export const SEED_ONLY_SITE_SETTINGS = new Set([
+  "stripe_secret_key",
+  "stripe_webhook_secret",
+]);
+
+export function isSeedOnlySiteSetting(name: string): boolean {
+  return SEED_ONLY_SITE_SETTINGS.has(`${name ?? ""}`.trim());
+}
+
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
   ...Object.keys(SITE_SETTINGS_EXTRAS),
@@ -1117,6 +1126,9 @@ async function propagateSiteSettingsToBays(
   ]
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
+  const remoteSettings = settings.filter(
+    ({ name }) => !isSeedOnlySiteSetting(name),
+  );
   const bays: SiteSettingsSyncResult["bays"] = [
     { bay_id: local_bay_id, status: "local", count: settings.length, version },
   ];
@@ -1134,7 +1146,7 @@ async function propagateSiteSettingsToBays(
   const results = await Promise.allSettled(
     remoteBayIds.map(async (bay_id) => {
       const api = getInterBayBridge().bayOps(bay_id, { timeout_ms: 15_000 });
-      for (const setting of settings) {
+      for (const setting of remoteSettings) {
         await api.setServerSetting(setting);
       }
       return bay_id;
@@ -1155,11 +1167,11 @@ async function propagateSiteSettingsToBays(
     }
     bays.push(
       result.status === "fulfilled"
-        ? { bay_id, status: "applied", count: settings.length, version }
+        ? { bay_id, status: "applied", count: remoteSettings.length, version }
         : {
             bay_id,
             status: "failed",
-            count: settings.length,
+            count: remoteSettings.length,
             version,
             error,
           },

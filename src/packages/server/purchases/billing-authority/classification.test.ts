@@ -15,6 +15,15 @@ describe("billing authority operation classification", () => {
     expect(isBillingAuthorityHubApiCall("purchases.getBalance")).toBe(true);
     expect(isBillingAuthorityHubApiCall("commercialOrders.list")).toBe(true);
     expect(
+      isBillingAuthorityHubApiCall("computeFunding.proposeAllocation"),
+    ).toBe(true);
+    expect(
+      isBillingAuthorityHubApiRead("computeFunding.proposeAllocation"),
+    ).toBe(false);
+    expect(isBillingAuthorityHubApiCall("computeFunding.notARealMethod")).toBe(
+      false,
+    );
+    expect(
       isBillingAuthorityHubApiCall(
         "adminCrm.createCommercialOrderFromOpportunity",
       ),

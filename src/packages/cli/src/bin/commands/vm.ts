@@ -9,6 +9,13 @@ import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { Command } from "commander";
+import type { CourseVmFundingSource } from "@cocalc/util/compute-vm-funding";
+import {
+  requireSponsoredHomeVolumes,
+  requireVolumeFundingVersion,
+} from "@cocalc/util/compute-volume-funding";
+import { isValidUUID } from "@cocalc/util/misc";
+import { registerVmPersonalFundingCommand } from "./vm-personal-funding";
 
 export type VmCommandDeps = {
   withContext: any;
@@ -138,6 +145,47 @@ export function parseTtlMinutes(value: string) {
         ? 60
         : 1440;
   return count * multiplier;
+}
+
+export function scheduledStopOptions(opts: {
+  stopAfter?: string;
+  scheduledStop?: boolean;
+}): { stop_after_minutes?: number | null } {
+  if (opts.stopAfter !== undefined && opts.scheduledStop === false) {
+    throw new Error("--stop-after and --no-scheduled-stop cannot be combined");
+  }
+  if (opts.scheduledStop === false) return { stop_after_minutes: null };
+  if (opts.stopAfter === undefined) return {};
+  if (!/^\d+[mhd]$/i.test(opts.stopAfter.trim()))
+    throw new Error(
+      "--stop-after must use minutes, hours, or days, e.g. 30m or 6h",
+    );
+  const minutes = parseTtlMinutes(opts.stopAfter);
+  if (!Number.isSafeInteger(minutes) || minutes < 1 || minutes > 525600)
+    throw new Error("--stop-after must be between 1 minute and 365 days");
+  return { stop_after_minutes: minutes };
+}
+
+export function courseFundingSource(opts: {
+  fundingPayer?: string;
+  fundingPool?: string;
+  fundingGrant?: string;
+}): CourseVmFundingSource | undefined {
+  const ids = [opts.fundingPayer, opts.fundingPool, opts.fundingGrant];
+  if (ids.every((id) => id === undefined)) return undefined;
+  if (ids.some((id) => id === undefined)) {
+    throw new Error(
+      "--funding-payer, --funding-pool, and --funding-grant are all required together",
+    );
+  }
+  if (!ids.every((id) => isValidUUID(id)))
+    throw new Error("funding payer, pool, and grant must be UUIDs");
+  return {
+    kind: "course",
+    payer_account_id: opts.fundingPayer!,
+    pool_id: opts.fundingPool!,
+    grant_id: opts.fundingGrant!,
+  };
 }
 
 async function waitForState(
@@ -377,6 +425,7 @@ export function vmListSummary(rows: any[]) {
     zone: row.zone,
     ip: row.public_ip ?? "",
     expires: row.expires_at ?? "never",
+    stops: row.stop_at ?? "never",
     project: row.project_id,
   }));
 }
@@ -399,6 +448,8 @@ export function vmLifecycleSummary(row: any) {
     ip: row.public_ip ?? "",
     ssh_alias: row.ssh_alias ?? "",
     expires: row.expires_at ?? "never",
+    stops: row.stop_at ?? "never",
+    stop_after_minutes: row.stop_after_minutes ?? null,
     ...(row.error ? { error: row.error } : {}),
   };
 }
@@ -447,6 +498,7 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
   const vm = program
     .command("vm")
     .description("account-owned managed compute VMs");
+  registerVmPersonalFundingCommand(vm, { withContext });
 
   vm.command("catalog")
     .description("show the live managed-compute provider catalog")
@@ -647,10 +699,31 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
       false,
     )
     .option("--ttl <duration>", "optional deletion deadline, e.g. 30m or 8h")
+    .option(
+      "--stop-after <duration>",
+      "stop without deleting disks (default: 6h)",
+    )
+    .option("--no-scheduled-stop", "explicitly disable scheduled stop")
+    .option(
+      "--funding-payer <uuid>",
+      "course funding payer (requires pool and grant)",
+    )
+    .option(
+      "--funding-pool <uuid>",
+      "course funding pool (requires payer and grant)",
+    )
+    .option(
+      "--funding-grant <uuid>",
+      "course funding grant (requires payer and pool)",
+    )
     .option("--boot-disk-gb <gb>", "persistent root disk size")
     .option(
       "--home-volume <name>",
       "existing persistent volume mounted at /home/user",
+    )
+    .option(
+      "--home-volume-funding-version <version>",
+      "reviewed independent home-volume funding version",
     )
     .option("--gpu-type <type>", "provider GPU type")
     .option("--gpu-count <count>", "number of GPUs")
@@ -670,8 +743,24 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     )
     .option("--wait", "wait until SSH-ready", false)
     .action(async (name: string, opts: any, command: Command) => {
+      const idempotencyKey = randomUUID();
       await withContext(command, "vm create", async (ctx) => {
         requireAccountAuth(ctx, "vm create");
+        const fundingSource = courseFundingSource(opts);
+        if (opts.homeVolumeFundingVersion && !opts.homeVolume)
+          throw Error("--home-volume-funding-version requires --home-volume");
+        if (opts.homeVolume) {
+          const volume = await getVolumeForContext(ctx, opts.homeVolume);
+          if (fundingSource || volume.funding_source || volume.funding_status)
+            requireSponsoredHomeVolumes(await ctx.hub.compute.getCatalog({}));
+          if (volume.funding_source || volume.funding_status) {
+            const version = requireVolumeFundingVersion(volume.funding_status);
+            if (opts.homeVolumeFundingVersion !== version)
+              throw Error(
+                "Review vm volume funding, then pass its current --home-volume-funding-version. Attachment keeps the volume's independent payer and retention.",
+              );
+          }
+        }
         const keySources = [
           opts.sshPublicKey ? "path" : "",
           opts.sshPublicKeyValue ? "value" : "",
@@ -699,6 +788,7 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
           provider: opts.provider,
           operating_system: opts.os,
           funding_mode: opts.fundingMode,
+          ...(fundingSource ? { funding_source: fundingSource } : {}),
           architecture: opts.architecture,
           region: opts.region,
           zone: opts.zone,
@@ -712,16 +802,18 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
           pricing_model: opts.spot ? "spot" : "on_demand",
           allow_on_demand_fallback: opts.allowStandardFallback === true,
           ttl_minutes: opts.ttl ? parseTtlMinutes(opts.ttl) : null,
+          ...scheduledStopOptions(opts),
           boot_disk_gb: Number(
             opts.bootDiskGb ?? (opts.os === "windows" ? 80 : 20),
           ),
           home_volume: opts.homeVolume,
+          expected_home_volume_funding_version: opts.homeVolumeFundingVersion,
           ssh_public_key: key.key,
           configure_project_ssh:
             !!opts.project &&
             opts.sshKey !== false &&
             opts.configureProjectSsh !== false,
-          idempotency_key: randomUUID(),
+          idempotency_key: idempotencyKey,
         });
         progress(
           `[vm create] Provider provisioning queued for '${name}' (id ${created.id}).`,
@@ -799,7 +891,9 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     });
 
   vm.command("funding <vm>")
-    .description("show or change a VM funding lane")
+    .description(
+      "show authorized funding context, prices and deadlines; --set changes only a legacy lane",
+    )
     .option("--set <mode>", "site-funded, account-postpaid, or account-prepaid")
     .action(
       async (idOrName: string, opts: { set?: string }, command: Command) => {
@@ -810,6 +904,18 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
               id: current.id,
               name: current.name,
               funding_mode: current.funding_mode,
+              owner_account_id: current.owner_account_id,
+              funding_status: current.funding_status ?? null,
+              state: current.state,
+              stop_at: current.stop_at ?? null,
+              stop_after_minutes: current.stop_after_minutes,
+              expires_at: current.expires_at ?? null,
+              home_volume_id: current.home_volume_id ?? null,
+              effective_pricing_model: current.effective_pricing_model,
+              spot_hourly_price: current.spot_hourly_price,
+              on_demand_hourly_price: current.on_demand_hourly_price,
+              os_license_hourly_price: current.os_license_hourly_price,
+              updated_at: current.updated_at,
             };
           }
           requireAccountAuth(ctx, "changing a VM funding lane");
@@ -860,15 +966,36 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
         false,
       )
       .option("--long", "show the full durable VM record", false)
+      .option(
+        "--stop-after <duration>",
+        "start with this stop duration, e.g. 6h; otherwise reuse saved choice",
+      )
+      .option(
+        "--no-scheduled-stop",
+        "start without a scheduled stop (owner approval required)",
+      )
       .action(
         async (
           idOrName: string,
-          opts: { wait?: boolean; long?: boolean },
+          opts: {
+            wait?: boolean;
+            long?: boolean;
+            stopAfter?: string;
+            scheduledStop?: boolean;
+          },
           command: Command,
         ) => {
           const idempotencyKey = randomUUID();
           let requestAnnounced = false;
           await withContext(command, `vm ${action}`, async (ctx) => {
+            if (
+              action === "stop" &&
+              (opts.stopAfter !== undefined || opts.scheduledStop === false)
+            ) {
+              throw new Error(
+                "scheduled stop options apply only to vm create or vm start",
+              );
+            }
             requireAccountAuth(ctx, `vm ${action}`);
             if (!requestAnnounced) {
               progress(
@@ -879,6 +1006,7 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
             const result = await ctx.hub.compute[`${action}Vm`]({
               id_or_name: idOrName,
               idempotency_key: idempotencyKey,
+              ...(action === "start" ? scheduledStopOptions(opts) : {}),
             });
             if (!opts.wait) {
               return opts.long ? result : vmLifecycleSummary(result);
@@ -1087,13 +1215,43 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     .option("--zone <zone>", "provider zone")
     .option("--size-gb <gb>", "volume size", "50")
     .option(
+      "--funding-payer <uuid>",
+      "course storage payer (requires pool and grant)",
+    )
+    .option(
+      "--funding-pool <uuid>",
+      "course storage pool (requires payer and grant)",
+    )
+    .option(
+      "--funding-grant <uuid>",
+      "course storage grant (requires payer and pool)",
+    )
+    .option(
+      "--accept-course-retention",
+      "accept independent billable storage, funding/deletion deadlines, bounded cleanup grace and no automatic backup or personal fallback",
+      false,
+    )
+    .option(
       "--funding-mode <mode>",
       "site-funded, account-postpaid, or account-prepaid",
     )
     .option("--wait", "wait until the volume is ready", false)
     .action(async (name: string, opts: any, command: Command) => {
+      const idempotencyKey = randomUUID();
       await withContext(command, "vm volume create", async (ctx) => {
         requireAccountAuth(ctx, "vm volume create");
+        const fundingSource = courseFundingSource(opts);
+        if (fundingSource) {
+          if (!opts.acceptCourseRetention)
+            throw Error(
+              "Course-funded storage requires --accept-course-retention. The volume keeps its own payer and deletion deadline after its VM stops or is deleted.",
+            );
+          requireSponsoredHomeVolumes(await ctx.hub.compute.getCatalog({}));
+        } else if (opts.acceptCourseRetention) {
+          throw Error(
+            "--accept-course-retention requires the course funding payer, pool, and grant",
+          );
+        }
         const created = await ctx.hub.compute.createVolume({
           project_id: opts.project,
           name,
@@ -1102,7 +1260,10 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
           zone: opts.zone,
           size_gb: Number(opts.sizeGb),
           funding_mode: opts.fundingMode,
-          idempotency_key: randomUUID(),
+          ...(fundingSource
+            ? { funding_source: fundingSource, accept_course_retention: true }
+            : {}),
+          idempotency_key: idempotencyKey,
         });
         if (!opts.wait) return created;
         return await waitForVolumeState(
@@ -1119,18 +1280,39 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     .description("grow a persistent compute volume")
     .requiredOption("--size-gb <gb>", "new grow-only volume size")
     .option(
+      "--expected-funding-version <version>",
+      "reviewed course volume funding version; payer is unchanged",
+    )
+    .option(
       "--funding-mode <mode>",
       "site-funded, account-postpaid, or account-prepaid",
     )
     .option("--wait", "wait until provider resize completes", false)
     .action(async (idOrName: string, opts: any, command: Command) => {
+      const idempotencyKey = randomUUID();
       await withContext(command, "vm volume resize", async (ctx) => {
         requireAccountAuth(ctx, "vm volume resize");
+        const current = await getVolumeForContext(ctx, idOrName);
+        if (current.funding_source || current.funding_status) {
+          requireSponsoredHomeVolumes(await ctx.hub.compute.getCatalog({}));
+          if (opts.fundingMode)
+            throw Error(
+              "A course volume keeps its independent funding lane and payer.",
+            );
+          if (
+            requireVolumeFundingVersion(current.funding_status) !==
+            opts.expectedFundingVersion
+          )
+            throw Error(
+              "Review vm volume funding, then pass its current --expected-funding-version.",
+            );
+        }
         const resized = await ctx.hub.compute.resizeVolume({
           id_or_name: idOrName,
           size_gb: Number(opts.sizeGb),
           funding_mode: opts.fundingMode,
-          idempotency_key: randomUUID(),
+          expected_funding_version: opts.expectedFundingVersion,
+          idempotency_key: idempotencyKey,
         });
         if (!opts.wait) return resized;
         return await waitForVolumeState(
@@ -1146,22 +1328,44 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     .command("funding <volume>")
     .description("show or change a persistent home volume funding lane")
     .option("--set <mode>", "site-funded, account-postpaid, or account-prepaid")
+    .option(
+      "--version-only",
+      "print only a current usable course funding version",
+      false,
+    )
     .action(
-      async (idOrName: string, opts: { set?: string }, command: Command) => {
+      async (
+        idOrName: string,
+        opts: { set?: string; versionOnly?: boolean },
+        command: Command,
+      ) => {
+        const idempotencyKey = randomUUID();
         await withContext(command, "vm volume funding", async (ctx) => {
+          if (opts.set && opts.versionOnly)
+            throw Error("--set and --version-only cannot be combined");
           const current = await getVolumeForContext(ctx, idOrName);
+          if (opts.versionOnly)
+            return requireVolumeFundingVersion(current.funding_status);
           if (!opts.set) {
             return {
               id: current.id,
               name: current.name,
               funding_mode: current.funding_mode,
+              owner_account_id: current.owner_account_id,
+              funding_source:
+                current.funding_source ?? current.funding_status?.source,
+              funding_status: current.funding_status,
             };
           }
           requireAccountAuth(ctx, "changing a home volume funding lane");
+          if (current.funding_source || current.funding_status)
+            throw Error(
+              "Course volume payer changes require a separate approved handoff; --set cannot change its funding.",
+            );
           return await ctx.hub.compute.setVolumeFundingMode({
             id_or_name: idOrName,
             funding_mode: opts.set,
-            idempotency_key: randomUUID(),
+            idempotency_key: idempotencyKey,
           });
         });
       },
@@ -1173,12 +1377,13 @@ export function registerVmCommand(program: Command, deps: VmCommandDeps) {
     .requiredOption("--confirm <name>", "type the exact volume name")
     .option("--wait", "wait for provider deletion", false)
     .action(async (idOrName: string, opts: any, command: Command) => {
+      const idempotencyKey = randomUUID();
       await withContext(command, "vm volume delete", async (ctx) => {
         requireAccountAuth(ctx, "vm volume delete");
         const deleted = await ctx.hub.compute.deleteVolume({
           id_or_name: idOrName,
           confirm_name: opts.confirm,
-          idempotency_key: randomUUID(),
+          idempotency_key: idempotencyKey,
         });
         if (!opts.wait) return deleted;
         return await waitForVolumeState(

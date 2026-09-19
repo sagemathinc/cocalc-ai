@@ -82,6 +82,7 @@ export function isBillingAuthorityHubApiCall(name: string): boolean {
   if (getHubApiPrincipalPolicy(name) == null) return false;
   return (
     group === "purchases" ||
+    group === "computeFunding" ||
     group === "commercialOrders" ||
     (group === "adminCrm" && ADMIN_CRM_FINANCIAL_METHODS.has(method)) ||
     (group === "legacyMigration" &&

@@ -16,6 +16,8 @@ import { boundedMembershipTierLabel } from "@cocalc/util/membership-tier-label";
 import type { Subscription } from "@cocalc/util/db-schema/subscriptions";
 import createPaymentIntent from "./create-payment-intent";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import getSpendableBalance from "@cocalc/server/purchases/get-spendable-balance";
+import { assertPurchaseAllowed } from "../is-purchase-allowed";
 import send, { support, url } from "@cocalc/server/messages/send";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { sendCancelNotification } from "../cancel-subscription";
@@ -157,7 +159,7 @@ async function prepareRenewalFunding({
     let balanceApplied = toDecimal(0);
     if (useBalance) {
       const balance = toDecimal(
-        await getBalance({ account_id, client, noSave: true }),
+        await getSpendableBalance({ account_id, client, noSave: true }),
       );
       if (balance.gte(amountValue)) {
         await client.query("COMMIT");
@@ -168,16 +170,15 @@ async function prepareRenewalFunding({
         attempt.funding_version === 1 &&
         !(await hasOpenPaygPurchases({ account_id, client }))
       ) {
-        balanceApplied = moneyRoundToCents(balance);
+        balanceApplied = moneyRound2Down(balance);
       }
     }
 
     const cardAmount = amountValue.sub(balanceApplied);
     if (balanceApplied.gt(0) && cardAmount.lte(MIN_SUBSCRIPTION_AMOUNT)) {
-      // Stripe cannot reliably collect tiny invoice remainders. Preserve the
-      // existing behavior that permits a very small negative balance instead.
-      await client.query("COMMIT");
-      return { balanceApplied: 0, payNow: true };
+      // A tiny remainder cannot reliably be collected. Charge the full amount
+      // instead of overdrawing credit or repeatedly retrying an unfunded debit.
+      balanceApplied = toDecimal(0);
     }
 
     await client.query(
@@ -452,16 +453,18 @@ export default async function createSubscriptionPayment({
   const { site_name } = await getServerSettings();
 
   if (funding.payNow) {
-    // Instead of trying to charge their credit card (etc.), we just
-    // directly extend their subscription for another period using credit
-    // on their account, possibly going negative (in case of MIN_SUBSCRIPTION_AMOUNT).
-    // If that happens, they will get billed some other way, or be required to fix
-    // that in order to make future purchases.
-    // completely pay with credit -- we just process the renewal assuming money is there already.
-
-    // we use one transaction so if anything goes awry, it is ALL rolled back.
+    // The earlier balance check was only a funding choice, not a reservation.
+    // Recheck under the account lock and debit atomically; never consume held
+    // course credit or silently overdraw even for a sub-minimum Stripe amount.
     const client = await getTransactionClient();
     try {
+      await lockMembershipSubscriptionAccount({ account_id, client });
+      await assertPurchaseAllowed({
+        account_id,
+        service: "membership",
+        cost: amountValue,
+        client,
+      });
       await setSubscriptionPaymentFromAttempt({ attempt, client });
       await processSubscriptionRenewal({
         account_id,
@@ -644,13 +647,16 @@ export async function processSubscriptionRenewal({
     subscription_id,
   });
   const amountValue = toDecimal(amount);
-  const subscriptionId =
-    typeof subscription_id != "number"
-      ? parseInt(subscription_id)
-      : subscription_id;
   const transaction = client ?? (await getTransactionClient());
   const useTransaction = client == null;
   try {
+    await lockMembershipSubscriptionAccount({
+      account_id,
+      client: transaction,
+    });
+    const subscriptionId = await (
+      await import("../payment-local-reference")
+    ).localPaymentSubscriptionId(account_id, paymentIntent, transaction);
     const { rows: subscriptions } = await transaction.query(
       "SELECT payment, cost, metadata, interval, latest_purchase_id FROM subscriptions WHERE account_id=$1 AND id=$2 FOR UPDATE",
       [account_id, subscriptionId],
@@ -780,13 +786,19 @@ export async function processSubscriptionRenewal({
     }
     if (balanceApplied.gt(0)) {
       const availableBalance = toDecimal(
-        await getBalance({
+        await getSpendableBalance({
           account_id,
           client: transaction,
           noSave: true,
         }),
       );
-      if (availableBalance.add(SUBSCRIPTION_PAYMENT_SLACK).lt(expectedAmount)) {
+      // This attempt may consume its own hold, but not another commitment.
+      if (
+        availableBalance
+          .add(balanceApplied)
+          .add(SUBSCRIPTION_PAYMENT_SLACK)
+          .lt(expectedAmount)
+      ) {
         throw Error(
           "account balance allocated to this subscription renewal is no longer available",
         );
@@ -992,13 +1004,14 @@ export async function processSubscriptionRenewalFailure({
       `invalid paymentIntent ${paymentIntent?.id} -- metadata must contain subscription_id`,
     );
   }
-  const id =
-    typeof subscription_id != "number"
-      ? parseInt(subscription_id)
-      : subscription_id;
   const client = await getTransactionClient();
   let changed = false;
+  let id = Number(subscription_id);
   try {
+    await lockMembershipSubscriptionAccount({ account_id, client });
+    id = await (
+      await import("../payment-local-reference")
+    ).localPaymentSubscriptionId(account_id, paymentIntent, client);
     const attempt = renewal_attempt_id
       ? await getSubscriptionRenewalAttempt({
           attempt_id: renewal_attempt_id,
@@ -1110,18 +1123,25 @@ export async function processResumeSubscriptionFailure({
   await clearResumeSubscriptionPayment({ account_id, paymentIntent });
 }
 
-async function clearResumeSubscriptionPayment({ account_id, paymentIntent }) {
+async function clearResumeSubscriptionPayment({
+  account_id,
+  paymentIntent,
+  client,
+}: {
+  account_id: string;
+  paymentIntent: any;
+  client?: PoolClient;
+}) {
   const { subscription_id } = paymentIntent?.metadata ?? {};
   if (!subscription_id) {
     throw Error(
       `invalid paymentIntent ${paymentIntent?.id} -- metadata must contain subscription_id`,
     );
   }
-  const id =
-    typeof subscription_id != "number"
-      ? parseInt(subscription_id)
-      : subscription_id;
-  const pool = getPool();
+  const pool = client ?? getPool();
+  const id = await (
+    await import("../payment-local-reference")
+  ).localPaymentSubscriptionId(account_id, paymentIntent, pool);
   const result = await pool.query(
     `UPDATE subscriptions SET resume_payment_intent=NULL WHERE id=$1 AND account_id=$2`,
     [id, account_id],
@@ -1170,11 +1190,18 @@ export async function processResumeSubscription({
   account_id,
   paymentIntent,
   amount,
+  client,
+}: {
+  account_id: string;
+  paymentIntent: any;
+  amount: MoneyValue;
+  client?: PoolClient;
 }) {
   await processSubscriptionRenewal({
     account_id,
     paymentIntent,
-    amount,
+    amount: toDecimal(amount).toNumber(),
+    client,
   });
-  await clearResumeSubscriptionPayment({ account_id, paymentIntent });
+  await clearResumeSubscriptionPayment({ account_id, paymentIntent, client });
 }

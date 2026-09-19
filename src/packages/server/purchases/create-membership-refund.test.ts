@@ -56,6 +56,7 @@ describe("membership admin refund", () => {
         list: jest.fn().mockResolvedValue({ data: [{ id: "ch_membership" }] }),
         retrieve: jest.fn().mockResolvedValue({
           id: "ch_membership",
+          currency: "usd",
           amount: 2400,
           amount_refunded: 0,
           refunded: false,
@@ -84,6 +85,8 @@ describe("membership admin refund", () => {
         create: jest.fn().mockResolvedValue({
           id: "re_membership",
           status: "succeeded",
+          charge: "ch_membership",
+          amount: 2400,
         }),
         list: jest.fn().mockResolvedValue({ data: [] }),
       },
@@ -93,11 +96,12 @@ describe("membership admin refund", () => {
   it("refunds membership and Stripe credit independently", async () => {
     const account_id = uuid();
     const admin_account_id = uuid();
+    const paymentIntentId = `pi_membership_${uuid()}`;
     await createTestAccount(account_id);
     const creditId = await createCredit({
       account_id,
       amount: 24,
-      invoice_id: "pi_membership",
+      invoice_id: paymentIntentId,
       description: { purpose: "membership-change" },
     });
     const { subscription_id } = await createTestMembershipSubscription(
@@ -132,7 +136,7 @@ describe("membership admin refund", () => {
         subscription_id,
         membershipPurchaseId,
         {
-          payment_intent_id: "pi_membership",
+          payment_intent_id: paymentIntentId,
           amount: 24,
           created: Date.now(),
           status: "paid",
@@ -217,7 +221,9 @@ describe("membership admin refund", () => {
         charge: "ch_membership",
         reason: "duplicate",
       }),
-      { idempotencyKey: `cocalc-refund-purchase-${creditId}` },
+      {
+        idempotencyKey: expect.stringMatching(/^cocalc-refund-[0-9a-f-]{36}$/),
+      },
     );
     expect(Number(await getBalance({ account_id }))).toBe(0);
     expect(mockSend).toHaveBeenCalledTimes(2);
@@ -229,7 +235,7 @@ describe("membership admin refund", () => {
     const creditId = await createCredit({
       account_id,
       amount: 24,
-      invoice_id: "pi_old_membership",
+      invoice_id: `pi_old_membership_${uuid()}`,
       description: { purpose: "subscription-renewal" },
     });
     const { subscription_id } = await createTestMembershipSubscription(

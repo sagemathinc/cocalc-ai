@@ -114,6 +114,7 @@ type ChallengeRow = {
   email_proved_at?: Date | null;
   account_created_at?: Date | null;
   expires_at: Date;
+  metadata?: Record<string, unknown> | null;
 };
 
 export async function ensureEmailAuthChallengeSchema(): Promise<void> {
@@ -330,12 +331,14 @@ async function deliverChallenge({
   email_address,
   link_token,
   purpose,
+  code_only,
 }: {
   challenge_id: string;
   code: string;
   email_address: string;
   link_token: string;
   purpose: EmailAuthChallengePublicStatus["purpose"];
+  code_only?: boolean;
 }): Promise<void> {
   const pool = getPool();
   try {
@@ -345,6 +348,7 @@ async function deliverChallenge({
       email_address,
       link_token,
       purpose,
+      code_only,
     });
     await pool.query(
       `
@@ -539,7 +543,7 @@ export async function startEmailAuthChallengeDirect(
             $1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10,
             $11, $12, $13, $14, $15, $16::JSONB, 0, $17, 1, $18,
             NOW(), $19, $20,
-            '{}'::JSONB
+            $21::JSONB
           )
           RETURNING *
         `,
@@ -569,6 +573,7 @@ export async function startEmailAuthChallengeDirect(
           resendAvailableAt,
           expiresAt,
           requestIpHash ?? null,
+          JSON.stringify({ code_only: opts.code_only === true }),
         ],
       )
     ).rows[0];
@@ -585,6 +590,7 @@ export async function startEmailAuthChallengeDirect(
     email_address: email,
     link_token: linkToken,
     purpose,
+    code_only: opts.code_only === true,
   });
   return {
     ...publicStatus(row),
@@ -743,6 +749,7 @@ export async function resendEmailAuthChallengeDirect(
     email_address: row.normalized_email,
     link_token: linkToken,
     purpose: row.purpose as EmailAuthChallengePublicStatus["purpose"],
+    code_only: row.metadata?.code_only === true,
   });
   return {
     ...publicStatus(row),

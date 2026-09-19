@@ -74,6 +74,9 @@ export interface ComputeVmRow {
   updated_at: Date;
   ready_at?: Date | null;
   expires_at?: Date | null;
+  stop_at?: Date | null;
+  stop_after_minutes?: number | null;
+  stop_generation?: number;
   stopped_at?: Date | null;
   deleted_at?: Date | null;
   allow_on_demand_fallback: boolean;

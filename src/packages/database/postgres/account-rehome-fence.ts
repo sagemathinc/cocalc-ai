@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import type { PostgreSQLMethods } from "@cocalc/database/postgres/types";
 import { DEFAULT_BAY_ID } from "@cocalc/util/bay";
 
@@ -62,6 +62,17 @@ export async function assertAccountNotRehoming({
   action?: string;
 }): Promise<void> {
   await lockAccountRehomeFence({ db, account_id });
+  // A failed coordinator attempt is retryable, not an unfreeze. Destination
+  // imports also remain unwritable before directory cutover and activation.
+  if (await tableExists(db, "account_financial_handoffs")) {
+    const { rows } = await db.query(
+      `SELECT 1 FROM account_financial_handoffs
+      WHERE account_id=$1 AND state IN ('frozen','accepted','imported') LIMIT 1`,
+      [account_id],
+    );
+    if (rows.length)
+      throw new Error(`cannot ${action}; account financial rehome is frozen`);
+  }
   if (!(await accountRehomeOperationsTableExists(db))) {
     return;
   }
@@ -134,7 +145,7 @@ export async function withAccountRehomeWriteFence<T>({
 }: {
   account_id: string;
   action?: string;
-  fn: (db: Queryable) => Promise<T>;
+  fn: (db: PoolClient) => Promise<T>;
 }): Promise<T> {
   const client = await getPool().connect();
   try {

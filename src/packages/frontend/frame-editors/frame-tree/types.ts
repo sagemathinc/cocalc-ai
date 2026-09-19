@@ -57,6 +57,7 @@ type EditorType =
   | "course-handouts"
   | "course-shared_project"
   | "course-students"
+  | "course-compute-budget"
   | "crm-account"
   | "crm-tables"
   | "csv-grid"
