@@ -191,6 +191,36 @@ describeIfLinux("baseline mutator parity behavior", () => {
     );
   });
 
+  it("does not overwrite a file created concurrently with force false", async () => {
+    await fs.writeFile("cp-race-source.txt", "source");
+    const move = fs.move;
+    fs.move = async (src: string, dest: string, options?: object) => {
+      await fs.writeFile(dest, "user-data");
+      return await move(src, dest, options);
+    };
+
+    try {
+      await fs.cp("cp-race-source.txt", "cp-race-target.txt", {
+        force: false,
+      });
+    } finally {
+      fs.move = move;
+    }
+
+    expect(await fs.readFile("cp-race-target.txt", "utf8")).toBe("user-data");
+  });
+
+  it("rejects copying a file onto an existing directory", async () => {
+    await fs.writeFile("cp-file-to-dir-source.txt", "source");
+    await fs.mkdir("cp-file-to-dir-target");
+
+    await expect(
+      fs.cp("cp-file-to-dir-source.txt", "cp-file-to-dir-target", {
+        force: false,
+      }),
+    ).rejects.toMatchObject({ code: "ERR_FS_CP_NON_DIR_TO_DIR" });
+  });
+
   it("preserves dangling symlinks during recursive cp", async () => {
     await fs.mkdir("cp-links");
     await symlink("missing-target", join(fs.path, "cp-links", "doc"));

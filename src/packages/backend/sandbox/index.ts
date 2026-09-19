@@ -362,6 +362,7 @@ const INTERNAL_METHODS = new Set([
   "cpDirectoryRequiresRecursiveError",
   "cpUnsupportedTypeError",
   "cpDestNotDirectoryError",
+  "cpFileToDirectoryError",
   "cpSafeSymlink",
   "cpSafeDirectoryRecursive",
   "cpSafeOne",
@@ -1676,6 +1677,18 @@ export class SandboxedFilesystem {
     return err;
   };
 
+  private cpFileToDirectoryError = (
+    src: string,
+    dest: string,
+  ): NodeJS.ErrnoException => {
+    const err: NodeJS.ErrnoException = new Error(
+      `Cannot overwrite directory '${dest}' with non-directory '${src}'`,
+    );
+    err.code = "ERR_FS_CP_NON_DIR_TO_DIR";
+    err.path = dest;
+    return err;
+  };
+
   private cpSafeSymlink = async (
     source: string,
     dest: string,
@@ -1746,25 +1759,53 @@ export class SandboxedFilesystem {
     dest: string,
     options?: CopyOptions,
   ): Promise<void> => {
-    if (!(options?.force ?? true)) {
+    if (options?.force ?? true) {
+      await this.copyFile(source, dest);
+      return;
+    }
+
+    const temporary = join(
+      dirname(dest),
+      `.${basename(dest)}.copy.${process.pid}.${randomUUID()}`,
+    );
+    try {
+      await this.copyFile(source, temporary);
       try {
-        await this.lstat(dest);
-        if (options?.errorOnExist) {
-          const err: NodeJS.ErrnoException = new Error(
-            "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
-          );
-          err.code = "ERR_FS_CP_EEXIST";
-          err.path = dest;
+        await this.move(temporary, dest);
+        return;
+      } catch (err: any) {
+        if (err?.code !== "EEXIST") {
           throw err;
         }
-        return;
+
+        try {
+          if ((await this.lstat(dest)).isDirectory()) {
+            throw this.cpFileToDirectoryError(source, dest);
+          }
+        } catch (statErr: any) {
+          if (statErr?.code !== "ENOENT") {
+            throw statErr;
+          }
+        }
+
+        if (options?.errorOnExist) {
+          const existsErr: NodeJS.ErrnoException = new Error(
+            "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+          );
+          existsErr.code = "ERR_FS_CP_EEXIST";
+          existsErr.path = dest;
+          throw existsErr;
+        }
+      }
+    } finally {
+      try {
+        await this.unlink(temporary);
       } catch (err: any) {
         if (err?.code !== "ENOENT") {
           throw err;
         }
       }
     }
-    await this.copyFile(source, dest);
   };
 
   private cpSafeDirectoryRecursive = async (
