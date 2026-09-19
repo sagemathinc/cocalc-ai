@@ -21,10 +21,11 @@ const DECISION_POLICY_VERSION = 1;
 const DEFAULT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const MIN_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_RETENTION_DAYS = 90;
+const MAX_RETENTION_DELETE_ROWS = 1000;
 const DEFAULT_CONCURRENCY = 2;
 const DEFAULT_SNAP_REFRESH_CONFIRMATION_DELAY_MS = 60_000;
 const MIN_SNAP_REFRESH_CONFIRMATION_DELAY_MS = 10_000;
-const HOST_ONLINE_WINDOW_MS = 5 * 60 * 1000;
+export const HOST_INTRUSION_ONLINE_WINDOW_MS = 5 * 60 * 1000;
 const HOST_RPC_TIMEOUT_MS = 130_000;
 const COVERAGE_FAILURE_ALERT_THRESHOLD = 3;
 const MAX_ALERT_HOSTS = 20;
@@ -1134,7 +1135,7 @@ async function listCandidateHosts(bayId: string): Promise<CandidateHost[]> {
         AND COALESCE(NULLIF(bay_id, ''), $2) = $2
       ORDER BY id
     `,
-    [HOST_ONLINE_WINDOW_MS, bayId],
+    [HOST_INTRUSION_ONLINE_WINDOW_MS, bayId],
   );
   return rows;
 }
@@ -1196,7 +1197,12 @@ async function loadFleetCompleteSnapshots({
         AND COALESCE(NULLIF(hosts.bay_id, ''), $1) = $1
       ORDER BY snapshots.host_id, snapshots.created_at DESC
     `,
-    [bayId, excludeHostId, NORMALIZATION_VERSION, HOST_ONLINE_WINDOW_MS],
+    [
+      bayId,
+      excludeHostId,
+      NORMALIZATION_VERSION,
+      HOST_INTRUSION_ONLINE_WINDOW_MS,
+    ],
   );
   return rows;
 }
@@ -1218,7 +1224,7 @@ export async function activeFleetHasCompleteBaseline(
           AND hosts.last_seen >= NOW() - ($3::double precision * INTERVAL '1 millisecond')
           AND COALESCE(NULLIF(hosts.bay_id, ''), $1) = $1
      ) AS present`,
-    [bayId, NORMALIZATION_VERSION, HOST_ONLINE_WINDOW_MS],
+    [bayId, NORMALIZATION_VERSION, HOST_INTRUSION_ONLINE_WINDOW_MS],
   );
   return rows[0]?.present === true;
 }
@@ -1275,7 +1281,7 @@ async function countPendingSnapRefreshes(bayId: string): Promise<number> {
             AND accepted.created_at > pending.created_at
         )
     `,
-    [bayId, HOST_ONLINE_WINDOW_MS],
+    [bayId, HOST_INTRUSION_ONLINE_WINDOW_MS],
   );
   return Number(rows[0]?.count ?? 0);
 }
@@ -1506,11 +1512,24 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-async function pruneOldSnapshots(retentionDays: number): Promise<number> {
+export function hostIntrusionRetentionDeleteBudget(hostCount: number): number {
+  const boundedHostCount = Math.max(0, Math.floor(hostCount));
+  return Math.max(MAX_RETENTION_DELETE_ROWS, boundedHostCount * 2);
+}
+
+async function pruneOldSnapshots(
+  retentionDays: number,
+  deleteBudget: number,
+): Promise<number> {
   const { rowCount } = await getPool().query(
     `DELETE FROM ${TABLE}
-      WHERE created_at < NOW() - ($1::double precision * INTERVAL '1 day')`,
-    [retentionDays],
+      WHERE id IN (
+        SELECT id FROM ${TABLE}
+         WHERE created_at < NOW() - ($1::double precision * INTERVAL '1 day')
+         ORDER BY created_at, id
+         LIMIT $2
+      )`,
+    [retentionDays, deleteBudget],
   );
   return rowCount ?? 0;
 }
@@ -1801,14 +1820,21 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
 
   result.pending = await countPendingSnapRefreshes(bayId);
 
-  const retentionDays = envNumberAtLeast(
+  const retentionDays = hostIntrusionRetentionDays();
+  const pruned = await pruneOldSnapshots(
+    retentionDays,
+    hostIntrusionRetentionDeleteBudget(hosts.length),
+  );
+  if (pruned) logger.info("pruned old host intrusion snapshots", { pruned });
+  return result;
+}
+
+export function hostIntrusionRetentionDays(): number {
+  return envNumberAtLeast(
     "COCALC_HOST_INTRUSION_MONITOR_RETENTION_DAYS",
     DEFAULT_RETENTION_DAYS,
     7,
   );
-  const pruned = await pruneOldSnapshots(retentionDays);
-  if (pruned) logger.info("pruned old host intrusion snapshots", { pruned });
-  return result;
 }
 
 function snapRefreshConfirmationDelayMs(): number {
@@ -1843,14 +1869,23 @@ async function runLockedPass(): Promise<void> {
   }
 }
 
-export function startHostIntrusionMonitor(): void {
-  if (started || process.env.COCALC_HOST_INTRUSION_MONITOR === "0") return;
-  started = true;
-  const intervalMs = envNumberAtLeast(
+export function hostIntrusionMonitorIntervalMs(): number {
+  return envNumberAtLeast(
     "COCALC_HOST_INTRUSION_MONITOR_INTERVAL_MS",
     DEFAULT_INTERVAL_MS,
     MIN_INTERVAL_MS,
   );
+}
+
+export function hostIntrusionObservationMaxAgeMs(): number {
+  const intervalMs = hostIntrusionMonitorIntervalMs();
+  return intervalMs + Math.max(60 * 60 * 1000, Math.floor(intervalMs / 4));
+}
+
+export function startHostIntrusionMonitor(): void {
+  if (started || process.env.COCALC_HOST_INTRUSION_MONITOR === "0") return;
+  started = true;
+  const intervalMs = hostIntrusionMonitorIntervalMs();
   logger.info("starting project-host intrusion monitor", {
     interval_ms: intervalMs,
     normalization_version: NORMALIZATION_VERSION,

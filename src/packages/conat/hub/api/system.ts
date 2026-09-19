@@ -70,6 +70,7 @@ export const system = {
   recordUxLatencyEvent: authFirstRequireAccount,
   getUxLatencySummary: authFirstRequireAccount,
   getLaunchHealth: authFirstRequireAccount,
+  getHostIntrusionReviewReport: authFirstRequireAccount,
   getBillingAuthorityStatus: authFirstRequireAccount,
   drainBillingAuthority: authFirstRequireAccount,
   resumeBillingAuthority: authFirstRequireAccount,
@@ -606,6 +607,124 @@ export interface LaunchHealthStatus {
   kill_switches: LaunchHealthKillSwitches;
   counts: LaunchHealthCounts;
   checks: LaunchHealthCheck[];
+}
+
+export interface HostIntrusionReviewReport {
+  checked_at: string;
+  bay_id: string;
+  reviewer: {
+    cursor_created_at: string | null;
+    cursor_id: string | null;
+    last_started_at: string | null;
+    last_success_at: string | null;
+    last_error_at: string | null;
+    last_error: string | null;
+    backlog: number;
+    oldest_unreviewed_at: string | null;
+    oldest_unreviewed_age_ms: number | null;
+    last_success_age_ms: number | null;
+  };
+  observations_24h: Array<{
+    coverage: string;
+    classification: string;
+    collector_version: number | null;
+    normalization_version: number;
+    decision_policy_version: number;
+    count: number;
+    truncated: number;
+  }>;
+  observations_truncated: boolean;
+  hosts_24h: Array<{
+    host_id: string;
+    latest_coverage: string;
+    collector_version: number | null;
+    normalization_version: number;
+    decision_policy_version: number;
+    latest_observed_at: string;
+    observations: number;
+    truncated: number;
+  }>;
+  hosts_truncated: boolean;
+  collector_coverage: {
+    expected_interval_ms: number;
+    max_observation_age_ms: number;
+    active_hosts: number;
+    observed_hosts: number;
+    overdue_hosts: number;
+    oldest_observation_at: string | null;
+    oldest_observation_age_ms: number | null;
+    overdue: Array<{
+      host_id: string;
+      host_name: string | null;
+      latest_observation_at: string | null;
+      latest_observation_age_ms: number | null;
+    }>;
+    overdue_truncated: boolean;
+  };
+  findings_24h: Array<{
+    rule_id: string;
+    rule_version: number;
+    classification: string;
+    severity: string;
+    count: number;
+    host_count: number;
+  }>;
+  findings_truncated: boolean;
+  retention: {
+    observations: number;
+    oldest_observation_at: string | null;
+    oldest_observation_age_ms: number | null;
+    latest_observation_at: string | null;
+    latest_observation_age_ms: number | null;
+    findings: number;
+    oldest_finding_at: string | null;
+    oldest_finding_age_ms: number | null;
+    delivered_notifications: number;
+    oldest_delivered_notification_at: string | null;
+    oldest_delivered_notification_age_ms: number | null;
+  };
+  rules: Array<{
+    id: string;
+    version: number;
+    owner: string;
+    severity: string;
+    required_coverage: string;
+    correlation_window_ms: number;
+    notification_enabled: boolean;
+    runbook_ref: string;
+  }>;
+  incident_summary: {
+    open: number;
+    acknowledged: number;
+    suppressed: number;
+    critical: number;
+    stale: number;
+    expiring_suppressions: number;
+    expired_suppressions: number;
+  };
+  incidents: Array<{
+    id: string;
+    host_id: string;
+    rule_id: string;
+    rule_version: number;
+    severity: string;
+    confidence: string;
+    state: string;
+    first_seen_at: string;
+    last_seen_at: string;
+    updated_at: string;
+    occurrence_count: number;
+    suppression_ref: string | null;
+    suppression_expires_at: string | null;
+    last_notification_transition: string | null;
+  }>;
+  incidents_truncated: boolean;
+  notifications: {
+    pending: number;
+    failed: number;
+    oldest_pending_at: string | null;
+    oldest_pending_age_ms: number | null;
+  };
 }
 
 export interface CloudflareTunnelApplyResult {
@@ -2214,6 +2333,11 @@ export interface System {
     alert_window_hours?: number;
     window_minutes?: number;
   }) => Promise<LaunchHealthStatus>;
+
+  getHostIntrusionReviewReport: (opts: {
+    account_id?: string;
+    bay_id: string;
+  }) => Promise<HostIntrusionReviewReport>;
 
   getBillingAuthorityStatus: (opts?: {
     account_id?: string;

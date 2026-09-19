@@ -158,6 +158,7 @@ import type {
   ActiveUserMapDetailsQuery,
   ActiveUserMapQuery,
   BrowserSessionLocation,
+  HostIntrusionReviewReport,
 } from "@cocalc/conat/hub/api/system";
 import { UX_LATENCY_HEALTH_METRICS } from "@cocalc/conat/hub/api/system";
 import {
@@ -314,6 +315,8 @@ import {
   getRecentAdminAlertSummary,
   MAX_ADMIN_ALERT_WINDOW_HOURS,
 } from "@cocalc/server/monitoring/recent-admin-alerts";
+import { getHostIntrusionReviewReport as getHostIntrusionReviewReportLocal } from "@cocalc/server/hosts/intrusion-reviewer";
+import { classifyHostIntrusionReviewHealth } from "@cocalc/server/hosts/intrusion-review-health";
 import { getAccountProjectIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-project-index-maintenance";
 import { getAccountCollaboratorIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-collaborator-index-maintenance";
 import { getAccountNotificationIndexProjectionMaintenanceStatus } from "@cocalc/server/projections/account-notification-index-maintenance";
@@ -2028,6 +2031,24 @@ export async function recordLaunchSmokeResult({
   return normalized;
 }
 
+export async function getHostIntrusionReviewReport({
+  account_id,
+  bay_id,
+}: {
+  account_id?: string;
+  bay_id: string;
+}): Promise<HostIntrusionReviewReport> {
+  await assertAdmin(account_id);
+  const requestedBayId = `${bay_id ?? ""}`.trim();
+  if (!requestedBayId) throw Error("bay_id must be specified");
+  if (requestedBayId === getConfiguredBayId()) {
+    return await getHostIntrusionReviewReportLocal({ bayId: requestedBayId });
+  }
+  return await getInterBayBridge()
+    .bayOps(requestedBayId, { timeout_ms: 15_000 })
+    .getHostIntrusionReviewReport({ account_id });
+}
+
 export async function getLaunchHealth({
   account_id,
   alert_window_hours,
@@ -2064,6 +2085,7 @@ export async function getLaunchHealth({
     configResult,
     smokeResult,
     adminAlertsResult,
+    intrusionReviewResult,
   ] = await Promise.allSettled([
     getPool("medium").query("SELECT 1"),
     getServerSettings(),
@@ -2077,6 +2099,7 @@ export async function getLaunchHealth({
     }),
     getLatestLaunchSmokeResult(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
+    getHostIntrusionReviewReportLocal({ bayId: currentBay.bay_id }),
   ]);
 
   const settings =
@@ -2097,6 +2120,10 @@ export async function getLaunchHealth({
   const adminAlerts =
     adminAlertsResult.status === "fulfilled"
       ? adminAlertsResult.value
+      : undefined;
+  const intrusionReview =
+    intrusionReviewResult.status === "fulfilled"
+      ? intrusionReviewResult.value
       : undefined;
   const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
@@ -2213,6 +2240,40 @@ export async function getLaunchHealth({
           ? "Postgres answered the operator health probe."
           : "Postgres health probe failed.",
       details: dbResult.status === "rejected" ? [`${dbResult.reason}`] : [],
+    }),
+    launchHealthCheck({
+      id: "host-intrusion-review",
+      label: "Host intrusion review",
+      level:
+        intrusionReviewResult.status === "rejected"
+          ? "critical"
+          : !intrusionReview
+            ? "unknown"
+            : classifyHostIntrusionReviewHealth(intrusionReview),
+      summary:
+        intrusionReviewResult.status === "rejected"
+          ? "Unable to read the local host intrusion reviewer projection."
+          : !intrusionReview
+            ? "Host intrusion reviewer state is unavailable."
+            : `${intrusionReview.reviewer.backlog} observation${intrusionReview.reviewer.backlog === 1 ? "" : "s"} await review; ${intrusionReview.collector_coverage.overdue_hosts} of ${intrusionReview.collector_coverage.active_hosts} active host${intrusionReview.collector_coverage.active_hosts === 1 ? "" : "s"} overdue for collection; ${intrusionReview.incidents.length} bounded open or suppressed incident record${intrusionReview.incidents.length === 1 ? "" : "s"} returned.`,
+      details:
+        intrusionReviewResult.status === "rejected"
+          ? [`${intrusionReviewResult.reason}`]
+          : intrusionReview
+            ? [
+                `last_success=${intrusionReview.reviewer.last_success_at ?? "never"}`,
+                `collector_interval_ms=${intrusionReview.collector_coverage.expected_interval_ms} collector_max_age_ms=${intrusionReview.collector_coverage.max_observation_age_ms}`,
+                `active_hosts=${intrusionReview.collector_coverage.active_hosts} observed_hosts=${intrusionReview.collector_coverage.observed_hosts} overdue_hosts=${intrusionReview.collector_coverage.overdue_hosts}`,
+                ...intrusionReview.collector_coverage.overdue
+                  .slice(0, 10)
+                  .map(
+                    (host) =>
+                      `overdue_host=${host.host_name ?? host.host_id} host_id=${host.host_id} latest_observation=${host.latest_observation_at ?? "never"} age_ms=${host.latest_observation_age_ms ?? "unknown"}`,
+                  ),
+                `oldest_unreviewed_age_ms=${intrusionReview.reviewer.oldest_unreviewed_age_ms ?? "none"}`,
+                `notifications_pending=${intrusionReview.notifications.pending} failed=${intrusionReview.notifications.failed}`,
+              ]
+            : [],
     }),
     launchHealthCheck({
       id: "recent-admin-alerts",

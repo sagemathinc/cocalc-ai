@@ -29,6 +29,7 @@ import {
   diffHostIntrusionSnapshots,
   ensureHostIntrusionMonitorSchema,
   hasHostIntrusionSnapshotChanges,
+  hostIntrusionRetentionDeleteBudget,
   normalizeHostIntrusionSnapshot,
   reachedCoverageFailureThreshold,
   runHostIntrusionMonitorPass,
@@ -200,6 +201,13 @@ function snapRefreshSnapshots({ mounted }: { mounted: boolean }): {
 }
 
 describe("project-host intrusion monitor normalization", () => {
+  it("scales retention cleanup above the fixed batch floor", () => {
+    expect(hostIntrusionRetentionDeleteBudget(0)).toBe(1000);
+    expect(hostIntrusionRetentionDeleteBudget(500)).toBe(1000);
+    expect(hostIntrusionRetentionDeleteBudget(1001)).toBe(2002);
+    expect(hostIntrusionRetentionDeleteBudget(10_000)).toBe(20_000);
+  });
+
   it("creates durable snapshot storage with a coverage constraint", async () => {
     await ensureHostIntrusionMonitorSchema();
     const id = "07960b11-b7de-4b8a-b88b-c91bdc7b6838";
