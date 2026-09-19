@@ -42,7 +42,7 @@ export function getCodexPaymentSourceOptions(
         : "Membership-funded Codex usage is not currently available for this account.",
       disabled: !includedAvailable,
     },
-    ...(paymentSource?.hasSubscription
+    ...(paymentSource?.hasSubscription || paymentSource?.subscriptions?.length
       ? [
           {
             value: "subscription" as const,
