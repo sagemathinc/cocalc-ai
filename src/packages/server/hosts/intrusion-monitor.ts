@@ -1512,7 +1512,15 @@ async function mapWithConcurrency<T>(
   await Promise.all(workers);
 }
 
-async function pruneOldSnapshots(retentionDays: number): Promise<number> {
+export function hostIntrusionRetentionDeleteBudget(hostCount: number): number {
+  const boundedHostCount = Math.max(0, Math.floor(hostCount));
+  return Math.max(MAX_RETENTION_DELETE_ROWS, boundedHostCount * 2);
+}
+
+async function pruneOldSnapshots(
+  retentionDays: number,
+  deleteBudget: number,
+): Promise<number> {
   const { rowCount } = await getPool().query(
     `DELETE FROM ${TABLE}
       WHERE id IN (
@@ -1521,7 +1529,7 @@ async function pruneOldSnapshots(retentionDays: number): Promise<number> {
          ORDER BY created_at, id
          LIMIT $2
       )`,
-    [retentionDays, MAX_RETENTION_DELETE_ROWS],
+    [retentionDays, deleteBudget],
   );
   return rowCount ?? 0;
 }
@@ -1813,7 +1821,10 @@ export async function runHostIntrusionMonitorPass(): Promise<HostIntrusionMonito
   result.pending = await countPendingSnapRefreshes(bayId);
 
   const retentionDays = hostIntrusionRetentionDays();
-  const pruned = await pruneOldSnapshots(retentionDays);
+  const pruned = await pruneOldSnapshots(
+    retentionDays,
+    hostIntrusionRetentionDeleteBudget(hosts.length),
+  );
   if (pruned) logger.info("pruned old host intrusion snapshots", { pruned });
   return result;
 }

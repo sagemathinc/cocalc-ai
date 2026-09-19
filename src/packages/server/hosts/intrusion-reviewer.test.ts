@@ -72,6 +72,7 @@ async function insertObservation({
   reasonCodes = ["no_normalized_delta"],
   actionableDelta,
   state = normalized(),
+  normalizationVersion = 2,
   createdAt = new Date(),
 }: {
   id?: string;
@@ -81,6 +82,7 @@ async function insertObservation({
   reasonCodes?: string[];
   actionableDelta?: Record<string, unknown>;
   state?: Record<string, unknown>;
+  normalizationVersion?: number;
   createdAt?: Date;
 } = {}): Promise<string> {
   await getPool().query(
@@ -88,7 +90,7 @@ async function insertObservation({
        (id, host_id, bay_id, captured_at, duration_ms, coverage,
         normalization_version, fingerprint, normalized, decision_policy_version,
         decision, baseline, baseline_eligible, created_at)
-     VALUES ($1,$2,$3,$4,1,$5,2,$6,$7::jsonb,1,$8::jsonb,
+     VALUES ($1,$2,$3,$4,1,$5,$10,$6,$7::jsonb,1,$8::jsonb,
              '{"kind":"host","snapshot_ids":[]}'::jsonb,$9,$4)`,
     [
       id,
@@ -107,6 +109,7 @@ async function insertObservation({
         diagnostic_verbosity: "actionable",
       }),
       coverage === "complete",
+      normalizationVersion,
     ],
   );
   return id;
@@ -139,7 +142,7 @@ describe("project-host intrusion reviewer", () => {
     delete process.env.COCALC_HOST_INTRUSION_REVIEW_OUTBOX_RETENTION_DAYS;
     delete process.env.COCALC_HOST_INTRUSION_MONITOR_INTERVAL_MS;
     mockAdminAlert.mockReset();
-    mockAdminAlert.mockResolvedValue(undefined);
+    mockAdminAlert.mockResolvedValue(1);
     await clearData();
   });
 
@@ -303,6 +306,53 @@ describe("project-host intrusion reviewer", () => {
     expect(mockAdminAlert).not.toHaveBeenCalled();
   });
 
+  it("requires compatible normalization versions for confirmation and recovery", async () => {
+    const base = Date.now();
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      normalizationVersion: 2,
+      createdAt: new Date(base),
+    });
+    await insertObservation({
+      state: changed,
+      normalizationVersion: 3,
+      createdAt: new Date(base + 1),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      opened: 0,
+    });
+
+    await insertObservation({
+      state: changed,
+      normalizationVersion: 2,
+      createdAt: new Date(base + 2),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      opened: 1,
+    });
+    await insertObservation({
+      state: normalized(),
+      normalizationVersion: 3,
+      createdAt: new Date(base + 3),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      resolved: 0,
+    });
+    await insertObservation({
+      state: normalized(),
+      normalizationVersion: 2,
+      createdAt: new Date(base + 4),
+    });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      resolved: 1,
+    });
+  });
+
   it("uses a durable outbox and emits exactly one approved open transition", async () => {
     process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
       "persistent-host-state";
@@ -325,6 +375,45 @@ describe("project-host intrusion reviewer", () => {
     expect(outbox.rows).toEqual([
       { state: "delivered", attempts: 1, transition: "open" },
     ]);
+  });
+
+  it("keeps an alert pending until an administrator can receive it", async () => {
+    process.env.COCALC_HOST_INTRUSION_REVIEW_NOTIFY_RULES =
+      "persistent-host-state";
+    mockAdminAlert.mockResolvedValue(undefined);
+    const delta = { added: { "services.enabled": [ADDED_VALUE] } };
+    const changed = normalized({ "services.enabled": [ADDED_VALUE] });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: delta,
+      state: changed,
+      createdAt: new Date(Date.now() - 1000),
+    });
+    await insertObservation({ state: changed });
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      notifications_delivered: 0,
+      notifications_failed: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT state, attempts FROM project_host_intrusion_notification_outbox",
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ state: "pending", attempts: 1 }],
+    });
+
+    mockAdminAlert.mockResolvedValue(1);
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      notifications_delivered: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT state, attempts FROM project_host_intrusion_notification_outbox",
+      ),
+    ).resolves.toMatchObject({
+      rows: [{ state: "delivered", attempts: 2 }],
+    });
   });
 
   it("opens one explicitly approved critical fixture notification", async () => {
@@ -418,6 +507,67 @@ describe("project-host intrusion reviewer", () => {
             AND classification='diagnostic' AND correlated_at IS NOT NULL`,
       ),
     ).resolves.toMatchObject({ rows: [{ count: 2 }] });
+  });
+
+  it("recomputes severity after critical evidence recovers", async () => {
+    const base = Date.now();
+    const criticalValue = '["root-equivalent",0]';
+    const criticalDelta = {
+      added: { "accounts.uid_zero": [criticalValue] },
+    };
+    const warningDelta = {
+      added: { "services.enabled": [ADDED_VALUE] },
+    };
+    const both = normalized({
+      "accounts.uid_zero": [criticalValue],
+      "services.enabled": [ADDED_VALUE],
+    });
+    const warningOnly = normalized({
+      "services.enabled": [ADDED_VALUE],
+    });
+    await insertObservation({
+      state: warningOnly,
+      createdAt: new Date(base + 3000),
+    });
+    await runHostIntrusionReviewerPass();
+
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: criticalDelta,
+      state: both,
+      createdAt: new Date(base),
+    });
+    await insertObservation({
+      classification: "actionable",
+      reasonCodes: ["actionable_selector_match"],
+      actionableDelta: warningDelta,
+      state: both,
+      createdAt: new Date(base + 1),
+    });
+    await insertObservation({
+      state: both,
+      createdAt: new Date(base + 1000),
+    });
+
+    await expect(runHostIntrusionReviewerPass()).resolves.toMatchObject({
+      opened: 1,
+    });
+    await expect(
+      getPool().query(
+        "SELECT severity, evidence FROM project_host_intrusion_incidents",
+      ),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          severity: "warning",
+          evidence: expect.objectContaining({
+            categories: ["services.enabled"],
+            superseded_candidate_count: 1,
+          }),
+        },
+      ],
+    });
   });
 
   it("prioritizes and marks critical evidence when bounding a large delta", async () => {

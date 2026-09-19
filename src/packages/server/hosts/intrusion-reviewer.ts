@@ -85,6 +85,7 @@ type ObservationRow = {
   host_id: string;
   created_at: Date | string;
   coverage: string;
+  normalization_version: number;
   decision: JsonObject | null;
   normalized: JsonObject | null;
   evidence_oversized: boolean;
@@ -358,7 +359,7 @@ async function remainingDeltaAfterLaterCompleteStates(
     `WITH entries AS MATERIALIZED (
        SELECT direction.key AS direction, category.key AS category,
               value.value #>> '{}' AS value
-         FROM jsonb_each($5::jsonb) AS direction(key, value)
+         FROM jsonb_each($6::jsonb) AS direction(key, value)
          CROSS JOIN LATERAL jsonb_each(direction.value)
            AS category(key, value)
          CROSS JOIN LATERAL jsonb_array_elements(category.value)
@@ -373,9 +374,10 @@ async function remainingDeltaAfterLaterCompleteStates(
          WHERE later.bay_id=$1 AND later.host_id=$2
            AND later.coverage='complete'
            AND (later.created_at, later.id) > ($3::timestamptz, $4::uuid)
+           AND later.normalization_version=$5
            AND later.normalized IS NOT NULL
-           AND pg_column_size(later.normalized) <= $6
-           AND octet_length(later.normalized::text) <= $7
+           AND pg_column_size(later.normalized) <= $7
+           AND octet_length(later.normalized::text) <= $8
            AND jsonb_typeof(later.normalized->'signals')='object'
            AND (
              NOT ((later.normalized->'signals') ? entries.category) OR
@@ -401,6 +403,7 @@ async function remainingDeltaAfterLaterCompleteStates(
       observation.host_id,
       observation.created_at,
       observation.id,
+      observation.normalization_version,
       JSON.stringify(delta),
       MAX_STORED_PHYSICAL_BYTES,
       MAX_STORED_JSON_BYTES,
@@ -773,8 +776,12 @@ async function openIncident(
       : ruleId === "coverage-loss"
         ? "host-coverage"
         : sha256(stableJson(evidence));
+  const compatibility =
+    ruleId === "persistent-host-state"
+      ? `:normalization:${observation.normalization_version}`
+      : "";
   const fingerprint = sha256(
-    `${getConfiguredBayId()}:${observation.host_id}:${ruleId}:${RULE_VERSION}:${evidenceFingerprint}`,
+    `${getConfiguredBayId()}:${observation.host_id}:${ruleId}:${RULE_VERSION}${compatibility}:${evidenceFingerprint}`,
   );
   const incidentId = uuidv5(fingerprint, INCIDENT_NAMESPACE);
   const { rows } = await client.query(
@@ -921,6 +928,13 @@ async function resolveIncidents(
     rule_id: string;
     evidence: JsonObject;
   }>) {
+    if (
+      incident.rule_id === "persistent-host-state" &&
+      incident.evidence.normalization_version !==
+        observation.normalization_version
+    ) {
+      continue;
+    }
     const delta = boundedDelta(incident.evidence.delta);
     const recovered =
       incident.rule_id === "coverage-loss"
@@ -957,6 +971,13 @@ async function reviewSuppressedIncidents(
     severity: "warning" | "critical";
     evidence: JsonObject;
   }>) {
+    if (
+      incident.rule_id === "persistent-host-state" &&
+      incident.evidence.normalization_version !==
+        observation.normalization_version
+    ) {
+      continue;
+    }
     const delta = boundedDelta(incident.evidence.delta);
     if (delta == null || !anyChangeRemains(delta, normalized)) continue;
     const expected = matchExpectedChange({
@@ -1049,6 +1070,7 @@ async function reviewObservation(
     );
     const evidence = {
       status: "candidate",
+      normalization_version: observation.normalization_version,
       candidate_severity: candidateSeverity,
       delta_fingerprint: sha256(stableJson(actionableDelta)),
       delta: actionableDelta,
@@ -1080,6 +1102,7 @@ async function reviewObservation(
           AND findings.rule_version=$3
           AND findings.classification='diagnostic'
           AND findings.correlated_at IS NULL
+          AND source.normalization_version=$6
           AND source.created_at BETWEEN
               $4::timestamptz - ($5::double precision * INTERVAL '1 millisecond')
               AND $4::timestamptz
@@ -1092,6 +1115,7 @@ async function reviewObservation(
         RULE_VERSION,
         observation.created_at,
         PERSISTENCE_WINDOW_MS,
+        observation.normalization_version,
       ],
     );
     const candidates = (rows as CandidateFinding[]).filter((row) => {
@@ -1152,7 +1176,10 @@ async function reviewObservation(
       );
       const delta = merged.delta!;
       const severity = activeCandidates.some(
-        ({ candidate }) => candidate.evidence.candidate_severity === "critical",
+        ({ candidate, delta }) =>
+          persistenceSeverity(delta, []) === "critical" ||
+          (candidate.evidence.candidate_severity === "critical" &&
+            candidate.evidence.delta_fingerprint === sha256(stableJson(delta))),
       )
         ? "critical"
         : "warning";
@@ -1161,6 +1188,7 @@ async function reviewObservation(
       );
       const evidence = {
         status: "confirmed",
+        normalization_version: observation.normalization_version,
         candidate_observation_ids: activeCandidates.map(
           ({ candidate }) => candidate.observation_id,
         ),
@@ -1275,7 +1303,7 @@ async function dispatchOutbox(
   );
   for (const row of rows) {
     try {
-      await adminAlert({
+      const messageId = await adminAlert({
         subject: `Project-host security incident ${row.transition}: ${row.rule_id}`,
         body: [
           `A durable ${row.severity} project-host security incident transitioned to ${row.transition}.`,
@@ -1290,6 +1318,9 @@ async function dispatchOutbox(
         dedupMinutes: 60,
         errorOnFail: true,
       });
+      if (messageId == null) {
+        throw Error("admin alert has no recipients");
+      }
       await pool.query(
         `UPDATE ${OUTBOX}
             SET state='delivered', attempts=attempts+1, delivered_at=NOW(), last_error=NULL
@@ -1443,6 +1474,7 @@ export async function runHostIntrusionReviewerPass({
     const observations = await client.query<ObservationRow>(
       `SELECT observations.id, observations.host_id,
               observations.created_at, observations.coverage,
+              observations.normalization_version,
               CASE
                 WHEN pg_column_size(decision) > $2 THEN NULL
                 WHEN octet_length(decision::text) > $3 THEN NULL
