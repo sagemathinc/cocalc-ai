@@ -89,3 +89,30 @@ describe("password reset redemption", () => {
     ).rejects.toThrow("Password reset no longer valid.");
   });
 });
+
+describe("password reset issuance", () => {
+  beforeEach(() => {
+    jest.resetModules();
+    queryMock = jest.fn();
+    getClusterAccountByEmailDirectMock.mockReset().mockResolvedValue({
+      account_id: "00000000-3000-4000-8000-000000000003",
+      email_address: "user@example.com",
+    });
+    getFinancialApprovalIdentityDirectMock.mockReset();
+  });
+
+  it("rejects an admin reset when the email now belongs to another account", async () => {
+    const { createResetLocal } = await import("./password-reset");
+
+    await expect(
+      createResetLocal(
+        "user@example.com",
+        "",
+        3600,
+        "00000000-2000-4000-8000-000000000002",
+      ),
+    ).rejects.toThrow("Account email changed before password reset creation.");
+    expect(getFinancialApprovalIdentityDirectMock).not.toHaveBeenCalled();
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+});

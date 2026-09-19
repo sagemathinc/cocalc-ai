@@ -1650,6 +1650,7 @@ export interface AccountLocalCreatePasswordResetRequest {
   email_address: string;
   ip_address: string;
   ttl_s: number;
+  expected_account_id?: string;
 }
 
 export interface AccountLocalCreatePasswordResetResult {

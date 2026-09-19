@@ -5423,7 +5423,7 @@ export async function adminResetPasswordLink({
   if (!email) {
     throw Error("passwords are only defined for accounts with email");
   }
-  const id = await createReset(email, "", 60 * 60 * 24); // 24 hour ttl seems reasonable for this.
+  const id = await createReset(email, "", 60 * 60 * 24, user_account_id); // 24 hour ttl seems reasonable for this.
   return `/auth/password-reset/${id}`;
 }
 

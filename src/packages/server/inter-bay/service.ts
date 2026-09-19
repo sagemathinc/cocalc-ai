@@ -1115,8 +1115,18 @@ async function startAccountDirectoryService(): Promise<void> {
     recentPasswordResetAttempts: async ({ email_address, ip_address }) => ({
       count: await recentPasswordResetAttemptsLocal(email_address, ip_address),
     }),
-    createPasswordReset: async ({ email_address, ip_address, ttl_s }) => ({
-      id: await createPasswordResetLocal(email_address, ip_address, ttl_s),
+    createPasswordReset: async ({
+      email_address,
+      ip_address,
+      ttl_s,
+      expected_account_id,
+    }) => ({
+      id: await createPasswordResetLocal(
+        email_address,
+        ip_address,
+        ttl_s,
+        expected_account_id,
+      ),
     }),
     redeemPasswordReset: async ({ password_reset_id }) => {
       const { email_address, account_id } =

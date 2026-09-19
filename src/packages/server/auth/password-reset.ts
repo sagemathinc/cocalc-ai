@@ -80,12 +80,16 @@ export async function createResetLocal(
   email_address: string,
   ip_address: string,
   ttl_s: number,
+  expected_account_id?: string,
 ): Promise<string> {
   const pool = getPool();
   const email = `${email_address ?? ""}`.trim().toLowerCase();
   const account = await getClusterAccountByEmailDirect(email);
   if (!account?.account_id) {
     throw Error("Account not found.");
+  }
+  if (expected_account_id && account.account_id !== expected_account_id) {
+    throw Error("Account email changed before password reset creation.");
   }
   const identity = await getFinancialApprovalIdentityDirect({
     account_id: account.account_id,
@@ -118,6 +122,7 @@ export async function createReset(
   email_address: string,
   ip_address: string,
   ttl_s: number,
+  expected_account_id?: string,
 ): Promise<string> {
   if (isMultiBayCluster() && getConfiguredClusterRole() === "attached") {
     return (
@@ -127,10 +132,16 @@ export async function createReset(
         email_address,
         ip_address,
         ttl_s,
+        expected_account_id,
       })
     ).id;
   }
-  return await createResetLocal(email_address, ip_address, ttl_s);
+  return await createResetLocal(
+    email_address,
+    ip_address,
+    ttl_s,
+    expected_account_id,
+  );
 }
 
 export async function redeemResetLocal(password_reset_id: string): Promise<{
