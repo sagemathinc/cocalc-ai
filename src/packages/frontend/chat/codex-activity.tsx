@@ -29,6 +29,7 @@ import { containingPath, humanSize, plural } from "@cocalc/util/misc";
 import { isAbsolutePath, normalizeAbsolutePath } from "@cocalc/util/path-model";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { AttachedSteerMessage } from "./agent-message-status";
+import { agentMessageDirectionFromMarkdown } from "./agent-message-presentation";
 import { formatCodexErrorForDisplay } from "./codex-error-presentation";
 import { lite } from "@cocalc/frontend/lite";
 import { CodexVmApprovalPrompt } from "./codex-vm-approval";
@@ -170,7 +171,26 @@ export interface CodexActivityProps {
   activitySteers?: AttachedSteerMessage[];
 }
 
-function renderSteerStatus(state: AttachedSteerMessage["state"]) {
+function renderSteerStatus(state: AttachedSteerMessage["state"], text: string) {
+  const agentDirection = agentMessageDirectionFromMarkdown(text);
+  if (agentDirection === "incoming") {
+    return {
+      label: "Agent guidance received",
+      borderColor: UI_COLORS.infoBg,
+      background: UI_COLORS.infoBg,
+      pillBackground: UI_COLORS.infoBg,
+      pillColor: UI_COLORS.info,
+    };
+  }
+  if (agentDirection === "outgoing") {
+    return {
+      label: "Agent guidance sent",
+      borderColor: UI_COLORS.successBg,
+      background: UI_COLORS.successBg,
+      pillBackground: UI_COLORS.successBg,
+      pillColor: UI_COLORS.success,
+    };
+  }
   switch (state) {
     case "sending":
       return {
@@ -660,7 +680,7 @@ function ActivityRow({
         </div>
       );
     case "steer":
-      const status = renderSteerStatus(entry.state);
+      const status = renderSteerStatus(entry.state, entry.text);
       return (
         <div data-codex-activity-entry-index={rowIndex}>
           <div

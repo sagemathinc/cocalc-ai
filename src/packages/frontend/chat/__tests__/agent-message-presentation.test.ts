@@ -1,8 +1,25 @@
 import {
+  agentMessageDirectionFromMarkdown,
   agentRpcMessageMarkdown,
   agentRpcPromptPrefix,
   stripAgentRpcPrompt,
 } from "../agent-message-presentation";
+
+test("reads direction only from an agent-message fence", () => {
+  expect(
+    agentMessageDirectionFromMarkdown(
+      "```agent-message direction=incoming from=%40reviewer\nhello\n```",
+    ),
+  ).toBe("incoming");
+  expect(
+    agentMessageDirectionFromMarkdown(
+      "```agent-message direction=outgoing to=%40builder\nhello\n```",
+    ),
+  ).toBe("outgoing");
+  expect(agentMessageDirectionFromMarkdown("direction=incoming")).toBe(
+    undefined,
+  );
+});
 
 const rpc = {
   source: {

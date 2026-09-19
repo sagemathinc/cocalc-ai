@@ -317,6 +317,26 @@ describe("AgentMessageStatus", () => {
 });
 
 describe("AttachedSteerStatusList", () => {
+  it("labels compact incoming agent guidance as received", () => {
+    render(
+      React.createElement(AttachedSteerStatusList, {
+        attachedSteers: [
+          {
+            messageId: "agent-guidance-1",
+            date: 1000,
+            state: "sent",
+            text: "```agent-message direction=incoming from=%40reviewer\nUse 5.\n```",
+          },
+        ],
+      }),
+    );
+
+    expect(
+      screen.getByRole("region", { name: "Agent guidance received" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Guidance sent")).toBeNull();
+  });
+
   it("keeps quoted guidance distinct from the user's follow-up", () => {
     render(
       React.createElement(AttachedSteerStatusList, {

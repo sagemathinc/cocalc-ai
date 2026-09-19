@@ -19,6 +19,7 @@ import type { InlineCodeLink } from "@cocalc/chat";
 import type { AcpStreamMessage } from "@cocalc/conat/ai/acp/types";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import CodexLogPanel from "./codex-log-panel";
+import { agentMessageDirectionFromMarkdown } from "./agent-message-presentation";
 import {
   reconcileSubagentEvents,
   summarizeSubagentEvents,
@@ -76,7 +77,26 @@ export interface AttachedSteerMessage {
   state: AttachedSteerState;
 }
 
-function renderSteerStatus(state: AttachedSteerState) {
+function renderSteerStatus(state: AttachedSteerState, text: string) {
+  const agentDirection = agentMessageDirectionFromMarkdown(text);
+  if (agentDirection === "incoming") {
+    return {
+      label: "Agent guidance received",
+      borderColor: UI_COLORS.infoBg,
+      background: UI_COLORS.infoBg,
+      pillBackground: UI_COLORS.infoBg,
+      pillColor: UI_COLORS.info,
+    };
+  }
+  if (agentDirection === "outgoing") {
+    return {
+      label: "Agent guidance sent",
+      borderColor: UI_COLORS.successBg,
+      background: UI_COLORS.successBg,
+      pillBackground: UI_COLORS.successBg,
+      pillColor: UI_COLORS.success,
+    };
+  }
   switch (state) {
     case "sending":
       return {
@@ -114,7 +134,7 @@ function renderSteerStatus(state: AttachedSteerState) {
 }
 
 export function SteerGuidanceCard({ steer }: { steer: AttachedSteerMessage }) {
-  const status = renderSteerStatus(steer.state);
+  const status = renderSteerStatus(steer.state, steer.text);
   return (
     <section
       aria-label={status.label}

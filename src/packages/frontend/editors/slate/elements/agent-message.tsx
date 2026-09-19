@@ -4,8 +4,6 @@
  */
 
 import {
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   InfoCircleOutlined,
@@ -151,7 +149,6 @@ export function AgentMessageElement({
   const direction = message.direction ?? "incoming";
   const outgoing = direction === "outgoing";
   const directionColor = outgoing ? UI_COLORS.success : UI_COLORS.info;
-  const directionBackground = outgoing ? UI_COLORS.successBg : UI_COLORS.infoBg;
   const { directory } = useNamedAgents(!!message.source_agent_id);
   const namedSource =
     message.source_agent_id && message.source_project_id
@@ -224,21 +221,6 @@ export function AgentMessageElement({
           flex: "0 0 auto",
         }}
       >
-        <span
-          aria-hidden="true"
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            justifyContent: "center",
-            width: 22,
-            height: 22,
-            borderRadius: 999,
-            color: directionColor,
-            background: directionBackground,
-          }}
-        >
-          {outgoing ? <ArrowRightOutlined /> : <ArrowLeftOutlined />}
-        </span>
         {outgoing ? "To" : "From"} {sourceLabel}
       </span>
       {message.source_project_id && (

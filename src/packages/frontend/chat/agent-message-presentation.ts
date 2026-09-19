@@ -26,6 +26,15 @@ type AgentMessageEvidence = {
   source_project_id?: string;
 };
 
+export function agentMessageDirectionFromMarkdown(
+  value: string,
+): "incoming" | "outgoing" | undefined {
+  const match = value.match(
+    /^`{3,}agent-message(?:[^\n]*\s)?direction=(incoming|outgoing)(?:\s|$)/m,
+  );
+  return match?.[1] as "incoming" | "outgoing" | undefined;
+}
+
 export function agentMessageFence(
   value: string,
   evidence?: AgentMessageEvidence,
