@@ -4,6 +4,7 @@ import {
 } from "@cocalc/backend/sandbox";
 import {
   mkdtemp,
+  link as linkNative,
   mkdir,
   readdir,
   realpath,
@@ -12,6 +13,7 @@ import {
   readFile,
   stat,
   symlink,
+  unlink as unlinkNative,
   writeFile,
 } from "node:fs/promises";
 import { rmSync, symlinkSync } from "node:fs";
@@ -311,6 +313,43 @@ describeIfLinux("baseline mutator parity behavior", () => {
     expect(await fs.readFile("cp-cleanup-target.txt", "utf8")).toBe(
       "user-data",
     );
+    await fs.unlink(stagingPath!);
+  });
+
+  it("copies staging data through the pinned descriptor", async () => {
+    await fs.writeFile("cp-pinned-source.txt", "source-data");
+    await fs.writeFile("cp-pinned-victim.txt", "victim-data");
+    const openVerifiedHandle = fs.openVerifiedHandle;
+    let stagingPath: string | undefined;
+    fs.openVerifiedHandle = async (options) => {
+      const opened = await openVerifiedHandle(options);
+      if (String(options.path).includes(".copy.")) {
+        stagingPath = String(options.path);
+        const absoluteStage = join(tempDir, "test-mutators", stagingPath);
+        await unlinkNative(absoluteStage);
+        await linkNative(
+          join(tempDir, "test-mutators", "cp-pinned-victim.txt"),
+          absoluteStage,
+        );
+      }
+      return opened;
+    };
+
+    try {
+      await expect(
+        fs.cp("cp-pinned-source.txt", "cp-pinned-target.txt", {
+          force: false,
+        }),
+      ).rejects.toMatchObject({ code: "ESTALE" });
+    } finally {
+      fs.openVerifiedHandle = openVerifiedHandle;
+    }
+
+    expect(await fs.readFile("cp-pinned-victim.txt", "utf8")).toBe(
+      "victim-data",
+    );
+    expect(await fs.exists("cp-pinned-target.txt")).toBe(false);
+    expect(stagingPath).toBeDefined();
     await fs.unlink(stagingPath!);
   });
 

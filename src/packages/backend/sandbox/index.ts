@@ -1815,7 +1815,32 @@ export class SandboxedFilesystem {
         mode: 0o600,
       });
       temporaryHandle = opened.handle;
-      await this.copyFile(source, temporary);
+      const sourceHandle = (
+        await this.openVerifiedHandle({
+          path: source,
+          flags: constants.O_RDONLY,
+        })
+      ).handle;
+      try {
+        const sourceInfo = await sourceHandle.stat();
+        const buffer = Buffer.allocUnsafe(1024 * 1024);
+        let position = 0;
+        while (true) {
+          const { bytesRead } = await sourceHandle.read(
+            buffer,
+            0,
+            buffer.length,
+            position,
+          );
+          if (bytesRead === 0) break;
+          await temporaryHandle.write(buffer, 0, bytesRead, position);
+          position += bytesRead;
+        }
+        await temporaryHandle.truncate(position);
+        await temporaryHandle.chmod(sourceInfo.mode);
+      } finally {
+        await sourceHandle.close();
+      }
       const [handleStat, pathStat] = await Promise.all([
         temporaryHandle.stat(),
         this.lstat(temporary),
