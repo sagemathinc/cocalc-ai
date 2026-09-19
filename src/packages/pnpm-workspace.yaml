@@ -118,6 +118,9 @@ minimumReleaseAgeExclude:
   # Maintainer-approved exact-version exception; review in .agents/git-review-modernization.md.
   - "@pierre/diffs@1.4.1"
   # CoCalc-owned upstream package; fresh releases are reviewed here before use.
+  - "@cocalc/openat2@0.1.2"
+  - "@cocalc/openat2-linux-arm64-gnu@0.1.2"
+  - "@cocalc/openat2-linux-x64-gnu@0.1.2"
   - "@cocalc/gcloud-pricing-calculator"
   - "@cocalc/xterm"
   - patchflow

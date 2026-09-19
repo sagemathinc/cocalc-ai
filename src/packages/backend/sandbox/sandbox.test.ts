@@ -4,7 +4,6 @@ import {
 } from "@cocalc/backend/sandbox";
 import {
   mkdtemp,
-  link as linkNative,
   mkdir,
   readdir,
   realpath,
@@ -13,10 +12,9 @@ import {
   readFile,
   stat,
   symlink,
-  unlink as unlinkNative,
   writeFile,
 } from "node:fs/promises";
-import { rmSync, symlinkSync } from "node:fs";
+import { rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { tmpdir } from "node:os";
@@ -252,12 +250,15 @@ describeIfLinux("baseline mutator parity behavior", () => {
 
   it("does not overwrite a file created concurrently with force false", async () => {
     await fs.writeFile("cp-race-source.txt", "source");
-    const install = fs.cpInstallNoReplace;
-    let stagingPath: string | undefined;
-    fs.cpInstallNoReplace = async (src: string, dest: string) => {
-      stagingPath = src;
-      await fs.writeFile(dest, "user-data");
-      return await install(src, dest);
+    const target = await fs.getOpenAt2DualPathTarget(
+      "cp-race-source.txt",
+      "cp-race-target.txt",
+    );
+    expect(target).not.toBeNull();
+    const copyFileNoReplace = target.root.copyFileNoReplace;
+    target.root.copyFileNoReplace = (src: string, dest: string) => {
+      writeFileSync(join(fs.path, dest), "user-data");
+      return copyFileNoReplace.call(target.root, src, dest);
     };
 
     try {
@@ -265,28 +266,16 @@ describeIfLinux("baseline mutator parity behavior", () => {
         force: false,
       });
     } finally {
-      fs.cpInstallNoReplace = install;
+      target.root.copyFileNoReplace = copyFileNoReplace;
     }
 
     expect(await fs.readFile("cp-race-target.txt", "utf8")).toBe("user-data");
-    expect(stagingPath).toBeDefined();
-    expect((await fs.stat(stagingPath!)).size).toBe(0);
-    await fs.unlink(stagingPath!);
-    await fs.rmdir(path.dirname(stagingPath!));
   });
 
-  it("fails closed when atomic no-replace installation is unavailable", async () => {
+  it("fails closed when atomic no-replace copy is unavailable", async () => {
     await fs.writeFile("cp-no-replace-source.txt", "source");
-    const install = fs.cpInstallNoReplace;
-    fs.cpInstallNoReplace = async (src: string, dest: string) => {
-      const getTarget = fs.getOpenAt2DualPathTarget;
-      fs.getOpenAt2DualPathTarget = async () => null;
-      try {
-        return await install(src, dest);
-      } finally {
-        fs.getOpenAt2DualPathTarget = getTarget;
-      }
-    };
+    const getTarget = fs.getOpenAt2DualPathTarget;
+    fs.getOpenAt2DualPathTarget = async () => null;
 
     try {
       await expect(
@@ -295,107 +284,26 @@ describeIfLinux("baseline mutator parity behavior", () => {
         }),
       ).rejects.toMatchObject({ code: "ENOTSUP" });
     } finally {
-      fs.cpInstallNoReplace = install;
+      fs.getOpenAt2DualPathTarget = getTarget;
     }
 
     expect(await fs.exists("cp-no-replace-target.txt")).toBe(false);
   });
 
-  it("does not remove a staging path replaced during failed installation", async () => {
-    await fs.writeFile("cp-cleanup-source.txt", "source");
-    const install = fs.cpInstallNoReplace;
-    let stagingPath: string | undefined;
-    fs.cpInstallNoReplace = async (src: string, dest: string) => {
-      stagingPath = src;
-      await fs.unlink(src);
-      await fs.writeFile(src, "replacement");
-      await fs.writeFile(dest, "user-data");
-      const err: NodeJS.ErrnoException = new Error("destination exists");
-      err.code = "EEXIST";
-      throw err;
-    };
-
-    try {
-      await fs.cp("cp-cleanup-source.txt", "cp-cleanup-target.txt", {
-        force: false,
-      });
-    } finally {
-      fs.cpInstallNoReplace = install;
-    }
-
-    expect(stagingPath).toBeDefined();
-    expect(await fs.readFile(stagingPath!, "utf8")).toBe("replacement");
-    expect(await fs.readFile("cp-cleanup-target.txt", "utf8")).toBe(
-      "user-data",
-    );
-    await fs.unlink(stagingPath!);
-  });
-
-  it("copies staging data through the pinned descriptor", async () => {
-    await fs.writeFile("cp-pinned-source.txt", "source-data");
-    await fs.writeFile("cp-pinned-victim.txt", "victim-data");
-    const openVerifiedHandle = fs.openVerifiedHandle;
+  it("does not expose staging entries during a no-clobber copy", async () => {
+    await fs.writeFile("cp-atomic-source.txt", "source");
     const sandboxRoot = join(tempDir, "test-mutators");
     const initialEntries = new Set(await readdir(sandboxRoot));
-    let stagingPath: string | undefined;
-    fs.openVerifiedHandle = async (options) => {
-      const opened = await openVerifiedHandle(options);
-      if (options.path === "cp-pinned-source.txt") {
-        const stagingDirectory = (await readdir(sandboxRoot)).find(
-          (name) => name.startsWith(".copy.") && !initialEntries.has(name),
-        );
-        expect(stagingDirectory).toBeDefined();
-        stagingPath = join(stagingDirectory!, "data");
-        const absoluteStage = join(sandboxRoot, stagingPath);
-        await unlinkNative(absoluteStage);
-        await linkNative(
-          join(sandboxRoot, "cp-pinned-victim.txt"),
-          absoluteStage,
-        );
-      }
-      return opened;
-    };
+    await fs.cp("cp-atomic-source.txt", "cp-atomic-target.txt", {
+      force: false,
+    });
 
-    try {
-      await expect(
-        fs.cp("cp-pinned-source.txt", "cp-pinned-target.txt", {
-          force: false,
-        }),
-      ).rejects.toMatchObject({ code: "ESTALE" });
-    } finally {
-      fs.openVerifiedHandle = openVerifiedHandle;
-    }
-
-    expect(await fs.readFile("cp-pinned-victim.txt", "utf8")).toBe(
-      "victim-data",
-    );
-    expect(await fs.exists("cp-pinned-target.txt")).toBe(false);
-    expect(stagingPath).toBeDefined();
-    await fs.unlink(stagingPath!);
-  });
-
-  it("does not clean up a staging path recreated after installation", async () => {
-    await fs.writeFile("cp-installed-source.txt", "source");
-    const install = fs.cpInstallNoReplace;
-    let stagingPath: string | undefined;
-    fs.cpInstallNoReplace = async (src: string, dest: string) => {
-      stagingPath = src;
-      await install(src, dest);
-      await fs.writeFile(src, "replacement");
-    };
-
-    try {
-      await fs.cp("cp-installed-source.txt", "cp-installed-target.txt", {
-        force: false,
-      });
-    } finally {
-      fs.cpInstallNoReplace = install;
-    }
-
-    expect(stagingPath).toBeDefined();
-    expect(await fs.readFile("cp-installed-target.txt", "utf8")).toBe("source");
-    expect(await fs.readFile(stagingPath!, "utf8")).toBe("replacement");
-    await fs.unlink(stagingPath!);
+    expect(await fs.readFile("cp-atomic-target.txt", "utf8")).toBe("source");
+    expect(
+      (await readdir(sandboxRoot)).filter(
+        (name) => !initialEntries.has(name) && name !== "cp-atomic-target.txt",
+      ),
+    ).toEqual([]);
   });
 
   it("rejects copying a file onto an existing directory", async () => {

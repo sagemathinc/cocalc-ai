@@ -127,6 +127,7 @@ interface OpenAt2SandboxRoot {
   chmod(path: string, mode: number): void;
   truncate(path: string, len: number): void;
   copyFile(src: string, dest: string, mode?: number | null): void;
+  copyFileNoReplace(src: string, dest: string): void;
   openRead?(path: string): number;
   openWrite?(
     path: string,
@@ -364,7 +365,6 @@ const INTERNAL_METHODS = new Set([
   "cpDestNotDirectoryError",
   "cpFileToDirectoryError",
   "cpSameFileError",
-  "cpInstallNoReplace",
   "cpSafeSymlink",
   "cpSafeDirectoryRecursive",
   "cpSafeOne",
@@ -1802,188 +1802,42 @@ export class SandboxedFilesystem {
       }
     }
 
-    const stagingDirectory = join(
-      dirname(dest),
-      `.copy.${process.pid}.${randomUUID()}`,
-    );
-    const temporary = join(stagingDirectory, "data");
-    let stagingDirectoryCreated = false;
-    let stagingDirectoryFd: number | undefined;
-    let temporaryHandle: Awaited<ReturnType<typeof open>> | undefined;
-    let installed = false;
-    try {
-      const target = await this.getOpenAt2PathTarget(stagingDirectory);
-      if (target == null || typeof target.root.openRead !== "function") {
-        const err: NodeJS.ErrnoException = new Error(
-          "anchored no-clobber copy staging is not supported",
-        );
-        err.code = "ENOTSUP";
-        err.path = dest;
-        throw err;
-      }
-      try {
-        target.root.mkdir(target.rel, false, 0o700);
-        stagingDirectoryCreated = true;
-        stagingDirectoryFd = target.root.openRead(target.rel);
-      } catch (err) {
-        this.throwOpenAt2PathError(stagingDirectory, err);
-      }
-      temporaryHandle = await open(
-        `/proc/${process.pid}/fd/${stagingDirectoryFd}/data`,
-        constants.O_CREAT | constants.O_EXCL | constants.O_RDWR,
-        0o600,
-      );
-      const sourceHandle = (
-        await this.openVerifiedHandle({
-          path: source,
-          flags: constants.O_RDONLY,
-        })
-      ).handle;
-      try {
-        const sourceInfo = await sourceHandle.stat();
-        const buffer = Buffer.allocUnsafe(1024 * 1024);
-        let position = 0;
-        while (true) {
-          const { bytesRead } = await sourceHandle.read(
-            buffer,
-            0,
-            buffer.length,
-            position,
-          );
-          if (bytesRead === 0) break;
-          let written = 0;
-          while (written < bytesRead) {
-            const { bytesWritten } = await temporaryHandle.write(
-              buffer,
-              written,
-              bytesRead - written,
-              position + written,
-            );
-            if (bytesWritten === 0) {
-              const err: NodeJS.ErrnoException = new Error(
-                `Unable to make progress writing copy staging file: '${temporary}'`,
-              );
-              err.code = "EIO";
-              err.path = temporary;
-              throw err;
-            }
-            written += bytesWritten;
-          }
-          position += bytesRead;
-        }
-        await temporaryHandle.truncate(position);
-        await temporaryHandle.chmod(sourceInfo.mode);
-      } finally {
-        await sourceHandle.close();
-      }
-      const [handleStat, pathStat] = await Promise.all([
-        temporaryHandle.stat(),
-        this.lstat(temporary),
-      ]);
-      if (handleStat.dev !== pathStat.dev || handleStat.ino !== pathStat.ino) {
-        const err: NodeJS.ErrnoException = new Error(
-          `Copy staging path changed during operation: '${temporary}'`,
-        );
-        err.code = "ESTALE";
-        err.path = temporary;
-        throw err;
-      }
-      try {
-        await this.cpInstallNoReplace(temporary, dest);
-        installed = true;
-        return;
-      } catch (err: any) {
-        if (err?.code !== "EEXIST") {
-          throw err;
-        }
-
-        try {
-          if ((await this.lstat(dest)).isDirectory()) {
-            throw this.cpFileToDirectoryError(source, dest);
-          }
-        } catch (statErr: any) {
-          if (statErr?.code !== "ENOENT") {
-            throw statErr;
-          }
-        }
-
-        if (options?.errorOnExist) {
-          const existsErr: NodeJS.ErrnoException = new Error(
-            "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
-          );
-          existsErr.code = "ERR_FS_CP_EEXIST";
-          existsErr.path = dest;
-          throw existsErr;
-        }
-      }
-    } finally {
-      if (!installed && temporaryHandle != null) {
-        // Reclaim data blocks through the pinned inode. Path-based removal is
-        // intentionally avoided because another process may have replaced it.
-        try {
-          await temporaryHandle.truncate(0);
-        } catch (err) {
-          logger.warn("unable to truncate failed no-clobber staging file", {
-            path: temporary,
-            err: String(err),
-          });
-        }
-      }
-      if (temporaryHandle != null) {
-        try {
-          await temporaryHandle.close();
-        } catch (err) {
-          logger.warn("unable to close no-clobber copy staging file", {
-            path: temporary,
-            err: String(err),
-          });
-        }
-      }
-      if (stagingDirectoryFd != null) {
-        await closeFd(stagingDirectoryFd).catch(() => {});
-      }
-      if (installed && stagingDirectoryCreated) {
-        try {
-          await this.rmdir(stagingDirectory);
-        } catch (err: any) {
-          if (err?.code !== "ENOENT") {
-            logger.warn("unable to remove no-clobber staging directory", {
-              path: stagingDirectory,
-              err: String(err),
-            });
-          }
-        }
-      }
-    }
-  };
-
-  private cpInstallNoReplace = async (
-    source: string,
-    dest: string,
-  ): Promise<void> => {
-    await Promise.all([this.safeAbsPath(source), this.safeAbsPath(dest)]);
     const target = await this.getOpenAt2DualPathTarget(source, dest);
-    if (target == null || typeof target.root.renameNoReplace !== "function") {
+    if (target == null || typeof target.root.copyFileNoReplace !== "function") {
       const err: NodeJS.ErrnoException = new Error(
-        "atomic no-replace copy installation is not supported",
+        "atomic no-replace copy is not supported",
       );
       err.code = "ENOTSUP";
       err.path = dest;
       throw err;
     }
+
     try {
-      target.root.renameNoReplace(target.srcRel, target.destRel);
+      target.root.copyFileNoReplace(target.srcRel, target.destRel);
+      return;
     } catch (err) {
-      const { code } = this.parseOpenAt2Error(err);
-      if (code === "ENOSYS" || code === "EINVAL") {
-        const unsupported: NodeJS.ErrnoException = new Error(
-          "atomic no-replace copy installation is not supported",
-        );
-        unsupported.code = "ENOTSUP";
-        unsupported.path = dest;
-        throw unsupported;
+      if (this.parseOpenAt2Error(err).code !== "EEXIST") {
+        this.throwOpenAt2PathError(dest, err);
       }
-      this.throwOpenAt2PathError(dest, err);
+    }
+
+    try {
+      if ((await this.lstat(dest)).isDirectory()) {
+        throw this.cpFileToDirectoryError(source, dest);
+      }
+    } catch (statErr: any) {
+      if (statErr?.code !== "ENOENT") {
+        throw statErr;
+      }
+    }
+
+    if (options?.errorOnExist) {
+      const existsErr: NodeJS.ErrnoException = new Error(
+        "SystemError [ERR_FS_CP_EEXIST]: Target already exists",
+      );
+      existsErr.code = "ERR_FS_CP_EEXIST";
+      existsErr.path = dest;
+      throw existsErr;
     }
   };
 
