@@ -253,7 +253,9 @@ describeIfLinux("baseline mutator parity behavior", () => {
   it("does not overwrite a file created concurrently with force false", async () => {
     await fs.writeFile("cp-race-source.txt", "source");
     const install = fs.cpInstallNoReplace;
+    let stagingPath: string | undefined;
     fs.cpInstallNoReplace = async (src: string, dest: string) => {
+      stagingPath = src;
       await fs.writeFile(dest, "user-data");
       return await install(src, dest);
     };
@@ -267,6 +269,10 @@ describeIfLinux("baseline mutator parity behavior", () => {
     }
 
     expect(await fs.readFile("cp-race-target.txt", "utf8")).toBe("user-data");
+    expect(stagingPath).toBeDefined();
+    expect((await fs.stat(stagingPath!)).size).toBe(0);
+    await fs.unlink(stagingPath!);
+    await fs.rmdir(path.dirname(stagingPath!));
   });
 
   it("fails closed when atomic no-replace installation is unavailable", async () => {

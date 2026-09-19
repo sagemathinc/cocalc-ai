@@ -1918,11 +1918,16 @@ export class SandboxedFilesystem {
       }
     } finally {
       if (!installed && temporaryHandle != null) {
-        // Identity-check-then-unlink is racy. Retain the rare failed staging
-        // file rather than risk deleting a path another process recreated.
-        logger.warn("retaining failed no-clobber copy staging file", {
-          path: temporary,
-        });
+        // Reclaim data blocks through the pinned inode. Path-based removal is
+        // intentionally avoided because another process may have replaced it.
+        try {
+          await temporaryHandle.truncate(0);
+        } catch (err) {
+          logger.warn("unable to truncate failed no-clobber staging file", {
+            path: temporary,
+            err: String(err),
+          });
+        }
       }
       if (temporaryHandle != null) {
         try {
