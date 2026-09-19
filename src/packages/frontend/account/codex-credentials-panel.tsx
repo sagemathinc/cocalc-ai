@@ -14,6 +14,7 @@ import {
   Input,
   message,
   Popconfirm,
+  Select,
   Space,
   Table,
   Tag,
@@ -26,13 +27,12 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import {
-  CODEX_USAGE_LABEL,
-  CODEX_USAGE_URL,
   clearCachedCodexModelCatalog,
   getChatGptAccountInfo,
   getCodexSubscriptionConnection,
   getLiveCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
+import { getCodexSubscriptionDisplayName } from "@cocalc/frontend/chat/codex-subscription-label";
 import { Icon, Loading } from "@cocalc/frontend/components";
 import Password from "@cocalc/frontend/components/password";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
@@ -206,6 +206,60 @@ export function CodexUsageMeters({
   );
 }
 
+function MembershipUsageMeters({
+  paymentSource,
+}: {
+  paymentSource?: CodexPaymentSourceInfo;
+}) {
+  const status = paymentSource?.siteFundedCodex?.status?.account;
+  if (!status) {
+    return (
+      <Text type="secondary">
+        CoCalc Membership usage is not available for this account.
+      </Text>
+    );
+  }
+  const windows = [
+    {
+      key: "5h",
+      label: "5-hour limit",
+      limit: status.limit5hMicrousd,
+      remaining: status.remaining5hMicrousd,
+      resetAt: status.reset5hAt,
+    },
+    {
+      key: "7d",
+      label: "7-day limit",
+      limit: status.limit7dMicrousd,
+      remaining: status.remaining7dMicrousd,
+      resetAt: status.reset7dAt,
+    },
+  ]
+    .filter(
+      ({ limit, remaining }) =>
+        typeof limit === "number" &&
+        Number.isFinite(limit) &&
+        limit > 0 &&
+        typeof remaining === "number" &&
+        Number.isFinite(remaining),
+    )
+    .map(({ key, label, limit = 0, remaining = 0, resetAt }) => ({
+      key,
+      label,
+      remainingPercent: Math.max(
+        0,
+        Math.min(100, Math.round((remaining / limit) * 100)),
+      ),
+      resetAt: resetAt ? new Date(resetAt) : undefined,
+    }));
+  return (
+    <UsageWindowMeters
+      windows={windows}
+      statusLabel="CoCalc Membership usage"
+    />
+  );
+}
+
 function formatCodexUsageReason(reason?: string): string | undefined {
   if (!reason) return undefined;
   if (
@@ -317,7 +371,9 @@ function CodexCredentialsPanelBody({
   const [codexUsageStatus, setCodexUsageStatus] = useState<
     CodexUsageStatusInfo | undefined
   >(undefined);
+  const [codexUsageCredentialId, setCodexUsageCredentialId] = useState("");
   const [codexUsageLoading, setCodexUsageLoading] = useState(false);
+  const [usageSource, setUsageSource] = useState("");
   const [apiKeyStatus, setApiKeyStatus] = useState<any>(undefined);
   const [credentials, setCredentials] = useState<ExternalCredentialInfo[]>([]);
   const [credentialOrder, setCredentialOrder] = useState<string[]>([]);
@@ -420,6 +476,7 @@ function CodexCredentialsPanelBody({
         setCredentials([]);
         setApiKeyStatus(undefined);
         setCodexUsageStatus(undefined);
+        setCodexUsageCredentialId("");
         setDeviceAuth(null);
         setDeviceAuthError("");
         setUploadedAuthFileStatus(null);
@@ -473,12 +530,13 @@ function CodexCredentialsPanelBody({
 
   useAsyncEffect(
     async (isMounted) => {
-      if (paymentSource?.source !== "subscription") {
-        setCodexUsageStatus(undefined);
+      if (!usageSource.startsWith("subscription:")) {
         setCodexUsageLoading(false);
         return;
       }
+      if (!paymentSource) return;
       if (!authProjectId && !lite) {
+        const credentialId = usageSource.slice("subscription:".length);
         setCodexUsageStatus({
           available: false,
           checkedAt: new Date().toISOString(),
@@ -486,16 +544,20 @@ function CodexCredentialsPanelBody({
           reason:
             "Open a project before checking live ChatGPT Codex usage in CoCalc.",
         });
+        setCodexUsageCredentialId(credentialId);
         setCodexUsageLoading(false);
         return;
       }
       setCodexUsageLoading(true);
+      const credentialId = usageSource.slice("subscription:".length);
       try {
         const result = await getLiveCodexUsageStatus({
           projectId: authProjectId || undefined,
+          credentialId: credentialId || undefined,
         });
         if (!isMounted()) return;
         setCodexUsageStatus(result as CodexUsageStatusInfo);
+        setCodexUsageCredentialId(credentialId);
       } catch (err) {
         if (!isMounted()) return;
         setCodexUsageStatus({
@@ -505,12 +567,53 @@ function CodexCredentialsPanelBody({
           project_id: authProjectId || undefined,
           reason: formatCodexUsageReason(getErrorMessage(err)),
         });
+        setCodexUsageCredentialId(credentialId);
       } finally {
         if (isMounted()) setCodexUsageLoading(false);
       }
     },
-    [authProjectId, paymentSource?.source, usageRefreshToken],
+    [authProjectId, usageRefreshToken, usageSource],
   );
+
+  const usageSourceOptions = useMemo(() => {
+    const subscriptions = paymentSource?.subscriptions ?? [];
+    return [
+      ...subscriptions.map((credential) => ({
+        value: `subscription:${credential.id}`,
+        label: getCodexSubscriptionDisplayName(credential, subscriptions),
+      })),
+      ...(subscriptions.length === 0 &&
+      (paymentSource?.hasSubscription ||
+        paymentSource?.source === "subscription")
+        ? [{ value: "subscription:", label: "ChatGPT" }]
+        : []),
+      ...(paymentSource?.hasSiteApiKey
+        ? [{ value: "site-api-key", label: "CoCalc Membership" }]
+        : []),
+      ...(paymentSource?.hasProjectApiKey
+        ? [{ value: "project-api-key", label: "Project OpenAI API key" }]
+        : []),
+      ...(paymentSource?.hasAccountApiKey
+        ? [{ value: "account-api-key", label: "Account OpenAI API key" }]
+        : []),
+    ];
+  }, [paymentSource]);
+
+  useEffect(() => {
+    if (!usageSourceOptions.length) {
+      setUsageSource("");
+      return;
+    }
+    if (usageSourceOptions.some(({ value }) => value === usageSource)) return;
+    const selectedCredential = paymentSource?.credentialId;
+    const exact = selectedCredential
+      ? `subscription:${selectedCredential}`
+      : undefined;
+    setUsageSource(
+      usageSourceOptions.find(({ value }) => value === exact)?.value ??
+        usageSourceOptions[0].value,
+    );
+  }, [paymentSource?.credentialId, usageSource, usageSourceOptions]);
 
   const startDeviceAuth = useCallback(
     async (credentialId?: string, create = false) => {
@@ -592,40 +695,46 @@ function CodexCredentialsPanelBody({
       {
         title: "Credential",
         key: "credential",
-        render: (_: any, row: ExternalCredentialInfo) => (
-          <Space orientation="vertical" size={0}>
-            <Text strong>
-              {row.metadata?.label ||
-                row.metadata?.email ||
-                "ChatGPT subscription"}
-            </Text>
-            <Text type="secondary">
-              {formatPlanType(row.metadata?.plan_type) ??
-                row.metadata?.provider_account_id?.slice?.(0, 12) ??
-                "Connected plan"}
-              {row.metadata?.cocalc_default ? " (default)" : ""}
-            </Text>
-            <Input
-              size="small"
-              aria-label={`Label for ${row.metadata?.email || "ChatGPT subscription"}`}
-              placeholder="Optional label"
-              maxLength={60}
-              value={labelDrafts[row.id] ?? row.metadata?.label ?? ""}
-              disabled={savingLabelId === row.id}
-              onChange={(event) =>
-                setLabelDrafts((drafts) => ({
-                  ...drafts,
-                  [row.id]: event.target.value,
-                }))
-              }
-              onBlur={(event) =>
-                void saveCredentialLabel(row, event.target.value)
-              }
-              onPressEnter={(event) => event.currentTarget.blur()}
-              style={{ width: 180, marginTop: 4 }}
-            />
-          </Space>
-        ),
+        render: (_: any, row: ExternalCredentialInfo) => {
+          const subscriptions = paymentSource?.subscriptions ?? [];
+          const subscription = subscriptions.find(({ id }) => id === row.id);
+          const displayName = subscription
+            ? getCodexSubscriptionDisplayName(subscription, subscriptions)
+            : row.metadata?.label || "ChatGPT";
+          return (
+            <Space orientation="vertical" size={0}>
+              <Text strong>{displayName}</Text>
+              {row.metadata?.email ? (
+                <Text type="secondary">{row.metadata.email}</Text>
+              ) : null}
+              <Text type="secondary">
+                {formatPlanType(row.metadata?.plan_type) ??
+                  row.metadata?.provider_account_id?.slice?.(0, 12) ??
+                  "Connected plan"}
+                {row.metadata?.cocalc_default ? " (default)" : ""}
+              </Text>
+              <Input
+                size="small"
+                aria-label={`Label for ${row.metadata?.email || "ChatGPT subscription"}`}
+                placeholder="Optional label"
+                maxLength={60}
+                value={labelDrafts[row.id] ?? row.metadata?.label ?? ""}
+                disabled={savingLabelId === row.id}
+                onChange={(event) =>
+                  setLabelDrafts((drafts) => ({
+                    ...drafts,
+                    [row.id]: event.target.value,
+                  }))
+                }
+                onBlur={(event) =>
+                  void saveCredentialLabel(row, event.target.value)
+                }
+                onPressEnter={(event) => event.currentTarget.blur()}
+                style={{ width: 180, marginTop: 4 }}
+              />
+            </Space>
+          );
+        },
       },
       {
         title: "Updated",
@@ -701,6 +810,7 @@ function CodexCredentialsPanelBody({
       refreshAfterPaymentSourceChange,
       revokingId,
       labelDrafts,
+      paymentSource?.subscriptions,
       saveCredentialLabel,
       savingLabelId,
       startDeviceAuth,
@@ -946,47 +1056,57 @@ function CodexCredentialsPanelBody({
   };
 
   const renderCodexUsageStatusDetails = () => {
-    if (paymentSource?.source !== "subscription") return null;
-    const chatgptAccount = getChatGptAccountInfo(codexUsageStatus);
-    const rateLimit = getCodexRateLimit(codexUsageStatus);
+    if (!usageSourceOptions.length) return null;
+    const selectedCredentialId = usageSource.slice("subscription:".length);
+    const selectedUsageStatus =
+      selectedCredentialId === codexUsageCredentialId
+        ? codexUsageStatus
+        : undefined;
+    const rateLimit = getCodexRateLimit(selectedUsageStatus);
     const planType =
-      formatPlanType(chatgptAccount?.planType) ??
+      formatPlanType(getChatGptAccountInfo(selectedUsageStatus)?.planType) ??
       formatPlanType(rateLimit?.planType ?? rateLimit?.plan_type);
-    const reason = formatCodexUsageReason(codexUsageStatus?.reason);
+    const reason = formatCodexUsageReason(selectedUsageStatus?.reason);
     return (
       <Space orientation="vertical" size={6} style={{ width: "100%" }}>
-        <Text strong>ChatGPT Codex usage</Text>
-        {codexUsageLoading && !codexUsageStatus ? (
+        <Text strong>Codex usage</Text>
+        <Select
+          aria-label="Codex usage payment source"
+          value={usageSource}
+          options={usageSourceOptions}
+          onChange={setUsageSource}
+          style={{ width: "100%", maxWidth: 360 }}
+        />
+        {usageSource === "site-api-key" ? (
+          <MembershipUsageMeters paymentSource={paymentSource} />
+        ) : usageSource.endsWith("-api-key") ? (
+          <Text type="secondary">
+            OpenAI does not provide a subscription-style remaining usage view
+            for API keys. Review API usage and billing in your OpenAI account.
+          </Text>
+        ) : codexUsageLoading && !selectedUsageStatus ? (
           <Text type="secondary">Checking ChatGPT Codex usage...</Text>
-        ) : !codexUsageStatus ? (
+        ) : !selectedUsageStatus ? (
           <Text type="secondary">Usage status has not been checked yet.</Text>
         ) : null}
-        <Space wrap>
-          {chatgptAccount?.email ? (
-            <Tag color="blue">{chatgptAccount.email}</Tag>
-          ) : null}
-          {planType ? <Tag color="green">{planType}</Tag> : null}
-        </Space>
-        <CodexUsageMeters status={codexUsageStatus} />
-        {reason ? <Text type="secondary">{reason}</Text> : null}
-        <Space wrap>
-          <Button
-            size="small"
-            onClick={refreshUsage}
-            loading={codexUsageLoading}
-            disabled={codexUsageLoading}
-          >
-            Refresh usage
-          </Button>
-          <Button
-            size="small"
-            href={CODEX_USAGE_URL}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {CODEX_USAGE_LABEL}
-          </Button>
-        </Space>
+        {usageSource.startsWith("subscription:") ? (
+          <>
+            <Space wrap>
+              {planType ? <Tag color="green">{planType}</Tag> : null}
+            </Space>
+            <CodexUsageMeters status={selectedUsageStatus} />
+            {reason ? <Text type="secondary">{reason}</Text> : null}
+            <Button
+              size="small"
+              onClick={refreshUsage}
+              loading={codexUsageLoading}
+              disabled={codexUsageLoading}
+              style={{ alignSelf: "flex-start" }}
+            >
+              Refresh usage
+            </Button>
+          </>
+        ) : null}
       </Space>
     );
   };
@@ -1089,7 +1209,7 @@ function CodexCredentialsPanelBody({
                 {codexUsageAuthProblem
                   ? "Your ChatGPT plan is selected for Codex, but the stored sign-in needs to be refreshed before Codex can use it."
                   : codexConnectionVerified
-                    ? "CoCalc is using your ChatGPT subscription for Codex. ChatGPT shows your exact plan and remaining Codex usage."
+                    ? "CoCalc is using your ChatGPT subscription for Codex. Usage for each configured payment source is shown below."
                     : codexConnectionChecking
                       ? "CoCalc found a stored ChatGPT credential and is checking whether Codex can use it."
                       : "CoCalc found a stored ChatGPT credential, but the live check did not confirm that Codex can use it. Refresh usage or sign in again."}
@@ -1112,9 +1232,6 @@ function CodexCredentialsPanelBody({
                 >
                   Add ChatGPT subscription
                 </Button>
-                <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                  {CODEX_USAGE_LABEL}
-                </Button>
               </Space>
               {!authProjectId ? (
                 <Text type="secondary">
@@ -1133,8 +1250,7 @@ function CodexCredentialsPanelBody({
               </Space>
               <Text type="secondary">
                 Sign in once to use your ChatGPT Codex subscription in CoCalc.
-                No API key is needed. ChatGPT shows your exact plan and
-                remaining Codex usage.
+                No API key is needed.
               </Text>
               <Space wrap>
                 <Button
@@ -1146,9 +1262,6 @@ function CodexCredentialsPanelBody({
                   {deviceAuthActionPending
                     ? "Getting sign-in code..."
                     : "Sign in with ChatGPT"}
-                </Button>
-                <Button href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                  {CODEX_USAGE_LABEL}
                 </Button>
               </Space>
               {!authProjectId ? (
@@ -1196,13 +1309,6 @@ function CodexCredentialsPanelBody({
                     Codex will prefer your ChatGPT Plan. Use an OpenAI API key
                     only as a fallback.
                   </Text>
-                  <Text type="secondary">
-                    To see the exact ChatGPT plan and remaining Codex usage,{" "}
-                    <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-                      {CODEX_USAGE_LABEL}
-                    </a>
-                    .
-                  </Text>
                   {renderCodexUsageStatusDetails()}
                 </Space>
               ) : (
@@ -1244,19 +1350,6 @@ function CodexCredentialsPanelBody({
                     </Tag>
                     <Tag>shared-home mode: {paymentSource.sharedHomeMode}</Tag>
                   </Space>
-                  {paymentSource.hasSubscription ? (
-                    <Text type="secondary">
-                      To see the exact ChatGPT plan and remaining Codex usage,{" "}
-                      <a
-                        href={CODEX_USAGE_URL}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        {CODEX_USAGE_LABEL}
-                      </a>
-                      .
-                    </Text>
-                  ) : null}
                   {renderCodexUsageStatusDetails()}
                 </Space>
               )
@@ -1657,6 +1750,16 @@ function CodexCredentialsPanelBody({
                       locale={{
                         emptyText: "No saved subscription credentials.",
                       }}
+                      footer={() => (
+                        <Button
+                          size="small"
+                          onClick={() => void startDeviceAuth(undefined, true)}
+                          loading={deviceAuthActionPending}
+                          disabled={deviceAuth?.state === "pending"}
+                        >
+                          Add
+                        </Button>
+                      )}
                     />
                   ),
                 },

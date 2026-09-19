@@ -30,8 +30,6 @@ import {
 } from "@cocalc/frontend/account/codex-credentials-panel";
 import CodexSessionsPanel from "@cocalc/frontend/account/codex-sessions-panel";
 import {
-  CODEX_USAGE_LABEL,
-  CODEX_USAGE_URL,
   clearCachedCodexModelCatalog,
   getChatGptAccountInfo,
   getLiveCodexUsageStatus,
@@ -42,7 +40,6 @@ import {
   writeCachedCodexUsageStatus,
 } from "@cocalc/frontend/account/codex-usage";
 import LiteAISettings from "@cocalc/frontend/account/lite-ai-settings";
-import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import { UsageWindowMeters } from "@cocalc/frontend/account/usage-window-meters";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import {
@@ -86,6 +83,7 @@ import {
   getCodexPaymentSourceOptions,
   getCodexPaymentSourceTooltip,
 } from "./use-codex-payment-source";
+import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
 import {
   readCodexSubscriptionSelection,
   writeCodexSubscriptionSelection,
@@ -464,14 +462,6 @@ export function CodexPaymentCredentialsModal({
             defaultProjectId={projectId}
             onPaymentSourceChanged={refreshPaymentSource}
           />
-          <Text type="secondary">
-            CoCalc can show which source Codex will use. To check remaining
-            ChatGPT Codex usage,{" "}
-            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              {CODEX_USAGE_LABEL}
-            </a>
-            .
-          </Text>
           <Divider style={{ margin: "8px 0" }} />
           <LiteAISettings onSaved={refreshPaymentSource} showTitle />
         </Space>
@@ -486,11 +476,7 @@ export function CodexPaymentCredentialsModal({
           <Text type="secondary">
             Choose the payment source for each chat in Codex settings.
             Credentials connected here remain available without overriding an
-            explicit choice. To check remaining ChatGPT Codex usage,{" "}
-            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              {CODEX_USAGE_LABEL}
-            </a>
-            .
+            explicit choice.
           </Text>
         </Space>
       )}
@@ -712,7 +698,10 @@ export function CodexConfigButton({
   const sourceShortLabel = paymentSourceLoading
     ? "Checking…"
     : paymentSource?.source === "subscription" && selectedSubscription
-      ? `ChatGPT: ${selectedSubscription.label ?? selectedSubscription.email ?? selectedSubscription.plan ?? "Plan"}`
+      ? getCodexSubscriptionDisplayName(
+          selectedSubscription,
+          paymentSource.subscriptions ?? [],
+        )
       : selectedPaymentSource === "subscription" && selectedCredentialId
         ? "ChatGPT selection unavailable"
         : getCodexPaymentSourceShortLabel(paymentSource?.source);
@@ -1149,16 +1138,24 @@ export function CodexConfigButton({
     items: [
       ...paymentSourceOptions.flatMap((option) =>
         option.value === "subscription"
-          ? (paymentSource?.subscriptions ?? []).map((credential) => ({
-              key: `subscription:${credential.id}`,
-              label:
-                credential.label ??
-                credential.email ??
-                `${credential.plan ?? "ChatGPT plan"} (${credential.id.slice(0, 8)})`,
-              title: credential.plan
-                ? `${credential.email ?? "ChatGPT subscription"} - ${credential.plan}`
-                : credential.email,
-            }))
+          ? paymentSource?.subscriptions?.length
+            ? paymentSource.subscriptions.map((credential) => ({
+                key: `subscription:${credential.id}`,
+                label: getCodexSubscriptionDisplayName(
+                  credential,
+                  paymentSource.subscriptions ?? [],
+                ),
+                title: credential.plan
+                  ? `ChatGPT ${credential.plan} subscription`
+                  : "ChatGPT subscription",
+              }))
+            : [
+                {
+                  key: option.value,
+                  label: option.label,
+                  title: option.description,
+                },
+              ]
           : [
               {
                 key: option.value,
@@ -1177,7 +1174,7 @@ export function CodexConfigButton({
     onClick: ({ domEvent, key }) => {
       domEvent.stopPropagation();
       if (key === "manage-subscriptions") {
-        openAccountSettings({ page: "ai" });
+        setPaymentOpen(true);
         return;
       }
       if (key.startsWith("subscription:")) {

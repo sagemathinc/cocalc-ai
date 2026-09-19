@@ -104,6 +104,24 @@ jest.mock("antd", () => {
   const Progress = ({ percent }: any) => (
     <div role="progressbar" aria-valuenow={percent} />
   );
+  const Select = ({
+    "aria-label": ariaLabel,
+    onChange,
+    options,
+    value,
+  }: any) => (
+    <select
+      aria-label={ariaLabel}
+      value={value}
+      onChange={(event) => onChange?.(event.target.value)}
+    >
+      {options?.map((option: any) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  );
   return {
     Alert: Div,
     Button,
@@ -111,8 +129,9 @@ jest.mock("antd", () => {
     Input: { TextArea },
     Popconfirm: Div,
     Progress,
+    Select,
     Space: Div,
-    Table: Div,
+    Table: ({ footer }: any) => <div>{footer?.()}</div>,
     Tag: Div,
     Typography: {
       Text: ({ children, style }: any) => <span style={style}>{children}</span>,
@@ -276,10 +295,8 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(screen.getAllByText("ChatGPT Plan").length).toBeGreaterThan(0);
       expect(screen.getByText("Current Codex payment source:")).toBeTruthy();
-      expect(
-        screen.getAllByText("Open ChatGPT Codex Usage").length,
-      ).toBeGreaterThan(0);
-      expect(screen.getByText("user@example.com")).toBeTruthy();
+      expect(screen.queryByText("Open ChatGPT Codex Usage")).toBeNull();
+      expect(screen.queryByText("user@example.com")).toBeNull();
       expect(screen.getByText("5-hour limit")).toBeTruthy();
       expect(screen.getByText("58%")).toBeTruthy();
       expect(screen.getAllByText("Remaining").length).toBeGreaterThan(0);
@@ -810,6 +827,50 @@ describe("CodexCredentialsPanel", () => {
     await waitFor(() => {
       expect(mockClipboardWriteText).toHaveBeenCalledWith("WXYZ-1234");
     });
+  });
+  it("checks usage for the exact subscription selected by the user", async () => {
+    getCodexPaymentSource.mockResolvedValue({
+      source: "subscription",
+      hasSubscription: true,
+      credentialId: "credential-a",
+      subscriptions: [
+        {
+          id: "credential-a",
+          label: "Normal",
+          updatedAt: "2026-09-19T00:00:00Z",
+        },
+        {
+          id: "credential-b",
+          label: "Security review",
+          updatedAt: "2026-09-19T00:00:00Z",
+        },
+      ],
+    });
+    getCodexUsageStatus.mockResolvedValue({
+      available: true,
+      checkedAt: "2026-09-19T00:00:00Z",
+      paymentSource: { source: "subscription" },
+    });
+
+    render(<CodexCredentialsPanel embedded defaultProjectId="project-1" />);
+
+    const selector = await screen.findByRole("combobox", {
+      name: "Codex usage payment source",
+    });
+    await waitFor(() =>
+      expect(getCodexUsageStatus).toHaveBeenCalledWith(
+        expect.objectContaining({ credential_id: "credential-a" }),
+      ),
+    );
+
+    fireEvent.change(selector, {
+      target: { value: "subscription:credential-b" },
+    });
+    await waitFor(() =>
+      expect(getCodexUsageStatus).toHaveBeenLastCalledWith(
+        expect.objectContaining({ credential_id: "credential-b" }),
+      ),
+    );
   });
 });
 

@@ -95,6 +95,7 @@ import { resolveAgentSessionIdForThread } from "./thread-session";
 import { useCodexLiveActivityStatus } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
+import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
 import {
   clearCachedCodexModelCatalog,
   getLiveCodexUsageStatus,
@@ -299,10 +300,10 @@ export function getNewThreadPaymentSourceOptions(
     if (!subscriptions.length) return [option];
     return subscriptions.map((credential) => ({
       value: `subscription:${credential.id}`,
-      label: `ChatGPT: ${credential.label ?? credential.email ?? credential.plan ?? credential.id.slice(0, 8)}`,
+      label: getCodexSubscriptionDisplayName(credential, subscriptions),
       description: credential.plan
-        ? `${credential.email ?? "ChatGPT subscription"} - ${credential.plan}`
-        : (credential.email ?? option.description),
+        ? `Use this ChatGPT ${credential.plan} subscription.`
+        : option.description,
     }));
   });
 }

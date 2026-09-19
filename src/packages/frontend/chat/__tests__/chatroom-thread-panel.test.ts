@@ -12,8 +12,20 @@ import {
 } from "../chatroom-thread-panel";
 import immutable from "immutable";
 import { COLORS } from "@cocalc/util/theme";
+import { getCodexSubscriptionDisplayName } from "../codex-subscription-label";
 
 describe("new thread setup patching", () => {
+  it("keeps generated subscription names stable when recency order changes", () => {
+    const first = { id: "a", updatedAt: "2026-09-19T00:00:00Z" };
+    const second = { id: "b", updatedAt: "2026-09-19T00:00:00Z" };
+    expect(getCodexSubscriptionDisplayName(first, [second, first])).toBe(
+      "ChatGPT",
+    );
+    expect(getCodexSubscriptionDisplayName(second, [second, first])).toBe(
+      "ChatGPT - 2",
+    );
+  });
+
   it("lists each ChatGPT subscription as an exact new-chat source", () => {
     const options = getNewThreadPaymentSourceOptions({
       source: "subscription",
@@ -43,11 +55,11 @@ describe("new thread setup patching", () => {
       expect.arrayContaining([
         expect.objectContaining({
           value: "subscription:credential-normal",
-          label: "ChatGPT: normal@example.com",
+          label: "ChatGPT",
         }),
         expect.objectContaining({
           value: "subscription:credential-security",
-          label: "ChatGPT: Security review",
+          label: "Security review",
         }),
       ]),
     );
