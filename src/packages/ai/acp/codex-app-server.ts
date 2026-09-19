@@ -465,6 +465,8 @@ type SpawnedCodexAppServer = {
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
+  credentialId?: string;
+  validateSubscriptionCredential?: () => Promise<void>;
 };
 
 function agentTurnSessionKey(
@@ -2466,24 +2468,15 @@ export class CodexAppServerAgent implements AcpAgent {
     }
   }
 
-  private runtimeMatchesRequest(
+  private async runtimeMatchesRequest(
     runtime: CodexAppServerRuntime,
     request: AcpEvaluateRequest,
     cwd: string,
-  ): boolean {
-    // Subscription authority is checked when a runtime is created. Never let a
-    // retained process turn that check into an unbounded authorization lease.
-    if (
-      authSourceForSpawned(runtime.spawned) === "subscription" ||
-      request.config?.paymentSource === "subscription" ||
-      request.config?.paymentSource === "subscription-credential"
-    ) {
-      return false;
-    }
+  ): Promise<boolean> {
     // The subagent limit configures a Codex thread, not its owning process.
     // Never replace a live manager (and its retained work) merely because a
     // recovered or older client omitted the limit that a newer client sends.
-    return (
+    const matches =
       runtime.projectId === (request.chat?.project_id ?? request.project_id) &&
       runtime.accountId === request.account_id &&
       // Identity leases are process-bound. A new human turn must not inherit
@@ -2492,8 +2485,17 @@ export class CodexAppServerAgent implements AcpAgent {
       runtime.cwd === cwd &&
       (runtime.paymentSource ?? "auto") ===
         (request.config?.paymentSource ?? "auto") &&
-      runtime.credentialId === request.config?.credentialId
-    );
+      runtime.credentialId === request.config?.credentialId;
+    if (!matches) return false;
+    if (authSourceForSpawned(runtime.spawned) !== "subscription") return true;
+    if (
+      !runtime.credentialId ||
+      !runtime.spawned.validateSubscriptionCredential
+    ) {
+      return false;
+    }
+    await runtime.spawned.validateSubscriptionCredential();
+    return true;
   }
 
   private async acquireRuntime({
@@ -2512,7 +2514,7 @@ export class CodexAppServerAgent implements AcpAgent {
     if (runtime?.active) {
       throw new Error("This Codex thread already has an active turn.");
     }
-    if (runtime && !this.runtimeMatchesRequest(runtime, request, cwd)) {
+    if (runtime && !(await this.runtimeMatchesRequest(runtime, request, cwd))) {
       let backgroundTerminalCount = runtime.backgroundTerminalCount;
       let activeDescendantCount = runtime.activeDescendantCount;
       try {
@@ -2616,7 +2618,7 @@ export class CodexAppServerAgent implements AcpAgent {
       accountId: request.account_id,
       cwd,
       paymentSource: request.config?.paymentSource,
-      credentialId: request.config?.credentialId,
+      credentialId: spawned.credentialId ?? request.config?.credentialId,
       maxConcurrentSubagents: normalizeMaxConcurrentSubagents(
         request.config?.maxConcurrentSubagents,
       ),

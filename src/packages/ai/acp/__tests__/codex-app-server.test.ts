@@ -5293,8 +5293,9 @@ describe("CodexAppServerAgent", () => {
     }
   });
 
-  it("does not retain an auto runtime that resolved to subscription auth", async () => {
+  it("revalidates and reuses the same retained subscription runtime", async () => {
     const processes: FakeCodexAppServerProc[] = [];
+    const validateSubscriptionCredential = jest.fn(async () => {});
     const spawnCodexAppServer = jest.fn(async () => {
       const index = processes.length;
       const proc = new FakeCodexAppServerProc((fake, message) => {
@@ -5319,7 +5320,10 @@ describe("CodexAppServerAgent", () => {
             );
             break;
           case "thread/backgroundTerminals/list":
-            fake.sendResponse(message.id, { data: [], nextCursor: null });
+            fake.sendResponse(message.id, {
+              data: [{ itemId: "build", command: "pnpm build" }],
+              nextCursor: null,
+            });
             break;
           case "thread/list":
             fake.sendResponse(message.id, { data: [], nextCursor: null });
@@ -5336,6 +5340,8 @@ describe("CodexAppServerAgent", () => {
         args: [],
         authSource: "subscription",
         runtimeEnv: {},
+        credentialId: "credential-A",
+        validateSubscriptionCredential,
       };
     });
     setCodexProjectSpawner({
@@ -5348,16 +5354,165 @@ describe("CodexAppServerAgent", () => {
     const request = {
       project_id: "project",
       account_id: "Q",
-      session_id: "auto-subscription-thread",
+      session_id: "retained-subscription-thread",
       stream: async () => {},
-      config: { paymentSource: "auto" as const },
+      config: {
+        paymentSource: "subscription-credential" as const,
+        credentialId: "credential-A",
+      },
     };
     try {
       await agent.evaluate({ ...request, prompt: "first" });
       await agent.evaluate({ ...request, prompt: "second" });
 
-      expect(spawnCodexAppServer).toHaveBeenCalledTimes(2);
-      expect(processes[0].killed).toBe(true);
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(1);
+      expect(validateSubscriptionCredential).toHaveBeenCalledTimes(1);
+      expect(processes[0].killed).toBe(false);
+    } finally {
+      await agent.dispose();
+    }
+  });
+
+  it("refuses A-to-B replacement while the retained runtime has background work", async () => {
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "subscription-A" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "turn-A" } });
+          setImmediate(() =>
+            fake.sendNotification("turn/completed", {
+              turn: { id: "turn-A", status: "completed" },
+            }),
+          );
+          break;
+        case "thread/backgroundTerminals/list":
+          fake.sendResponse(message.id, {
+            data: [{ itemId: "build", command: "pnpm build" }],
+            nextCursor: null,
+          });
+          break;
+        case "thread/list":
+          fake.sendResponse(message.id, { data: [], nextCursor: null });
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    const spawnCodexAppServer = jest.fn(async () => ({
+      proc: proc as any,
+      cmd: "fake",
+      args: [],
+      authSource: "subscription",
+      runtimeEnv: {},
+      credentialId: "credential-A",
+      validateSubscriptionCredential: async () => {},
+    }));
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected");
+      },
+      spawnCodexAppServer,
+    });
+    const agent = new CodexAppServerAgent();
+    const base = {
+      project_id: "project",
+      account_id: "Q",
+      session_id: "subscription-A",
+      stream: async () => {},
+    };
+    try {
+      await agent.evaluate({
+        ...base,
+        prompt: "start",
+        config: {
+          paymentSource: "subscription-credential",
+          credentialId: "credential-A",
+        },
+      });
+      const events: any[] = [];
+      await agent.evaluate({
+        ...base,
+        prompt: "switch",
+        config: {
+          paymentSource: "subscription-credential",
+          credentialId: "credential-B",
+        },
+        stream: async (event) => events.push(event),
+      });
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(1);
+      expect(proc.killed).toBe(false);
+      expect(events).toContainEqual({
+        type: "error",
+        error: expect.stringContaining("background commands running"),
+      });
+    } finally {
+      await agent.dispose();
+    }
+  });
+
+  it("rejects the next follow-up when its retained credential was revoked", async () => {
+    let revoked = false;
+    const proc = new FakeCodexAppServerProc((fake, message) => {
+      switch (message.method) {
+        case "thread/start":
+          fake.sendResponse(message.id, { thread: { id: "revoked-thread" } });
+          break;
+        case "turn/start":
+          fake.sendResponse(message.id, { turn: { id: "revoked-turn" } });
+          setImmediate(() =>
+            fake.sendNotification("turn/completed", {
+              turn: { id: "revoked-turn", status: "completed" },
+            }),
+          );
+          break;
+        default:
+          if (typeof message.id === "number") fake.sendResponse(message.id, {});
+      }
+    });
+    const spawnCodexAppServer = jest.fn(async () => ({
+      proc: proc as any,
+      cmd: "fake",
+      args: [],
+      authSource: "subscription",
+      runtimeEnv: {},
+      credentialId: "credential-A",
+      validateSubscriptionCredential: async () => {
+        if (revoked) throw new Error("selected subscription was revoked");
+      },
+    }));
+    setCodexProjectSpawner({
+      spawnCodexExec: async () => {
+        throw new Error("unexpected");
+      },
+      spawnCodexAppServer,
+    });
+    const agent = new CodexAppServerAgent();
+    const request = {
+      project_id: "project",
+      account_id: "Q",
+      session_id: "revoked-thread",
+      config: {
+        paymentSource: "subscription-credential" as const,
+        credentialId: "credential-A",
+      },
+      stream: async () => {},
+    };
+    try {
+      await agent.evaluate({ ...request, prompt: "first" });
+      revoked = true;
+      const events: any[] = [];
+      await agent.evaluate({
+        ...request,
+        prompt: "second",
+        stream: async (event) => events.push(event),
+      });
+      expect(spawnCodexAppServer).toHaveBeenCalledTimes(1);
+      expect(events).toContainEqual({
+        type: "error",
+        error: expect.stringContaining("selected subscription was revoked"),
+      });
     } finally {
       await agent.dispose();
     }
@@ -5440,12 +5595,23 @@ describe("CodexAppServerAgent", () => {
         project_id: "project",
         account_id: "Q",
         prompt: "work",
+        config: {
+          paymentSource: "subscription-credential",
+          credentialId: "credential-pinned-at-admission",
+        },
         mentionReferences: [],
         stream: async (event) => {
           events.push(event);
         },
       });
       expect(spawnCodexAppServer).toHaveBeenCalledTimes(3);
+      expect(
+        spawnCodexAppServer.mock.calls.map(([opts]) => opts.credentialId),
+      ).toEqual([
+        "credential-pinned-at-admission",
+        "credential-pinned-at-admission",
+        "credential-pinned-at-admission",
+      ]);
       expect(events).toContainEqual({
         type: "summary",
         finalResponse: "Recovered",

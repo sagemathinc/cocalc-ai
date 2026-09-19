@@ -3402,6 +3402,7 @@ export interface InterBayExternalCredentialsApi {
     selector: ExternalCredentialSelector;
     payload: string;
     metadata?: Record<string, any>;
+    revive?: boolean;
   }) => Promise<boolean>;
   updateLabelById: (opts: {
     id: string;

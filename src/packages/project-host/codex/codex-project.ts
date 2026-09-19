@@ -60,6 +60,7 @@ import {
   subscriptionRuntime,
 } from "./codex-auth";
 import {
+  pullSubscriptionAuthFromRegistry,
   refreshSubscriptionAuthFromRegistry,
   syncSubscriptionAuthToRegistryIfChanged,
 } from "./codex-auth-registry";
@@ -2242,6 +2243,28 @@ export function initCodexProjectRunner(): void {
         runtimeEnv: spawned.runtimeEnv,
         setAgentSessionKey: spawned.setAgentSessionKey,
         siteFundedTurn: spawned.siteFundedTurn,
+        credentialId: spawned.authRuntime.credentialId,
+        validateSubscriptionCredential:
+          spawned.authRuntime.source === "subscription" &&
+          accountId &&
+          spawned.authRuntime.codexHome &&
+          spawned.authRuntime.credentialId
+            ? async () => {
+                const result = await pullSubscriptionAuthFromRegistry({
+                  projectId,
+                  accountId,
+                  credentialId: spawned.authRuntime.credentialId,
+                  codexHome: spawned.authRuntime.codexHome!,
+                  onlyIfNewer: true,
+                  requireAuthority: true,
+                });
+                if (result.missing) {
+                  throw new Error(
+                    "The selected ChatGPT subscription is no longer available.",
+                  );
+                }
+              }
+            : undefined,
       };
     },
   });

@@ -160,11 +160,13 @@ export async function updateExternalCredentialByIdRouted({
   selector,
   payload,
   metadata,
+  revive,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
   payload: string;
   metadata?: Record<string, any>;
+  revive?: boolean;
 }): Promise<boolean> {
   return await withExternalCredentialAuthority({
     selector,
@@ -174,6 +176,7 @@ export async function updateExternalCredentialByIdRouted({
         selector,
         payload,
         metadata: metadata ?? {},
+        revive,
       }),
     remote: async (dest_bay) =>
       await remoteCredentialsClient(dest_bay).updateById({
@@ -181,6 +184,7 @@ export async function updateExternalCredentialByIdRouted({
         selector,
         payload,
         metadata,
+        revive,
       }),
   });
 }

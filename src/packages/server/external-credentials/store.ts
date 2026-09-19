@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import getPool from "@cocalc/database/pool";
+import getPool, { type PoolClient } from "@cocalc/database/pool";
 import {
   decryptSecretStorageValue,
   encryptSecretStorageValue,
 } from "@cocalc/database/settings/secret-settings";
 
 const MAX_PAYLOAD_BYTES = 2_000_000;
+export const CODEX_SUBSCRIPTION_KIND = "codex-subscription-auth-json";
+export const CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY = "cocalc_default";
 
 export type ExternalCredentialScope =
   | "account"
@@ -111,6 +113,37 @@ function selectorValues(selector: ExternalCredentialSelector) {
   ] as const;
 }
 
+function selectorLockKey(selector: ExternalCredentialSelector): string {
+  return `external-credential:${selectorValues(selector).join(":")}`;
+}
+
+function defaultMetadataKeyForSelector(
+  selector: ExternalCredentialSelector,
+): string | undefined {
+  return selector.provider === "openai" &&
+    selector.kind === CODEX_SUBSCRIPTION_KIND &&
+    selector.scope === "account"
+    ? CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY
+    : undefined;
+}
+
+function rowToSummary(row: ExternalCredentialRow): ExternalCredentialSummary {
+  return {
+    id: row.id,
+    provider: row.provider,
+    kind: row.kind,
+    scope: row.scope,
+    owner_account_id: row.owner_account_id ?? undefined,
+    project_id: row.project_id ?? undefined,
+    organization_id: row.organization_id ?? undefined,
+    metadata: row.metadata ?? {},
+    created: row.created,
+    updated: row.updated,
+    revoked: row.revoked,
+    last_used: row.last_used,
+  };
+}
+
 async function rowToRecord(
   row: ExternalCredentialRow,
 ): Promise<ExternalCredentialRecord> {
@@ -160,6 +193,56 @@ function ownershipClause(startIndex = 2): string {
     AND owner_account_id IS NOT DISTINCT FROM $${startIndex + 3}
     AND project_id IS NOT DISTINCT FROM $${startIndex + 4}
     AND organization_id IS NOT DISTINCT FROM $${startIndex + 5}`;
+}
+
+async function ensureDefaultExternalCredentialLocked({
+  client,
+  selector,
+  metadataKey,
+}: {
+  client: PoolClient;
+  selector: ExternalCredentialSelector;
+  metadataKey: string;
+}): Promise<ExternalCredentialRow | undefined> {
+  const { rows } = await client.query<ExternalCredentialRow>(
+    `
+SELECT ${EXTERNAL_CREDENTIAL_COLUMNS}
+FROM external_credentials
+WHERE ${ownershipClause(1)}
+ORDER BY updated DESC NULLS LAST,
+         created DESC NULLS LAST
+FOR UPDATE
+    `,
+    [...selectorValues(selector)],
+  );
+  const row =
+    rows.find(({ metadata }) => metadata?.[metadataKey] === true) ??
+    rows.find(({ revoked }) => revoked == null);
+  if (!row) return undefined;
+
+  // Repair any historic duplicate designation while retaining the selected
+  // row even when it is a revoked tombstone.
+  await client.query(
+    `
+UPDATE external_credentials
+SET metadata = COALESCE(metadata, '{}'::jsonb) - $8::text
+WHERE ${ownershipClause(1)}
+  AND id <> $7
+    `,
+    [...selectorValues(selector), row.id, metadataKey],
+  );
+  if (row.metadata?.[metadataKey] !== true) {
+    await client.query(
+      `
+UPDATE external_credentials
+SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object($2::text, true)
+WHERE id=$1 AND revoked IS NULL
+      `,
+      [row.id, metadataKey],
+    );
+    row.metadata = { ...(row.metadata ?? {}), [metadataKey]: true };
+  }
+  return row;
 }
 
 async function encryptPayload(
@@ -312,8 +395,34 @@ export async function createExternalCredential({
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-      `external-credential:${selectorValues(normalized).join(":")}`,
+      selectorLockKey(normalized),
     ]);
+    let insertedMetadata = metadata;
+    if (defaultMetadataKey) {
+      const designated = await ensureDefaultExternalCredentialLocked({
+        client,
+        selector: normalized,
+        metadataKey: defaultMetadataKey,
+      });
+      // Only a genuinely first credential establishes a new default. Existing
+      // active credentials are migrated above, and a revoked designation is a
+      // tombstone that Add must not silently replace.
+      if (!designated) {
+        const { rows } = await client.query<{ exists: boolean }>(
+          `SELECT EXISTS(
+             SELECT 1 FROM external_credentials
+             WHERE ${ownershipClause(1)}
+           ) AS exists`,
+          [...selectorValues(normalized)],
+        );
+        if (!rows[0]?.exists) {
+          insertedMetadata = {
+            ...metadata,
+            [defaultMetadataKey]: true,
+          };
+        }
+      }
+    }
     // Short-lived operation leases share this table so admission follows the
     // same home-bay authority and transaction lock as credentials. Expired
     // leases must not permanently consume maxActive capacity after host loss.
@@ -383,27 +492,6 @@ WHERE ${ownershipClause(1)} AND revoked IS NULL
         throw new Error(`at most ${limit} active credentials are allowed`);
       }
     }
-    let insertedMetadata = metadata;
-    if (defaultMetadataKey) {
-      const { rows } = await client.query<{ id: string }>(
-        `
-SELECT id
-FROM external_credentials
-WHERE ${ownershipClause(1)}
-  AND revoked IS NULL
-  AND metadata->>$7 = 'true'
-LIMIT 1
-FOR UPDATE
-        `,
-        [...selectorValues(normalized), defaultMetadataKey],
-      );
-      if (!rows[0]) {
-        insertedMetadata = {
-          ...metadata,
-          [defaultMetadataKey]: true,
-        };
-      }
-    }
     await client.query(
       `
 INSERT INTO external_credentials (
@@ -460,26 +548,53 @@ export async function updateExternalCredentialById({
   selector,
   payload,
   metadata,
+  revive = false,
 }: {
   id: string;
   selector: ExternalCredentialSelector;
   payload: string;
   metadata: Record<string, any>;
+  revive?: boolean;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
   validatePayload(payload);
   const encryptedPayload = await encryptPayload(normalized, payload);
-  const { rowCount } = await pool().query(
-    `
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      selectorLockKey(normalized),
+    ]);
+    const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+    if (defaultMetadataKey) {
+      await ensureDefaultExternalCredentialLocked({
+        client,
+        selector: normalized,
+        metadataKey: defaultMetadataKey,
+      });
+    }
+    const { rowCount } = await client.query(
+      `
 UPDATE external_credentials
 SET encrypted_payload=$8,
     metadata=COALESCE(metadata, '{}'::jsonb) || $9::jsonb,
-    updated=NOW()
-WHERE id=$1 AND ${ownershipClause(2)} AND revoked IS NULL
-    `,
-    [id, ...selectorValues(normalized), encryptedPayload, metadata],
-  );
-  return !!rowCount;
+    updated=NOW(),
+    revoked=CASE WHEN $10::boolean THEN NULL ELSE revoked END
+WHERE id=$1 AND ${ownershipClause(2)}
+  AND ($10::boolean OR revoked IS NULL)
+      `,
+      [id, ...selectorValues(normalized), encryptedPayload, metadata, revive],
+    );
+    await client.query("COMMIT");
+    return !!rowCount;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 export async function updateExternalCredentialLabelById({
@@ -519,64 +634,19 @@ export async function ensureDefaultExternalCredential({
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
-      `external-credential:${selectorValues(normalized).join(":")}`,
+      selectorLockKey(normalized),
     ]);
-    const { rows } = await client.query<ExternalCredentialRow>(
-      `
-SELECT ${EXTERNAL_CREDENTIAL_COLUMNS}
-FROM external_credentials
-WHERE ${ownershipClause(1)}
-  AND ((metadata->>$7 = 'true') OR revoked IS NULL)
-ORDER BY (metadata->>$7 = 'true') DESC,
-         (revoked IS NULL) DESC,
-         created ASC NULLS LAST,
-         updated ASC NULLS LAST
-FOR UPDATE
-      `,
-      [...selectorValues(normalized), metadataKey],
-    );
-    const row = rows[0];
+    const row = await ensureDefaultExternalCredentialLocked({
+      client,
+      selector: normalized,
+      metadataKey,
+    });
     if (!row) {
       await client.query("COMMIT");
       return undefined;
     }
-    if (row.revoked) {
-      await client.query("COMMIT");
-      return undefined;
-    }
-    await client.query(
-      `
-UPDATE external_credentials
-SET metadata = COALESCE(metadata, '{}'::jsonb) - $8::text
-WHERE ${ownershipClause(1)}
-  AND id <> $7
-  AND revoked IS NULL
-  AND metadata->>$8 = 'true'
-      `,
-      [...selectorValues(normalized), row.id, metadataKey],
-    );
-    if (row.metadata?.[metadataKey] !== true) {
-      await client.query(
-        `
-UPDATE external_credentials
-SET metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object($2::text, true),
-    updated=NOW()
-WHERE id=$1 AND revoked IS NULL
-        `,
-        [row.id, metadataKey],
-      );
-      row.metadata = { ...(row.metadata ?? {}), [metadataKey]: true };
-      row.updated = new Date();
-    }
     await client.query("COMMIT");
-    const { encrypted_payload: _, ...summary } = row;
-    return {
-      ...summary,
-      owner_account_id: row.owner_account_id ?? undefined,
-      project_id: row.project_id ?? undefined,
-      organization_id: row.organization_id ?? undefined,
-      metadata: row.metadata ?? {},
-    };
+    return rowToSummary(row);
   } catch (err) {
     try {
       await client.query("ROLLBACK");
@@ -595,6 +665,19 @@ export async function getExternalCredential({
   touchLastUsed?: boolean;
 }): Promise<ExternalCredentialRecord | undefined> {
   const normalized = normalizeSelector(selector);
+  const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+  if (defaultMetadataKey) {
+    const designated = await ensureDefaultExternalCredential({
+      selector: normalized,
+      metadataKey: defaultMetadataKey,
+    });
+    if (!designated || designated.revoked) return undefined;
+    return await getExternalCredentialById({
+      id: designated.id,
+      selector: normalized,
+      touchLastUsed,
+    });
+  }
   const { rows } = await pool().query<{
     id: string;
     provider: string;
@@ -694,6 +777,23 @@ export async function updateExternalCredentialPayloadLocked({
   const client = await pool().connect();
   try {
     await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      selectorLockKey(normalized),
+    ]);
+    let resolvedId = id;
+    const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+    if (!resolvedId && defaultMetadataKey) {
+      const designated = await ensureDefaultExternalCredentialLocked({
+        client,
+        selector: normalized,
+        metadataKey: defaultMetadataKey,
+      });
+      if (!designated || designated.revoked) {
+        await client.query("COMMIT");
+        return undefined;
+      }
+      resolvedId = designated.id;
+    }
     const { rows } = await client.query<{
       id: string;
       provider: string;
@@ -744,7 +844,7 @@ FOR UPDATE
         normalized.owner_account_id ?? null,
         normalized.project_id ?? null,
         normalized.organization_id ?? null,
-        id ?? null,
+        resolvedId ?? null,
       ],
     );
     const row = rows[0];
@@ -818,6 +918,14 @@ export async function hasExternalCredential({
   selector: ExternalCredentialSelector;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
+  const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+  if (defaultMetadataKey) {
+    const designated = await ensureDefaultExternalCredential({
+      selector: normalized,
+      metadataKey: defaultMetadataKey,
+    });
+    return designated != null && designated.revoked == null;
+  }
   const { rows } = await pool().query<{ id: string }>(
     `
 SELECT id
@@ -851,6 +959,16 @@ export async function touchExternalCredential({
   id?: string;
 }): Promise<boolean> {
   const normalized = normalizeSelector(selector);
+  let resolvedId = id;
+  const defaultMetadataKey = defaultMetadataKeyForSelector(normalized);
+  if (!resolvedId && defaultMetadataKey) {
+    const designated = await ensureDefaultExternalCredential({
+      selector: normalized,
+      metadataKey: defaultMetadataKey,
+    });
+    if (!designated || designated.revoked) return false;
+    resolvedId = designated.id;
+  }
   const { rowCount } = await pool().query(
     `
 WITH target AS (
@@ -878,7 +996,7 @@ WHERE id IN (SELECT id FROM target)
       normalized.owner_account_id ?? null,
       normalized.project_id ?? null,
       normalized.organization_id ?? null,
-      id ?? null,
+      resolvedId ?? null,
     ],
   );
   return !!rowCount;
@@ -961,15 +1079,61 @@ export async function revokeExternalCredential({
   id: string;
   owner_account_id?: string;
 }): Promise<boolean> {
-  const { rowCount } = await pool().query(
-    `
+  const client = await pool().connect();
+  try {
+    await client.query("BEGIN");
+    const { rows } = await client.query<ExternalCredentialRow>(
+      `
+SELECT ${EXTERNAL_CREDENTIAL_COLUMNS}
+FROM external_credentials
+WHERE id=$1
+  AND ($2::uuid IS NULL OR owner_account_id = $2::uuid)
+LIMIT 1
+      `,
+      [id, owner_account_id ?? null],
+    );
+    const row = rows[0];
+    if (!row || row.revoked) {
+      await client.query("COMMIT");
+      return false;
+    }
+    const selector = normalizeSelector({
+      provider: row.provider,
+      kind: row.kind,
+      scope: row.scope,
+      owner_account_id: row.owner_account_id ?? undefined,
+      project_id: row.project_id ?? undefined,
+      organization_id: row.organization_id ?? undefined,
+    });
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
+      selectorLockKey(selector),
+    ]);
+    const defaultMetadataKey = defaultMetadataKeyForSelector(selector);
+    if (defaultMetadataKey) {
+      await ensureDefaultExternalCredentialLocked({
+        client,
+        selector,
+        metadataKey: defaultMetadataKey,
+      });
+    }
+    const { rowCount } = await client.query(
+      `
 UPDATE external_credentials
 SET revoked=NOW(), updated=NOW()
 WHERE id=$1
   AND ($2::uuid IS NULL OR owner_account_id = $2::uuid)
   AND revoked IS NULL
-    `,
-    [id, owner_account_id ?? null],
-  );
-  return !!rowCount;
+      `,
+      [id, owner_account_id ?? null],
+    );
+    await client.query("COMMIT");
+    return !!rowCount;
+  } catch (err) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {}
+    throw err;
+  } finally {
+    client.release();
+  }
 }

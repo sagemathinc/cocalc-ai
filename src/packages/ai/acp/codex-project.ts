@@ -133,6 +133,8 @@ export type CodexProjectSpawner = {
     runtimeEnv?: Record<string, string>;
     setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
     siteFundedTurn?: CodexSiteFundedTurnRuntime;
+    credentialId?: string;
+    validateSubscriptionCredential?: () => Promise<void>;
   }>;
 };
 

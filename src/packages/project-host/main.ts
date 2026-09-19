@@ -84,6 +84,7 @@ import {
   init as initAcp,
   rehydrateAcpAutomationsForProject,
   setAcpAdmissionLimitsProvider,
+  setCodexCredentialAdmissionResolver,
 } from "@cocalc/lite/hub/acp";
 import { setContainerExec } from "@cocalc/lite/hub/acp/executor/container";
 import { initCodexProjectRunner } from "./codex/codex-project";
@@ -538,6 +539,10 @@ export async function main(
       await getProjectOwnerEffectiveLimits(id),
     );
   });
+  setCodexCredentialAdmissionResolver(async (opts) => ({
+    ...(await hubApi.system.getCodexPaymentSource(opts)),
+    credentialPinRequired: true,
+  }));
   configureProjectHostAcpAdmissionDenialRecorder();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
   // Local persist must exist before ACP startup so automation indexes can

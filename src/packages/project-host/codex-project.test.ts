@@ -11,6 +11,7 @@ const execFileMock = jest.fn();
 const execMock = jest.fn();
 const mockStartProjectWithAdmission = jest.fn();
 const refreshSubscriptionAuthFromRegistryMock = jest.fn();
+const pullSubscriptionAuthFromRegistryMock = jest.fn();
 const syncSubscriptionAuthToRegistryIfChangedMock = jest.fn();
 const restrictedEgressCloseMock = jest.fn();
 const startRestrictedCodexEgressProxySessionMock = jest.fn(async () => ({
@@ -99,6 +100,8 @@ jest.mock("./codex/codex-auth", () => ({
 }));
 
 jest.mock("./codex/codex-auth-registry", () => ({
+  pullSubscriptionAuthFromRegistry: (...args: any[]) =>
+    pullSubscriptionAuthFromRegistryMock(...args),
   refreshSubscriptionAuthFromRegistry: (...args: any[]) =>
     refreshSubscriptionAuthFromRegistryMock(...args),
   syncSubscriptionAuthToRegistryIfChanged: (...args: any[]) =>
@@ -206,6 +209,8 @@ describe("initCodexProjectRunner", () => {
     refreshSubscriptionAuthFromRegistryMock.mockResolvedValue({
       refreshed: true,
     });
+    pullSubscriptionAuthFromRegistryMock.mockReset();
+    pullSubscriptionAuthFromRegistryMock.mockResolvedValue({ pulled: false });
     syncSubscriptionAuthToRegistryIfChangedMock.mockReset();
     syncSubscriptionAuthToRegistryIfChangedMock.mockResolvedValue({
       ok: true,
@@ -520,7 +525,7 @@ describe("initCodexProjectRunner", () => {
 
     const { initCodexProjectRunner } = await import("./codex/codex-project");
     initCodexProjectRunner();
-    await getCodexProjectSpawner()!.spawnCodexAppServer!({
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
       isolatedCodexHome: true,
@@ -1364,11 +1369,22 @@ describe("initCodexProjectRunner", () => {
 
     const { initCodexProjectRunner } = await import("./codex/codex-project");
     initCodexProjectRunner();
-    await getCodexProjectSpawner()!.spawnCodexAppServer!({
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
       credentialId: selectedCredentialId,
       paymentSource: "subscription",
+    });
+
+    expect(spawned.credentialId).toBe(selectedCredentialId);
+    await spawned.validateSubscriptionCredential?.();
+    expect(pullSubscriptionAuthFromRegistryMock).toHaveBeenCalledWith({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+      onlyIfNewer: true,
+      requireAuthority: true,
     });
 
     for (const listener of proc.listeners("exit")) {

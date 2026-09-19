@@ -155,6 +155,7 @@ import {
   getExternalCredentialByIdRouted,
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
+  listAccountExternalCredentialsRouted,
   refreshCodexSubscriptionAuthRouted,
   revokeExternalCredentialByIdAndSelectorRouted,
   touchExternalCredentialByIdRouted,
@@ -2852,9 +2853,20 @@ export async function upsertExternalCredential({
         selector: routedSelector,
         payload,
         metadata: safeMetadata,
+        revive: currentDefault.revoked != null,
       });
       if (!updated) throw new Error("credential is unavailable");
       return { id: currentDefault.id, created: false };
+    }
+    const historic = await listAccountExternalCredentialsRouted({
+      owner_account_id: routedSelector.owner_account_id!,
+      provider: routedSelector.provider,
+      kind: routedSelector.kind,
+      scope: "account",
+      includeRevoked: true,
+    });
+    if (historic.length) {
+      throw new Error("default credential is unavailable");
     }
     const created = await createExternalCredentialRouted({
       selector: routedSelector,
@@ -2966,6 +2978,14 @@ export async function getExternalCredential({
         metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
       })
     )?.id;
+  }
+  const isDefaultSubscriptionLookup =
+    !credential_id &&
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account";
+  if (isDefaultSubscriptionLookup && !resolvedCredentialId) {
+    return undefined;
   }
   const result = resolvedCredentialId
     ? await getExternalCredentialByIdRouted({
@@ -3096,6 +3116,17 @@ export async function hasExternalCredential({
       touchLastUsed: false,
     }));
   }
+  if (
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account"
+  ) {
+    const designated = await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    return designated?.revoked == null && designated != null;
+  }
   return await hasExternalCredentialRouted({ selector: routedSelector });
 }
 
@@ -3163,9 +3194,23 @@ export async function touchExternalCredential({
     project_id: selectorProjectId,
     organization_id: normalized.organization_id,
   };
-  return credential_id
+  let resolvedCredentialId = credential_id;
+  if (
+    !resolvedCredentialId &&
+    routedSelector.provider === "openai" &&
+    routedSelector.kind === CODEX_SUBSCRIPTION_KIND &&
+    routedSelector.scope === "account"
+  ) {
+    const designated = await ensureDefaultExternalCredentialRouted({
+      selector: routedSelector,
+      metadataKey: CODEX_SUBSCRIPTION_DEFAULT_METADATA_KEY,
+    });
+    if (!designated || designated.revoked) return false;
+    resolvedCredentialId = designated.id;
+  }
+  return resolvedCredentialId
     ? await touchExternalCredentialByIdRouted({
-        id: credential_id,
+        id: resolvedCredentialId,
         selector: routedSelector,
       })
     : await touchExternalCredentialRouted({ selector: routedSelector });

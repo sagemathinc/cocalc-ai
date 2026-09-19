@@ -11,6 +11,7 @@ import {
   disposeAcpAgents,
   runDetachedAcpQueueWorker,
   setAcpAdmissionLimitsProvider,
+  setCodexCredentialAdmissionResolver,
   setAcpSessionPublisherOverride,
   publishActiveAcpSessions,
 } from "@cocalc/lite/hub/acp";
@@ -106,6 +107,21 @@ function configureProjectHostAcpRuntime(): void {
     return acpAdmissionLimitsFromEffectiveLimits(
       await getProjectOwnerEffectiveLimits(id),
     );
+  });
+  setCodexCredentialAdmissionResolver(async (opts) => {
+    const client = getMasterConatClient();
+    if (!client) {
+      throw new Error("master hub connection unavailable");
+    }
+    return {
+      ...(await callHub({
+        client,
+        name: "system.getCodexPaymentSource",
+        args: [opts],
+        host_id: getLocalHostId(),
+      })),
+      credentialPinRequired: true,
+    };
   });
   configureProjectHostAcpAdmissionDenialRecorder();
   setContainerExec((opts) =>

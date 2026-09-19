@@ -2298,12 +2298,13 @@ async function startExternalCredentialsService(): Promise<void> {
         deduplicateMetadata: deduplicate_metadata,
         defaultMetadataKey: default_metadata_key,
       }),
-    updateById: async ({ id, selector, payload, metadata }) =>
+    updateById: async ({ id, selector, payload, metadata, revive }) =>
       await updateExternalCredentialById({
         id,
         selector,
         payload,
         metadata: metadata ?? {},
+        revive,
       }),
     updateLabelById: async ({ id, selector, label }) =>
       await updateExternalCredentialLabelById({ id, selector, label }),

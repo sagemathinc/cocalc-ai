@@ -6810,9 +6810,11 @@ export async function getCodexPaymentSource({
     },
     metadataKey: "cocalc_default",
   });
+  const activeDefaultSubscription =
+    defaultSubscription?.revoked == null ? defaultSubscription : undefined;
   const subscriptionCredential = credential_id
     ? subscriptionCredentials.find(({ id }) => id === credential_id)
-    : defaultSubscription;
+    : activeDefaultSubscription;
   const hasSubscription = subscriptionCredential != null;
   const subscriptionUpdatedAt = subscriptionCredential
     ? new Date(subscriptionCredential.updated).toISOString()
@@ -6888,7 +6890,7 @@ export async function getCodexPaymentSource({
         typeof credential.metadata?.plan_type === "string"
           ? credential.metadata.plan_type
           : undefined,
-      isDefault: credential.id === defaultSubscription?.id,
+      isDefault: credential.id === activeDefaultSubscription?.id,
       updatedAt: new Date(credential.updated).toISOString(),
     })),
     hasProjectApiKey,
