@@ -7,6 +7,12 @@ import {
 } from "@cocalc/chat/server";
 import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
 import type { Client } from "@cocalc/conat/core/client";
+import { filename_extension, hidden_meta_file } from "@cocalc/util/misc";
+
+export function agentChatMetadataPath(path: string): string {
+  const extension = filename_extension(path).toLowerCase();
+  return hidden_meta_file(path, extension || "chat");
+}
 
 export async function withAgentChat<T>(
   agent: Pick<
@@ -23,10 +29,11 @@ export async function withAgentChat<T>(
   const client = conatWithProjectRoutingForAccount({
     account_id: agent.created_by,
   });
+  const metadataPath = agentChatMetadataPath(agent.path);
   const db = await acquireChatSyncDB({
     client,
     project_id: agent.project_id,
-    path: agent.path,
+    path: metadataPath,
     readyTimeoutMs: 20_000,
   });
   try {
@@ -40,6 +47,6 @@ export async function withAgentChat<T>(
       throw new Error("an existing non-archived Codex thread is required");
     return await fn(db, thread, rows, client);
   } finally {
-    await releaseChatSyncDB(agent.project_id, agent.path);
+    await releaseChatSyncDB(agent.project_id, metadataPath);
   }
 }
