@@ -221,10 +221,15 @@ it("claims work while egress and provider inventory calls are pending, preservin
   try {
     await jest.advanceTimersByTimeAsync(16 * 60_000);
     expect(db.claimComputeWork).toHaveBeenCalled();
-    expect(db.listComputeVmsForEgressMetering).toHaveBeenCalledTimes(1);
+    // The live enforcement pass and finalized billing pass have independent
+    // single-flight locks and may both be waiting on the provider query.
+    expect(db.listComputeVmsForEgressMetering).toHaveBeenCalledTimes(2);
     expect(provider.listProviderComputeInventory).toHaveBeenCalledTimes(1);
     expect(withSessionAdvisoryLock).toHaveBeenCalledWith(
       expect.objectContaining({ lockKey: "managed-compute-egress-meter" }),
+    );
+    expect(withSessionAdvisoryLock).toHaveBeenCalledWith(
+      expect.objectContaining({ lockKey: "managed-compute-live-egress" }),
     );
   } finally {
     stop();

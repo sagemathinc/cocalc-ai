@@ -4,6 +4,7 @@
  */
 
 import {
+  courseGcpMaxRunDurationSeconds,
   gcpInstanceIdForEgress,
   isProviderNotFound,
   managedVmBootstrapScript,
@@ -313,5 +314,48 @@ describe("gcpInstanceIdForEgress", () => {
         deleted_at: new Date(),
       } as ComputeVmRow),
     ).toThrow("no GCP numeric instance id");
+  });
+});
+
+describe("courseGcpMaxRunDurationSeconds", () => {
+  const vm = {
+    provider: "gcp",
+    stop_at: null,
+    metadata: {
+      billing: { course_funding: { source: { kind: "course" } } },
+    },
+  } as unknown as ComputeVmRow;
+  const original = process.env.COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS;
+
+  afterEach(() => {
+    if (original == null) {
+      delete process.env.COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS;
+    } else {
+      process.env.COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS = original;
+    }
+  });
+
+  it("defaults to a stable 24-hour backstop across reconciliations", () => {
+    delete process.env.COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS;
+    expect(courseGcpMaxRunDurationSeconds(vm)).toBe(24 * 60 * 60);
+    expect(
+      courseGcpMaxRunDurationSeconds({
+        ...vm,
+        stop_at: new Date(Date.now() + 2 * 60 * 60_000),
+      }),
+    ).toBe(24 * 60 * 60);
+  });
+
+  it("clamps the site value to GCP limits and ignores personal VMs", () => {
+    process.env.COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS = "999999999";
+    expect(courseGcpMaxRunDurationSeconds(vm)).toBe(120 * 24 * 60 * 60);
+    expect(
+      courseGcpMaxRunDurationSeconds({
+        ...vm,
+        metadata: {
+          billing: { course_funding: { source: { kind: "personal" } } },
+        },
+      }),
+    ).toBeUndefined();
   });
 });

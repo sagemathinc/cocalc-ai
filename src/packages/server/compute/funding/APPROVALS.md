@@ -129,15 +129,17 @@ not a promise that provider charges cannot cross that amount. Network telemetry
 is necessarily retrospective: bytes have already left the VM before Cloud
 Monitoring can report them, and stopping an observed VM also takes time. The
 course payer therefore accepts the actual finalized `$0.10/GB` charge,
-including a small amount reported after a student's threshold or remaining
+including potentially material usage reported after a student's threshold or remaining
 allocation is reached. That overage is posted directly to the payer and is
 recorded separately from the student's bounded grant and reservation.
 
 Enforcement deliberately uses two clocks:
 
 - A near-live pass queries GCP from the durable billing watermark through the
-  current time every 30 seconds by default. The interval is configurable with
-  `COCALC_COMPUTE_LIVE_EGRESS_INTERVAL_MS`, clamped to 10--60 seconds. Crossing
+  current time every 60 seconds by default. GCP samples the metric every 60
+  seconds, and a sample can take up to another 150 seconds to become visible.
+  The interval is configurable with `COCALC_COMPUTE_LIVE_EGRESS_INTERVAL_MS`,
+  clamped to 60--300 seconds. Crossing
   the threshold immediately queues a VM stop.
 - The authoritative billing pass retains a five-minute watermark delay so late
   provider samples cannot be skipped. Live observations never advance this
@@ -146,6 +148,14 @@ Enforcement deliberately uses two clocks:
   observation guard stops sponsored service. Worker health and provider API
   failures must be monitored because no in-VM mechanism is trusted as the
   financial enforcement boundary.
+- Every course-funded GCP VM also receives a provider-enforced
+  `maxRunDuration` with termination action `STOP`. It defaults to 24 hours per
+  start and is configurable with
+  `COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS` within GCP's 30-second to
+  120-day limits. The ordinary CoCalc shutdown deadline can stop the VM sooner.
+  CoCalc verifies the provider setting before create and start. A legacy
+  running VM without it is stopped once, repaired, and restarted. The duration
+  resets whenever GCP starts the VM.
 
 Managed GCP VMs use one interface and Standard network tier; Tier 1 bandwidth
 is not enabled. For the supported machine families, [Google's documented
@@ -153,15 +163,19 @@ maximum traffic rate to destinations outside the
 VPC](https://docs.cloud.google.com/compute/docs/network-bandwidth#egress_to_destinations_outside_of_a_vpc_network)
 is 7 Gbit/s. At the conservative
 CoCalc rate of `$0.10` per decimal GB, that is at most `$0.0875` per second:
-`$2.625` during one 30-second poll, `$26.25` during five minutes, or `$78.75`
+`$5.25` during one 60-second poll, `$26.25` during five minutes, or `$78.75`
 during the 15-minute stale-data window, plus [up to 30 seconds before an
 automatic provider stop begins](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime#restrictions).
 These are conservative exposure calculations, not normal charges or timing guarantees.
 The deployment's active-VM limits, course shutdown timers, and site exposure
 policy bound aggregate risk; operators must size and monitor them together.
 An extended control-plane outage increases exposure linearly at no more than
-that per-VM bandwidth bound until the configured shutdown timer or service
-recovery stops the VM.
+that per-VM bandwidth bound until the provider run limit, configured shutdown
+timer, or service recovery stops the VM. Finalized egress over the student's
+bounded grant is posted as a payer purchase even for prepaid funding. This can
+create a payer balance due; it is operator credit risk bounded operationally by
+the site exposure limit, active-VM limits, and provider run limit, and must be
+collected under the deployment's normal billing terms.
 
 ## Paid Credit Transfers
 

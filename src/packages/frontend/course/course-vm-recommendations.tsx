@@ -213,7 +213,7 @@ export function CourseVmRecommendationsEditor({
         showIcon
         style={{ marginBottom: 12 }}
         title="GCP public network usage is a course-payer charge"
-        description="CoCalc stops a course-funded GCP VM after its network spending threshold is observed, but GCP reports usage after traffic is sent. The course payer is responsible for the actual $0.10/GB charge, which can slightly exceed a student's remaining allocation before automatic shutdown completes."
+        description="GCP samples outgoing traffic every 60 seconds, and a sample can take up to another 150 seconds to appear. CoCalc requests a stop after the spending threshold is observed, but the course payer remains responsible for all finalized $0.10/GB charges, including potentially material usage reported after a student's allocation is exhausted. A provider-side maximum run duration (24 hours per start by default) limits worker-outage exposure."
       />
       <ul style={{ paddingInlineStart: 20 }}>
         {templates.map((template) => (
