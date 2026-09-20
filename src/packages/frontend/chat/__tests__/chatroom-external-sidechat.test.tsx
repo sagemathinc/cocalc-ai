@@ -173,6 +173,7 @@ describe("ChatPanel external side chat persistence", () => {
     desc?: Record<string, unknown>,
     opts?: {
       hideCompactThreadHeader?: boolean;
+      hideTopControls?: boolean;
       isVisible?: boolean;
       tabIsVisible?: boolean;
     },
@@ -190,7 +191,10 @@ describe("ChatPanel external side chat persistence", () => {
 
     render(
       <ChatEmbeddingOptionsProvider
-        value={{ hideCompactThreadHeader: opts?.hideCompactThreadHeader }}
+        value={{
+          hideCompactThreadHeader: opts?.hideCompactThreadHeader,
+          hideTopControls: opts?.hideTopControls,
+        }}
       >
         <ChatPanel
           actions={actions}
@@ -254,6 +258,14 @@ describe("ChatPanel external side chat persistence", () => {
     expect(
       renderChatRoomThreadPanel.mock.lastCall?.[0]?.hideCompactThreadHeader,
     ).toBe(true);
+  });
+
+  it("lets an embedded surface remove the internal top controls", () => {
+    renderPanel(undefined, { hideTopControls: true });
+
+    expect(renderChatRoomThreadPanel.mock.lastCall?.[0]?.hideTopControls).toBe(
+      true,
+    );
   });
 
   it("leaves the selected thread viewport to ChatLog", () => {

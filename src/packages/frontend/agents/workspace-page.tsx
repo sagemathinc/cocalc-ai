@@ -97,6 +97,7 @@ import {
 import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
+import { AgentRunningIndicator } from "./agent-running-indicator";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
@@ -158,6 +159,39 @@ const MAX_AGENT_SIDEBAR_WIDTH = 600;
 const AGENT_SIDEBAR_WIDTH_STORAGE_KEY = "cocalc-agents-sidebar-width-v1";
 const AGENT_SIDEBAR_HIDDEN_STORAGE_KEY = "cocalc-agents-sidebar-hidden-v1";
 const AGENT_DOCS_DRAWER_OPEN_STORAGE_KEY = "cocalc-agents-docs-drawer-open-v1";
+const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
+  "cocalc-agents-docs-drawer-width-v1";
+const DEFAULT_AGENT_DOCS_DRAWER_WIDTH = 720;
+const MIN_AGENT_DOCS_DRAWER_WIDTH = 360;
+
+function clampAgentDocsDrawerWidth(width: number): number {
+  const maximum =
+    typeof window === "undefined" ? 960 : Math.max(320, window.innerWidth - 32);
+  const minimum = Math.min(MIN_AGENT_DOCS_DRAWER_WIDTH, maximum);
+  return Math.min(maximum, Math.max(minimum, width));
+}
+
+function initialAgentDocsDrawerWidth(): number {
+  if (typeof window === "undefined") return DEFAULT_AGENT_DOCS_DRAWER_WIDTH;
+  try {
+    const stored = Number(
+      window.localStorage.getItem(AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY),
+    );
+    return Number.isFinite(stored) && stored > 0
+      ? clampAgentDocsDrawerWidth(stored)
+      : clampAgentDocsDrawerWidth(DEFAULT_AGENT_DOCS_DRAWER_WIDTH);
+  } catch {
+    return clampAgentDocsDrawerWidth(DEFAULT_AGENT_DOCS_DRAWER_WIDTH);
+  }
+}
+
+function rememberAgentDocsDrawerWidth(width: number): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(
+    AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY,
+    `${clampAgentDocsDrawerWidth(width)}`,
+  );
+}
 
 function initialAgentDocsDrawerOpen(): boolean {
   if (typeof window === "undefined") return false;
@@ -1390,6 +1424,7 @@ function AgentProjectContext({
         value={{
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
+          hideTopControls: true,
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
           openFilesInWorkbench: true,
@@ -1478,6 +1513,9 @@ function AgentWorkspace({
     useState<ThemeEditorDraft | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions>();
   const [docsOpen, setDocsOpen] = useState(initialAgentDocsDrawerOpen);
+  const [docsDrawerWidth, setDocsDrawerWidth] = useState(
+    initialAgentDocsDrawerWidth,
+  );
   const [showEditorControls, setShowEditorControls] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [, setChatVersion] = useState(0);
@@ -2016,7 +2054,18 @@ function AgentWorkspace({
         open={active && docsOpen}
         placement="right"
         title="Documentation"
-        width="min(720px, calc(100vw - 32px))"
+        size={docsDrawerWidth}
+        resizable={{
+          onResize: (width) => {
+            const next = clampAgentDocsDrawerWidth(width);
+            setDocsDrawerWidth(next);
+            try {
+              rememberAgentDocsDrawerWidth(next);
+            } catch {
+              // Resizing still works when localStorage is unavailable.
+            }
+          },
+        }}
         onClose={closeDocs}
         styles={{ body: { overflow: "auto", padding: "12px 0 0 14px" } }}
       >
@@ -2348,20 +2397,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             textAlign: "left",
           }}
         >
-          <ThreadBadge
-            icon={appearance?.thread_icon}
-            color={theme.primaryColor}
-            accentColor={theme.accentColor}
-            image={appearance?.thread_image}
-            fallbackIcon={
-              theme.primaryColor ||
-              theme.accentColor ||
-              appearance?.thread_image
-                ? undefined
-                : "robot"
-            }
-            size={30}
-          />
+          <AgentRunningIndicator agent={agent}>
+            <ThreadBadge
+              icon={appearance?.thread_icon}
+              color={theme.primaryColor}
+              accentColor={theme.accentColor}
+              image={appearance?.thread_image}
+              fallbackIcon={
+                theme.primaryColor ||
+                theme.accentColor ||
+                appearance?.thread_image
+                  ? undefined
+                  : "robot"
+              }
+              size={30}
+            />
+          </AgentRunningIndicator>
           <span style={{ minWidth: 0 }}>
             <Text strong ellipsis style={{ display: "block" }}>
               {theme.title}

@@ -2192,8 +2192,9 @@ export function ChatRoomThreadPanel({
       </Tooltip>
     </div>
   );
-  const topRightControls =
-    topRightControlsPortal === undefined
+  const topRightControls = !showTopControls
+    ? null
+    : topRightControlsPortal === undefined
       ? renderTopRightControls()
       : topRightControlsPortal != null
         ? createPortal(renderTopRightControls(), topRightControlsPortal)

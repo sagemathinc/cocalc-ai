@@ -2876,7 +2876,7 @@ function ChatPanelContent({
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}
         onOpenGitBrowser={openGitBrowserFromMessage}
-        hideTopControls={hideTopControls}
+        hideTopControls={hideTopControls || embeddingOptions.hideTopControls}
         codexConfigInComposer={!effectiveReadOnly}
         hideCompactThreadHeader={
           hideCompactThreadHeader ||
