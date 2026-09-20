@@ -185,58 +185,6 @@ function spotScheduling() {
   } as const;
 }
 
-const GCP_MIN_RUN_DURATION_SECONDS = 30;
-const GCP_MAX_RUN_DURATION_SECONDS = 120 * 24 * 60 * 60;
-
-function maxRunDurationSeconds(
-  metadata: HostSpec["metadata"] | HostRuntime["metadata"],
-): number | undefined {
-  if (metadata?.max_run_duration_seconds == null) return;
-  const seconds = Number(metadata.max_run_duration_seconds);
-  if (
-    !Number.isInteger(seconds) ||
-    seconds < GCP_MIN_RUN_DURATION_SECONDS ||
-    seconds > GCP_MAX_RUN_DURATION_SECONDS
-  ) {
-    throw new Error(
-      `gcp: max run duration must be an integer from ${GCP_MIN_RUN_DURATION_SECONDS} to ${GCP_MAX_RUN_DURATION_SECONDS} seconds`,
-    );
-  }
-  return seconds;
-}
-
-function withMaxRunDuration<T extends Record<string, unknown>>(
-  scheduling: T,
-  seconds?: number,
-) {
-  if (seconds == null) return scheduling;
-  return {
-    ...scheduling,
-    maxRunDuration: { seconds },
-    instanceTerminationAction: "STOP",
-  };
-}
-
-function observedMaxRunDurationSeconds(instance: any): number | undefined {
-  const value = instance?.scheduling?.maxRunDuration?.seconds;
-  if (value == null) return;
-  const seconds = Number(`${value}`);
-  return Number.isFinite(seconds) ? seconds : undefined;
-}
-
-function assertMaxRunDuration(instance: any, expected?: number) {
-  if (expected == null) return;
-  if (
-    observedMaxRunDurationSeconds(instance) !== expected ||
-    `${instance?.scheduling?.instanceTerminationAction ?? ""}`.toUpperCase() !==
-      "STOP"
-  ) {
-    throw new Error(
-      `gcp: provider did not apply the required ${expected}-second STOP run limit`,
-    );
-  }
-}
-
 function pricingModelFromInstance(
   instance: any,
 ): NonNullable<HostSpec["pricing_model"]> {
@@ -522,22 +470,15 @@ async function setStandardSchedulingViaRest(opts: {
   credentials: any;
   runtime: HostRuntime;
   gpu: boolean;
-  maxRunDurationSeconds?: number;
 }) {
   const authClient = await opts.client.auth.getClient();
   const response = await authClient.request({
     url: `https://compute.googleapis.com/compute/v1/projects/${opts.credentials.projectId}/zones/${opts.runtime.zone}/instances/${opts.runtime.instance_id}/setScheduling`,
     method: "POST",
     data: {
-      ...withMaxRunDuration(
-        onDemandScheduling({ gpu: opts.gpu }),
-        opts.maxRunDurationSeconds,
-      ),
-      // Clearing the Spot-only termination action requires an explicit null
-      // only when no provider-side run limit requires STOP.
-      ...(opts.maxRunDurationSeconds == null
-        ? { instanceTerminationAction: null }
-        : {}),
+      ...onDemandScheduling({ gpu: opts.gpu }),
+      // Clearing the Spot-only termination action requires an explicit null.
+      instanceTerminationAction: null,
     },
   });
   await waitUntilOperationComplete({
@@ -826,13 +767,10 @@ export class GcpProvider implements CloudProvider {
             },
           ]
         : [];
-    const requiredMaxRunDuration = maxRunDurationSeconds(spec.metadata);
-    const scheduling = withMaxRunDuration(
+    const scheduling =
       spec.pricing_model === "spot"
         ? spotScheduling()
-        : onDemandScheduling({ gpu: !!spec.gpu }),
-      requiredMaxRunDuration,
-    );
+        : onDemandScheduling({ gpu: !!spec.gpu });
 
     const instanceResource = {
       name: spec.name,
@@ -902,7 +840,6 @@ export class GcpProvider implements CloudProvider {
           ssh_public_key: spec.metadata?.ssh_public_key,
           ssh_public_keys: sshPublicKeys,
           ssh_user: sshUserFor(spec),
-          max_run_duration_seconds: requiredMaxRunDuration,
           provider_status: instance?.status ?? undefined,
         },
       };
@@ -917,45 +854,14 @@ export class GcpProvider implements CloudProvider {
           instance: spec.name,
         });
         if (!instance) return undefined;
-        let recoveredInstance = instance;
-        if (requiredMaxRunDuration != null) {
-          try {
-            assertMaxRunDuration(instance, requiredMaxRunDuration);
-          } catch {
-            const runtime = runtimeFromInstance(instance);
-            const repaired = await this.ensureMaxRunDuration(
-              runtime,
-              requiredMaxRunDuration,
-              creds,
-            );
-            if (repaired.stopped) {
-              await this.startHost(
-                {
-                  ...runtime,
-                  metadata: {
-                    ...(runtime.metadata ?? {}),
-                    max_run_duration_seconds: requiredMaxRunDuration,
-                  },
-                },
-                creds,
-              );
-            }
-            [recoveredInstance] = await client.get({
-              project: credentials.projectId,
-              zone,
-              instance: spec.name,
-            });
-            assertMaxRunDuration(recoveredInstance, requiredMaxRunDuration);
-          }
-        }
         logger.warn("gcp.createHost recovered existing instance", {
           project: credentials.projectId,
           zone,
           name: spec.name,
           err: String(err),
-          status: recoveredInstance.status,
+          status: instance.status,
         });
-        return runtimeFromInstance(recoveredInstance);
+        return runtimeFromInstance(instance);
       } catch (lookupErr) {
         if (isNotFoundError(lookupErr)) return undefined;
         logger.warn("gcp.createHost existing instance lookup failed", {
@@ -999,94 +905,7 @@ export class GcpProvider implements CloudProvider {
       instance: spec.name,
     });
 
-    assertMaxRunDuration(instance, requiredMaxRunDuration);
-
     return runtimeFromInstance(instance);
-  }
-
-  async ensureMaxRunDuration(
-    runtime: HostRuntime,
-    seconds: number,
-    creds: any,
-  ): Promise<{ stopped: boolean }> {
-    maxRunDurationSeconds({ max_run_duration_seconds: seconds });
-    const credentials = parseCredentials(creds ?? {});
-    if (!runtime.zone) {
-      throw new Error("gcp.ensureMaxRunDuration requires zone");
-    }
-    const client = new InstancesClient(credentials);
-    let [instance] = await client.get({
-      project: credentials.projectId,
-      zone: runtime.zone,
-      instance: runtime.instance_id,
-    });
-    try {
-      assertMaxRunDuration(instance, seconds);
-      return { stopped: false };
-    } catch {
-      // Repair below. GCP only permits scheduling updates while stopped.
-    }
-    let stopped = false;
-    const status = `${instance?.status ?? ""}`.trim().toUpperCase();
-    if (
-      status === "RUNNING" ||
-      status === "PROVISIONING" ||
-      status === "STAGING"
-    ) {
-      const [response] = await client.stop({
-        project: credentials.projectId,
-        zone: runtime.zone,
-        instance: runtime.instance_id,
-      });
-      await waitUntilOperationComplete({
-        response,
-        zone: runtime.zone,
-        credentials,
-      });
-      instance = await waitForInstanceLifecycleStatus({
-        client,
-        credentials,
-        runtime,
-        desired: ["TERMINATED"],
-      });
-      stopped = true;
-    } else if (status === "STOPPING") {
-      instance = await waitForInstanceLifecycleStatus({
-        client,
-        credentials,
-        runtime,
-        desired: ["TERMINATED"],
-      });
-      stopped = true;
-    }
-    const gpu =
-      Number(
-        (runtime.metadata as { gpu_count?: number } | undefined)?.gpu_count,
-      ) > 0;
-    const scheduling = withMaxRunDuration(
-      pricingModelFromInstance(instance) === "spot"
-        ? spotScheduling()
-        : onDemandScheduling({ gpu }),
-      seconds,
-    );
-    const [response] = await client.setScheduling({
-      project: credentials.projectId,
-      zone: runtime.zone,
-      instance: runtime.instance_id,
-      schedulingResource: scheduling,
-    });
-    await waitUntilOperationComplete({
-      response,
-      zone: runtime.zone,
-      credentials,
-    });
-    [instance] = await client.get({
-      project: credentials.projectId,
-      zone: runtime.zone,
-      instance: runtime.instance_id,
-    });
-    assertMaxRunDuration(instance, seconds);
-    return { stopped };
   }
 
   async startHost(runtime: HostRuntime, creds: any): Promise<void> {
@@ -1097,10 +916,6 @@ export class GcpProvider implements CloudProvider {
     const credentials = parseCredentials(creds ?? {});
     if (!runtime.zone) {
       throw new Error("gcp.startHost requires zone");
-    }
-    const requiredMaxRunDuration = maxRunDurationSeconds(runtime.metadata);
-    if (requiredMaxRunDuration != null) {
-      await this.ensureMaxRunDuration(runtime, requiredMaxRunDuration, creds);
     }
     const client = new InstancesClient(credentials);
     await ensureSshMetadata(runtime, credentials, client);
@@ -1550,7 +1365,6 @@ export class GcpProvider implements CloudProvider {
         credentials,
         runtime,
         gpu,
-        maxRunDurationSeconds: maxRunDurationSeconds(runtime.metadata),
       });
       return;
     }
@@ -1558,10 +1372,7 @@ export class GcpProvider implements CloudProvider {
       project: credentials.projectId,
       zone: runtime.zone,
       instance: runtime.instance_id,
-      schedulingResource: withMaxRunDuration(
-        spotScheduling(),
-        maxRunDurationSeconds(runtime.metadata),
-      ),
+      schedulingResource: spotScheduling(),
     });
     await waitUntilOperationComplete({
       response,

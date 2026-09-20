@@ -148,15 +148,6 @@ Enforcement deliberately uses two clocks:
   observation guard stops sponsored service. Worker health and provider API
   failures must be monitored because no in-VM mechanism is trusted as the
   financial enforcement boundary.
-- Every course-funded GCP VM also receives a provider-enforced
-  `maxRunDuration` with termination action `STOP`. It defaults to 24 hours per
-  start and is configurable with
-  `COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS` within GCP's 30-second to
-  120-day limits. The ordinary CoCalc shutdown deadline can stop the VM sooner.
-  CoCalc verifies the provider setting before create and start. A legacy
-  running VM without it is stopped once, repaired, and restarted. The duration
-  resets whenever GCP starts the VM.
-
 Managed GCP VMs use one interface and Standard network tier; Tier 1 bandwidth
 is not enabled. For the supported machine families, [Google's documented
 maximum traffic rate to destinations outside the
@@ -170,12 +161,12 @@ These are conservative exposure calculations, not normal charges or timing guara
 The deployment's active-VM limits, course shutdown timers, and site exposure
 policy bound aggregate risk; operators must size and monitor them together.
 An extended control-plane outage increases exposure linearly at no more than
-that per-VM bandwidth bound until the provider run limit, configured shutdown
-timer, or service recovery stops the VM. Finalized egress over the student's
+that per-VM bandwidth bound until the configured shutdown timer or service
+recovery stops the VM. Finalized egress over the student's
 bounded grant is posted as a payer purchase even for prepaid funding. This can
 create a payer balance due; it is operator credit risk bounded operationally by
-the site exposure limit, active-VM limits, and provider run limit, and must be
-collected under the deployment's normal billing terms.
+the site exposure limit and active-VM limits, and must be collected under the
+deployment's normal billing terms.
 
 ## Paid Credit Transfers
 

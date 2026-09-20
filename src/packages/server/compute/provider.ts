@@ -65,9 +65,6 @@ let subnetInventoryCache:
   | undefined;
 const NETWORK_CACHE_MS = 60_000;
 const NEBIUS_CAPACITY_CACHE_MS = 60_000;
-const GCP_MIN_RUN_DURATION_SECONDS = 30;
-const GCP_MAX_RUN_DURATION_SECONDS = 120 * 24 * 60 * 60;
-const DEFAULT_COURSE_GCP_MAX_RUN_DURATION_SECONDS = 24 * 60 * 60;
 let nebiusCapacityCache:
   | { project_id: string; checked_at: number; advice: NebiusCapacityAdvice[] }
   | undefined;
@@ -94,33 +91,6 @@ const REQUIRED_NON_PUBLIC_IPV4_RANGES = [
   "224.0.0.0/4",
   "240.0.0.0/4",
 ];
-
-function isSponsoredGcpVm(vm: Pick<ComputeVmRow, "provider" | "metadata">) {
-  return (
-    vm.provider === "gcp" &&
-    vm.metadata?.billing?.course_funding?.source?.kind === "course"
-  );
-}
-
-export function courseGcpMaxRunDurationSeconds(
-  vm: Pick<ComputeVmRow, "provider" | "metadata">,
-): number | undefined {
-  if (!isSponsoredGcpVm(vm)) return;
-  const configured = Number(
-    process.env.COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS ??
-      DEFAULT_COURSE_GCP_MAX_RUN_DURATION_SECONDS,
-  );
-  if (!Number.isFinite(configured) || configured <= 0) {
-    throw new Error(
-      "COCALC_COURSE_VM_GCP_MAX_RUN_DURATION_SECONDS must be a positive number",
-    );
-  }
-  const siteMaximum = Math.max(
-    GCP_MIN_RUN_DURATION_SECONDS,
-    Math.min(GCP_MAX_RUN_DURATION_SECONDS, Math.floor(configured)),
-  );
-  return siteMaximum;
-}
 
 export function isProviderNotFound(err: unknown): boolean {
   return /not found|was not found|code.?5|404/i.test(`${err}`);
@@ -595,7 +565,6 @@ function specFor(
       ),
       block_project_ssh_keys: true,
       disable_service_account: true,
-      max_run_duration_seconds: courseGcpMaxRunDurationSeconds(vm),
       subnetwork_uri: subnetwork,
       public_ip: vm.public_ip,
       labels: {
@@ -978,17 +947,6 @@ function runtimeFor(vm: ComputeVmRow): HostRuntime {
       ssh_user: vm.ssh_user,
       public_address_id: vm.public_address_id,
       provisional_instance_id: providerInstanceIdIsProvisional(vm),
-    },
-  };
-}
-
-function runtimeForStart(vm: ComputeVmRow): HostRuntime {
-  const runtime = runtimeFor(vm);
-  return {
-    ...runtime,
-    metadata: {
-      ...(runtime.metadata ?? {}),
-      max_run_duration_seconds: courseGcpMaxRunDurationSeconds(vm),
     },
   };
 }
@@ -1623,28 +1581,9 @@ export async function createProviderComputeVm(
 export async function startProviderComputeVm(vm: ComputeVmRow) {
   const { creds } = await context(vm.provider, vm.region);
   await (vm.provider === "gcp" ? gcpProvider : nebiusProvider).startHost(
-    runtimeForStart(vm),
+    runtimeFor(vm),
     creds,
   );
-}
-
-export async function ensureProviderComputeVmRunDuration(
-  vm: ComputeVmRow,
-): Promise<{ stopped: boolean; max_run_duration_seconds?: number }> {
-  const seconds = courseGcpMaxRunDurationSeconds(vm);
-  if (seconds == null) return { stopped: false };
-  const { creds } = await context("gcp", vm.region);
-  try {
-    const result = await gcpProvider.ensureMaxRunDuration(
-      runtimeForStart(vm),
-      seconds,
-      creds,
-    );
-    return { ...result, max_run_duration_seconds: seconds };
-  } catch (err) {
-    if (isProviderNotFound(err)) return { stopped: false };
-    throw err;
-  }
 }
 
 export async function setProviderComputeMachineType(vm: ComputeVmRow) {

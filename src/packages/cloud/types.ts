@@ -122,11 +122,6 @@ export type PublicIngressResult = {
 export interface CloudProvider {
   createHost(spec: HostSpec, creds: any): Promise<HostRuntime>;
   startHost(runtime: HostRuntime, creds: any): Promise<void>;
-  ensureMaxRunDuration?(
-    runtime: HostRuntime,
-    seconds: number,
-    creds: any,
-  ): Promise<{ stopped: boolean }>;
   stopHost(runtime: HostRuntime, creds: any): Promise<void>;
   setPricingModel?(
     runtime: HostRuntime,

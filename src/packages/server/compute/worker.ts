@@ -69,7 +69,6 @@ import {
 } from "./funding/vm-funding";
 import {
   createProviderComputeVm,
-  courseGcpMaxRunDurationSeconds,
   deleteOrphanProviderComputeAddress,
   deleteOrphanProviderComputeBootDisk,
   deleteOrphanProviderComputeInstance,
@@ -80,7 +79,6 @@ import {
   ensureProviderComputePublicAddress,
   ensureProviderComputePublicAddressAttached,
   ensureProviderComputeSshAccess,
-  ensureProviderComputeVmRunDuration,
   inspectProviderComputeVm,
   inspectProviderComputeVolume,
   getProviderComputePublicEgressBytes,
@@ -1666,18 +1664,6 @@ async function refreshComputeProviderObservations() {
       const vm = candidates[cursor++];
       try {
         await inspectAndRecordProviderComputeVm(vm);
-        const expectedRunDuration = courseGcpMaxRunDurationSeconds(vm);
-        if (
-          expectedRunDuration != null &&
-          vm.desired_state === "running" &&
-          vm.metadata?.runtime?.max_run_duration_seconds !== expectedRunDuration
-        ) {
-          await enqueueComputeWork({
-            resource_id: vm.id,
-            action: "start",
-            idempotency_key: `ensure-gcp-run-duration:${vm.id}:${expectedRunDuration}`,
-          });
-        }
       } catch (err) {
         logger.warn("managed compute provider observation failed", {
           vm_id: vm.id,
@@ -2282,27 +2268,7 @@ async function start(vm: ComputeVmRow) {
   }
   if (vm.desired_state === "stopped") return await reconcile(vm);
   await refreshCourseVmForProvider(vm);
-  const runDuration = await observeVmPhase(
-    vm,
-    "ensure_provider_run_duration",
-    async () => await ensureProviderComputeVmRunDuration(vm),
-  );
-  if (
-    runDuration.max_run_duration_seconds != null &&
-    vm.metadata?.runtime?.max_run_duration_seconds !==
-      runDuration.max_run_duration_seconds
-  ) {
-    vm = (await updateComputeVm(vm.id, {
-      metadata: {
-        ...(vm.metadata ?? {}),
-        runtime: {
-          ...(vm.metadata?.runtime ?? {}),
-          max_run_duration_seconds: runDuration.max_run_duration_seconds,
-        },
-      },
-    }))!;
-  }
-  if (!runDuration.stopped && runningVmWorkAlreadySatisfied(vm)) return;
+  if (runningVmWorkAlreadySatisfied(vm)) return;
   let observed = await inspectAndRecordProviderComputeVm(vm);
   let disposition = providerStartDisposition(observed.status);
   if (disposition === "provision") return await provision(vm);

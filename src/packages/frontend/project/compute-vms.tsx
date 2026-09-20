@@ -1004,7 +1004,7 @@ export function VmCreateModal({
               showIcon
               style={{ marginBottom: 16 }}
               title="GCP network charges can exceed course credit"
-              description="GCP samples outgoing traffic every 60 seconds, and a sample can take up to another 150 seconds to appear. CoCalc checks about every 60 seconds and requests a stop after the spending threshold is observed. The course payer remains responsible for all finalized $0.10/GB charges, including potentially material usage reported after the student's allocation is exhausted. GCP also stops the VM after a site-defined maximum run duration per start (24 hours by default)."
+              description="GCP samples outgoing traffic every 60 seconds, and a sample can take up to another 150 seconds to appear. CoCalc checks about every 60 seconds and requests a stop after the spending threshold is observed. The course payer remains responsible for all finalized $0.10/GB charges, including potentially material usage reported after the student's allocation is exhausted."
             />
           )}
         {!recommendationMode && (
