@@ -61,8 +61,10 @@ import {
 } from "./host-dns-reconciliation";
 import {
   activeHostPublicRouteMode,
+  desiredHostPublicRouteMode,
   ensureDirectCloudflareIngressForHost,
   hostPublicRouteMigrationInProgress,
+  migrateHostPublicRouteInternal,
 } from "./public-route";
 
 const logger = getLogger("server:cloud:host-work");
@@ -1246,6 +1248,36 @@ async function reconcileRuntimeNetworkAfterStart(
   }
   await ensureDnsForHost(row);
   await scheduleRuntimeRefresh(row, { force: providerId === "gcp" });
+}
+
+async function reconcileDesiredPublicRouteAfterReady({
+  host,
+  providerId,
+}: {
+  host: any;
+  providerId?: string;
+}): Promise<void> {
+  if (providerId !== "gcp" || hostPublicRouteMigrationInProgress(host)) {
+    return;
+  }
+  const desiredMode = desiredHostPublicRouteMode(host);
+  if (activeHostPublicRouteMode(host) === desiredMode) {
+    return;
+  }
+  try {
+    await migrateHostPublicRouteInternal({
+      id: host.id,
+      mode: desiredMode,
+    });
+  } catch (err) {
+    // The guarded migration restores the tunnel route on failure. Keep the
+    // healthy host available and retry after its next lifecycle verification.
+    logger.warn("failed to reconcile desired project-host public route", {
+      host_id: host.id,
+      desired_mode: desiredMode,
+      err,
+    });
+  }
 }
 
 function maybeReplaceIpInUrl(
@@ -3034,6 +3066,7 @@ async function handleVerifyHostReady(row: any) {
         err,
       });
     }
+    await reconcileDesiredPublicRouteAfterReady({ host, providerId });
     return;
   }
 

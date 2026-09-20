@@ -17,6 +17,7 @@ const getServerSettingsMock = jest.fn();
 const getRoutedHostControlClientMock = jest.fn();
 const maybeAutoGrowHostDiskForReservationFailureMock = jest.fn();
 const removeHostSshKnownHostAliasMock = jest.fn();
+const migrateHostPublicRouteInternalMock = jest.fn();
 
 jest.mock("./host-util", () => ({
   buildHostSpec: (...args: any[]) => buildHostSpecMock(...args),
@@ -65,6 +66,15 @@ jest.mock("./host-ssh-known-hosts", () => ({
     removeHostSshKnownHostAliasMock(...args),
 }));
 
+jest.mock("./public-route", () => {
+  const actual = jest.requireActual("./public-route");
+  return {
+    ...actual,
+    migrateHostPublicRouteInternal: (...args: any[]) =>
+      migrateHostPublicRouteInternalMock(...args),
+  };
+});
+
 beforeAll(async () => {
   await before({ noConat: true });
 }, 15000);
@@ -102,6 +112,9 @@ beforeEach(async () => {
     reason: "not a reservation failure",
   });
   removeHostSshKnownHostAliasMock.mockResolvedValue(undefined);
+  migrateHostPublicRouteInternalMock.mockResolvedValue({
+    mode: "cloudflare-proxy",
+  });
   buildHostSpecMock.mockImplementation(async (row) => ({
     name: row.id,
     region: row.region,
@@ -966,6 +979,11 @@ describe("cloud host start failures", () => {
         started_at: startedAt,
       },
     } as any);
+
+    expect(migrateHostPublicRouteInternalMock).toHaveBeenCalledWith({
+      id: hostId,
+      mode: "cloudflare-proxy",
+    });
 
     const workRows = await getPool().query(
       `
