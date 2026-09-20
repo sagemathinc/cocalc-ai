@@ -3,9 +3,11 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Button } from "antd";
+import { useState } from "react";
+import { Alert, Button, Modal, Space } from "antd";
 import type { NamedAgentDirectory } from "@cocalc/conat/agents/personal";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export const NAMED_AGENT_LIMIT_ERROR = "named_agent_limit_reached";
@@ -56,11 +58,77 @@ export function NamedAgentUsage({
 }: {
   directory: NamedAgentDirectory | undefined;
 }) {
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const usage = directory?.usage;
   if (!usage || usage.active >= usage.limit) return null;
   return (
-    <div style={{ color: UI_COLORS.muted }}>
-      {usage.active} of {usage.limit} named-agent slots used
-    </div>
+    <>
+      <Button
+        type="link"
+        size="small"
+        aria-label={`${usage.active} of ${usage.limit} named-agent slots used. Learn how to free slots`}
+        style={{
+          color: UI_COLORS.muted,
+          height: "auto",
+          padding: 0,
+          textDecoration: "underline",
+          whiteSpace: "normal",
+        }}
+        onClick={() => setDetailsOpen(true)}
+      >
+        {usage.active} of {usage.limit} named-agent slots used
+      </Button>
+      <Modal
+        open={detailsOpen}
+        title="Named-agent slots"
+        onCancel={() => setDetailsOpen(false)}
+        modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
+        footer={
+          <Space wrap>
+            <Button onClick={() => setDetailsOpen(false)}>Close</Button>
+            <Button
+              onClick={() => {
+                setDetailsOpen(false);
+                openAccountSettings({ page: "membership" });
+              }}
+            >
+              Review membership
+            </Button>
+            <Button
+              type="primary"
+              onClick={() => {
+                setDetailsOpen(false);
+                openAccountSettings({ page: "my-agents" });
+              }}
+            >
+              Manage named agents
+            </Button>
+          </Space>
+        }
+      >
+        <p>
+          Each active named agent uses one slot. You are currently using{" "}
+          <strong>{usage.active}</strong> of <strong>{usage.limit}</strong>.
+        </p>
+        <p>To free a slot:</p>
+        <ol>
+          <li>Open Manage named agents.</li>
+          <li>Find an agent you no longer need.</li>
+          <li>Choose Remove from Agents and confirm.</li>
+        </ol>
+        <p>
+          Removing an agent from Agents does not delete its project,
+          conversation, or artifacts. Historical Agent Network records remain,
+          but the agent can no longer receive network messages unless it is
+          named again.
+        </p>
+        <Alert
+          type="info"
+          showIcon
+          title="Hiding an agent does not free a slot"
+          description="Hide from Agents only removes the agent from the visible sidebar. Use Remove from Agents to release its slot."
+        />
+      </Modal>
+    </>
   );
 }
