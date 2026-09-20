@@ -69,12 +69,22 @@ export async function loadFundingExposureBudget(
   const multi =
     isMultiBayCluster() ||
     getConfiguredClusterBayCatalog().some((b) => b.bay_id !== local);
-  if (!multi && !process.env.COCALC_FUNDING_ROLLOUT_MANIFEST) {
-    if (owningBay && owningBay !== local)
-      unavailable("The resource owning bay is not in this deployment.");
+  const isolatedQa =
+    process.env.COCALC_FUNDING_ISOLATED_QA === "yes" &&
+    process.env.COCALC_COMPUTE_VM_ENVIRONMENT?.trim().toLowerCase() ===
+      "development";
+  if (!process.env.COCALC_FUNDING_ROLLOUT_MANIFEST && (!multi || isolatedQa)) {
     const proof = require_sponsorship_admission
       ? await (await import("./rollout")).assertSponsorshipAdmission()
       : undefined;
+    const bayIds = proof?.bay_ids ?? [
+      local,
+      ...(isolatedQa
+        ? getConfiguredClusterBayCatalog().map((bay) => bay.bay_id)
+        : []),
+    ];
+    if (owningBay && !bayIds.includes(owningBay))
+      unavailable("The resource owning bay is not in this deployment.");
     return { limit_usd: ceiling, proof };
   }
   const { loadProductionFundingRollout } =

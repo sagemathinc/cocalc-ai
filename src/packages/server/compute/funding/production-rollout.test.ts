@@ -273,6 +273,41 @@ it("requires rollout admission for sponsored reservations in isolated one-bay mo
   ).resolves.toEqual({ limit_usd: "100.0000000000", proof });
   expect(admission).toHaveBeenCalledTimes(1);
 });
+it("uses all-bay live admission instead of operator files in isolated multi-bay development", async () => {
+  delete process.env.COCALC_FUNDING_ROLLOUT_MANIFEST;
+  delete process.env.COCALC_FUNDING_ROLLOUT_PUBLIC_KEY;
+  process.env.COCALC_FUNDING_ISOLATED_QA = "yes";
+  process.env.COCALC_COMPUTE_VM_ENVIRONMENT = "development";
+  mockCatalog = [{ bay_id: "home" }, { bay_id: "resources" }];
+  const proof = {
+    expires_at: Date.now() + 30_000,
+    bay_ids: ["home", "resources"],
+  };
+  const admission = jest
+    .spyOn(rollout, "assertSponsorshipAdmission")
+    .mockResolvedValue(proof);
+
+  await expect(
+    loadFundingExposureBudget("resources", {
+      require_sponsorship_admission: true,
+    }),
+  ).resolves.toEqual({ limit_usd: "100.0000000000", proof });
+  expect(admission).toHaveBeenCalledTimes(1);
+  expect(mockOpen).not.toHaveBeenCalled();
+});
+it("still requires operator files for multi-bay production", async () => {
+  delete process.env.COCALC_FUNDING_ROLLOUT_MANIFEST;
+  delete process.env.COCALC_FUNDING_ROLLOUT_PUBLIC_KEY;
+  process.env.COCALC_FUNDING_ISOLATED_QA = "yes";
+  process.env.COCALC_COMPUTE_VM_ENVIRONMENT = "production";
+  mockCatalog = [{ bay_id: "home" }, { bay_id: "resources" }];
+
+  await expect(
+    loadFundingExposureBudget("resources", {
+      require_sponsorship_admission: true,
+    }),
+  ).rejects.toThrow("operator files");
+});
 it.each([
   "over quota",
   "changed durable quota",
