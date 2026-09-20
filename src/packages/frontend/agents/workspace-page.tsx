@@ -97,6 +97,10 @@ import {
 } from "./api";
 import { AgentNetworkPills } from "./agent-network-pills";
 import {
+  readAgentNetworkFilter,
+  rememberAgentNetworkFilter,
+} from "./agent-network-filter";
+import {
   AgentNetworkDetailsModal,
   AgentNetworkFilterBar,
 } from "./agent-network-details-modal";
@@ -177,13 +181,6 @@ const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
   "cocalc-agents-docs-drawer-width-v1";
 const DEFAULT_AGENT_DOCS_DRAWER_WIDTH = 720;
 const MIN_AGENT_DOCS_DRAWER_WIDTH = 360;
-
-function initialAgentNetworkFilter(): string | undefined {
-  if (typeof window === "undefined") return undefined;
-  return (
-    new URLSearchParams(window.location.search).get("network") || undefined
-  );
-}
 
 function networksForAgent(networks: AgentNetwork[], agent: NamedAgent) {
   return networks.filter(
@@ -2144,7 +2141,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | undefined;
   const [search, setSearch] = useState("");
   const [networkFilterId, setNetworkFilterId] = useState(
-    initialAgentNetworkFilter,
+    readAgentNetworkFilter,
   );
   const [networkDetailsId, setNetworkDetailsId] = useState<string>();
   const [creating, setCreating] = useState(activeAgentId === "new");
@@ -2204,6 +2201,28 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     agents.find(
       ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
     ) ?? selected;
+
+  useEffect(() => {
+    if (!networkDirectory || !networkFilterId) return;
+    if (selectedNetwork) {
+      rememberAgentNetworkFilter(networkFilterId);
+      return;
+    }
+    rememberAgentNetworkFilter();
+    setNetworkFilterId(undefined);
+    set_url(
+      getPageUrlPath({
+        page: "agents",
+        agent_id: creating ? "new" : selected?.endpoint.agent_id,
+      }),
+    );
+  }, [
+    creating,
+    networkDirectory,
+    networkFilterId,
+    selected?.endpoint.agent_id,
+    selectedNetwork,
+  ]);
 
   useEffect(() => {
     if (!selectedNetwork || creating) return;
@@ -2370,6 +2389,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   function selectNetwork(network?: AgentNetwork) {
     const next = network?.agent_network_id;
+    rememberAgentNetworkFilter(next);
     setNetworkFilterId(next);
     set_url(
       getPageUrlPath({

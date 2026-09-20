@@ -93,9 +93,11 @@ test("filter bar makes details and clearing explicit", async () => {
     />,
   );
 
-  expect(
-    screen.getByRole("region", { name: "Filtered to Release network" }),
-  ).toHaveTextContent("Showing Release · 2 agents");
+  const filter = screen.getByRole("region", {
+    name: "Filtered to Release network",
+  });
+  expect(filter).toHaveTextContent("Showing Release · 2 agents");
+  expect(filter).toHaveStyle({ boxSizing: "border-box", width: "100%" });
   await user.click(screen.getByRole("button", { name: "Details" }));
   await user.click(screen.getByRole("button", { name: "Clear" }));
   expect(onOpen).toHaveBeenCalledTimes(1);

@@ -51,10 +51,12 @@ export function AgentNetworkFilterBar({
         background: UI_COLORS.infoBg,
         border: `1px solid ${UI_COLORS.info}`,
         borderRadius: 6,
+        boxSizing: "border-box",
         display: "flex",
         flexWrap: "wrap",
         gap: 6,
         padding: "7px 8px",
+        maxWidth: "100%",
         width: "100%",
       }}
     >
