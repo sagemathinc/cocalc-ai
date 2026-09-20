@@ -13,7 +13,10 @@ import {
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
 import {
+  assertAgentWorkingDirectory,
+  createAgentWorkingDirectory,
   effectiveNewAgentWorkingDirectory,
+  MissingAgentWorkingDirectoryError,
   relativeAgentWorkingDirectory,
 } from "./workspace-path";
 
@@ -100,5 +103,33 @@ describe("agent workspace paths", () => {
         projectHome: "/home/user",
       }),
     ).toBe("/home/user/stuff");
+  });
+
+  it("distinguishes a missing working directory from a non-directory", async () => {
+    await expect(
+      assertAgentWorkingDirectory(
+        { stat: jest.fn(async () => Promise.reject(new Error("ENOENT"))) },
+        "/home/user/missing",
+      ),
+    ).rejects.toBeInstanceOf(MissingAgentWorkingDirectoryError);
+
+    await expect(
+      assertAgentWorkingDirectory(
+        { stat: jest.fn(async () => ({ isDirectory: () => false })) },
+        "/home/user/file",
+      ),
+    ).rejects.toThrow('Working directory "/home/user/file" is not a directory');
+  });
+
+  it("creates and revalidates a missing working directory", async () => {
+    const mkdir = jest.fn(async () => undefined);
+    const stat = jest.fn(async () => ({ isDirectory: () => true }));
+
+    await createAgentWorkingDirectory({ mkdir, stat }, "/home/user/scratch2");
+
+    expect(mkdir).toHaveBeenCalledWith("/home/user/scratch2", {
+      recursive: true,
+    });
+    expect(stat).toHaveBeenCalledWith("/home/user/scratch2");
   });
 });

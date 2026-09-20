@@ -32,3 +32,40 @@ export function effectiveNewAgentWorkingDirectory({
     ? projectHome
     : directory;
 }
+
+type WorkingDirectoryFilesystem = {
+  mkdir: (path: string, options?: { recursive?: boolean }) => Promise<unknown>;
+  stat: (path: string) => Promise<{ isDirectory: () => boolean }>;
+};
+
+export class MissingAgentWorkingDirectoryError extends Error {
+  constructor(public readonly path: string) {
+    super(`Working directory ${JSON.stringify(path)} does not exist`);
+    this.name = "MissingAgentWorkingDirectoryError";
+  }
+}
+
+export async function assertAgentWorkingDirectory(
+  fs: Pick<WorkingDirectoryFilesystem, "stat">,
+  path: string,
+): Promise<void> {
+  let stat;
+  try {
+    stat = await fs.stat(path);
+  } catch {
+    throw new MissingAgentWorkingDirectoryError(path);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(
+      `Working directory ${JSON.stringify(path)} is not a directory. Choose an existing directory.`,
+    );
+  }
+}
+
+export async function createAgentWorkingDirectory(
+  fs: WorkingDirectoryFilesystem,
+  path: string,
+): Promise<void> {
+  await fs.mkdir(path, { recursive: true });
+  await assertAgentWorkingDirectory(fs, path);
+}

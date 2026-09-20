@@ -144,7 +144,10 @@ import {
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
 import {
+  assertAgentWorkingDirectory,
+  createAgentWorkingDirectory,
   effectiveNewAgentWorkingDirectory,
+  MissingAgentWorkingDirectoryError,
   relativeAgentWorkingDirectory,
 } from "./workspace-path";
 
@@ -395,6 +398,10 @@ function NewAgentPanel({
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
+  const [missingDirectory, setMissingDirectory] = useState<{
+    path: string;
+    projectId: string;
+  }>();
   const paymentPreference = (config.paymentSource ??
     "auto") as CodexPaymentSourcePreference;
   const {
@@ -502,19 +509,7 @@ function NewAgentPanel({
       directoryProjectId === targetProjectId
         ? directory.trim() || projectHome
         : projectHome;
-    let stat;
-    try {
-      stat = await fs.stat(workingDirectory);
-    } catch {
-      throw new Error(
-        `Working directory ${JSON.stringify(workingDirectory)} does not exist in the selected project. Choose an existing directory.`,
-      );
-    }
-    if (!stat.isDirectory()) {
-      throw new Error(
-        `Working directory ${JSON.stringify(workingDirectory)} is not a directory. Choose an existing directory.`,
-      );
-    }
+    await assertAgentWorkingDirectory(fs, workingDirectory);
     const path = joinAbsolutePath(
       getProjectHomeDirectory(targetProjectId),
       `.local/share/cocalc/agents/${uuid()}.chat`,
@@ -555,68 +550,104 @@ function NewAgentPanel({
     if (busy || uploading || problem || atLimit || !request) return;
     setBusy(true);
     setError("");
+    setMissingDirectory(undefined);
     try {
-      const created = await prepare();
-      boundAccount.assertCurrent();
-      const api = personalAgentApi();
-      const locator = {
+      await submitNewAgentRequest(request);
+    } catch (err) {
+      handleCreateError(err);
+      if (isNamedAgentLimitError(err)) refreshNamedAgents();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitNewAgentRequest(request: string): Promise<void> {
+    const created = await prepare();
+    boundAccount.assertCurrent();
+    const api = personalAgentApi();
+    const locator = {
+      project_id: created.projectId,
+      path: created.path,
+      thread_id: created.threadId,
+    };
+    let identity = await api.resolveIdentity(locator);
+    if (!identity) {
+      identity = await api.registerIdentity(locator);
+    }
+    if (!identity) throw new Error("Unable to register this agent thread");
+    boundAccount.assertCurrent();
+    await api.nameAgent({
+      endpoint: {
+        project_id: created.projectId,
+        agent_id: identity.agent_id,
+      },
+      name: normalizeAgentName(name),
+      description,
+      ...cachedAgentNameContext(locator),
+      project_title: projectMap?.getIn([created.projectId, "title"]) as
+        | string
+        | undefined,
+      thread_title: name.trim(),
+    });
+    const actions = initChat(created.projectId, created.path, {
+      instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
+    });
+    await waitForChatReady(actions);
+    const sent = actions.sendChat({
+      input: request,
+      reply_thread_id: created.threadId,
+      acpConfigOverride: config,
+    });
+    if (sent) {
+      await actions.syncdb?.save();
+      await actions.save_to_disk();
+    } else {
+      await writeChatComposerDraft({
+        account_id: boundAccount.accountId,
         project_id: created.projectId,
         path: created.path,
-        thread_id: created.threadId,
-      };
-      let identity = await api.resolveIdentity(locator);
-      if (!identity) {
-        identity = await api.registerIdentity(locator);
-      }
-      if (!identity) throw new Error("Unable to register this agent thread");
-      boundAccount.assertCurrent();
-      await api.nameAgent({
-        endpoint: {
-          project_id: created.projectId,
-          agent_id: identity.agent_id,
-        },
-        name: normalizeAgentName(name),
-        description,
-        ...cachedAgentNameContext(locator),
-        project_title: projectMap?.getIn([created.projectId, "title"]) as
-          | string
-          | undefined,
-        thread_title: name.trim(),
+        composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
+        text: request,
       });
-      const actions = initChat(created.projectId, created.path, {
-        instanceKey: NEW_AGENT_BOOTSTRAP_INSTANCE_KEY,
-      });
-      await waitForChatReady(actions);
-      const sent = actions.sendChat({
-        input: request,
-        reply_thread_id: created.threadId,
-        acpConfigOverride: config,
-      });
-      if (sent) {
-        await actions.syncdb?.save();
-        await actions.save_to_disk();
-      } else {
-        await writeChatComposerDraft({
-          account_id: boundAccount.accountId,
-          project_id: created.projectId,
-          path: created.path,
-          composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
-          text: request,
-        });
-        antdMessage.warning(
-          "The agent was created, but the first request could not start. It is preserved as a draft.",
-        );
-      }
-      rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
-      refreshNamedAgents();
-      onCreated(identity.agent_id);
-    } catch (err) {
-      setError(
-        isNamedAgentLimitError(err)
-          ? "Your membership's named-agent limit was reached."
-          : `${err}`,
+      antdMessage.warning(
+        "The agent was created, but the first request could not start. It is preserved as a draft.",
       );
-      if (isNamedAgentLimitError(err)) refreshNamedAgents();
+    }
+    rememberAgentName(normalizeAgentName(name), boundAccount.accountId);
+    refreshNamedAgents();
+    onCreated(identity.agent_id);
+  }
+
+  function handleCreateError(err: unknown): void {
+    if (err instanceof MissingAgentWorkingDirectoryError && projectId) {
+      setMissingDirectory({ path: err.path, projectId });
+      setError("");
+      return;
+    }
+    setError(
+      isNamedAgentLimitError(err)
+        ? "Your membership's named-agent limit was reached."
+        : `${err}`,
+    );
+  }
+
+  async function createMissingDirectoryAndContinue(): Promise<void> {
+    if (!missingDirectory || busy) return;
+    const request = firstRequestRef.current().trim();
+    if (!request) return;
+    setBusy(true);
+    setError("");
+    try {
+      await ensureProjectReduxRuntime();
+      const fs = redux.getProjectActions(missingDirectory.projectId)?.fs?.();
+      if (!fs) {
+        throw new Error("The selected project filesystem is unavailable");
+      }
+      await createAgentWorkingDirectory(fs, missingDirectory.path);
+      setMissingDirectory(undefined);
+      await submitNewAgentRequest(request);
+    } catch (err) {
+      handleCreateError(err);
     } finally {
       setBusy(false);
     }
@@ -698,6 +729,8 @@ function NewAgentPanel({
           value={projectId}
           disabled={busy || !!pending}
           onChange={(nextProjectId) => {
+            setMissingDirectory(undefined);
+            setError("");
             setProjectId(nextProjectId);
             const home = getProjectHomeDirectory(nextProjectId);
             setDirectory(home);
@@ -716,6 +749,8 @@ function NewAgentPanel({
             value={effectiveDirectory}
             disabled={busy || !!pending}
             onChange={(event) => {
+              setMissingDirectory(undefined);
+              setError("");
               setDirectory(event.target.value);
               setDirectoryProjectId(projectId);
             }}
@@ -995,6 +1030,29 @@ function NewAgentPanel({
           />
         )}
         {error && <Alert role="alert" type="error" title={error} />}
+        {missingDirectory && (
+          <Alert
+            role="alert"
+            type="error"
+            showIcon
+            title={`Working directory ${JSON.stringify(missingDirectory.path)} does not exist in the selected project.`}
+            description={
+              <span>
+                Choose an existing directory or{" "}
+                <Button
+                  type="link"
+                  size="small"
+                  loading={busy}
+                  style={{ height: "auto", padding: 0 }}
+                  onClick={() => void createMissingDirectoryAndContinue()}
+                >
+                  create this directory
+                </Button>
+                .
+              </span>
+            }
+          />
+        )}
       </Space>
       <Modal
         open={directorySelectorOpen}
@@ -1010,6 +1068,8 @@ function NewAgentPanel({
             allowAbsolutePaths
             closable={false}
             onSelect={(path) => {
+              setMissingDirectory(undefined);
+              setError("");
               setDirectory(path);
               setDirectoryProjectId(projectId);
               setDirectorySelectorOpen(false);
