@@ -372,6 +372,10 @@ const ACP_INSTANCE_ID =
   `${process.env.COCALC_ACP_INSTANCE_ID ?? ""}`.trim() || randomUUID();
 
 let blobStore: AKV | null = null;
+type AttachmentBlobReader = (opts: {
+  uuid: string;
+  projectId: string;
+}) => Promise<Buffer | undefined>;
 type GeneratedImageBlobWriter = (opts: {
   uuid: string;
   blob: Buffer;
@@ -380,6 +384,13 @@ type GeneratedImageBlobWriter = (opts: {
 }) => Promise<void>;
 
 let generatedImageBlobWriter: GeneratedImageBlobWriter | undefined;
+let attachmentBlobReader: AttachmentBlobReader | undefined;
+
+export function setAttachmentBlobReader(
+  reader: AttachmentBlobReader | undefined,
+): void {
+  attachmentBlobReader = reader;
+}
 
 export function setGeneratedImageBlobWriter(
   writer: GeneratedImageBlobWriter | undefined,
@@ -7686,6 +7697,7 @@ async function executeAcpRequest({
   );
   const { prompt, local_images, cleanup } = await materializeBlobs(
     request.prompt ?? "",
+    projectId,
   );
   if (!conatClient) {
     throw Error("conat client must be initialized");
@@ -11742,12 +11754,15 @@ export async function init(
   }
 }
 
-async function materializeBlobs(prompt: string): Promise<{
+async function materializeBlobs(
+  prompt: string,
+  projectId: string,
+): Promise<{
   prompt: string;
   local_images: string[];
   cleanup: () => Promise<void>;
 }> {
-  if (!blobStore) {
+  if (!blobStore && !attachmentBlobReader) {
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const refs = extractBlobReferences(prompt);
@@ -11767,7 +11782,22 @@ async function materializeBlobs(prompt: string): Promise<{
   try {
     for (const ref of unique) {
       try {
-        const data = await blobStore!.get(ref.uuid);
+        let data: Buffer | Uint8Array | string | undefined;
+        if (attachmentBlobReader) {
+          try {
+            data = await attachmentBlobReader({
+              projectId,
+              uuid: ref.uuid,
+            });
+          } catch (err) {
+            logger.warn("failed to read project chat blob", {
+              project_id: projectId,
+              ref,
+              err,
+            });
+          }
+        }
+        data ??= await blobStore?.get(ref.uuid);
         if (data == null) continue;
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
         const safeName = buildSafeBlobFilename(ref);

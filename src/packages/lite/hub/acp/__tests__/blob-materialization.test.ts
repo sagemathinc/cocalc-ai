@@ -1,4 +1,24 @@
-import { rewriteBlobReferencesInPrompt } from "../blob-materialization";
+import {
+  extractBlobReferences,
+  rewriteBlobReferencesInPrompt,
+} from "../blob-materialization";
+
+describe("extractBlobReferences", () => {
+  it("extracts the HTML image markup emitted by the rich chat composer", () => {
+    const prompt = [
+      "Can you see this UI:",
+      '<img alt="" title="" src="/blobs/paste-mprbim5suah.png?uuid=13f56890-208b-4590-81c4-2605ace1b29d" style="width: 855.79px; max-width: 100%;">',
+    ].join("\n\n");
+
+    expect(extractBlobReferences(prompt)).toEqual([
+      {
+        url: "/blobs/paste-mprbim5suah.png?uuid=13f56890-208b-4590-81c4-2605ace1b29d",
+        uuid: "13f56890-208b-4590-81c4-2605ace1b29d",
+        filename: "paste-mprbim5suah.png",
+      },
+    ]);
+  });
+});
 
 describe("rewriteBlobReferencesInPrompt", () => {
   it("replaces markdown and html blob refs with attachment placeholders", () => {

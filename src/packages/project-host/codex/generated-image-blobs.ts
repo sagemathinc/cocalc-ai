@@ -1,10 +1,37 @@
 import getLogger from "@cocalc/backend/logger";
 import callHub from "@cocalc/conat/hub/call-hub";
-import { setGeneratedImageBlobWriter } from "@cocalc/lite/hub/acp";
+import {
+  setAttachmentBlobReader,
+  setGeneratedImageBlobWriter,
+} from "@cocalc/lite/hub/acp";
 import { getMasterConatClient } from "../master-conat-client";
 import { getLocalHostId } from "../sqlite/hosts";
 
 const logger = getLogger("project-host:codex:generated-image-blobs");
+
+export function initCodexAttachmentBlobReader(): void {
+  setAttachmentBlobReader(
+    async ({ uuid, projectId }): Promise<Buffer | undefined> => {
+      const client = getMasterConatClient();
+      const host_id = getLocalHostId();
+      if (!client || !host_id) {
+        throw Error(
+          "master conat client and host id are required to read chat attachment blobs",
+        );
+      }
+      const result = await callHub({
+        client,
+        host_id,
+        name: "db.getBlob",
+        args: [{ project_id: projectId, uuid }],
+        timeout: 60_000,
+      });
+      return result.blob == null
+        ? undefined
+        : Buffer.from(result.blob, "base64");
+    },
+  );
+}
 
 export function initCodexGeneratedImageBlobWriter(): void {
   setGeneratedImageBlobWriter(
