@@ -1225,6 +1225,7 @@ function AgentProjectContext({
       <ChatEmbeddingOptionsProvider
         value={{
           hideCompactThreadHeader: true,
+          hideComposerIdentity: true,
           openFilesInWorkbench: true,
           sidebarHiddenByDefault: true,
           sidebarPreferenceKey: `cocalc:agents:chat-sidebar-hidden:${agent.account_id}:${agent.endpoint.agent_id}`,

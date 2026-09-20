@@ -49,6 +49,7 @@ import {
 import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
 import { CodexConfigButton } from "./codex";
+import { useChatEmbeddingOptions } from "./embedding-options";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -144,6 +145,7 @@ export function ChatRoomComposer({
   onOpenCodexPaymentConfig,
   mobile = false,
 }: ChatRoomComposerProps) {
+  const embeddingOptions = useChatEmbeddingOptions();
   const visualViewport = useChatVisualViewport(mobile);
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -658,81 +660,83 @@ export function ChatRoomComposer({
               </div>
             </Tooltip>
           )}
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              marginBottom: 6,
-              minWidth: 0,
-              flexWrap: "wrap",
-            }}
-          >
-            {showGoal && selectedThread && (
-              <NameAgent
-                key={agentMentions.accountId}
-                agent={agentMentions.namedAgent}
-                projectId={project_id}
-                path={path}
-                threadId={selectedThread.key}
-                threadTitle={threadLabel}
-                initiallyOpen={nameAfterPreparation}
-              />
-            )}
-            {!selectedThread && isNewThreadCodex && onPrepareAgentThread && (
-              <Button
-                size="small"
-                onClick={() => {
-                  setNameAfterPreparation(true);
-                  void prepareAgentThread({});
-                }}
-              >
-                Name agent
-              </Button>
-            )}
-            {threadLabel && (
-              <button
-                type="button"
-                aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
-                aria-haspopup="dialog"
-                disabled={!onEditThreadAppearance}
-                onClick={onEditThreadAppearance}
-                style={{
-                  background: "none",
-                  border: 0,
-                  cursor: onEditThreadAppearance ? "pointer" : "default",
-                  fontFamily: "inherit",
-                  display: "flex",
-                  alignItems: "center",
-                  marginLeft: "auto",
-                  minWidth: 0,
-                  maxWidth: "100%",
-                  gap: "8px",
-                  color: UI_COLORS.secondary,
-                  fontSize: "12px",
-                  padding: "1px 4px",
-                }}
-              >
-                <ThreadBadge
-                  icon={threadIcon}
-                  color={threadColor}
-                  accentColor={threadAccentColor}
-                  image={threadImage}
-                  size={18}
+          {!embeddingOptions.hideComposerIdentity && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                marginBottom: 6,
+                minWidth: 0,
+                flexWrap: "wrap",
+              }}
+            >
+              {showGoal && selectedThread && (
+                <NameAgent
+                  key={agentMentions.accountId}
+                  agent={agentMentions.namedAgent}
+                  projectId={project_id}
+                  path={path}
+                  threadId={selectedThread.key}
+                  threadTitle={threadLabel}
+                  initiallyOpen={nameAfterPreparation}
                 />
-                <span
-                  style={{
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+              )}
+              {!selectedThread && isNewThreadCodex && onPrepareAgentThread && (
+                <Button
+                  size="small"
+                  onClick={() => {
+                    setNameAfterPreparation(true);
+                    void prepareAgentThread({});
                   }}
-                  title={stripHtml(threadLabel)}
                 >
-                  {stripHtml(threadLabel)}
-                </span>
-              </button>
-            )}
-          </div>
+                  Name agent
+                </Button>
+              )}
+              {threadLabel && (
+                <button
+                  type="button"
+                  aria-label={`Edit Thread Appearance: ${stripHtml(threadLabel)}`}
+                  aria-haspopup="dialog"
+                  disabled={!onEditThreadAppearance}
+                  onClick={onEditThreadAppearance}
+                  style={{
+                    background: "none",
+                    border: 0,
+                    cursor: onEditThreadAppearance ? "pointer" : "default",
+                    fontFamily: "inherit",
+                    display: "flex",
+                    alignItems: "center",
+                    marginLeft: "auto",
+                    minWidth: 0,
+                    maxWidth: "100%",
+                    gap: "8px",
+                    color: UI_COLORS.secondary,
+                    fontSize: "12px",
+                    padding: "1px 4px",
+                  }}
+                >
+                  <ThreadBadge
+                    icon={threadIcon}
+                    color={threadColor}
+                    accentColor={threadAccentColor}
+                    image={threadImage}
+                    size={18}
+                  />
+                  <span
+                    style={{
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                    title={stripHtml(threadLabel)}
+                  >
+                    {stripHtml(threadLabel)}
+                  </span>
+                </button>
+              )}
+            </div>
+          )}
           {showCodexPaymentSourceBanner && (
             <Alert
               action={

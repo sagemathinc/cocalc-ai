@@ -8,6 +8,10 @@ import {
   approvedDraftIsCurrent,
   ChatRoomComposer,
 } from "../composer";
+import {
+  ChatEmbeddingOptionsProvider,
+  type ChatEmbeddingOptions,
+} from "../embedding-options";
 
 let lastChatInputProps: any;
 
@@ -69,6 +73,7 @@ jest.mock("../utils", () => ({
 
 function renderComposer(
   overrides: Partial<React.ComponentProps<typeof ChatRoomComposer>> = {},
+  embeddingOptions: ChatEmbeddingOptions = {},
 ) {
   const props: React.ComponentProps<typeof ChatRoomComposer> = {
     actions: {
@@ -91,7 +96,11 @@ function renderComposer(
     onComposerFocusChange: jest.fn(),
     ...overrides,
   };
-  return render(<ChatRoomComposer {...props} />);
+  return render(
+    <ChatEmbeddingOptionsProvider value={embeddingOptions}>
+      <ChatRoomComposer {...props} />
+    </ChatEmbeddingOptionsProvider>,
+  );
 }
 
 describe("ChatRoomComposer resize handle", () => {
@@ -239,6 +248,36 @@ describe("ChatRoomComposer resize handle", () => {
       }
     },
   );
+
+  it("hides the identity row when requested by an embedded surface", () => {
+    renderComposer(
+      {
+        selectedThread: {
+          key: "thread-embedded",
+          label: "Agent thread title",
+          newestTime: 0,
+          messageCount: 1,
+          hasCustomName: true,
+          hasCustomAppearance: false,
+          readCount: 1,
+          unreadCount: 0,
+          isAI: true,
+          isAutomation: false,
+          isPinned: false,
+          isArchived: false,
+        },
+        onEditThreadAppearance: jest.fn(),
+      },
+      { hideComposerIdentity: true },
+    );
+
+    expect(
+      screen.queryByRole("button", {
+        name: "Edit Thread Appearance: Agent thread title",
+      }),
+    ).toBeNull();
+    expect(screen.getByTestId("chat-input-focus-probe")).toBeInTheDocument();
+  });
 
   it("does not show the resize handle when the composer is empty but focused", () => {
     const { container } = renderComposer();
