@@ -306,6 +306,12 @@ import {
 import { buildCodexRuntimeEnv } from "./runtime-env";
 import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
+import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
+
+export {
+  pinCodexCredentialAtAdmission,
+  setCodexCredentialAdmissionResolver,
+} from "./codex-credential-admission";
 
 export {
   acpAdmissionLimitsFromEffectiveLimits,
@@ -8168,6 +8174,7 @@ async function enqueueAutomationRun(
   const assistant_message_id = randomUUID();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  const userMessageContent = automationMessageLabel(row, opts.manual);
   let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
   let automationConfig = buildAutomationAcpConfig({ chatPath: row.path });
 
@@ -8194,7 +8201,7 @@ async function enqueueAutomationRun(
           sender_id: automationSenderId,
           date: userDate,
           prevHistory: [],
-          content: automationMessageLabel(row, opts.manual),
+          content: userMessageContent,
           generating: false,
           message_id: user_message_id,
           thread_id: row.thread_id,
@@ -8217,8 +8224,9 @@ async function enqueueAutomationRun(
     automation_id: row.automation_id,
     automation_title: row.title ?? undefined,
     automation_revision: automationSettingsRevision(row),
+    user_message_content: userMessageContent,
   };
-  const request: AcpJobRequest =
+  let request: AcpJobRequest =
     row.run_kind === "command"
       ? {
           request_kind: "command",
@@ -8240,6 +8248,8 @@ async function enqueueAutomationRun(
           config: automationConfig,
           chat,
         };
+
+  request = await pinCodexCredentialAtAdmission(request);
 
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(request, admissionLimits),
@@ -9023,6 +9033,17 @@ export function automationRecordFromThreadProjection({
   };
 }
 
+export function recoveredAutomationRequiresActiveAdmission(
+  row: AcpAutomationRow,
+): boolean {
+  return (
+    row.enabled &&
+    (row.status === "active" ||
+      row.status === "running" ||
+      row.status === "error")
+  );
+}
+
 async function recoverAcpAutomationFromThreadProjection({
   project_id,
   path,
@@ -9072,6 +9093,26 @@ async function recoverAcpAutomationFromThreadProjection({
   });
   const row = normalizeAcpAutomationRecord(record);
   if (!row) return;
+  if (recoveredAutomationRequiresActiveAdmission(row)) {
+    throwIfAcpAdmissionDenied(
+      admitActiveAcpAutomationForProject(
+        {
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+          automation_id: row.automation_id,
+        },
+        await resolveAcpAdmissionLimits({
+          account_id: row.account_id,
+          project_id: row.project_id,
+          path: row.path,
+          thread_id: row.thread_id,
+        }),
+      ),
+      "automation",
+    );
+  }
   const restored = upsertAcpAutomation(row);
   await publishAutomationRecordToProjectIndex(restored);
   logger.warn("recovered ACP automation from thread projection", {
@@ -10798,11 +10839,12 @@ async function enqueueChatAcpTurn({
   request: AcpRequest;
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<void> {
-  if (!request.chat) {
-    throw new Error("chat metadata is required to enqueue an ACP turn");
-  }
   if (!conatClient) {
     throw new Error("conat client must be initialized");
+  }
+  request = await pinCodexCredentialAtAdmission(request);
+  if (!request.chat) {
+    throw new Error("chat metadata is required to enqueue an ACP turn");
   }
   throwIfAcpAdmissionDenied(
     admitAcpJobCreation(

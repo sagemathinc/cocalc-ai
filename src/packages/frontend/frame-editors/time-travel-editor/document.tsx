@@ -9,7 +9,7 @@ Render a static version of a document for use in TimeTravel.
 
 import * as CodeMirror from "codemirror";
 import $ from "jquery";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import type { AccountState } from "@cocalc/frontend/account/types";
 import "../generic/codemirror-plugins";
 import { cm_options } from "../codemirror/cm-options";
@@ -37,6 +37,7 @@ type TextDocumentProps = {
   value: string | (() => string);
   syntaxHighlightExtension?: string;
   sourcePosition?: { line: number; column?: number; request?: number };
+  scrollPosition?: { current: number };
 };
 
 function readValue(value: string | (() => string)): string {
@@ -44,8 +45,14 @@ function readValue(value: string | (() => string)): string {
 }
 
 export function TextDocument(props: TextDocumentProps) {
-  const { path, font_size, editor_settings, value, syntaxHighlightExtension } =
-    props;
+  const {
+    path,
+    font_size,
+    editor_settings,
+    value,
+    syntaxHighlightExtension,
+    scrollPosition,
+  } = props;
   const modePath = useMemo(
     () =>
       syntaxHighlightExtension != null
@@ -62,7 +69,7 @@ export function TextDocument(props: TextDocumentProps) {
     cm.refresh();
   };
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (textarea == null) return;
 
@@ -72,25 +79,87 @@ export function TextDocument(props: TextDocumentProps) {
     cmRef.current = cm;
     init_style_hacks(cm);
     $(cm.getWrapperElement()).css({ height: "100%" });
+    const restoreTop = scrollPosition?.current ?? 0;
     cm.setValue(readValue(value));
-    requestAnimationFrame(refresh);
+    let restoring = true;
+    let acceptingUserScroll = false;
+    let scrollIdleTimer: ReturnType<typeof setTimeout> | undefined;
+    const endUserScrollSoon = () => {
+      clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = setTimeout(() => {
+        acceptingUserScroll = false;
+      }, 150);
+    };
+    const saveScrollPosition = () => {
+      if (!restoring && acceptingUserScroll && scrollPosition != null) {
+        scrollPosition.current = cm.getScrollInfo().top;
+      }
+      if (acceptingUserScroll) {
+        endUserScrollSoon();
+      }
+    };
+    const beginUserScroll = () => {
+      restoring = false;
+      acceptingUserScroll = true;
+      endUserScrollSoon();
+    };
+    const scroller = cm.getScrollerElement();
+    scroller.addEventListener("scroll", saveScrollPosition, { passive: true });
+    scroller.addEventListener("wheel", beginUserScroll, { passive: true });
+    scroller.addEventListener("touchstart", beginUserScroll, { passive: true });
+    scroller.addEventListener("pointerdown", beginUserScroll);
+    scroller.addEventListener("keydown", beginUserScroll);
+    let restoreFrame: number | undefined;
+    let restoreAttempts = 0;
+    // CodeMirror measures its new document asynchronously and may reset the
+    // viewport during the first few frames.
+    const restoreScroll = () => {
+      if (!restoring) return;
+      refresh();
+      if (Math.abs(cm.getScrollInfo().top - restoreTop) > 1) {
+        cm.scrollTo(null, restoreTop);
+      }
+      restoreAttempts += 1;
+      if (restoreAttempts < 12) {
+        restoreFrame = requestAnimationFrame(restoreScroll);
+      } else {
+        restoring = false;
+      }
+    };
+    restoreFrame = requestAnimationFrame(restoreScroll);
 
     return () => {
+      if (restoreFrame != null) {
+        cancelAnimationFrame(restoreFrame);
+      }
+      clearTimeout(scrollIdleTimer);
+      scroller.removeEventListener("scroll", saveScrollPosition);
+      scroller.removeEventListener("wheel", beginUserScroll);
+      scroller.removeEventListener("touchstart", beginUserScroll);
+      scroller.removeEventListener("pointerdown", beginUserScroll);
+      scroller.removeEventListener("keydown", beginUserScroll);
       $(cm.getWrapperElement()).remove();
       cmRef.current = null;
     };
-  }, [modePath, editor_settings]);
+  }, [modePath, editor_settings, scrollPosition]);
 
   useEffect(() => {
     const cm = cmRef.current;
     if (cm == null) return;
     const next = readValue(value);
+    const top = scrollPosition?.current;
     if (cm.getValue() !== next) {
       // Apply live updates without resetting the viewport or selection.
       cm.setValueNoJump(next);
     }
-    requestAnimationFrame(refresh);
-  }, [value]);
+    const frame = requestAnimationFrame(() => {
+      refresh();
+      if (top != null) {
+        cm.scrollTo(null, top);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [value, scrollPosition]);
 
   useEffect(() => {
     const position = props.sourcePosition;

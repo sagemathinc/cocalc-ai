@@ -33,6 +33,8 @@ export function Viewer({
   font_size,
   editor_settings,
   actions,
+  textScrollPosition,
+  notebookScrollPosition,
 }: {
   ext: string;
   doc: () => Document | undefined;
@@ -43,6 +45,8 @@ export function Viewer({
   font_size: number;
   editor_settings;
   actions;
+  textScrollPosition?: { current: number };
+  notebookScrollPosition?: { current: number };
 }) {
   const renderText = () => {
     return (
@@ -57,6 +61,7 @@ export function Viewer({
         font_size={font_size}
         editor_settings={editor_settings}
         actions={actions}
+        scrollPosition={textScrollPosition}
       />
     );
   };
@@ -83,7 +88,12 @@ export function Viewer({
     case "tasks":
       return <TasksHistoryViewer {...opts} />;
     case "ipynb":
-      return <JupyterHistoryViewer {...opts} />;
+      return (
+        <JupyterHistoryViewer
+          {...opts}
+          scrollPosition={notebookScrollPosition}
+        />
+      );
     case "md":
       const scale = getScale(font_size);
       return (

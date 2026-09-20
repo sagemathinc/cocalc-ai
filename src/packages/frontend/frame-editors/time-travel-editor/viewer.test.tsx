@@ -20,6 +20,10 @@ const mockTextDocument = jest.fn((props: any) => (
   />
 ));
 
+const mockJupyterHistoryViewer = jest.fn(() => (
+  <div data-testid="jupyter-viewer" />
+));
+
 jest.mock("@cocalc/frontend/editors/slate/editable-markdown", () => ({
   EditableMarkdown: (props: any) => mockEditableMarkdown(props),
 }));
@@ -50,7 +54,7 @@ jest.mock(
 );
 
 jest.mock("@cocalc/frontend/jupyter/history-viewer", () => ({
-  HistoryViewer: () => <div data-testid="jupyter-viewer" />,
+  HistoryViewer: (props: any) => mockJupyterHistoryViewer(props),
   to_ipynb: (doc: any) => mockToIpynb(doc),
 }));
 
@@ -105,6 +109,8 @@ describe("TimeTravel Viewer", () => {
   });
 
   it("renders ipynb source as notebook JSON instead of internal object-doc text", () => {
+    const textScrollPosition = { current: 120 };
+    const notebookScrollPosition = { current: 340 };
     const doc = {
       to_str: () => "internal-jsonl",
       toIpynb: () => ({
@@ -128,6 +134,8 @@ describe("TimeTravel Viewer", () => {
         ext="ipynb"
         path="/home/user/history.ipynb"
         textMode
+        textScrollPosition={textScrollPosition}
+        notebookScrollPosition={notebookScrollPosition}
         doc={() => doc as any}
       />,
     );
@@ -140,6 +148,23 @@ describe("TimeTravel Viewer", () => {
       "internal-jsonl",
     );
     expect(mockToIpynb).toHaveBeenCalledWith(doc);
+    expect(mockTextDocument).toHaveBeenLastCalledWith(
+      expect.objectContaining({ scrollPosition: textScrollPosition }),
+    );
+
+    render(
+      <Viewer
+        {...baseProps}
+        ext="ipynb"
+        path="/home/user/history.ipynb"
+        textScrollPosition={textScrollPosition}
+        notebookScrollPosition={notebookScrollPosition}
+        doc={() => doc as any}
+      />,
+    );
+    expect(mockJupyterHistoryViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({ scrollPosition: notebookScrollPosition }),
+    );
   });
 
   it("renders chat history with the compact thread selector", () => {

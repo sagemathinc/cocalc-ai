@@ -6,6 +6,7 @@ import {
   runThreadAutomationNow,
   resendCanceledAcpTurn,
   resetAcpApiStateForTests,
+  sanitizeSharedCodexConfig,
   sendQueuedAcpTurnImmediately,
 } from "../acp-api";
 
@@ -754,6 +755,21 @@ describe("processAcpLLM", () => {
         acp_state: "not-sent",
       }),
     );
+  });
+});
+
+describe("sanitizeSharedCodexConfig", () => {
+  it("removes collaborator-persisted credential selectors", () => {
+    expect(
+      sanitizeSharedCodexConfig({
+        paymentSource: "subscription",
+        model: "gpt-5.4",
+        credentialId: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).toEqual({
+      paymentSource: "subscription",
+      model: "gpt-5.4",
+    });
   });
 });
 

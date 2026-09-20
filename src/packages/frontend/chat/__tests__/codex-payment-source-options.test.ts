@@ -35,6 +35,28 @@ describe("Codex payment source choices", () => {
     );
   });
 
+  it("offers replacement subscriptions when the selected credential was deleted", () => {
+    const options = getCodexPaymentSourceOptions({
+      ...available,
+      source: "none",
+      preference: "subscription",
+      hasSubscription: false,
+      credentialId: undefined,
+      subscriptions: [
+        {
+          id: "replacement-credential",
+          email: "replacement@example.com",
+          updatedAt: new Date().toISOString(),
+        },
+      ],
+    });
+    expect(options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ value: "subscription" }),
+      ]),
+    );
+  });
+
   it("disables membership usage when the site-funded policy is unavailable", () => {
     const options = getCodexPaymentSourceOptions({
       ...available,

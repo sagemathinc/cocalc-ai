@@ -28,6 +28,7 @@ import {
   diffHostIntrusionSnapshotAgainstFleet,
   diffHostIntrusionSnapshots,
   ensureHostIntrusionMonitorSchema,
+  getHostIntrusionObservationSummary,
   hasHostIntrusionSnapshotChanges,
   normalizeHostIntrusionSnapshot,
   reachedCoverageFailureThreshold,
@@ -286,6 +287,8 @@ describe("project-host intrusion monitor normalization", () => {
     await ensureProjectHostsTestTable();
     const hostId = "83ce7448-8b5f-4b28-a531-f728067bf2b4";
     const pool = getPool();
+    const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "actionable";
     mockAdminAlert.mockReset();
     mockGetIntrusionSnapshot.mockReset();
     mockGetIntrusionSnapshot.mockResolvedValue(snapshot());
@@ -324,6 +327,11 @@ describe("project-host intrusion monitor normalization", () => {
       );
       expect(result.rows[0]?.count).toBe("1");
     } finally {
+      if (previousMode == null) {
+        delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      } else {
+        process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+      }
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
         [hostId],
@@ -375,13 +383,13 @@ describe("project-host intrusion monitor normalization", () => {
     }
   });
 
-  it("can collect evidence with transition notifications disabled", async () => {
+  it("defaults to collecting evidence without notifications", async () => {
     await ensureHostIntrusionMonitorSchema();
     await ensureProjectHostsTestTable();
     const hostId = "0630d575-e9ef-41bc-a91e-c9f407f77821";
     const pool = getPool();
     const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
-    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "off";
+    delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
     mockAdminAlert.mockReset();
     mockGetIntrusionSnapshot.mockReset();
     mockGetIntrusionSnapshot.mockResolvedValue(snapshot());
@@ -418,13 +426,7 @@ describe("project-host intrusion monitor normalization", () => {
       }
       expect(mockAdminAlert).not.toHaveBeenCalled();
       await runHostIntrusionMonitorPass();
-      expect(mockAdminAlert).toHaveBeenCalledTimes(1);
-      expect(mockAdminAlert).toHaveBeenCalledWith(
-        expect.objectContaining({
-          subject: "Project host intrusion monitoring has incomplete coverage",
-          errorOnFail: true,
-        }),
-      );
+      expect(mockAdminAlert).not.toHaveBeenCalled();
     } finally {
       if (previousMode == null) {
         delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
@@ -438,6 +440,73 @@ describe("project-host intrusion monitor normalization", () => {
       await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
       mockAdminAlert.mockReset();
       mockGetIntrusionSnapshot.mockReset();
+    }
+  });
+
+  it("summarizes only local-bay observations without exposing evidence values", async () => {
+    await ensureHostIntrusionMonitorSchema();
+    await ensureProjectHostsTestTable();
+    const hostId = "6cb50c44-5bf5-42a2-8484-7283f09ed5db";
+    const snapshotId = "92c9f21b-6724-4b69-b176-7a81250f44e0";
+    const unchangedSnapshotId = "4cc033b0-ef9d-4a64-a9a1-d61d53ebdc35";
+    const wrongBaySnapshotId = "ac4af625-7c74-4bef-bc37-e7f21304ac88";
+    const pool = getPool();
+    await pool.query(
+      `INSERT INTO project_hosts
+         (id, name, bay_id, status, last_seen, created, updated)
+       VALUES ($1, 'summary-host', 'intrusion-monitor-test', 'running',
+               NOW(), NOW(), NOW())`,
+      [hostId],
+    );
+    const delta = {
+      added: { "network.listeners": ["secret-listener-value"] },
+      removed: {},
+    };
+    await pool.query(
+      `INSERT INTO project_host_intrusion_snapshots
+         (id, host_id, bay_id, captured_at, duration_ms, coverage,
+          normalization_version, normalized, delta)
+       VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+               2, '{}'::jsonb, $3::jsonb)`,
+      [snapshotId, hostId, JSON.stringify(delta)],
+    );
+    await pool.query(
+      `INSERT INTO project_host_intrusion_snapshots
+         (id, host_id, bay_id, captured_at, duration_ms, coverage,
+          normalization_version, normalized, delta, created_at)
+       VALUES ($1, $2, 'intrusion-monitor-test', NOW(), 1, 'complete',
+               2, '{}'::jsonb, '{"added":{},"removed":{}}'::jsonb,
+               NOW() + INTERVAL '1 second')`,
+      [unchangedSnapshotId, hostId],
+    );
+    await pool.query(
+      `INSERT INTO project_host_intrusion_snapshots
+         (id, host_id, bay_id, captured_at, duration_ms, coverage,
+          normalization_version, normalized, created_at)
+       VALUES ($1, $2, 'another-bay', NOW(), 1, 'unavailable',
+               2, '{}'::jsonb, NOW() + INTERVAL '2 seconds')`,
+      [wrongBaySnapshotId, hostId],
+    );
+    try {
+      const summary = await getHostIntrusionObservationSummary();
+      expect(summary).toMatchObject({
+        active_hosts: 1,
+        observed_hosts: 1,
+        missing_hosts: 0,
+        stale_hosts: 0,
+        incomplete_hosts: 0,
+        recently_changed_hosts: 1,
+      });
+      expect(summary.details).toEqual([
+        `${"summary-host"} (${hostId}): recent changes: network.listeners (+1/-0)`,
+      ]);
+      expect(JSON.stringify(summary)).not.toContain("secret-listener-value");
+    } finally {
+      await pool.query(
+        "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
+        [hostId],
+      );
+      await pool.query("DELETE FROM project_hosts WHERE id=$1", [hostId]);
     }
   });
 
@@ -514,6 +583,8 @@ describe("project-host intrusion monitor normalization", () => {
     const snapshotId = "1f56604f-93cf-40d9-a16f-7648490b9945";
     const hostId = "03cad6ab-4c33-48ad-a46b-824a5a0407b7";
     const pool = getPool();
+    const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "actionable";
     const current = snapshot();
     current.services.enabled.push("unexpected.service enabled");
     mockAdminAlert.mockReset();
@@ -566,6 +637,11 @@ describe("project-host intrusion monitor normalization", () => {
       );
       expect(result.rows[0]?.count).toBe("2");
     } finally {
+      if (previousMode == null) {
+        delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      } else {
+        process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+      }
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
         [hostId],
@@ -582,6 +658,8 @@ describe("project-host intrusion monitor normalization", () => {
     const hostId = "4f04cd67-3d45-4ad6-8574-b8bb594e18af";
     const baselineId = "a547d1cb-08d2-48fa-b919-142937f79f31";
     const pool = getPool();
+    const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "actionable";
     const race = snapRefreshSnapshots({ mounted: false });
     const attested = snapRefreshSnapshots({ mounted: true });
     mockAdminAlert.mockReset();
@@ -677,6 +755,11 @@ describe("project-host intrusion monitor normalization", () => {
         },
       });
     } finally {
+      if (previousMode == null) {
+        delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      } else {
+        process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+      }
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
         [hostId],
@@ -693,6 +776,8 @@ describe("project-host intrusion monitor normalization", () => {
     const hostId = "d3bcc208-46ca-4915-a435-c064f20ddc9d";
     const baselineId = "1553db1d-9dfe-44dd-aeeb-779f866cb18f";
     const pool = getPool();
+    const previousMode = process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+    process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = "actionable";
     const { before, after } = snapRefreshSnapshots({ mounted: false });
     mockAdminAlert.mockReset();
     mockAdminAlert.mockResolvedValue(undefined);
@@ -780,6 +865,11 @@ describe("project-host intrusion monitor normalization", () => {
         baseline_eligible: true,
       });
     } finally {
+      if (previousMode == null) {
+        delete process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE;
+      } else {
+        process.env.COCALC_HOST_INTRUSION_MONITOR_ALERT_MODE = previousMode;
+      }
       await pool.query(
         "DELETE FROM project_host_intrusion_snapshots WHERE host_id=$1",
         [hostId],

@@ -30,8 +30,6 @@ import {
 } from "@cocalc/frontend/account/codex-credentials-panel";
 import CodexSessionsPanel from "@cocalc/frontend/account/codex-sessions-panel";
 import {
-  CODEX_USAGE_LABEL,
-  CODEX_USAGE_URL,
   clearCachedCodexModelCatalog,
   getChatGptAccountInfo,
   getLiveCodexUsageStatus,
@@ -85,6 +83,11 @@ import {
   getCodexPaymentSourceOptions,
   getCodexPaymentSourceTooltip,
 } from "./use-codex-payment-source";
+import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
+import {
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "./codex-subscription-selection";
 
 const { Text } = Typography;
 const DEFAULT_MODEL_NAME = DEFAULT_CODEX_MODEL_NAME;
@@ -133,6 +136,7 @@ export interface CodexConfigButtonProps {
   paymentSource?: CodexPaymentSourceInfo;
   paymentSourceLoading?: boolean;
   refreshPaymentSource?: () => void;
+  turnRunning?: boolean;
 }
 
 export interface CodexPaymentCredentialsModalProps {
@@ -459,14 +463,6 @@ export function CodexPaymentCredentialsModal({
             defaultProjectId={projectId}
             onPaymentSourceChanged={refreshPaymentSource}
           />
-          <Text type="secondary">
-            CoCalc can show which source Codex will use. To check remaining
-            ChatGPT Codex usage,{" "}
-            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              {CODEX_USAGE_LABEL}
-            </a>
-            .
-          </Text>
           <Divider style={{ margin: "8px 0" }} />
           <LiteAISettings onSaved={refreshPaymentSource} showTitle />
         </Space>
@@ -481,11 +477,7 @@ export function CodexPaymentCredentialsModal({
           <Text type="secondary">
             Choose the payment source for each chat in Codex settings.
             Credentials connected here remain available without overriding an
-            explicit choice. To check remaining ChatGPT Codex usage,{" "}
-            <a href={CODEX_USAGE_URL} target="_blank" rel="noreferrer">
-              {CODEX_USAGE_LABEL}
-            </a>
-            .
+            explicit choice.
           </Text>
         </Space>
       )}
@@ -503,6 +495,7 @@ export function CodexConfigButton({
   paymentSource,
   paymentSourceLoading = false,
   refreshPaymentSource,
+  turnRunning = false,
 }: CodexConfigButtonProps): React.ReactElement {
   const defaultSessionMode = getDefaultCodexSessionMode();
   const accountId = useTypedRedux("account", "account_id");
@@ -517,6 +510,18 @@ export function CodexConfigButton({
   const [paymentOpen, setPaymentOpen] = useState(false);
   const [sessionsOpen, setSessionsOpen] = useState(false);
   const [form] = Form.useForm();
+  const [selectedCredentialId, setSelectedCredentialId] = useState<
+    string | undefined
+  >();
+  const [credentialSelectionLoaded, setCredentialSelectionLoaded] =
+    useState(false);
+  useEffect(() => {
+    setCredentialSelectionLoaded(false);
+    setSelectedCredentialId(
+      readCodexSubscriptionSelection({ accountId, projectId, threadKey }),
+    );
+    setCredentialSelectionLoaded(true);
+  }, [accountId, projectId, threadKey]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [value, setValue] = useState<Partial<CodexThreadConfig> | null>(null);
   const [controlsCollapsed, setControlsCollapsed] = useState(
@@ -541,6 +546,12 @@ export function CodexConfigButton({
   const lastCodexUsageScopeRef = React.useRef<string | undefined>(undefined);
   const lastCodexModelRefreshRef = React.useRef(0);
   const modelSelectionTouchedRef = React.useRef(false);
+  const runningConfigSnapshotRef = React.useRef<{
+    threadKey: string;
+    key: string;
+  }>(undefined);
+  const [configChangedForNextTurn, setConfigChangedForNextTurn] =
+    useState(false);
 
   useEffect(
     () =>
@@ -669,6 +680,34 @@ export function CodexConfigButton({
     paymentSource.siteFundedCodex?.enabled
       ? paymentSource.siteFundedCodex.policy
       : undefined;
+  const effectiveConfigKey = `${codexThreadConfigKey(
+    threadConfig ?? value,
+  )}\0${selectedCredentialId ?? ""}`;
+
+  useEffect(() => {
+    if (!turnRunning) {
+      runningConfigSnapshotRef.current = undefined;
+      setConfigChangedForNextTurn(false);
+      return;
+    }
+    if (value == null || !credentialSelectionLoaded) return;
+    const snapshot = runningConfigSnapshotRef.current;
+    if (!snapshot || snapshot.threadKey !== threadKey) {
+      runningConfigSnapshotRef.current = {
+        threadKey,
+        key: effectiveConfigKey,
+      };
+      setConfigChangedForNextTurn(false);
+      return;
+    }
+    setConfigChangedForNextTurn(snapshot.key !== effectiveConfigKey);
+  }, [
+    credentialSelectionLoaded,
+    effectiveConfigKey,
+    threadKey,
+    turnRunning,
+    value,
+  ]);
   const siteFundedAccountStatus =
     paymentSource?.siteFundedCodex?.status?.account;
   const allModeOptions = useMemo(() => getModeOptions(), []);
@@ -693,9 +732,19 @@ export function CodexConfigButton({
       })) ?? []
     );
   }, [models, selectedModelValue]);
+  const selectedSubscription = paymentSource?.subscriptions?.find(
+    ({ id }) => id === (selectedCredentialId ?? paymentSource.credentialId),
+  );
   const sourceShortLabel = paymentSourceLoading
     ? "Checking…"
-    : getCodexPaymentSourceShortLabel(paymentSource?.source);
+    : paymentSource?.source === "subscription" && selectedSubscription
+      ? getCodexSubscriptionDisplayName(
+          selectedSubscription,
+          paymentSource.subscriptions ?? [],
+        )
+      : selectedPaymentSource === "subscription" && selectedCredentialId
+        ? "ChatGPT selection unavailable"
+        : getCodexPaymentSourceShortLabel(paymentSource?.source);
   const sourceTooltip = getCodexPaymentSourceTooltip(paymentSource);
   const membershipNeedsNewThread =
     hasEstablishedSession &&
@@ -835,6 +884,7 @@ export function CodexConfigButton({
       projectId,
       includeModels,
       refreshModels: forceModels,
+      credentialId: paymentSource.credentialId,
     })
       .then((status: CodexUsageStatusInfo) => {
         if (cancelled) return;
@@ -1116,20 +1166,72 @@ export function CodexConfigButton({
     ({ value }) => value !== "auto",
   );
   const showPaymentSourceSelector =
-    !lite && configuredPaymentSources.length > 1;
+    !lite &&
+    (configuredPaymentSources.length > 1 ||
+      (paymentSource?.subscriptions?.length ?? 0) > 1);
   const paymentSourceMenu: MenuProps = {
-    selectedKeys: [selectedPaymentSource],
-    items: paymentSourceOptions.map((option) => ({
-      key: option.value,
-      label: option.label,
-      disabled:
-        option.value === "site-api-key" && membershipNeedsNewThread
-          ? false
-          : option.disabled,
-      title: option.description,
-    })),
+    selectedKeys: [
+      selectedPaymentSource === "subscription" && selectedSubscription
+        ? `subscription:${selectedSubscription.id}`
+        : selectedPaymentSource,
+    ],
+    items: [
+      ...paymentSourceOptions.flatMap((option) =>
+        option.value === "subscription"
+          ? paymentSource?.subscriptions?.length
+            ? paymentSource.subscriptions.map((credential) => ({
+                key: `subscription:${credential.id}`,
+                label: getCodexSubscriptionDisplayName(
+                  credential,
+                  paymentSource.subscriptions ?? [],
+                ),
+                title: credential.plan
+                  ? `ChatGPT ${credential.plan} subscription`
+                  : "ChatGPT subscription",
+              }))
+            : [
+                {
+                  key: option.value,
+                  label: option.label,
+                  title: option.description,
+                },
+              ]
+          : [
+              {
+                key: option.value,
+                label: option.label,
+                disabled:
+                  option.value === "site-api-key" && membershipNeedsNewThread
+                    ? false
+                    : option.disabled,
+                title: option.description,
+              },
+            ],
+      ),
+      { type: "divider" },
+      { key: "manage-subscriptions", label: "Manage subscriptions" },
+    ],
     onClick: ({ domEvent, key }) => {
       domEvent.stopPropagation();
+      if (key === "manage-subscriptions") {
+        setPaymentOpen(true);
+        return;
+      }
+      if (key.startsWith("subscription:")) {
+        const credentialId = key.slice("subscription:".length);
+        if (accountId && projectId) {
+          writeCodexSubscriptionSelection({
+            accountId,
+            projectId,
+            threadKey,
+            credentialId,
+          });
+          setSelectedCredentialId(credentialId);
+          applyQuickConfigPatch(paymentSourcePatch("subscription"));
+          refreshPaymentSource?.();
+        }
+        return;
+      }
       const next = key as CodexPaymentSourcePreference;
       if (next === "site-api-key" && membershipNeedsNewThread) {
         setMembershipHelpOpen(true);
@@ -1454,6 +1556,13 @@ export function CodexConfigButton({
             ) : null}
           </>
         )}
+        {configChangedForNextTurn ? (
+          <Tooltip title="These settings changed while a turn is running. They will apply to the next admitted turn, including recovery of a pending message that was not admitted.">
+            <Tag color="orange" role="status" style={{ marginInlineEnd: 0 }}>
+              Next turn
+            </Tag>
+          </Tooltip>
+        ) : null}
       </div>
       <Modal
         open={membershipHelpOpen}
@@ -1483,6 +1592,14 @@ export function CodexConfigButton({
         }}
       >
         <Space orientation="vertical" style={{ width: "100%" }} size={12}>
+          {configChangedForNextTurn ? (
+            <Alert
+              type="info"
+              showIcon
+              title="Changes apply to the next turn"
+              description="The running turn and its internal retries keep the settings with which they were admitted. The current settings will be used for the next admitted turn, including recovery of a pending message that never started."
+            />
+          ) : null}
           <div
             style={{
               ...sectionStyle,

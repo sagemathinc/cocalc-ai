@@ -320,11 +320,16 @@ import {
   setAdminAssignedMembershipLocal,
 } from "@cocalc/server/membership/admin-assigned";
 import {
+  createExternalCredential,
+  ensureDefaultExternalCredential,
   getExternalCredential,
+  getExternalCredentialById,
   hasExternalCredential,
   listExternalCredentials,
   revokeExternalCredential,
   touchExternalCredential,
+  updateExternalCredentialById,
+  updateExternalCredentialLabelById,
   upsertExternalCredential,
 } from "@cocalc/server/external-credentials/store";
 import { refreshCodexSubscriptionAuth } from "@cocalc/server/external-credentials/codex-subscription-refresh";
@@ -2492,13 +2497,52 @@ async function startExternalCredentialsService(): Promise<void> {
   const impl: InterBayExternalCredentialsApi = {
     upsert: async ({ selector, payload, metadata }) =>
       await upsertExternalCredential({ selector, payload, metadata }),
+    create: async ({
+      selector,
+      payload,
+      metadata,
+      max_active,
+      deduplicate_metadata,
+      default_metadata_key,
+    }) =>
+      await createExternalCredential({
+        selector,
+        payload,
+        metadata,
+        maxActive: max_active,
+        deduplicateMetadata: deduplicate_metadata,
+        defaultMetadataKey: default_metadata_key,
+      }),
+    updateById: async ({ id, selector, payload, metadata, revive }) =>
+      await updateExternalCredentialById({
+        id,
+        selector,
+        payload,
+        metadata: metadata ?? {},
+        revive,
+      }),
+    updateLabelById: async ({ id, selector, label }) =>
+      await updateExternalCredentialLabelById({ id, selector, label }),
     get: async ({ selector, touch_last_used }) =>
       await getExternalCredential({
         selector,
         touchLastUsed: touch_last_used,
       }),
+    getById: async ({ id, selector, touch_last_used }) =>
+      await getExternalCredentialById({
+        id,
+        selector,
+        touchLastUsed: touch_last_used,
+      }),
+    ensureDefault: async ({ selector, metadata_key }) =>
+      await ensureDefaultExternalCredential({
+        selector,
+        metadataKey: metadata_key,
+      }),
     has: async ({ selector }) => await hasExternalCredential({ selector }),
     touch: async ({ selector }) => await touchExternalCredential({ selector }),
+    touchById: async ({ id, selector }) =>
+      await touchExternalCredential({ selector, id }),
     list: async ({
       owner_account_id,
       include_revoked,
@@ -2517,10 +2561,12 @@ async function startExternalCredentialsService(): Promise<void> {
       await revokeExternalCredential({ id, owner_account_id }),
     refreshCodexSubscription: async ({
       owner_account_id,
+      credential_id,
       previous_access_token_hash,
     }) =>
       await refreshCodexSubscriptionAuth({
         ownerAccountId: owner_account_id,
+        credentialId: credential_id,
         previousAccessTokenHash: previous_access_token_hash,
       }),
   };

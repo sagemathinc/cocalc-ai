@@ -892,6 +892,7 @@ export const STUDENT_PROJECT_FUNCTIONALITY_KEYS = [
   "disablePlutoServer",
   "disableTerminals",
   "disableUploads",
+  "disableSharing",
   "disableCollaborators",
   "disableAI",
   "disableSomeAI",
@@ -907,6 +908,7 @@ export interface StudentProjectFunctionality {
   disablePlutoServer?: boolean;
   disableTerminals?: boolean;
   disableUploads?: boolean;
+  disableSharing?: boolean;
   disableCollaborators?: boolean;
   disableAI?: boolean;
   disableSomeAI?: boolean;

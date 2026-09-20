@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+import { conatPassword } from "@cocalc/backend/data";
 import {
   buildProjectHostSessionCookie,
   buildProjectHostSessionCookieDeletion,
@@ -9,6 +11,7 @@ const getRowMock = jest.fn();
 const getAccountRevokedBeforeMsMock = jest.fn(() => undefined);
 const mockCallHub = jest.fn();
 const mockGetMasterConatClient = jest.fn(() => ({ id: "master-client" }));
+const mockVerifyProjectHostAuthToken = jest.fn();
 
 jest.mock("@cocalc/lite/hub/sqlite/database", () => ({
   getRow: (...args: any[]) => getRowMock(...args),
@@ -28,11 +31,21 @@ jest.mock("./master-status", () => ({
   getMasterConatClient: (...args: any[]) => mockGetMasterConatClient(...args),
 }));
 
+jest.mock("@cocalc/conat/auth/project-host-token", () => ({
+  verifyProjectHostAuthToken: (...args: any[]) =>
+    mockVerifyProjectHostAuthToken(...args),
+}));
+
+jest.mock("./auth-public-key", () => ({
+  getProjectHostAuthPublicKey: () => "test-public-key",
+}));
+
 import {
   clearProjectHostHttpProxyAuthCaches,
   createProjectHostHttpProxyAuth,
   createProjectHostHttpSessionToken,
   resolveProjectHostHttpSessionFromCookieHeader,
+  verifyProjectHostHttpSessionToken,
 } from "./http-proxy-auth";
 import { EventEmitter } from "node:events";
 import { createProjectHostBrowserSessionToken } from "./browser-session";
@@ -53,6 +66,14 @@ function createResponse() {
   } as any;
 }
 
+function createLegacySessionToken(payload: Record<string, unknown>): string {
+  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  const signature = createHmac("sha256", conatPassword)
+    .update(encoded)
+    .digest("base64url");
+  return `${encoded}.${signature}`;
+}
+
 describe("project-host HTTP session cookie", () => {
   const project_id = "00000000-1000-4000-8000-000000000000";
   const account_id = "00000000-1000-4000-8000-000000000001";
@@ -70,6 +91,7 @@ describe("project-host HTTP session cookie", () => {
     mockCallHub.mockReset();
     mockGetMasterConatClient.mockReset();
     mockGetMasterConatClient.mockReturnValue({ id: "master-client" });
+    mockVerifyProjectHostAuthToken.mockReset();
   });
 
   it("scopes the session cookie to the project path", () => {
@@ -143,6 +165,46 @@ describe("project-host HTTP session cookie", () => {
     });
   });
 
+  it("rejects pre-cutover full-lifetime HTTP session tokens", () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const legacyToken = createLegacySessionToken({
+      account_id,
+      iat: now_s,
+      exp: now_s + 30 * 24 * 60 * 60,
+      nonce: "33".repeat(12),
+    });
+
+    expect(
+      verifyProjectHostHttpSessionToken(legacyToken, now_s * 1000),
+    ).toBeUndefined();
+  });
+
+  it("does not refresh a pre-cutover browser session token", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    const browserSession = createLegacySessionToken({
+      account_id,
+      iat: now_s,
+      exp: now_s + 30 * 24 * 60 * 60,
+      nonce: "44".repeat(12),
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: {
+        cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+      },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+    const res = createResponse();
+
+    await expect(
+      auth.authorizeHttpRequest(req, res, project_id),
+    ).rejects.toThrow("missing project-host HTTP auth token");
+    expect(res.headers.get("Set-Cookie")).toBeUndefined();
+  });
+
   it("authorizes HTTP requests from the shared browser session cookie and mints a scoped HTTP session cookie", async () => {
     const auth = createProjectHostHttpProxyAuth({
       host_id: "00000000-1000-4000-8000-000000000099",
@@ -167,6 +229,190 @@ describe("project-host HTTP session cookie", () => {
     const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
     expect(cookies.join("\n")).toContain("cocalc_project_host_http_session=");
     expect(cookies.join("\n")).toContain(`Path=/${project_id}`);
+  });
+
+  it("does not widen a bounded browser session when minting HTTP cookies", async () => {
+    jest.useFakeTimers();
+    try {
+      const now = new Date("2026-09-19T04:00:00.000Z");
+      jest.setSystemTime(now);
+      const auth = createProjectHostHttpProxyAuth({
+        host_id: "00000000-1000-4000-8000-000000000099",
+      });
+      const browserSession = createProjectHostBrowserSessionToken({
+        account_id,
+        now_ms: now.getTime(),
+        restricted_exp_s: Math.floor(now.getTime() / 1000) + 60,
+      });
+      const req = {
+        headers: {
+          cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "x-forwarded-proto": "https",
+        },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      } as any;
+      const res = createResponse();
+
+      await auth.authorizeHttpRequest(req, res, project_id);
+
+      const setCookie = res.headers.get("Set-Cookie");
+      const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+      const issuedCookies = cookies.filter((cookie) =>
+        `${cookie}`.includes("Max-Age=60"),
+      );
+      expect(issuedCookies).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("continues sliding ordinary browser sessions", async () => {
+    jest.useFakeTimers();
+    try {
+      const now = new Date("2026-09-19T04:00:00.000Z");
+      jest.setSystemTime(now);
+      const auth = createProjectHostHttpProxyAuth({
+        host_id: "00000000-1000-4000-8000-000000000099",
+      });
+      const browserSession = createProjectHostBrowserSessionToken({
+        account_id,
+        now_ms: now.getTime() - 24 * 60 * 60 * 1000,
+      });
+      const req = {
+        headers: {
+          cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+          "x-forwarded-proto": "https",
+        },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      } as any;
+      const res = createResponse();
+
+      await auth.authorizeHttpRequest(req, res, project_id);
+
+      const setCookie = res.headers.get("Set-Cookie");
+      const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+      expect(
+        cookies.filter((cookie) => `${cookie}`.includes("Max-Age=2592000")),
+      ).toHaveLength(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("rejects an expired restricted bearer for HTTP requests", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      iat: now_s - 60,
+      exp: now_s + 600,
+      browser_session_exp_s: now_s - 1,
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: { authorization: "Bearer restricted-token" },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow("browser session authorization expired");
+  });
+
+  it("rejects agent bearers at HTTP session redemption", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      auth_actor: "agent",
+      iat: now_s,
+      exp: now_s + 600,
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: { authorization: "Bearer agent-token" },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/`,
+    } as any;
+
+    await expect(
+      auth.authorizeHttpRequest(req, createResponse(), project_id),
+    ).rejects.toThrow(
+      "agent credentials cannot authorize project-host HTTP access",
+    );
+  });
+
+  it("bounds cookies minted from a restricted bearer", async () => {
+    jest.useFakeTimers();
+    try {
+      const now = new Date("2026-09-19T04:00:00.000Z");
+      jest.setSystemTime(now);
+      const now_s = Math.floor(now.getTime() / 1000);
+      mockVerifyProjectHostAuthToken.mockReturnValue({
+        sub: account_id,
+        act: "account",
+        iat: now_s,
+        exp: now_s + 600,
+        browser_session_exp_s: now_s + 60,
+      });
+      const auth = createProjectHostHttpProxyAuth({
+        host_id: "00000000-1000-4000-8000-000000000099",
+      });
+      const req = {
+        headers: { authorization: "Bearer restricted-token" },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/`,
+      } as any;
+      const res = createResponse();
+
+      await auth.authorizeHttpRequest(req, res, project_id);
+
+      const setCookie = res.headers.get("Set-Cookie");
+      const cookies = Array.isArray(setCookie) ? setCookie : [setCookie];
+      expect(
+        cookies.filter((cookie) => `${cookie}`.includes("Max-Age=60")),
+      ).toHaveLength(2);
+      const httpCookie = cookies.find(
+        (cookie) =>
+          `${cookie}`.startsWith("cocalc_project_host_http_session=") &&
+          `${cookie}`.includes("Max-Age=60"),
+      );
+      expect(
+        resolveProjectHostHttpSessionFromCookieHeader(`${httpCookie}`),
+      ).toMatchObject({ restricted_exp_s: now_s + 60 });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it("rejects an expired restricted bearer for websocket upgrades", async () => {
+    const now_s = Math.floor(Date.now() / 1000);
+    mockVerifyProjectHostAuthToken.mockReturnValue({
+      sub: account_id,
+      act: "account",
+      iat: now_s - 60,
+      exp: now_s + 600,
+      browser_session_exp_s: now_s - 1,
+    });
+    const auth = createProjectHostHttpProxyAuth({
+      host_id: "00000000-1000-4000-8000-000000000099",
+    });
+    const req = {
+      headers: { authorization: "Bearer restricted-token" },
+      socket: {},
+      url: `/${project_id}/apps/python-hello/socket`,
+    } as any;
+
+    await expect(auth.authorizeUpgradeRequest(req, project_id)).rejects.toThrow(
+      "browser session authorization expired",
+    );
   });
 
   it("does not forward bearer query tokens when a browser session cookie authorizes the request", async () => {
@@ -426,6 +672,44 @@ describe("project-host HTTP session cookie", () => {
     stop();
 
     expect(socket.destroy).toHaveBeenCalled();
+  });
+
+  it("disconnects an upgraded socket when its browser session expires", async () => {
+    jest.useFakeTimers();
+    try {
+      const now = new Date("2026-09-19T04:00:00.000Z");
+      jest.setSystemTime(now);
+      const auth = createProjectHostHttpProxyAuth({
+        host_id: "00000000-1000-4000-8000-000000000099",
+      });
+      const browserSession = createProjectHostBrowserSessionToken({
+        account_id,
+        now_ms: now.getTime(),
+        restricted_exp_s: Math.floor(now.getTime() / 1000) + 1,
+      });
+      const req = {
+        headers: {
+          cookie: `cocalc_project_host_session=${encodeURIComponent(browserSession)}`,
+        },
+        socket: {},
+        url: `/${project_id}/apps/python-hello/socket`,
+      } as any;
+      await auth.authorizeUpgradeRequest(req, project_id);
+      const socket = new EventEmitter() as any;
+      socket.destroyed = false;
+      socket.destroy = jest.fn(() => {
+        socket.destroyed = true;
+      });
+      auth.trackUpgradedSocket(req, socket);
+
+      jest.setSystemTime(new Date(now.getTime() + 2_000));
+      const stop = auth.startUpgradeRevocationKickLoop();
+      stop();
+
+      expect(socket.destroy).toHaveBeenCalled();
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it("strips bearer query tokens from websocket upgrade urls authorized by browser session cookie", async () => {

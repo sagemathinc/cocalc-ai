@@ -468,7 +468,7 @@ it.each(["new", "existing"])(
     );
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
     expect(onCreate.mock.calls[0][0]).toMatchObject({
-      funding_source: kind === "new" ? source : undefined,
+      funding_source: source,
       create_home_volume: kind === "new",
       stop_after_minutes: 90,
       ...(kind === "new"

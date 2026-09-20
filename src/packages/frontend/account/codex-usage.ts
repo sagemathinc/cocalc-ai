@@ -353,10 +353,12 @@ export async function getLiveCodexUsageStatus({
   projectId,
   includeModels = false,
   refreshModels = false,
+  credentialId,
 }: {
   projectId?: string;
   includeModels?: boolean;
   refreshModels?: boolean;
+  credentialId?: string;
 }): Promise<CodexUsageStatusInfo> {
   if (projectId && !lite) {
     return await webapp_client.conat_client.hub.projects.getCodexUsageStatus({
@@ -364,6 +366,7 @@ export async function getLiveCodexUsageStatus({
       include_models: includeModels,
       refresh_models: refreshModels,
       timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
+      credential_id: credentialId,
     });
   }
   return await webapp_client.conat_client.hub.system.getCodexUsageStatus({
@@ -371,5 +374,6 @@ export async function getLiveCodexUsageStatus({
     include_models: includeModels,
     refresh_models: refreshModels,
     timeout: CODEX_USAGE_STATUS_TIMEOUT_MS,
+    credential_id: credentialId,
   });
 }

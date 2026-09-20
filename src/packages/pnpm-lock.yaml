@@ -239,8 +239,8 @@ importers:
         specifier: workspace:*
         version: link:../conat
       '@cocalc/openat2':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.1.2
+        version: 0.1.2
       '@cocalc/sync':
         specifier: workspace:*
         version: link:../sync
@@ -1799,8 +1799,8 @@ importers:
         specifier: workspace:*
         version: link:../lite
       '@cocalc/openat2':
-        specifier: ^0.1.0
-        version: 0.1.0
+        specifier: ^0.1.2
+        version: 0.1.2
       '@cocalc/project-proxy':
         specifier: workspace:*
         version: link:../project-proxy
@@ -2996,22 +2996,22 @@ packages:
   '@cocalc/local-storage-lru@2.5.0':
     resolution: {integrity: sha512-hTBh1LxKxWD6q8NCj0xZthT/T4b6hJC1dxaM89CEoAW5pPV9q30NeKugL/Of8oKfC1mHYIPU96LV9miXtDGq0Q==}
 
-  '@cocalc/openat2-linux-arm64-gnu@0.1.0':
-    resolution: {integrity: sha512-ySAcw9gLqQT+AvcXzBZma0hHKMoZS2KB5mZpTVvXa1rlCCQHQecLRojWRWRJI3D5kMgwPKFmHpVDv4lZ73MyCA==}
+  '@cocalc/openat2-linux-arm64-gnu@0.1.2':
+    resolution: {integrity: sha512-FfaQBzEpeNJ+i+e5TgL9lkmIgYOzFaMChWIAO9Hx0LbtyfyzfuMLNo0ZJj5jFRrrNWv/4gz/DQaj3GkdxcjmkA==}
     engines: {node: '>=18'}
     cpu: [arm64]
     os: [linux]
     libc: [glibc]
 
-  '@cocalc/openat2-linux-x64-gnu@0.1.0':
-    resolution: {integrity: sha512-X0bBB3+6L4t7jmVaI7bqZtJYmja4xMC6Gn7XK/nDxaHaNUdNh+Npz5v4yBIq34GPpvAAHIt3Pc00PZElW3Zdgw==}
+  '@cocalc/openat2-linux-x64-gnu@0.1.2':
+    resolution: {integrity: sha512-YvVuCDXBMNrYbA9Zkc82JAjWyTZ4aGGTGSnXoUCqrEYhoN3EowJqNvIPfqkZpQHsAPq0aseQ8Aow/xXMCQLKWw==}
     engines: {node: '>=18'}
     cpu: [x64]
     os: [linux]
     libc: [glibc]
 
-  '@cocalc/openat2@0.1.0':
-    resolution: {integrity: sha512-kil1KsVI4GKEKYAl0xFI6rwpL8sDd+I9hGOZhSdUOoRXVxa11W3c3mm6mpVKNNpo7PFc8wjEd9uRCWjAfeMlIg==}
+  '@cocalc/openat2@0.1.2':
+    resolution: {integrity: sha512-7dsegwJdfZjLlhcjBLI74QF/ZxR+33OWt7oHrdVspfKvS8wddxzFcR49dLfPhr1JLIVnZ2iTgW8Ml9Iuht9hgw==}
     engines: {node: '>=18'}
 
   '@cocalc/primus-multiplex@1.1.0':
@@ -12424,16 +12424,16 @@ snapshots:
 
   '@cocalc/local-storage-lru@2.5.0': {}
 
-  '@cocalc/openat2-linux-arm64-gnu@0.1.0':
+  '@cocalc/openat2-linux-arm64-gnu@0.1.2':
     optional: true
 
-  '@cocalc/openat2-linux-x64-gnu@0.1.0':
+  '@cocalc/openat2-linux-x64-gnu@0.1.2':
     optional: true
 
-  '@cocalc/openat2@0.1.0':
+  '@cocalc/openat2@0.1.2':
     optionalDependencies:
-      '@cocalc/openat2-linux-arm64-gnu': 0.1.0
-      '@cocalc/openat2-linux-x64-gnu': 0.1.0
+      '@cocalc/openat2-linux-arm64-gnu': 0.1.2
+      '@cocalc/openat2-linux-x64-gnu': 0.1.2
 
   '@cocalc/primus-multiplex@1.1.0':
     dependencies:

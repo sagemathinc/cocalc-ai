@@ -32,6 +32,7 @@ import {
   getAccountNotificationIndexProjectionBacklogStatus,
 } from "@cocalc/database/postgres/account-notification-index-projector";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
+import { getHostIntrusionObservationSummary } from "@cocalc/server/hosts/intrusion-monitor";
 import { assertProjectRuntimeCapability } from "@cocalc/server/launchpad/project-runtime";
 import { getConfiguredClusterSeedBayId } from "@cocalc/server/cluster-config";
 import { runBayDrainPreflight } from "@cocalc/server/bay-drain/preflight";
@@ -86,12 +87,14 @@ import getLogger from "@cocalc/backend/logger";
 import basePath from "@cocalc/backend/base-path";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import {
+  ensureDefaultExternalCredentialRouted,
   getExternalCredentialRouted,
   hasExternalCredentialRouted,
   listAccountExternalCredentialsRouted,
   revokeAccountExternalCredentialRouted,
   revokeExternalCredentialBySelectorRouted,
   upsertExternalCredentialRouted,
+  updateExternalCredentialLabelByIdRouted,
 } from "@cocalc/server/external-credentials/routing";
 import { assertProjectCollaboratorAccessAllowRemote } from "@cocalc/server/conat/project-remote-access";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -2080,6 +2083,7 @@ export async function getLaunchHealth({
     configResult,
     smokeResult,
     adminAlertsResult,
+    intrusionObservationsResult,
   ] = await Promise.allSettled([
     getPool("medium").query("SELECT 1"),
     getServerSettings(),
@@ -2093,6 +2097,7 @@ export async function getLaunchHealth({
     }),
     getLatestLaunchSmokeResult(),
     getRecentAdminAlertSummary({ windowHours: alertWindowHours }),
+    getHostIntrusionObservationSummary(),
   ]);
 
   const settings =
@@ -2113,6 +2118,10 @@ export async function getLaunchHealth({
   const adminAlerts =
     adminAlertsResult.status === "fulfilled"
       ? adminAlertsResult.value
+      : undefined;
+  const intrusionObservations =
+    intrusionObservationsResult.status === "fulfilled"
+      ? intrusionObservationsResult.value
       : undefined;
   const sla = getUxLatencySlaThresholdsFromSettings(settings);
   const killSwitches = launchHealthKillSwitches(settings);
@@ -2251,6 +2260,28 @@ export async function getLaunchHealth({
           : (adminAlerts?.alerts.map(
               (alert) => `${alert.sent_at} ${alert.subject}`,
             ) ?? []),
+    }),
+    launchHealthCheck({
+      id: "project-host-intrusion-observations",
+      label: "Project host intrusion observations",
+      level:
+        intrusionObservationsResult.status === "rejected" ||
+        !intrusionObservations ||
+        intrusionObservations.missing_hosts > 0 ||
+        intrusionObservations.stale_hosts > 0 ||
+        intrusionObservations.incomplete_hosts > 0
+          ? "unknown"
+          : "healthy",
+      summary:
+        intrusionObservationsResult.status === "rejected"
+          ? "Unable to review retained project-host intrusion observations."
+          : !intrusionObservations
+            ? "No project-host intrusion observation summary is available."
+            : `${intrusionObservations.observed_hosts}/${intrusionObservations.active_hosts} active hosts observed; ${intrusionObservations.recently_changed_hosts} had retained security-state changes in the last 24 hours.`,
+      details:
+        intrusionObservationsResult.status === "rejected"
+          ? [`${intrusionObservationsResult.reason}`]
+          : (intrusionObservations?.details ?? []),
     }),
     launchHealthCheck({
       id: "kill-switches",
@@ -6377,6 +6408,43 @@ async function assertProjectCollaborator(
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
 }
 
+export async function assertCodexPaymentSourceCaller({
+  account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string;
+  project_id?: string;
+  host_id?: string;
+}): Promise<void> {
+  if (!host_id) {
+    if (project_id) {
+      await assertProjectCollaborator(account_id, project_id);
+    }
+    return;
+  }
+  if (!project_id) {
+    throw new Error("project_id is required for project-host Codex admission");
+  }
+  const { rowCount } = await getPool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND users ? $3::text
+      LIMIT 1
+    `,
+    [project_id, host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error(
+      "project host is not authorized for this account payment source",
+    );
+  }
+}
+
 export async function listExternalCredentials({
   account_id,
   provider,
@@ -6430,6 +6498,34 @@ export async function revokeExternalCredential({
     owner_account_id: account_id,
   });
   return { revoked };
+}
+
+export async function updateCodexSubscriptionLabel({
+  account_id,
+  id,
+  label,
+}: {
+  account_id?: string;
+  id: string;
+  label?: string;
+}) {
+  if (!account_id) throw Error("must be signed in");
+  if (!id) throw Error("id must be specified");
+  const normalizedLabel = `${label ?? ""}`.trim();
+  if (normalizedLabel.length > 60) {
+    throw Error("label must be at most 60 characters");
+  }
+  const updated = await updateExternalCredentialLabelByIdRouted({
+    id,
+    selector: {
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    label: normalizedLabel || undefined,
+  });
+  return { updated };
 }
 
 export async function setOpenAiApiKey({
@@ -6675,11 +6771,15 @@ export async function cancelChatSpeech(
 export async function getCodexPaymentSource({
   account_id,
   project_id,
+  host_id,
   preference = "auto",
+  credential_id,
 }: {
   account_id?: string;
   project_id?: string;
+  host_id?: string;
   preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credential_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -6690,8 +6790,9 @@ export async function getCodexPaymentSource({
   const accountKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
   );
-  if (project_id) {
-    await assertProjectCollaborator(account_id, project_id);
+  await assertCodexPaymentSourceCaller({ account_id, project_id, host_id });
+  if (credential_id && preference !== "subscription") {
+    throw Error("credential_id requires the subscription payment source");
   }
 
   const settings = await getServerSettings();
@@ -6794,7 +6895,20 @@ export async function getCodexPaymentSource({
       },
     }),
   ]);
-  const subscriptionCredential = subscriptionCredentials[0];
+  const defaultSubscription = await ensureDefaultExternalCredentialRouted({
+    selector: {
+      provider: "openai",
+      kind: CODEX_SUBSCRIPTION_KIND,
+      scope: "account",
+      owner_account_id: account_id,
+    },
+    metadataKey: "cocalc_default",
+  });
+  const activeDefaultSubscription =
+    defaultSubscription?.revoked == null ? defaultSubscription : undefined;
+  const subscriptionCredential = credential_id
+    ? subscriptionCredentials.find(({ id }) => id === credential_id)
+    : activeDefaultSubscription;
   const hasSubscription = subscriptionCredential != null;
   const subscriptionUpdatedAt = subscriptionCredential
     ? new Date(subscriptionCredential.updated).toISOString()
@@ -6829,8 +6943,10 @@ export async function getCodexPaymentSource({
   } as const;
   let unavailableReason: string | undefined;
   if (preference !== "auto") {
-    if (sourceAvailable[preference]) {
-      source = preference;
+    const requestedSource =
+      preference === "subscription-credential" ? "subscription" : preference;
+    if (sourceAvailable[requestedSource]) {
+      source = requestedSource;
     } else {
       source = "none";
       unavailableReason = `The selected Codex payment source (${preference}) is not configured.`;
@@ -6853,6 +6969,24 @@ export async function getCodexPaymentSource({
     source,
     hasSubscription,
     subscriptionRevision,
+    credentialId: subscriptionCredential?.id,
+    subscriptions: subscriptionCredentials.map((credential) => ({
+      id: credential.id,
+      label:
+        typeof credential.metadata?.label === "string"
+          ? credential.metadata.label
+          : undefined,
+      email:
+        typeof credential.metadata?.email === "string"
+          ? credential.metadata.email
+          : undefined,
+      plan:
+        typeof credential.metadata?.plan_type === "string"
+          ? credential.metadata.plan_type
+          : undefined,
+      isDefault: credential.id === activeDefaultSubscription?.id,
+      updatedAt: new Date(credential.updated).toISOString(),
+    })),
     hasProjectApiKey,
     hasAccountApiKey,
     hasSiteApiKey,
@@ -6890,12 +7024,14 @@ export async function getSiteFundedCodexAdminStatus({
 export async function getCodexUsageStatus({
   account_id,
   project_id,
+  credential_id,
 }: {
   account_id?: string;
   project_id?: string;
   include_models?: boolean;
   refresh_models?: boolean;
   timeout?: number;
+  credential_id?: string;
 }) {
   if (!account_id) {
     throw Error("must be signed in");
@@ -6904,6 +7040,8 @@ export async function getCodexUsageStatus({
   const paymentSource = await getCodexPaymentSource({
     account_id,
     project_id,
+    preference: credential_id ? "subscription" : "auto",
+    credential_id,
   });
   if (paymentSource.source !== "subscription") {
     return {

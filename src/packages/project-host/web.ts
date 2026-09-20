@@ -10,6 +10,8 @@ import {
   appendSetCookie,
   buildProjectHostBrowserSessionCookie,
   createProjectHostBrowserSessionToken,
+  restrictedBrowserSessionTtlSeconds,
+  resolveLegacyProjectHostBrowserSessionForExamMigration,
   resolveProjectHostBrowserSessionFromCookieHeader,
 } from "./browser-session";
 import {
@@ -121,12 +123,41 @@ function examRuntimeForRequest(req: express.Request) {
   return runtime;
 }
 
-function examSessionForRequest(req: express.Request) {
+export function resolveExamSessionForRequest(
+  req: express.Request,
+  res?: express.Response,
+) {
+  if (!examRuntimeForRequest(req)) return;
   const browser = resolveProjectHostBrowserSessionFromCookieHeader(
     req.headers.cookie,
   );
-  if (!browser) return;
-  return getExamBrowserSession(browser.account_id);
+  if (browser) return getExamBrowserSession(browser.account_id);
+
+  const legacy = resolveLegacyProjectHostBrowserSessionForExamMigration(
+    req.headers.cookie,
+  );
+  if (!legacy) return;
+  const session = getExamBrowserSession(legacy.account_id);
+  if (!session || !res) return session;
+
+  const restricted_exp_s = Math.min(
+    legacy.exp_s,
+    Math.floor(session.expires_at_ms / 1000),
+  );
+  if (restricted_exp_s <= Math.floor(Date.now() / 1000)) return session;
+  const max_age_seconds = restrictedBrowserSessionTtlSeconds(restricted_exp_s);
+  appendSetCookie(
+    res,
+    buildProjectHostBrowserSessionCookie({
+      req,
+      sessionToken: createProjectHostBrowserSessionToken({
+        account_id: session.account_id,
+        restricted_exp_s,
+      }),
+      max_age_seconds,
+    }),
+  );
+  return session;
 }
 
 function resolveStaticPath(): string | undefined {
@@ -338,7 +369,7 @@ export async function initHttp({
     const runtime = examRuntimeForRequest(req);
     if (!runtime) return next();
     setExamResponseHeaders(res);
-    const session = examSessionForRequest(req);
+    const session = resolveExamSessionForRequest(req, res);
     if (session) {
       res.redirect(appRedirect(session.project_id));
       return;
@@ -357,7 +388,7 @@ export async function initHttp({
     const runtime = examRuntimeForRequest(req);
     if (!runtime) return next();
     setExamResponseHeaders(res);
-    const session = examSessionForRequest(req);
+    const session = resolveExamSessionForRequest(req, res);
     if (session) {
       res.redirect(appRedirect(session.project_id));
       return;
@@ -382,7 +413,7 @@ export async function initHttp({
     const runtime = examRuntimeForRequest(req);
     if (!runtime) return next();
     setExamResponseHeaders(res);
-    const existing = examSessionForRequest(req);
+    const existing = resolveExamSessionForRequest(req, res);
     if (existing) {
       res.redirect(appRedirect(existing.project_id));
       return;
@@ -399,7 +430,7 @@ export async function initHttp({
       );
       const sessionToken = createProjectHostBrowserSessionToken({
         account_id: session.account_id,
-        ttl_seconds: ttlSeconds,
+        restricted_exp_s: Math.floor(session.expires_at_ms / 1000),
       });
       appendSetCookie(
         res,
@@ -472,7 +503,7 @@ export async function initHttp({
       return;
     }
     setExamResponseHeaders(res);
-    const session = examSessionForRequest(req);
+    const session = resolveExamSessionForRequest(req, res);
     res.json(
       getProjectHostCustomizePayload({
         account_id: session?.account_id,
@@ -492,7 +523,7 @@ export function addCatchAll(app: express.Application) {
     if (req.url.endsWith("__webpack_hmr")) return;
     const runtime = examRuntimeForRequest(req);
     if (runtime) {
-      const session = examSessionForRequest(req);
+      const session = resolveExamSessionForRequest(req, res);
       if (!session) {
         res.redirect("/");
         return;

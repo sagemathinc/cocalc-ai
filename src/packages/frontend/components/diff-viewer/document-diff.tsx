@@ -4,7 +4,7 @@
  */
 
 import { Alert, Checkbox, Select } from "antd";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewItem } from "@pierre/diffs";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
@@ -32,6 +32,7 @@ export interface DocumentDiffProps {
   path: string;
   label: string;
   fontSize: number;
+  scrollPosition?: { current: number };
 }
 
 export default function DocumentDiff(props: DocumentDiffProps) {
@@ -45,12 +46,19 @@ export default function DocumentDiff(props: DocumentDiffProps) {
     }),
     [props.before, props.after, props.path, props.label],
   );
-  return <ReadOnlyDiff source={source} fontSize={props.fontSize} />;
+  return (
+    <ReadOnlyDiff
+      source={source}
+      fontSize={props.fontSize}
+      scrollPosition={props.scrollPosition}
+    />
+  );
 }
 
 export function ReadOnlyDiff(props: {
   source: DiffPreviewSource;
   fontSize: number;
+  scrollPosition?: { current: number };
 }) {
   return (
     <DiffHighlightingProvider>
@@ -62,9 +70,11 @@ export function ReadOnlyDiff(props: {
 function DocumentDiffContent({
   source,
   fontSize,
+  scrollPosition,
 }: {
   source: DiffPreviewSource;
   fontSize: number;
+  scrollPosition?: { current: number };
 }) {
   const { label } = source;
   const { resolved } = useAppearance();
@@ -139,6 +149,23 @@ function DocumentDiffContent({
       "Space Shift+Space PageDown PageUp ArrowDown ArrowUp Home",
     );
   }, [label, parsed.error]);
+  useLayoutEffect(() => {
+    if (viewport.current != null && scrollPosition != null) {
+      viewport.current.scrollTop = scrollPosition.current;
+    }
+  }, [parsed.error, scrollPosition]);
+  useEffect(() => {
+    const node = viewport.current;
+    if (node == null || scrollPosition == null) return;
+    const save = () => {
+      scrollPosition.current = node.scrollTop;
+    };
+    node.addEventListener("scroll", save, { passive: true });
+    return () => {
+      save();
+      node.removeEventListener("scroll", save);
+    };
+  }, [parsed.error, scrollPosition]);
   return (
     <section
       aria-label="Historical text comparison"

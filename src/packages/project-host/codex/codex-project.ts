@@ -57,8 +57,10 @@ import {
   redactCodexAuthRuntime,
   resolveCodexAuthRuntime,
   resolveSharedCodexHome,
+  subscriptionRuntime,
 } from "./codex-auth";
 import {
+  pullSubscriptionAuthFromRegistry,
   refreshSubscriptionAuthFromRegistry,
   syncSubscriptionAuthToRegistryIfChanged,
 } from "./codex-auth-registry";
@@ -969,6 +971,7 @@ function createAppServerRequestHandler({
           await refreshSubscriptionAuthFromRegistry({
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
             previousAccessTokenHash: createHash("sha256")
               .update(lastAccessToken)
@@ -1630,6 +1633,8 @@ export type SpawnCodexInProjectContainerOptions = {
   touchReason?: string | false;
   forceRefreshSiteKey?: boolean;
   paymentSource?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credentialId?: string;
+  syncSubscriptionAuthOnExit?: boolean;
 };
 
 export type SpawnCodexInProjectContainerResult = {
@@ -1654,6 +1659,8 @@ export async function spawnCodexInProjectContainer({
   touchReason = "codex",
   forceRefreshSiteKey = false,
   paymentSource = "auto",
+  credentialId,
+  syncSubscriptionAuthOnExit = true,
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
   const authRuntime =
     explicitAuthRuntime ??
@@ -1662,6 +1669,7 @@ export async function spawnCodexInProjectContainer({
       accountId,
       forceRefreshSiteKey,
       preference: paymentSource,
+      credentialId,
     }));
   let codexArgs = args;
   const providerArgs = getManagedOpenAiProviderArgs(authRuntime);
@@ -1769,6 +1777,7 @@ export async function spawnCodexInProjectContainer({
   proc.on("exit", async () => {
     try {
       if (
+        syncSubscriptionAuthOnExit &&
         authRuntime.source === "subscription" &&
         accountId &&
         authRuntime.codexHome
@@ -1777,12 +1786,14 @@ export async function spawnCodexInProjectContainer({
           await syncSubscriptionAuthToRegistryIfChanged({
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
           });
         } catch (err) {
           logger.debug("codex project: failed syncing subscription auth", {
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
             err: `${err}`,
           });
@@ -1818,6 +1829,8 @@ type SpawnCodexAppServerInProjectRuntimeOptions = {
   touchReason?: string | false;
   siteFundedTurn?: CodexSiteFundedTurnRequest;
   paymentSource?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+  credentialId?: string;
+  codexHome?: string;
 };
 
 type SpawnCodexAppServerInProjectRuntimeResult = {
@@ -1847,13 +1860,24 @@ async function spawnCodexAppServerInProjectRuntime({
   touchReason = "codex",
   siteFundedTurn: siteFundedTurnRequest,
   paymentSource = "auto",
+  credentialId,
+  codexHome,
 }: SpawnCodexAppServerInProjectRuntimeOptions): Promise<SpawnCodexAppServerInProjectRuntimeResult> {
-  const authRuntime = await resolveCodexAuthRuntime({
-    projectId,
-    accountId,
-    forceRefreshSiteKey,
-    preference: paymentSource,
-  });
+  const authRuntime =
+    codexHome && accountId
+      ? subscriptionRuntime({
+          projectId,
+          accountId,
+          codexHome,
+          credentialId,
+        })
+      : await resolveCodexAuthRuntime({
+          projectId,
+          accountId,
+          forceRefreshSiteKey,
+          preference: paymentSource,
+          credentialId,
+        });
   logResolvedCodexAuthRuntime(projectId, accountId, authRuntime);
   await ensureProjectContainerRunning({ projectId, accountId });
   const { home, scratch } = await localPath({ project_id: projectId });
@@ -1885,12 +1909,16 @@ async function spawnCodexAppServerInProjectRuntime({
   const appServerLogin = siteFundedTurn
     ? undefined
     : await resolveAppServerLoginHint(authRuntime);
-  const handleAppServerRequest = createAppServerRequestHandler({
-    projectId,
-    accountId,
-    authRuntime,
-    appServerLogin,
-  });
+  // Staged credentials are verification-only. In particular, do not let a
+  // refresh request pull an older authoritative credential into staging.
+  const handleAppServerRequest = codexHome
+    ? undefined
+    : createAppServerRequestHandler({
+        projectId,
+        accountId,
+        authRuntime,
+        appServerLogin,
+      });
   const name = projectContainerName(projectId);
   const cliTokenLease = await createProjectCliTokenLease({
     projectId,
@@ -2080,12 +2108,14 @@ async function spawnCodexAppServerInProjectRuntime({
       if (
         authRuntime.source === "subscription" &&
         accountId &&
-        authRuntime.codexHome
+        authRuntime.codexHome &&
+        !codexHome
       ) {
         try {
           await syncSubscriptionAuthToRegistryIfChanged({
             projectId,
             accountId,
+            credentialId: authRuntime.credentialId,
             codexHome: authRuntime.codexHome,
           });
         } catch (err) {
@@ -2184,6 +2214,8 @@ export function initCodexProjectRunner(): void {
       touchReason,
       siteFundedTurn,
       paymentSource,
+      credentialId,
+      codexHome,
     }) {
       const spawned = await spawnCodexAppServerInProjectRuntime({
         projectId,
@@ -2195,6 +2227,8 @@ export function initCodexProjectRunner(): void {
         touchReason: touchReason ?? "codex",
         siteFundedTurn,
         paymentSource,
+        credentialId,
+        codexHome,
       });
       return {
         proc: spawned.proc,
@@ -2212,6 +2246,28 @@ export function initCodexProjectRunner(): void {
         runtimeEnv: spawned.runtimeEnv,
         setAgentSessionKey: spawned.setAgentSessionKey,
         siteFundedTurn: spawned.siteFundedTurn,
+        credentialId: spawned.authRuntime.credentialId,
+        validateSubscriptionCredential:
+          spawned.authRuntime.source === "subscription" &&
+          accountId &&
+          spawned.authRuntime.codexHome &&
+          spawned.authRuntime.credentialId
+            ? async () => {
+                const result = await pullSubscriptionAuthFromRegistry({
+                  projectId,
+                  accountId,
+                  credentialId: spawned.authRuntime.credentialId,
+                  codexHome: spawned.authRuntime.codexHome!,
+                  onlyIfNewer: true,
+                  requireAuthority: true,
+                });
+                if (result.missing) {
+                  throw new Error(
+                    "The selected ChatGPT subscription is no longer available.",
+                  );
+                }
+              }
+            : undefined,
       };
     },
   });
