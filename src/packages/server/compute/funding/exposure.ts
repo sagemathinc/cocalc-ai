@@ -16,6 +16,10 @@ import {
 import { moneyToDbString, toDecimal } from "@cocalc/util/money";
 import type { FundingRolloutManifest } from "./production-rollout-contract";
 import type { SponsorshipAdmissionProof } from "./rollout";
+import {
+  assertCoResidentFundingAdvisoryTopology,
+  isCoResidentFundingAdvisoryMode,
+} from "./rollout-mode";
 
 type Allocation = NonNullable<FundingRolloutManifest["exposure_allocation"]>;
 export interface FundingExposureBudget {
@@ -73,7 +77,12 @@ export async function loadFundingExposureBudget(
     process.env.COCALC_FUNDING_ISOLATED_QA === "yes" &&
     process.env.COCALC_COMPUTE_VM_ENVIRONMENT?.trim().toLowerCase() ===
       "development";
-  if (!process.env.COCALC_FUNDING_ROLLOUT_MANIFEST && (!multi || isolatedQa)) {
+  const coResidentAdvisory = isCoResidentFundingAdvisoryMode();
+  if (coResidentAdvisory) assertCoResidentFundingAdvisoryTopology();
+  if (
+    (coResidentAdvisory || !process.env.COCALC_FUNDING_ROLLOUT_MANIFEST) &&
+    (!multi || isolatedQa)
+  ) {
     const proof = require_sponsorship_admission
       ? await (await import("./rollout")).assertSponsorshipAdmission()
       : undefined;

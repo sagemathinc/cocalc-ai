@@ -116,6 +116,13 @@ accepts that hub/host compromise includes full database authority. Inventory
 every actual writer and other trusted administrative login; the co-resident
 model is release attestation and writer fencing, not process isolation.
 
+During the current one-bay co-resident phase, operators may explicitly set
+`COCALC_FUNDING_ROLLOUT_MODE=co-resident-advisory`. This makes signed deployment
+inventory observational: drift sends deduplicated admin alerts but does not
+disable new sponsorship. Live protocol checks, the default-off site settings,
+transaction-time rechecks, and the site exposure ceiling remain enforced. The
+mode refuses multi-bay topology and is not an alternative for isolated writers.
+
 Multiple bays also pin `COCALC_FUNDING_EXPOSURE_ALLOCATION_SHA256` as above.
 The verifier never repairs credentials or silently enables sponsorship.
 `compute_sponsorship_enabled` remains independently default off.

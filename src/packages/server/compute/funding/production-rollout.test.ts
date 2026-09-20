@@ -28,6 +28,7 @@ const mockOpen = jest.fn();
 const mockRegistry = jest.fn();
 const mockConfig = jest.fn();
 const mockRpc = jest.fn();
+const mockAdminAlert = jest.fn();
 let mockExposure = "0";
 let mockAllocationMatches = true;
 let mockCatalog = [{ bay_id: "home" }];
@@ -53,6 +54,10 @@ jest.mock("@cocalc/server/bay-registry", () => ({
 }));
 jest.mock("@cocalc/server/inter-bay/fabric", () => ({
   getInterBayFabricClient: () => ({ fastRpcRequest: mockRpc }),
+}));
+jest.mock("@cocalc/server/messages/admin-alert", () => ({
+  __esModule: true,
+  default: (...args) => mockAdminAlert(...args),
 }));
 jest.mock("@cocalc/database/settings/server-settings", () => ({
   getServerSettings: async () => ({}),
@@ -433,6 +438,64 @@ it("makes co-resident database authority explicit for a one-bay deployment", asy
   expect(
     (await getLocalFundingRolloutCapabilities()).checks["account-holds"],
   ).toMatchObject({ enforced: true });
+});
+it("keeps one-bay co-resident sponsorship available when an optional attestation drifts", async () => {
+  process.env.COCALC_FUNDING_ROLLOUT_MODE = "co-resident-advisory";
+  process.env.COCALC_FUNDING_WRITER_BUILD_ID = "new-unattested-build";
+  initFundingRolloutVerifiers();
+  const capabilities = await getLocalFundingRolloutCapabilities();
+  for (const check of ["account-holds", "sponsored-resources"] as const) {
+    expect(capabilities.checks[check]).toMatchObject({
+      enforced: true,
+      evidence_id: `co-resident-advisory:home:${check}`,
+    });
+  }
+  await expect(
+    loadFundingExposureBudget("home", {
+      require_sponsorship_admission: true,
+    }),
+  ).resolves.toMatchObject({ limit_usd: "100.0000000000" });
+  expect(mockAdminAlert).toHaveBeenCalledWith(
+    expect.objectContaining({
+      subject: "Course funding rollout attestation mismatch",
+      dedupBySubject: true,
+    }),
+  );
+});
+it("does not require operator manifest files in explicit one-bay advisory mode", async () => {
+  process.env.COCALC_FUNDING_ROLLOUT_MODE = "co-resident-advisory";
+  delete process.env.COCALC_FUNDING_ROLLOUT_MANIFEST;
+  delete process.env.COCALC_FUNDING_ROLLOUT_PUBLIC_KEY;
+  initFundingRolloutVerifiers();
+  const capabilities = await getLocalFundingRolloutCapabilities();
+  expect(capabilities.checks["account-holds"]).toMatchObject({
+    enforced: true,
+    evidence_id: "co-resident-advisory:home:account-holds",
+  });
+  expect(capabilities.checks["sponsored-resources"]).toMatchObject({
+    enforced: true,
+    evidence_id: "co-resident-advisory:home:sponsored-resources",
+  });
+  expect(mockOpen).not.toHaveBeenCalled();
+});
+it("still requires operator manifest files when advisory mode is not explicit", async () => {
+  delete process.env.COCALC_FUNDING_ROLLOUT_MANIFEST;
+  delete process.env.COCALC_FUNDING_ROLLOUT_PUBLIC_KEY;
+  initFundingRolloutVerifiers();
+  expect(
+    (await getLocalFundingRolloutCapabilities()).checks["account-holds"],
+  ).toBeNull();
+});
+it("does not permit co-resident advisory mode across multiple bays", async () => {
+  process.env.COCALC_FUNDING_ROLLOUT_MODE = "co-resident-advisory";
+  mockCatalog.push({ bay_id: "second" });
+  initFundingRolloutVerifiers();
+  expect(
+    (await getLocalFundingRolloutCapabilities()).checks["account-holds"],
+  ).toBeNull();
+  await expect(loadFundingExposureBudget("home")).rejects.toThrow(
+    "limited to one-bay",
+  );
 });
 it("rejects privileged application writers under the isolated model", async () => {
   const goodQuery = mockQuery.getMockImplementation()!;

@@ -70,15 +70,31 @@ COCALC_FUNDING_WRITER_BUILD_ID=<this writer's manifest build_id>
 COCALC_FUNDING_EXPOSURE_ALLOCATION_SHA256=<reported allocation digest, when allocated>
 ```
 
+Current one-bay deployments that explicitly accept the co-resident operator
+trust boundary may instead set:
+
+```text
+COCALC_FUNDING_ROLLOUT_MODE=co-resident-advisory
+```
+
+In this mode the two default-off site settings, live writer protocol checks,
+transaction-time admission recheck, and configured site exposure ceiling remain
+enforced. A missing, expired, or mismatched signed manifest produces a deduplicated
+admin alert but does not block new sponsorship. This mode refuses multi-bay
+topologies. It is a temporary risk acceptance for deployments where the hub and
+database operator are already one trust domain; it must not be used to weaken an
+`isolated-writers` deployment.
+
 `isolated-writers` manifests have at most 15 minutes of validity and need renewal
 while admitting new work. A one-bay `co-resident-operator-writer` manifest is a
 deployment attestation and may be valid for up to 366 days; replace it when the
 deployed build, database, writer inventory, namespace, or provider credentials
 change. It does not require an online signing loop. Renew either model only from
 current verified deployment evidence; do not extend stale attestations blindly.
-Install replacement files atomically. An expired or mismatched manifest blocks
-new commitments; existing stop, deletion, and settlement obligations must
-continue. The runtime also checks bay inventory, actual database privileges,
+Install replacement files atomically. Outside explicit one-bay advisory mode, an
+expired or mismatched manifest blocks new commitments; existing stop, deletion,
+and settlement obligations must continue. The runtime also checks bay inventory,
+actual database privileges,
 compiled worker capabilities and credential identities. Exposure verification
 persists an allocation policy pin: unlike the offline utility and payer audit,
 runtime admission verification is not wholly read-only.
