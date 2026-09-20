@@ -6,19 +6,24 @@ import {
 } from "@cocalc/ai/agent-sdk";
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
+import {
+  createAgentSession as createAgentSessionImpl,
+  resolveAgentSessionProposal as resolveAgentSessionProposalImpl,
+  updateAgentSession as updateAgentSessionImpl,
+} from "@cocalc/server/agents/personal";
 export {
   listNamedAgents,
   nameAgent,
   retireNamedAgent,
   listAgentSessions,
-  createAgentSession,
-  updateAgentSession,
   listAgentSessionActivity,
   inspectAgentSessionAttempt,
   listAgentSessionProposals,
-  resolveAgentSessionProposal,
   setPersonalMessagingState,
 } from "@cocalc/server/agents/personal";
+export const createAgentSession = createAgentSessionImpl;
+export const updateAgentSession = updateAgentSessionImpl;
+export const resolveAgentSessionProposal = resolveAgentSessionProposalImpl;
 export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const registerIdentity = identities.registerIdentity;

@@ -18,6 +18,10 @@ export type CodexServiceTier = "standard" | "fast";
 export type CodexPaymentSourcePreference =
   | "auto"
   | "subscription"
+  // Internal wire value for an explicitly selected credential. Older hosts do
+  // not recognize it as the legacy subscription default and therefore fail
+  // instead of silently running a turn with a different account.
+  | "subscription-credential"
   | "project-api-key"
   | "account-api-key"
   | "site-api-key"
@@ -47,6 +51,8 @@ export interface CodexSessionConfig {
   env?: Record<string, string>;
   codexPathOverride?: string;
   paymentSource?: CodexPaymentSourcePreference;
+  /** Opaque account-owned credential selector for subscription turns. */
+  credentialId?: string;
   // Account-wide limit for spawned workers. The manager thread is not counted.
   maxConcurrentSubagents?: number;
 }

@@ -745,6 +745,10 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     decision: "internal-auth-only",
     reason: INTERNAL_AUTH_ONLY,
   },
+  "hosts.releaseCodexDeviceAuthLease": {
+    decision: "internal-auth-only",
+    reason: INTERNAL_AUTH_ONLY,
+  },
   "hosts.restartHost": {
     decision: "fresh-auth-required",
     reason: "host restart can disrupt all projects on a dedicated host",
@@ -1717,5 +1721,9 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
   "system.upsertBrowserSession": {
     decision: "fresh-auth-not-required",
     reason: ORDINARY_AUTHZ,
+  },
+  "system.updateCodexSubscriptionLabel": {
+    decision: "fresh-auth-not-required",
+    reason: "updates only the signed-in account's credential display label",
   },
 };

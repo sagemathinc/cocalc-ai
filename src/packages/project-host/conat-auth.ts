@@ -37,7 +37,10 @@ import { conatPassword } from "@cocalc/backend/data";
 import { isValidUUID } from "@cocalc/util/misc";
 import { getProject } from "./sqlite/projects";
 import { getAccountRevokedBeforeMs } from "./sqlite/account-revocations";
-import { resolveProjectHostBrowserSessionFromCookieHeader } from "./browser-session";
+import {
+  resolveProjectHostBrowserSessionFromCookieHeader,
+  restrictedBrowserSessionTtlSeconds,
+} from "./browser-session";
 import { getProjectHostManagedEgressBlockedMessage } from "./managed-egress-runtime";
 import { getLocalExamAccountProjectId } from "./exam/identity";
 import {
@@ -127,6 +130,7 @@ function userFromBearerToken({
   if (claims.act === "hub") {
     return { hub_id: claims.sub || "hub" };
   }
+  restrictedBrowserSessionTtlSeconds(claims.browser_session_exp_s);
   if (
     isAccountSessionRevoked({
       account_id: claims.sub,

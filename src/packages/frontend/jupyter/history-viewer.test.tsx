@@ -42,6 +42,7 @@ describe("Jupyter HistoryViewer", () => {
   });
 
   it("does not pass live notebook actions into the readonly history cell list", () => {
+    const scrollPosition = { current: 320 };
     const doc = {
       get: (query) => {
         if (query?.type === "cell") {
@@ -65,6 +66,7 @@ describe("Jupyter HistoryViewer", () => {
         path="/home/user/test.ipynb"
         doc={doc as any}
         font_size={14}
+        scrollPosition={scrollPosition}
       />,
     );
 
@@ -73,5 +75,6 @@ describe("Jupyter HistoryViewer", () => {
     expect(capturedCellListProps.read_only).toBe(true);
     expect(capturedCellListProps.actions).toBeUndefined();
     expect(capturedCellListProps.cell_list.toJS()).toEqual(["cell-1"]);
+    expect(capturedCellListProps.scrollPosition).toBe(scrollPosition);
   });
 });

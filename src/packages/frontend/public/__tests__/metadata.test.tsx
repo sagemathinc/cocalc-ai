@@ -60,6 +60,16 @@ describe("public route metadata", () => {
     expect(products.description).toContain("CoCalc Launchpad");
     expect(products.description).toContain("CoCalc Rocket");
 
+    const plus = getPublicRouteMetadata(
+      {
+        route: { view: "products-cocalc-plus" },
+        section: "products",
+      },
+      { site_name: "CoCalc" },
+    );
+    expect(plus.description).toContain("project model");
+    expect(plus.description).not.toContain("workspace model");
+
     const star = getPublicRouteMetadata(
       {
         route: { view: "products-cocalc-star" },
@@ -141,8 +151,10 @@ describe("public route metadata", () => {
     );
 
     expect(metadata.title).toBe("CoCalc");
-    expect(metadata.description).toContain("persistent shared computer");
-    expect(metadata.description).toContain("same Linux project");
+    expect(metadata.description).toContain(
+      "people, AI agents, and project work",
+    );
+    expect(metadata.description).toContain("persistent shared Linux projects");
     expect(metadata.description).not.toMatch(/notebooks, code, documents/i);
   });
 
@@ -154,7 +166,9 @@ describe("public route metadata", () => {
     );
 
     expect(metadata.canonicalPath).toBe("/base/products/cocalc-star");
-    expect(metadata.imagePath).toBe("/base/public/landing/product-options.jpg");
+    expect(metadata.imagePath).toBe(
+      "/base/public/landing/project-notebook-20260916.jpg",
+    );
   });
 
   it("canonicalizes duplicated marketing routes to cocalc.ai on branded hosts", () => {
@@ -212,6 +226,48 @@ describe("public route metadata", () => {
     }
   });
 
+  it("uses the public team registry for person-specific metadata", () => {
+    const william = getPublicRouteMetadata(
+      getPublicMetadataRouteFromPath("/about/team/william-stein"),
+      { site_name: "CoCalc" },
+    );
+    expect(william.title).toBe("William Stein, Founder and CEO | CoCalc");
+    expect(william.description).toContain("creator of CoCalc and SageMath");
+    expect(william.notFound).toBeFalsy();
+
+    const unknown = getPublicRouteMetadata(
+      getPublicMetadataRouteFromPath("/about/team/not-a-person"),
+      { site_name: "CoCalc" },
+    );
+    expect(unknown.notFound).toBe(true);
+    expect(unknown.title).toBe("CoCalc Team | CoCalc");
+  });
+
+  it("noindexes thin auth and account-specific support actions", () => {
+    for (const path of [
+      "/auth/sign-in",
+      "/auth/sign-up",
+      "/auth/password-reset",
+      "/invites/example-token",
+      "/sso",
+      "/support/new",
+      "/support/tickets",
+    ]) {
+      const metadata = getPublicRouteMetadata(
+        getPublicMetadataRouteFromPath(path),
+        { site_name: "CoCalc" },
+      );
+      expect(metadata.noindex).toBe(true);
+    }
+    for (const path of ["/support", "/support/community"]) {
+      const metadata = getPublicRouteMetadata(
+        getPublicMetadataRouteFromPath(path),
+        { site_name: "CoCalc" },
+      );
+      expect(metadata.noindex).toBeFalsy();
+    }
+  });
+
   it("only emits routable feature detail pages in the public metadata sitemap", () => {
     const featurePaths = PUBLIC_SITEMAP_PATHS.filter((path) =>
       path.startsWith("/features/"),
@@ -256,7 +312,7 @@ describe("public route metadata", () => {
     );
     expect(headMeta('meta[name="twitter:card"]')).toBe("summary_large_image");
     expect(headMeta('meta[property="og:image"]')).toBe(
-      "http://localhost/public/landing/product-options.jpg",
+      "http://localhost/public/landing/project-notebook-20260916.jpg",
     );
     expect(canonicalHref()).toBe("https://cocalc.ai/products/cocalc-star");
   });

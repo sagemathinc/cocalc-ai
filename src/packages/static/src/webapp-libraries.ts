@@ -50,3 +50,7 @@ export const cocalcStylesReady = import("@cocalc/frontend/styles/index.css") // 
       console.warn(stack);
     }
   });
+
+export function revealCocalcApp(): void {
+  document.documentElement.classList.remove("cocalc-app-starting");
+}

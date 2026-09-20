@@ -39,6 +39,13 @@ chat-file automation metadata (including CLI `automation status`) remain allowed
 by their normal project-file permissions. No separate read protocol or implicit
 human-credential fallback is introduced.
 
+If both the local scheduler row and canonical project index are unavailable,
+control recovery may rebuild from the collaborator-editable chat projection.
+That exceptional recovery never infers historical authority from the projection:
+the authenticated caller explicitly assumes responsibility under a fresh settings
+revision. In the normal indexed path, `acknowledge` and `run_now` continue to
+preserve the existing settings writer.
+
 Scoped identity leases are process-bound, so a subsequent turn starts a fresh
 app-server process while resuming the model session. This costs a process startup,
 authentication and session resume per turn. Existing subagents/background commands

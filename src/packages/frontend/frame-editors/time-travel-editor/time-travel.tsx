@@ -9,7 +9,7 @@ import { Button, Modal, Radio, Select, Space, message } from "antd";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { Map, List } from "immutable";
 import { debounce } from "lodash";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { AccountState } from "@cocalc/frontend/account/types";
 import { useAsyncEffect, useEditorRedux } from "@cocalc/frontend/app-framework";
 import { AsyncComponent } from "@cocalc/frontend/misc/async-component";
@@ -22,6 +22,7 @@ import { GitAuthors, TimeTravelAuthors } from "./authors";
 import { Diff } from "./diff";
 import { timeTravelDocumentSource } from "./document-source";
 import { useHistoryLoad } from "./use-history-load";
+import { usePreservedScroll } from "./use-preserved-scroll";
 import { LoadMoreHistory } from "./load-more-history";
 import { LogView } from "./log-view";
 import { NavigationButtons } from "./navigation-buttons";
@@ -57,6 +58,9 @@ interface Props {
 
 export function TimeTravel(props: Props) {
   const { project_id, path } = props;
+  const textScrollPosition = useRef(0);
+  const notebookScrollPosition = useRef(0);
+  const diffScrollPosition = useRef(0);
 
   const useEditor = useEditorRedux<TimeTravelState>({ project_id, path });
   const error = useEditor("error");
@@ -402,6 +406,8 @@ export function TimeTravel(props: Props) {
     }
   });
   const { doc, doc0, doc1, useJson = false } = loadedDocuments?.value ?? {};
+  const { elementRef: bodyScrollRef, onScroll: handleBodyScroll } =
+    usePreservedScroll(documentSelection, loadedDocuments != null);
 
   useAsyncEffect(async () => {
     if (!gitMode || changesMode || version == null) {
@@ -510,7 +516,7 @@ export function TimeTravel(props: Props) {
               {commit.shortHash}
             </Button>{" "}
             · {commit.authorName} ·{" "}
-            <TimeAgo date={new Date(commit.timestampMs)} time_ago_absolute />
+            <TimeAgo date={new Date(commit.timestampMs)} />
           </span>
         );
       }
@@ -526,7 +532,7 @@ export function TimeTravel(props: Props) {
             {t != null && (
               <>
                 {" "}
-                · <TimeAgo date={new Date(t)} time_ago_absolute />
+                · <TimeAgo date={new Date(t)} />
               </>
             )}
           </span>
@@ -544,7 +550,7 @@ export function TimeTravel(props: Props) {
             {t != null && (
               <>
                 {" "}
-                · <TimeAgo date={new Date(t)} time_ago_absolute />
+                · <TimeAgo date={new Date(t)} />
               </>
             )}
           </span>
@@ -742,7 +748,7 @@ export function TimeTravel(props: Props) {
               {meta.timeMs != null && (
                 <>
                   {meta.subtitle ? " · " : ""}
-                  <TimeAgo date={new Date(meta.timeMs)} time_ago_absolute />
+                  <TimeAgo date={new Date(meta.timeMs)} />
                 </>
               )}
             </div>
@@ -781,6 +787,7 @@ export function TimeTravel(props: Props) {
         font_size={props.font_size}
         editor_settings={props.editor_settings}
         use_json={useJson}
+        scrollPosition={diffScrollPosition}
       />
     );
   };
@@ -1024,10 +1031,7 @@ export function TimeTravel(props: Props) {
                 <span>{commit.subject}</span>
                 <div style={{ color: UI_COLORS.secondary, fontSize: "12px" }}>
                   {commit.authorName} ·{" "}
-                  <TimeAgo
-                    date={new Date(commit.timestampMs)}
-                    time_ago_absolute
-                  />
+                  <TimeAgo date={new Date(commit.timestampMs)} />
                 </div>
               </div>
             ))}
@@ -1327,6 +1331,8 @@ export function TimeTravel(props: Props) {
         project_id={props.project_id}
         font_size={props.font_size}
         editor_settings={props.editor_settings}
+        textScrollPosition={textScrollPosition}
+        notebookScrollPosition={notebookScrollPosition}
       />
     );
   } else if (!changesMode && loadedDocuments == null) {
@@ -1354,6 +1360,8 @@ export function TimeTravel(props: Props) {
       >
         <div
           data-testid="timetravel-body-scroll"
+          onScroll={handleBodyScroll}
+          ref={bodyScrollRef}
           style={{
             flex: "1 1 0",
             height: "100%",

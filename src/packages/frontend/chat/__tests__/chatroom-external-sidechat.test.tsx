@@ -280,7 +280,7 @@ describe("ChatPanel external side chat persistence", () => {
     expect(actions.scrollToIndex).not.toHaveBeenCalled();
   });
 
-  it("keeps durable Codex attention requests out of the activity drawer", async () => {
+  it("routes durable Codex attention requests through the selected thread", async () => {
     renderPanel({
       "data-codexAttentionDate": "1234",
       "data-codexAttentionId": "attention-1",
@@ -291,7 +291,7 @@ describe("ChatPanel external side chat persistence", () => {
       expect(renderChatRoomThreadPanel.mock.lastCall?.[0]).toEqual(
         expect.objectContaining({
           activityJumpDate: undefined,
-          activityJumpAttentionId: undefined,
+          activityJumpAttentionId: "attention-1",
           activityJumpToken: 1,
         }),
       ),

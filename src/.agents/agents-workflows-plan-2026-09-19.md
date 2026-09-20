@@ -207,10 +207,10 @@ existing product surface in production.
       registration and frees its quota slot without deleting the `.chat`
       conversation, artifacts, or historical Agent Session records. Retired
       members become unavailable for subsequent session delivery.
-- [ ] Reconcile the branch with `origin/main`, resolve conflicts by preserving
+- [x] Reconcile the branch with `origin/main`, resolve conflicts by preserving
       the shared chat/project behavior, and rerun focused checks after the final
       merge result. Do not stack more feature work on the pre-merge branch.
-- [ ] Complete a security review of account-home and project-owning-bay routing,
+- [x] Complete a security review of account-home and project-owning-bay routing,
       human session binding, Agent Session membership and revocation, RPC
       admission/execution, identity recovery, blob/attachment access, replay and
       idempotency, bounded payloads, denial behavior, and secret-safe logging.
@@ -219,7 +219,7 @@ existing product surface in production.
 - [ ] Validate schema upgrades from the previous release and a rollback that
       leaves new tables inert. Confirm older clients fail closed or degrade
       safely when they encounter the new Agent and Workbench records.
-- [ ] Run package typechecks, focused server/frontend tests, frontend lint, the
+- [x] Run package typechecks, focused server/frontend tests, frontend lint, the
       full development build, and dependency/version consistency checks from the
       reconciled tree.
 - [ ] Exercise the release matrix in both Lite and hub-backed Launchpad: create,
@@ -235,6 +235,19 @@ existing product surface in production.
       quota and authorization denial metrics, RPC outcome/latency metrics,
       Workbench/open-file failures, blob resolution failures, and a way to turn
       off new Agent messaging without disabling ordinary `.chat` files.
+
+Release-audit evidence after reconciling `origin/main`:
+
+- The full development build and dependency consistency check pass.
+- Focused merged frontend/account tests pass (89 tests), along with the HTTP
+  external-agent approval tests (4 tests).
+- The complete Conat agent/RPC/attachment suite passes (104 tests), the server
+  agent/security suite passes (103 tests, with 2 environment-specific skips),
+  project-host agent tests pass (13 tests), and the complete CLI suite passes
+  (822 tests).
+- Frontend lint passes. The security audit also restored registry visibility for
+  the three expansive Agent Session mutations and updated transactional external
+  enrollment coverage for add-member failure and revocation rollback.
 
 ### Terminology
 

@@ -11,15 +11,24 @@ import { claimExternalAgentLoginChallenge } from "@cocalc/server/auth/cli-auth";
 
 const mockEnroll = jest.fn(),
   mockStatus = jest.fn(),
+  mockRevoke = jest.fn(),
+  mockUpdateSession = jest.fn(),
   mockRemote = jest.fn();
 jest.mock("./external-store", () => ({
   ExternalAgentStore: jest.fn().mockImplementation(() => ({
     enroll: (...args) => mockEnroll(...args),
     enrollmentStatus: (...args) => mockStatus(...args),
+    revoke: (...args) => mockRevoke(...args),
   })),
 }));
 jest.mock("./store", () => ({ agentStore: jest.fn() }));
 jest.mock("./api", () => ({ getIdentity: jest.fn() }));
+jest.mock("./personal", () => ({
+  personalAgentLimits: async () => ({ named: 5, members: 3 }),
+  personalStore: () => ({
+    updateSession: (...args) => mockUpdateSession(...args),
+  }),
+}));
 jest.mock("@cocalc/server/bay-directory", () => ({
   resolveAccountHomeBay: jest.fn(),
 }));
@@ -45,8 +54,9 @@ jest.mock("@cocalc/conat/inter-bay/agent-rpc", () => ({
 }));
 
 const account_id = randomUUID(),
-  challenge_id = randomUUID();
-const targets = [{ project_id: randomUUID(), agent_id: randomUUID() }];
+  challenge_id = randomUUID(),
+  agent_session_id = randomUUID(),
+  external_agent_id = randomUUID();
 const challenge = {
   label: "External QA",
   secret_hash: "a".repeat(64),
@@ -57,7 +67,7 @@ const opts = {
   challenge_id,
   session_hash: "human-home-session",
   origin_bay_id: "origin",
-  targets,
+  agent_session_id,
   ttl_seconds: 3600,
 };
 beforeEach(() => {
@@ -67,12 +77,19 @@ beforeEach(() => {
     .mockResolvedValue({ home_bay_id: "home" } as any);
   jest.mocked(requireDangerousSessionAuth).mockResolvedValue(undefined as any);
   mockRemote.mockResolvedValue({ challenge });
-  mockEnroll.mockResolvedValue({ installation_id: challenge_id });
+  mockEnroll.mockResolvedValue({
+    installation_id: challenge_id,
+    agent_id: external_agent_id,
+  });
+  mockUpdateSession.mockResolvedValue(undefined);
 });
 
 test("human approves at home; only a short attestation, never their credential, reaches origin", async () => {
   expect(await approveExternalAgentLogin(opts)).toEqual({
-    installation: { installation_id: challenge_id },
+    installation: {
+      installation_id: challenge_id,
+      agent_id: external_agent_id,
+    },
   });
   expect(requireDangerousSessionAuth).toHaveBeenCalledWith({
     account_id,
@@ -98,11 +115,35 @@ test("human approves at home; only a short attestation, never their credential, 
       installation_id: challenge_id,
       secret_hash: challenge.secret_hash,
       label: challenge.label,
-      targets,
+      agent_session_id,
       ttl_seconds: 3600,
     },
     Date.parse(challenge.expires_at),
   );
+  expect(mockUpdateSession).toHaveBeenCalledWith(
+    account_id,
+    {
+      request_id: challenge_id,
+      agent_session_id,
+      action: "add-member",
+      member: {
+        kind: "external",
+        agent_id: external_agent_id,
+        installation_id: challenge_id,
+      },
+    },
+    3,
+    true,
+  );
+});
+
+test("failed Agent Session membership revokes the enrolled external credential", async () => {
+  mockUpdateSession.mockRejectedValueOnce(new Error("session unavailable"));
+
+  await expect(approveExternalAgentLogin(opts)).rejects.toThrow(
+    "session unavailable",
+  );
+  expect(mockRevoke).toHaveBeenCalledWith(account_id, challenge_id);
 });
 
 test("failed fresh auth or wrong home cannot claim or enroll", async () => {

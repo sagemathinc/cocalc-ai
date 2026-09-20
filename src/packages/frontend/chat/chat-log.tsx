@@ -25,6 +25,7 @@ import {
   type ReactNode,
 } from "react";
 import { Button } from "antd";
+import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
 import { VirtuosoHandle } from "react-virtuoso";
 import StatefulVirtuoso from "@cocalc/frontend/components/stateful-virtuoso";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
@@ -61,6 +62,11 @@ import { getUserName } from "./user-name";
 import { getSortedDates } from "./sorted-dates";
 import { useActivityVisibility } from "./activity-visibility";
 import { agentRpcMessageMarkdown } from "./agent-message-presentation";
+import {
+  CodexAttentionCard,
+  type CodexAttentionDraft,
+  type CodexAttentionDraftUpdater,
+} from "./codex-attention-card";
 
 export { getSortedDates } from "./sorted-dates";
 
@@ -483,6 +489,7 @@ interface Props {
     commitHash: string;
   }) => void;
   suppressInlineCodexStatusDate?: string;
+  attentionRecords?: readonly AcpAttentionRecord[];
   readOnly?: boolean;
 }
 
@@ -513,6 +520,7 @@ export function ChatLog({
   activityJumpAttentionId,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
+  attentionRecords = [],
   readOnly = false,
 }: Props) {
   const singleThreadView = selectedThread != null;
@@ -746,6 +754,7 @@ export function ChatLog({
             anyOverlayOpen,
             onOpenGitBrowser,
             suppressInlineCodexStatusDate,
+            attentionRecords,
             readOnly,
           }}
         />
@@ -893,6 +902,7 @@ export function MessageList({
   anyOverlayOpen = false,
   onOpenGitBrowser,
   suppressInlineCodexStatusDate,
+  attentionRecords = [],
   readOnly = false,
   virtualized = true,
 }: {
@@ -935,6 +945,7 @@ export function MessageList({
     commitHash: string;
   }) => void;
   suppressInlineCodexStatusDate?: string;
+  attentionRecords?: readonly AcpAttentionRecord[];
   readOnly?: boolean;
   virtualized?: boolean;
 }) {
@@ -945,6 +956,9 @@ export function MessageList({
   const listContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollerRef = useRef<HTMLElement | null>(null);
   const [atBottom, setAtBottom] = useState(true);
+  const [attentionDrafts, setAttentionDrafts] = useState<
+    Record<string, CodexAttentionDraft>
+  >({});
   const cacheId = scrollCacheId ?? `${project_id}${path}`;
   const initialAnchor = useMemo(
     () => loadChatViewportAnchor(cacheId),
@@ -962,6 +976,22 @@ export function MessageList({
   const blockScrollInput = anyOverlayOpen === true;
   const showNewestMessagesButton =
     sortedDates.length > 0 && (!atBottom || manualScroll);
+  const attentionJumpExists =
+    activityJumpAttentionId != null &&
+    attentionRecords.some(
+      ({ attention_id }) => attention_id === activityJumpAttentionId,
+    );
+  const updateAttentionDraft = useCallback(
+    (attentionId: string, update: CodexAttentionDraftUpdater) => {
+      setAttentionDrafts((current) => ({
+        ...current,
+        [attentionId]: update(
+          current[attentionId] ?? { selected: {}, other: {} },
+        ),
+      }));
+    },
+    [],
+  );
   const {
     expanded: expandedCodexActivityByMessageId,
     explicit: explicitCodexActivityByMessageId,
@@ -1018,7 +1048,9 @@ export function MessageList({
           return;
         if (!isVisibleRef.current) return;
         const anchor = captureChatViewportAnchor({
-          forceAtBottom,
+          // Streaming can grow a row before Virtuoso follows it. Preserve the
+          // user's bottom-following intent across that intermediate layout.
+          forceAtBottom: forceAtBottom || keepBottomAnchoredRef?.current,
           scroller: scrollerRef.current,
           sortedDates: sortedDatesRef.current,
         });
@@ -1030,7 +1062,7 @@ export function MessageList({
         anchorCaptureFrameRef.current = window.setTimeout(capture, 0);
       }
     },
-    [cacheId, useVirtuoso],
+    [cacheId, keepBottomAnchoredRef, useVirtuoso],
   );
 
   const clearUserScrollIntentLater = () => {
@@ -1138,7 +1170,6 @@ export function MessageList({
   };
 
   const maybeBlockScrollKeys = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!blockScrollInput) return;
     if (
       isEditableOrOverlayInteractionTarget(event.target) ||
       isEditableOrOverlayInteractionTarget(document.activeElement)
@@ -1146,13 +1177,12 @@ export function MessageList({
       return;
     }
     const key = `${event.key ?? ""}`.toLowerCase();
-    if (
-      key === "arrowup" ||
-      key === "pageup" ||
-      key === "home" ||
-      key === " " ||
-      key === "spacebar"
-    ) {
+    if (key === "arrowup" || key === "pageup" || key === "home") {
+      markUserScrollIntent();
+      markManualScrollAway();
+    }
+    if (!blockScrollInput) return;
+    if (key === " " || key === "spacebar") {
       markUserScrollIntent();
       markManualScrollAway();
     }
@@ -1561,7 +1591,21 @@ export function MessageList({
         key: date == null ? "end" : steerRowKey(date),
         render:
           index === sortedDates.length
-            ? () => <div style={{ height: "25px" }} />
+            ? () => (
+                <div style={{ padding: "8px 12px 25px" }}>
+                  {attentionRecords.map((record) => (
+                    <div key={record.attention_id} style={{ marginTop: 8 }}>
+                      <CodexAttentionCard
+                        initialRecord={record}
+                        draft={attentionDrafts[record.attention_id]}
+                        onDraftChange={(update) =>
+                          updateAttentionDraft(record.attention_id, update)
+                        }
+                      />
+                    </div>
+                  ))}
+                </div>
+              )
             : () => renderMessage(index),
       };
     },
@@ -1625,6 +1669,52 @@ export function MessageList({
       endRef.current?.scrollIntoView({ block: "end" });
     };
   }, [scrollToBottomRef, useVirtuoso]);
+
+  useEffect(() => {
+    if (!activityJumpAttentionId || !attentionJumpExists) {
+      return;
+    }
+    if (useVirtuoso) {
+      listVirtuosoRef.current?.scrollToIndex({
+        index: sortedDates.length,
+        align: "center",
+        behavior: INSTANT_SCROLL_BEHAVIOR,
+      });
+    }
+    let canceled = false;
+    let frame: number | undefined;
+    let attempts = 0;
+    const focusCard = () => {
+      if (canceled) return;
+      const nodes =
+        listContainerRef.current?.querySelectorAll<HTMLElement>(
+          "[data-codex-attention-id]",
+        ) ?? [];
+      const node = [...nodes].find(
+        ({ dataset }) => dataset.codexAttentionId === activityJumpAttentionId,
+      );
+      if (node) {
+        node.scrollIntoView({ block: "nearest" });
+        node.focus({ preventScroll: true });
+        return;
+      }
+      if (++attempts < 8) {
+        frame = requestAnimationFrame(focusCard);
+      }
+    };
+    frame = requestAnimationFrame(focusCard);
+    return () => {
+      canceled = true;
+      if (frame != null) cancelAnimationFrame(frame);
+    };
+  }, [
+    activityJumpAttentionId,
+    attentionJumpExists,
+    activityJumpToken,
+    listVirtuosoRef,
+    sortedDates.length,
+    useVirtuoso,
+  ]);
 
   useEffect(() => {
     if (!useVirtuoso) return;
@@ -1730,6 +1820,7 @@ export function MessageList({
   if (!useVirtuoso) {
     return (
       <div
+        ref={listContainerRef}
         style={MESSAGE_LIST_CONTAINER_STYLE}
         onWheelCapture={maybeBlockScrollEvent}
         onTouchMoveCapture={maybeBlockScrollEvent}
@@ -1737,7 +1828,19 @@ export function MessageList({
         onPointerDownCapture={markUserScrollIntent}
       >
         {sortedDates.map((_, index) => renderMessage(index))}
-        <div ref={endRef} style={{ height: "25px" }} />
+        <div ref={endRef} style={{ padding: "8px 12px 25px" }}>
+          {attentionRecords.map((record) => (
+            <div key={record.attention_id} style={{ marginTop: 8 }}>
+              <CodexAttentionCard
+                initialRecord={record}
+                draft={attentionDrafts[record.attention_id]}
+                onDraftChange={(update) =>
+                  updateAttentionDraft(record.attention_id, update)
+                }
+              />
+            </div>
+          ))}
+        </div>
       </div>
     );
   }

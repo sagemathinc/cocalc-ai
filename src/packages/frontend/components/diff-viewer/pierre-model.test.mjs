@@ -86,6 +86,26 @@ test("complete TimeTravel versions support unchanged lines outside diff hunks", 
   assert.equal(containsPreviewLine(file, 301, "additions"), false);
 });
 
+test("document diffs use the requested context without discarding hidden lines", () => {
+  const before = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
+  for (const context of [3, 10, 30]) {
+    const [file] = parsePreviewSource(
+      {
+        kind: "documents",
+        label: "history",
+        path: "file.txt",
+        before,
+        after: before.replace("line 49", "changed"),
+      },
+      context,
+    );
+    assert.equal(file.hunks.length, 1);
+    assert.equal(file.hunks[0].additionCount, 2 * context + 1);
+    assert.equal(file.hunks[0].additionStart, 50 - context);
+    assert.equal(containsPreviewLine(file, 100, "additions"), true);
+  }
+});
+
 test("a truncated patch reports an error instead of presenting a complete review", () => {
   assert.throws(() =>
     parsePreviewSource({

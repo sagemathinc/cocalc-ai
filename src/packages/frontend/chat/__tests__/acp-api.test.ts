@@ -3,8 +3,10 @@
 import {
   cancelQueuedAcpTurn,
   processAcpLLM,
+  runThreadAutomationNow,
   resendCanceledAcpTurn,
   resetAcpApiStateForTests,
+  sanitizeSharedCodexConfig,
   sendQueuedAcpTurnImmediately,
 } from "../acp-api";
 
@@ -12,6 +14,7 @@ const mockStreamAcp = jest.fn();
 const mockSteerAcp = jest.fn();
 const mockControlAcp = jest.fn();
 const mockInterruptAcp = jest.fn();
+const mockAutomationAcp = jest.fn();
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({
   webapp_client: {
@@ -20,6 +23,7 @@ jest.mock("@cocalc/frontend/webapp-client", () => ({
       steerAcp: (...args: any[]) => mockSteerAcp(...args),
       controlAcp: (...args: any[]) => mockControlAcp(...args),
       interruptAcp: (...args: any[]) => mockInterruptAcp(...args),
+      automationAcp: (...args: any[]) => mockAutomationAcp(...args),
       getProjectHostAcpBearer: async () => "",
     },
   },
@@ -770,6 +774,52 @@ describe("processAcpLLM", () => {
         acp_state: "not-sent",
       }),
     );
+  });
+});
+
+describe("sanitizeSharedCodexConfig", () => {
+  it("removes collaborator-persisted credential selectors", () => {
+    expect(
+      sanitizeSharedCodexConfig({
+        paymentSource: "subscription",
+        model: "gpt-5.4",
+        credentialId: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).toEqual({
+      paymentSource: "subscription",
+      model: "gpt-5.4",
+    });
+  });
+});
+
+describe("automation controls", () => {
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  it("rejects missing chat context instead of silently doing nothing", async () => {
+    await expect(
+      runThreadAutomationNow({ actions: {} as any, threadId: "thread-1" }),
+    ).rejects.toThrow("Chat automation context is unavailable");
+    expect(mockAutomationAcp).not.toHaveBeenCalled();
+  });
+
+  it("propagates scheduler failures to the caller", async () => {
+    mockAutomationAcp.mockRejectedValueOnce(new Error("automation not found"));
+    const actions = {
+      store: {
+        get: (key: string) =>
+          key === "project_id"
+            ? "project-1"
+            : key === "path"
+              ? "repo/agent.chat"
+              : undefined,
+      },
+    } as any;
+
+    await expect(
+      runThreadAutomationNow({ actions, threadId: "thread-1" }),
+    ).rejects.toThrow("automation not found");
   });
 });
 

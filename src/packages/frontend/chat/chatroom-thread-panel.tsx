@@ -94,8 +94,8 @@ import {
 import { resolveAgentSessionIdForThread } from "./thread-session";
 import { useCodexLiveActivityStatus } from "./use-codex-log";
 import { CodexFullAccessNotice } from "./codex-full-access";
-import { CodexAttentionCard } from "./codex-attention-card";
 import { getCodexPaymentSourceOptions } from "./use-codex-payment-source";
+import { getCodexSubscriptionDisplayName } from "./codex-subscription-label";
 import {
   clearCachedCodexModelCatalog,
   getLiveCodexUsageStatus,
@@ -290,6 +290,23 @@ export function getDefaultNewThreadSetup(): NewThreadSetup {
 
 export const DEFAULT_NEW_THREAD_SETUP: NewThreadSetup =
   getDefaultNewThreadSetup();
+
+export function getNewThreadPaymentSourceOptions(
+  paymentSource?: CodexPaymentSourceInfo,
+) {
+  return getCodexPaymentSourceOptions(paymentSource).flatMap((option) => {
+    if (option.value !== "subscription") return [option];
+    const subscriptions = paymentSource?.subscriptions ?? [];
+    if (!subscriptions.length) return [option];
+    return subscriptions.map((credential) => ({
+      value: `subscription:${credential.id}`,
+      label: getCodexSubscriptionDisplayName(credential, subscriptions),
+      description: credential.plan
+        ? `Use this ChatGPT ${credential.plan} subscription.`
+        : option.description,
+    }));
+  });
+}
 
 export function reconcileNewThreadSetupWithCodexCatalog({
   setup,
@@ -502,6 +519,8 @@ interface ChatRoomThreadPanelProps {
   onNewChat: () => void;
   codexPaymentSource?: CodexPaymentSourceInfo;
   codexPaymentSourceLoading?: boolean;
+  codexCredentialId?: string;
+  onCodexCredentialIdChange?: (credentialId: string) => void;
   refreshCodexPaymentSource?: () => void;
   newThreadSetup: NewThreadSetup;
   onNewThreadSetupChange: React.Dispatch<React.SetStateAction<NewThreadSetup>>;
@@ -554,6 +573,8 @@ export function ChatRoomThreadPanel({
   onNewChat,
   codexPaymentSource,
   codexPaymentSourceLoading,
+  codexCredentialId,
+  onCodexCredentialIdChange,
   refreshCodexPaymentSource,
   newThreadSetup,
   onNewThreadSetupChange,
@@ -713,6 +734,7 @@ export function ChatRoomThreadPanel({
       projectId: project_id,
       includeModels: true,
       refreshModels: forceRefresh,
+      credentialId: codexPaymentSource.credentialId,
     })
       .then((status) => {
         if (cancelled || !status.models?.length) return;
@@ -1467,8 +1489,13 @@ export function ChatRoomThreadPanel({
         .find(({ value }) => value === codexModel)
         ?.serviceTiers?.includes("fast") ??
       codexModelSupportsFastMode(codexModel);
-    const paymentSourceOptions =
-      getCodexPaymentSourceOptions(codexPaymentSource);
+    const exactPaymentSourceOptions =
+      getNewThreadPaymentSourceOptions(codexPaymentSource);
+    const selectedPaymentSource =
+      (newThreadSetup.codexConfig.paymentSource ?? "auto") === "subscription" &&
+      codexCredentialId
+        ? `subscription:${codexCredentialId}`
+        : (newThreadSetup.codexConfig.paymentSource ?? "auto");
     const siteFundedPolicy =
       codexPaymentSource?.source === "site-api-key" &&
       codexPaymentSource.siteFundedCodex?.enabled
@@ -1757,23 +1784,36 @@ export function ChatRoomThreadPanel({
                     Payment source
                   </div>
                   <Select
-                    value={newThreadSetup.codexConfig.paymentSource ?? "auto"}
+                    value={selectedPaymentSource}
                     style={{ width: "100%" }}
-                    options={paymentSourceOptions}
+                    options={exactPaymentSourceOptions}
                     optionRender={(option) =>
                       renderOptionWithDescription({
                         title: `${option.data.label}`,
                         description: option.data.description,
                       })
                     }
-                    onChange={(value: CodexPaymentSourcePreference) =>
+                    onChange={(value: string) => {
+                      if (value.startsWith("subscription:")) {
+                        const credentialId = value.slice(
+                          "subscription:".length,
+                        );
+                        onCodexCredentialIdChange?.(credentialId);
+                        update({
+                          codexConfig: {
+                            ...newThreadSetup.codexConfig,
+                            paymentSource: "subscription",
+                          },
+                        });
+                        return;
+                      }
                       update({
                         codexConfig: {
                           ...newThreadSetup.codexConfig,
-                          paymentSource: value,
+                          paymentSource: value as CodexPaymentSourcePreference,
                         },
-                      })
-                    }
+                      });
+                    }}
                   />
                   {siteFundedPolicy ? (
                     <Alert
@@ -2245,6 +2285,7 @@ export function ChatRoomThreadPanel({
                 paymentSource={codexPaymentSource}
                 paymentSourceLoading={codexPaymentSourceLoading}
                 refreshPaymentSource={refreshCodexPaymentSource}
+                turnRunning={selectedRunningCodexMessage != null}
               />
             ) : null}
           </Space>
@@ -2960,25 +3001,6 @@ export function ChatRoomThreadPanel({
           paddingTop: contentTopInset,
         }}
       >
-        {attentionRecords.length > 0 ? (
-          <section
-            aria-label="Pending Codex requests"
-            style={{
-              maxHeight: "45vh",
-              overflowY: "auto",
-              padding: "8px 12px 0",
-            }}
-          >
-            <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-              {attentionRecords.map((record) => (
-                <CodexAttentionCard
-                  key={record.attention_id}
-                  initialRecord={record}
-                />
-              ))}
-            </Space>
-          </section>
-        ) : null}
         {showArchivedBanner ? (
           <div
             style={{
@@ -3088,6 +3110,7 @@ export function ChatRoomThreadPanel({
               ? `${selectedRunningCodexDate}`
               : undefined
           }
+          attentionRecords={attentionRecords}
           readOnly={readOnly}
         />
       </div>

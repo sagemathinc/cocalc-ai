@@ -11,6 +11,8 @@ const execFileMock = jest.fn();
 const execMock = jest.fn();
 const mockStartProjectWithAdmission = jest.fn();
 const refreshSubscriptionAuthFromRegistryMock = jest.fn();
+const pullSubscriptionAuthFromRegistryMock = jest.fn();
+const syncSubscriptionAuthToRegistryIfChangedMock = jest.fn();
 const restrictedEgressCloseMock = jest.fn();
 const startRestrictedCodexEgressProxySessionMock = jest.fn(async () => ({
   proxyUrl:
@@ -98,9 +100,12 @@ jest.mock("./codex/codex-auth", () => ({
 }));
 
 jest.mock("./codex/codex-auth-registry", () => ({
+  pullSubscriptionAuthFromRegistry: (...args: any[]) =>
+    pullSubscriptionAuthFromRegistryMock(...args),
   refreshSubscriptionAuthFromRegistry: (...args: any[]) =>
     refreshSubscriptionAuthFromRegistryMock(...args),
-  syncSubscriptionAuthToRegistryIfChanged: jest.fn(),
+  syncSubscriptionAuthToRegistryIfChanged: (...args: any[]) =>
+    syncSubscriptionAuthToRegistryIfChangedMock(...args),
 }));
 
 jest.mock("./codex/restricted-egress-proxy", () => ({
@@ -201,6 +206,12 @@ describe("initCodexProjectRunner", () => {
     refreshSubscriptionAuthFromRegistryMock.mockReset();
     refreshSubscriptionAuthFromRegistryMock.mockResolvedValue({
       refreshed: true,
+    });
+    pullSubscriptionAuthFromRegistryMock.mockReset();
+    pullSubscriptionAuthFromRegistryMock.mockResolvedValue({ pulled: false });
+    syncSubscriptionAuthToRegistryIfChangedMock.mockReset();
+    syncSubscriptionAuthToRegistryIfChangedMock.mockResolvedValue({
+      ok: true,
     });
     restrictedEgressCloseMock.mockReset();
     startRestrictedCodexEgressProxySessionMock.mockClear();
@@ -505,7 +516,7 @@ describe("initCodexProjectRunner", () => {
 
     const { initCodexProjectRunner } = await import("./codex/codex-project");
     initCodexProjectRunner();
-    await getCodexProjectSpawner()!.spawnCodexAppServer!({
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
       projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
       accountId: "00000000-0000-4000-8000-000000000001",
       isolatedCodexHome: true,
@@ -1301,6 +1312,85 @@ describe("initCodexProjectRunner", () => {
     ).rejects.toThrow("unchanged access token");
     expect(spawnMock.mock.calls[0][1]).not.toContain(
       "OPENAI_API_KEY=secret-key",
+    );
+  });
+
+  it("syncs a recovered selected subscription back to its exact registry row", async () => {
+    const proc = new FakeProc();
+    spawnMock.mockReturnValue(proc);
+    execFileMock.mockImplementation((_cmd, args, _opts, cb) => {
+      if (args[0] === "inspect" && args[1] === "-f") {
+        cb(null, "true\n", "");
+        return;
+      }
+      cb(null, "", "");
+    });
+    const tmp = await mkTempDir("codex-project-selected-recovery-");
+    const home = path.join(tmp, "home");
+    const defaultHome = path.join(tmp, "subscriptions", "default-a");
+    const selectedHome = path.join(tmp, "subscriptions", "selected-b");
+    const selectedCredentialId = "00000000-0000-4000-8000-000000000002";
+    await fs.mkdir(home, { recursive: true });
+    await fs.mkdir(defaultHome, { recursive: true });
+    await fs.mkdir(selectedHome, { recursive: true });
+    const accessToken = jwt({
+      "https://api.openai.com/auth": {
+        chatgpt_account_id: "workspace-b",
+        chatgpt_plan_type: "pro",
+      },
+    });
+    await fs.writeFile(
+      path.join(selectedHome, "auth.json"),
+      JSON.stringify({
+        tokens: {
+          access_token: accessToken,
+          account_id: "workspace-b",
+        },
+      }),
+    );
+    filesystem.localPath.mockResolvedValue({ home, scratch: undefined });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "subscription",
+      contextId: "subscription-b",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+      env: {},
+    });
+
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+    const spawned = await getCodexProjectSpawner()!.spawnCodexAppServer!({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      paymentSource: "subscription",
+    });
+
+    expect(spawned.credentialId).toBe(selectedCredentialId);
+    await spawned.validateSubscriptionCredential?.();
+    expect(pullSubscriptionAuthFromRegistryMock).toHaveBeenCalledWith({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+      onlyIfNewer: true,
+      requireAuthority: true,
+    });
+
+    for (const listener of proc.listeners("exit")) {
+      await listener(0);
+    }
+
+    expect(syncSubscriptionAuthToRegistryIfChangedMock).toHaveBeenCalledWith({
+      projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+      accountId: "00000000-0000-4000-8000-000000000001",
+      credentialId: selectedCredentialId,
+      codexHome: selectedHome,
+    });
+    expect(
+      syncSubscriptionAuthToRegistryIfChangedMock,
+    ).not.toHaveBeenCalledWith(
+      expect.objectContaining({ codexHome: defaultHome }),
     );
   });
 

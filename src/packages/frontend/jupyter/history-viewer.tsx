@@ -33,7 +33,13 @@ function get_cells(doc): { cells: Map<string, any>; cell_list: List<string> } {
   return { cells, cell_list };
 }
 
-export function HistoryViewer({ project_id, path, doc, font_size }) {
+export function HistoryViewer({
+  project_id,
+  path,
+  doc,
+  font_size,
+  scrollPosition,
+}) {
   const accountFontSize = useTypedRedux("account", "font_size");
   const default_font_size = font_size ?? accountFontSize ?? DEFAULT_FONT_SIZE;
   const { head: directory } = path_split(path);
@@ -72,6 +78,7 @@ export function HistoryViewer({ project_id, path, doc, font_size }) {
         directory={directory}
         trust={false}
         read_only={true}
+        scrollPosition={scrollPosition}
       />
     </div>
   );

@@ -327,6 +327,41 @@ describe("CodexConfigButton", () => {
     ).toBeTruthy();
   });
 
+  it("labels settings changed during an active turn as next-turn settings", async () => {
+    const actions = {
+      getCodexConfig: () => undefined,
+      setCodexConfig: jest.fn(),
+    } as any;
+    const { rerender } = render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-5.4", reasoning: "medium" }}
+        actions={actions}
+        turnRunning
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.queryByText("Next turn")).toBeNull();
+      expect(stableForm.setFieldsValue).toHaveBeenCalled();
+    });
+
+    rerender(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        threadConfig={{ model: "gpt-5.4", reasoning: "high" }}
+        actions={actions}
+        turnRunning
+      />,
+    );
+
+    expect(await screen.findByText("Next turn")).toBeTruthy();
+  });
+
   it("uses the authenticated catalog and preserves only the selected unavailable model", () => {
     const options = codexModelOptionsForCatalog(
       [
@@ -1369,6 +1404,57 @@ describe("CodexConfigButton", () => {
     expect(actions.setCodexConfig).not.toHaveBeenCalled();
   });
 
+  it("uses a custom subscription label and opens credential management in place", async () => {
+    const user = userEvent.setup();
+    render(
+      <CodexConfigButton
+        threadKey="thread-1"
+        chatPath="foo.chat"
+        projectId="project-1"
+        actions={
+          {
+            getCodexConfig: jest.fn(() => undefined),
+            setCodexConfig: jest.fn(),
+          } as any
+        }
+        threadConfig={{ paymentSource: "subscription" }}
+        paymentSource={{
+          source: "subscription",
+          hasSubscription: true,
+          credentialId: "credential-security",
+          subscriptions: [
+            {
+              id: "credential-security",
+              label: "Security review",
+              email: "private@example.com",
+              updatedAt: "2026-09-19T00:00:00Z",
+            },
+          ],
+          hasProjectApiKey: false,
+          hasAccountApiKey: false,
+          hasSiteApiKey: false,
+          sharedHomeMode: "disabled",
+        }}
+      />,
+    );
+
+    const source = await screen.findByRole("button", {
+      name: "Change Codex payment source",
+    });
+    expect(source.textContent).toBe("Security review");
+    expect(screen.queryByText("private@example.com")).toBeNull();
+
+    await user.click(source);
+    await user.click(
+      screen.getByRole("button", { name: "Manage subscriptions" }),
+    );
+    expect(
+      await screen.findByRole("dialog", {
+        name: "Codex Payment & Credentials",
+      }),
+    ).toBeTruthy();
+  });
+
   it.each([
     ["a new personal thread", "subscription", undefined],
     ["an existing membership thread", "site-api-key", "thr-membership"],
@@ -1728,7 +1814,7 @@ describe("CodexConfigButton", () => {
     expect(screen.getByLabelText("Expand Codex controls")).toBeTruthy();
   });
 
-  it("shows the ChatGPT Codex usage link in payment settings", async () => {
+  it("omits the obsolete external usage link from payment settings", async () => {
     render(
       <CodexConfigButton
         threadKey="thread-1"
@@ -1748,7 +1834,7 @@ describe("CodexConfigButton", () => {
     });
     fireEvent.click(screen.getByText("ChatGPT"));
 
-    expect(screen.getByText("Open ChatGPT Codex Usage")).not.toBeNull();
+    expect(screen.queryByText("Open ChatGPT Codex Usage")).toBeNull();
   });
 
   it("shows compact ChatGPT usage in the settings summary", async () => {

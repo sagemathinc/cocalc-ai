@@ -474,6 +474,8 @@ type SpawnedCodexAppServer = {
   runtimeEnv?: Record<string, string>;
   setAgentSessionKey?: (agentSessionKey: string) => Promise<void>;
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
+  credentialId?: string;
+  validateSubscriptionCredential?: () => Promise<void>;
 };
 
 function agentTurnSessionKey(
@@ -597,6 +599,8 @@ type SessionStoreEntry = {
 
 type RunningTurn = {
   executionAccountId: string;
+  paymentSource: CodexSessionConfig["paymentSource"];
+  credentialId?: string;
   proc: ReturnType<typeof spawn>;
   client: AppServerClient;
   stop: () => Promise<void>;
@@ -611,6 +615,7 @@ type CodexAppServerRuntime = {
   accountId: string;
   cwd: string;
   paymentSource: CodexSessionConfig["paymentSource"];
+  credentialId?: string;
   maxConcurrentSubagents?: number;
   spawned: SpawnedCodexAppServer;
   client: AppServerClient;
@@ -631,6 +636,7 @@ type CodexAppServerRuntime = {
 type RetryableAppServerFailureKind =
   | "remote-compact-timeout"
   | "model-capacity"
+  | "runtime-environment-refresh"
   | "timeout"
   | "stream-disconnect";
 type InProcessRetryableAppServerFailureKind = Exclude<
@@ -1384,6 +1390,10 @@ function formatStreamDisconnectRetryExhaustedError(error: string): string {
   return normalized ? `${normalized}\n\n${guidance}` : guidance;
 }
 
+function formatRuntimeEnvironmentRefreshExhaustedError(): string {
+  return "The agent runtime could not finish updating automatically. Please retry this message. If it continues to fail, restart the project or contact support.";
+}
+
 function formatRetryDelay(ms: number): string {
   if (ms >= 60_000 && ms % 60_000 === 0) {
     const minutes = ms / 60_000;
@@ -1401,10 +1411,19 @@ function getRetryPolicyForFailure(
 ): {
   maxRetries: number;
   retryDelayMs: number;
+  announceRetry?: boolean;
   retryMessage: (attempt: number, maxRetries: number) => string;
   exhaustedMessage: (error: string) => string;
 } {
   switch (kind) {
+    case "runtime-environment-refresh":
+      return {
+        maxRetries: 1,
+        retryDelayMs: 0,
+        announceRetry: false,
+        retryMessage: () => "Refreshing the agent runtime...",
+        exhaustedMessage: formatRuntimeEnvironmentRefreshExhaustedError,
+      };
     case "timeout": {
       const retryDelayMs = getTimeoutRetryDelayMs();
       return {
@@ -2050,6 +2069,8 @@ export async function getCodexAppServerAccountStatus(opts: {
   includeTokenUsage?: boolean;
   includeModels?: boolean;
   timeoutMs?: number;
+  credentialId?: string;
+  codexHome?: string;
 }): Promise<CodexAppServerAccountStatus> {
   const timeoutMs = opts.timeoutMs ?? ACCOUNT_STATUS_REQUEST_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
@@ -2070,6 +2091,9 @@ export async function getCodexAppServerAccountStatus(opts: {
           env: opts.env,
           isolatedCodexHome: opts.isolatedCodexHome,
           touchReason: false,
+          paymentSource: opts.credentialId ? "subscription" : undefined,
+          credentialId: opts.credentialId,
+          codexHome: opts.codexHome,
         })
       : await spawnStandaloneAppServer(
           {
@@ -2469,15 +2493,15 @@ export class CodexAppServerAgent implements AcpAgent {
     }
   }
 
-  private runtimeMatchesRequest(
+  private async runtimeMatchesRequest(
     runtime: CodexAppServerRuntime,
     request: AcpEvaluateRequest,
     cwd: string,
-  ): boolean {
+  ): Promise<boolean> {
     // The subagent limit configures a Codex thread, not its owning process.
     // Never replace a live manager (and its retained work) merely because a
     // recovered or older client omitted the limit that a newer client sends.
-    return (
+    const matches =
       runtime.projectId === (request.chat?.project_id ?? request.project_id) &&
       runtime.accountId === request.account_id &&
       // Identity leases are process-bound. A new human turn must not inherit
@@ -2485,8 +2509,18 @@ export class CodexAppServerAgent implements AcpAgent {
       !runtime.spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE &&
       runtime.cwd === cwd &&
       (runtime.paymentSource ?? "auto") ===
-        (request.config?.paymentSource ?? "auto")
-    );
+        (request.config?.paymentSource ?? "auto") &&
+      runtime.credentialId === request.config?.credentialId;
+    if (!matches) return false;
+    if (authSourceForSpawned(runtime.spawned) !== "subscription") return true;
+    if (
+      !runtime.credentialId ||
+      !runtime.spawned.validateSubscriptionCredential
+    ) {
+      return false;
+    }
+    await runtime.spawned.validateSubscriptionCredential();
+    return true;
   }
 
   private async acquireRuntime({
@@ -2505,7 +2539,7 @@ export class CodexAppServerAgent implements AcpAgent {
     if (runtime?.active) {
       throw new Error("This Codex thread already has an active turn.");
     }
-    if (runtime && !this.runtimeMatchesRequest(runtime, request, cwd)) {
+    if (runtime && !(await this.runtimeMatchesRequest(runtime, request, cwd))) {
       let backgroundTerminalCount = runtime.backgroundTerminalCount;
       let activeDescendantCount = runtime.activeDescendantCount;
       try {
@@ -2570,6 +2604,7 @@ export class CodexAppServerAgent implements AcpAgent {
         path: request.chat?.path,
       },
       paymentSource: request.config?.paymentSource,
+      credentialId: request.config?.credentialId,
     });
     const client = new AppServerClient(
       spawned.proc,
@@ -2608,6 +2643,7 @@ export class CodexAppServerAgent implements AcpAgent {
       accountId: request.account_id,
       cwd,
       paymentSource: request.config?.paymentSource,
+      credentialId: spawned.credentialId ?? request.config?.credentialId,
       maxConcurrentSubagents: normalizeMaxConcurrentSubagents(
         request.config?.maxConcurrentSubagents,
       ),
@@ -2632,11 +2668,11 @@ export class CodexAppServerAgent implements AcpAgent {
   }
 
   async evaluate(request: AcpEvaluateRequest): Promise<void> {
-    let maxRetries = 0;
-    let retryDelayMs = 0;
-    let retryMessage = (_attempt: number, _maxRetries: number) => "Retrying...";
-    let exhaustedMessage = (error: string) => error;
-    for (let attempt = 0; ; attempt += 1) {
+    const retriesByKind = new Map<
+      InProcessRetryableAppServerFailureKind,
+      number
+    >();
+    for (;;) {
       try {
         const outcome = await this.evaluateOnce(request);
         if (outcome === "interrupted") {
@@ -2668,32 +2704,31 @@ export class CodexAppServerAgent implements AcpAgent {
           });
           return;
         }
-        if (isRetryableAppServerError(err)) {
-          const retryKind = err.kind;
-          if (retryKind === "model-capacity") {
-            await request.stream({
-              type: "error",
-              error: err.message,
-              code: CODEX_ACP_RECOVERY_ERROR_CODE.modelCapacity,
-              retryable: true,
-            });
-            return;
-          }
-          const policy = getRetryPolicyForFailure(retryKind);
-          maxRetries = policy.maxRetries;
-          retryDelayMs = policy.retryDelayMs;
-          retryMessage = policy.retryMessage;
-          exhaustedMessage = policy.exhaustedMessage;
-        }
-        if (!isRetryableAppServerError(err) || attempt >= maxRetries) {
-          const error =
-            isRetryableAppServerError(err) && attempt >= maxRetries
-              ? exhaustedMessage(err.message ?? `${err}`)
-              : ((err as Error)?.message ?? `${err}`);
-          await request.stream({ type: "error", error });
+        if (!isRetryableAppServerError(err)) {
+          await request.stream({ type: "error", error: terminalError });
           return;
         }
-        const retryNumber = attempt + 1;
+        const retryKind = err.kind;
+        if (retryKind === "model-capacity") {
+          await request.stream({
+            type: "error",
+            error: err.message,
+            code: CODEX_ACP_RECOVERY_ERROR_CODE.modelCapacity,
+            retryable: true,
+          });
+          return;
+        }
+        const policy = getRetryPolicyForFailure(retryKind);
+        const completedRetries = retriesByKind.get(retryKind) ?? 0;
+        if (completedRetries >= policy.maxRetries) {
+          await request.stream({
+            type: "error",
+            error: policy.exhaustedMessage(err.message ?? `${err}`),
+          });
+          return;
+        }
+        const retryNumber = completedRetries + 1;
+        retriesByKind.set(retryKind, retryNumber);
         logger.warn("codex app-server: retrying transient failure", {
           projectId: request.chat?.project_id ?? request.project_id,
           accountId: request.account_id,
@@ -2701,18 +2736,22 @@ export class CodexAppServerAgent implements AcpAgent {
           threadId: err.threadId,
           turnId: err.turnId,
           attempt: retryNumber,
-          maxRetries,
-          delayMs: retryDelayMs,
+          maxRetries: policy.maxRetries,
+          delayMs: policy.retryDelayMs,
           stderrTail: err.stderrTail ?? [],
         });
-        await request.stream({
-          type: "event",
-          event: {
-            type: "thinking",
-            text: retryMessage(retryNumber, maxRetries),
-          },
-        });
-        await delay(retryDelayMs * retryNumber);
+        if (policy.announceRetry ?? true) {
+          await request.stream({
+            type: "event",
+            event: {
+              type: "thinking",
+              text: policy.retryMessage(retryNumber, policy.maxRetries),
+            },
+          });
+        }
+        if (policy.retryDelayMs > 0) {
+          await delay(policy.retryDelayMs * retryNumber);
+        }
       }
     }
   }
@@ -2735,7 +2774,7 @@ export class CodexAppServerAgent implements AcpAgent {
       }).filter(([, value]) => typeof value === "string"),
     ) as Record<string, string>;
     const cwd = this.resolveCwd(config);
-    const { runtime } = await this.acquireRuntime({
+    const { runtime, created: runtimeCreated } = await this.acquireRuntime({
       request,
       session,
       cwd,
@@ -2901,14 +2940,45 @@ export class CodexAppServerAgent implements AcpAgent {
     try {
       if (request.mentionReferences != null) {
         const identityPath = spawned.runtimeEnv?.COCALC_AGENT_IDENTITY_FILE;
+        // A retained process can straddle a project-tools rollout. Refresh it
+        // before turn/start rather than exposing an operator-only error.
         if (
-          identityPath &&
-          spawned.runtimeEnv?.[TURN_MENTION_FILE_ENV] !==
-            turnMentionFilePath(identityPath)
+          (identityPath &&
+            spawned.runtimeEnv?.[TURN_MENTION_FILE_ENV] !==
+              turnMentionFilePath(identityPath)) ||
+          (!identityPath && request.mentionReferences.length > 0)
         ) {
-          throw new Error(
-            "Scoped mention environment was not installed at process spawn; restart the ACP runtime",
-          );
+          if (!runtimeCreated) {
+            let backgroundTerminalCount: number;
+            let activeDescendantCount: number;
+            try {
+              const [backgroundCount, descendants] = await Promise.all([
+                this.listBackgroundTerminals(runtime),
+                this.listDescendantThreads(runtime),
+              ]);
+              backgroundTerminalCount = backgroundCount;
+              activeDescendantCount = descendants.filter(
+                (thread) => thread?.status?.type === "active",
+              ).length;
+            } catch (err) {
+              runtimeHealthy = true;
+              throw new Error(
+                `Unable to verify whether this Codex thread still has subagents or background commands running, so CoCalc preserved its current runtime. Retry shortly. ${err}`,
+              );
+            }
+            if (backgroundTerminalCount > 0 || activeDescendantCount > 0) {
+              runtimeHealthy = true;
+              throw new Error(
+                "This Codex thread still has subagents or background commands running, so CoCalc preserved its current runtime. Wait for them to finish or stop them, then retry this message.",
+              );
+            }
+          }
+          throw createRetryableAppServerError({
+            kind: "runtime-environment-refresh",
+            message:
+              "Scoped mention environment is not installed in the current ACP runtime",
+            threadId: currentThreadId,
+          });
         }
         const file = await materializeTurnMentionFile({
           identityPath,
@@ -2922,6 +2992,8 @@ export class CodexAppServerAgent implements AcpAgent {
       }
       runningEntry = {
         executionAccountId: request.account_id,
+        paymentSource: request.config?.paymentSource,
+        credentialId: request.config?.credentialId,
         proc: spawned.proc,
         client,
         stop: async () => {
@@ -4077,6 +4149,9 @@ export class CodexAppServerAgent implements AcpAgent {
       if (isRecoverableTurnError(err)) {
         throw err;
       }
+      if (isRetryableAppServerError(err)) {
+        throw err;
+      }
       if (
         client.hasExited() &&
         isBlockedCommandErrorText(userFacingPrimaryError)
@@ -4294,6 +4369,16 @@ export class CodexAppServerAgent implements AcpAgent {
       return { state: "missing" };
     }
     assertSameTurnPrincipal(running.executionAccountId, request.account_id);
+    if (
+      (request.config?.paymentSource ?? running.paymentSource ?? "auto") !==
+        (running.paymentSource ?? "auto") ||
+      (request.config?.credentialId ?? running.credentialId) !==
+        running.credentialId
+    ) {
+      throw new Error(
+        "Send Immediately cannot change the active turn's credential. Queue a new turn or wait for the current turn to finish.",
+      );
+    }
     const runtimeEnv = Object.fromEntries(
       Object.entries({
         ...(this.opts.env ?? {}),
@@ -4403,6 +4488,7 @@ export class CodexAppServerAgent implements AcpAgent {
     env,
     siteFundedTurn,
     paymentSource,
+    credentialId,
   }: {
     projectId: string;
     accountId?: string;
@@ -4411,6 +4497,7 @@ export class CodexAppServerAgent implements AcpAgent {
     env?: NodeJS.ProcessEnv;
     siteFundedTurn?: CodexSiteFundedTurnRequest;
     paymentSource?: CodexSessionConfig["paymentSource"];
+    credentialId?: string;
   }): Promise<SpawnedCodexAppServer> {
     const projectSpawner = getCodexProjectSpawner();
     if (projectSpawner && projectId && projectSpawner.spawnCodexAppServer) {
@@ -4422,6 +4509,7 @@ export class CodexAppServerAgent implements AcpAgent {
         env,
         siteFundedTurn,
         paymentSource,
+        credentialId,
       });
       logger.debug("codex app-server: spawning via project container", {
         cmd: spawned.cmd,

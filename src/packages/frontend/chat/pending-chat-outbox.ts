@@ -41,6 +41,11 @@ export type PendingChatSend = {
   shouldMarkNotSent?: boolean;
 };
 
+// Credential selection is intentionally not captured here. Recovery of an
+// unsent, unadmitted message is a new admission and uses the thread's current
+// Codex-bar settings. An admitted execution and its internal retries keep the
+// settings with which that execution started.
+
 export type PendingChatOutboxEntry = BrowserOutboxEntry<PendingChatSend>;
 
 export function getPendingChatBrowserSessionId(): string {

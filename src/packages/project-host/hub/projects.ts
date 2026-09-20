@@ -67,7 +67,7 @@ import {
 } from "../master-status";
 import callHub from "@cocalc/conat/hub/call-hub";
 import { secretsPath as sshProxySecretsPath } from "@cocalc/project-proxy/ssh-server";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import {
   writeManagedAuthorizedKeys,
@@ -112,7 +112,11 @@ import {
   resolveCodexAuthRuntime,
   uploadSubscriptionAuthFile,
 } from "../codex/codex-auth";
-import { pushSubscriptionAuthToRegistry } from "../codex/codex-auth-registry";
+import {
+  acquireCodexDeviceAuthLease,
+  pushSubscriptionAuthToRegistry,
+  releaseCodexDeviceAuthLease,
+} from "../codex/codex-auth-registry";
 import { clearProjectHostConatAuthCaches } from "../conat-auth";
 import { rehydrateAcpAutomationsForProject } from "@cocalc/lite/hub/acp";
 import { getImage } from "@cocalc/project-runner/run/podman";
@@ -384,11 +388,13 @@ async function loadCodexModelCatalogStatus({
   projectId,
   accountId,
   timeoutMs,
+  credentialId,
 }: {
   dedupeKey?: string;
   projectId: string;
   accountId: string;
   timeoutMs: number;
+  credentialId?: string;
 }): Promise<CodexAppServerAccountStatus> {
   const pending = dedupeKey
     ? codexModelCatalogInflight.get(dedupeKey)
@@ -400,6 +406,7 @@ async function loadCodexModelCatalogStatus({
     isolatedCodexHome: true,
     includeModels: true,
     timeoutMs,
+    credentialId,
   });
   if (!dedupeKey) return await load;
   codexModelCatalogInflight.set(dedupeKey, load);
@@ -2848,15 +2855,22 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   async function codexDeviceAuthStart({
     account_id,
     project_id,
+    credential_id,
+    create,
   }: {
     account_id?: string;
     project_id: string;
+    credential_id?: string;
+    create?: boolean;
   }) {
     if (!account_id) {
       throw Error("user must be signed in");
     }
     if (!isValidUUID(project_id)) {
       throw Error("invalid project_id");
+    }
+    if (credential_id != null && !isValidUUID(credential_id)) {
+      throw Error("invalid credential_id");
     }
     if (!getProject(project_id)) {
       throw Error("project is not hosted on this project-host");
@@ -2865,23 +2879,61 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       project_id,
       account_id,
       verifyCodexSubscriptionAuth,
+      { credentialId: credential_id, create },
     );
+  }
+
+  async function getCodexCredentialSelectionCapability({
+    account_id,
+    project_id,
+  }: {
+    account_id?: string;
+    project_id: string;
+  }): Promise<{ version: 2; credentialLifecycle: true }> {
+    assertHostedProjectAccess({ account_id, project_id });
+    return { version: 2, credentialLifecycle: true };
+  }
+
+  async function codexDeviceAuthStartV2(opts: {
+    account_id?: string;
+    project_id: string;
+    credential_id?: string;
+    create?: boolean;
+  }) {
+    const hasCredentialId = !!opts.credential_id?.trim();
+    if ((opts.create === true) === hasCredentialId) {
+      throw new Error(
+        "sign-in must either create a credential or target one credential_id",
+      );
+    }
+    return await codexDeviceAuthStart(opts);
   }
 
   async function verifyCodexSubscriptionAuth({
     projectId,
     accountId,
+    credentialId,
+    codexHome,
   }: {
     projectId: string;
     accountId: string;
     codexHome: string;
-  }): Promise<void> {
+    credentialId?: string;
+  }): Promise<{ descriptorMetadata?: { email?: string } }> {
     const status = await getCodexAppServerAccountStatus({
       projectId,
       accountId,
+      credentialId,
+      codexHome,
       timeoutMs: CODEX_DEVICE_AUTH_VERIFY_TIMEOUT_MS,
     });
-    if (status.rateLimits) return;
+    if (status.rateLimits) {
+      const account = status.account as any;
+      const email = String(
+        account?.email ?? account?.account?.email ?? account?.user?.email ?? "",
+      ).trim();
+      return email ? { descriptorMetadata: { email } } : {};
+    }
     throw Error(
       status.errors?.rateLimits ??
         status.errors?.account ??
@@ -2962,11 +3014,15 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     project_id,
     filename,
     content,
+    credential_id,
+    create,
   }: {
     account_id?: string;
     project_id: string;
     filename?: string;
     content: string;
+    credential_id?: string;
+    create?: boolean;
   }) {
     if (!account_id) {
       throw Error("user must be signed in");
@@ -2980,18 +3036,79 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     if (filename && !/auth\.json$/i.test(filename.trim())) {
       throw Error("only auth.json uploads are supported");
     }
-    const result = await uploadSubscriptionAuthFile({
-      accountId: account_id,
-      content,
-    });
-    const synced = await pushSubscriptionAuthToRegistry({
+    if (credential_id != null && !isValidUUID(credential_id)) {
+      throw Error("invalid credential_id");
+    }
+    const sessionId = uuid();
+    const leaseId = await acquireCodexDeviceAuthLease({
       projectId: project_id,
       accountId: account_id,
-      codexHome: result.codexHome,
-      content,
+      sessionId,
     });
-    invalidateCodexModelCatalog(account_id);
-    return { ok: true as const, synced: synced.ok, ...result };
+    try {
+      const result = await uploadSubscriptionAuthFile({
+        accountId: account_id,
+        sessionId,
+        content,
+      });
+      try {
+        const verification = await verifyCodexSubscriptionAuth({
+          projectId: project_id,
+          accountId: account_id,
+          codexHome: result.codexHome,
+          credentialId: credential_id,
+        });
+        const synced = await pushSubscriptionAuthToRegistry({
+          projectId: project_id,
+          accountId: account_id,
+          credentialId: credential_id,
+          create,
+          codexHome: result.codexHome,
+          content,
+          descriptorMetadata: verification.descriptorMetadata,
+        });
+        if (
+          !synced.ok ||
+          typeof synced.id !== "string" ||
+          !isValidUUID(synced.id)
+        ) {
+          throw new Error("unable to save uploaded credential");
+        }
+        const credentialId = synced.id;
+        invalidateCodexModelCatalog(account_id);
+        return {
+          ok: true as const,
+          synced: true as const,
+          bytes: result.bytes,
+          credentialId,
+        };
+      } finally {
+        await rm(result.codexHome, { recursive: true, force: true });
+      }
+    } finally {
+      await releaseCodexDeviceAuthLease({
+        projectId: project_id,
+        accountId: account_id,
+        leaseId,
+      });
+    }
+  }
+
+  async function codexUploadAuthFileV2(opts: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+    credential_id?: string;
+    create?: boolean;
+  }) {
+    const hasCredentialId = !!opts.credential_id?.trim();
+    if ((opts.create === true) === hasCredentialId) {
+      throw new Error(
+        "auth-file upload must either create a credential or target one credential_id",
+      );
+    }
+    return await codexUploadAuthFile(opts);
   }
 
   function assertHostedProjectAccess({
@@ -3018,14 +3135,19 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     include_models,
     refresh_models,
     timeout,
+    credential_id,
   }: {
     account_id?: string;
     project_id: string;
     include_models?: boolean;
     refresh_models?: boolean;
     timeout?: number;
+    credential_id?: string;
   }): Promise<CodexUsageStatusInfo> {
     assertHostedProjectAccess({ account_id, project_id });
+    if (credential_id != null && !isValidUUID(credential_id)) {
+      throw Error("invalid credential_id");
+    }
     const accountId = account_id!;
     const checkedAt = new Date().toISOString();
     let source: CodexUsageStatusInfo["paymentSource"]["source"];
@@ -3034,6 +3156,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       authRuntime = await resolveCodexAuthRuntime({
         projectId: project_id,
         accountId,
+        preference: credential_id ? "subscription" : "auto",
+        credentialId: credential_id,
       });
       source = authRuntime.source;
     } catch (err) {
@@ -3064,6 +3188,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       hasSiteApiKey: source === "site-api-key",
       sharedHomeMode: source === "shared-home" ? "always" : "disabled",
       project_id,
+      credentialId: authRuntime.credentialId,
     } satisfies CodexUsageStatusInfo["paymentSource"];
     if (paymentSource.source !== "subscription") {
       return {
@@ -3107,6 +3232,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               projectId: project_id,
               accountId,
               timeoutMs,
+              credentialId: authRuntime.credentialId,
             })
           : await getCodexAppServerAccountStatus({
               projectId: project_id,
@@ -3114,6 +3240,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
               isolatedCodexHome: true,
               includeModels: include_models && !cachedCatalog,
               timeoutMs,
+              credentialId: authRuntime.credentialId,
             });
       const liveModels = status.models?.length ? status.models : undefined;
       if (
@@ -3478,9 +3605,13 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   hubApi.projects.getBackupFiles = getBackupFiles;
   hubApi.projects.getBackupQuota = getBackupQuota;
   hubApi.projects.codexDeviceAuthStart = codexDeviceAuthStart;
+  hubApi.projects.codexDeviceAuthStartV2 = codexDeviceAuthStartV2;
+  hubApi.projects.getCodexCredentialSelectionCapability =
+    getCodexCredentialSelectionCapability;
   hubApi.projects.codexDeviceAuthStatus = codexDeviceAuthStatus;
   hubApi.projects.codexDeviceAuthCancel = codexDeviceAuthCancel;
   hubApi.projects.codexUploadAuthFile = codexUploadAuthFile;
+  hubApi.projects.codexUploadAuthFileV2 = codexUploadAuthFileV2;
   hubApi.projects.getCodexUsageStatus = getCodexUsageStatus;
   hubApi.projects.chatStoreStats = chatStoreStats;
   hubApi.projects.chatStoreRotate = chatStoreRotate;

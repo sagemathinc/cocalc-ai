@@ -1267,9 +1267,12 @@ export const projects = {
   reconcileProjectRehome: authFirstRequireAccount,
   drainProjectRehome: authFirstRequireAccount,
   codexDeviceAuthStart: authFirstRequireAccount,
+  codexDeviceAuthStartV2: authFirstRequireAccount,
+  getCodexCredentialSelectionCapability: authFirstRequireAccount,
   codexDeviceAuthStatus: authFirstRequireAccount,
   codexDeviceAuthCancel: authFirstRequireAccount,
   codexUploadAuthFile: authFirstRequireAccount,
+  codexUploadAuthFileV2: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   chatStoreStats: authFirstRequireAccount,
   chatStoreRotate: authFirstRequireAccount,
@@ -2413,6 +2416,8 @@ export interface Projects {
   codexDeviceAuthStart: (opts: {
     account_id?: string;
     project_id: string;
+    credential_id?: string;
+    create?: boolean;
   }) => Promise<{
     id: string;
     accountId: string;
@@ -2427,6 +2432,39 @@ export interface Projects {
     error?: string;
     syncedToRegistry?: boolean;
     syncError?: string;
+    credentialId?: string;
+    create?: boolean;
+  }>;
+
+  codexDeviceAuthStartV2: (opts: {
+    account_id?: string;
+    project_id: string;
+    credential_id?: string;
+    create?: boolean;
+  }) => Promise<{
+    id: string;
+    accountId: string;
+    state: "pending" | "syncing" | "completed" | "failed" | "canceled";
+    verificationUrl?: string;
+    userCode?: string;
+    output: string;
+    startedAt: number;
+    updatedAt: number;
+    exitCode?: number | null;
+    signal?: string | null;
+    error?: string;
+    syncedToRegistry?: boolean;
+    syncError?: string;
+    credentialId?: string;
+    create?: boolean;
+  }>;
+
+  getCodexCredentialSelectionCapability: (opts: {
+    account_id?: string;
+    project_id: string;
+  }) => Promise<{
+    version: number;
+    credentialLifecycle?: boolean;
   }>;
 
   codexDeviceAuthStatus: (opts: {
@@ -2447,6 +2485,8 @@ export interface Projects {
     error?: string;
     syncedToRegistry?: boolean;
     syncError?: string;
+    credentialId?: string;
+    create?: boolean;
   }>;
 
   codexDeviceAuthCancel: (opts: {
@@ -2460,7 +2500,21 @@ export interface Projects {
     project_id: string;
     filename?: string;
     content: string;
-  }) => Promise<{ ok: true; codexHome: string; bytes: number }>;
+  }) => Promise<{ ok: true; synced: true; bytes: number }>;
+
+  codexUploadAuthFileV2: (opts: {
+    account_id?: string;
+    project_id: string;
+    filename?: string;
+    content: string;
+    credential_id?: string;
+    create?: boolean;
+  }) => Promise<{
+    ok: true;
+    synced: true;
+    bytes: number;
+    credentialId: string;
+  }>;
 
   getCodexUsageStatus: (opts: {
     account_id?: string;
@@ -2468,6 +2522,7 @@ export interface Projects {
     include_models?: boolean;
     refresh_models?: boolean;
     timeout?: number;
+    credential_id?: string;
   }) => Promise<CodexUsageStatusInfo>;
 
   chatStoreStats: (opts: {

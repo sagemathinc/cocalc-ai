@@ -2,6 +2,7 @@ import {
   noAuth,
   authFirstRequireAccount,
   authFirstRequireAccountOrHost,
+  authFirstRequireAccountOrHostWithAccountTarget,
   authFirstRequireAccountOrProjectOrHost,
   authFirstRequireAuthenticated,
   authFirstRequireHost,
@@ -138,6 +139,7 @@ export const system = {
   setAccountEntitlementOverride: authFirstRequireAccount,
   clearAccountEntitlementOverride: authFirstRequireAccount,
   listExternalCredentials: authFirstRequireAccount,
+  updateCodexSubscriptionLabel: authFirstRequireAccount,
   revokeExternalCredential: authFirstRequireAccount,
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
@@ -146,7 +148,7 @@ export const system = {
   transcribeChatAudio: authFirstRequireAccount,
   synthesizeChatSpeech: authFirstRequireAccount,
   cancelChatSpeech: authFirstRequireAccount,
-  getCodexPaymentSource: authFirstRequireAccount,
+  getCodexPaymentSource: authFirstRequireAccountOrHostWithAccountTarget,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
@@ -831,6 +833,15 @@ export interface CodexPaymentSourceInfo {
   hasSubscription: boolean;
   /** Opaque revision of the connected ChatGPT credential, never secret data. */
   subscriptionRevision?: string;
+  credentialId?: string;
+  subscriptions?: Array<{
+    id: string;
+    label?: string;
+    email?: string;
+    plan?: string;
+    isDefault?: boolean;
+    updatedAt: string;
+  }>;
   hasProjectApiKey: boolean;
   hasAccountApiKey: boolean;
   hasSiteApiKey: boolean;
@@ -2812,6 +2823,12 @@ export interface System {
     include_revoked?: boolean;
   }) => Promise<ExternalCredentialInfo[]>;
 
+  updateCodexSubscriptionLabel: (opts: {
+    account_id?: string;
+    id: string;
+    label?: string;
+  }) => Promise<{ updated: boolean }>;
+
   revokeExternalCredential: (opts: {
     account_id?: string;
     browser_id?: string | null;
@@ -2888,8 +2905,10 @@ export interface System {
 
   getCodexPaymentSource: (opts: {
     account_id?: string;
+    host_id?: string;
     project_id?: string;
     preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
+    credential_id?: string;
   }) => Promise<CodexPaymentSourceInfo>;
 
   getSiteFundedCodexAdminStatus: (opts: {
@@ -2904,6 +2923,7 @@ export interface System {
     include_models?: boolean;
     refresh_models?: boolean;
     timeout?: number;
+    credential_id?: string;
   }) => Promise<CodexUsageStatusInfo>;
 
   getFrontendSourceFingerprint: (opts?: {

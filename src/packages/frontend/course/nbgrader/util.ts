@@ -5,14 +5,16 @@
 
 import { Map } from "immutable";
 
-export function nbgrader_status(assignment: Map<string, any>): {
+export function nbgrader_status(assignment?: Map<string, any>): {
   succeeded: number;
   failed: number;
   not_attempted: number;
   attempted: number;
 } {
-  const student_ids = assignment.get("last_collect").keySeq().toJS(); // students whose work has been collected
-  const scores = assignment.get("nbgrader_scores");
+  // Students whose work has been collected. Assignment data can be incomplete
+  // while the course store reconnects and reloads.
+  const student_ids = assignment?.get("last_collect")?.keySeq().toArray() ?? [];
+  const scores = assignment?.get("nbgrader_scores");
   const result = { succeeded: 0, failed: 0, not_attempted: 0, attempted: 0 };
   if (scores == null) {
     result.not_attempted = student_ids.length;

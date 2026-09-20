@@ -6,6 +6,26 @@
         margin: 0;
       }
     </style>
+    <style id="cocalc-app-startup-guard">
+      html.cocalc-app-starting
+        body[data-cocalc-entry="app"]
+        #cocalc-webapp-container,
+      html.cocalc-app-starting
+        body[data-cocalc-entry="embed"]
+        #cocalc-webapp-container {
+        visibility: hidden;
+      }
+    </style>
+    <script>
+      (function () {
+        var className = "cocalc-app-starting";
+        var root = document.documentElement;
+        root.classList.add(className);
+        setTimeout(function () {
+          root.classList.remove(className);
+        }, 30000);
+      })();
+    </script>
     <!-- Replaced at build time with PUBLIC_HEAD_PLACEHOLDER from
          @cocalc/util/public-site-metadata. The hub then replaces that exact
          title element with per-route public metadata at serve time. -->

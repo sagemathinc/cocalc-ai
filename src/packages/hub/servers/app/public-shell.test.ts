@@ -116,12 +116,110 @@ describe("public shell rendering", () => {
     expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
   });
 
-  it("removes the body placeholder from routes without a prerender", async () => {
-    const { html: body } = await renderPublicShell(request("/pricing"));
+  it("hides the crawler fallback before deferred public scripts run", async () => {
+    const { html } = await renderPublicShell(request("/"));
+    const guardIndex = html.indexOf('id="cocalc-public-prerender-guard"');
+    const fallbackIndex = html.indexOf('data-cocalc-public-prerender="home"');
 
-    expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
-    expect(body).not.toContain("data-cocalc-public-prerender");
+    expect(guardIndex).toBeGreaterThanOrEqual(0);
+    expect(guardIndex).toBeLessThan(fallbackIndex);
+    expect(html).toContain(
+      "html.cocalc-public-starting [data-cocalc-public-prerender]{visibility:hidden}",
+    );
+    expect(html).toContain("e.classList.remove(c)},30000)");
   });
+
+  it.each([
+    ["/", "home", "Keep people, AI agents, and project work together."],
+    ["/products", "products", "Ways to Run CoCalc"],
+    ["/pricing", "pricing", "Hosted memberships"],
+  ])(
+    "renders crawler-visible landing content for %s",
+    async (path, section, expectedText) => {
+      const { html: body, status } = await renderPublicShell(request(path));
+
+      expect(status).toBe(200);
+      expect(body).not.toContain(PUBLIC_BODY_PLACEHOLDER);
+      expect(body).toContain(`data-cocalc-public-prerender="${section}"`);
+      expect(body).toContain(expectedText);
+    },
+  );
+
+  it.each([
+    ["/guides", "guides", "Durable collaborative projects"],
+    ["/about", "about", "Building the future of collaborative computation."],
+    ["/about/team", "about-team", "Blaec Bejarano, CSO"],
+    ["/about/team/william-stein", "about-team-member", "William Stein"],
+    ["/support", "support", "Find the right next step"],
+    ["/support/community", "support-community", "GitHub source code"],
+  ])(
+    "renders stable discovery content for %s",
+    async (path, section, expectedText) => {
+      const { html, status } = await renderPublicShell(request(path));
+
+      expect(status).toBe(200);
+      expect(html).not.toContain(PUBLIC_BODY_PLACEHOLDER);
+      expect(html).toContain(`data-cocalc-public-prerender="${section}"`);
+      expect(html).toContain(expectedText);
+    },
+  );
+
+  it("uses person-specific metadata and preserves unknown-team 404s", async () => {
+    const william = await renderPublicShell(
+      request("/about/team/william-stein"),
+    );
+    expect(william.status).toBe(200);
+    expect(william.html).toContain(
+      "<title>William Stein, Founder and CEO | CoCalc</title>",
+    );
+    expect(william.html).toContain("creator of CoCalc and SageMath");
+
+    const unknown = await renderPublicShell(
+      request("/about/team/not-a-person"),
+    );
+    expect(unknown.status).toBe(404);
+    expect(unknown.html).not.toContain(
+      'data-cocalc-public-prerender="about-team-member"',
+    );
+  });
+
+  it.each([
+    "/auth/sign-in",
+    "/auth/sign-up",
+    "/auth/password-reset",
+    "/invites/example-token",
+    "/sso",
+    "/support/new",
+    "/support/tickets",
+  ])("marks thin action route %s as noindex", async (path) => {
+    const { html, status } = await renderPublicShell(request(path));
+    expect(status).toBe(200);
+    expect(html).toContain(
+      'content="noindex" data-cocalc-public-route-meta="robots" name="robots"',
+    );
+  });
+
+  it.each([
+    ["/", "project-notebook-20260916.jpg", "1050", "650"],
+    ["/products/cocalc-star", "project-notebook-20260916.jpg", "1050", "650"],
+    ["/features/teaching", "project-terminal-20260916.jpg", "800", "400"],
+  ])(
+    "emits current product evidence and dimensions for %s",
+    async (path, image, width, height) => {
+      const { html, status } = await renderPublicShell(request(path));
+
+      expect(status).toBe(200);
+      expect(html).toContain(
+        `content="https://cocalc.ai/public/landing/${image}" data-cocalc-public-route-meta="og:image"`,
+      );
+      expect(html).toContain(
+        `content="${width}" data-cocalc-public-route-meta="og:image:width"`,
+      );
+      expect(html).toContain(
+        `content="${height}" data-cocalc-public-route-meta="og:image:height"`,
+      );
+    },
+  );
 
   it("renders docs inside the container replaced by the public React app", async () => {
     const { html, status } = await renderPublicShell(

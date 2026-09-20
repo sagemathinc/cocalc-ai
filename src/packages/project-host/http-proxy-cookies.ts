@@ -29,17 +29,23 @@ export function buildProjectHostSessionCookie({
   req,
   sessionToken,
   project_id,
+  max_age_seconds = HTTP_SESSION_TTL_SECONDS,
 }: {
   req: IncomingMessage;
   sessionToken: string;
   project_id: string;
+  max_age_seconds?: number;
 }): string {
+  const maxAge = Math.max(
+    1,
+    Math.min(HTTP_SESSION_TTL_SECONDS, Math.floor(max_age_seconds)),
+  );
   const attrs = [
     `${PROJECT_HOST_HTTP_SESSION_COOKIE_NAME}=${encodeURIComponent(sessionToken)}`,
     `Path=${projectCookiePath(project_id)}`,
     "HttpOnly",
     "SameSite=Lax",
-    `Max-Age=${HTTP_SESSION_TTL_SECONDS}`,
+    `Max-Age=${maxAge}`,
   ];
   if (isSecureRequest(req)) {
     attrs.push("Secure");

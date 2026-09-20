@@ -3,8 +3,8 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { Alert, Checkbox } from "antd";
-import { useEffect, useMemo, useRef } from "react";
+import { Alert, Checkbox, Select } from "antd";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { CodeView } from "@pierre/diffs/react";
 import type { CodeViewItem } from "@pierre/diffs";
 import { useAppearance } from "@cocalc/frontend/appearance/use-appearance";
@@ -32,6 +32,7 @@ export interface DocumentDiffProps {
   path: string;
   label: string;
   fontSize: number;
+  scrollPosition?: { current: number };
 }
 
 export default function DocumentDiff(props: DocumentDiffProps) {
@@ -45,12 +46,19 @@ export default function DocumentDiff(props: DocumentDiffProps) {
     }),
     [props.before, props.after, props.path, props.label],
   );
-  return <ReadOnlyDiff source={source} fontSize={props.fontSize} />;
+  return (
+    <ReadOnlyDiff
+      source={source}
+      fontSize={props.fontSize}
+      scrollPosition={props.scrollPosition}
+    />
+  );
 }
 
 export function ReadOnlyDiff(props: {
   source: DiffPreviewSource;
   fontSize: number;
+  scrollPosition?: { current: number };
 }) {
   return (
     <DiffHighlightingProvider>
@@ -62,13 +70,16 @@ export function ReadOnlyDiff(props: {
 function DocumentDiffContent({
   source,
   fontSize,
+  scrollPosition,
 }: {
   source: DiffPreviewSource;
   fontSize: number;
+  scrollPosition?: { current: number };
 }) {
   const { label } = source;
   const { resolved } = useAppearance();
   const { split, wrap } = useDiffViewPreferences();
+  const [contextLines, setContextLines] = useState(3);
   const viewport = useRef<HTMLDivElement>(null);
   const parsed = useMemo(() => {
     try {
@@ -99,12 +110,12 @@ function DocumentDiffContent({
             );
         }
       }
-      const files = parsePreviewSource(source);
+      const files = parsePreviewSource(source, contextLines);
       return { files, error: "" };
     } catch (error) {
       return { files: [], error: String(error) };
     }
-  }, [source]);
+  }, [source, contextLines]);
   const generation = useRef({ parsed, version: 0 });
   if (generation.current.parsed !== parsed) {
     generation.current = { parsed, version: generation.current.version + 1 };
@@ -138,6 +149,23 @@ function DocumentDiffContent({
       "Space Shift+Space PageDown PageUp ArrowDown ArrowUp Home",
     );
   }, [label, parsed.error]);
+  useLayoutEffect(() => {
+    if (viewport.current != null && scrollPosition != null) {
+      viewport.current.scrollTop = scrollPosition.current;
+    }
+  }, [parsed.error, scrollPosition]);
+  useEffect(() => {
+    const node = viewport.current;
+    if (node == null || scrollPosition == null) return;
+    const save = () => {
+      scrollPosition.current = node.scrollTop;
+    };
+    node.addEventListener("scroll", save, { passive: true });
+    return () => {
+      save();
+      node.removeEventListener("scroll", save);
+    };
+  }, [parsed.error, scrollPosition]);
   return (
     <section
       aria-label="Historical text comparison"
@@ -170,6 +198,18 @@ function DocumentDiffContent({
           flexShrink: 0,
         }}
       >
+        {source.kind === "documents" && (
+          <Select
+            aria-label="Context lines"
+            value={contextLines}
+            onChange={setContextLines}
+            options={[3, 10, 30].map((value) => ({
+              value,
+              label: `Context ${value}`,
+            }))}
+            style={{ minWidth: 120 }}
+          />
+        )}
         <Checkbox
           checked={split}
           onChange={(event) =>
@@ -204,7 +244,7 @@ function DocumentDiffContent({
             diffStyle: split ? "split" : "unified",
             overflow: wrap ? "wrap" : "scroll",
             lineDiffType: "word",
-            expandUnchanged: source.kind === "documents",
+            expandUnchanged: false,
             stickyHeaders: true,
             itemMetrics: { lineHeight: diffLineHeight(fontSize) },
             theme: { light: "github-light", dark: "github-dark" },

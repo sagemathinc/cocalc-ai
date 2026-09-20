@@ -96,6 +96,11 @@ import {
   useCodexPaymentSource,
 } from "./use-codex-payment-source";
 import {
+  CODEX_SUBSCRIPTION_SELECTION_EVENT,
+  readCodexSubscriptionSelection,
+  writeCodexSubscriptionSelection,
+} from "./codex-subscription-selection";
+import {
   acknowledgeThreadAutomation,
   deleteThreadAutomation,
   pauseThreadAutomation,
@@ -1479,6 +1484,8 @@ function ChatPanelContent({
     setAutomationActionBusy("pause");
     try {
       await pauseThreadAutomation({ actions, threadId: selectedThreadId });
+    } catch (err) {
+      antdMessage.error(`Unable to pause automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "pause" ? "" : current,
@@ -1498,6 +1505,8 @@ function ChatPanelContent({
         project_id: actions.store?.get("project_id") ?? "",
         response,
       });
+    } catch (err) {
+      antdMessage.error(`Unable to resume automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "resume" ? "" : current,
@@ -1510,6 +1519,8 @@ function ChatPanelContent({
     setAutomationActionBusy("run_now");
     try {
       await runThreadAutomationNow({ actions, threadId: selectedThreadId });
+    } catch (err) {
+      antdMessage.error(`Unable to run automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "run_now" ? "" : current,
@@ -1525,6 +1536,8 @@ function ChatPanelContent({
         actions,
         threadId: selectedThreadId,
       });
+    } catch (err) {
+      antdMessage.error(`Unable to skip automation run: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "skip_next" ? "" : current,
@@ -1540,6 +1553,8 @@ function ChatPanelContent({
         actions,
         threadId: selectedThreadId,
       });
+    } catch (err) {
+      antdMessage.error(`Unable to acknowledge automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "acknowledge" ? "" : current,
@@ -1552,6 +1567,8 @@ function ChatPanelContent({
     setAutomationActionBusy("delete");
     try {
       await deleteThreadAutomation({ actions, threadId: selectedThreadId });
+    } catch (err) {
+      antdMessage.error(`Unable to delete automation: ${err}`);
     } finally {
       setAutomationActionBusy((current) =>
         current === "delete" ? "" : current,
@@ -1907,6 +1924,24 @@ function ChatPanelContent({
     ? selectedThreadMetadata?.acp_config?.paymentSource
     : newThreadSetup.codexConfig.paymentSource) ??
     "auto") as CodexPaymentSourcePreference;
+  const selectionThreadKey = selectedThreadKey ?? "";
+  const [codexCredentialId, setCodexCredentialId] = useState<
+    string | undefined
+  >();
+  useEffect(() => {
+    const load = () =>
+      setCodexCredentialId(
+        readCodexSubscriptionSelection({
+          accountId: account_id,
+          projectId: project_id,
+          threadKey: selectionThreadKey,
+        }),
+      );
+    load();
+    window.addEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
+    return () =>
+      window.removeEventListener(CODEX_SUBSCRIPTION_SELECTION_EVENT, load);
+  }, [account_id, project_id, selectionThreadKey]);
   const {
     paymentSource: codexPaymentSource,
     loading: codexPaymentSourceLoading,
@@ -1914,6 +1949,8 @@ function ChatPanelContent({
   } = useCodexPaymentSource({
     projectId: project_id,
     preference: codexPaymentPreference,
+    credentialId:
+      codexPaymentPreference === "subscription" ? codexCredentialId : undefined,
     enabled:
       aiAgentPolicyAllowed &&
       !readOnly &&
@@ -2111,9 +2148,19 @@ function ChatPanelContent({
             fetchCodexPaymentSourceForSubmit({
               projectId: project_id,
               preference: paymentPreference,
+              credentialId:
+                paymentPreference === "subscription"
+                  ? codexCredentialId
+                  : undefined,
             }),
           fetchUsageStatus: () =>
-            getLiveCodexUsageStatus({ projectId: project_id }),
+            getLiveCodexUsageStatus({
+              projectId: project_id,
+              credentialId:
+                paymentPreference === "subscription"
+                  ? codexCredentialId
+                  : undefined,
+            }),
         })
           .then((needsAttention) => {
             if (!needsAttention) return;
@@ -2232,6 +2279,14 @@ function ChatPanelContent({
             actions.getCodexConfig?.(reply_thread_id) ??
             undefined)
           : undefined;
+    if (!reply_thread_id && codexCredentialId) {
+      writeCodexSubscriptionSelection({
+        accountId: account_id,
+        projectId: project_id,
+        threadKey: chatIdentity.thread_id,
+        credentialId: codexCredentialId,
+      });
+    }
     const pendingChatSend: PendingChatSend = {
       project_id,
       path,
@@ -2859,6 +2914,15 @@ function ChatPanelContent({
         }}
         codexPaymentSource={codexPaymentSource}
         codexPaymentSourceLoading={codexPaymentSourceLoading}
+        codexCredentialId={codexCredentialId}
+        onCodexCredentialIdChange={(credentialId) => {
+          writeCodexSubscriptionSelection({
+            accountId: account_id,
+            projectId: project_id,
+            threadKey: "",
+            credentialId,
+          });
+        }}
         refreshCodexPaymentSource={refreshCodexPaymentSource}
         newThreadSetup={newThreadSetup}
         onNewThreadSetupChange={setNewThreadSetup}
@@ -2871,7 +2935,7 @@ function ChatPanelContent({
           activityJumpAttentionId ? undefined : activityJumpDate
         }
         activityJumpToken={activityJumpToken}
-        activityJumpAttentionId={undefined}
+        activityJumpAttentionId={activityJumpAttentionId}
         attentionRecords={selectedAttentionRecords}
         shortcutEnabled={isVisible && tabIsVisible}
         isVisible={isVisible && tabIsVisible}

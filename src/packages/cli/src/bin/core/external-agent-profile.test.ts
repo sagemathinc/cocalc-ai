@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -65,4 +71,53 @@ test("external credential validation rejects native identities, expiry and unsaf
   });
   for (const name of ["../default", "/tmp/token", "", "a/b"])
     assert.throws(() => externalAgentProfilePath(name));
+});
+
+test("failed credential saves remove temporary files and preserve the original error", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "external-agent-profile-"));
+  const failure = new Error("rename failed");
+  t.mock.method(require("node:fs"), "renameSync", () => {
+    throw failure;
+  });
+  try {
+    assert.throws(
+      () => saveExternalAgentCredential("soc2", credential(), home),
+      (error) => error === failure,
+    );
+    assert.deepEqual(
+      readdirSync(join(home, ".config", "cocalc", "agents")),
+      [],
+    );
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("credential save and cleanup failures are both reported", (t) => {
+  const home = mkdtempSync(join(tmpdir(), "external-agent-profile-"));
+  const failure = new Error("rename failed");
+  const cleanupFailure = new Error("unlink failed");
+  t.mock.method(require("node:fs"), "renameSync", () => {
+    throw failure;
+  });
+  t.mock.method(require("node:fs"), "unlinkSync", () => {
+    throw cleanupFailure;
+  });
+  try {
+    assert.throws(
+      () => saveExternalAgentCredential("soc2", credential(), home),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal((error as Error & { cause: unknown }).cause, failure);
+        assert.equal(
+          (error as Error & { cleanupError: unknown }).cleanupError,
+          cleanupFailure,
+        );
+        return true;
+      },
+    );
+  } finally {
+    t.mock.restoreAll();
+    rmSync(home, { recursive: true, force: true });
+  }
 });
