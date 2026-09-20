@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import VmFundingStatus from "./compute-vm-funding-status";
 import type { ComputeVmFundingStatus } from "@cocalc/util/compute-vm-funding";
 import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-funding";
@@ -49,8 +50,8 @@ test("loads the grant balance rather than treating a VM reservation as the grant
     webapp_client.conat_client.hub.computeFunding.listSources as jest.Mock
   ).mockResolvedValue({ sources: [course] });
   render(<VmFundingStatus funding={funding} now={now} compact />);
-  expect(await screen.findByText("$4.97 unspent of $5.00")).toBeVisible();
-  expect(screen.getByText("$0.90 reserved for this VM")).toBeVisible();
+  expect(await screen.findByText("$4.97 (of $5.00) remaining")).toBeVisible();
+  expect(screen.getByText("$0.90 reserved")).toBeVisible();
 });
 
 test("shows resource funding deadlines and preserves the notebook distinction", () => {
@@ -80,12 +81,37 @@ test("shows remaining course funding as visible progress", () => {
   expect(
     screen.getByRole("region", { name: "Course funding summary" }),
   ).toBeVisible();
-  expect(screen.getByText("$4.97 unspent of $5.00")).toBeVisible();
+  expect(screen.getByText("$4.97 (of $5.00) remaining")).toBeVisible();
   expect(
-    screen.getByLabelText("Course funding: $4.97 remaining of $5.00"),
+    screen.getByLabelText(
+      "Course funding: credit used, $4.97 remaining of $5.00",
+    ),
   ).toBeVisible();
   expect(screen.queryByText(/Funding stops this VM/)).toBeNull();
-  expect(screen.getByText("$0.90 reserved for this VM")).toBeVisible();
+  expect(screen.getByText("$0.90 reserved")).toBeVisible();
+});
+
+test("explains reserves with a keyboard-accessible popover and fills the used-credit bar", async () => {
+  const user = userEvent.setup();
+  render(
+    <VmFundingStatus
+      funding={funding}
+      courseBudget={{ ...course, spent_usd: "5" }}
+      now={now}
+      compact
+    />,
+  );
+  expect(screen.getByRole("progressbar")).toHaveAttribute(
+    "aria-valuenow",
+    "100",
+  );
+  screen.getByRole("button", { name: "About reserved credit" }).focus();
+  await user.keyboard("{Enter}");
+  await waitFor(() =>
+    expect(
+      screen.getByText(/not an additional charge or money already spent/),
+    ).toBeVisible(),
+  );
 });
 
 test("does not present stale funding as current", () => {

@@ -46,7 +46,7 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { CopyToClipBoard, Icon, TimeAgo } from "@cocalc/frontend/components";
-import { openProjectDocs } from "@cocalc/frontend/docs/navigation";
+import { openAppDocs, openProjectDocs } from "@cocalc/frontend/docs/navigation";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { mapCountryRegionToR2Region } from "@cocalc/util/consts";
 import {
@@ -220,6 +220,7 @@ import VmStopAfter from "./compute-vm-stop-after";
 import ComputeFundingSelect from "./compute-funding-select";
 import VmFundingStatus from "./compute-vm-funding-status";
 import VmPowerControls from "./compute-vm-power-controls";
+import FundingHelp from "./compute-funding-help";
 import VmPersonalFunding from "./compute-vm-personal-funding";
 import CourseCreditSummary from "./course-credit-summary";
 import { CourseVmTemplateSelect } from "./course-vm-template-select";
@@ -4068,7 +4069,7 @@ export function ProjectComputeVms({
     {
       title: "Status",
       dataIndex: "state",
-      width: 165,
+      width: 135,
       render: (state: string, vm) => {
         const providerState = vm.provider_state;
         const displayState = vmDisplayState(vm);
@@ -4222,7 +4223,7 @@ export function ProjectComputeVms({
     },
     {
       title: "Configuration",
-      width: 220,
+      width: 175,
       render: (_, vm) => {
         const machineLabel = vm.gpu_type
           ? `${vm.gpu_count}x ${vm.gpu_type}`
@@ -4269,9 +4270,6 @@ export function ProjectComputeVms({
         const freeEgress = providerEgressIsFree(vm.provider);
         return (
           <Space direction="vertical" size={8} style={{ width: "100%" }}>
-            {vm.funding_status && (
-              <VmFundingStatus funding={vm.funding_status} compact />
-            )}
             <Popover
               trigger="click"
               title={`Cost and usage for ${vm.name}`}
@@ -4281,7 +4279,6 @@ export function ProjectComputeVms({
                   size={10}
                   style={{ width: 430, maxWidth: "80vw" }}
                 >
-                  <VmFundingStatus funding={vm.funding_status} />
                   {estimate ? (
                     <HostPriceBreakdown
                       estimate={estimate}
@@ -4376,9 +4373,32 @@ export function ProjectComputeVms({
                 </span>
               </Button>
             </Popover>
+            <Text type="secondary">
+              Outgoing traffic
+              <FundingHelp title="Egress">
+                Egress means all outgoing network traffic from this VM,
+                including downloads from it, SSH responses, and notebook results
+                sent back to your project. Usage is metered continuously and
+                charged as reports are processed, with a five-minute
+                finalization delay plus provider/reporting latency. Totals
+                normally update within minutes, not once per day; delayed
+                reports can take longer. Incoming traffic is not egress. The
+                provider's rate shown here applies.
+              </FundingHelp>
+            </Text>
           </Space>
         );
       },
+    },
+    {
+      title: "Course funding",
+      width: 230,
+      render: (_, vm) =>
+        vm.funding_status ? (
+          <VmFundingStatus funding={vm.funding_status} compact />
+        ) : (
+          <Text type="secondary">No course funding</Text>
+        ),
     },
     {
       title: "Actions",
@@ -4500,6 +4520,22 @@ export function ProjectComputeVms({
                     Public TCP ports: {vm.public_ports.join(", ")}. HTTPS
                     certificates and services are managed by you.
                   </Text>
+                  <Text>
+                    Run notebook code on this VM using a remote Jupyter kernel
+                    while keeping the notebook in your CoCalc project.
+                  </Text>
+                  <Button
+                    onClick={() =>
+                      projectId
+                        ? openProjectDocs({
+                            projectId,
+                            slug: "jupyter/remote-kernels",
+                          })
+                        : openAppDocs("jupyter/remote-kernels")
+                    }
+                  >
+                    Remote Jupyter kernels
+                  </Button>
                 </Space>
               }
             >

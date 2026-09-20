@@ -10,6 +10,7 @@ import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 import { useEffect, useState } from "react";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-funding";
+import FundingHelp from "./compute-funding-help";
 
 export function vmFundingAmounts(
   funding: ComputeVmFundingStatus,
@@ -98,6 +99,17 @@ export default function VmFundingStatus({
     now - asOf > 45_000 ||
     asOf > now + 5_000;
   const fundingLabel = personal ? "Personal funding" : "Course funding";
+  const minutesLeft = course?.forecast_exhausts_at
+    ? Math.max(0, (Date.parse(course.forecast_exhausts_at) - now) / 60000)
+    : undefined;
+  const runtime =
+    minutesLeft == null
+      ? undefined
+      : minutesLeft >= 1440
+        ? `${Number((minutesLeft / 1440).toFixed(1))} days`
+        : minutesLeft >= 60
+          ? `${Number((minutesLeft / 60).toFixed(1))} hours`
+          : `${Math.floor(minutesLeft)} minutes`;
   const summary = (
     <section aria-label={`${fundingLabel} summary`}>
       <Space orientation="vertical" size={2} style={{ width: "100%" }}>
@@ -108,15 +120,17 @@ export default function VmFundingStatus({
               strong={!compact}
               style={compact ? undefined : { fontSize: 20 }}
             >
-              {moneyToCurrency(amounts.remaining)} unspent of{" "}
-              {moneyToCurrency(amounts.total)}
+              {moneyToCurrency(amounts.remaining)} (of{" "}
+              {moneyToCurrency(amounts.total)}) remaining
             </Typography.Text>
             <Progress
-              aria-label={`${fundingLabel}: ${moneyToCurrency(amounts.remaining)} remaining of ${moneyToCurrency(amounts.total)}`}
-              percent={amounts.percentRemaining}
+              aria-label={`${fundingLabel}: credit used, ${moneyToCurrency(amounts.remaining)} remaining of ${moneyToCurrency(amounts.total)}`}
+              percent={100 - (amounts.percentRemaining ?? 100)}
               showInfo={false}
               size="small"
-              status={amounts.percentRemaining === 0 ? "exception" : "normal"}
+              status={
+                (amounts.percentRemaining ?? 100) <= 20 ? "exception" : "normal"
+              }
             />
           </>
         ) : (
@@ -126,16 +140,31 @@ export default function VmFundingStatus({
               : "Course balance unavailable."}
           </Typography.Text>
         )}
-        {course?.forecast_exhausts_at && funding.state === "running" && (
+        {runtime && funding.state === "running" && (
           <Typography.Text type="secondary">
-            Estimated credit cutoff{" "}
-            <TimeAgo date={new Date(course.forecast_exhausts_at)} />
+            Can run for about {runtime}
+            <FundingHelp title="Remaining runtime">
+              Estimated time before usable course credit runs out or a course
+              budget or payer spending limit is reached, at the current reported
+              cost of all VMs using this grant. Disk and network reserves are
+              excluded from available runtime credit. Prices, network traffic,
+              other VMs, and delayed usage reports can change this estimate.
+              Your shutdown timer can stop this VM earlier.
+            </FundingHelp>
           </Typography.Text>
         )}
         <Typography.Text type="secondary">
           {funding.committed_usd != null
-            ? `${moneyToCurrency(funding.committed_usd)} reserved for this VM`
+            ? `${moneyToCurrency(funding.committed_usd)} reserved`
             : "VM reservation unavailable"}
+          <FundingHelp title="Reserved credit">
+            Credit set aside for this VM's next running interval, retained
+            disks, and maximum approved network charges. This is part of your
+            remaining credit, not an additional charge or money already spent.
+            Actual usage is charged against it; unused reserves become available
+            again when the remaining costs are settled. Stopping compute does
+            not stop disk charges.
+          </FundingHelp>
         </Typography.Text>
         {funding.state === "stopped" && (
           <Typography.Text type="secondary">
@@ -146,7 +175,7 @@ export default function VmFundingStatus({
                 <TimeAgo date={new Date(funding.stopped_at)} />
               </>
             )}
-            ; retained disks may still use credit.
+            ; retained disks continue to use credit.
           </Typography.Text>
         )}
         {stale && (
