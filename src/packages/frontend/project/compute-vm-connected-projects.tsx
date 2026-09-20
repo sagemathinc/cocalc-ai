@@ -133,10 +133,16 @@ export function ConnectedProjectsSelect({
       content={
         <div style={{ width: "min(440px, calc(100vw - 56px))" }}>
           <Flex justify="space-between" align="center" gap={12}>
-            <Text type="secondary">
-              Selected projects can connect over managed SSH after the VM
-              starts.
-            </Text>
+            <Space direction="vertical" size={2}>
+              <Text type="secondary">
+                Selected projects can connect over managed SSH after the VM
+                starts.
+              </Text>
+              <Text type="secondary">
+                You can easily add or remove project access later. You can also
+                add a public key in Advanced options.
+              </Text>
+            </Space>
             <Button
               size="small"
               disabled={disabled || count === 0}

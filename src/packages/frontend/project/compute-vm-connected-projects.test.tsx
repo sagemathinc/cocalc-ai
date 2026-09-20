@@ -110,6 +110,12 @@ it("toggles projects and provides a clear unselect-all action", async () => {
   await user.click(
     screen.getByRole("button", { name: /2 connected projects/i }),
   );
+  expect(
+    screen.getByText(/easily add or remove project access later/i),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByText(/add a public key in advanced options/i),
+  ).toBeInTheDocument();
   expect(screen.getByRole("checkbox", { name: /first/i })).toBeChecked();
   await user.click(screen.getByRole("checkbox", { name: /second/i }));
   expect(
