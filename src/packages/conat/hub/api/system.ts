@@ -2,6 +2,7 @@ import {
   noAuth,
   authFirstRequireAccount,
   authFirstRequireAccountOrHost,
+  authFirstRequireAccountOrHostWithAccountTarget,
   authFirstRequireAccountOrProjectOrHost,
   authFirstRequireAuthenticated,
   authFirstRequireHost,
@@ -147,7 +148,7 @@ export const system = {
   transcribeChatAudio: authFirstRequireAccount,
   synthesizeChatSpeech: authFirstRequireAccount,
   cancelChatSpeech: authFirstRequireAccount,
-  getCodexPaymentSource: authFirstRequireAccount,
+  getCodexPaymentSource: authFirstRequireAccountOrHostWithAccountTarget,
   getSiteFundedCodexAdminStatus: authFirstRequireAccount,
   getCodexUsageStatus: authFirstRequireAccount,
   getFrontendSourceFingerprint: authFirstRequireAccount,
@@ -2904,6 +2905,7 @@ export interface System {
 
   getCodexPaymentSource: (opts: {
     account_id?: string;
+    host_id?: string;
     project_id?: string;
     preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
     credential_id?: string;

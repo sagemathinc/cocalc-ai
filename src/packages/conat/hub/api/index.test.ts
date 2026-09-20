@@ -75,6 +75,7 @@ describe("hub API argument transforms", () => {
       "projects.startFromHost",
       "publicDirectoryShares.authorizeRead",
       "publicDirectoryShares.getTemporaryViewerReadPolicy",
+      "system.getCodexPaymentSource",
     ]);
   });
 
@@ -435,6 +436,24 @@ describe("hub API argument transforms", () => {
   });
 
   it("preserves explicitly declared account targets for host RPCs", async () => {
+    const paymentSourceArgs = await transformArgs({
+      name: "system.getCodexPaymentSource",
+      args: [
+        {
+          account_id: "codex-account",
+          project_id: "project-1",
+          preference: "subscription",
+        },
+      ],
+      host_id: "caller-host",
+    });
+    expect(paymentSourceArgs[0]).toEqual({
+      account_id: "codex-account",
+      host_id: "caller-host",
+      project_id: "project-1",
+      preference: "subscription",
+    });
+
     const viewerArgs = await transformArgs({
       name: "publicDirectoryShares.authorizeRead",
       args: [

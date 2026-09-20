@@ -6380,6 +6380,43 @@ async function assertProjectCollaborator(
   await assertProjectCollaboratorAccessAllowRemote({ account_id, project_id });
 }
 
+export async function assertCodexPaymentSourceCaller({
+  account_id,
+  project_id,
+  host_id,
+}: {
+  account_id: string;
+  project_id?: string;
+  host_id?: string;
+}): Promise<void> {
+  if (!host_id) {
+    if (project_id) {
+      await assertProjectCollaborator(account_id, project_id);
+    }
+    return;
+  }
+  if (!project_id) {
+    throw new Error("project_id is required for project-host Codex admission");
+  }
+  const { rowCount } = await getPool().query(
+    `
+      SELECT 1
+      FROM projects
+      WHERE project_id=$1
+        AND host_id=$2
+        AND deleted IS NOT true
+        AND users ? $3::text
+      LIMIT 1
+    `,
+    [project_id, host_id, account_id],
+  );
+  if (!rowCount) {
+    throw new Error(
+      "project host is not authorized for this account payment source",
+    );
+  }
+}
+
 export async function listExternalCredentials({
   account_id,
   provider,
@@ -6706,11 +6743,13 @@ export async function cancelChatSpeech(
 export async function getCodexPaymentSource({
   account_id,
   project_id,
+  host_id,
   preference = "auto",
   credential_id,
 }: {
   account_id?: string;
   project_id?: string;
+  host_id?: string;
   preference?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
   credential_id?: string;
 }) {
@@ -6723,9 +6762,7 @@ export async function getCodexPaymentSource({
   const accountKeys = parseMap(
     process.env.COCALC_CODEX_AUTH_ACCOUNT_OPENAI_KEYS_JSON,
   );
-  if (project_id) {
-    await assertProjectCollaborator(account_id, project_id);
-  }
+  await assertCodexPaymentSourceCaller({ account_id, project_id, host_id });
   if (credential_id && preference !== "subscription") {
     throw Error("credential_id requires the subscription payment source");
   }
