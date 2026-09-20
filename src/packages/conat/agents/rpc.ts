@@ -106,6 +106,7 @@ export const AGENT_RPC_FAILURE_CODES = [
   "project_slot_limit",
   "project_not_startable",
   "startup_deadline",
+  "target_not_agent",
   "execution_not_allowed",
   "execution_ack_unknown",
   "submission_deadline",

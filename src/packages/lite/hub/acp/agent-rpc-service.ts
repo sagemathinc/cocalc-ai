@@ -94,6 +94,23 @@ function startFailure(
   };
 }
 
+function executionFailure(
+  error: unknown,
+): Pick<AgentRpcOutcome, "code" | "reason"> {
+  if (/requires a Codex\/ACP thread/i.test(`${error}`)) {
+    return {
+      code: "target_not_agent",
+      reason:
+        "The recipient is named but agent execution is disabled or unconfigured; open it in Agents and enable agent execution",
+    };
+  }
+  return {
+    code: "execution_not_allowed",
+    reason:
+      "Execution was not submitted; target validation, authorization or chat preparation failed",
+  };
+}
+
 export function createAgentRpcService(
   deps: AgentRpcExecutionAdapter,
   attempts = new AgentRpcAttempts(),
@@ -347,12 +364,13 @@ export function createAgentRpcService(
                             "Execution acknowledgment unavailable; inspect before any explicit retry",
                         }
                       : {
-                          code:
-                            Date.now() >= e.deadline
-                              ? ("submission_deadline" as const)
-                              : ("execution_not_allowed" as const),
-                          reason:
-                            "Execution was not submitted; target validation, authorization or chat preparation failed",
+                          ...(Date.now() >= e.deadline
+                            ? {
+                                code: "submission_deadline" as const,
+                                reason:
+                                  "Execution was not submitted before its deadline",
+                              }
+                            : executionFailure(error)),
                         }),
             },
           );
@@ -411,11 +429,7 @@ export function createAgentRpcService(
                 code === "attachment_invalid" ||
                 code === "attachment_limit_exceeded"
               ? ({ code, reason: code } as const)
-              : {
-                  code: "execution_not_allowed" as const,
-                  reason:
-                    "Recipient thread or attachment authorization is unavailable; no message was submitted",
-                };
+              : executionFailure(error);
         return rpcOutcome(e, "rejected", { ...failure, chat_effect: "none" });
       }
     },

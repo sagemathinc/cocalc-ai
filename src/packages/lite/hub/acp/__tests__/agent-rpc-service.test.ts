@@ -156,6 +156,26 @@ test("external source may use session delivery but not live project paths", asyn
   expect(db.set).toHaveBeenCalledTimes(1);
 });
 
+test("reports when a named recipient is not configured as an agent", async () => {
+  const { e, service, db, deps } = fixture();
+  db.get()[0] = {
+    event: "chat-thread-config",
+    thread_id: e.thread_id,
+    agent_kind: null,
+    acp_config: null,
+  };
+
+  await expect(service.submit(e)).resolves.toMatchObject({
+    outcome: "rejected",
+    code: "target_not_agent",
+    reason: expect.stringContaining("enable agent execution"),
+    chat_effect: "none",
+  });
+  expect(db.set).not.toHaveBeenCalled();
+  expect(deps.ensureRunning).not.toHaveBeenCalled();
+  expect(deps.admit).not.toHaveBeenCalled();
+});
+
 test.each([
   ["adapter", "attachment_unavailable"],
   ["authorization", "execution_not_allowed"],

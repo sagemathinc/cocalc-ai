@@ -157,6 +157,7 @@ import {
   rememberAgentName,
   suggestedAgentName,
 } from "./new-agent-defaults";
+import { namedAgentExecutionState } from "./agent-execution-state";
 import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
@@ -1559,6 +1560,7 @@ function AgentWorkspace({
   const [showEditorControls, setShowEditorControls] = useState(false);
   const [directoryOpen, setDirectoryOpen] = useState(false);
   const [, setChatVersion] = useState(0);
+  const repairedLegacyThreads = useRef<Set<string>>(new Set());
   const openDocs = useCallback(() => {
     setDocsOpen(true);
     rememberAgentDocsDrawerOpen(true);
@@ -1635,6 +1637,10 @@ function AgentWorkspace({
   const selectedThreadConfig = selectedThreadMetadata?.acp_config as
     | CodexThreadConfig
     | undefined;
+  const executionState =
+    chatActions && selectedThread && !unregistered
+      ? namedAgentExecutionState(selectedThreadMetadata ?? {})
+      : undefined;
   const selectedWorkingDirectory =
     (selectedThreadConfig as any)?.get?.("workingDirectory") ??
     selectedThreadConfig?.workingDirectory;
@@ -1644,6 +1650,31 @@ function AgentWorkspace({
   );
   const canRegisterSelectedThread =
     !!unregistered && selectedThreadMetadata?.agent_kind === "acp";
+  const enableSelectedAgent = useCallback(
+    (showNotice = true) => {
+      if (!chatActions || !selectedThread) return;
+      const defaults = getDefaultCodexNewChatDefaults();
+      chatActions.setCodexConfig(selectedThread, {
+        ...defaults,
+        allowWrite: defaults.sessionMode !== "read-only",
+        workingDirectory: getProjectHomeDirectory(agent.endpoint.project_id),
+      });
+      if (showNotice) antdMessage.success("Agent execution enabled.");
+    },
+    [agent.endpoint.project_id, chatActions, selectedThread],
+  );
+  useEffect(() => {
+    if (
+      !active ||
+      executionState !== "legacy-missing" ||
+      !selectedThread ||
+      repairedLegacyThreads.current.has(selectedThread)
+    ) {
+      return;
+    }
+    repairedLegacyThreads.current.add(selectedThread);
+    enableSelectedAgent(false);
+  }, [active, enableSelectedAgent, executionState, selectedThread]);
   const threadTitle = unregistered
     ? cachedAgentNameContext({
         project_id: agent.endpoint.project_id,
@@ -2065,6 +2096,30 @@ function AgentWorkspace({
           />
         )}
       />
+      {!unregistered && executionState === "disabled" && (
+        <Alert
+          showIcon
+          type="warning"
+          title="Agent execution is disabled"
+          description="This named agent cannot run turns or receive Agent Network messages until agent execution is enabled."
+          action={
+            <Button type="primary" onClick={() => enableSelectedAgent()}>
+              Enable agent
+            </Button>
+          }
+        />
+      )}
+      {!unregistered && executionState === "legacy-missing" && (
+        <Alert
+          showIcon
+          type="info"
+          title="Repairing agent configuration"
+          description="This named agent has incomplete legacy execution settings. CoCalc is restoring them from your current agent defaults."
+          action={
+            <Button onClick={() => enableSelectedAgent()}>Enable now</Button>
+          }
+        />
+      )}
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
           showEditorControls={showEditorControls}
