@@ -61,6 +61,7 @@ test("operator signs and verifies a bounded manifest without overwriting or acce
           database: {
             name: "smc",
             system_identifier: "123456",
+            trust_model: "isolated-writers",
             writer_roles: ["hub"],
             operator_roles: ["operator"],
             retired_roles: [],

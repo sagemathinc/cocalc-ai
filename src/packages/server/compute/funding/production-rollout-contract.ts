@@ -49,6 +49,7 @@ export interface FundingRolloutBay {
   database: {
     system_identifier: string;
     name: string;
+    trust_model: "isolated-writers" | "co-resident-operator-writer";
     writer_roles: string[];
     operator_roles: string[];
     retired_roles: FundingCredentialRevocation[];

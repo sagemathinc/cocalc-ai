@@ -17,9 +17,24 @@ The typed contract is
 `src/packages/server/compute/funding/production-rollout-contract.ts`. Include each
 bay's PostgreSQL system identifier, database name, writer and operator roles,
 worker identity/build/protocol/capabilities, and deployment resource namespace.
-Application writers must not be database superusers. A rotation must name the
-previous credential epoch and evidence for retired database and provider credentials;
-bootstrap is only for a genuinely new credential inventory.
+The manifest must state the database trust model honestly:
+
+- `isolated-writers` means request-serving writers use dedicated
+  non-superuser, non-`BYPASSRLS` credentials that cannot impersonate an
+  operator. This is the target defense-in-depth architecture.
+- `co-resident-operator-writer` is accepted only for a one-bay deployment. It
+  means the hub and PostgreSQL share a host/operating-system trust domain and
+  the application writer has administrative database authority. A hub or host
+  compromise can therefore fully alter the database. The signed manifest
+  inventories the deployed writers and release, but does not claim process or
+  database isolation.
+
+For the co-resident model, put every application writer identity in
+`writer_roles`, even when that role is also operationally privileged. Put other
+privileged login roles that can mutate funding state in `operator_roles`; a role
+must not appear in both lists. A rotation must name the previous credential
+epoch and evidence for retired database and provider credentials; bootstrap is
+only for a genuinely new credential inventory.
 
 For multiple bays, include a fixed exposure allocation with one quota per bay.
 Their sum cannot exceed the site ceiling. Its digest is pinned independently of
@@ -63,6 +78,13 @@ must continue. The runtime also checks bay inventory, actual database privileges
 compiled worker capabilities and credential identities. Exposure verification
 persists an allocation policy pin: unlike the offline utility and payer audit,
 runtime admission verification is not wholly read-only.
+
+The co-resident model is a documented risk acceptance for a bounded one-bay
+pilot, not completion of the database-isolation roadmap. Compensating controls
+are exact writer/build inventory, retired-session fencing, transaction and
+idempotency invariants, small payer/resource limits, provider reconciliation,
+and the ability to disable new sponsorship while cleanup and settlement keep
+running.
 
 Do not enable a production pilot merely because offline verification succeeds.
 Review the live capability results across all bays and complete the independent

@@ -150,6 +150,7 @@ export async function verifyFundingAccountWriters(
       "Actual PostgreSQL writer coverage differs from the signed inventory.",
     );
   if (
+    bay.database.trust_model === "isolated-writers" &&
     writers.some(
       (w) =>
         bay.database.writer_roles.includes(w.role) &&

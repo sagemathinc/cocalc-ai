@@ -159,6 +159,7 @@ export function verifyFundingRolloutManifest(
     const db = object(bay.database, [
       "system_identifier",
       "name",
+      "trust_model",
       "writer_roles",
       "operator_roles",
       "retired_roles",
@@ -166,6 +167,16 @@ export function verifyFundingRolloutManifest(
     if (!/^\d+$/.test(string(db.system_identifier)))
       throw Error("Invalid PostgreSQL cluster identity.");
     string(db.name);
+    const trustModel = string(db.trust_model);
+    if (
+      trustModel !== "isolated-writers" &&
+      trustModel !== "co-resident-operator-writer"
+    )
+      throw Error("Unknown PostgreSQL funding trust model.");
+    if (trustModel === "co-resident-operator-writer" && bays.length !== 1)
+      throw Error(
+        "The co-resident PostgreSQL funding trust model is limited to one-bay deployments.",
+      );
     const writerRoles = array(db.writer_roles, 128).map(string);
     const operatorRoles = array(db.operator_roles, 128).map(string);
     if (!writerRoles.length)

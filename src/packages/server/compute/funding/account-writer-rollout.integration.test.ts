@@ -53,8 +53,9 @@ postgresDescribe("funding account writer PostgreSQL census", () => {
       database: {
         name: identity.database,
         system_identifier: identity.system_identifier,
-        writer_roles: [],
-        operator_roles: [identity.role],
+        trust_model: "co-resident-operator-writer",
+        writer_roles: [identity.role],
+        operator_roles: [],
         retired_roles: [],
       },
       writers: [

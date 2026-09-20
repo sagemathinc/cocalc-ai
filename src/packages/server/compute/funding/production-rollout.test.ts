@@ -101,6 +101,7 @@ function fixture(): FundingRolloutManifest {
         database: {
           name: "smc",
           system_identifier: "123456",
+          trust_model: "isolated-writers",
           writer_roles: ["hub"],
           operator_roles: ["operator"],
           retired_roles: [],
@@ -415,6 +416,54 @@ it("connects actual production startup, signed file reader and observed database
   expect(mockQuery).toHaveBeenCalledWith(
     expect.stringContaining("WITH tables"),
     [FUNDING_AUTHORITY_TABLES],
+  );
+});
+it("makes co-resident database authority explicit for a one-bay deployment", async () => {
+  manifest.bays[0].database.trust_model = "co-resident-operator-writer";
+  manifest.bays[0].database.operator_roles = [];
+  const goodQuery = mockQuery.getMockImplementation()!;
+  mockQuery.mockImplementation(async (sql, ...args) =>
+    sql.includes("WITH tables")
+      ? {
+          rows: [{ role: "hub", superuser: true, bypass_rls: true }],
+        }
+      : goodQuery(sql, ...args),
+  );
+  initFundingRolloutVerifiers();
+  expect(
+    (await getLocalFundingRolloutCapabilities()).checks["account-holds"],
+  ).toMatchObject({ enforced: true });
+});
+it("rejects privileged application writers under the isolated model", async () => {
+  const goodQuery = mockQuery.getMockImplementation()!;
+  mockQuery.mockImplementation(async (sql, ...args) =>
+    sql.includes("WITH tables")
+      ? {
+          rows: [
+            { role: "hub", superuser: true, bypass_rls: true },
+            { role: "operator", superuser: true, bypass_rls: true },
+          ],
+        }
+      : goodQuery(sql, ...args),
+  );
+  initFundingRolloutVerifiers();
+  expect(
+    (await getLocalFundingRolloutCapabilities()).checks["account-holds"],
+  ).toBeNull();
+});
+it("does not allow a co-resident database claim across multiple bays", () => {
+  manifest.bays[0].database.trust_model = "co-resident-operator-writer";
+  manifest.bays.push({ ...manifest.bays[0], bay_id: "second" });
+  manifest.exposure_allocation = {
+    id: "co-resident-multi-bay-test",
+    site_ceiling_usd: "2",
+    bay_quotas: [
+      { bay_id: "home", amount_usd: "1" },
+      { bay_id: "second", amount_usd: "1" },
+    ],
+  };
+  expect(() => verifyFundingRolloutManifest(signed(), publicKey)).toThrow(
+    "limited to one-bay deployments",
   );
 });
 it.each([

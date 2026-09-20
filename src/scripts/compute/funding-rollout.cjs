@@ -76,6 +76,9 @@ function run(args) {
         rollout_id: manifest.rollout_id,
         expires_at: manifest.expires_at,
         bay_ids: manifest.bays.map((bay) => bay.bay_id),
+        database_trust_models: Object.fromEntries(
+          manifest.bays.map((bay) => [bay.bay_id, bay.database.trust_model]),
+        ),
         manifest_sha256: digest,
         exposure_allocation_sha256: manifest.exposure_allocation
           ? fundingExposureAllocationDigest(manifest)

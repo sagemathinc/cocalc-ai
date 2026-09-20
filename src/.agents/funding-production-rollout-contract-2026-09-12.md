@@ -105,9 +105,13 @@ Node `crypto.sign(null, bytes, ed25519PrivateKey)`; envelope signature is base64
 Only the public key is installed in hubs. Renew manifests within the 15-minute
 maximum validity, with every bay reporting the same manifest digest before new
 admission. The DB verifier needs read permission for `pg_control_system()` and
-role/activity catalogs, not permission to revoke credentials. Application
-writers must use dedicated non-superuser/non-BYPASSRLS credentials; inventory
-trusted administrative roles separately.
+role/activity catalogs, not permission to revoke credentials. The manifest
+declares either `isolated-writers`, where application writers use dedicated
+non-superuser/non-`BYPASSRLS` credentials, or
+`co-resident-operator-writer`, which is limited to one bay and explicitly
+accepts that hub/host compromise includes full database authority. Inventory
+every actual writer and other trusted administrative login; the co-resident
+model is release attestation and writer fencing, not process isolation.
 
 Multiple bays also pin `COCALC_FUNDING_EXPOSURE_ALLOCATION_SHA256` as above.
 The verifier never repairs credentials or silently enables sponsorship.
