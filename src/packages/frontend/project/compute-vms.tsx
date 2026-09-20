@@ -511,10 +511,12 @@ export function VmCreateModal({
   const [usePersistentHomeVolume, setUsePersistentHomeVolume] = useState(false);
   const [confirmedDraft, setConfirmedDraft] = useState<VmDraft>();
   const [sshKeyError, setSshKeyError] = useState<string>();
+  const connectedProjectsSelectionHandled = useRef(false);
   const pricingSettings = useHostPricingSettings();
 
   useEffect(() => {
     if (!open) return;
+    connectedProjectsSelectionHandled.current = false;
     form.setFieldsValue({
       funding_source: undefined,
       accept_course_retention: false,
@@ -550,18 +552,16 @@ export function VmCreateModal({
     ((!!draft.funding_source &&
       (!!draft.create_home_volume || !!draft.home_volume)) ||
       (selectedVolume != null && !!volumeCourseSource(selectedVolume)));
-  const courseFundingNeedsProject =
-    !recommendationMode &&
-    !!draft.funding_source &&
-    !draft.connected_project_ids?.length;
   const creationBlocked =
     catalogLoading ||
     !!creationUnavailable ||
     fundingUnavailable ||
     recommendationPending ||
-    courseFundingNeedsProject ||
     volumeUnsupported;
-  const courseProjectIds = defaultCourseConnectedProjectIds(connectedProjects);
+  const courseProjectIds = useMemo(
+    () => defaultCourseConnectedProjectIds(connectedProjects),
+    [connectedProjects],
+  );
   const creationProjectId =
     project_id ?? draft.connected_project_ids?.[0] ?? undefined;
   const selection: ProviderSelection = {
@@ -690,6 +690,23 @@ export function VmCreateModal({
     form.setFieldsValue(patch);
     setDraft((current) => ({ ...current, ...patch }));
   };
+
+  useEffect(() => {
+    if (
+      !open ||
+      !draft.funding_source ||
+      connectedProjectsSelectionHandled.current ||
+      courseProjectIds.length === 0
+    ) {
+      return;
+    }
+    connectedProjectsSelectionHandled.current = true;
+    form.setFieldValue("connected_project_ids", courseProjectIds);
+    setDraft((current) => ({
+      ...current,
+      connected_project_ids: courseProjectIds,
+    }));
+  }, [courseProjectIds, draft.funding_source, form, open]);
 
   const chooseGcpMachine = (
     nextSelection: ProviderSelection,
@@ -889,7 +906,13 @@ export function VmCreateModal({
           </Flex>
         )
       }
-      styles={{ body: { maxHeight: "calc(100vh - 190px)", overflowY: "auto" } }}
+      styles={{
+        body: {
+          maxHeight: "calc(100vh - 190px)",
+          overflowY: "auto",
+          paddingInlineEnd: 36,
+        },
+      }}
       width={920}
     >
       {catalogLoading ? (
@@ -946,14 +969,17 @@ export function VmCreateModal({
             <ComputeFundingSelect
               disabled={saving}
               defaultToCourseFunding={open}
-              onChange={(funding_source) =>
+              onChange={(funding_source) => {
+                connectedProjectsSelectionHandled.current = funding_source
+                  ? courseProjectIds.length > 0
+                  : false;
                 patchDraft({
                   funding_source,
                   ...(funding_source
                     ? { connected_project_ids: courseProjectIds }
                     : undefined),
-                })
-              }
+                });
+              }}
               onLaneChange={(funding_mode) =>
                 patchDraft({
                   funding_mode,
@@ -966,25 +992,15 @@ export function VmCreateModal({
           </Form.Item>
         )}
         {!recommendationMode && (
-          <Form.Item
-            name="connected_project_ids"
-            label="Project SSH access"
-            extra="Checked projects receive a managed SSH alias and can connect as soon as the VM is ready."
-          >
+          <Form.Item name="connected_project_ids" label="Project SSH access">
             <ConnectedProjectsSelect
               projects={connectedProjects}
               disabled={saving}
+              onUserChange={() => {
+                connectedProjectsSelectionHandled.current = true;
+              }}
             />
           </Form.Item>
-        )}
-        {courseFundingNeedsProject && (
-          <Alert
-            showIcon
-            type="error"
-            title="Select at least one connected project for course funding."
-            description="Course-funded VMs require a CoCalc project for SSH access and funding admission."
-            style={{ marginBottom: 16 }}
-          />
         )}
         {!recommendationMode &&
           recommendedSource?.grant_id === draft.funding_source?.grant_id &&

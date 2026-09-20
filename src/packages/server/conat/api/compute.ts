@@ -81,7 +81,7 @@ import type { ComputeVolumeRow } from "@cocalc/server/compute/types";
 import type { ComputeVmProjectAccessRow } from "@cocalc/server/compute/types";
 import {
   normalizeManagedVmSshPublicKey,
-  resolveManagedVmCreateSshAuthorization,
+  resolveVmCreateSshAuthorization,
 } from "@cocalc/server/compute/ssh-authorization";
 import {
   ensureProviderComputeSshAccess,
@@ -830,8 +830,6 @@ export async function createVm(
       throw new Error(
         "Course funding does not allow unreserved Standard price fallback",
       );
-    if (!opts.project_id)
-      throw new Error("Course-funded VMs require a CoCalc project context");
   }
   const stopSchedule = createStopSchedule(
     opts.stop_after_minutes,
@@ -1109,12 +1107,10 @@ export async function createVm(
     },
     require_fresh_auth: true,
   });
-  const configureProjectAccess = fundingSource
-    ? true
-    : opts.configure_project_ssh;
   const projectKey =
     opts.project_id &&
-    (configureProjectAccess === true || opts.ssh_public_key == null)
+    ((fundingSource ? true : opts.configure_project_ssh) === true ||
+      opts.ssh_public_key == null)
       ? await getManagedVmProjectSshPublicKey({
           account_id: accountId,
           project_id: opts.project_id,
@@ -1123,12 +1119,12 @@ export async function createVm(
   const {
     ssh_public_key: sshPublicKey,
     configure_project_ssh: configureProjectSsh,
-  } = resolveManagedVmCreateSshAuthorization({
-    requested_key: fundingSource
-      ? (projectKey ?? undefined)
-      : opts.ssh_public_key,
-    configure_project_ssh: configureProjectAccess,
+  } = resolveVmCreateSshAuthorization({
+    requested_key: opts.ssh_public_key,
+    configure_project_ssh: opts.configure_project_ssh,
     project_key: projectKey,
+    course_funded: fundingSource != null,
+    has_project_context: !!opts.project_id,
   });
   const providerInstanceId = managedComputeVmProviderName(
     id,

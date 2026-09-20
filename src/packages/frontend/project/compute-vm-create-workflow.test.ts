@@ -142,13 +142,20 @@ it("forces managed project access for course-funded VMs and creates a key when n
     ssh_public_key: "ssh-ed25519 AAAAPROJECT project",
   });
   expect(generateProjectSshKey).toHaveBeenCalledTimes(1);
-  await expect(
-    prepareCourseFundedVmValues({
-      values: h.values,
-      projectSshPublicKey: null,
-      generateProjectSshKey,
-    }),
-  ).rejects.toThrow("CoCalc project");
+  const withoutProject = await prepareCourseFundedVmValues({
+    values: {
+      ...h.values,
+      configure_project_ssh: true,
+      ssh_public_key: "ssh-ed25519 AAAAACCOUNT account",
+    },
+    projectSshPublicKey: null,
+    generateProjectSshKey,
+  });
+  expect(withoutProject.values).toMatchObject({
+    allow_on_demand_fallback: false,
+    configure_project_ssh: false,
+    ssh_public_key: "ssh-ed25519 AAAAACCOUNT account",
+  });
 });
 
 it("leaves personally funded VM access choices unchanged", async () => {

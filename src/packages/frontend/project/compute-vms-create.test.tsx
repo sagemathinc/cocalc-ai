@@ -1,5 +1,11 @@
 import "@testing-library/jest-dom";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { VmCreateModal } from "./compute-vms";
 import { VM_PREVIEW_CATALOG } from "./compute-vms-preview";
 import userEvent from "@testing-library/user-event";
@@ -111,4 +117,57 @@ it("opens the real VM form without a catalog but blocks creation", () => {
   fireEvent.click(screen.getByRole("button", { name: "Cancel", exact: true }));
   expect(onCancel).toHaveBeenCalled();
   rerender(<></>);
+});
+
+it("waits for course projects before applying the course-funded default", async () => {
+  const user = userEvent.setup();
+  const initial = {
+    ...VM_PREVIEW_CATALOG.defaults,
+    name: "Course VM",
+    funding_mode: "account-prepaid" as const,
+    funding_source: {
+      kind: "course" as const,
+      payer_account_id: "instructor",
+      pool_id: "pool",
+      grant_id: "grant",
+    },
+    pricing_model: "on_demand" as const,
+    allow_on_demand_fallback: false,
+  };
+  const props = {
+    open: true,
+    catalog: VM_PREVIEW_CATALOG,
+    volumes: [],
+    initial,
+    projectSshPublicKey: null,
+    sshKeys: [],
+    saving: false,
+    preferredR2Region: undefined,
+    onCancel: jest.fn(),
+    onCreate: jest.fn(),
+  };
+  const projects = [
+    { project_id: "course-a", title: "Course A", course: true },
+    { project_id: "personal", title: "Personal", course: false },
+    { project_id: "course-b", title: "Course B", course: true },
+  ];
+  const { rerender } = render(
+    <VmCreateModal {...props} connectedProjects={[]} />,
+  );
+  const dialog = screen.getByRole("dialog", { name: "Create Course VM" });
+  await waitFor(() =>
+    expect(within(dialog).getByText("0 Connected Projects...")).toBeVisible(),
+  );
+
+  rerender(<VmCreateModal {...props} connectedProjects={projects} />);
+  expect(
+    await within(dialog).findByText("2 Connected Projects..."),
+  ).toBeVisible();
+
+  await user.click(within(dialog).getByText("2 Connected Projects..."));
+  await user.click(screen.getByRole("button", { name: /unselect all/i }));
+  expect(within(dialog).getByText("0 Connected Projects...")).toBeVisible();
+
+  rerender(<VmCreateModal {...props} connectedProjects={[...projects]} />);
+  expect(within(dialog).getByText("0 Connected Projects...")).toBeVisible();
 });

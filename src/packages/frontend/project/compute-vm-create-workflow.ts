@@ -71,7 +71,14 @@ export async function prepareCourseFundedVmValues<T extends VmCreateCliValues>({
 }): Promise<{ values: T; projectSshPublicKey: string | null }> {
   if (!values.funding_source) return { values, projectSshPublicKey };
   if (!project_id) {
-    throw new Error("Course-funded VMs must be created from a CoCalc project.");
+    return {
+      values: {
+        ...values,
+        allow_on_demand_fallback: false,
+        configure_project_ssh: false,
+      },
+      projectSshPublicKey,
+    };
   }
   const publicKey =
     projectSshPublicKey ?? (await generateProjectSshKey()).trim();

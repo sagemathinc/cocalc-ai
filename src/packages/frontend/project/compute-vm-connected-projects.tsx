@@ -67,12 +67,14 @@ export function ConnectedProjectsSelect({
   projects,
   value = [],
   onChange,
+  onUserChange,
   disabled,
   id,
 }: {
   projects: VmConnectedProject[];
   value?: string[];
   onChange?: (projectIds: string[]) => void;
+  onUserChange?: () => void;
   disabled?: boolean;
   id?: string;
 }) {
@@ -81,6 +83,7 @@ export function ConnectedProjectsSelect({
     const next = new Set(value);
     if (checked) next.add(projectId);
     else next.delete(projectId);
+    onUserChange?.();
     onChange?.(
       projects.map(({ project_id }) => project_id).filter((id) => next.has(id)),
     );
@@ -104,7 +107,10 @@ export function ConnectedProjectsSelect({
             <Button
               size="small"
               disabled={disabled || count === 0}
-              onClick={() => onChange?.([])}
+              onClick={() => {
+                onUserChange?.();
+                onChange?.([]);
+              }}
             >
               Unselect all
             </Button>
