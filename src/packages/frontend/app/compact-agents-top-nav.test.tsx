@@ -30,7 +30,10 @@ jest.mock("antd", () => ({
                 key={item.key}
                 role="menuitem"
                 type="button"
-                onClick={() => menu.onClick({ key: item.key })}
+                onClick={() => {
+                  item.onClick?.({ key: item.key });
+                  menu.onClick({ key: item.key });
+                }}
               >
                 {item.label}
               </button>
@@ -158,5 +161,32 @@ describe("compact Agents navigation", () => {
 
     expect(screen.queryByRole("menu")).toBeNull();
     await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("runs workspace actions and opens documentation without navigating away", () => {
+    const openTerminal = jest.fn();
+    const onOpenDocs = jest.fn();
+    render(
+      <CompactAgentsTopNav
+        isLoggedIn
+        pageStyle={pageStyle}
+        onOpenDocs={onOpenDocs}
+        workspaceItems={[
+          {
+            key: "workspace-terminal",
+            label: "Open terminal",
+            onClick: openTerminal,
+          },
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal" }));
+    expect(openTerminal).toHaveBeenCalledTimes(1);
+    expect(setActiveTab).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "More navigation" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Documentation" }));
+    expect(onOpenDocs).toHaveBeenCalledTimes(1);
+    expect(setActiveTab).not.toHaveBeenCalled();
   });
 });

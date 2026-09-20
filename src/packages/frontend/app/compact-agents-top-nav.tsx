@@ -31,16 +31,19 @@ export function CompactAgentsTopNav({
   pageStyle,
   onOpenInProject,
   foregroundColor,
+  workspaceItems = [],
+  onOpenDocs,
 }: {
   isLoggedIn: boolean;
   pageStyle: PageStyle;
   onOpenInProject?: () => void;
   foregroundColor?: string;
+  workspaceItems?: MenuProps["items"];
+  onOpenDocs?: () => void;
 }) {
   const pageActions = useActions("page");
   const groups = useTypedRedux("account", "groups");
   const fullscreen = useTypedRedux("page", "fullscreen");
-  const zendesk = !!useTypedRedux("customize", "zendesk");
   const [menuOpen, setMenuOpen] = useState(false);
   const menuTriggerRef = useRef<HTMLSpanElement>(null);
 
@@ -60,6 +63,7 @@ export function CompactAgentsTopNav({
   }, [menuOpen]);
 
   const items: MenuProps["items"] = [
+    ...workspaceItems,
     ...(onOpenInProject
       ? [
           {
@@ -88,9 +92,7 @@ export function CompactAgentsTopNav({
       : []),
     { type: "divider" },
     { key: "docs", icon: <Icon name="book" />, label: "Documentation" },
-    ...(zendesk
-      ? [{ key: "support", icon: <Icon name="support" />, label: "Help" }]
-      : []),
+    { key: "support", icon: <Icon name="support" />, label: "Contact us" },
     { key: "connection", icon: <Icon name="wifi" />, label: "Connection" },
     {
       key: "fullscreen",
@@ -102,6 +104,10 @@ export function CompactAgentsTopNav({
   function onMenuClick({ key }: { key: string }) {
     setMenuOpen(false);
     switch (key) {
+      case "docs":
+        if (onOpenDocs) onOpenDocs();
+        else pageActions.set_active_tab("docs");
+        return;
       case "open-in-project":
         onOpenInProject?.();
         return;
@@ -118,6 +124,7 @@ export function CompactAgentsTopNav({
         pageActions.toggle_fullscreen();
         return;
       default:
+        if (key.startsWith("workspace-")) return;
         pageActions.set_active_tab(key);
     }
   }

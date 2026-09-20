@@ -101,7 +101,6 @@ import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
 } from "./workspace-sidebar-toggle";
-import { AgentWorkspaceCloseButton } from "./workspace-close-button";
 import {
   readAgentThreadAppearance,
   resolveAgentHeaderTheme,
@@ -1102,6 +1101,7 @@ function NewAgentPanel({
 }
 
 function AgentProjectContext({
+  showEditorControls,
   agent,
   workspaceAgents,
   active,
@@ -1113,6 +1113,7 @@ function AgentProjectContext({
   onClose,
   onOpenDocs,
 }: {
+  showEditorControls: boolean;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
   active: boolean;
@@ -1387,6 +1388,7 @@ function AgentProjectContext({
     <ProjectContext.Provider value={projectContext}>
       <ChatEmbeddingOptionsProvider
         value={{
+          hideSingleFrameToolbar: !showEditorControls,
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
           openFilesInWorkbench: true,
@@ -1403,9 +1405,13 @@ function AgentProjectContext({
 function AgentsWorkspaceNavigation({
   onOpenInProject,
   foregroundColor,
+  workspaceItems,
+  onOpenDocs,
 }: {
   onOpenInProject?: () => void;
   foregroundColor?: string;
+  workspaceItems?: import("antd").MenuProps["items"];
+  onOpenDocs?: () => void;
 } = {}) {
   const { pageStyle } = useAppContext();
   const accountId = useTypedRedux("account", "account_id");
@@ -1415,11 +1421,14 @@ function AgentsWorkspaceNavigation({
       pageStyle={pageStyle}
       onOpenInProject={onOpenInProject}
       foregroundColor={foregroundColor}
+      workspaceItems={workspaceItems}
+      onOpenDocs={onOpenDocs}
     />
   );
 }
 
 function AgentWorkspace({
+  onCopy,
   workspaceKey,
   agent,
   workspaceAgents,
@@ -1434,6 +1443,7 @@ function AgentWorkspace({
   onClose,
   onRegisteredThreadSelected,
 }: {
+  onCopy: (agent: NamedAgent) => void;
   workspaceKey: string;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1463,6 +1473,8 @@ function AgentWorkspace({
     useState<ThemeEditorDraft | null>(null);
   const [chatActions, setChatActions] = useState<ChatActions>();
   const [docsOpen, setDocsOpen] = useState(initialAgentDocsDrawerOpen);
+  const [showEditorControls, setShowEditorControls] = useState(false);
+  const [directoryOpen, setDirectoryOpen] = useState(false);
   const [, setChatVersion] = useState(0);
   const openDocs = useCallback(() => {
     setDocsOpen(true);
@@ -1622,6 +1634,16 @@ function AgentWorkspace({
         antdMessage.error(`Unable to open project: ${err}`);
       });
   };
+  const runFrameAction = (action: "terminal" | "show_search") => {
+    const editor = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    const id =
+      editor?._get_most_recent_active_frame_id_of_type("chatroom") ??
+      editor?._get_active_id();
+    if (editor && id) void editor[action](id);
+  };
   return (
     <div
       ref={ref}
@@ -1682,109 +1704,68 @@ function AgentWorkspace({
             size={36}
           />
         </Button>
-        <div style={{ minWidth: 0, flex: 1 }}>
-          <Button
-            aria-label="Edit thread appearance"
-            type="text"
-            onClick={openAppearanceEditor}
-            style={{
-              color: headerTextColor,
-              display: "block",
-              fontSize: 16,
-              fontWeight: 600,
-              height: "auto",
-              maxWidth: "100%",
-              overflow: "hidden",
-              padding: 0,
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {title}
-          </Button>
-          <div
-            style={{
-              alignItems: "center",
-              color: headerTextColor,
-              display: "flex",
-              minWidth: 0,
-              opacity: 0.78,
-              overflow: "hidden",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {canRegisterSelectedThread ? (
-              <Text style={{ color: "inherit" }}>Not yet registered</Text>
-            ) : !unregistered ? (
-              <NameAgent
-                agent={displayedAgent}
-                projectId={agent.endpoint.project_id}
-                path={agent.path}
-                threadId={selectedThread}
-                threadTitle={title}
-                projectTitle={agent.project_title}
-                triggerLabel={`@${displayedAgent.name}`}
-                triggerButtonProps={{
-                  type: "link",
-                  style: {
-                    color: "inherit",
-                    height: "auto",
-                    padding: 0,
-                  },
-                }}
-              />
-            ) : null}
-            {!unregistered || canRegisterSelectedThread ? (
-              <span aria-hidden="true">&nbsp;·&nbsp;</span>
-            ) : null}
+        <div
+          style={{
+            minWidth: 0,
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            flexWrap: "wrap",
+          }}
+        >
+          {!unregistered ? (
+            <NameAgent
+              agent={displayedAgent}
+              projectId={agent.endpoint.project_id}
+              path={agent.path}
+              threadId={selectedThread}
+              threadTitle={title}
+              projectTitle={agent.project_title}
+              triggerLabel={`@${displayedAgent.name}`}
+              triggerButtonProps={{
+                type: "text",
+                title: displayedAgent.description || title,
+                style: {
+                  color: "inherit",
+                  fontSize: 16,
+                  fontWeight: 600,
+                  padding: 0,
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                },
+              }}
+            />
+          ) : (
+            <Text style={{ color: "inherit" }}>{title}</Text>
+          )}
+          {workingDirectoryLabel && (
             <Button
-              type="link"
-              size="small"
-              onClick={() => openProject("files/")}
+              type="text"
+              aria-label={`Change working directory: ${workingDirectoryLabel}`}
+              title={`${displayedAgent.project_title || agent.endpoint.project_id}: ${selectedWorkingDirectory}`}
+              onClick={() => setDirectoryOpen(true)}
               style={{
                 color: "inherit",
-                flex: "0 1 auto",
-                height: "auto",
-                maxWidth: 280,
+                textAlign: "left",
+                flex: "1 1 180px",
+                justifyContent: "flex-start",
                 minWidth: 0,
-                overflow: "hidden",
                 padding: 0,
-                textOverflow: "ellipsis",
               }}
             >
-              {displayedAgent.project_title || agent.endpoint.project_id}
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {workingDirectoryLabel}
+              </span>
             </Button>
-            {workingDirectoryLabel ? (
-              <>
-                <span aria-hidden="true">&nbsp;·&nbsp;</span>
-                <span
-                  title={selectedWorkingDirectory}
-                  style={{
-                    flex: "0 1 240px",
-                    maxWidth: 240,
-                    minWidth: 120,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                  }}
-                >
-                  {workingDirectoryLabel}
-                </span>
-              </>
-            ) : null}
-            {sharing ? (
-              <>
-                <span aria-hidden="true">&nbsp;·&nbsp;</span>
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={() => openProject("settings", "people")}
-                  style={{ color: "inherit", height: "auto", padding: 0 }}
-                >
-                  {sharing}
-                </Button>
-              </>
-            ) : null}
-          </div>
+          )}
         </div>
         {canRegisterSelectedThread && (
           <NameAgent
@@ -1803,6 +1784,53 @@ function AgentWorkspace({
         {active && (
           <AgentsWorkspaceNavigation
             foregroundColor={headerTextColor}
+            onOpenDocs={openDocs}
+            workspaceItems={[
+              {
+                key: "workspace-terminal",
+                label: "Open terminal",
+                icon: <Icon name="terminal" />,
+                onClick: () => runFrameAction("terminal"),
+              },
+              {
+                key: "workspace-find",
+                label: "Find in conversation",
+                icon: <Icon name="search" />,
+                onClick: () => runFrameAction("show_search"),
+              },
+              {
+                key: "workspace-appearance",
+                label: "Appearance",
+                onClick: openAppearanceEditor,
+              },
+              ...(!unregistered
+                ? [
+                    {
+                      key: "workspace-copy",
+                      label: "Copy agent",
+                      onClick: () => onCopy(displayedAgent),
+                    },
+                  ]
+                : []),
+              {
+                key: "workspace-collaborators",
+                label: sharing ?? "Collaborators",
+                onClick: () => openProject("settings", "people"),
+              },
+              {
+                key: "workspace-controls",
+                label: showEditorControls
+                  ? "Hide editor controls"
+                  : "Show editor controls",
+                onClick: () => setShowEditorControls((value) => !value),
+              },
+              {
+                key: "workspace-close",
+                label: "Close workbench",
+                onClick: onClose,
+              },
+              { type: "divider" },
+            ]}
             onOpenInProject={() =>
               void openAgentThread({
                 project_id: agent.endpoint.project_id,
@@ -1812,12 +1840,24 @@ function AgentWorkspace({
             }
           />
         )}
-        <AgentWorkspaceCloseButton
-          agentPath={agent.path}
-          color={headerTextColor}
-          onClose={onClose}
-        />
       </header>
+      <Modal
+        title="Working directory"
+        open={directoryOpen}
+        footer={null}
+        onCancel={() => setDirectoryOpen(false)}
+        destroyOnHidden
+      >
+        <DirectorySelector
+          allowAbsolutePaths
+          project_id={agent.endpoint.project_id}
+          startingPath={selectedWorkingDirectory}
+          onSelect={(workingDirectory) => {
+            chatActions?.setCodexConfig(selectedThread, { workingDirectory });
+            setDirectoryOpen(false);
+          }}
+        />
+      </Modal>
       <ThemeEditorModal
         open={appearanceOpen}
         title="Edit Thread Appearance"
@@ -1849,6 +1889,7 @@ function AgentWorkspace({
       />
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
+          showEditorControls={showEditorControls}
           agent={agent}
           workspaceAgents={workspaceAgents}
           active={active}
@@ -2765,6 +2806,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               if (!agent) return null;
               return (
                 <AgentWorkspace
+                  onCopy={openCopyAgent}
                   key={workspace}
                   workspaceKey={workspace}
                   agent={agent}
