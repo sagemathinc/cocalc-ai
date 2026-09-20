@@ -466,6 +466,30 @@ it("does not allow a co-resident database claim across multiple bays", () => {
     "limited to one-bay deployments",
   );
 });
+it("allows a deployment-duration co-resident attestation without weakening isolated writers", () => {
+  manifest.bays[0].database.trust_model = "co-resident-operator-writer";
+  manifest.expires_at = new Date(
+    Date.now() + 365 * 24 * 60 * 60_000,
+  ).toISOString();
+  expect(verifyFundingRolloutManifest(signed(), publicKey).manifest).toEqual(
+    manifest,
+  );
+
+  manifest.expires_at = new Date(
+    Date.now() + 367 * 24 * 60 * 60_000,
+  ).toISOString();
+  expect(() => verifyFundingRolloutManifest(signed(), publicKey)).toThrow(
+    "validity bound",
+  );
+
+  manifest.expires_at = new Date(
+    Date.now() + 365 * 24 * 60 * 60_000,
+  ).toISOString();
+  manifest.bays[0].database.trust_model = "isolated-writers";
+  expect(() => verifyFundingRolloutManifest(signed(), publicKey)).toThrow(
+    "validity bound",
+  );
+});
 it.each([
   "unknown writer",
   "retired session",

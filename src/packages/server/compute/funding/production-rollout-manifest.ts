@@ -24,7 +24,8 @@ import { fundingAmount } from "@cocalc/util/compute-funding";
 import { toDecimal } from "@cocalc/util/money";
 
 const MAX_MANIFEST_BYTES = 256 * 1024;
-const MAX_VALIDITY_MS = 15 * 60_000;
+const ISOLATED_WRITER_MAX_VALIDITY_MS = 15 * 60_000;
+const CO_RESIDENT_MAX_VALIDITY_MS = 366 * 24 * 60 * 60_000;
 
 function object(value: unknown, keys: string[]): Record<string, any> {
   if (
@@ -102,18 +103,14 @@ export function verifyFundingRolloutManifest(
   string(m.seed_bay_id);
   const issued = date(m.issued_at),
     expires = date(m.expires_at);
-  if (
-    issued > now + 1000 ||
-    expires <= now ||
-    expires <= issued ||
-    expires - issued > MAX_VALIDITY_MS
-  )
+  if (issued > now + 1000 || expires <= now || expires <= issued)
     throw Error(
       "Funding rollout manifest is expired or outside its validity bound.",
     );
   const bays = array(m.bays, 32);
   if (!bays.length) throw Error("Funding rollout manifest has no bays.");
   unique(bays.map((b) => string(b.bay_id)));
+  let maxValidity = ISOLATED_WRITER_MAX_VALIDITY_MS;
   if (m.exposure_allocation !== undefined) {
     const allocation = object(m.exposure_allocation, [
       "id",
@@ -177,6 +174,8 @@ export function verifyFundingRolloutManifest(
       throw Error(
         "The co-resident PostgreSQL funding trust model is limited to one-bay deployments.",
       );
+    if (trustModel === "co-resident-operator-writer")
+      maxValidity = CO_RESIDENT_MAX_VALIDITY_MS;
     const writerRoles = array(db.writer_roles, 128).map(string);
     const operatorRoles = array(db.operator_roles, 128).map(string);
     if (!writerRoles.length)
@@ -289,6 +288,10 @@ export function verifyFundingRolloutManifest(
         throw Error("Retired resource credentials are still active.");
     }
   }
+  if (expires - issued > maxValidity)
+    throw Error(
+      "Funding rollout manifest is expired or outside its validity bound.",
+    );
   return {
     manifest: m as FundingRolloutManifest,
     digest: createHash("sha256").update(canonical).digest("hex"),
