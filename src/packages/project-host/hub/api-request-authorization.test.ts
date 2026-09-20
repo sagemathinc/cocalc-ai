@@ -94,6 +94,9 @@ describe("project-host hub API request authorization", () => {
   });
 
   it("allows only the routed account methods for local collaborators", () => {
+    expect(ACCOUNT_PROJECT_HOST_HUB_METHODS).toContain(
+      "projects.getCodexCredentialSelectionCapability",
+    );
     for (const name of ACCOUNT_PROJECT_HOST_HUB_METHODS) {
       expect(() =>
         authorizeProjectHostHubApiRequest(accountRequest(name)),
