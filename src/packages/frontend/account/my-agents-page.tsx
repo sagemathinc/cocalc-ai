@@ -198,7 +198,7 @@ function AccountAgentsPage() {
                       Modal.confirm({
                         title: `Remove @${agent.name} from Agents?`,
                         content:
-                          "This frees a named-agent slot. Remove the agent from its Agent Sessions first. The chat is not deleted.",
+                          "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Sessions keep their records, but this agent becomes unavailable to those sessions.",
                         okText: "Remove from Agents",
                         okButtonProps: { danger: true },
                         onOk: async () => {

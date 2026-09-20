@@ -191,6 +191,62 @@ all that is known; add specific adapters only for the workflows that need them.
       Keep interactive notebook editing in the project until embedding the real
       editor has its own tested lifecycle.
 
+## Release Landing Plan
+
+Land the current Agents and first-workflow slice before expanding the workflow
+scope. The branch is already large enough that adding another vertical slice
+would increase merge, review, deployment, and rollback risk without proving the
+existing product surface in production.
+
+### P0 Release Gates
+
+- [x] Freeze feature scope at the current Agents workspace, Workbench, file/code
+      workflow, and Agent Session capability. Defer result manifests, notebook
+      review, connector providers, and autonomous coordination.
+- [x] Provide an explicit `Remove from Agents` action that retires the named
+      registration and frees its quota slot without deleting the `.chat`
+      conversation, artifacts, or historical Agent Session records. Retired
+      members become unavailable for subsequent session delivery.
+- [ ] Reconcile the branch with `origin/main`, resolve conflicts by preserving
+      the shared chat/project behavior, and rerun focused checks after the final
+      merge result. Do not stack more feature work on the pre-merge branch.
+- [ ] Complete a security review of account-home and project-owning-bay routing,
+      human session binding, Agent Session membership and revocation, RPC
+      admission/execution, identity recovery, blob/attachment access, replay and
+      idempotency, bounded payloads, denial behavior, and secret-safe logging.
+      Handle any suspected vulnerability through the private process in
+      `SECURITY.md` rather than documenting it on the public branch.
+- [ ] Validate schema upgrades from the previous release and a rollback that
+      leaves new tables inert. Confirm older clients fail closed or degrade
+      safely when they encounter the new Agent and Workbench records.
+- [ ] Run package typechecks, focused server/frontend tests, frontend lint, the
+      full development build, and dependency/version consistency checks from the
+      reconciled tree.
+- [ ] Exercise the release matrix in both Lite and hub-backed Launchpad: create,
+      name, copy, remove, and re-register agents; hit and recover from quota;
+      send, queue, interrupt, reload, and reconnect; upload/select files and
+      paste images; open/revise/download artifacts; change projects/directories;
+      create, pause, modify, and close Agent Sessions; verify denied and expired
+      authority paths.
+- [ ] Check keyboard operation, focus restoration, 200% zoom, narrow layouts,
+      light/dark appearance, reduced motion, and screen-reader names for every
+      new menu, dialog, drawer, status indicator, and composer control.
+- [ ] Define staged rollout, observability, and rollback: feature availability,
+      quota and authorization denial metrics, RPC outcome/latency metrics,
+      Workbench/open-file failures, blob resolution failures, and a way to turn
+      off new Agent messaging without disabling ordinary `.chat` files.
+
+### Terminology
+
+Keep **Agent Session** for the current bounded membership, authorization, and
+delivery channel. A session can connect two or more agents, but it does not by
+itself schedule work, choose delegates, or pursue a shared objective.
+
+Reserve **Agent Swarm** for a future autonomous coordination construct that may
+create or use one or more Agent Sessions. Renaming the current security boundary
+to “swarm” would imply orchestration behavior it does not have and make support,
+audit, and permission language less exact.
+
 ## Acceptance And Release
 
 Use disposable fixtures and the Chromium browser on port 9222 against

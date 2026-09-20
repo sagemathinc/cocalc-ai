@@ -2095,6 +2095,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [copyName, setCopyName] = useState("");
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
+  const [retiringAgentId, setRetiringAgentId] = useState<string>();
   const [mobileList, setMobileList] = useState(true);
   const [showHidden, setShowHidden] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
@@ -2341,6 +2342,60 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     }
   }
 
+  function confirmRetireAgent(agent: NamedAgent) {
+    Modal.confirm({
+      title: `Remove @${agent.name} from Agents?`,
+      content:
+        "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Sessions keep their records, but this agent becomes unavailable to those sessions.",
+      okText: "Remove from Agents",
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        setRetiringAgentId(agent.endpoint.agent_id);
+        try {
+          await personalAgentApi().retireNamedAgent({
+            endpoint: agent.endpoint,
+          });
+          const workspace = agentWorkspaceKey(agent);
+          const nextAgent = agents.find(
+            ({ endpoint }) => endpoint.agent_id !== agent.endpoint.agent_id,
+          );
+          setMountedWorkspaces((old) => {
+            if (
+              agents.some(
+                (candidate) =>
+                  candidate.endpoint.agent_id !== agent.endpoint.agent_id &&
+                  agentWorkspaceKey(candidate) === workspace,
+              )
+            ) {
+              return old;
+            }
+            const next = new Set(old);
+            next.delete(workspace);
+            return next;
+          });
+          if (selected?.endpoint.agent_id === agent.endpoint.agent_id) {
+            if (nextAgent) {
+              mountAgent(nextAgent);
+              selectAgentId(nextAgent.endpoint.agent_id);
+            } else {
+              setCreatingSourceAgentId(undefined);
+              setCreating(true);
+              redux.getActions("page").setState({ active_agent_id: "new" });
+              set_url(getPageUrlPath({ page: "agents", agent_id: "new" }));
+            }
+          }
+          refreshNamedAgents();
+          antdMessage.success(`Removed @${agent.name} from Agents.`);
+        } catch (err) {
+          antdMessage.error(`Unable to remove @${agent.name}: ${err}`);
+          throw err;
+        } finally {
+          setRetiringAgentId(undefined);
+        }
+      },
+    });
+  }
+
   function renderAgentRow(
     agent: NamedAgent,
     pinned: boolean,
@@ -2456,11 +2511,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
                 label: hidden ? "Show in Agents" : "Hide from Agents",
               },
+              { type: "divider" },
+              {
+                key: "remove",
+                danger: true,
+                disabled: retiringAgentId === id,
+                icon: <Icon name="trash" />,
+                label:
+                  retiringAgentId === id
+                    ? "Removing from Agents…"
+                    : "Remove from Agents…",
+              },
             ],
             onClick: ({ key, domEvent }) => {
               domEvent.stopPropagation();
               if (key === "copy") {
                 openCopyAgent(agent);
+                return;
+              }
+              if (key === "remove") {
+                confirmRetireAgent(agent);
                 return;
               }
               agentOrganization.setHidden(id, !hidden);

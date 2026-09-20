@@ -106,6 +106,47 @@ describeDb("account-home Agent Sessions", () => {
     ).rejects.toThrow("not_a_member");
   });
 
+  test("retiring a named agent frees its slot without deleting session history", async () => {
+    const session = await store.createSession(
+      account,
+      {
+        request_id: randomUUID(),
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: peer },
+        ],
+      },
+      8,
+    );
+
+    await store.retire(account, { endpoint: source });
+
+    await expect(store.names(account)).resolves.toHaveLength(3);
+    const preserved = (await store.sessions(account, 100)).sessions.find(
+      ({ agent_session_id }) => agent_session_id === session.agent_session_id,
+    );
+    expect(preserved).toBeDefined();
+    expect(
+      preserved?.members.find(
+        ({ kind, member_id }) =>
+          kind === "registered" && member_id === source.agent_id,
+      ),
+    ).toMatchObject({ available: false });
+    await expect(
+      store.checkSession(
+        account,
+        session.agent_session_id,
+        source,
+        run_id,
+        peer,
+      ),
+    ).rejects.toThrow("not_a_member");
+
+    await expect(
+      store.name(account, { endpoint: source, name: "builder" }, 4),
+    ).resolves.toMatchObject({ name: "builder" });
+  });
+
   test("concurrent creation is idempotent and changed input cannot reuse its key", async () => {
     const request_id = randomUUID();
     const options = {
