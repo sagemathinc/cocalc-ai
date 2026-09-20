@@ -2194,7 +2194,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
     activeAgentId && activeAgentId !== "new"
-      ? agents.find((agent) => agent.endpoint.agent_id === activeAgentId)
+      ? agents.find(
+          (agent) =>
+            agent.endpoint.agent_id === activeAgentId ||
+            agent.name === activeAgentId,
+        )
       : (agentOrganization.groups.pinned[0] ??
         agentOrganization.groups.unpinned[0]);
   const creatingSourceAgent =
@@ -2210,19 +2214,24 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     }
     rememberAgentNetworkFilter();
     setNetworkFilterId(undefined);
-    set_url(
-      getPageUrlPath({
-        page: "agents",
-        agent_id: creating ? "new" : selected?.endpoint.agent_id,
-      }),
-    );
-  }, [
-    creating,
-    networkDirectory,
-    networkFilterId,
-    selected?.endpoint.agent_id,
-    selectedNetwork,
-  ]);
+  }, [networkDirectory, networkFilterId, selectedNetwork]);
+
+  useEffect(() => {
+    if (!activeAgentId || activeAgentId === "new" || !selected) return;
+    if (activeAgentId !== selected.endpoint.agent_id) {
+      redux.getActions("page").setState({
+        active_agent_id: selected.endpoint.agent_id,
+        active_agent_name: selected.name,
+      });
+    } else if (
+      redux.getStore("page")?.get("active_agent_name") !== selected.name
+    ) {
+      redux.getActions("page").setState({ active_agent_name: selected.name });
+    }
+    if (activeAgentId !== selected.name) {
+      set_url(getPageUrlPath({ page: "agents", agent_id: selected.name }));
+    }
+  }, [activeAgentId, selected?.endpoint.agent_id, selected?.name]);
 
   useEffect(() => {
     if (!selectedNetwork || creating) return;
@@ -2235,12 +2244,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     mountAgent(first);
     redux.getActions("page").setState({
       active_agent_id: first.endpoint.agent_id,
+      active_agent_name: first.name,
     });
     set_url(
       getPageUrlPath({
         page: "agents",
-        agent_id: first.endpoint.agent_id,
-        network_id: selectedNetwork.agent_network_id,
+        agent_id: first.name,
       }),
     );
   }, [agents, creating, selected, selectedNetwork]);
@@ -2342,16 +2351,16 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       if (currentAgentId === nextAgent.endpoint.agent_id) return;
       redux.getActions("page").setState({
         active_agent_id: nextAgent.endpoint.agent_id,
+        active_agent_name: nextAgent.name,
       });
       set_url(
         getPageUrlPath({
           page: "agents",
-          agent_id: nextAgent.endpoint.agent_id,
-          network_id: networkFilterId,
+          agent_id: nextAgent.name,
         }),
       );
     },
-    [networkFilterId],
+    [],
   );
 
   function selectAgent(agent: NamedAgent) {
@@ -2377,12 +2386,17 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }
 
   function selectAgentId(agentId: string) {
-    redux.getActions("page").setState({ active_agent_id: agentId });
+    const routeName = agents.find(
+      ({ endpoint }) => endpoint.agent_id === agentId,
+    )?.name;
+    redux.getActions("page").setState({
+      active_agent_id: agentId,
+      active_agent_name: routeName,
+    });
     set_url(
       getPageUrlPath({
         page: "agents",
-        agent_id: agentId,
-        network_id: networkFilterId,
+        agent_id: routeName ?? agentId,
       }),
     );
   }
@@ -2391,13 +2405,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     const next = network?.agent_network_id;
     rememberAgentNetworkFilter(next);
     setNetworkFilterId(next);
-    set_url(
-      getPageUrlPath({
-        page: "agents",
-        agent_id: creating ? "new" : selected?.endpoint.agent_id,
-        network_id: next,
-      }),
-    );
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -2514,12 +2521,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             } else {
               setCreatingSourceAgentId(undefined);
               setCreating(true);
-              redux.getActions("page").setState({ active_agent_id: "new" });
+              redux.getActions("page").setState({
+                active_agent_id: "new",
+                active_agent_name: undefined,
+              });
               set_url(
                 getPageUrlPath({
                   page: "agents",
                   agent_id: "new",
-                  network_id: networkFilterId,
                 }),
               );
             }
@@ -2791,12 +2800,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           onNewAgent={() => {
             setCreatingSourceAgentId(selected?.endpoint.agent_id);
             setCreating(true);
-            redux.getActions("page").setState({ active_agent_id: "new" });
+            redux.getActions("page").setState({
+              active_agent_id: "new",
+              active_agent_name: undefined,
+            });
             set_url(
               getPageUrlPath({
                 page: "agents",
                 agent_id: "new",
-                network_id: networkFilterId,
               }),
             );
             setMobileList(false);
@@ -3131,11 +3142,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               } else {
                 redux.getActions("page").setState({
                   active_agent_id: undefined,
+                  active_agent_name: undefined,
                 });
                 set_url(
                   getPageUrlPath({
                     page: "agents",
-                    network_id: networkFilterId,
                   }),
                 );
               }

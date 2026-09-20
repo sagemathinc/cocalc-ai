@@ -26,6 +26,7 @@ export type ConnectionStatus = "disconnected" | "connecting" | "connected";
 export interface PageState {
   active_top_tab: TopTab; // key of the active tab
   active_agent_id?: string;
+  active_agent_name?: string;
   last_project_tab?: string; // project context retained while viewing global pages
   admin_route?: AdminRoute;
   auth_view?: AuthView;
@@ -77,6 +78,12 @@ export function init_store() {
   const DEFAULT_STATE: PageState = {
     active_top_tab: getPageTopTab(parsed) as TopTab,
     active_agent_id: parsed.page === "agents" ? parsed.agent_id : undefined,
+    active_agent_name:
+      parsed.page === "agents" &&
+      parsed.agent_id &&
+      !is_valid_uuid_string(parsed.agent_id)
+        ? parsed.agent_id
+        : undefined,
     last_project_tab: is_valid_uuid_string(initialProjectId)
       ? initialProjectId
       : undefined,

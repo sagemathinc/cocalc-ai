@@ -148,9 +148,12 @@ describe("project context across global navigation", () => {
   );
 
   it("opens the selected agent's stable workspace URL", async () => {
-    actions.setState({ active_agent_id: "agent-123" });
+    actions.setState({
+      active_agent_id: "agent-123",
+      active_agent_name: "reviewer",
+    });
     await actions.set_active_tab("agents");
-    expect(set_url).toHaveBeenLastCalledWith("/agents/agent-123");
+    expect(set_url).toHaveBeenLastCalledWith("/agents/reviewer");
   });
 
   it("retains context across repeated Account/Admin visits and updates on explicit project navigation", async () => {

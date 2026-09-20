@@ -205,6 +205,7 @@ export function useNavigationData() {
           destination: {
             kind: "agent",
             agentId: agent.endpoint.agent_id,
+            agentName: agent.name,
           },
         });
       }

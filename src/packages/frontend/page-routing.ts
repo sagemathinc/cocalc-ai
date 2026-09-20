@@ -35,7 +35,7 @@ export type PageTopTab =
 
 export type ParsedPageTarget =
   | { page: "projects" }
-  | { page: "agents"; agent_id?: string; network_id?: string }
+  | { page: "agents"; agent_id?: string }
   | { page: "project"; target: string }
   | {
       page: "account";
@@ -78,16 +78,12 @@ export function parsePageTarget(target?: string): ParsedPageTarget {
   }
   const normalizedTarget = getLegacyCommerceTargetPath(target) ?? target;
   const cleanTarget = normalizedTarget.split(/[?#]/)[0];
-  const query = normalizedTarget.includes("?")
-    ? new URLSearchParams(normalizedTarget.split("?")[1]?.split("#")[0])
-    : undefined;
   const segments = cleanTarget.split("/");
   switch (segments[0]) {
     case "agents":
       return {
         page: "agents",
         agent_id: segments.slice(1).filter(Boolean).join("/") || undefined,
-        ...(query?.get("network") ? { network_id: query.get("network")! } : {}),
       };
     case "projects":
       if (segments.length < 2 || (segments.length == 2 && segments[1] == "")) {
@@ -172,7 +168,9 @@ export function getInitialAccountPageState(parsed: ParsedPageTarget):
 export function getPageTargetPath(parsed: ParsedPageTarget): string {
   switch (parsed.page) {
     case "agents":
-      return `${parsed.agent_id ? `agents/${encodeURIComponent(parsed.agent_id)}` : "agents"}${parsed.network_id ? `?network=${encodeURIComponent(parsed.network_id)}` : ""}`;
+      return parsed.agent_id
+        ? `agents/${encodeURIComponent(parsed.agent_id)}`
+        : "agents";
     case "projects":
       return "projects";
     case "project":

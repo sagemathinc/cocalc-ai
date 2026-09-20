@@ -12,9 +12,9 @@ test("restores the last selected network when the URL has no filter", () => {
   expect(readAgentNetworkFilter("")).toBe("stored-network");
 });
 
-test("URL network filters take precedence over stored state", () => {
+test("ignores legacy URL network filters", () => {
   rememberAgentNetworkFilter("stored-network");
-  expect(readAgentNetworkFilter("?network=url-network")).toBe("url-network");
+  expect(readAgentNetworkFilter("?network=url-network")).toBe("stored-network");
 });
 
 test("clearing a network filter removes persisted state", () => {

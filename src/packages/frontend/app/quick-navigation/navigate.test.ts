@@ -318,10 +318,13 @@ it("selects a registered agent before opening My Agents", async () => {
       name === "page" ? { setState, set_active_tab } : undefined,
   });
   await navigate(
-    { kind: "agent", agentId: "agent-id" },
+    { kind: "agent", agentId: "agent-id", agentName: "reviewer" },
     new AbortController().signal,
   );
-  expect(setState).toHaveBeenCalledWith({ active_agent_id: "agent-id" });
+  expect(setState).toHaveBeenCalledWith({
+    active_agent_id: "agent-id",
+    active_agent_name: "reviewer",
+  });
   expect(set_active_tab).toHaveBeenCalledWith("agents", true);
 });
 

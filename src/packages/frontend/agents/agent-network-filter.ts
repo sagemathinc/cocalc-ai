@@ -6,10 +6,8 @@
 const AGENT_NETWORK_FILTER_STORAGE_KEY = "cocalc-agents-network-filter-v1";
 
 export function readAgentNetworkFilter(
-  search = typeof window === "undefined" ? "" : window.location.search,
+  _search = typeof window === "undefined" ? "" : window.location.search,
 ): string | undefined {
-  const fromUrl = new URLSearchParams(search).get("network");
-  if (fromUrl) return fromUrl;
   if (typeof window === "undefined") return undefined;
   try {
     return (
@@ -29,6 +27,6 @@ export function rememberAgentNetworkFilter(networkId?: string): void {
       window.localStorage.removeItem(AGENT_NETWORK_FILTER_STORAGE_KEY);
     }
   } catch {
-    // URL state still works when localStorage is unavailable.
+    // Filtering remains session-only when localStorage is unavailable.
   }
 }

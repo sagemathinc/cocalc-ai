@@ -363,7 +363,11 @@ it("offers registered agents without inspecting project chat files", () => {
       detail: "Agents › Other",
       priority: 4,
       recent: 123,
-      destination: { kind: "agent", agentId: "agent-id" },
+      destination: {
+        kind: "agent",
+        agentId: "agent-id",
+        agentName: "reviewer",
+      },
     }),
   );
 });

@@ -104,7 +104,10 @@ export async function navigate(
   }
   if (destination.kind === "agent") {
     const page = redux.getActions("page");
-    page.setState({ active_agent_id: destination.agentId });
+    page.setState({
+      active_agent_id: destination.agentId,
+      active_agent_name: destination.agentName,
+    });
     page.set_active_tab("agents", true);
     return;
   }
