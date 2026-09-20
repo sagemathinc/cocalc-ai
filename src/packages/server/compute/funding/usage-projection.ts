@@ -41,17 +41,27 @@ export function projectFundingUsage(opts: {
     // Pending egress settlement is financial exposure, not a running disk/VM.
     if (row.terminal === true) continue;
     const observed = Date.parse(row.stopped_until ?? row.running_until ?? "");
+    if (Number.isFinite(observed)) {
+      oldest = Math.min(oldest, observed);
+      result.usage_as_of = new Date(oldest).toISOString();
+    } else {
+      result.usage_as_of = undefined;
+    }
     // Dispatch is not evidence of a running VM. Unknown or stale observations
     // omit counts/rates instead of silently reporting zero.
     if (
-      row.resource_kind !== "compute-vm" ||
+      !["compute-vm", "compute-volume"].includes(row.resource_kind) ||
       !["consuming", "settling"].includes(row.state) ||
       !Number.isFinite(observed) ||
       observed > opts.as_of.valueOf() ||
       opts.as_of.valueOf() - observed > 90_000
-    )
+    ) {
+      result.forecast_unavailable_reason =
+        "Waiting for a usage report from every active resource within the last 90 seconds. A missing estimate does not mean the credit is exhausted.";
       return result;
-    const stopped = !!row.stopped_until;
+    }
+    const stopped =
+      !!row.stopped_until || row.resource_kind === "compute-volume";
     const value = stopped ? row.storage_hourly_cost_usd : row.hourly_cost_usd;
     if (value === undefined) return result;
     try {
@@ -87,6 +97,10 @@ export function projectFundingUsage(opts: {
   result.usage_as_of = new Date(oldest).toISOString();
   result.running_vms = running;
   result.hourly_usd = moneyToDbString(rate);
+  result.forecast_unavailable_reason =
+    running === 0
+      ? undefined
+      : "A current resource price, reservation, or payer spending-limit report is unavailable. A missing estimate does not mean the credit is exhausted.";
   if (
     running > 0 &&
     rate.gt(0) &&
@@ -106,14 +120,12 @@ export function projectFundingUsage(opts: {
       : 0;
     const exhaustion = Math.max(
       opts.as_of.valueOf(),
-      Math.min(
-        opts.as_of.valueOf() + milliseconds,
-        opts.ends_at.valueOf(),
-        opts.window_ends_at.valueOf(),
-      ),
+      Math.min(opts.as_of.valueOf() + milliseconds, opts.ends_at.valueOf()),
     );
-    if (Number.isFinite(exhaustion))
+    if (Number.isFinite(exhaustion)) {
       result.forecast_exhausts_at = new Date(exhaustion).toISOString();
+      result.forecast_unavailable_reason = undefined;
+    }
   }
   return result;
 }

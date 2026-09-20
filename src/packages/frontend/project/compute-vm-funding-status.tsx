@@ -7,15 +7,29 @@ import { Alert, Descriptions, Progress, Space, Typography } from "antd";
 import type { ComputeVmFundingStatus } from "@cocalc/util/compute-vm-funding";
 import { moneyToCurrency, toDecimal } from "@cocalc/util/money";
 import { TimeAgo } from "@cocalc/frontend/components/time-ago";
+import { useEffect, useState } from "react";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-funding";
 
-export function vmFundingAmounts(funding: ComputeVmFundingStatus): {
+export function vmFundingAmounts(
+  funding: ComputeVmFundingStatus,
+  course?: CourseFundingSourceSummary,
+): {
   remaining?: string;
   total?: string;
   percentRemaining?: number;
 } {
-  const remaining = funding.remaining_usd ?? funding.committed_usd;
+  if (funding.source.kind === "course" && !course) return {};
+  const remaining = course
+    ? toDecimal(course.authorized_usd)
+        .minus(course.spent_usd)
+        .minus(course.released_usd)
+        .toFixed()
+    : (funding.remaining_usd ?? funding.committed_usd);
   if (remaining == null) return {};
-  const total = toDecimal(funding.spent_usd).plus(remaining);
+  const total = course
+    ? toDecimal(course.authorized_usd)
+    : toDecimal(funding.spent_usd).plus(remaining);
   const percentRemaining = total.eq(0)
     ? 0
     : Math.max(
@@ -29,17 +43,60 @@ export default function VmFundingStatus({
   funding,
   now = Date.now(),
   compact = false,
+  courseBudget,
 }: {
   funding?: ComputeVmFundingStatus;
   now?: number;
   compact?: boolean;
+  courseBudget?: CourseFundingSourceSummary;
 }) {
+  const [loadedBudget, setLoadedBudget] =
+    useState<CourseFundingSourceSummary>();
+  const [budgetFailed, setBudgetFailed] = useState(false);
+  const grantId =
+    funding?.source.kind === "course" ? funding.source.grant_id : undefined;
+  const api = webapp_client.conat_client?.hub?.computeFunding;
+  useEffect(() => {
+    setLoadedBudget(undefined);
+    if (!grantId || courseBudget || !api) return;
+    let active = true,
+      pending = false;
+    const load = async () => {
+      if (pending) return;
+      pending = true;
+      try {
+        const result = await api.listSources({ include_inactive: true });
+        if (active) {
+          setLoadedBudget(
+            result.sources.find((source) => source.grant_id === grantId),
+          );
+          setBudgetFailed(false);
+        }
+      } catch {
+        if (active) setBudgetFailed(true);
+      } finally {
+        pending = false;
+      }
+    };
+    void load();
+    const timer = setInterval(load, 15000);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  }, [api, grantId, courseBudget]);
   if (!funding) return null;
   const personal = funding.source.kind === "personal";
-  const amounts = vmFundingAmounts(funding);
+  const course =
+    courseBudget ??
+    (loadedBudget?.grant_id === grantId ? loadedBudget : undefined);
+  const amounts = vmFundingAmounts(funding, course);
   const asOf = Date.parse(funding.as_of);
   const stale =
-    !Number.isFinite(asOf) || now - asOf > 45_000 || asOf > now + 5_000;
+    budgetFailed ||
+    !Number.isFinite(asOf) ||
+    now - asOf > 45_000 ||
+    asOf > now + 5_000;
   const fundingLabel = personal ? "Personal funding" : "Course funding";
   if (compact) {
     return (
@@ -49,7 +106,7 @@ export default function VmFundingStatus({
           {amounts.remaining != null && amounts.total != null ? (
             <>
               <Typography.Text>
-                {moneyToCurrency(amounts.remaining)} remaining of{" "}
+                {moneyToCurrency(amounts.remaining)} unspent of{" "}
                 {moneyToCurrency(amounts.total)}
               </Typography.Text>
               <Progress
@@ -62,12 +119,32 @@ export default function VmFundingStatus({
             </>
           ) : (
             <Typography.Text type="secondary">
-              Remaining funding is unavailable.
+              {personal
+                ? "VM funding unavailable."
+                : "Course balance unavailable."}
             </Typography.Text>
           )}
-          {funding.stop_at && (
+          {course?.forecast_exhausts_at && funding.state === "running" && (
             <Typography.Text type="secondary">
-              Funding stops this VM <TimeAgo date={new Date(funding.stop_at)} />
+              Estimated credit cutoff{" "}
+              <TimeAgo date={new Date(course.forecast_exhausts_at)} />
+            </Typography.Text>
+          )}
+          <Typography.Text type="secondary">
+            {funding.committed_usd != null
+              ? `${moneyToCurrency(funding.committed_usd)} reserved for this VM`
+              : "VM reservation unavailable"}
+          </Typography.Text>
+          {funding.state === "stopped" && (
+            <Typography.Text type="secondary">
+              Stopped
+              {funding.stopped_at && (
+                <>
+                  {" "}
+                  <TimeAgo date={new Date(funding.stopped_at)} />
+                </>
+              )}
+              ; retained disks may still use credit.
             </Typography.Text>
           )}
           {stale && (
@@ -83,11 +160,18 @@ export default function VmFundingStatus({
     <section
       aria-label={personal ? "VM personal funding" : "VM course funding"}
     >
-      <Typography.Title level={5}>{funding.label}</Typography.Title>
+      <Typography.Text strong>{funding.label}</Typography.Text>
       {stale && (
         <Alert type="warning" showIcon title="Funding status is out of date." />
       )}
-      <Descriptions size="small" column={1} layout="vertical">
+      <Descriptions
+        size="small"
+        column={1}
+        styles={{
+          label: { whiteSpace: "nowrap" },
+          content: { overflowWrap: "anywhere" },
+        }}
+      >
         <Descriptions.Item label="Funding state">
           {
             {
@@ -99,19 +183,28 @@ export default function VmFundingStatus({
             }[funding.state]
           }
         </Descriptions.Item>
-        <Descriptions.Item label="Spent">
+        <Descriptions.Item label="VM charges recorded">
           {moneyToCurrency(funding.spent_usd)}
         </Descriptions.Item>
-        <Descriptions.Item label="Remaining">
+        <Descriptions.Item
+          label={personal ? "Unspent VM funding" : "Unspent course credit"}
+        >
           {amounts.remaining == null
             ? "Unavailable"
             : moneyToCurrency(amounts.remaining)}
         </Descriptions.Item>
         {amounts.total != null && (
-          <Descriptions.Item label="Starting amount">
+          <Descriptions.Item
+            label={personal ? "VM funding amount" : "Course allocation"}
+          >
             {moneyToCurrency(amounts.total)}
           </Descriptions.Item>
         )}
+        <Descriptions.Item label="Reserved for this VM">
+          {funding.committed_usd == null
+            ? "Unavailable"
+            : moneyToCurrency(funding.committed_usd)}
+        </Descriptions.Item>
         {funding.protected_storage_usd != null && (
           <Descriptions.Item label="Protected storage and cleanup">
             {moneyToCurrency(funding.protected_storage_usd)}
@@ -130,23 +223,26 @@ export default function VmFundingStatus({
         )}
         {funding.authorized_until && (
           <Descriptions.Item label="Runtime authorized until">
-            {new Date(funding.authorized_until).toLocaleString()}
+            <TimeAgo date={new Date(funding.authorized_until)} />
           </Descriptions.Item>
         )}
         {funding.stop_at && (
-          <Descriptions.Item label="Financial stop deadline">
-            {new Date(funding.stop_at).toLocaleString()}
+          <Descriptions.Item label="Service authorization">
+            {Date.parse(funding.stop_at) <= now ? "Ended " : "Renews before "}
+            <TimeAgo date={new Date(funding.stop_at)} />
           </Descriptions.Item>
         )}
         {funding.storage_delete_at && (
           <Descriptions.Item label="Storage deletion deadline">
-            {new Date(funding.storage_delete_at).toLocaleString()}
+            <TimeAgo date={new Date(funding.storage_delete_at)} />
           </Descriptions.Item>
         )}
         <Descriptions.Item label="Updated">
-          {Number.isFinite(asOf)
-            ? new Date(asOf).toLocaleString()
-            : "Unavailable"}
+          {Number.isFinite(asOf) ? (
+            <TimeAgo date={new Date(asOf)} />
+          ) : (
+            "Unavailable"
+          )}
         </Descriptions.Item>
       </Descriptions>
       <Typography.Paragraph type="secondary">

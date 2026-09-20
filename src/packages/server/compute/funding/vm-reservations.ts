@@ -543,6 +543,7 @@ export async function checkComputeVmFundingLocal(
       authorized_usd: reservation.authorized_usd,
       authorized_until: binding.authorized_until,
       already_reserved: true,
+      rolling_service: true,
     });
     if (opts.renew_until) {
       await assertFundingExposureAvailable(client, exposureBudget!, "0");
@@ -552,8 +553,6 @@ export async function checkComputeVmFundingLocal(
           new Date(fundingDate(opts.renew_until)).valueOf(),
           pool.ends_at.valueOf(),
           grant.ends_at.valueOf(),
-          policy.windows["5h"].window!.resets_at.valueOf(),
-          policy.windows["7d"].window!.resets_at.valueOf(),
           now.valueOf() + VM_FUNDING_RUN_MS + VM_FUNDING_MARGIN_MS,
           original.requested_stop_at
             ? new Date(original.requested_stop_at).valueOf() +
@@ -578,6 +577,7 @@ export async function checkComputeVmFundingLocal(
         assertComputeFundingServicePolicy(policy, {
           authorized_usd: additional,
           authorized_until: until.toISOString(),
+          rolling_service: true,
         });
         for (const budget of [pool, grant])
           if (

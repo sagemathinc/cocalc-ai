@@ -376,7 +376,9 @@ export function ComputePoolManagement({
                 {action === "revise" && (
                   <Space wrap style={{ margin: "12px 0" }}>
                     <label>
-                      Selected student ceiling (USD)
+                      <span style={{ marginRight: 8 }}>
+                        Selected student ceiling (USD)
+                      </span>
                       <InputNumber
                         aria-label="Selected student ceiling (USD)"
                         stringMode

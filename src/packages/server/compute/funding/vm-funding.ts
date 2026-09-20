@@ -201,6 +201,7 @@ export function publicVmFundingStatus(
           ? "stopped"
           : "running",
     lane: binding?.lane,
+    stopped_at: vm.stopped_at?.toISOString(),
     committed_usd: committed,
     remaining_usd: committed,
     spent_usd: spent,

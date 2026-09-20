@@ -193,9 +193,7 @@ it("explains each student budget accounting column", async () => {
   ).toBeVisible();
   await user.click(projected);
   expect(
-    await screen.findByText(
-      /projected to exhaust their usable course funding/i,
-    ),
+    await screen.findByText(/projected to exhaust usable course credit/i),
   ).toBeInTheDocument();
 });
 

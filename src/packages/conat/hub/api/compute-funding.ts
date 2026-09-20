@@ -33,13 +33,14 @@ export interface FundingApprovalReadiness {
 
 // All money is decimal USD strings; all timestamps are ISO strings.
 export interface CourseFundingRuntimeSummary {
+  forecast_unavailable_reason?: string;
   usage_as_of?: string;
   active_reservations?: number;
   // Latest trusted meter observation; omitted for stale/unknown runtime state.
   running_vms?: number;
   hourly_usd?: string;
   // Estimate at the observed rate, excluding new VMs and unmetered egress.
-  // Estimated runtime headroom limit, capped by payer windows and source dates.
+  // Estimated runtime headroom limit under normal renewals, capped by source dates.
   // Excludes reserved egress/protected storage; absent when evidence is unknown.
   forecast_exhausts_at?: string;
 }

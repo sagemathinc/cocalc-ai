@@ -191,6 +191,7 @@ export interface ComputeVmFundingSettlement {
 }
 
 export interface ComputeVmFundingStatus {
+  stopped_at?: string;
   funding_version?: string;
   personal_consent?: VmPersonalFundingConsent;
   source: ComputeVmFundingSource;

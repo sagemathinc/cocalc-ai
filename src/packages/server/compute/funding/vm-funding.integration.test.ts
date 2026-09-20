@@ -118,6 +118,68 @@ async function fixture(provider: "gcp" | "nebius" = "gcp") {
 
 describe("actual sponsored VM reservation and settlement", () => {
   it.each(["5h", "7d"] as const)(
+    "renews funded service across a %s reset without stopping",
+    async (window) => {
+      const { payer, request } = await fixture("nebius");
+      const policy = await withFundingAccountTransaction(payer, (db) =>
+        getComputeFundingPolicyInTransaction(db, {
+          payer_account_id: payer,
+          lane: "prepaid",
+          for_service: true,
+        }),
+      );
+      const reset = new Date(Date.now() + 10 * 60_000);
+      await getPool().query(
+        "UPDATE account_usage_windows SET resets_at=$2 WHERE id=$1",
+        [policy.windows[window].window!.id, reset],
+      );
+      const binding = await reserveComputeVmFundingLocal(request);
+      const opts = {
+        account_id: payer,
+        binding,
+        renew_until: new Date(Date.now() + 18 * 60_000).toISOString(),
+      };
+      const renewed = await checkComputeVmFundingLocal(opts);
+      expect(Date.parse(renewed.stop_at)).toBeGreaterThan(reset.valueOf());
+      expect(Number(renewed.authorized_usd)).toBeGreaterThan(
+        Number(binding.authorized_usd),
+      );
+      expect(
+        await checkComputeVmFundingLocal({
+          account_id: payer,
+          binding: renewed,
+        }),
+      ).toEqual(renewed);
+      const {
+        rows: [grant],
+      } = await getPool().query(
+        "SELECT reserved_usd FROM compute_funding_grants WHERE id=$1",
+        [request.source.grant_id],
+      );
+      expect(grant.reserved_usd).toBe(renewed.authorized_usd);
+      // The new window still counts the full outstanding commitment.
+      await getPool().query(
+        "UPDATE account_usage_windows SET resets_at=NOW()-interval '1 second' WHERE id=$1",
+        [policy.windows[window].window!.id],
+      );
+      expect(
+        await checkComputeVmFundingLocal({
+          account_id: payer,
+          binding: renewed,
+        }),
+      ).toEqual(renewed);
+      setPolicy(payer, {
+        effective_limits: {
+          prepaid_host_usage_limit_5h_usd: 0.01,
+          prepaid_host_usage_limit_7d_usd: 0.01,
+        },
+      });
+      await expect(
+        checkComputeVmFundingLocal({ ...opts, binding: renewed }),
+      ).rejects.toThrow();
+    },
+  );
+  it.each(["5h", "7d"] as const)(
     "bounds new service at a nearby %s reset without dropping protected backing",
     async (window) => {
       const { payer, request } = await fixture("nebius");

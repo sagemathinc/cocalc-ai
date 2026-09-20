@@ -37,6 +37,7 @@ import { usableCeiling } from "./compute-pool-management-model";
 import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
 import { SponsoredComputeReminder } from "@cocalc/frontend/account/low-credit-notification-setting";
 import HelpPopover from "./common/help-popover";
+import { TimeAgo } from "@cocalc/frontend/components/time-ago";
 
 type Summary = Awaited<ReturnType<ComputeFundingApi["getCourseSummary"]>>;
 type Preview = Awaited<ReturnType<ComputeFundingApi["previewAllocation"]>>;
@@ -275,6 +276,7 @@ export function ComputeBudget({
     <div
       className="smc-vfill"
       style={{
+        display: "block",
         overflowY: "auto",
         paddingBottom: 24,
         color: UI_COLORS.text,
@@ -345,7 +347,7 @@ export function ComputeBudget({
       )}
       {summary && (
         <Typography.Paragraph type="secondary">
-          Updated {new Date(summary.as_of).toLocaleString()}
+          Updated <TimeAgo date={new Date(summary.as_of)} />
         </Typography.Paragraph>
       )}
       <section
@@ -401,7 +403,12 @@ export function ComputeBudget({
             role="region"
             aria-label="Student budget details"
             tabIndex={0}
-            style={{ overflowX: "auto", maxWidth: "100%" }}
+            style={{
+              overflowX: "auto",
+              overflowY: "hidden",
+              maxWidth: "100%",
+              paddingBottom: 4,
+            }}
           >
             <Table
               rowKey="id"
@@ -423,11 +430,18 @@ export function ComputeBudget({
                   render: (_, grant) => grant.running_vms ?? "Unknown",
                 },
                 {
-                  title: "Usage observed",
+                  title: (
+                    <BudgetColumnTitle
+                      title="Usage updated"
+                      explanation="Time through which VM runtime or stopped-disk usage was last reported. With several resources, this is the oldest report. Charges may lag behind real-time usage; network reports arrive separately."
+                    />
+                  ),
                   render: (_, grant) =>
-                    grant.usage_as_of
-                      ? new Date(grant.usage_as_of).toLocaleString()
-                      : "Unknown",
+                    grant.usage_as_of ? (
+                      <TimeAgo date={new Date(grant.usage_as_of)} />
+                    ) : (
+                      "Awaiting usage report"
+                    ),
                 },
                 {
                   title: "Observed hourly cost",
@@ -440,35 +454,49 @@ export function ComputeBudget({
                   title: (
                     <BudgetColumnTitle
                       title="Projected funding cutoff"
-                      explanation="When the student's currently running VMs are projected to exhaust their usable course funding at the observed hourly cost. This estimate can move as usage changes and is also capped by funding-window and course-budget end dates."
+                      explanation="When currently running VMs are projected to exhaust usable course credit at their reported hourly cost, or reach the course budget end date. Reserved disk and network funds are excluded from runtime credit. This is an estimate, not a scheduled shutdown. No estimate is shown when no VMs are running or recent usage or spending-limit information is unavailable."
                     />
                   ),
                   render: (_, grant) =>
-                    grant.forecast_exhausts_at
-                      ? new Date(grant.forecast_exhausts_at).toLocaleString()
-                      : "Unknown",
+                    grant.forecast_exhausts_at ? (
+                      <TimeAgo date={new Date(grant.forecast_exhausts_at)} />
+                    ) : grant.running_vms === 0 ? (
+                      "No VMs running"
+                    ) : (
+                      <BudgetColumnTitle
+                        title={
+                          grant.running_vms == null
+                            ? "Awaiting recent usage"
+                            : "Estimate unavailable"
+                        }
+                        explanation={
+                          grant.forecast_unavailable_reason ??
+                          "Waiting for current usage, pricing, or spending-limit information. This does not mean the student's credit is exhausted."
+                        }
+                      />
+                    ),
                 },
                 ...(
                   [
                     [
                       "Allocated",
                       "authorized_usd",
-                      "The total course credit assigned to this student for this funding grant.",
+                      "The credit ceiling assigned to this student, including credit already spent, reserved, or returned. Unspent credit equals Allocated minus Spent minus Returned.",
                     ],
                     [
                       "Spent",
                       "spent_usd",
-                      "Course credit already charged for the student's finalized compute usage.",
+                      "Charges recorded so far for VM runtime, disks, and network traffic. Updated as usage reports are processed, not once per day. Recent usage may not yet be included, and amounts are displayed rounded to cents.",
                     ],
                     [
                       "Reserved",
                       "reserved_usd",
-                      "Credit committed to active VMs, retained storage, and bounded network usage but not yet finalized as spent. Reserved credit is not available to start additional resources.",
+                      "Unspent credit set aside for the next VM runtime interval, keeping disks after compute stops, and an approved network spending cap. It is part of the student's unspent credit, not an extra charge. Network usage is charged as reports arrive; GCP public egress costs $0.10/GB. Unused reservations are released when the resource's remaining costs are accounted for.",
                     ],
                     [
                       "Returned",
                       "released_usd",
-                      "Credit released from this student back to the course pool. It is no longer available to this student unless allocated again.",
+                      "Credit removed from this student's allocation by the instructor or payer through Adjust budget, revoking the grant, or closing the pool. Students do not have a Return credit button. Stopping a VM does not return the student's grant; retained disks may still cost money.",
                     ],
                   ] as const
                 ).map(([title, dataIndex, explanation]) => ({

@@ -6,7 +6,7 @@ import type { SettingsPageDefinition } from "@cocalc/frontend/account/settings-p
 import { labels } from "@cocalc/frontend/i18n";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import Balance from "./balance";
-import CreditTransfers from "./credit-transfers";
+import TransferButton from "./transfer-button";
 import MonthlyCollection from "./monthly-collection";
 import SponsoredBudgets from "./sponsored-budgets";
 import LegacyBillingMigrationStatus from "./legacy-billing-migration-status";
@@ -45,7 +45,7 @@ export default function BalancePage() {
       <LegacyBillingMigrationStatus onApplied={refresh} />
       <Balance refresh={refresh} />
       <MonthlyCollection />
-      <CreditTransfers onApplied={refresh} />
+      <TransferButton onApplied={refresh} />
       <SponsoredBudgets onApplied={refresh} />
     </Space>
   );

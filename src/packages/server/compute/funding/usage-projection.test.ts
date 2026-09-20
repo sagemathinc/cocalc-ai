@@ -53,7 +53,7 @@ it("excludes protected storage and egress from runtime backing", () => {
     (Date.parse(result.forecast_exhausts_at!) - now.valueOf()) / 3600000;
   expect(hours).toBeCloseTo(0.79 / 0.0748, 5);
 });
-it("caps forecast by current payer windows and pool/grant end dates", () => {
+it("caps forecast by payer headroom and grant dates, not ordinary window resets", () => {
   expect(
     projectFundingUsage({
       ...base,
@@ -74,7 +74,7 @@ it("caps forecast by current payer windows and pool/grant end dates", () => {
       observations: [observation],
       window_ends_at: new Date("2026-09-12T12:00:00Z"),
     }).forecast_exhausts_at,
-  ).toBe("2026-09-12T12:00:00.000Z");
+  ).toBe("2026-09-12T13:00:00.000Z");
 });
 it("does not project beyond a reduced window or an unavailable policy", () => {
   expect(
@@ -126,7 +126,7 @@ it.each(["reserved", "dispatched", "uncertain"])(
       ...base,
       observations: [{ ...observation, state }],
     });
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       usage_as_of: now.toISOString(),
       active_reservations: 1,
     });
@@ -140,6 +140,10 @@ it("omits forecasts and counts for stale or missing meters", () => {
     });
     expect(result.running_vms).toBeUndefined();
     expect(result.hourly_usd).toBeUndefined();
+    expect(result.usage_as_of).toBe(
+      running_until ? new Date(running_until).toISOString() : undefined,
+    );
+    expect(result.forecast_unavailable_reason).toContain("90 seconds");
   }
 });
 it("reports known empty reservation observations as zero without a forecast", () => {

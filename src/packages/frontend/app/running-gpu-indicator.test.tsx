@@ -65,7 +65,7 @@ it("shows course funding remaining in the account VM dialog", async () => {
   expect(
     screen.getByRole("region", { name: "Course funding summary" }),
   ).toBeInTheDocument();
-  expect(screen.getByText("$8.00 remaining of $10.00")).toBeInTheDocument();
+  expect(screen.getByText("$8.00 reserved for this VM")).toBeInTheDocument();
 });
 afterEach(() => {
   jest.useRealTimers();

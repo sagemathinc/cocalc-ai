@@ -172,6 +172,9 @@ export function assertComputeFundingServicePolicy(
     authorized_usd: string;
     authorized_until: string;
     already_reserved?: boolean;
+    // Existing VM service may roll across a reset; its entire outstanding
+    // commitment is charged against headroom in both windows.
+    rolling_service?: boolean;
   },
 ): void {
   if (!policy.backing_valid)
@@ -198,7 +201,8 @@ export function assertComputeFundingServicePolicy(
     if (
       !window ||
       window.account_id !== policy.payer_account_id ||
-      until > window.resets_at
+      (until > window.resets_at &&
+        !(opts.rolling_service && until.valueOf() <= Date.now() + 20 * 60_000))
     )
       throw new ComputeFundingError(
         "funding_unavailable",

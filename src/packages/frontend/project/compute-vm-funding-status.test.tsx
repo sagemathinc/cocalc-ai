@@ -1,6 +1,27 @@
 import { render, screen } from "@testing-library/react";
 import VmFundingStatus from "./compute-vm-funding-status";
 import type { ComputeVmFundingStatus } from "@cocalc/util/compute-vm-funding";
+import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-funding";
+import { webapp_client } from "@cocalc/frontend/webapp-client";
+jest.mock("@cocalc/frontend/webapp-client", () => ({
+  webapp_client: {
+    conat_client: {
+      hub: {
+        computeFunding: {
+          listSources: jest.fn().mockResolvedValue({ sources: [] }),
+        },
+      },
+    },
+  },
+}));
+const course = {
+  grant_id: "grant",
+  authorized_usd: "5",
+  spent_usd: "0.03",
+  released_usd: "0",
+  reserved_usd: "1.54",
+  running_vms: 1,
+} as CourseFundingSourceSummary;
 
 const now = Date.parse("2026-09-12T12:00:00Z");
 const funding: ComputeVmFundingStatus = {
@@ -17,6 +38,21 @@ const funding: ComputeVmFundingStatus = {
   as_of: new Date(now).toISOString(),
 };
 
+beforeEach(() => {
+  (
+    webapp_client.conat_client.hub.computeFunding.listSources as jest.Mock
+  ).mockResolvedValue({ sources: [] });
+});
+
+test("loads the grant balance rather than treating a VM reservation as the grant", async () => {
+  (
+    webapp_client.conat_client.hub.computeFunding.listSources as jest.Mock
+  ).mockResolvedValue({ sources: [course] });
+  render(<VmFundingStatus funding={funding} now={now} compact />);
+  expect(await screen.findByText("$4.97 unspent of $5.00")).toBeVisible();
+  expect(screen.getByText("$0.90 reserved for this VM")).toBeVisible();
+});
+
 test("shows resource funding deadlines and preserves the notebook distinction", () => {
   render(<VmFundingStatus funding={funding} now={now} />);
   expect(
@@ -25,7 +61,7 @@ test("shows resource funding deadlines and preserves the notebook distinction", 
   expect(screen.getByText("Runtime authorized until")).toBeTruthy();
   expect(screen.getByText("Storage deletion deadline")).toBeTruthy();
   expect(screen.getByText("$0.12")).toBeTruthy();
-  expect(screen.getByText("$1.02")).toBeTruthy();
+  expect(screen.queryByText("$1.02")).toBeNull();
   expect(
     screen.getByText(/not notebooks saved in your CoCalc project/),
   ).toBeTruthy();
@@ -33,15 +69,23 @@ test("shows resource funding deadlines and preserves the notebook distinction", 
 });
 
 test("shows remaining course funding as visible progress", () => {
-  render(<VmFundingStatus funding={funding} now={now} compact />);
+  render(
+    <VmFundingStatus
+      funding={funding}
+      courseBudget={course}
+      now={now}
+      compact
+    />,
+  );
   expect(
     screen.getByRole("region", { name: "Course funding summary" }),
   ).toBeVisible();
-  expect(screen.getByText("$0.90 remaining of $1.02")).toBeVisible();
+  expect(screen.getByText("$4.97 unspent of $5.00")).toBeVisible();
   expect(
-    screen.getByLabelText("Course funding: $0.90 remaining of $1.02"),
+    screen.getByLabelText("Course funding: $4.97 remaining of $5.00"),
   ).toBeVisible();
-  expect(screen.getByText(/Funding stops this VM/)).toBeVisible();
+  expect(screen.queryByText(/Funding stops this VM/)).toBeNull();
+  expect(screen.getByText("$0.90 reserved for this VM")).toBeVisible();
 });
 
 test("does not present stale funding as current", () => {
@@ -57,7 +101,7 @@ test("distinguishes unavailable commitments from settled zero", () => {
     />,
   );
   expect(screen.getByText("Finalizing charges")).toBeTruthy();
-  expect(screen.getByText("Unavailable")).toBeTruthy();
+  expect(screen.getAllByText("Unavailable").length).toBeGreaterThan(0);
   expect(screen.queryByText("$0.00")).toBeNull();
   rerender(
     <VmFundingStatus
