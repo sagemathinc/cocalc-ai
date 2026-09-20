@@ -715,7 +715,7 @@ export function registerAuthCommand(
       },
     });
     process.stderr.write(
-      `Open this URL to enroll a distinct external agent in an Agent Session (not account login):\n${start.approval_url}\n`,
+      `Open this URL to enroll a distinct external agent in an Agent Network (not account login):\n${start.approval_url}\n`,
     );
     const status = await waitForCliChallenge({
       apiBaseUrl,
@@ -754,7 +754,7 @@ export function registerAuthCommand(
       path,
       agent_id: installation.agent_id,
       expires_at: installation.expires_at,
-      agent_session_id: installation.agent_session_id,
+      agent_network_id: installation.agent_network_id,
       authority: "external-agent-session-member",
       human_profile_unchanged: true,
     };
@@ -1005,7 +1005,7 @@ export function registerAuthCommand(
     .option("--email <email>", "optional email hint shown during browser login")
     .option(
       "--agent <profile>",
-      "enroll a separate external member in one Agent Session; never create a human session",
+      "enroll a separate external member in one Agent Network; never create a human session",
     )
     .option(
       "--agent-label <label>",

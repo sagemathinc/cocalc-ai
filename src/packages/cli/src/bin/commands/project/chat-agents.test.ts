@@ -17,7 +17,7 @@ function program(calls: unknown[]) {
   return command;
 }
 
-test("destinations discovers session peers with the runtime identity", async () => {
+test("destinations discovers network peers with the runtime identity", async () => {
   const requests: unknown[] = [];
   const transport = mock.method(
     require("../../core/agent-message"),
@@ -39,7 +39,7 @@ test("destinations discovers session peers with the runtime identity", async () 
   }
 });
 
-test("session proposal and broadcast carry explicit bounded topology", async () => {
+test("network proposal and broadcast carry explicit bounded topology", async () => {
   const requests: any[] = [];
   const transport = mock.method(
     require("../../core/agent-message"),
@@ -51,13 +51,13 @@ test("session proposal and broadcast carry explicit bounded topology", async () 
   );
   const source = { project_id: randomUUID(), agent_id: randomUUID() };
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
-  const session = randomUUID();
+  const network = randomUUID();
   try {
     await program([]).parseAsync(
       [
         "chat",
         "agent",
-        "propose-session",
+        "propose-network",
         "--members",
         JSON.stringify([
           { kind: "registered", endpoint: source },
@@ -75,18 +75,18 @@ test("session proposal and broadcast carry explicit bounded topology", async () 
         "broadcast",
         "Please",
         "review",
-        "--agent-session",
-        session,
+        "--agent-network",
+        network,
         "--targets",
         JSON.stringify([target]),
       ],
       { from: "user" },
     );
     assert.equal(requests[0].version, 3);
-    assert.equal(requests[0].action, "propose-session");
+    assert.equal(requests[0].action, "propose-network");
     assert.equal(requests[0].members.length, 2);
     assert.equal(requests[1].action, "broadcast");
-    assert.equal(requests[1].agent_session_id, session);
+    assert.equal(requests[1].agent_network_id, network);
     assert.equal(requests[1].body, "Please review");
   } finally {
     transport.mock.restore();

@@ -3,7 +3,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { NameAgent } from "./name-agent";
-import { SessionApproval } from "./session-approval";
+import { NetworkApproval } from "./network-approval";
 import { cachedAgentNameContext } from "./name-context";
 
 jest.mock("./name-context", () => ({ cachedAgentNameContext: jest.fn() }));
@@ -32,9 +32,9 @@ let mockAgents: NamedAgent[];
 const mockApi = {
   nameAgent: jest.fn(),
   getIdentity: jest.fn(),
-  listAgentSessions: jest.fn(),
-  createAgentSession: jest.fn(),
-  updateAgentSession: jest.fn(),
+  listAgentNetworks: jest.fn(),
+  createAgentNetwork: jest.fn(),
+  updateAgentNetwork: jest.fn(),
 };
 const mockRunFreshAuthAction = jest.fn(async (action: () => Promise<void>) => {
   await action();
@@ -81,13 +81,13 @@ beforeEach(() => {
     name,
     endpoint,
   }));
-  mockApi.createAgentSession.mockResolvedValue({});
-  mockApi.updateAgentSession.mockResolvedValue({});
-  mockApi.listAgentSessions.mockResolvedValue({
+  mockApi.createAgentNetwork.mockResolvedValue({});
+  mockApi.updateAgentNetwork.mockResolvedValue({});
+  mockApi.listAgentNetworks.mockResolvedValue({
     enabled: true,
     controls: { paused: false, generation: 0 },
-    usage: { active_sessions: 0, session_limit: 100, member_limit: 8 },
-    sessions: [],
+    usage: { active_networks: 0, network_limit: 100, member_limit: 8 },
+    networks: [],
   });
   mockRunFreshAuthAction.mockImplementation(async (action) => {
     await action();
@@ -95,10 +95,10 @@ beforeEach(() => {
   });
 });
 
-test("an unnamed source is named before its two-way session is created", async () => {
+test("an unnamed source is named before its two-way network is created", async () => {
   const user = userEvent.setup();
   render(
-    <SessionApproval
+    <NetworkApproval
       value={{
         source,
         target,
@@ -109,7 +109,7 @@ test("an unnamed source is named before its two-way session is created", async (
       onClose={jest.fn()}
     />,
   );
-  const create = await screen.findByRole("button", { name: "Create session" });
+  const create = await screen.findByRole("button", { name: "Create network" });
   expect(create).toBeDisabled();
   const input = screen.getByRole("textbox", { name: "Source agent name" });
   await user.type(input, "reviewer");
@@ -118,19 +118,19 @@ test("an unnamed source is named before its two-way session is created", async (
   await user.clear(input);
   await user.type(input, "builder");
   await user.type(
-    screen.getByRole("textbox", { name: "Session topic" }),
+    screen.getByRole("textbox", { name: "Network topic" }),
     "Review work",
   );
   await user.click(create);
-  await waitFor(() => expect(mockApi.createAgentSession).toHaveBeenCalled());
+  await waitFor(() => expect(mockApi.createAgentNetwork).toHaveBeenCalled());
   expect(mockApi.nameAgent).toHaveBeenCalledWith({
     endpoint: source,
     name: "builder",
   });
   expect(mockApi.nameAgent.mock.invocationCallOrder[0]).toBeLessThan(
-    mockApi.createAgentSession.mock.invocationCallOrder[0],
+    mockApi.createAgentNetwork.mock.invocationCallOrder[0],
   );
-  expect(mockApi.createAgentSession).toHaveBeenCalledWith({
+  expect(mockApi.createAgentNetwork).toHaveBeenCalledWith({
     request_id: expect.any(String),
     title: "Review work",
     delivery_mode: "queued",
@@ -141,14 +141,14 @@ test("an unnamed source is named before its two-way session is created", async (
   });
 });
 
-test("session creation preserves cached source context while naming", async () => {
+test("network creation preserves cached source context while naming", async () => {
   jest.mocked(cachedAgentNameContext).mockReturnValue({
     project_title: "Build project",
     thread_title: "Current draft thread",
   });
   const user = userEvent.setup();
   render(
-    <SessionApproval
+    <NetworkApproval
       value={{
         source,
         target,
@@ -173,11 +173,11 @@ test("session creation preserves cached source context while naming", async () =
     "builder",
   );
   await user.type(
-    screen.getByRole("textbox", { name: "Session topic" }),
+    screen.getByRole("textbox", { name: "Network topic" }),
     "Build review",
   );
-  await user.click(screen.getByRole("button", { name: "Create session" }));
-  await waitFor(() => expect(mockApi.createAgentSession).toHaveBeenCalled());
+  await user.click(screen.getByRole("button", { name: "Create network" }));
+  await waitFor(() => expect(mockApi.createAgentNetwork).toHaveBeenCalled());
   expect(mockApi.getIdentity).not.toHaveBeenCalled();
   expect(mockApi.nameAgent).toHaveBeenCalledWith({
     endpoint: source,
@@ -187,11 +187,11 @@ test("session creation preserves cached source context while naming", async () =
   });
 });
 
-test("an already named source creates a session without renaming", async () => {
+test("an already named source creates a network without renaming", async () => {
   mockAgents.push({ ...reviewer, name: "builder", endpoint: source });
   const user = userEvent.setup();
   render(
-    <SessionApproval
+    <NetworkApproval
       value={{
         source,
         target,
@@ -206,18 +206,18 @@ test("an already named source creates a session without renaming", async () => {
     screen.queryByRole("textbox", { name: "Source agent name" }),
   ).toBeNull();
   await user.type(
-    await screen.findByRole("textbox", { name: "Session topic" }),
+    await screen.findByRole("textbox", { name: "Network topic" }),
     "Review work",
   );
-  await user.click(screen.getByRole("button", { name: "Create session" }));
+  await user.click(screen.getByRole("button", { name: "Create network" }));
   await waitFor(() =>
-    expect(mockApi.createAgentSession).toHaveBeenCalledTimes(1),
+    expect(mockApi.createAgentNetwork).toHaveBeenCalledTimes(1),
   );
   expect(mockApi.nameAgent).not.toHaveBeenCalled();
   expect(mockRunFreshAuthAction).toHaveBeenCalledTimes(1);
 });
 
-test("an agent joins a target's existing topic session", async () => {
+test("an agent joins a target's existing topic network", async () => {
   const builder = { ...reviewer, name: "builder", endpoint: source };
   const illustrator = {
     ...reviewer,
@@ -228,13 +228,13 @@ test("an agent joins a target's existing topic session", async () => {
     },
   };
   mockAgents.push(builder, illustrator);
-  mockApi.listAgentSessions.mockResolvedValue({
+  mockApi.listAgentNetworks.mockResolvedValue({
     enabled: true,
     controls: { paused: false, generation: 0 },
-    usage: { active_sessions: 1, session_limit: 100, member_limit: 8 },
-    sessions: [
+    usage: { active_networks: 1, network_limit: 100, member_limit: 8 },
+    networks: [
       {
-        agent_session_id: "77777777-7777-4777-8777-777777777777",
+        agent_network_id: "77777777-7777-4777-8777-777777777777",
         account_id: account,
         title: "Illustration work",
         state: "active",
@@ -266,7 +266,7 @@ test("an agent joins a target's existing topic session", async () => {
   });
   const user = userEvent.setup();
   render(
-    <SessionApproval
+    <NetworkApproval
       value={{
         source,
         target,
@@ -278,19 +278,21 @@ test("an agent joins a target's existing topic session", async () => {
     />,
   );
 
-  expect(await screen.findByText("Illustration work")).toBeInTheDocument();
+  expect(
+    (await screen.findAllByText("Illustration work")).length,
+  ).toBeGreaterThan(0);
   expect(screen.getByText("@illustrator")).toBeInTheDocument();
-  await user.click(screen.getByRole("button", { name: "Join session" }));
+  await user.click(screen.getByRole("button", { name: "Join network" }));
 
   await waitFor(() =>
-    expect(mockApi.updateAgentSession).toHaveBeenCalledWith({
+    expect(mockApi.updateAgentNetwork).toHaveBeenCalledWith({
       request_id: expect.any(String),
-      agent_session_id: "77777777-7777-4777-8777-777777777777",
+      agent_network_id: "77777777-7777-4777-8777-777777777777",
       action: "add-member",
       member: { kind: "registered", endpoint: source },
     }),
   );
-  expect(mockApi.createAgentSession).not.toHaveBeenCalled();
+  expect(mockApi.createAgentNetwork).not.toHaveBeenCalled();
 });
 
 test("rename dialog checks current names without submitting", async () => {

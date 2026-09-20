@@ -16,10 +16,10 @@ import type { AgentSnapshot } from "@cocalc/conat/agents/attachments";
 import type { AgentIdentityRoute } from "./agent-identities";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
 import type {
-  AgentSessionActivity,
-  AgentSessionAuthorization,
-  AgentSessionDiscovery,
-  AgentSessionProposal,
+  AgentNetworkActivity,
+  AgentNetworkAuthorization,
+  AgentNetworkDiscovery,
+  AgentNetworkProposal,
   PersonalAgentDenial,
 } from "@cocalc/conat/agents/personal";
 
@@ -27,13 +27,13 @@ export type PersonalHumanMethod =
   | "listNamedAgents"
   | "nameAgent"
   | "retireNamedAgent"
-  | "listAgentSessions"
-  | "createAgentSession"
-  | "updateAgentSession"
-  | "listAgentSessionActivity"
-  | "inspectAgentSessionAttempt"
-  | "listAgentSessionProposals"
-  | "resolveAgentSessionProposal"
+  | "listAgentNetworks"
+  | "createAgentNetwork"
+  | "updateAgentNetwork"
+  | "listAgentNetworkActivity"
+  | "inspectAgentNetworkAttempt"
+  | "listAgentNetworkProposals"
+  | "resolveAgentNetworkProposal"
   | "setPersonalMessagingState";
 export type PersonalControlRequest =
   | {
@@ -46,24 +46,24 @@ export type PersonalControlRequest =
       };
     }[PersonalHumanMethod]
   | {
-      action: "checkSession";
+      action: "checkNetwork";
       options: {
-        agent_session_id: string;
+        agent_network_id: string;
         source: AgentRpcSource;
         run_id?: string;
         target: AgentRpcSource;
       };
     }
   | {
-      action: "discoverSessions";
+      action: "discoverNetworks";
       options: { source: AgentRpcSource; run_id?: string };
     }
   | {
-      action: "proposeSession";
+      action: "proposeNetwork";
       options: {
         source: AgentRpcSource;
         run_id?: string;
-        proposal: import("@cocalc/conat/agents/personal").ProposeAgentSessionOptions;
+        proposal: import("@cocalc/conat/agents/personal").ProposeAgentNetworkOptions;
       };
     }
   | {
@@ -82,14 +82,14 @@ export type PersonalControlRequest =
         outcome: import("@cocalc/conat/agents/rpc").AgentRpcBroadcastOutcome;
       };
     }
-  | { action: "observeSessionActivity"; options: AgentSessionActivity };
+  | { action: "observeNetworkActivity"; options: AgentNetworkActivity };
 export type PersonalControlResult =
   | PersonalAgentDenial
   | void
   | Awaited<ReturnType<AgentApi[PersonalHumanMethod]>>
-  | AgentSessionAuthorization
-  | AgentSessionDiscovery
-  | AgentSessionProposal
+  | AgentNetworkAuthorization
+  | AgentNetworkDiscovery
+  | AgentNetworkProposal
   | {
       claimed: boolean;
       binding_hash: string;

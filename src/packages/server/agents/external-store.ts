@@ -28,7 +28,7 @@ export type ExternalEnrollment = {
   secret_hash: string;
   label: string;
   agent_id?: string;
-  agent_session_id: string;
+  agent_network_id: string;
   ttl_seconds: number;
 };
 type Row = Omit<ExternalAgentInstallation, "created_at" | "expires_at"> & {
@@ -100,7 +100,7 @@ export class ExternalAgentStore {
       state: row.state,
       created_at: new Date(row.created_at).toISOString(),
       expires_at: new Date(row.expires_at).toISOString(),
-      agent_session_id: row.agent_session_id,
+      agent_network_id: row.agent_network_id,
     };
   }
 
@@ -158,7 +158,7 @@ export class ExternalAgentStore {
       opts.label.trim(),
       opts.agent_id ?? "",
       `${opts.ttl_seconds}`,
-      opts.agent_session_id,
+      opts.agent_network_id,
     ];
     // The default is the first-party cookie-backed fresh-auth gate. Network
     // adapters must never substitute an agent-controlled approval timestamp.
@@ -235,7 +235,7 @@ export class ExternalAgentStore {
       const row = (
         await db.query(
           `INSERT INTO agent_external_installations
-        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_session_id,expires_at)
+        (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_network_id,expires_at)
         VALUES($1,$2,$3,$4,$5,'active',$6,$7::jsonb,$8,$9) RETURNING *`,
           [
             opts.installation_id,
@@ -245,7 +245,7 @@ export class ExternalAgentStore {
             opts.secret_hash,
             controls.generation,
             JSON.stringify(approval),
-            opts.agent_session_id,
+            opts.agent_network_id,
             new Date(Date.now() + opts.ttl_seconds * 1000),
           ],
         )
@@ -356,14 +356,14 @@ export class ExternalAgentStore {
     account_id: string;
     installation_id: string;
     attempt_id: string;
-    agent_session_id: string;
-    session_generation: string;
+    agent_network_id: string;
+    network_generation: string;
     source: AgentRpcSource;
     body: string;
   }): Promise<ExternalAgentInboxMessage> {
     requireUuid(opts.attempt_id, "attempt_id");
-    requireUuid(opts.agent_session_id, "agent_session_id");
-    requireUuid(opts.session_generation, "session_generation");
+    requireUuid(opts.agent_network_id, "agent_network_id");
+    requireUuid(opts.network_generation, "network_generation");
     if (
       typeof opts.body !== "string" ||
       !opts.body.trim() ||
@@ -377,8 +377,8 @@ export class ExternalAgentStore {
         opts.installation_id,
         controls,
       );
-      if (installation.agent_session_id !== opts.agent_session_id)
-        throw new Error("external_session_mismatch");
+      if (installation.agent_network_id !== opts.agent_network_id)
+        throw new Error("external_network_mismatch");
       const existing = (
         await db.query(
           "SELECT * FROM agent_external_inbox WHERE account_id=$1 AND attempt_id=$2",
@@ -388,8 +388,8 @@ export class ExternalAgentStore {
       if (existing) {
         if (
           existing.installation_id !== opts.installation_id ||
-          existing.agent_session_id !== opts.agent_session_id ||
-          existing.session_generation !== opts.session_generation ||
+          existing.agent_network_id !== opts.agent_network_id ||
+          existing.network_generation !== opts.network_generation ||
           existing.body !== opts.body ||
           agentRpcSourceKey(existing.source) !== agentRpcSourceKey(opts.source)
         )
@@ -407,16 +407,16 @@ export class ExternalAgentStore {
       const row = (
         await db.query(
           `INSERT INTO agent_external_inbox
-           (message_id,attempt_id,account_id,installation_id,agent_session_id,
-            session_generation,source,body,expires_at)
+           (message_id,attempt_id,account_id,installation_id,agent_network_id,
+            network_generation,source,body,expires_at)
            VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,now()+interval '7 days') RETURNING *`,
           [
             randomUUID(),
             opts.attempt_id,
             opts.account_id,
             opts.installation_id,
-            opts.agent_session_id,
-            opts.session_generation,
+            opts.agent_network_id,
+            opts.network_generation,
             JSON.stringify(opts.source),
             opts.body,
           ],
@@ -434,7 +434,7 @@ export class ExternalAgentStore {
     return {
       message_id: row.message_id,
       attempt_id: row.attempt_id,
-      agent_session_id: row.agent_session_id,
+      agent_network_id: row.agent_network_id,
       source: row.source,
       body: row.body,
       created_at: new Date(row.created_at).toISOString(),

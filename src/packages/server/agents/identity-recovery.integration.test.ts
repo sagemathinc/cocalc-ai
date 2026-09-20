@@ -39,8 +39,8 @@ describeDb("native identity recovery", () => {
           "agent_identities",
           "agent_identity_runs",
           "agent_personal_names",
-          "agent_sessions",
-          "agent_session_members",
+          "agent_networks",
+          "agent_network_members",
         ].map((name) => [name, SCHEMA[name]]),
       ),
     );
@@ -77,19 +77,19 @@ describeDb("native identity recovery", () => {
        VALUES($1,'old-name',$2,$3,'{}')`,
       [account, project, oldAgent],
     );
-    const session = randomUUID();
+    const network = randomUUID();
     await db.query(
-      `INSERT INTO agent_sessions
-       (agent_session_id,account_id,title,generation,created_by)
-       VALUES($1,$2,'Existing session',$3,$2)`,
-      [session, account, randomUUID()],
+      `INSERT INTO agent_networks
+       (agent_network_id,account_id,title,generation,created_by)
+       VALUES($1,$2,'Existing network',$3,$2)`,
+      [network, account, randomUUID()],
     );
     for (const agent of [oldAgent, target])
       await db.query(
-        `INSERT INTO agent_session_members
-         (agent_session_id,member_kind,member_id,registered_agent_id,project_id,added_by)
+        `INSERT INTO agent_network_members
+         (agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by)
          VALUES($1,'registered',$2,$2,$3,$4)`,
-        [session, agent, project, account],
+        [network, agent, project, account],
       );
   });
 
@@ -131,7 +131,7 @@ describeDb("native identity recovery", () => {
     expect(
       (
         await db.query(
-          "SELECT registered_agent_id FROM agent_session_members WHERE registered_agent_id=$1",
+          "SELECT registered_agent_id FROM agent_network_members WHERE registered_agent_id=$1",
           [oldAgent],
         )
       ).rows[0].registered_agent_id,

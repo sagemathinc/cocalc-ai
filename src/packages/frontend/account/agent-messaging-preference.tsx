@@ -11,9 +11,9 @@ export function AgentMessagingPreference() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   return (
-    <Panel header="Agent Sessions">
+    <Panel header="Agent Networks">
       <label id={`${id}-label`} htmlFor={id}>
-        Enable Agent Sessions
+        Enable Agent Networks
       </label>{" "}
       <Switch
         id={id}
@@ -39,7 +39,7 @@ export function AgentMessagingPreference() {
         }}
       />
       <p id={`${id}-description`}>
-        Show agent naming, agent mentions, and two-way Agent Session setup.
+        Show agent naming, agent mentions, and two-way Agent Network setup.
         Turning this off hides these controls; it does not pause or close
         sessions and does not revoke external credentials.
       </p>

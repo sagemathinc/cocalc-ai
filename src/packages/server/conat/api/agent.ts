@@ -7,23 +7,23 @@ import {
 import * as identities from "@cocalc/server/agents/api";
 import * as rpc from "@cocalc/server/agents/rpc";
 import {
-  createAgentSession as createAgentSessionImpl,
-  resolveAgentSessionProposal as resolveAgentSessionProposalImpl,
-  updateAgentSession as updateAgentSessionImpl,
+  createAgentNetwork as createAgentNetworkImpl,
+  resolveAgentNetworkProposal as resolveAgentNetworkProposalImpl,
+  updateAgentNetwork as updateAgentNetworkImpl,
 } from "@cocalc/server/agents/personal";
 export {
   listNamedAgents,
   nameAgent,
   retireNamedAgent,
-  listAgentSessions,
-  listAgentSessionActivity,
-  inspectAgentSessionAttempt,
-  listAgentSessionProposals,
+  listAgentNetworks,
+  listAgentNetworkActivity,
+  inspectAgentNetworkAttempt,
+  listAgentNetworkProposals,
   setPersonalMessagingState,
 } from "@cocalc/server/agents/personal";
-export const createAgentSession = createAgentSessionImpl;
-export const updateAgentSession = updateAgentSessionImpl;
-export const resolveAgentSessionProposal = resolveAgentSessionProposalImpl;
+export const createAgentNetwork = createAgentNetworkImpl;
+export const updateAgentNetwork = updateAgentNetworkImpl;
+export const resolveAgentNetworkProposal = resolveAgentNetworkProposalImpl;
 export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const registerIdentity = identities.registerIdentity;

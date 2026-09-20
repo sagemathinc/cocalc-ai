@@ -14,28 +14,28 @@ import {
 import {
   normalizeAgentName,
   PersonalAgentAuthorizationError,
-  type AgentSession,
-  type AgentSessionActivity,
-  type AgentSessionAuthorization,
-  type AgentSessionDeliveryMode,
-  type AgentSessionDiscovery,
-  type AgentSessionMember,
-  type AgentSessionMemberLocator,
-  type AgentSessionProposal,
-  type CreateAgentSessionOptions,
+  type AgentNetwork,
+  type AgentNetworkActivity,
+  type AgentNetworkAuthorization,
+  type AgentNetworkDeliveryMode,
+  type AgentNetworkDiscovery,
+  type AgentNetworkMember,
+  type AgentNetworkMemberLocator,
+  type AgentNetworkProposal,
+  type CreateAgentNetworkOptions,
   type NamedAgent,
   type NameAgentOptions,
   type PersonalMessagingControls,
-  type ProposeAgentSessionOptions,
+  type ProposeAgentNetworkOptions,
   type RetireNamedAgentOptions,
   type SetPersonalMessagingStateOptions,
-  type UpdateAgentSessionOptions,
+  type UpdateAgentNetworkOptions,
 } from "@cocalc/conat/agents/personal";
 import type { AgentStore } from "./store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 
-const MAX_ACTIVE_SESSIONS = 100;
-const MAX_RETAINED_SESSIONS = 1000;
+const MAX_ACTIVE_NETWORKS = 100;
+const MAX_RETAINED_NETWORKS = 1000;
 const MAX_TITLE_LENGTH = 120;
 const MAX_ACTIVITY_PER_ACCOUNT = 10_000;
 const MAX_PENDING_PROPOSALS = 100;
@@ -263,21 +263,24 @@ export class PersonalAgentStore {
     return this.named(row);
   }
 
-  private validateTitle(title?: string) {
-    if (title === undefined) return undefined;
-    if (typeof title !== "string" || title.trim().length > MAX_TITLE_LENGTH)
-      throw new Error("invalid_session_title");
-    return title.trim() || undefined;
+  private validateTitle(title: string) {
+    if (
+      typeof title !== "string" ||
+      !title.trim() ||
+      title.trim().length > MAX_TITLE_LENGTH
+    )
+      throw new Error("invalid_network_title");
+    return title.trim();
   }
 
-  private validateDelivery(value?: string): AgentSessionDeliveryMode {
+  private validateDelivery(value?: string): AgentNetworkDeliveryMode {
     if (value === undefined) return "queued";
     if (value !== "queued" && value !== "live")
       throw new Error("invalid_delivery_mode");
     return value;
   }
 
-  private validateLocator(locator: AgentSessionMemberLocator) {
+  private validateLocator(locator: AgentNetworkMemberLocator) {
     if (locator.kind === "registered") validateAgentEndpoint(locator.endpoint);
     else {
       requireUuid(locator.agent_id, "external agent_id");
@@ -285,7 +288,7 @@ export class PersonalAgentStore {
     }
   }
 
-  private locatorKey(locator: AgentSessionMemberLocator) {
+  private locatorKey(locator: AgentNetworkMemberLocator) {
     return locator.kind === "registered"
       ? `registered/${locator.endpoint.project_id}/${locator.endpoint.agent_id}`
       : `external/${locator.agent_id}/${locator.installation_id}`;
@@ -293,18 +296,18 @@ export class PersonalAgentStore {
 
   private async validateMembers(
     account: string,
-    members: AgentSessionMemberLocator[],
+    members: AgentNetworkMemberLocator[],
     memberLimit: number,
   ) {
     if (!Array.isArray(members) || members.length < 2)
-      throw new Error("agent_session_requires_two_members");
+      throw new Error("agent_network_requires_two_members");
     if (members.length > Math.min(memberLimit, 64))
-      throw new Error(`agent_session_member_limit_reached:${memberLimit}`);
+      throw new Error(`agent_network_member_limit_reached:${memberLimit}`);
     const seen = new Set<string>();
     for (const member of members) {
       this.validateLocator(member);
       const key = this.locatorKey(member);
-      if (seen.has(key)) throw new Error("duplicate_session_member");
+      if (seen.has(key)) throw new Error("duplicate_network_member");
       seen.add(key);
       if (member.kind === "registered") {
         await this.endpoint(account, member.endpoint);
@@ -314,12 +317,12 @@ export class PersonalAgentStore {
             [account, member.endpoint.project_id, member.endpoint.agent_id],
           )
         ).rows[0];
-        if (!named) throw new Error("session_member_not_named");
+        if (!named) throw new Error("network_member_not_named");
       }
     }
   }
 
-  private proposal(row: any): AgentSessionProposal {
+  private proposal(row: any): AgentNetworkProposal {
     return {
       proposal_id: row.proposal_id,
       account_id: row.account_id,
@@ -332,17 +335,17 @@ export class PersonalAgentStore {
       created_at: iso(row.created_at),
       expires_at: iso(row.expires_at),
       resolved_at: row.resolved_at ? iso(row.resolved_at) : null,
-      agent_session_id: row.agent_session_id,
+      agent_network_id: row.agent_network_id,
     };
   }
 
-  async proposeSession(
+  async proposeNetwork(
     account: string,
     source: AgentRpcSource,
     run_id: string | undefined,
-    options: ProposeAgentSessionOptions,
+    options: ProposeAgentNetworkOptions,
     memberLimit: number,
-  ): Promise<AgentSessionProposal> {
+  ): Promise<AgentNetworkProposal> {
     requireUuid(options.proposal_id, "proposal_id");
     validateAgentRpcSource(source, run_id);
     if (isExternalAgentSource(source)) {
@@ -387,7 +390,7 @@ export class PersonalAgentStore {
       if (controls.paused) throw new Error("messaging_paused");
       const existing = (
         await db.query(
-          "SELECT * FROM agent_session_proposals WHERE account_id=$1 AND proposal_id=$2",
+          "SELECT * FROM agent_network_proposals WHERE account_id=$1 AND proposal_id=$2",
           [account, options.proposal_id],
         )
       ).rows[0];
@@ -398,7 +401,7 @@ export class PersonalAgentStore {
       }
       const pending = +(
         await db.query(
-          `SELECT count(*) AS count FROM agent_session_proposals
+          `SELECT count(*) AS count FROM agent_network_proposals
            WHERE account_id=$1 AND state='pending' AND expires_at>now()`,
           [account],
         )
@@ -407,7 +410,7 @@ export class PersonalAgentStore {
         throw new Error("proposal_capacity_reached");
       const recent = +(
         await db.query(
-          `SELECT count(*) AS count FROM agent_session_proposals
+          `SELECT count(*) AS count FROM agent_network_proposals
            WHERE account_id=$1 AND created_at>now()-interval '1 hour'`,
           [account],
         )
@@ -415,7 +418,7 @@ export class PersonalAgentStore {
       if (recent >= 100) throw new Error("proposal_rate_limited");
       const row = (
         await db.query(
-          `INSERT INTO agent_session_proposals
+          `INSERT INTO agent_network_proposals
            (proposal_id,account_id,source,title,delivery_mode,members,reason,binding_hash,expires_at)
            VALUES($1,$2,$3,$4,$5,$6,$7,$8,now()+interval '7 days') RETURNING *`,
           [
@@ -437,16 +440,16 @@ export class PersonalAgentStore {
   async proposals(
     account: string,
     limit = 100,
-  ): Promise<AgentSessionProposal[]> {
+  ): Promise<AgentNetworkProposal[]> {
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     await this.db.query(
-      `UPDATE agent_session_proposals SET state='expired',resolved_at=now()
+      `UPDATE agent_network_proposals SET state='expired',resolved_at=now()
        WHERE account_id=$1 AND state='pending' AND expires_at<=now()`,
       [account],
     );
     return (
       await this.db.query(
-        `SELECT * FROM agent_session_proposals WHERE account_id=$1
+        `SELECT * FROM agent_network_proposals WHERE account_id=$1
          ORDER BY created_at DESC LIMIT $2`,
         [account, bounded],
       )
@@ -457,16 +460,16 @@ export class PersonalAgentStore {
     requireUuid(proposal_id, "proposal_id");
     const row = (
       await this.db.query(
-        "SELECT * FROM agent_session_proposals WHERE account_id=$1 AND proposal_id=$2",
+        "SELECT * FROM agent_network_proposals WHERE account_id=$1 AND proposal_id=$2",
         [account, proposal_id],
       )
     ).rows[0];
-    if (!row) throw new Error("session_proposal_not_found");
+    if (!row) throw new Error("network_proposal_not_found");
     if (
       row.state !== "pending" ||
       new Date(row.expires_at).getTime() <= Date.now()
     )
-      throw new Error("session_proposal_not_pending");
+      throw new Error("network_proposal_not_pending");
     return this.proposal(row);
   }
 
@@ -474,20 +477,20 @@ export class PersonalAgentStore {
     account: string,
     proposal_id: string,
     state: "approved" | "rejected",
-    agent_session_id?: string,
+    agent_network_id?: string,
   ) {
     requireUuid(proposal_id, "proposal_id");
-    if (agent_session_id) requireUuid(agent_session_id, "agent_session_id");
+    if (agent_network_id) requireUuid(agent_network_id, "agent_network_id");
     const row = (
       await this.db.query(
-        `UPDATE agent_session_proposals
-         SET state=$3,resolved_at=now(),agent_session_id=$4
+        `UPDATE agent_network_proposals
+         SET state=$3,resolved_at=now(),agent_network_id=$4
          WHERE account_id=$1 AND proposal_id=$2 AND state='pending'
          RETURNING *`,
-        [account, proposal_id, state, agent_session_id ?? null],
+        [account, proposal_id, state, agent_network_id ?? null],
       )
     ).rows[0];
-    if (!row) throw new Error("session_proposal_not_pending");
+    if (!row) throw new Error("network_proposal_not_pending");
     return this.proposal(row);
   }
 
@@ -502,16 +505,16 @@ export class PersonalAgentStore {
     outcome?: AgentRpcBroadcastOutcome;
   }> {
     for (const target of broadcast.targets)
-      await this.checkSession(
+      await this.checkNetwork(
         account,
-        broadcast.agent_session_id,
+        broadcast.agent_network_id,
         source,
         run_id,
         target,
       );
     const binding_hash = digest({
       source: agentRpcSourceKey(source),
-      agent_session_id: broadcast.agent_session_id,
+      agent_network_id: broadcast.agent_network_id,
       targets: broadcast.targets.map(agentRpcSourceKey),
       body: broadcast.body,
     });
@@ -519,7 +522,7 @@ export class PersonalAgentStore {
       if (controls.paused) throw new Error("messaging_paused");
       const existing = (
         await db.query(
-          `SELECT binding_hash,state,outcome FROM agent_session_broadcasts
+          `SELECT binding_hash,state,outcome FROM agent_network_broadcasts
            WHERE account_id=$1 AND broadcast_id=$2`,
           [account, broadcast.broadcast_id],
         )
@@ -536,13 +539,13 @@ export class PersonalAgentStore {
         };
       }
       await db.query(
-        `INSERT INTO agent_session_broadcasts
-         (account_id,broadcast_id,agent_session_id,source,binding_hash,state)
+        `INSERT INTO agent_network_broadcasts
+         (account_id,broadcast_id,agent_network_id,source,binding_hash,state)
          VALUES($1,$2,$3,$4,$5,'pending')`,
         [
           account,
           broadcast.broadcast_id,
-          broadcast.agent_session_id,
+          broadcast.agent_network_id,
           source,
           binding_hash,
         ],
@@ -560,7 +563,7 @@ export class PersonalAgentStore {
     requireUuid(broadcast_id, "broadcast_id");
     const row = (
       await this.db.query(
-        `UPDATE agent_session_broadcasts
+        `UPDATE agent_network_broadcasts
          SET state='complete',outcome=$4,updated_at=now()
          WHERE account_id=$1 AND broadcast_id=$2 AND binding_hash=$3
          RETURNING broadcast_id`,
@@ -583,14 +586,14 @@ export class PersonalAgentStore {
     requireUuid(request_id, "request_id");
     const row = (
       await db.query(
-        "SELECT binding_hash,agent_session_id FROM agent_session_mutations WHERE account_id=$1 AND request_id=$2",
+        "SELECT binding_hash,agent_network_id FROM agent_network_mutations WHERE account_id=$1 AND request_id=$2",
         [account, request_id],
       )
     ).rows[0];
     if (!row) return undefined;
     if (row.binding_hash !== binding_hash)
-      throw new Error("session_mutation_idempotency_conflict");
-    return row.agent_session_id;
+      throw new Error("network_mutation_idempotency_conflict");
+    return row.agent_network_id;
   }
 
   private async recordMutation(
@@ -598,15 +601,15 @@ export class PersonalAgentStore {
     account: string,
     request_id: string,
     binding_hash: string,
-    agent_session_id: string,
+    agent_network_id: string,
   ) {
     await db.query(
-      "INSERT INTO agent_session_mutations(account_id,request_id,binding_hash,agent_session_id) VALUES($1,$2,$3,$4)",
-      [account, request_id, binding_hash, agent_session_id],
+      "INSERT INTO agent_network_mutations(account_id,request_id,binding_hash,agent_network_id) VALUES($1,$2,$3,$4)",
+      [account, request_id, binding_hash, agent_network_id],
     );
     await db.query(
-      `DELETE FROM agent_session_mutations WHERE account_id=$1 AND request_id IN
-       (SELECT request_id FROM agent_session_mutations WHERE account_id=$1 ORDER BY created_at DESC OFFSET 10000)`,
+      `DELETE FROM agent_network_mutations WHERE account_id=$1 AND request_id IN
+       (SELECT request_id FROM agent_network_mutations WHERE account_id=$1 ORDER BY created_at DESC OFFSET 10000)`,
       [account],
     );
   }
@@ -614,28 +617,28 @@ export class PersonalAgentStore {
   private async assertExpansiveMutationRate(db: Query, account: string) {
     const recent = +(
       await db.query(
-        `SELECT count(*) AS count FROM agent_session_mutations
+        `SELECT count(*) AS count FROM agent_network_mutations
          WHERE account_id=$1 AND created_at>now()-interval '1 hour'`,
         [account],
       )
     ).rows[0].count;
     if (recent >= MAX_EXPANSIVE_MUTATIONS_PER_HOUR)
-      throw new Error("agent_session_mutation_rate_limited");
+      throw new Error("agent_network_mutation_rate_limited");
   }
 
   private async insertMember(
     db: Query,
     account: string,
-    agent_session_id: string,
-    member: AgentSessionMemberLocator,
+    agent_network_id: string,
+    member: AgentNetworkMemberLocator,
   ) {
     if (member.kind === "registered") {
       await db.query(
-        `INSERT INTO agent_session_members
-         (agent_session_id,member_kind,member_id,registered_agent_id,project_id,added_by)
+        `INSERT INTO agent_network_members
+         (agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by)
          VALUES($1,'registered',$2,$2,$3,$4)`,
         [
-          agent_session_id,
+          agent_network_id,
           member.endpoint.agent_id,
           member.endpoint.project_id,
           account,
@@ -647,16 +650,16 @@ export class PersonalAgentStore {
       await db.query(
         `SELECT * FROM agent_external_installations
          WHERE account_id=$1 AND installation_id=$2 AND agent_id=$3
-           AND agent_session_id=$4 AND state='active' AND expires_at>now()`,
-        [account, member.installation_id, member.agent_id, agent_session_id],
+           AND agent_network_id=$4 AND state='active' AND expires_at>now()`,
+        [account, member.installation_id, member.agent_id, agent_network_id],
       )
     ).rows[0];
     if (!installation) throw new Error("external_identity_unavailable");
     await db.query(
-      `INSERT INTO agent_session_members
-       (agent_session_id,member_kind,member_id,external_agent_id,installation_id,added_by)
+      `INSERT INTO agent_network_members
+       (agent_network_id,member_kind,member_id,external_agent_id,installation_id,added_by)
        VALUES($1,'external',$2,$2,$3,$4)`,
-      [agent_session_id, member.agent_id, member.installation_id, account],
+      [agent_network_id, member.agent_id, member.installation_id, account],
     );
   }
 
@@ -722,21 +725,21 @@ export class PersonalAgentStore {
     };
   }
 
-  private async session(
+  private async network(
     db: Query,
     account: string,
     row: any,
-  ): Promise<AgentSession> {
-    const members: AgentSessionMember[] = [];
+  ): Promise<AgentNetwork> {
+    const members: AgentNetworkMember[] = [];
     for (const memberRow of (
       await db.query(
-        "SELECT * FROM agent_session_members WHERE agent_session_id=$1 ORDER BY added_at,member_id",
-        [row.agent_session_id],
+        "SELECT * FROM agent_network_members WHERE agent_network_id=$1 ORDER BY added_at,member_id",
+        [row.agent_network_id],
       )
     ).rows)
       members.push(await this.member(db, account, memberRow));
     return {
-      agent_session_id: row.agent_session_id,
+      agent_network_id: row.agent_network_id,
       account_id: row.account_id,
       title: row.title,
       state: row.state,
@@ -750,7 +753,7 @@ export class PersonalAgentStore {
     };
   }
 
-  async sessions(account: string, limit = 100, cursor?: string) {
+  async networks(account: string, limit = 100, cursor?: string) {
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     const values: unknown[] = [account, bounded + 1];
     let cursorSql = "";
@@ -758,47 +761,47 @@ export class PersonalAgentStore {
       const [updated, id] = Buffer.from(cursor, "base64url")
         .toString()
         .split("/");
-      requireUuid(id, "session cursor");
-      if (!Number.isFinite(+updated)) throw new Error("invalid_session_cursor");
+      requireUuid(id, "network cursor");
+      if (!Number.isFinite(+updated)) throw new Error("invalid_network_cursor");
       values.push(new Date(+updated), id);
-      cursorSql = "AND (updated_at,agent_session_id)<($3,$4)";
+      cursorSql = "AND (updated_at,agent_network_id)<($3,$4)";
     }
     const rows = (
       await this.db.query(
-        `SELECT * FROM agent_sessions WHERE account_id=$1 ${cursorSql}
-         ORDER BY updated_at DESC,agent_session_id DESC LIMIT $2`,
+        `SELECT * FROM agent_networks WHERE account_id=$1 ${cursorSql}
+         ORDER BY updated_at DESC,agent_network_id DESC LIMIT $2`,
         values,
       )
     ).rows;
     const page = rows.slice(0, bounded);
-    const sessions: AgentSession[] = [];
+    const networks: AgentNetwork[] = [];
     for (const row of page)
-      sessions.push(await this.session(this.db, account, row));
+      networks.push(await this.network(this.db, account, row));
     const last = page[page.length - 1];
     const active_count = +(
       await this.db.query(
-        "SELECT count(*) AS count FROM agent_sessions WHERE account_id=$1 AND state<>'closed'",
+        "SELECT count(*) AS count FROM agent_networks WHERE account_id=$1 AND state<>'closed'",
         [account],
       )
     ).rows[0].count;
     return {
-      sessions,
+      networks,
       active_count,
       next_cursor:
         rows.length > bounded && last
           ? Buffer.from(
-              `${new Date(last.updated_at).getTime()}/${last.agent_session_id}`,
+              `${new Date(last.updated_at).getTime()}/${last.agent_network_id}`,
             ).toString("base64url")
           : undefined,
     };
   }
 
-  async createSession(
+  async createNetwork(
     account: string,
-    options: CreateAgentSessionOptions,
+    options: CreateAgentNetworkOptions,
     memberLimit: number,
     fresh = false,
-  ): Promise<AgentSession> {
+  ): Promise<AgentNetwork> {
     requireUuid(options.request_id, "request_id");
     const title = this.validateTitle(options.title);
     const delivery = this.validateDelivery(options.delivery_mode);
@@ -829,67 +832,67 @@ export class PersonalAgentStore {
       if (replay) {
         const row = (
           await db.query(
-            "SELECT * FROM agent_sessions WHERE account_id=$1 AND agent_session_id=$2",
+            "SELECT * FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2",
             [account, replay],
           )
         ).rows[0];
-        return this.session(db, account, row);
+        return this.network(db, account, row);
       }
       await this.assertExpansiveMutationRate(db, account);
       const counts = (
         await db.query(
           `SELECT count(*) AS retained,
              count(*) FILTER(WHERE state<>'closed') AS active
-           FROM agent_sessions WHERE account_id=$1`,
+           FROM agent_networks WHERE account_id=$1`,
           [account],
         )
       ).rows[0];
-      if (+counts.retained >= MAX_RETAINED_SESSIONS)
-        throw new Error("agent_session_history_capacity");
-      if (+counts.active >= MAX_ACTIVE_SESSIONS)
-        throw new Error("agent_session_capacity");
-      const agent_session_id = randomUUID();
+      if (+counts.retained >= MAX_RETAINED_NETWORKS)
+        throw new Error("agent_network_history_capacity");
+      if (+counts.active >= MAX_ACTIVE_NETWORKS)
+        throw new Error("agent_network_capacity");
+      const agent_network_id = randomUUID();
       const row = (
         await db.query(
-          `INSERT INTO agent_sessions
-           (agent_session_id,account_id,title,state,delivery_mode,generation,created_by)
+          `INSERT INTO agent_networks
+           (agent_network_id,account_id,title,state,delivery_mode,generation,created_by)
            VALUES($1,$2,$3,'active',$4,$5,$2) RETURNING *`,
-          [agent_session_id, account, title, delivery, randomUUID()],
+          [agent_network_id, account, title, delivery, randomUUID()],
         )
       ).rows[0];
       for (const member of options.members)
-        await this.insertMember(db, account, agent_session_id, member);
+        await this.insertMember(db, account, agent_network_id, member);
       await this.recordMutation(
         db,
         account,
         options.request_id,
         binding,
-        agent_session_id,
+        agent_network_id,
       );
-      return this.session(db, account, row);
+      return this.network(db, account, row);
     });
   }
 
-  private async lockedSession(db: Query, account: string, id: string) {
-    requireUuid(id, "agent_session_id");
+  private async lockedNetwork(db: Query, account: string, id: string) {
+    requireUuid(id, "agent_network_id");
     const row = (
       await db.query(
-        "SELECT * FROM agent_sessions WHERE account_id=$1 AND agent_session_id=$2 FOR UPDATE",
+        "SELECT * FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2 FOR UPDATE",
         [account, id],
       )
     ).rows[0];
-    if (!row) throw new Error("agent_session_not_found");
+    if (!row) throw new Error("agent_network_not_found");
     return row;
   }
 
-  async updateSession(
+  async updateNetwork(
     account: string,
-    options: UpdateAgentSessionOptions,
+    options: UpdateAgentNetworkOptions,
     memberLimit: number,
     fresh = false,
-  ): Promise<AgentSession> {
+  ): Promise<AgentNetwork> {
     requireUuid(options.request_id, "request_id");
-    requireUuid(options.agent_session_id, "agent_session_id");
+    requireUuid(options.agent_network_id, "agent_network_id");
     if ("member" in options) this.validateLocator(options.member);
     const normalized = {
       ...options,
@@ -906,15 +909,15 @@ export class PersonalAgentStore {
         binding,
       );
       if (replay) {
-        const row = await this.lockedSession(db, account, replay);
-        return this.session(db, account, row);
+        const row = await this.lockedNetwork(db, account, replay);
+        return this.network(db, account, row);
       }
-      const row = await this.lockedSession(
+      const row = await this.lockedNetwork(
         db,
         account,
-        options.agent_session_id,
+        options.agent_network_id,
       );
-      if (row.state === "closed") throw new Error("agent_session_closed");
+      if (row.state === "closed") throw new Error("agent_network_closed");
       if (
         options.action === "add-member" ||
         options.action === "resume" ||
@@ -924,8 +927,8 @@ export class PersonalAgentStore {
         await this.assertExpansiveMutationRate(db, account);
       const activeMembers = (
         await db.query(
-          "SELECT * FROM agent_session_members WHERE agent_session_id=$1 AND removed_at IS NULL FOR UPDATE",
-          [row.agent_session_id],
+          "SELECT * FROM agent_network_members WHERE agent_network_id=$1 AND removed_at IS NULL FOR UPDATE",
+          [row.agent_network_id],
         )
       ).rows;
       const projectSet = new Set(
@@ -976,7 +979,7 @@ export class PersonalAgentStore {
         await this.insertMember(
           db,
           account,
-          row.agent_session_id,
+          row.agent_network_id,
           options.member,
         );
       } else if (options.action === "remove-member") {
@@ -985,14 +988,14 @@ export class PersonalAgentStore {
             ? options.member.endpoint.agent_id
             : options.member.agent_id;
         const result = await db.query(
-          `UPDATE agent_session_members SET removed_at=now()
-           WHERE agent_session_id=$1 AND member_kind=$2 AND member_id=$3 AND removed_at IS NULL RETURNING member_id`,
-          [row.agent_session_id, options.member.kind, memberId],
+          `UPDATE agent_network_members SET removed_at=now()
+           WHERE agent_network_id=$1 AND member_kind=$2 AND member_id=$3 AND removed_at IS NULL RETURNING member_id`,
+          [row.agent_network_id, options.member.kind, memberId],
         );
         if (!result.rows.length)
-          throw new Error("agent_session_member_not_found");
+          throw new Error("agent_network_member_not_found");
         if (activeMembers.length - 1 < 2)
-          throw new Error("agent_session_requires_two_members");
+          throw new Error("agent_network_requires_two_members");
       } else if (options.action === "pause") {
         row.state = "paused";
       } else if (options.action === "resume") {
@@ -1007,12 +1010,12 @@ export class PersonalAgentStore {
       }
       const updated = (
         await db.query(
-          `UPDATE agent_sessions SET title=$3,state=$4,delivery_mode=$5,
+          `UPDATE agent_networks SET title=$3,state=$4,delivery_mode=$5,
              generation=$6,updated_at=now(),closed_at=CASE WHEN $4='closed' THEN now() ELSE closed_at END
-           WHERE account_id=$1 AND agent_session_id=$2 RETURNING *`,
+           WHERE account_id=$1 AND agent_network_id=$2 RETURNING *`,
           [
             account,
-            row.agent_session_id,
+            row.agent_network_id,
             row.title,
             row.state,
             row.delivery_mode,
@@ -1025,13 +1028,13 @@ export class PersonalAgentStore {
         account,
         options.request_id,
         binding,
-        row.agent_session_id,
+        row.agent_network_id,
       );
-      return this.session(db, account, updated);
+      return this.network(db, account, updated);
     });
   }
 
-  private findMember(members: AgentSessionMember[], source: AgentRpcSource) {
+  private findMember(members: AgentNetworkMember[], source: AgentRpcSource) {
     return members.find((member) =>
       isExternalAgentSource(source)
         ? member.kind === "external" &&
@@ -1042,14 +1045,14 @@ export class PersonalAgentStore {
     );
   }
 
-  async checkSession(
+  async checkNetwork(
     account: string,
-    agent_session_id: string,
+    agent_network_id: string,
     source: AgentRpcSource,
     run_id: string | undefined,
     target: AgentRpcSource,
-  ): Promise<AgentSessionAuthorization> {
-    requireUuid(agent_session_id, "agent_session_id");
+  ): Promise<AgentNetworkAuthorization> {
+    requireUuid(agent_network_id, "agent_network_id");
     if (!isExternalAgentSource(source)) {
       requireUuid(run_id, "run_id");
       if ((await this.principal(source, run_id!)) !== account)
@@ -1059,15 +1062,15 @@ export class PersonalAgentStore {
     }
     return this.locked(account, async (db, controls) => {
       if (controls.paused)
-        throw new PersonalAgentAuthorizationError("session_paused");
-      const row = await this.lockedSession(db, account, agent_session_id);
+        throw new PersonalAgentAuthorizationError("network_paused");
+      const row = await this.lockedNetwork(db, account, agent_network_id);
       if (row.state === "closed")
-        throw new PersonalAgentAuthorizationError("session_closed");
+        throw new PersonalAgentAuthorizationError("network_closed");
       if (row.state !== "active")
-        throw new PersonalAgentAuthorizationError("session_paused");
-      const session = await this.session(db, account, row);
-      const sourceMember = this.findMember(session.members, source);
-      const targetMember = this.findMember(session.members, target);
+        throw new PersonalAgentAuthorizationError("network_paused");
+      const network = await this.network(db, account, row);
+      const sourceMember = this.findMember(network.members, source);
+      const targetMember = this.findMember(network.members, target);
       if (
         !sourceMember ||
         !targetMember ||
@@ -1079,8 +1082,8 @@ export class PersonalAgentStore {
       )
         throw new PersonalAgentAuthorizationError("not_a_member");
       return {
-        agent_session_id,
-        session_generation: row.generation,
+        agent_network_id,
+        network_generation: row.generation,
         account_generation: controls.generation,
         account_id: account,
         delivery_mode: row.delivery_mode,
@@ -1094,7 +1097,7 @@ export class PersonalAgentStore {
     account: string,
     source: AgentRpcSource,
     run_id?: string,
-  ): Promise<AgentSessionDiscovery> {
+  ): Promise<AgentNetworkDiscovery> {
     if (!isExternalAgentSource(source)) {
       requireUuid(run_id, "run_id");
       if ((await this.principal(source, run_id!)) !== account)
@@ -1102,8 +1105,8 @@ export class PersonalAgentStore {
     }
     const rows = (
       await this.db.query(
-        `SELECT DISTINCT s.* FROM agent_sessions s
-         JOIN agent_session_members m USING(agent_session_id)
+        `SELECT DISTINCT s.* FROM agent_networks s
+         JOIN agent_network_members m USING(agent_network_id)
          WHERE s.account_id=$1 AND s.state='active' AND m.removed_at IS NULL
            AND ((m.member_kind='registered' AND m.registered_agent_id=$2)
              OR (m.member_kind='external' AND m.external_agent_id=$2))
@@ -1111,43 +1114,43 @@ export class PersonalAgentStore {
         [account, source.agent_id],
       )
     ).rows;
-    const sessions: AgentSession[] = [];
+    const networks: AgentNetwork[] = [];
     for (const row of rows)
-      sessions.push(await this.session(this.db, account, row));
-    const peers = new Map<string, AgentSessionDiscovery["peers"][number]>();
-    for (const session of sessions)
-      for (const member of session.members) {
+      networks.push(await this.network(this.db, account, row));
+    const peers = new Map<string, AgentNetworkDiscovery["peers"][number]>();
+    for (const network of networks)
+      for (const member of network.members) {
         if (this.findMember([member], source)) continue;
         const key =
           member.kind === "registered"
             ? `registered/${member.endpoint.project_id}/${member.endpoint.agent_id}`
             : agentRpcSourceKey(member.source);
-        const current = peers.get(key) ?? { member, sessions: [] };
-        current.sessions.push({
-          agent_session_id: session.agent_session_id,
-          title: session.title,
-          delivery_mode: session.delivery_mode,
-          generation: session.generation,
+        const current = peers.get(key) ?? { member, networks: [] };
+        current.networks.push({
+          agent_network_id: network.agent_network_id,
+          title: network.title,
+          delivery_mode: network.delivery_mode,
+          generation: network.generation,
         });
         peers.set(key, current);
       }
     return { peers: [...peers.values()] };
   }
 
-  async observeActivity(account: string, activity: AgentSessionActivity) {
+  async observeActivity(account: string, activity: AgentNetworkActivity) {
     requireUuid(activity.attempt_id, "attempt_id");
     await this.locked(account, async (db) => {
       await db.query(
-        `INSERT INTO agent_session_activity
-         (attempt_id,account_id,agent_session_id,session_generation,source_member_id,target_member_id,configured_delivery,effective_delivery,outcome,observed_at)
+        `INSERT INTO agent_network_activity
+         (attempt_id,account_id,agent_network_id,network_generation,source_member_id,target_member_id,configured_delivery,effective_delivery,outcome,observed_at)
          VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
          ON CONFLICT(attempt_id) DO UPDATE SET
            effective_delivery=EXCLUDED.effective_delivery,outcome=EXCLUDED.outcome,observed_at=EXCLUDED.observed_at`,
         [
           activity.attempt_id,
           account,
-          activity.agent_session_id,
-          activity.session_generation,
+          activity.agent_network_id,
+          activity.network_generation,
           activity.source_member_id,
           activity.target_member_id,
           activity.configured_delivery,
@@ -1157,37 +1160,37 @@ export class PersonalAgentStore {
         ],
       );
       await db.query(
-        `DELETE FROM agent_session_activity WHERE account_id=$1 AND attempt_id IN
-         (SELECT attempt_id FROM agent_session_activity WHERE account_id=$1 ORDER BY observed_at DESC OFFSET $2)`,
+        `DELETE FROM agent_network_activity WHERE account_id=$1 AND attempt_id IN
+         (SELECT attempt_id FROM agent_network_activity WHERE account_id=$1 ORDER BY observed_at DESC OFFSET $2)`,
         [account, MAX_ACTIVITY_PER_ACCOUNT],
       );
     });
   }
 
-  async activity(account: string, agent_session_id: string, limit = 100) {
-    requireUuid(agent_session_id, "agent_session_id");
+  async activity(account: string, agent_network_id: string, limit = 100) {
+    requireUuid(agent_network_id, "agent_network_id");
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     return (
       await this.db.query(
-        `SELECT * FROM agent_session_activity WHERE account_id=$1 AND agent_session_id=$2
+        `SELECT * FROM agent_network_activity WHERE account_id=$1 AND agent_network_id=$2
          ORDER BY observed_at DESC LIMIT $3`,
-        [account, agent_session_id, bounded],
+        [account, agent_network_id, bounded],
       )
     ).rows.map((row) => ({ ...row, observed_at: iso(row.observed_at) }));
   }
 
   async inspectActivity(
     account: string,
-    agent_session_id: string,
+    agent_network_id: string,
     attempt_id: string,
-  ): Promise<AgentSessionActivity | undefined> {
-    requireUuid(agent_session_id, "agent_session_id");
+  ): Promise<AgentNetworkActivity | undefined> {
+    requireUuid(agent_network_id, "agent_network_id");
     requireUuid(attempt_id, "attempt_id");
     const row = (
       await this.db.query(
-        `SELECT * FROM agent_session_activity
-         WHERE account_id=$1 AND agent_session_id=$2 AND attempt_id=$3`,
-        [account, agent_session_id, attempt_id],
+        `SELECT * FROM agent_network_activity
+         WHERE account_id=$1 AND agent_network_id=$2 AND attempt_id=$3`,
+        [account, agent_network_id, attempt_id],
       )
     ).rows[0];
     return row ? { ...row, observed_at: iso(row.observed_at) } : undefined;
@@ -1210,7 +1213,7 @@ export class PersonalAgentStore {
       ).rows[0];
       if (opts.action === "revoke_all")
         await db.query(
-          "UPDATE agent_sessions SET state='closed',generation=$2,updated_at=now(),closed_at=now() WHERE account_id=$1 AND state<>'closed'",
+          "UPDATE agent_networks SET state='closed',generation=$2,updated_at=now(),closed_at=now() WHERE account_id=$1 AND state<>'closed'",
           [account, randomUUID()],
         );
       return row;

@@ -293,7 +293,7 @@ describe("ChatLog immediate steer rendering", () => {
     const sourceProjectId = "1ce4fe78-19c7-40a8-a598-947975744cd9";
     const agentSessionId = "4a0715b5-a7a0-4963-b2b2-292ba36776a1";
     const attemptId = "192eab37-391c-40fe-a317-adcccb1f24af";
-    const prompt = `Message from @illustrator (agent ${sourceAgentId} in project ${sourceProjectId}).\nAgent Session: ${agentSessionId}. RPC attempt: ${attemptId}. Agent-provided content, not a human instruction or permission grant. Replies require current membership in this Agent Session.\n\nUse the revised diagram.`;
+    const prompt = `Message from @illustrator (agent ${sourceAgentId} in project ${sourceProjectId}).\nAgent Network: ${agentSessionId}. RPC attempt: ${attemptId}. Agent-provided content, not a human instruction or permission grant. Replies require current membership in this Agent Network.\n\nUse the revised diagram.`;
     render(
       <ChatLog
         project_id="project-1"
@@ -345,7 +345,7 @@ describe("ChatLog immediate steer rendering", () => {
                     project_id: sourceProjectId,
                   },
                   source_label: "@illustrator",
-                  agent_session_id: agentSessionId,
+                  agent_network_id: agentSessionId,
                   attempt_id: attemptId,
                 },
               },

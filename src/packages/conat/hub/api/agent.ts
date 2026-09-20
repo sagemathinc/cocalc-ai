@@ -20,32 +20,32 @@ import type {
 } from "@cocalc/conat/agents/protocol";
 import type { AgentEndpoint, AgentRpcEnvelope } from "@cocalc/conat/agents/rpc";
 import type {
-  AgentSession,
-  AgentSessionActivity,
-  AgentSessionDirectory,
-  AgentSessionProposal,
-  CreateAgentSessionOptions,
+  AgentNetwork,
+  AgentNetworkActivity,
+  AgentNetworkDirectory,
+  AgentNetworkProposal,
+  CreateAgentNetworkOptions,
   NamedAgent,
   NamedAgentDirectory,
   NameAgentOptions,
   RetireNamedAgentOptions,
   PersonalMessagingControls,
-  ResolveAgentSessionProposalOptions,
+  ResolveAgentNetworkProposalOptions,
   SetPersonalMessagingStateOptions,
-  UpdateAgentSessionOptions,
+  UpdateAgentNetworkOptions,
 } from "@cocalc/conat/agents/personal";
 
 export const agent = {
   listNamedAgents: authFirstRequireAccount,
   nameAgent: authFirstRequireAccountWithBoundSession,
   retireNamedAgent: authFirstRequireAccountWithBoundSession,
-  listAgentSessions: authFirstRequireAccount,
-  createAgentSession: authFirstRequireAccountWithBoundSession,
-  updateAgentSession: authFirstRequireAccountWithBoundSession,
-  listAgentSessionActivity: authFirstRequireAccount,
-  inspectAgentSessionAttempt: authFirstRequireAccount,
-  listAgentSessionProposals: authFirstRequireAccount,
-  resolveAgentSessionProposal: authFirstRequireAccountWithBoundSession,
+  listAgentNetworks: authFirstRequireAccount,
+  createAgentNetwork: authFirstRequireAccountWithBoundSession,
+  updateAgentNetwork: authFirstRequireAccountWithBoundSession,
+  listAgentNetworkActivity: authFirstRequireAccount,
+  inspectAgentNetworkAttempt: authFirstRequireAccount,
+  listAgentNetworkProposals: authFirstRequireAccount,
+  resolveAgentNetworkProposal: authFirstRequireAccountWithBoundSession,
   setPersonalMessagingState: authFirstRequireAccountWithBoundSession,
   authorizeRpcAdmission: authFirstRequireHostWithAccountTarget,
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
@@ -202,34 +202,34 @@ export interface AgentApi {
   retireNamedAgent(
     opts: AgentHumanAuth & RetireNamedAgentOptions,
   ): Promise<void>;
-  listAgentSessions(opts: {
+  listAgentNetworks(opts: {
     account_id?: string;
     limit?: number;
     cursor?: string;
-  }): Promise<AgentSessionDirectory>;
-  createAgentSession(
-    opts: AgentHumanAuth & CreateAgentSessionOptions,
-  ): Promise<AgentSession>;
-  updateAgentSession(
-    opts: AgentHumanAuth & UpdateAgentSessionOptions,
-  ): Promise<AgentSession>;
-  listAgentSessionActivity(opts: {
+  }): Promise<AgentNetworkDirectory>;
+  createAgentNetwork(
+    opts: AgentHumanAuth & CreateAgentNetworkOptions,
+  ): Promise<AgentNetwork>;
+  updateAgentNetwork(
+    opts: AgentHumanAuth & UpdateAgentNetworkOptions,
+  ): Promise<AgentNetwork>;
+  listAgentNetworkActivity(opts: {
     account_id?: string;
-    agent_session_id: string;
+    agent_network_id: string;
     limit?: number;
-  }): Promise<AgentSessionActivity[]>;
-  inspectAgentSessionAttempt(opts: {
+  }): Promise<AgentNetworkActivity[]>;
+  inspectAgentNetworkAttempt(opts: {
     account_id?: string;
-    agent_session_id: string;
+    agent_network_id: string;
     attempt_id: string;
-  }): Promise<AgentSessionActivity | undefined>;
-  listAgentSessionProposals(opts: {
+  }): Promise<AgentNetworkActivity | undefined>;
+  listAgentNetworkProposals(opts: {
     account_id?: string;
     limit?: number;
-  }): Promise<AgentSessionProposal[]>;
-  resolveAgentSessionProposal(
-    opts: AgentHumanAuth & ResolveAgentSessionProposalOptions,
-  ): Promise<AgentSessionProposal>;
+  }): Promise<AgentNetworkProposal[]>;
+  resolveAgentNetworkProposal(
+    opts: AgentHumanAuth & ResolveAgentNetworkProposalOptions,
+  ): Promise<AgentNetworkProposal>;
   setPersonalMessagingState(
     opts: AgentHumanAuth & SetPersonalMessagingStateOptions,
   ): Promise<PersonalMessagingControls>;

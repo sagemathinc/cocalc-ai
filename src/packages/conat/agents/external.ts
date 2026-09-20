@@ -3,7 +3,7 @@ import { requireUuid } from "./protocol";
 export const EXTERNAL_AGENT_TOKEN_PREFIX = "cocalc_external_agent_v1.";
 export const EXTERNAL_AGENT_MAX_LIFETIME_SECONDS = 30 * 86400;
 
-/** External identities have no project locator and use a bounded session inbox. */
+/** External identities have no project locator and use a bounded network inbox. */
 export interface ExternalAgentSource {
   kind: "external";
   project_id?: never;
@@ -33,13 +33,13 @@ export interface ExternalAgentInstallation {
   state: "active" | "revoked";
   expires_at: string;
   created_at: string;
-  agent_session_id: string;
+  agent_network_id: string;
 }
 
 export interface ExternalAgentInboxMessage {
   message_id: string;
   attempt_id: string;
-  agent_session_id: string;
+  agent_network_id: string;
   source: import("./rpc").AgentRpcSource;
   body: string;
   created_at: string;
@@ -135,7 +135,7 @@ export function validateExternalAgentLabel(label: string): void {
 export function validateExternalAgentApproval(options: {
   installation_id: string;
   agent_id?: string;
-  agent_session_id: string;
+  agent_network_id: string;
   ttl_seconds: number;
 }): void {
   if (
@@ -144,7 +144,7 @@ export function validateExternalAgentApproval(options: {
         ![
           "installation_id",
           "agent_id",
-          "agent_session_id",
+          "agent_network_id",
           "ttl_seconds",
           "label",
           "secret_hash",
@@ -153,7 +153,7 @@ export function validateExternalAgentApproval(options: {
   )
     throw new Error("unexpected external approval field");
   requireUuid(options.installation_id, "installation_id");
-  requireUuid(options.agent_session_id, "agent_session_id");
+  requireUuid(options.agent_network_id, "agent_network_id");
   if (options.agent_id !== undefined) requireUuid(options.agent_id, "agent_id");
   if (
     !Number.isInteger(options.ttl_seconds) ||

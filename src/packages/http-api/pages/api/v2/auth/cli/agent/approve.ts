@@ -17,7 +17,7 @@ export default async function externalAgentApprove(req, res) {
     const {
       origin_bay_id,
       challenge_id,
-      agent_session_id,
+      agent_network_id,
       ttl_seconds,
       agent_id,
     } = getParams(req);
@@ -27,7 +27,7 @@ export default async function externalAgentApprove(req, res) {
         session_hash,
         origin_bay_id,
         challenge_id,
-        agent_session_id,
+        agent_network_id,
         ttl_seconds,
         agent_id,
       }),

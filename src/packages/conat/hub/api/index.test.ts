@@ -101,9 +101,9 @@ describe("hub API argument transforms", () => {
 
   it.each([
     "agent.registerIdentity",
-    "agent.createAgentSession",
-    "agent.updateAgentSession",
-    "agent.resolveAgentSessionProposal",
+    "agent.createAgentNetwork",
+    "agent.updateAgentNetwork",
+    "agent.resolveAgentNetworkProposal",
     "agent.setPersonalMessagingState",
     "agent.disableIdentity",
   ])("requires a human and binds %s to the actual session", async (name) => {

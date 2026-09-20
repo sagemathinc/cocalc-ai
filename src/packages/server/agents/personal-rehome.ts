@@ -6,11 +6,11 @@ import {
 export const PERSONAL_AGENT_STATE_TABLES = [
   "agent_personal_names",
   "agent_personal_controls",
-  "agent_sessions",
-  "agent_session_mutations",
-  "agent_session_activity",
-  "agent_session_proposals",
-  "agent_session_broadcasts",
+  "agent_networks",
+  "agent_network_mutations",
+  "agent_network_activity",
+  "agent_network_proposals",
+  "agent_network_broadcasts",
 ] as const;
 
 export const EXTERNAL_AGENT_STATE_TABLES = [
@@ -68,7 +68,7 @@ export async function assertNoPersonalStateForRehome(
       ).rows.length
     )
       throw new Error(
-        "Account rehome is unavailable while this account has personal agent names, sessions, controls, proposals, or external-agent history. Personal agent state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
+        "Account rehome is unavailable while this account has personal agent names, networks, controls, proposals, or external-agent history. Personal agent state portability is not supported yet; keep this account on its current home bay. Pausing messaging does not remove this restriction.",
       );
   }
 }

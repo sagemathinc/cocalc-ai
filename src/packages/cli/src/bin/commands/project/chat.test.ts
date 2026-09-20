@@ -8,7 +8,7 @@ import { parseAgentMessageRuntimeEvents } from "@cocalc/conat/agents/runtime-eve
 
 test("named send uses one scoped attempt and never the human send path", async () => {
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
-  const agent_session_id = randomUUID();
+  const agent_network_id = randomUUID();
   let resolved = 0;
   const attempts: any[] = [];
   let output: any;
@@ -18,7 +18,7 @@ test("named send uses one scoped attempt and never the human send path", async (
     async (name: string) => {
       assert.equal(name, "@reviewer");
       resolved++;
-      return { target, agent_session_id };
+      return { target, agent_network_id };
     },
   );
   const transport = mock.method(
@@ -59,8 +59,8 @@ test("named send uses one scoped attempt and never the human send path", async (
         "send",
         "--to",
         "@reviewer",
-        "--agent-session",
-        agent_session_id,
+        "--agent-network",
+        agent_network_id,
         "Review this",
       ],
       { from: "user" },
@@ -107,7 +107,7 @@ test("named send uses one scoped attempt and never the human send path", async (
 
 test("attachment sends preserve same-project references and prepare cross-project bytes", async () => {
   const target = { project_id: randomUUID(), agent_id: randomUUID() };
-  const agent_session_id = randomUUID();
+  const agent_network_id = randomUUID();
   const paths = [
     { kind: "project-file", path: "/tmp/report.pdf" },
     { kind: "project-file", path: "/tmp/results.json" },
@@ -116,7 +116,7 @@ test("attachment sends preserve same-project references and prepare cross-projec
   const resolver = mock.method(
     require("../../core/agent-destination"),
     "resolveRuntimeAgentName",
-    async () => ({ target, agent_session_id }),
+    async () => ({ target, agent_network_id }),
   );
   const reader = mock.method(
     require("../../core/agent-attachments"),
@@ -153,7 +153,7 @@ test("attachment sends preserve same-project references and prepare cross-projec
         return allowPreparation
           ? {
               version: 3,
-              agent_session_id,
+              agent_network_id,
               target,
               attempt_id: request.attempt_id,
               outcome: "prepared",
@@ -162,7 +162,7 @@ test("attachment sends preserve same-project references and prepare cross-projec
             }
           : {
               version: 3,
-              agent_session_id,
+              agent_network_id,
               target,
               attempt_id: request.attempt_id,
               outcome: "rejected",
@@ -187,8 +187,8 @@ test("attachment sends preserve same-project references and prepare cross-projec
     "send",
     "--to",
     "reviewer",
-    "--agent-session",
-    agent_session_id,
+    "--agent-network",
+    agent_network_id,
     "--attach",
     "report.pdf",
     "--attach",

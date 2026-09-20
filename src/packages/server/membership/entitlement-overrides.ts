@@ -50,7 +50,7 @@ const NUMERIC_USAGE_LIMIT_KEYS = new Set<keyof MembershipUsageLimits>([
   "total_storage_hard_bytes",
   "max_projects",
   "max_named_agents",
-  "max_agent_session_members",
+  "max_agent_network_members",
   "max_sponsored_running_projects",
   "max_snapshots_per_project",
   "max_backups_per_project",
@@ -178,9 +178,9 @@ const OVERRIDE_EFFECT_FIELDS = [
   },
   {
     section: "usage_limits",
-    key: "max_agent_session_members",
+    key: "max_agent_network_members",
     ...MEMBERSHIP_ENTITLEMENT_OVERRIDE_DESCRIPTIONS.usage_limits
-      .max_agent_session_members,
+      .max_agent_network_members,
   },
   {
     section: "usage_limits",

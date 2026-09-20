@@ -31,10 +31,10 @@ import {
   requireUuid,
 } from "@cocalc/conat/agents/protocol";
 import type {
-  AgentSessionActivity,
-  AgentSessionAuthorization,
-  AgentSessionDiscovery,
-  AgentSessionMember,
+  AgentNetworkActivity,
+  AgentNetworkAuthorization,
+  AgentNetworkDiscovery,
+  AgentNetworkMember,
   PersonalAgentDenial,
 } from "@cocalc/conat/agents/personal";
 import { PersonalAgentAuthorizationError } from "@cocalc/conat/agents/personal";
@@ -60,7 +60,7 @@ import {
 } from "./external";
 import { personalControl, withPersonalHome } from "./personal";
 
-function sessionMemberLabel(member: AgentSessionMember): string {
+function networkMemberLabel(member: AgentNetworkMember): string {
   if (member.kind === "external") {
     return (
       member.label.trim() || `External agent ${member.member_id.slice(0, 8)}`
@@ -117,7 +117,7 @@ async function submitBroadcast(
     return {
       version: 3,
       broadcast_id: request.broadcast_id,
-      agent_session_id: request.agent_session_id,
+      agent_network_id: request.agent_network_id,
       outcome: "unknown",
       observed_at: Date.now(),
       children: [],
@@ -128,7 +128,7 @@ async function submitBroadcast(
       version: 3 as const,
       action: "send" as const,
       attempt_id: broadcastChildId(request.broadcast_id, target, index),
-      agent_session_id: request.agent_session_id,
+      agent_network_id: request.agent_network_id,
       target,
       body: request.body,
     };
@@ -150,7 +150,7 @@ async function submitBroadcast(
   const outcome: AgentRpcBroadcastOutcome = {
     version: 3,
     broadcast_id: request.broadcast_id,
-    agent_session_id: request.agent_session_id,
+    agent_network_id: request.agent_network_id,
     outcome: children.every(({ outcome }) => outcome === "accepted")
       ? "accepted"
       : children.every(({ outcome }) => outcome === "rejected")
@@ -251,35 +251,35 @@ async function hostFor(endpoint: AgentEndpoint) {
   };
 }
 
-async function sessionProof(
+async function networkProof(
   account_id: string,
   source: AgentRpcSource,
   run_id: string | undefined,
   target: AgentRpcTarget,
-  agent_session_id: string,
-): Promise<AgentSessionAuthorization | PersonalAgentDenial> {
+  agent_network_id: string,
+): Promise<AgentNetworkAuthorization | PersonalAgentDenial> {
   validateAgentRpcSource(source, run_id);
   validateAgentRpcTarget(target);
-  requireUuid(agent_session_id, "agent_session_id");
+  requireUuid(agent_network_id, "agent_network_id");
   requireUuid(account_id, "account_id");
   if (isExternalAgentSource(source) && source.account_id !== account_id)
     throw new PersonalAgentAuthorizationError("principal_mismatch");
   return (await withPersonalHome(account_id, {
-    action: "checkSession",
+    action: "checkNetwork",
     options: {
-      agent_session_id,
+      agent_network_id,
       source,
       ...(run_id ? { run_id } : {}),
       target,
     },
-  })) as AgentSessionAuthorization | PersonalAgentDenial;
+  })) as AgentNetworkAuthorization | PersonalAgentDenial;
 }
 
 async function observeActivity(
-  proof: AgentSessionAuthorization,
+  proof: AgentNetworkAuthorization,
   request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
   outcome: import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
-  deliveryOverride?: AgentSessionActivity["effective_delivery"],
+  deliveryOverride?: AgentNetworkActivity["effective_delivery"],
 ) {
   const effective_delivery =
     deliveryOverride ??
@@ -292,10 +292,10 @@ async function observeActivity(
           : proof.delivery_mode === "live"
             ? "queued-fallback"
             : undefined);
-  const activity: AgentSessionActivity = {
+  const activity: AgentNetworkActivity = {
     attempt_id: request.attempt_id,
-    agent_session_id: proof.agent_session_id,
-    session_generation: proof.session_generation,
+    agent_network_id: proof.agent_network_id,
+    network_generation: proof.network_generation,
     source_member_id: proof.source.member_id,
     target_member_id: proof.target.member_id,
     configured_delivery: proof.delivery_mode,
@@ -304,7 +304,7 @@ async function observeActivity(
     observed_at: new Date(outcome.observed_at).toISOString(),
   };
   await withPersonalHome(proof.account_id, {
-    action: "observeSessionActivity",
+    action: "observeNetworkActivity",
     options: activity,
   });
 }
@@ -338,21 +338,21 @@ async function submitAgentRpcOperation(
 
   let submissionStarted = false;
   let permitId: string | undefined;
-  let proof: AgentSessionAuthorization | undefined;
+  let proof: AgentNetworkAuthorization | undefined;
   let observedOutcome:
     | import("@cocalc/conat/agents/rpc").AgentRpcOutcome
     | undefined;
   try {
-    const checked = await sessionProof(
+    const checked = await networkProof(
       opts.account_id,
       opts.source,
       opts.run_id,
       opts.request.target,
-      opts.request.agent_session_id,
+      opts.request.agent_network_id,
     );
     if ("denied" in checked)
       return rpcOutcome(opts.request, "rejected", {
-        code: "session_unavailable",
+        code: "network_unavailable",
         reason: checked.denied,
       });
     proof = checked;
@@ -367,12 +367,12 @@ async function submitAgentRpcOperation(
     const envelope: AgentRpcEnvelope = {
       ...opts.request,
       source: opts.source,
-      source_label: sessionMemberLabel(proof.source),
-      target_label: sessionMemberLabel(proof.target),
+      source_label: networkMemberLabel(proof.source),
+      target_label: networkMemberLabel(proof.target),
       ...(opts.run_id ? { run_id: opts.run_id } : {}),
       permit_id: randomUUID(),
       account_id: proof.account_id,
-      session_generation: proof.session_generation,
+      network_generation: proof.network_generation,
       account_generation: proof.account_generation,
       configured_delivery: proof.delivery_mode,
       guidance: proof.delivery_mode === "live",
@@ -450,7 +450,7 @@ async function submitAgentRpcOperation(
   } catch (error) {
     logger.warn("recipient submission failed", {
       attempt_id: opts.request.attempt_id,
-      agent_session_id: opts.request.agent_session_id,
+      agent_network_id: opts.request.agent_network_id,
       target: opts.request.target,
       submissionStarted,
       error: `${error}`,
@@ -461,13 +461,13 @@ async function submitAgentRpcOperation(
       {
         code:
           error instanceof PersonalAgentAuthorizationError
-            ? "session_unavailable"
+            ? "network_unavailable"
             : undefined,
         reason: submissionStarted
           ? "Recipient acknowledgment unavailable"
           : error instanceof PersonalAgentAuthorizationError
             ? error.denial
-            : "Session, execution account, target, or host unavailable",
+            : "Network, execution account, target, or host unavailable",
       },
     );
     return observedOutcome;
@@ -486,7 +486,7 @@ async function submitAgentRpcOperation(
       // Observation is bounded best-effort evidence and never changes delivery.
       void observeActivity(proof, opts.request, observedOutcome).catch(
         (error) =>
-          logger.warn("session activity observation unavailable", {
+          logger.warn("network activity observation unavailable", {
             error: `${error}`,
           }),
       );
@@ -517,12 +517,12 @@ export const agentRpcControl: AgentRpcControlApi = {
   inspect: async (opts) => {
     await local(opts, opts.request.target);
     validateAgentRpcRequest({ ...opts.request, action: "inspect" });
-    const proof = await sessionProof(
+    const proof = await networkProof(
       opts.account_id,
       opts.source,
       opts.run_id,
       opts.request.target,
-      opts.request.agent_session_id,
+      opts.request.agent_network_id,
     );
     if ("denied" in proof)
       return rpcOutcome(opts.request, "unknown", {
@@ -548,23 +548,23 @@ export const agentRpcControl: AgentRpcControlApi = {
 
 async function reauthorizeEnvelope(e: AgentRpcEnvelope) {
   if (Date.now() >= e.deadline) throw new Error("submission deadline expired");
-  const proof = await sessionProof(
+  const proof = await networkProof(
     e.account_id,
     e.source,
     e.run_id,
     e.target,
-    e.agent_session_id,
+    e.agent_network_id,
   );
   if ("denied" in proof)
     throw new PersonalAgentAuthorizationError(proof.denied);
   if (
     proof.account_id !== e.account_id ||
-    proof.session_generation !== e.session_generation ||
+    proof.network_generation !== e.network_generation ||
     proof.account_generation !== e.account_generation ||
     proof.delivery_mode !== e.configured_delivery ||
     e.guidance !== (proof.delivery_mode === "live")
   )
-    throw new PersonalAgentAuthorizationError("session_stale");
+    throw new PersonalAgentAuthorizationError("network_stale");
   return proof;
 }
 
@@ -622,23 +622,23 @@ export const authorizeRpcExecution: AgentApi["authorizeRpcExecution"] = async (
     target.thread_id !== authorization.target_thread_id
   )
     throw new Error("target identity changed");
-  const proof = await sessionProof(
+  const proof = await networkProof(
     account_id,
     authorization.source,
     authorization.source_run_id,
     authorization.target,
-    authorization.agent_session_id,
+    authorization.agent_network_id,
   );
   if ("denied" in proof)
     throw new PersonalAgentAuthorizationError(proof.denied);
   if (
     proof.account_id !== account_id ||
-    proof.session_generation !== authorization.session_generation ||
+    proof.network_generation !== authorization.network_generation ||
     proof.account_generation !== authorization.account_generation ||
     proof.delivery_mode !== authorization.configured_delivery ||
     authorization.guidance !== (proof.delivery_mode === "live")
   )
-    throw new PersonalAgentAuthorizationError("session_stale");
+    throw new PersonalAgentAuthorizationError("network_stale");
 };
 
 async function submitExternalInbox(
@@ -659,16 +659,16 @@ async function submitExternalInbox(
       chat_effect: "none",
       reason: "External inbox attachments are not available",
     });
-  const checked = await sessionProof(
+  const checked = await networkProof(
     account_id,
     source,
     run_id,
     request.target,
-    request.agent_session_id,
+    request.agent_network_id,
   );
   if ("denied" in checked)
     return rpcOutcome(request, "rejected", {
-      code: "session_unavailable",
+      code: "network_unavailable",
       chat_effect: "none",
       reason: checked.denied,
     });
@@ -687,8 +687,8 @@ async function submitExternalInbox(
       account_id: checked.account_id,
       installation_id: request.target.installation_id,
       attempt_id: request.attempt_id,
-      agent_session_id: checked.agent_session_id,
-      session_generation: checked.session_generation,
+      agent_network_id: checked.agent_network_id,
+      network_generation: checked.network_generation,
       source,
       body: request.body,
     });
@@ -722,13 +722,13 @@ export async function acceptAgentRpc(
   const run = await sourceRun(source, run_id);
   if (request.action === "destinations")
     return withPersonalHome(run.account_id, {
-      action: "discoverSessions",
+      action: "discoverNetworks",
       options: { source, run_id },
     });
-  if (request.action === "propose-session") {
+  if (request.action === "propose-network") {
     const { version: _, action: __, ...proposal } = request;
     return withPersonalHome(run.account_id, {
-      action: "proposeSession",
+      action: "proposeNetwork",
       options: { source, run_id, proposal },
     });
   }
@@ -821,13 +821,13 @@ export async function acceptExternalAgentRpc(
   validateExternalAgentSource(source);
   if (request.action === "destinations")
     return (await withPersonalHome(account_id, {
-      action: "discoverSessions",
+      action: "discoverNetworks",
       options: { source },
-    })) as AgentSessionDiscovery;
-  if (request.action === "propose-session") {
+    })) as AgentNetworkDiscovery;
+  if (request.action === "propose-network") {
     const { version: _, action: __, ...proposal } = request;
     return withPersonalHome(account_id, {
-      action: "proposeSession",
+      action: "proposeNetwork",
       options: { source, proposal },
     });
   }

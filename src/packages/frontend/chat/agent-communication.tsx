@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { Alert, Button, Space, Tag } from "antd";
 import type { AgentApi } from "@cocalc/conat/hub/api/agent";
-import type { AgentSession } from "@cocalc/conat/agents/personal";
+import type { AgentNetwork } from "@cocalc/conat/agents/personal";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 
-type Api = Pick<AgentApi, "resolveIdentity" | "listAgentSessions">;
+type Api = Pick<AgentApi, "resolveIdentity" | "listAgentNetworks">;
 
 export function AgentCommunication({
   api,
@@ -19,7 +19,7 @@ export function AgentCommunication({
   accountId: string;
 }) {
   const [open, setOpen] = useState(false);
-  const [sessions, setSessions] = useState<AgentSession[]>([]);
+  const [networks, setSessions] = useState<AgentNetwork[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -39,10 +39,10 @@ export function AgentCommunication({
           if (!disposed) setSessions([]);
           return;
         }
-        const directory = await api.listAgentSessions({ limit: 100 });
+        const directory = await api.listAgentNetworks({ limit: 100 });
         if (!disposed)
           setSessions(
-            directory.sessions.filter((session) =>
+            directory.networks.filter((session) =>
               session.members.some(
                 (member) =>
                   member.kind === "registered" &&
@@ -63,25 +63,25 @@ export function AgentCommunication({
   }, [api, open, path, projectId, threadId]);
 
   return (
-    <section aria-label="Agent Sessions" style={{ marginTop: 16 }}>
+    <section aria-label="Agent Networks" style={{ marginTop: 16 }}>
       <Button size="small" aria-expanded={open} onClick={() => setOpen(!open)}>
-        Agent Sessions
+        Agent Networks
       </Button>
       {open && (
         <Space orientation="vertical" style={{ width: "100%", marginTop: 8 }}>
           {error && (
             <Alert
               type="error"
-              title="Unable to load Agent Sessions"
+              title="Unable to load Agent Networks"
               description={error}
             />
           )}
-          {!loading && !error && sessions.length === 0 && (
-            <span>This agent is not in an Agent Session.</span>
+          {!loading && !error && networks.length === 0 && (
+            <span>This agent is not in an Agent Network.</span>
           )}
-          {sessions.map((session) => (
-            <div key={session.agent_session_id}>
-              <strong>{session.title || "Untitled Agent Session"}</strong>{" "}
+          {networks.map((session) => (
+            <div key={session.agent_network_id}>
+              <strong>{session.title || "Untitled Agent Network"}</strong>{" "}
               <Tag>{session.state}</Tag>
               <Tag>{session.delivery_mode}</Tag>
               <span>{session.members.length} members</span>
@@ -92,7 +92,7 @@ export function AgentCommunication({
               size="small"
               onClick={() => openAccountSettings({ page: "my-agents" })}
             >
-              Manage Agent Sessions
+              Manage Agent Networks
             </Button>
           )}
         </Space>

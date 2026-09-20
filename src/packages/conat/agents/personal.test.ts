@@ -8,11 +8,11 @@ import { normalizeAgentName } from "./personal";
 const endpoint = () => ({ project_id: randomUUID(), agent_id: randomUUID() });
 const member = () => ({ kind: "registered" as const, endpoint: endpoint() });
 
-test("session proposals are typed, bounded, and cannot claim a principal", () => {
+test("network proposals are typed, bounded, and cannot claim a principal", () => {
   const source = member();
   const value = {
     version: 3 as const,
-    action: "propose-session" as const,
+    action: "propose-network" as const,
     proposal_id: randomUUID(),
     delivery_mode: "queued" as const,
     title: "Review",
@@ -31,12 +31,12 @@ test("session proposals are typed, bounded, and cannot claim a principal", () =>
     expect(() => validateAgentRpcRequest(invalid as any)).toThrow();
 });
 
-test("broadcasts bind the exact session, targets, body, and child outcomes", () => {
+test("broadcasts bind the exact network, targets, body, and child outcomes", () => {
   const request = {
     version: 3 as const,
     action: "broadcast" as const,
     broadcast_id: randomUUID(),
-    agent_session_id: randomUUID(),
+    agent_network_id: randomUUID(),
     targets: [endpoint(), endpoint()],
     body: "Review the release",
   };
@@ -44,13 +44,13 @@ test("broadcasts bind the exact session, targets, body, and child outcomes", () 
   const outcome = {
     version: 3 as const,
     broadcast_id: request.broadcast_id,
-    agent_session_id: request.agent_session_id,
+    agent_network_id: request.agent_network_id,
     outcome: "accepted" as const,
     observed_at: Date.now(),
     children: request.targets.map((target) => ({
       version: 3 as const,
       attempt_id: randomUUID(),
-      agent_session_id: request.agent_session_id,
+      agent_network_id: request.agent_network_id,
       target,
       outcome: "accepted" as const,
       observed_at: Date.now(),

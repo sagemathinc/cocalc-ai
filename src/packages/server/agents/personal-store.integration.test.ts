@@ -9,7 +9,7 @@ import { PersonalAgentStore } from "./personal-store";
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
-describeDb("account-home Agent Sessions", () => {
+describeDb("account-home Agent Networks", () => {
   const account = randomUUID();
   const project = randomUUID();
   const otherProject = randomUUID();
@@ -33,12 +33,12 @@ describeDb("account-home Agent Sessions", () => {
   const tables = [
     "agent_personal_controls",
     "agent_personal_names",
-    "agent_sessions",
-    "agent_session_members",
-    "agent_session_mutations",
-    "agent_session_activity",
-    "agent_session_proposals",
-    "agent_session_broadcasts",
+    "agent_networks",
+    "agent_network_members",
+    "agent_network_mutations",
+    "agent_network_activity",
+    "agent_network_proposals",
+    "agent_network_broadcasts",
     "agent_external_identities",
     "agent_external_installations",
     "agent_external_inbox",
@@ -64,8 +64,8 @@ describeDb("account-home Agent Sessions", () => {
       await store.name(account, { endpoint, name });
   });
 
-  test("one session authorizes every direction but no nonmember", async () => {
-    const session = await store.createSession(
+  test("one network authorizes every direction but no nonmember", async () => {
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
@@ -78,27 +78,27 @@ describeDb("account-home Agent Sessions", () => {
       8,
     );
     await expect(
-      store.checkSession(
+      store.checkNetwork(
         account,
-        session.agent_session_id,
+        network.agent_network_id,
         source,
         run_id,
         peer,
       ),
     ).resolves.toMatchObject({ delivery_mode: "queued" });
     await expect(
-      store.checkSession(
+      store.checkNetwork(
         account,
-        session.agent_session_id,
+        network.agent_network_id,
         peer,
         run_id,
         source,
       ),
-    ).resolves.toMatchObject({ agent_session_id: session.agent_session_id });
+    ).resolves.toMatchObject({ agent_network_id: network.agent_network_id });
     await expect(
-      store.checkSession(
+      store.checkNetwork(
         account,
-        session.agent_session_id,
+        network.agent_network_id,
         source,
         run_id,
         secondPeer,
@@ -106,11 +106,12 @@ describeDb("account-home Agent Sessions", () => {
     ).rejects.toThrow("not_a_member");
   });
 
-  test("retiring a named agent frees its slot without deleting session history", async () => {
-    const session = await store.createSession(
+  test("retiring a named agent frees its slot without deleting network history", async () => {
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
+        title: "Retirement history",
         members: [
           { kind: "registered", endpoint: source },
           { kind: "registered", endpoint: peer },
@@ -122,8 +123,8 @@ describeDb("account-home Agent Sessions", () => {
     await store.retire(account, { endpoint: source });
 
     await expect(store.names(account)).resolves.toHaveLength(3);
-    const preserved = (await store.sessions(account, 100)).sessions.find(
-      ({ agent_session_id }) => agent_session_id === session.agent_session_id,
+    const preserved = (await store.networks(account, 100)).networks.find(
+      ({ agent_network_id }) => agent_network_id === network.agent_network_id,
     );
     expect(preserved).toBeDefined();
     expect(
@@ -133,9 +134,9 @@ describeDb("account-home Agent Sessions", () => {
       ),
     ).toMatchObject({ available: false });
     await expect(
-      store.checkSession(
+      store.checkNetwork(
         account,
-        session.agent_session_id,
+        network.agent_network_id,
         source,
         run_id,
         peer,
@@ -158,28 +159,29 @@ describeDb("account-home Agent Sessions", () => {
       ],
     };
     const [first, second] = await Promise.all([
-      store.createSession(account, options, 8),
-      store.createSession(account, options, 8),
+      store.createNetwork(account, options, 8),
+      store.createNetwork(account, options, 8),
     ]);
-    expect(second.agent_session_id).toBe(first.agent_session_id);
+    expect(second.agent_network_id).toBe(first.agent_network_id);
     expect(
       +(
         await db.query(
-          "SELECT count(*) AS count FROM agent_sessions WHERE account_id=$1",
+          "SELECT count(*) AS count FROM agent_networks WHERE account_id=$1",
           [account],
         )
       ).rows[0].count,
     ).toBe(1);
     await expect(
-      store.createSession(account, { ...options, title: "Changed" }, 8),
-    ).rejects.toThrow("session_mutation_idempotency_conflict");
+      store.createNetwork(account, { ...options, title: "Changed" }, 8),
+    ).rejects.toThrow("network_mutation_idempotency_conflict");
   });
 
   test("fresh auth tracks project-set expansion, not every added agent", async () => {
-    const session = await store.createSession(
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
+        title: "Project expansion",
         members: [
           { kind: "registered", endpoint: source },
           { kind: "registered", endpoint: peer },
@@ -188,11 +190,11 @@ describeDb("account-home Agent Sessions", () => {
       8,
     );
     await expect(
-      store.updateSession(
+      store.updateNetwork(
         account,
         {
           request_id: randomUUID(),
-          agent_session_id: session.agent_session_id,
+          agent_network_id: network.agent_network_id,
           action: "add-member",
           member: { kind: "registered", endpoint: secondPeer },
         },
@@ -200,11 +202,11 @@ describeDb("account-home Agent Sessions", () => {
       ),
     ).resolves.toMatchObject({ members: expect.any(Array) });
     await expect(
-      store.updateSession(
+      store.updateNetwork(
         account,
         {
           request_id: randomUUID(),
-          agent_session_id: session.agent_session_id,
+          agent_network_id: network.agent_network_id,
           action: "add-member",
           member: { kind: "registered", endpoint: remote },
         },
@@ -212,11 +214,11 @@ describeDb("account-home Agent Sessions", () => {
       ),
     ).rejects.toThrow("fresh_auth_required");
     await expect(
-      store.updateSession(
+      store.updateNetwork(
         account,
         {
           request_id: randomUUID(),
-          agent_session_id: session.agent_session_id,
+          agent_network_id: network.agent_network_id,
           action: "add-member",
           member: { kind: "registered", endpoint: remote },
         },
@@ -226,11 +228,12 @@ describeDb("account-home Agent Sessions", () => {
     ).resolves.toMatchObject({ members: expect.any(Array) });
   });
 
-  test("an external installation can join only its exact approved session", async () => {
-    const session = await store.createSession(
+  test("an external installation can join only its exact approved network", async () => {
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
+        title: "External review",
         members: [
           { kind: "registered", endpoint: source },
           { kind: "registered", endpoint: peer },
@@ -246,7 +249,7 @@ describeDb("account-home Agent Sessions", () => {
     );
     await db.query(
       `INSERT INTO agent_external_installations
-       (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_session_id,expires_at)
+       (installation_id,account_id,agent_id,label,secret_hash,state,generation,approval,agent_network_id,expires_at)
        VALUES($1,$2,$3,$4,$5,'active',0,'[]'::jsonb,$6,now()+interval '1 hour')`,
       [
         installation_id,
@@ -258,11 +261,11 @@ describeDb("account-home Agent Sessions", () => {
       ],
     );
     await expect(
-      store.updateSession(
+      store.updateNetwork(
         account,
         {
           request_id: randomUUID(),
-          agent_session_id: session.agent_session_id,
+          agent_network_id: network.agent_network_id,
           action: "add-member",
           member: { kind: "external", agent_id, installation_id },
         },
@@ -272,10 +275,11 @@ describeDb("account-home Agent Sessions", () => {
   });
 
   test("mutation rate limits expansion but never blocks restrictive closure", async () => {
-    const session = await store.createSession(
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
+        title: "Rate limit",
         members: [
           { kind: "registered", endpoint: source },
           { kind: "registered", endpoint: peer },
@@ -284,30 +288,30 @@ describeDb("account-home Agent Sessions", () => {
       8,
     );
     await db.query(
-      `INSERT INTO agent_session_mutations
-       (account_id,request_id,binding_hash,agent_session_id)
+      `INSERT INTO agent_network_mutations
+       (account_id,request_id,binding_hash,agent_network_id)
        SELECT $1,md5(i::text)::uuid,'rate-fixture',$2
        FROM generate_series(1,999) AS i`,
-      [account, session.agent_session_id],
+      [account, network.agent_network_id],
     );
     await expect(
-      store.updateSession(
+      store.updateNetwork(
         account,
         {
           request_id: randomUUID(),
-          agent_session_id: session.agent_session_id,
+          agent_network_id: network.agent_network_id,
           action: "add-member",
           member: { kind: "registered", endpoint: secondPeer },
         },
         8,
       ),
-    ).rejects.toThrow("agent_session_mutation_rate_limited");
+    ).rejects.toThrow("agent_network_mutation_rate_limited");
     await expect(
-      store.updateSession(
+      store.updateNetwork(
         account,
         {
           request_id: randomUUID(),
-          agent_session_id: session.agent_session_id,
+          agent_network_id: network.agent_network_id,
           action: "close",
         },
         8,
@@ -316,10 +320,11 @@ describeDb("account-home Agent Sessions", () => {
   });
 
   test("pause and account revoke block both directions", async () => {
-    const session = await store.createSession(
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
+        title: "Pause and revoke",
         members: [
           { kind: "registered", endpoint: source },
           { kind: "registered", endpoint: peer },
@@ -327,30 +332,30 @@ describeDb("account-home Agent Sessions", () => {
       },
       8,
     );
-    await store.updateSession(
+    await store.updateNetwork(
       account,
       {
         request_id: randomUUID(),
-        agent_session_id: session.agent_session_id,
+        agent_network_id: network.agent_network_id,
         action: "pause",
       },
       8,
     );
     await expect(
-      store.checkSession(
+      store.checkNetwork(
         account,
-        session.agent_session_id,
+        network.agent_network_id,
         source,
         run_id,
         peer,
       ),
-    ).rejects.toThrow("session_paused");
+    ).rejects.toThrow("network_paused");
     await store.setControls(account, { action: "revoke_all" });
-    expect((await store.sessions(account)).active_count).toBe(0);
+    expect((await store.networks(account)).active_count).toBe(0);
   });
 
   test("agent proposals are inert, bounded, and human-resolved", async () => {
-    const proposal = await store.proposeSession(
+    const proposal = await store.proposeNetwork(
       account,
       source,
       run_id,
@@ -366,9 +371,9 @@ describeDb("account-home Agent Sessions", () => {
       8,
     );
     expect(proposal.state).toBe("pending");
-    expect((await store.sessions(account)).sessions).toHaveLength(0);
+    expect((await store.networks(account)).networks).toHaveLength(0);
     await expect(
-      store.proposeSession(
+      store.proposeNetwork(
         account,
         source,
         run_id,
@@ -389,10 +394,11 @@ describeDb("account-home Agent Sessions", () => {
   });
 
   test("broadcast parent idempotency binds body and target order", async () => {
-    const session = await store.createSession(
+    const network = await store.createNetwork(
       account,
       {
         request_id: randomUUID(),
+        title: "Broadcast review",
         members: [
           { kind: "registered", endpoint: source },
           { kind: "registered", endpoint: peer },
@@ -405,7 +411,7 @@ describeDb("account-home Agent Sessions", () => {
       version: 3,
       action: "broadcast",
       broadcast_id: randomUUID(),
-      agent_session_id: session.agent_session_id,
+      agent_network_id: network.agent_network_id,
       targets: [peer, secondPeer],
       body: "Review",
     };

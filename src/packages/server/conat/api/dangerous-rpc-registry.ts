@@ -23,16 +23,16 @@ const TELEMETRY_ONLY =
 // public hub API exports with destructive/admin-looking names and fails until
 // new RPCs are added here with a fresh-auth decision.
 export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
-  "agent.createAgentSession": {
+  "agent.createAgentNetwork": {
     decision: "fresh-auth-required",
     reason:
       "may create a complete-graph agent prompt/data bridge across projects",
   },
-  "agent.updateAgentSession": {
+  "agent.updateAgentNetwork": {
     decision: "fresh-auth-required",
-    reason: "may expand, resume, or enable live steering for an Agent Session",
+    reason: "may expand, resume, or enable live steering for an Agent Network",
   },
-  "agent.resolveAgentSessionProposal": {
+  "agent.resolveAgentNetworkProposal": {
     decision: "fresh-auth-required",
     reason:
       "approval may create a complete-graph agent prompt/data bridge across projects",

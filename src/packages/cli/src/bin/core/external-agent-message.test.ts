@@ -5,7 +5,7 @@ import test, { mock } from "node:test";
 import { rpcOutcome, type AgentRpcSend } from "@cocalc/conat/agents/rpc";
 import { sendExternalAgentMessage } from "./external-agent-message";
 
-test("external transport pins profile and preserves session send semantics", async () => {
+test("external transport pins profile and preserves network send semantics", async () => {
   const source = {
     kind: "external" as const,
     account_id: randomUUID(),
@@ -26,7 +26,7 @@ test("external transport pins profile and preserves session send semantics", asy
     version: 3,
     action: "send",
     attempt_id: randomUUID(),
-    agent_session_id: randomUUID(),
+    agent_network_id: randomUUID(),
     target: { agent_id: randomUUID(), project_id: randomUUID() },
     body: "test",
   };

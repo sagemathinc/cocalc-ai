@@ -16,8 +16,8 @@ import {
   type AgentRpcBroadcastOutcome,
 } from "@cocalc/conat/agents/rpc";
 import type {
-  AgentSessionDiscovery,
-  AgentSessionProposal,
+  AgentNetworkDiscovery,
+  AgentNetworkProposal,
 } from "@cocalc/conat/agents/personal";
 import type { ResolvedAgentDestination } from "./agent-destination";
 import { readExternalAgentCredential } from "./external-agent-profile";
@@ -64,8 +64,8 @@ export async function sendExternalAgentMessage(
   profile: string,
   request: AgentRpcRequest,
 ): Promise<
-  | AgentSessionDiscovery
-  | AgentSessionProposal
+  | AgentNetworkDiscovery
+  | AgentNetworkProposal
   | AgentRpcBroadcastOutcome
   | AgentRpcOutcome
   | AgentRpcPreparation
@@ -121,7 +121,7 @@ export async function sendExternalAgentMessage(
         if (
           typeof message?.message_id !== "string" ||
           typeof message?.attempt_id !== "string" ||
-          typeof message?.agent_session_id !== "string" ||
+          typeof message?.agent_network_id !== "string" ||
           typeof message?.body !== "string" ||
           typeof message?.created_at !== "string" ||
           typeof message?.expires_at !== "string" ||
@@ -135,12 +135,12 @@ export async function sendExternalAgentMessage(
         result?.message_id !== request.message_id
       )
         throw new Error("invalid external inbox acknowledgment");
-    } else if (request.action === "propose-session") {
+    } else if (request.action === "propose-network") {
       if (
         result?.proposal_id !== request.proposal_id ||
         result?.state === undefined
       )
-        throw new Error("invalid session proposal response");
+        throw new Error("invalid network proposal response");
     } else validateAgentRpcOutcome(result, request);
     return result;
   } catch (error) {
@@ -170,34 +170,34 @@ export async function sendExternalAgentMessage(
 export async function resolveExternalAgentName(
   profile: string,
   name: string,
-  agentSessionId?: string,
+  agentNetworkId?: string,
 ): Promise<ResolvedAgentDestination> {
   const normalized = name.replace(/^@/, "");
   const destinations = (await sendExternalAgentMessage(profile, {
     version: 3,
     action: "destinations",
-  })) as AgentSessionDiscovery;
+  })) as AgentNetworkDiscovery;
   const matches = destinations.peers.filter(
-    ({ member, sessions }) =>
+    ({ member, networks }) =>
       member.kind === "registered" &&
       member.name === normalized &&
-      sessions.some(
-        ({ agent_session_id }) =>
-          agentSessionId === undefined || agent_session_id === agentSessionId,
+      networks.some(
+        ({ agent_network_id }) =>
+          agentNetworkId === undefined || agent_network_id === agentNetworkId,
       ),
   );
   if (matches.length !== 1 || matches[0].member.kind !== "registered")
     throw new Error(
-      "No unambiguous session peer; run agent destinations and specify --agent-session",
+      "No unambiguous network peer; run agent destinations and specify --agent-network",
     );
-  const sessions = matches[0].sessions.filter(
-    ({ agent_session_id }) =>
-      agentSessionId === undefined || agent_session_id === agentSessionId,
+  const networks = matches[0].networks.filter(
+    ({ agent_network_id }) =>
+      agentNetworkId === undefined || agent_network_id === agentNetworkId,
   );
-  if (sessions.length !== 1)
-    throw new Error("Specify the exact --agent-session for this peer");
+  if (networks.length !== 1)
+    throw new Error("Specify the exact --agent-network for this peer");
   return {
     target: matches[0].member.endpoint,
-    agent_session_id: sessions[0].agent_session_id,
+    agent_network_id: networks[0].agent_network_id,
   };
 }

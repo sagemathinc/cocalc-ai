@@ -5,6 +5,7 @@
 
 import {
   normalizeAgentName,
+  type AgentNetwork,
   type NamedAgent,
   type NamedAgentDirectory,
 } from "@cocalc/conat/agents/personal";
@@ -87,7 +88,13 @@ import {
   message as antdMessage,
 } from "antd";
 import { openAgentThread } from "./open-agent";
-import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
+import {
+  personalAgentApi,
+  refreshNamedAgents,
+  useAgentNetworks,
+  useNamedAgents,
+} from "./api";
+import { AgentNetworkPills } from "./agent-network-pills";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
@@ -165,6 +172,27 @@ const AGENT_DOCS_DRAWER_WIDTH_STORAGE_KEY =
   "cocalc-agents-docs-drawer-width-v1";
 const DEFAULT_AGENT_DOCS_DRAWER_WIDTH = 720;
 const MIN_AGENT_DOCS_DRAWER_WIDTH = 360;
+
+function initialAgentNetworkFilter(): string | undefined {
+  if (typeof window === "undefined") return undefined;
+  return (
+    new URLSearchParams(window.location.search).get("network") || undefined
+  );
+}
+
+function networksForAgent(networks: AgentNetwork[], agent: NamedAgent) {
+  return networks.filter(
+    (network) =>
+      network.state !== "closed" &&
+      network.members.some(
+        (member) =>
+          member.kind === "registered" &&
+          !member.removed_at &&
+          member.endpoint.project_id === agent.endpoint.project_id &&
+          member.endpoint.agent_id === agent.endpoint.agent_id,
+      ),
+  );
+}
 
 function clampAgentDocsDrawerWidth(width: number): number {
   const maximum =
@@ -1482,6 +1510,9 @@ function AgentWorkspace({
   onAgentAppearance,
   onClose,
   onRegisteredThreadSelected,
+  networks,
+  selectedNetworkId,
+  onSelectNetwork,
 }: {
   onCopy: (agent: NamedAgent) => void;
   projectAgents: NamedAgent[];
@@ -1502,6 +1533,9 @@ function AgentWorkspace({
   ) => void;
   onClose: () => void;
   onRegisteredThreadSelected: (workspaceKey: string, agent: NamedAgent) => void;
+  networks: AgentNetwork[];
+  selectedNetworkId?: string;
+  onSelectNetwork: (network: AgentNetwork) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selectedThread, setSelectedThread] = useState(agent.thread_id);
@@ -1821,6 +1855,14 @@ function AgentWorkspace({
             ) : (
               <Text style={{ color: "inherit" }}>Unregistered thread</Text>
             )}
+            {!unregistered && networks.length > 0 && (
+              <AgentNetworkPills
+                networks={networks}
+                maxVisible={2}
+                selectedNetworkId={selectedNetworkId}
+                onSelect={onSelectNetwork}
+              />
+            )}
             <span aria-hidden="true">·</span>
             <Dropdown
               trigger={["click"]}
@@ -2084,6 +2126,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
+  const { directory: networkDirectory, error: networkError } =
+    useAgentNetworks();
   const accountId = useTypedRedux("account", "account_id") as
     | string
     | undefined;
@@ -2091,6 +2135,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | string
     | undefined;
   const [search, setSearch] = useState("");
+  const [networkFilterId, setNetworkFilterId] = useState(
+    initialAgentNetworkFilter,
+  );
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -2131,6 +2178,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     (document.activeElement as HTMLElement | null)?.blur?.();
   }, [active]);
   const agents = directory?.agents ?? [];
+  const networks = networkDirectory?.networks ?? [];
+  const selectedNetwork = networks.find(
+    ({ agent_network_id }) => agent_network_id === networkFilterId,
+  );
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
     activeAgentId && activeAgentId !== "new"
@@ -2141,6 +2192,27 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     agents.find(
       ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
     ) ?? selected;
+
+  useEffect(() => {
+    if (!selectedNetwork || creating) return;
+    if (selected && networksForAgent([selectedNetwork], selected).length)
+      return;
+    const first = agents.find(
+      (agent) => networksForAgent([selectedNetwork], agent).length > 0,
+    );
+    if (!first) return;
+    mountAgent(first);
+    redux.getActions("page").setState({
+      active_agent_id: first.endpoint.agent_id,
+    });
+    set_url(
+      getPageUrlPath({
+        page: "agents",
+        agent_id: first.endpoint.agent_id,
+        network_id: selectedNetwork.agent_network_id,
+      }),
+    );
+  }, [agents, creating, selected, selectedNetwork]);
 
   useEffect(() => {
     setCreating(activeAgentId === "new");
@@ -2179,23 +2251,32 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   const visibleGroups = useMemo(() => {
     const value = search.trim().toLowerCase();
-    const filter = (agent: NamedAgent) =>
-      !value ||
-      [
-        agent.name,
-        agentAppearances.get(agent.endpoint.agent_id)?.name,
-        agent.thread_title,
-        agent.project_title,
-        agent.description,
-      ]
-        .filter(Boolean)
-        .some((part) => `${part}`.toLowerCase().includes(value));
+    const filter = (agent: NamedAgent) => {
+      if (
+        selectedNetwork &&
+        !networksForAgent([selectedNetwork], agent).length
+      ) {
+        return false;
+      }
+      return (
+        !value ||
+        [
+          agent.name,
+          agentAppearances.get(agent.endpoint.agent_id)?.name,
+          agent.thread_title,
+          agent.project_title,
+          agent.description,
+        ]
+          .filter(Boolean)
+          .some((part) => `${part}`.toLowerCase().includes(value))
+      );
+    };
     return {
       pinned: agentOrganization.groups.pinned.filter(filter),
       unpinned: agentOrganization.groups.unpinned.filter(filter),
       hidden: agentOrganization.groups.hidden.filter(filter),
     };
-  }, [agentAppearances, agentOrganization.groups, search]);
+  }, [agentAppearances, agentOrganization.groups, search, selectedNetwork]);
   const recencySections = useMemo(
     () =>
       groupAgentsByRecency(
@@ -2235,10 +2316,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         getPageUrlPath({
           page: "agents",
           agent_id: nextAgent.endpoint.agent_id,
+          network_id: networkFilterId,
         }),
       );
     },
-    [],
+    [networkFilterId],
   );
 
   function selectAgent(agent: NamedAgent) {
@@ -2265,7 +2347,25 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   function selectAgentId(agentId: string) {
     redux.getActions("page").setState({ active_agent_id: agentId });
-    set_url(getPageUrlPath({ page: "agents", agent_id: agentId }));
+    set_url(
+      getPageUrlPath({
+        page: "agents",
+        agent_id: agentId,
+        network_id: networkFilterId,
+      }),
+    );
+  }
+
+  function selectNetwork(network?: AgentNetwork) {
+    const next = network?.agent_network_id;
+    setNetworkFilterId(next);
+    set_url(
+      getPageUrlPath({
+        page: "agents",
+        agent_id: creating ? "new" : selected?.endpoint.agent_id,
+        network_id: next,
+      }),
+    );
   }
 
   function openCopyAgent(agent: NamedAgent) {
@@ -2348,7 +2448,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     Modal.confirm({
       title: `Remove @${agent.name} from Agents?`,
       content:
-        "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Sessions keep their records, but this agent becomes unavailable to those sessions.",
+        "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Networks keep their records, but this agent becomes unavailable to those networks.",
       okText: "Remove from Agents",
       okButtonProps: { danger: true },
       onOk: async () => {
@@ -2383,7 +2483,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               setCreatingSourceAgentId(undefined);
               setCreating(true);
               redux.getActions("page").setState({ active_agent_id: "new" });
-              set_url(getPageUrlPath({ page: "agents", agent_id: "new" }));
+              set_url(
+                getPageUrlPath({
+                  page: "agents",
+                  agent_id: "new",
+                  network_id: networkFilterId,
+                }),
+              );
             }
           }
           refreshNamedAgents();
@@ -2436,52 +2542,61 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         ) : (
           <span aria-hidden style={{ flex: "0 0 26px" }} />
         )}
-        <button
-          type="button"
-          aria-current={active ? "page" : undefined}
-          onClick={() => selectAgent(agent)}
-          style={{
-            alignItems: "center",
-            background: "transparent",
-            border: 0,
-            color: UI_COLORS.text,
-            cursor: "pointer",
-            display: "flex",
-            flex: 1,
-            gap: 8,
-            minWidth: 0,
-            padding: "9px 4px",
-            textAlign: "left",
-          }}
-        >
-          <AgentRunningIndicator agent={agent}>
-            <ThreadBadge
-              icon={appearance?.thread_icon}
-              color={theme.primaryColor}
-              accentColor={theme.accentColor}
-              image={appearance?.thread_image}
-              fallbackIcon={
-                theme.primaryColor ||
-                theme.accentColor ||
-                appearance?.thread_image
-                  ? undefined
-                  : "robot"
-              }
-              size={30}
+        <div style={{ flex: 1, minWidth: 0, padding: "5px 4px" }}>
+          <button
+            type="button"
+            aria-current={active ? "page" : undefined}
+            onClick={() => selectAgent(agent)}
+            style={{
+              alignItems: "center",
+              background: "transparent",
+              border: 0,
+              color: UI_COLORS.text,
+              cursor: "pointer",
+              display: "flex",
+              gap: 8,
+              minWidth: 0,
+              padding: "4px 0",
+              textAlign: "left",
+              width: "100%",
+            }}
+          >
+            <AgentRunningIndicator agent={agent}>
+              <ThreadBadge
+                icon={appearance?.thread_icon}
+                color={theme.primaryColor}
+                accentColor={theme.accentColor}
+                image={appearance?.thread_image}
+                fallbackIcon={
+                  theme.primaryColor ||
+                  theme.accentColor ||
+                  appearance?.thread_image
+                    ? undefined
+                    : "robot"
+                }
+                size={30}
+              />
+            </AgentRunningIndicator>
+            <span style={{ minWidth: 0, flex: 1 }}>
+              <Text strong ellipsis style={{ display: "block" }}>
+                {theme.title}
+              </Text>
+              <Text type="secondary" ellipsis style={{ display: "block" }}>
+                @{agent.name}
+                {showProjectTitle
+                  ? ` · ${agent.project_title || agent.endpoint.project_id}`
+                  : ""}
+              </Text>
+            </span>
+          </button>
+          <div style={{ marginInlineStart: 38 }}>
+            <AgentNetworkPills
+              networks={networksForAgent(networks, agent)}
+              selectedNetworkId={networkFilterId}
+              onSelect={selectNetwork}
             />
-          </AgentRunningIndicator>
-          <span style={{ minWidth: 0 }}>
-            <Text strong ellipsis style={{ display: "block" }}>
-              {theme.title}
-            </Text>
-            <Text type="secondary" ellipsis style={{ display: "block" }}>
-              @{agent.name}
-              {showProjectTitle
-                ? ` · ${agent.project_title || agent.endpoint.project_id}`
-                : ""}
-            </Text>
-          </span>
-        </button>
+          </div>
+        </div>
         {!hidden && (
           <Button
             type="text"
@@ -2642,7 +2757,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             setCreatingSourceAgentId(selected?.endpoint.agent_id);
             setCreating(true);
             redux.getActions("page").setState({ active_agent_id: "new" });
-            set_url(getPageUrlPath({ page: "agents", agent_id: "new" }));
+            set_url(
+              getPageUrlPath({
+                page: "agents",
+                agent_id: "new",
+                network_id: networkFilterId,
+              }),
+            );
             setMobileList(false);
           }}
         />
@@ -2653,6 +2774,33 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />
+        {selectedNetwork && (
+          <div
+            role="status"
+            style={{ display: "flex", alignItems: "center", gap: 6 }}
+          >
+            <Text type="secondary">Filtered by</Text>
+            <Tag
+              closable
+              onClose={(event) => {
+                event.preventDefault();
+                selectNetwork();
+              }}
+              style={{ marginInlineEnd: 0, maxWidth: "100%" }}
+            >
+              {selectedNetwork.title}
+            </Tag>
+          </div>
+        )}
+        {networkError && (
+          <Alert
+            role="alert"
+            type="warning"
+            showIcon
+            title="Unable to load Agent Networks"
+            description={networkError}
+          />
+        )}
         <Segmented
           block
           aria-label="Agent ordering"
@@ -2960,7 +3108,12 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 redux.getActions("page").setState({
                   active_agent_id: undefined,
                 });
-                set_url(getPageUrlPath({ page: "agents" }));
+                set_url(
+                  getPageUrlPath({
+                    page: "agents",
+                    network_id: networkFilterId,
+                  }),
+                );
               }
               setMobileList(true);
             }}
@@ -3047,6 +3200,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   onAgentActivity={agentOrganization.recordActivity}
                   agentAppearances={agentAppearances}
                   onAgentAppearance={handleAgentAppearance}
+                  networks={networksForAgent(networks, agent)}
+                  selectedNetworkId={networkFilterId}
+                  onSelectNetwork={selectNetwork}
                   onClose={() => {
                     setMountedWorkspaces((old) => {
                       const next = new Set(old);

@@ -3,9 +3,9 @@ import type { AgentEndpoint, AgentRpcSource } from "./rpc";
 
 export type PersonalAgentDenialCode =
   | "approval_required"
-  | "session_paused"
-  | "session_closed"
-  | "session_stale"
+  | "network_paused"
+  | "network_closed"
+  | "network_stale"
   | "not_a_member"
   | "principal_mismatch"
   | "account_disabled"
@@ -60,10 +60,10 @@ export interface RetireNamedAgentOptions {
   endpoint: AgentEndpoint;
 }
 
-export type AgentSessionState = "active" | "paused" | "closed";
-export type AgentSessionDeliveryMode = "queued" | "live";
+export type AgentNetworkState = "active" | "paused" | "closed";
+export type AgentNetworkDeliveryMode = "queued" | "live";
 
-export interface RegisteredAgentSessionMember {
+export interface RegisteredAgentNetworkMember {
   kind: "registered";
   member_id: string;
   endpoint: AgentEndpoint;
@@ -75,7 +75,7 @@ export interface RegisteredAgentSessionMember {
   removed_at?: string | null;
 }
 
-export interface ExternalAgentSessionMember {
+export interface ExternalAgentNetworkMember {
   kind: "external";
   member_id: string;
   source: ExternalAgentSource;
@@ -85,11 +85,11 @@ export interface ExternalAgentSessionMember {
   removed_at?: string | null;
 }
 
-export type AgentSessionMember =
-  | RegisteredAgentSessionMember
-  | ExternalAgentSessionMember;
+export type AgentNetworkMember =
+  | RegisteredAgentNetworkMember
+  | ExternalAgentNetworkMember;
 
-export type AgentSessionMemberLocator =
+export type AgentNetworkMemberLocator =
   | { kind: "registered"; endpoint: AgentEndpoint }
   | {
       kind: "external";
@@ -97,99 +97,99 @@ export type AgentSessionMemberLocator =
       installation_id: string;
     };
 
-export interface AgentSession {
-  agent_session_id: string;
+export interface AgentNetwork {
+  agent_network_id: string;
   account_id: string;
-  title?: string | null;
-  state: AgentSessionState;
-  delivery_mode: AgentSessionDeliveryMode;
+  title: string;
+  state: AgentNetworkState;
+  delivery_mode: AgentNetworkDeliveryMode;
   generation: string;
   created_by: string;
   created_at: string;
   updated_at: string;
   closed_at?: string | null;
-  members: AgentSessionMember[];
+  members: AgentNetworkMember[];
 }
 
-export interface AgentSessionDirectory {
+export interface AgentNetworkDirectory {
   enabled: boolean;
-  sessions: AgentSession[];
+  networks: AgentNetwork[];
   usage: {
-    active_sessions: number;
-    session_limit: number;
+    active_networks: number;
+    network_limit: number;
     member_limit: number;
   };
   controls: PersonalMessagingControls;
   next_cursor?: string;
 }
 
-export interface CreateAgentSessionOptions {
+export interface CreateAgentNetworkOptions {
   request_id: string;
-  title?: string;
-  delivery_mode?: AgentSessionDeliveryMode;
-  members: AgentSessionMemberLocator[];
+  title: string;
+  delivery_mode?: AgentNetworkDeliveryMode;
+  members: AgentNetworkMemberLocator[];
 }
 
-export type UpdateAgentSessionOptions =
+export type UpdateAgentNetworkOptions =
   | {
       request_id: string;
-      agent_session_id: string;
+      agent_network_id: string;
       action: "pause" | "resume" | "close";
     }
   | {
       request_id: string;
-      agent_session_id: string;
+      agent_network_id: string;
       action: "set-delivery";
-      delivery_mode: AgentSessionDeliveryMode;
+      delivery_mode: AgentNetworkDeliveryMode;
     }
   | {
       request_id: string;
-      agent_session_id: string;
+      agent_network_id: string;
       action: "add-member" | "remove-member";
-      member: AgentSessionMemberLocator;
+      member: AgentNetworkMemberLocator;
     }
   | {
       request_id: string;
-      agent_session_id: string;
+      agent_network_id: string;
       action: "set-title";
-      title?: string;
+      title: string;
     };
 
 export interface SetPersonalMessagingStateOptions {
   action: "pause" | "resume" | "revoke_all";
 }
 
-export interface AgentSessionAuthorization {
-  agent_session_id: string;
-  session_generation: string;
+export interface AgentNetworkAuthorization {
+  agent_network_id: string;
+  network_generation: string;
   account_generation: number;
   account_id: string;
-  delivery_mode: AgentSessionDeliveryMode;
-  source: AgentSessionMember;
-  target: AgentSessionMember;
+  delivery_mode: AgentNetworkDeliveryMode;
+  source: AgentNetworkMember;
+  target: AgentNetworkMember;
 }
 
-export interface AgentSessionPeer {
-  member: AgentSessionMember;
-  sessions: Array<
+export interface AgentNetworkPeer {
+  member: AgentNetworkMember;
+  networks: Array<
     Pick<
-      AgentSession,
-      "agent_session_id" | "title" | "delivery_mode" | "generation"
+      AgentNetwork,
+      "agent_network_id" | "title" | "delivery_mode" | "generation"
     >
   >;
 }
 
-export interface AgentSessionDiscovery {
-  peers: AgentSessionPeer[];
+export interface AgentNetworkDiscovery {
+  peers: AgentNetworkPeer[];
 }
 
-export interface AgentSessionActivity {
+export interface AgentNetworkActivity {
   attempt_id: string;
-  agent_session_id: string;
-  session_generation: string;
+  agent_network_id: string;
+  network_generation: string;
   source_member_id: string;
   target_member_id: string;
-  configured_delivery: AgentSessionDeliveryMode;
+  configured_delivery: AgentNetworkDeliveryMode;
   effective_delivery?:
     | "idle-wake"
     | "queued"
@@ -200,30 +200,30 @@ export interface AgentSessionActivity {
   observed_at: string;
 }
 
-export interface AgentSessionProposal {
+export interface AgentNetworkProposal {
   proposal_id: string;
   account_id: string;
   source: AgentRpcSource;
-  title?: string | null;
-  delivery_mode: AgentSessionDeliveryMode;
-  members: AgentSessionMemberLocator[];
+  title: string;
+  delivery_mode: AgentNetworkDeliveryMode;
+  members: AgentNetworkMemberLocator[];
   reason?: string | null;
   state: "pending" | "approved" | "rejected" | "expired";
   created_at: string;
   expires_at: string;
   resolved_at?: string | null;
-  agent_session_id?: string | null;
+  agent_network_id?: string | null;
 }
 
-export interface ProposeAgentSessionOptions {
+export interface ProposeAgentNetworkOptions {
   proposal_id: string;
-  title?: string;
-  delivery_mode?: AgentSessionDeliveryMode;
-  members: AgentSessionMemberLocator[];
+  title: string;
+  delivery_mode?: AgentNetworkDeliveryMode;
+  members: AgentNetworkMemberLocator[];
   reason?: string;
 }
 
-export interface ResolveAgentSessionProposalOptions {
+export interface ResolveAgentNetworkProposalOptions {
   proposal_id: string;
   action: "approve" | "reject";
   request_id: string;

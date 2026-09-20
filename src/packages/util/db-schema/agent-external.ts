@@ -78,13 +78,13 @@ Table({
       "map",
       "Canonical approval parameters for duplicate approval conflict detection.",
     ),
-    agent_session_id: {
+    agent_network_id: {
       ...required(
         "uuid",
-        "Exact two-way Agent Session approved for this installation.",
+        "Exact two-way Agent Network approved for this installation.",
       ),
-      // Legacy send-only installations deliberately receive an unresolvable
-      // session id, so the hard cutover fails closed without blocking startup.
+      // Pre-network installations deliberately receive an unresolvable
+      // network id, so the hard cutover fails closed without blocking startup.
       pg_null_backfill: "gen_random_uuid()",
     },
     created_at: created,
@@ -133,8 +133,8 @@ Table({
     attempt_id: required("uuid", "Exact sender attempt and idempotency key."),
     account_id: required("uuid", "Account-home authority."),
     installation_id: required("uuid", "Exact external installation inbox."),
-    agent_session_id: required("uuid", "Authorizing Agent Session."),
-    session_generation: required("uuid", "Session generation at admission."),
+    agent_network_id: required("uuid", "Authorizing Agent Network."),
+    network_generation: required("uuid", "Network generation at admission."),
     source: {
       ...required("map", "Discriminated authenticated source member."),
       pg_type: "JSONB",

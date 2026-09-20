@@ -10,7 +10,7 @@ import {
   QuestionCircleOutlined,
 } from "@ant-design/icons";
 import { useState } from "react";
-import type { AgentSessionActivity } from "@cocalc/conat/agents/personal";
+import type { AgentNetworkActivity } from "@cocalc/conat/agents/personal";
 import { useNamedAgents, sameEndpoint } from "@cocalc/frontend/agents/api";
 import { ProjectTitle } from "@cocalc/frontend/projects/project-title";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
@@ -24,14 +24,14 @@ import {
 export interface AgentMessage extends SlateElement {
   type: "agent-message";
   direction?: "incoming" | "outgoing";
-  agent_session_id?: string;
+  agent_network_id?: string;
   attempt_id?: string;
   source_label?: string;
   source_agent_id?: string;
   source_project_id?: string;
 }
 
-function deliveryLabel(activity: AgentSessionActivity): string {
+function deliveryLabel(activity: AgentNetworkActivity): string {
   switch (activity.effective_delivery) {
     case "idle-wake":
       return "Woke idle agent";
@@ -48,7 +48,7 @@ function deliveryLabel(activity: AgentSessionActivity): string {
   }
 }
 
-function outcomePresentation(activity: AgentSessionActivity) {
+function outcomePresentation(activity: AgentNetworkActivity) {
   switch (activity.outcome) {
     case "accepted":
       return {
@@ -90,11 +90,11 @@ export function agentMessageFromMarkdownFence({
   if (kind.toLowerCase() !== "agent-message") return;
   const uuid =
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  let agent_session_id: string | undefined;
+  let agent_network_id: string | undefined;
   let attempt_id: string | undefined;
   if (tokens[0] && !tokens[0].includes("=")) {
-    [agent_session_id, attempt_id] = tokens.splice(0, 2);
-    if (!uuid.test(agent_session_id ?? "") || !uuid.test(attempt_id ?? ""))
+    [agent_network_id, attempt_id] = tokens.splice(0, 2);
+    if (!uuid.test(agent_network_id ?? "") || !uuid.test(attempt_id ?? ""))
       return;
   }
   let source_label: string | undefined;
@@ -125,7 +125,7 @@ export function agentMessageFromMarkdownFence({
   }
   return {
     type: "agent-message",
-    ...(agent_session_id && attempt_id ? { agent_session_id, attempt_id } : {}),
+    ...(agent_network_id && attempt_id ? { agent_network_id, attempt_id } : {}),
     ...(source_label ? { source_label } : {}),
     ...(source_agent_id ? { source_agent_id } : {}),
     ...(source_project_id ? { source_project_id } : {}),
@@ -141,7 +141,7 @@ export function AgentMessageElement({
 }: RenderElementProps) {
   const [expanded, setExpanded] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [activity, setActivity] = useState<AgentSessionActivity>();
+  const [activity, setActivity] = useState<AgentNetworkActivity>();
   const [error, setError] = useState("");
   if (element.type !== "agent-message")
     throw new Error("Expected agent-message element");
@@ -167,7 +167,7 @@ export function AgentMessageElement({
           !/\b[0-9a-f]{8}(?:-[0-9a-f-]+)?\b/i.test(message.source_label)
         ? message.source_label
         : "Agent";
-  const inspectable = !!(message.agent_session_id && message.attempt_id);
+  const inspectable = !!(message.agent_network_id && message.attempt_id);
   const outcome = activity ? outcomePresentation(activity) : undefined;
   async function inspect() {
     const next = !expanded;
@@ -177,8 +177,8 @@ export function AgentMessageElement({
     setError("");
     try {
       const { personalAgentApi } = await import("@cocalc/frontend/agents/api");
-      const result = await personalAgentApi().inspectAgentSessionAttempt({
-        agent_session_id: message.agent_session_id!,
+      const result = await personalAgentApi().inspectAgentNetworkAttempt({
+        agent_network_id: message.agent_network_id!,
         attempt_id: message.attempt_id!,
       });
       if (!result)
@@ -360,8 +360,8 @@ export function AgentMessageElement({
                     overflowWrap: "anywhere",
                   }}
                 >
-                  <dt>Session</dt>
-                  <dd style={{ margin: 0 }}>{activity.agent_session_id}</dd>
+                  <dt>Network</dt>
+                  <dd style={{ margin: 0 }}>{activity.agent_network_id}</dd>
                   <dt>Attempt</dt>
                   <dd style={{ margin: 0 }}>{activity.attempt_id}</dd>
                   <dt>Source</dt>
@@ -369,7 +369,7 @@ export function AgentMessageElement({
                   <dt>Target</dt>
                   <dd style={{ margin: 0 }}>{activity.target_member_id}</dd>
                   <dt>Generation</dt>
-                  <dd style={{ margin: 0 }}>{activity.session_generation}</dd>
+                  <dd style={{ margin: 0 }}>{activity.network_generation}</dd>
                 </dl>
               </details>
             </>
@@ -392,8 +392,8 @@ register({
     let fence = "```";
     while (body.includes(fence)) fence += "`";
     const correlation =
-      node.agent_session_id && node.attempt_id
-        ? ` ${node.agent_session_id} ${node.attempt_id}`
+      node.agent_network_id && node.attempt_id
+        ? ` ${node.agent_network_id} ${node.attempt_id}`
         : "";
     const metadata = [
       node.direction ? `direction=${node.direction}` : undefined,

@@ -18,7 +18,7 @@ CLI_ROOT="$(pwd)/src/packages/cli"
 ```
 
 Upload the resulting `index.cjs` to a disposable source project through the
-normal authorized file API. Create an explicit Agent Session containing the
+normal authorized file API. Create an explicit Agent Network containing the
 source and intended QA receiver. Do not revive unrelated closed sessions or
 copy a human credential into the source turn.
 
@@ -26,7 +26,7 @@ Ask the actual source agent to execute this command exactly once, using its
 existing runtime environment:
 
 ```text
-/opt/cocalc/bin/node <uploaded-index.cjs> <source-agent-uuid> <agent-session-uuid> <target-project-uuid> <target-agent-uuid> <new-attempt-uuid> <new-evidence-file>
+/opt/cocalc/bin/node <uploaded-index.cjs> <source-agent-uuid> <agent-network-uuid> <target-project-uuid> <target-agent-uuid> <new-attempt-uuid> <new-evidence-file>
 ```
 
 The agent should report stdout and stop, without inspecting the evidence file,

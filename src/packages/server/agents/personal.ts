@@ -26,8 +26,8 @@ import { PersonalAgentStore } from "./personal-store";
 import { assertPersonalAccountAuthority } from "./personal-rehome";
 
 const DEFAULT_MAX_NAMED_AGENTS = 5;
-const DEFAULT_MAX_SESSION_MEMBERS = 3;
-const MAX_SESSIONS = 100;
+const DEFAULT_MAX_NETWORK_MEMBERS = 3;
+const MAX_NETWORKS = 100;
 
 export async function personalAgentLimits(account_id: string) {
   const membership = await resolveMembershipForAccount(account_id);
@@ -35,8 +35,8 @@ export async function personalAgentLimits(account_id: string) {
     named:
       membership.effective_limits?.max_named_agents ?? DEFAULT_MAX_NAMED_AGENTS,
     members:
-      membership.effective_limits?.max_agent_session_members ??
-      DEFAULT_MAX_SESSION_MEMBERS,
+      membership.effective_limits?.max_agent_network_members ??
+      DEFAULT_MAX_NETWORK_MEMBERS,
   };
 }
 
@@ -109,7 +109,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
     throw new Error("stale personal account home route");
   await ensureAccountSecurityStateReady();
   if (isAccountBannedCached(opts.account_id))
-    if (opts.request.action === "checkSession")
+    if (opts.request.action === "checkNetwork")
       return { denied: "account_disabled" };
     else throw new PersonalAgentAuthorizationError("account_disabled");
 
@@ -140,8 +140,8 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
       );
     case "retireNamedAgent":
       return store.retire(account, request.options);
-    case "listAgentSessions": {
-      const result = await store.sessions(
+    case "listAgentNetworks": {
+      const result = await store.networks(
         account,
         request.options.limit,
         request.options.cursor,
@@ -150,53 +150,53 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
         enabled: true,
         ...result,
         usage: {
-          active_sessions: result.active_count,
-          session_limit: MAX_SESSIONS,
+          active_networks: result.active_count,
+          network_limit: MAX_NETWORKS,
           member_limit: (await personalAgentLimits(account)).members,
         },
         controls: await store.controls(account),
       };
     }
-    case "createAgentSession":
-      return store.createSession(
+    case "createAgentNetwork":
+      return store.createNetwork(
         account,
         request.options,
         (await personalAgentLimits(account)).members,
         opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
       );
-    case "updateAgentSession":
-      return store.updateSession(
+    case "updateAgentNetwork":
+      return store.updateNetwork(
         account,
-        request.options as import("@cocalc/conat/agents/personal").UpdateAgentSessionOptions,
+        request.options as import("@cocalc/conat/agents/personal").UpdateAgentNetworkOptions,
         (await personalAgentLimits(account)).members,
         opts.fresh_auth_at !== undefined && (fresh(opts.fresh_auth_at), true),
       );
-    case "listAgentSessionActivity":
+    case "listAgentNetworkActivity":
       return store.activity(
         account,
-        request.options.agent_session_id,
+        request.options.agent_network_id,
         request.options.limit,
       );
-    case "inspectAgentSessionAttempt":
+    case "inspectAgentNetworkAttempt":
       return store.inspectActivity(
         account,
-        request.options.agent_session_id,
+        request.options.agent_network_id,
         request.options.attempt_id,
       );
-    case "listAgentSessionProposals":
+    case "listAgentNetworkProposals":
       return store.proposals(account, request.options.limit);
-    case "resolveAgentSessionProposal": {
+    case "resolveAgentNetworkProposal": {
       const proposal = await store.getProposal(
         account,
         request.options.proposal_id,
       );
       if (request.options.action === "reject")
         return store.finishProposal(account, proposal.proposal_id, "rejected");
-      const session = await store.createSession(
+      const network = await store.createNetwork(
         account,
         {
           request_id: request.options.request_id,
-          title: proposal.title ?? undefined,
+          title: proposal.title,
           delivery_mode: proposal.delivery_mode,
           members: proposal.members,
         },
@@ -207,17 +207,17 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
         account,
         proposal.proposal_id,
         "approved",
-        session.agent_session_id,
+        network.agent_network_id,
       );
     }
     case "setPersonalMessagingState":
       if (request.options.action === "resume") fresh(opts.fresh_auth_at);
       return store.setControls(account, request.options);
-    case "checkSession":
+    case "checkNetwork":
       try {
-        return await store.checkSession(
+        return await store.checkNetwork(
           account,
-          request.options.agent_session_id,
+          request.options.agent_network_id,
           request.options.source,
           request.options.run_id,
           request.options.target,
@@ -227,14 +227,14 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
           return { denied: error.denial };
         throw error;
       }
-    case "discoverSessions":
+    case "discoverNetworks":
       return store.discover(
         account,
         request.options.source,
         request.options.run_id,
       );
-    case "proposeSession":
-      return store.proposeSession(
+    case "proposeNetwork":
+      return store.proposeNetwork(
         account,
         request.options.source,
         request.options.run_id,
@@ -255,7 +255,7 @@ export const personalControl: AgentRpcControlApi["personal"] = async (opts) => {
         request.options.binding_hash,
         request.options.outcome,
       );
-    case "observeSessionActivity":
+    case "observeNetworkActivity":
       return store.observeActivity(account, request.options);
     default:
       throw new Error("unsupported personal agent operation");
@@ -296,9 +296,9 @@ async function human<K extends PersonalHumanMethod>(
   } catch (error) {
     if (
       ![
-        "createAgentSession",
-        "updateAgentSession",
-        "resolveAgentSessionProposal",
+        "createAgentNetwork",
+        "updateAgentNetwork",
+        "resolveAgentNetworkProposal",
       ].includes(action) ||
       !`${error}`.includes("fresh_auth_required")
     )
@@ -318,20 +318,20 @@ export const nameAgent: AgentApi["nameAgent"] = (opts) =>
   human("nameAgent", opts);
 export const retireNamedAgent: AgentApi["retireNamedAgent"] = (opts) =>
   human("retireNamedAgent", opts);
-export const listAgentSessions: AgentApi["listAgentSessions"] = (opts) =>
-  human("listAgentSessions", opts);
-export const createAgentSession: AgentApi["createAgentSession"] = (opts) =>
-  human("createAgentSession", opts);
-export const updateAgentSession: AgentApi["updateAgentSession"] = (opts) =>
-  human("updateAgentSession", opts);
-export const listAgentSessionActivity: AgentApi["listAgentSessionActivity"] = (
+export const listAgentNetworks: AgentApi["listAgentNetworks"] = (opts) =>
+  human("listAgentNetworks", opts);
+export const createAgentNetwork: AgentApi["createAgentNetwork"] = (opts) =>
+  human("createAgentNetwork", opts);
+export const updateAgentNetwork: AgentApi["updateAgentNetwork"] = (opts) =>
+  human("updateAgentNetwork", opts);
+export const listAgentNetworkActivity: AgentApi["listAgentNetworkActivity"] = (
   opts,
-) => human("listAgentSessionActivity", opts);
-export const inspectAgentSessionAttempt: AgentApi["inspectAgentSessionAttempt"] =
-  (opts) => human("inspectAgentSessionAttempt", opts);
-export const listAgentSessionProposals: AgentApi["listAgentSessionProposals"] =
-  (opts) => human("listAgentSessionProposals", opts);
-export const resolveAgentSessionProposal: AgentApi["resolveAgentSessionProposal"] =
-  (opts) => human("resolveAgentSessionProposal", opts);
+) => human("listAgentNetworkActivity", opts);
+export const inspectAgentNetworkAttempt: AgentApi["inspectAgentNetworkAttempt"] =
+  (opts) => human("inspectAgentNetworkAttempt", opts);
+export const listAgentNetworkProposals: AgentApi["listAgentNetworkProposals"] =
+  (opts) => human("listAgentNetworkProposals", opts);
+export const resolveAgentNetworkProposal: AgentApi["resolveAgentNetworkProposal"] =
+  (opts) => human("resolveAgentNetworkProposal", opts);
 export const setPersonalMessagingState: AgentApi["setPersonalMessagingState"] =
   (opts) => human("setPersonalMessagingState", opts);

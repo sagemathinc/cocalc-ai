@@ -8,9 +8,9 @@ import { AgentStore } from "./store";
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
-describeDb("session-bound external agents", () => {
+describeDb("network-bound external agents", () => {
   const account = randomUUID();
-  const session = randomUUID();
+  const network = randomUUID();
   const generation = randomUUID();
   const db = new AgentStore();
   const freshAuth = jest.fn(async () => {});
@@ -37,7 +37,7 @@ describeDb("session-bound external agents", () => {
       installation_id: randomUUID(),
       label: "Remote reviewer",
       secret_hash: createHash("sha256").update(secret).digest("hex"),
-      agent_session_id: session,
+      agent_network_id: network,
       ttl_seconds: 3600,
     };
     return {
@@ -59,7 +59,7 @@ describeDb("session-bound external agents", () => {
       hook.mockReset().mockResolvedValue(undefined);
   });
 
-  test("approval creates one finite credential bound to one session", async () => {
+  test("approval creates one finite credential bound to one network", async () => {
     const { options, token } = enrollment();
     const approved = await store.enroll(account, "human-session", options);
 
@@ -68,7 +68,7 @@ describeDb("session-bound external agents", () => {
     expect(approved).toMatchObject({
       installation_id: options.installation_id,
       account_id: account,
-      agent_session_id: session,
+      agent_network_id: network,
       state: "active",
     });
     expect(await store.authenticate(token)).toEqual(approved);
@@ -86,7 +86,7 @@ describeDb("session-bound external agents", () => {
     await expect(
       store.enroll(account, "human-session", {
         ...options,
-        agent_session_id: randomUUID(),
+        agent_network_id: randomUUID(),
       }),
     ).rejects.toThrow("external_approval_conflict");
     await expect(
@@ -120,7 +120,7 @@ describeDb("session-bound external agents", () => {
     );
   });
 
-  test("bounded inbox is session-bound, idempotent, and acknowledged", async () => {
+  test("bounded inbox is network-bound, idempotent, and acknowledged", async () => {
     const { options } = enrollment();
     const installation = await store.enroll(account, "human-session", options);
     const attempt = randomUUID();
@@ -135,8 +135,8 @@ describeDb("session-bound external agents", () => {
       account_id: account,
       installation_id: installation.installation_id,
       attempt_id: attempt,
-      agent_session_id: session,
-      session_generation: generation,
+      agent_network_id: network,
+      network_generation: generation,
       source,
       body: "Please inspect this result.",
     };
@@ -152,9 +152,9 @@ describeDb("session-bound external agents", () => {
       store.enqueue({
         ...input,
         attempt_id: randomUUID(),
-        agent_session_id: randomUUID(),
+        agent_network_id: randomUUID(),
       }),
-    ).rejects.toThrow("external_session_mismatch");
+    ).rejects.toThrow("external_network_mismatch");
     await expect(
       store.acknowledge(
         account,

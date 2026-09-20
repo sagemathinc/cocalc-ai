@@ -12,7 +12,7 @@ const {
 async function run(args = process.argv.slice(2)) {
   const [
     sourceAgent,
-    agentSession,
+    agentNetwork,
     targetProject,
     targetAgent,
     attemptId,
@@ -20,7 +20,7 @@ async function run(args = process.argv.slice(2)) {
   ] = args;
   if (!evidence || args.length !== 6)
     throw Error(
-      "Expected source-agent agent-session target-project target-agent attempt-id evidence-file",
+      "Expected source-agent agent-network target-project target-agent attempt-id evidence-file",
     );
   const credential = await readIdentityCredential();
   if (credential.agent_id !== sourceAgent) throw Error("Wrong scoped QA agent");
@@ -63,7 +63,7 @@ async function run(args = process.argv.slice(2)) {
   try {
     record("begin", {
       sourceAgent,
-      agentSession,
+      agentNetwork,
       targetProject,
       targetAgent,
       attemptId,
@@ -71,7 +71,7 @@ async function run(args = process.argv.slice(2)) {
     const result = await sendIdentityMessage({
       version: 3,
       action: "send",
-      agent_session_id: agentSession,
+      agent_network_id: agentNetwork,
       target: { project_id: targetProject, agent_id: targetAgent },
       attempt_id: attemptId,
       body: `Lost-ack QA ${attemptId}. Acknowledge this message locally only. Do not reply to any agent, execute commands, edit files, or change permissions.`,

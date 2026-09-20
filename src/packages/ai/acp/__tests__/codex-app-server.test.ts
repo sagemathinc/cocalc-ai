@@ -253,7 +253,7 @@ describe("CodexAppServerAgent", () => {
       },
       target_name: "reviewer",
       body: "Review this",
-      agent_session_id: "00000000-0000-4000-8000-000000000012",
+      agent_network_id: "00000000-0000-4000-8000-000000000012",
       attempt_id: "00000000-0000-4000-8000-000000000013",
       outcome: "accepted" as const,
       observed_at: 1234,
@@ -493,7 +493,7 @@ describe("CodexAppServerAgent", () => {
             target: peerMessage.target,
             target_name: "reviewer",
             body: "Review this",
-            agent_session_id: peerMessage.agent_session_id,
+            agent_network_id: peerMessage.agent_network_id,
             attempt_id: peerMessage.attempt_id,
             outcome: "accepted",
             observed_at: 1234,
@@ -4271,8 +4271,8 @@ describe("CodexAppServerAgent", () => {
     expect(text).toContain("project build <path>");
     expect(text).toContain("complete editor pipeline");
     expect(text).toContain("project chat agent destinations --json");
-    expect(text).toContain("--agent-session SESSION_ID --stdin --json");
-    expect(text).toContain("explicit two-way Agent Session");
+    expect(text).toContain("--agent-network SESSION_ID --stdin --json");
+    expect(text).toContain("explicit two-way Agent Network");
     expect(text).toContain("cannot create authority themselves");
     expect(text).toContain("subagents remain internal");
     expect(text).toContain(
@@ -4349,7 +4349,7 @@ describe("CodexAppServerAgent", () => {
     });
   });
 
-  it("uses full-access sandboxing for container-backed sessions by default", async () => {
+  it("uses full-access sandboxing for container-backed networks by default", async () => {
     let threadStartParams: any;
     let turnStartParams: any;
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
@@ -4427,7 +4427,7 @@ describe("CodexAppServerAgent", () => {
     const originalCodexHome = process.env.COCALC_CODEX_HOME;
     const codexHome = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const sessionId = "019d0000-0000-7000-8000-000000000001";
-    const sessionDir = path.join(codexHome, "sessions", "2026", "04", "08");
+    const sessionDir = path.join(codexHome, "networks", "2026", "04", "08");
     mkdirSync(sessionDir, { recursive: true });
     const sessionFile = path.join(
       sessionDir,
@@ -4540,7 +4540,7 @@ describe("CodexAppServerAgent", () => {
     const sessionDir = path.join(
       rootHostPath,
       ".codex",
-      "sessions",
+      "networks",
       "2026",
       "04",
       "08",
@@ -4648,13 +4648,13 @@ describe("CodexAppServerAgent", () => {
     });
   });
 
-  it("resumes container-backed sessions with full access by default", async () => {
+  it("resumes container-backed networks with full access by default", async () => {
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const sessionId = "019d0000-0000-7000-8000-000000000003";
     const sessionDir = path.join(
       rootHostPath,
       ".codex",
-      "sessions",
+      "networks",
       "2026",
       "04",
       "08",
@@ -6974,12 +6974,12 @@ describe("CodexAppServerAgent", () => {
 
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const codexHome = path.join(rootHostPath, ".codex");
-    mkdirSync(path.join(codexHome, "sessions", "2026", "03", "15"), {
+    mkdirSync(path.join(codexHome, "networks", "2026", "03", "15"), {
       recursive: true,
     });
     const rolloutPath = path.join(
       codexHome,
-      "sessions",
+      "networks",
       "2026",
       "03",
       "15",
@@ -7034,7 +7034,7 @@ describe("CodexAppServerAgent", () => {
     );
     db.prepare("INSERT INTO threads(id, rollout_path) VALUES(?, ?)").run(
       "thr-rollout-1",
-      "/root/.codex/sessions/2026/03/15/rollout-test.jsonl",
+      "/root/.codex/networks/2026/03/15/rollout-test.jsonl",
     );
     db.close();
 
@@ -7133,12 +7133,12 @@ describe("CodexAppServerAgent", () => {
   it("surfaces persisted compaction markers in the ACP stream", async () => {
     const rootHostPath = mkdtempSync(path.join(tmpdir(), "codex-home-"));
     const codexHome = path.join(rootHostPath, ".codex");
-    mkdirSync(path.join(codexHome, "sessions", "2026", "03", "15"), {
+    mkdirSync(path.join(codexHome, "networks", "2026", "03", "15"), {
       recursive: true,
     });
     const rolloutPath = path.join(
       codexHome,
-      "sessions",
+      "networks",
       "2026",
       "03",
       "15",
@@ -7176,7 +7176,7 @@ describe("CodexAppServerAgent", () => {
     );
     db.prepare("INSERT INTO threads(id, rollout_path) VALUES(?, ?)").run(
       "thr-compacted-1",
-      "/root/.codex/sessions/2026/03/15/rollout-compacted.jsonl",
+      "/root/.codex/networks/2026/03/15/rollout-compacted.jsonl",
     );
     db.close();
 

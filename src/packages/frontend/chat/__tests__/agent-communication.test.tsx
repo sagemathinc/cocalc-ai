@@ -9,10 +9,10 @@ const peerId = "33333333-3333-4333-8333-333333333333";
 function setup() {
   const api = {
     resolveIdentity: jest.fn(async () => ({ agent_id: agentId })),
-    listAgentSessions: jest.fn(async () => ({
-      sessions: [
+    listAgentNetworks: jest.fn(async () => ({
+      networks: [
         {
-          agent_session_id: "44444444-4444-4444-8444-444444444444",
+          agent_network_id: "44444444-4444-4444-8444-444444444444",
           account_id: "55555555-5555-4555-8555-555555555555",
           title: "Review team",
           state: "active",
@@ -66,12 +66,12 @@ test("session inspection is lazy, keyboard operable, and does not submit a paren
   );
   expect(api.resolveIdentity).not.toHaveBeenCalled();
   await user.tab();
-  const toggle = screen.getByRole("button", { name: "Agent Sessions" });
+  const toggle = screen.getByRole("button", { name: "Agent Networks" });
   expect(document.activeElement).toBe(toggle);
   await user.keyboard("{Enter}");
   expect(await screen.findByText("Review team")).toBeTruthy();
   expect(screen.getByText("2 members")).toBeTruthy();
-  expect(api.listAgentSessions).toHaveBeenCalledWith({ limit: 100 });
+  expect(api.listAgentNetworks).toHaveBeenCalledWith({ limit: 100 });
   expect(submit).not.toHaveBeenCalled();
 });
 
@@ -80,7 +80,7 @@ test("read denial exposes no mutation controls", async () => {
   api.resolveIdentity.mockRejectedValue(new Error("not a collaborator"));
   const user = userEvent.setup();
   render(<AgentCommunication {...props} />);
-  await user.click(screen.getByRole("button", { name: "Agent Sessions" }));
+  await user.click(screen.getByRole("button", { name: "Agent Networks" }));
   expect(await screen.findByText(/not a collaborator/)).toBeTruthy();
-  expect(screen.queryByText("Manage Agent Sessions")).toBeNull();
+  expect(screen.queryByText("Manage Agent Networks")).toBeNull();
 });

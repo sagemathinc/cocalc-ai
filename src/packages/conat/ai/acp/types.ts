@@ -89,8 +89,8 @@ export interface AcpChatContext {
     target: AgentEndpoint;
     target_path: string;
     target_thread_id: string;
-    agent_session_id: string;
-    session_generation: string;
+    agent_network_id: string;
+    network_generation: string;
     account_generation: number;
     configured_delivery: "queued" | "live";
     principal_account_id: string;

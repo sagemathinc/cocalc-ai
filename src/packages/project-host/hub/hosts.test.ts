@@ -64,8 +64,8 @@ describe("wireHostsApi", () => {
       account_id: "target-account",
       authorization: {
         version: 3,
-        agent_session_id: "session",
-        session_generation: "generation",
+        agent_network_id: "session",
+        network_generation: "generation",
       },
     };
     await hubApi.agent.authorizeRpcExecution(opts as any);

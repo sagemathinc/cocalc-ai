@@ -47,25 +47,25 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
     );
     await remove(
       db,
-      "session_mutations",
-      `DELETE FROM agent_session_mutations WHERE (account_id,request_id) IN
-       (SELECT account_id,request_id FROM agent_session_mutations
+      "network_mutations",
+      `DELETE FROM agent_network_mutations WHERE (account_id,request_id) IN
+       (SELECT account_id,request_id FROM agent_network_mutations
         WHERE created_at<now()-interval '30 days' LIMIT $1)`,
       result,
     );
     await remove(
       db,
-      "session_activity",
-      `DELETE FROM agent_session_activity WHERE attempt_id IN
-       (SELECT attempt_id FROM agent_session_activity
+      "network_activity",
+      `DELETE FROM agent_network_activity WHERE attempt_id IN
+       (SELECT attempt_id FROM agent_network_activity
         WHERE observed_at<now()-interval '180 days' LIMIT $1)`,
       result,
     );
     await remove(
       db,
-      "session_proposals",
-      `DELETE FROM agent_session_proposals WHERE proposal_id IN
-       (SELECT proposal_id FROM agent_session_proposals
+      "network_proposals",
+      `DELETE FROM agent_network_proposals WHERE proposal_id IN
+       (SELECT proposal_id FROM agent_network_proposals
         WHERE expires_at<now()-interval '30 days'
           OR (resolved_at IS NOT NULL AND resolved_at<now()-interval '30 days')
         LIMIT $1)`,
@@ -73,9 +73,9 @@ export async function cleanupAgentMessagingHistory(): Promise<CleanupResult> {
     );
     await remove(
       db,
-      "session_broadcasts",
-      `DELETE FROM agent_session_broadcasts WHERE (account_id,broadcast_id) IN
-       (SELECT account_id,broadcast_id FROM agent_session_broadcasts
+      "network_broadcasts",
+      `DELETE FROM agent_network_broadcasts WHERE (account_id,broadcast_id) IN
+       (SELECT account_id,broadcast_id FROM agent_network_broadcasts
         WHERE created_at<now()-interval '30 days' LIMIT $1)`,
       result,
     );

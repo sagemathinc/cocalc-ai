@@ -12,7 +12,7 @@ export interface AgentMessageRuntimeEvent {
   target: AgentRpcTarget;
   target_name?: string;
   body: string;
-  agent_session_id: string;
+  agent_network_id: string;
   attempt_id: string;
   outcome: "accepted" | "rejected" | "unknown";
   observed_at: number;
@@ -43,7 +43,7 @@ export function parseAgentMessageRuntimeEvents(
         value?.direction === "outgoing" &&
         typeof value?.body === "string" &&
         typeof value?.attempt_id === "string" &&
-        typeof value?.agent_session_id === "string" &&
+        typeof value?.agent_network_id === "string" &&
         ["accepted", "rejected", "unknown"].includes(value?.outcome)
       ) {
         events.push(value as AgentMessageRuntimeEvent);

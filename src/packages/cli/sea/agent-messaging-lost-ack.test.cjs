@@ -32,7 +32,7 @@ test("lost-ack adapter wraps one exact session attempt without retries", async (
               version: 3,
               outcome,
               target: body.target,
-              agent_session_id: body.agent_session_id,
+              agent_network_id: body.agent_network_id,
               attempt_id: body.attempt_id,
               observed_at: Date.now(),
             },
@@ -60,7 +60,7 @@ test("lost-ack adapter wraps one exact session attempt without retries", async (
     const first = await run(args);
     assert.equal(first.passed, true);
     assert.equal(first.result.outcome, "unknown");
-    assert.equal(first.result.agent_session_id, args[1]);
+    assert.equal(first.result.agent_network_id, args[1]);
     const evidence = await fs.readFile(args[5], "utf8");
     assert.ok(evidence.includes('"accepted-ack-discarded"'));
     assert.ok(!evidence.includes(credential.token));

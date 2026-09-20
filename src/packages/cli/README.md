@@ -384,10 +384,10 @@ and cross-site identity federation are not provided by this command. To use a
 different site, explicitly select its API/profile and authorized credentials;
 never put credentials into the message text.
 
-### Named Agent Sessions
+### Named Agent Networks
 
 Name agents in the Agents page or beside the thread title, then explicitly put
-two or more agents in an Agent Session. A session is always a complete graph:
+two or more agents in an Agent Network. A session is always a complete graph:
 every active member can message every other member in both directions. Session
 authority belongs to the human account that created it, not everyone sharing a
 thread.
@@ -404,7 +404,7 @@ EOF
 
 `--to` resolves an exact named member of the exact `--agent-session`; it never
 selects the only matching session or guesses from project titles. Agents may use
-`agent propose-session` to place a bounded typed proposal in the Agents page,
+`agent propose-network` to place a bounded typed proposal in the Agents page,
 but only a human can approve it. Approval never replays a send.
 
 Named send returns `accepted`, `rejected`, or `unknown` with an attempt ID
@@ -429,7 +429,7 @@ cocalc project chat agent inbox --external-agent security --json
 ```
 
 Open the printed approval URL, sign in and complete fresh authentication. Select
-the exact Agent Session and a finite lifetime (at most 30 days). Credentials
+the exact Agent Network and a finite lifetime (at most 30 days). Credentials
 are stored separately in `~/.config/cocalc/agents/security.json` with owner-only
 file permissions. Anyone able to read that file can use the installation;
 do not put it in a shared directory, source control, or a chat message. These

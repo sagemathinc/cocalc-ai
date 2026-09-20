@@ -5,7 +5,7 @@ import {
   type AgentEndpoint,
   type AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
-import type { AgentSessionDiscovery } from "@cocalc/conat/agents/personal";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { readIdentityCredential, sendIdentityMessage } from "./agent-message";
 
 export interface AgentNameBinding {
@@ -15,14 +15,14 @@ export interface AgentNameBinding {
 
 export interface ResolvedAgentDestination {
   target: AgentRpcTarget;
-  agent_session_id: string;
+  agent_network_id: string;
 }
 
 export function resolveAgentName(
   input: string,
-  directory: AgentSessionDiscovery,
+  directory: AgentNetworkDiscovery,
   references: AgentNameBinding[] = [],
-  requestedSession?: string,
+  requestedNetwork?: string,
 ): ResolvedAgentDestination {
   const name = input.trim().replace(/^@/, "");
   if (!/^[a-z](?:[a-z0-9-]{0,30}[a-z0-9])?$/.test(name))
@@ -30,7 +30,7 @@ export function resolveAgentName(
   // A selected mention remains pinned even if the account directory changes.
   const selected = references.filter((ref) => ref.name === name);
   if (!selected.length) {
-    // Names are resolved from the current account-home session directory.
+    // Names are resolved from the current account-home network directory.
   }
   const peers = directory.peers.filter(({ member }) =>
     member.kind === "registered"
@@ -68,19 +68,19 @@ export function resolveAgentName(
     })
   )
     throw new Error(`Ambiguous agent reference @${name}; no message was sent`);
-  const sessions = first.sessions.filter(
-    ({ agent_session_id }) =>
-      requestedSession === undefined || agent_session_id === requestedSession,
+  const networks = first.networks.filter(
+    ({ agent_network_id }) =>
+      requestedNetwork === undefined || agent_network_id === requestedNetwork,
   );
-  if (sessions.length !== 1)
+  if (networks.length !== 1)
     throw new Error(
-      sessions.length
-        ? `Multiple Agent Sessions include @${name}; specify --agent-session ID`
-        : `@${name} is not in Agent Session ${requestedSession}; no message was sent`,
+      networks.length
+        ? `Multiple Agent Networks include @${name}; specify --agent-network ID`
+        : `@${name} is not in Agent Network ${requestedNetwork}; no message was sent`,
     );
   return {
     target,
-    agent_session_id: sessions[0].agent_session_id,
+    agent_network_id: networks[0].agent_network_id,
   };
 }
 
@@ -107,12 +107,12 @@ export async function readTurnAgentReferences(): Promise<AgentNameBinding[]> {
 export async function resolveRuntimeAgentName(
   name: string,
   apiUrl?: string,
-  requestedSession?: string,
+  requestedNetwork?: string,
 ): Promise<ResolvedAgentDestination> {
   const references = await readTurnAgentReferences();
   const destinations = (await sendIdentityMessage(
     { version: 3, action: "destinations" },
     apiUrl,
-  )) as AgentSessionDiscovery;
-  return resolveAgentName(name, destinations, references, requestedSession);
+  )) as AgentNetworkDiscovery;
+  return resolveAgentName(name, destinations, references, requestedNetwork);
 }

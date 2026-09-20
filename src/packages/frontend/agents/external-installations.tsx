@@ -72,8 +72,8 @@ export function ExternalAgentInstallations({
         External Agent Installations
       </h3>
       <p>
-        Session-scoped credentials for agents on other computers or sites. Each
-        installation sends and receives only within its approved Agent Session.
+        Network-scoped credentials for agents on other computers or sites. Each
+        installation sends and receives only within its approved Agent Network.
         Account pause and revoke-all also apply.
       </p>
       {error && <Alert type="error" role="alert" title={error} />}
@@ -96,7 +96,7 @@ export function ExternalAgentInstallations({
                 . Expires {new Date(item.expires_at).toLocaleString()}.
               </p>
               <p>
-                Agent Session <code>{item.agent_session_id}</code>. Installation{" "}
+                Agent Network <code>{item.agent_network_id}</code>. Installation{" "}
                 <code style={{ overflowWrap: "anywhere" }}>
                   {item.installation_id}
                 </code>

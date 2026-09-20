@@ -69,7 +69,7 @@ export async function approveExternalAgentLogin(opts: {
   session_hash: string;
   origin_bay_id: string;
   challenge_id: string;
-  agent_session_id: string;
+  agent_network_id: string;
   ttl_seconds: number;
   agent_id?: string;
 }) {
@@ -103,7 +103,7 @@ export async function approveExternalAgentLogin(opts: {
       installation_id: opts.challenge_id,
       secret_hash,
       label,
-      agent_session_id: opts.agent_session_id,
+      agent_network_id: opts.agent_network_id,
       ttl_seconds: opts.ttl_seconds,
       ...(opts.agent_id ? { agent_id: opts.agent_id } : {}),
     },
@@ -111,11 +111,11 @@ export async function approveExternalAgentLogin(opts: {
   );
   try {
     const { members } = await personalAgentLimits(opts.account_id);
-    await personalStore().updateSession(
+    await personalStore().updateNetwork(
       opts.account_id,
       {
         request_id: opts.challenge_id,
-        agent_session_id: opts.agent_session_id,
+        agent_network_id: opts.agent_network_id,
         action: "add-member",
         member: {
           kind: "external",

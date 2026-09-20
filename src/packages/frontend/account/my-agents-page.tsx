@@ -3,7 +3,7 @@ import { Alert, Button, Card, Input, Modal, Space, Tag } from "antd";
 import { defineMessage } from "react-intl";
 import type { SetPersonalMessagingStateOptions } from "@cocalc/conat/agents/personal";
 import { NameAgent } from "@cocalc/frontend/agents/name-agent";
-import { AgentSessions } from "@cocalc/frontend/agents/agent-sessions";
+import { AgentNetworks } from "@cocalc/frontend/agents/agent-networks";
 import { ExternalAgentInstallations } from "@cocalc/frontend/agents/external-installations";
 import {
   personalAgentApi,
@@ -45,7 +45,7 @@ function AccountAgentsPage() {
           ? "All future agent messaging is paused."
           : action === "resume"
             ? "Agent messaging resumed."
-            : "All Agent Sessions were closed and account messaging authority was revoked.",
+            : "All Agent Networks were closed and account messaging authority was revoked.",
       );
       refreshNamedAgents();
       setRevision((value) => value + 1);
@@ -75,8 +75,8 @@ function AccountAgentsPage() {
       <div>
         <h1 style={{ marginBottom: 4 }}>Agents</h1>
         <p>
-          Name reusable agents and put them in Agent Sessions. Every active
-          session is a two-way communication group; named agents alone cannot
+          Name reusable agents and put them in Agent Networks. Every active
+          network is a two-way communication group; named agents alone cannot
           message one another.
         </p>
       </div>
@@ -113,16 +113,16 @@ function AccountAgentsPage() {
           disabled={busy || !directory?.controls}
           onClick={() =>
             Modal.confirm({
-              title: "Revoke all Agent Sessions?",
+              title: "Revoke all Agent Networks?",
               content:
-                "This permanently closes every Agent Session and changes the account authorization generation. Already accepted work is not canceled.",
+                "This permanently closes every Agent Network and changes the account authorization generation. Already accepted work is not canceled.",
               okText: "Revoke all",
               okButtonProps: { danger: true },
               onOk: () => accountAction("revoke_all"),
             })
           }
         >
-          Revoke all sessions
+          Revoke all networks
         </Button>
       </div>
       {(directoryError || error) && (
@@ -198,7 +198,7 @@ function AccountAgentsPage() {
                       Modal.confirm({
                         title: `Remove @${agent.name} from Agents?`,
                         content:
-                          "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Sessions keep their records, but this agent becomes unavailable to those sessions.",
+                          "This frees a named-agent slot. The conversation and artifacts are preserved, and historical Agent Networks keep their records, but this agent becomes unavailable to those networks.",
                         okText: "Remove from Agents",
                         okButtonProps: { danger: true },
                         onOk: async () => {
@@ -230,7 +230,7 @@ function AccountAgentsPage() {
           ))}
         </Space>
       </section>
-      <AgentSessions key={revision} agents={directory?.agents ?? []} />
+      <AgentNetworks key={revision} agents={directory?.agents ?? []} />
       <ExternalAgentInstallations revision={revision} />
     </Space>
   );
@@ -240,7 +240,7 @@ export const MY_AGENTS_SETTINGS_PAGE = {
   component: MyAgentsPage,
   description: defineMessage({
     id: "account.settings.my-agents.description",
-    defaultMessage: "Your named agents and two-way Agent Sessions.",
+    defaultMessage: "Your named agents and two-way Agent Networks.",
   }),
   icon: "robot",
   key: "my-agents",

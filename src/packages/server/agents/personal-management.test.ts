@@ -1,7 +1,7 @@
 import { personalControl } from "./personal";
 
-const mockSessions = jest.fn();
-const mockUpdateSession = jest.fn();
+const mockNetworks = jest.fn();
+const mockUpdateNetwork = jest.fn();
 const mockAssertHome = jest.fn();
 const mockNames = jest.fn();
 const mockRetire = jest.fn();
@@ -15,9 +15,9 @@ jest.mock("./store", () => ({
 jest.mock("./personal-store", () => ({
   PersonalAgentStore: jest.fn().mockImplementation(() => ({
     assertHome: mockAssertHome,
-    sessions: mockSessions,
+    networks: mockNetworks,
     controls: async () => ({ paused: false, generation: 0 }),
-    updateSession: mockUpdateSession,
+    updateNetwork: mockUpdateNetwork,
     names: mockNames,
     retire: mockRetire,
   })),
@@ -50,7 +50,7 @@ jest.mock("@cocalc/server/membership/resolve", () => ({
   resolveMembershipForAccount: async () => ({
     effective_limits: {
       max_named_agents: 15,
-      max_agent_session_members: 8,
+      max_agent_network_members: 8,
     },
   }),
 }));
@@ -60,40 +60,40 @@ beforeEach(() => {
   mockHome = "home";
   jest.clearAllMocks();
   mockAssertHome.mockResolvedValue(undefined);
-  mockSessions.mockResolvedValue({ sessions: [], active_count: 0 });
+  mockNetworks.mockResolvedValue({ networks: [], active_count: 0 });
   mockNames.mockResolvedValue([]);
 });
 
-test("session inspection passes the account-home fence", async () => {
+test("network inspection passes the account-home fence", async () => {
   await expect(
     personalControl({
       account_id,
       home_bay_id: "home",
-      request: { action: "listAgentSessions", options: {} },
+      request: { action: "listAgentNetworks", options: {} },
     }),
   ).resolves.toMatchObject({
     enabled: true,
-    sessions: [],
-    usage: { active_sessions: 0, member_limit: 8 },
+    networks: [],
+    usage: { active_networks: 0, member_limit: 8 },
   });
   expect(mockAssertHome).toHaveBeenCalledWith(account_id);
 });
 
-test("restrictive session pause remains available", async () => {
+test("restrictive network pause remains available", async () => {
   const options = {
     request_id: "22222222-2222-4222-8222-222222222222",
-    agent_session_id: "33333333-3333-4333-8333-333333333333",
+    agent_network_id: "33333333-3333-4333-8333-333333333333",
     action: "pause" as const,
   };
-  mockUpdateSession.mockResolvedValue({
-    agent_session_id: options.agent_session_id,
+  mockUpdateNetwork.mockResolvedValue({
+    agent_network_id: options.agent_network_id,
   });
   await personalControl({
     account_id,
     home_bay_id: "home",
-    request: { action: "updateAgentSession", options },
+    request: { action: "updateAgentNetwork", options },
   });
-  expect(mockUpdateSession).toHaveBeenCalledWith(account_id, options, 8, false);
+  expect(mockUpdateNetwork).toHaveBeenCalledWith(account_id, options, 8, false);
 });
 
 test("named-agent directory reports membership usage", async () => {
@@ -113,8 +113,8 @@ test("inspection rejects a stale home route", async () => {
     personalControl({
       account_id,
       home_bay_id: "home",
-      request: { action: "listAgentSessions", options: {} },
+      request: { action: "listAgentNetworks", options: {} },
     }),
   ).rejects.toThrow("stale personal account home route");
-  expect(mockSessions).not.toHaveBeenCalled();
+  expect(mockNetworks).not.toHaveBeenCalled();
 });

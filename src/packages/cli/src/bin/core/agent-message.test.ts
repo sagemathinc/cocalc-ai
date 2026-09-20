@@ -42,8 +42,8 @@ test("missing identity never falls back to account or project credentials", asyn
   }
 });
 
-test("session send uses one scoped request and reports a lost result as unknown", async () => {
-  const dir = await mkdtemp(join(tmpdir(), "agent-session-cli-"));
+test("network send uses one scoped request and reports a lost result as unknown", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "agent-network-cli-"));
   const previous = process.env.COCALC_AGENT_IDENTITY_FILE;
   const credential = {
     agent_id: randomUUID(),
@@ -56,7 +56,7 @@ test("session send uses one scoped request and reports a lost result as unknown"
     version: 3,
     action: "send",
     attempt_id: randomUUID(),
-    agent_session_id: randomUUID(),
+    agent_network_id: randomUUID(),
     target: { agent_id: randomUUID(), project_id: randomUUID() },
     body: "review this",
   };

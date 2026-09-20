@@ -328,7 +328,7 @@ describe("AgentMessageStatus", () => {
               target: { project_id: "project", agent_id: "agent" },
               target_name: "reviewer",
               body: "Please check the proof.",
-              agent_session_id: "session",
+              agent_network_id: "session",
               attempt_id: "attempt",
               outcome: "accepted",
               observed_at: 1,

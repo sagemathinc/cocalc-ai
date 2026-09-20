@@ -11,7 +11,7 @@ const endpoint = () => ({ project_id: randomUUID(), agent_id: randomUUID() });
 const request = (): AgentRpcSend => ({
   version: 3,
   attempt_id: randomUUID(),
-  agent_session_id: randomUUID(),
+  agent_network_id: randomUUID(),
   target: endpoint(),
   body: "review this",
 });

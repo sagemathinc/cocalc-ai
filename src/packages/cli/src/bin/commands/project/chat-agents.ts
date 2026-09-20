@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { Command } from "commander";
-import type { AgentSessionMemberLocator } from "@cocalc/conat/agents/personal";
+import type { AgentNetworkMemberLocator } from "@cocalc/conat/agents/personal";
 import type { AgentRpcTarget } from "@cocalc/conat/agents/rpc";
 import type { ProjectCommandDeps } from "../project";
 import { sendIdentityMessage } from "../../core/agent-message";
@@ -18,10 +18,10 @@ export function registerChatAgentCommands(
   } = deps;
   const agent = chat
     .command("agent")
-    .description("registered agent identities and two-way Agent Sessions");
+    .description("registered agent identities and two-way Agent Networks");
   const rpc = agent
     .command("rpc")
-    .description("session-authorized agent messaging protocol v3");
+    .description("network-authorized agent messaging protocol v3");
 
   const stdin = async () => {
     let value = "";
@@ -49,14 +49,14 @@ export function registerChatAgentCommands(
   agent
     .command("destinations")
     .option("--external-agent <profile>", "use an enrolled external agent")
-    .description("discover peers and Agent Sessions available to this runtime")
+    .description("discover peers and Agent Networks available to this runtime")
     .action((opts, cmd) =>
       destinations(opts, cmd, "project chat agent destinations"),
     );
   rpc
     .command("destinations")
     .option("--external-agent <profile>", "use an enrolled external agent")
-    .description("discover peers and exact session identifiers")
+    .description("discover peers and exact network identifiers")
     .action((opts, cmd) =>
       destinations(opts, cmd, "project chat agent rpc destinations"),
     );
@@ -67,7 +67,7 @@ export function registerChatAgentCommands(
       "enrolled external-agent profile",
     )
     .option("--limit <count>", "maximum messages to return", "50")
-    .description("list pending messages for an external session member")
+    .description("list pending messages for an external network member")
     .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
       const limit = Number(opts.limit);
@@ -101,7 +101,7 @@ export function registerChatAgentCommands(
       );
     });
   agent
-    .command("propose-session")
+    .command("propose-network")
     .requiredOption(
       "--members <json>",
       "JSON array of explicit registered/external member locators",
@@ -111,10 +111,10 @@ export function registerChatAgentCommands(
     .option("--delivery <mode>", "queued or live", "queued")
     .option("--reason <text>", "short human-facing reason")
     .option("--external-agent <profile>", "use an enrolled external agent")
-    .description("propose a session for explicit human approval")
+    .description("propose a network for explicit human approval")
     .action(async (opts, cmd) => {
       const globals = globalsFrom(cmd);
-      let members: AgentSessionMemberLocator[];
+      let members: AgentNetworkMemberLocator[];
       try {
         members = JSON.parse(opts.members);
       } catch {
@@ -122,7 +122,7 @@ export function registerChatAgentCommands(
       }
       const request = {
         version: 3 as const,
-        action: "propose-session" as const,
+        action: "propose-network" as const,
         proposal_id: opts.proposalId ?? randomUUID(),
         title: opts.title,
         delivery_mode: opts.delivery,
@@ -131,7 +131,7 @@ export function registerChatAgentCommands(
       };
       emitSuccess(
         { globals },
-        "project chat agent propose-session",
+        "project chat agent propose-network",
         opts.externalAgent
           ? await sendExternalAgentMessage(opts.externalAgent, request)
           : await sendIdentityMessage(request, globals.api),
@@ -139,12 +139,12 @@ export function registerChatAgentCommands(
     });
   agent
     .command("broadcast [message...]")
-    .requiredOption("--agent-session <uuid>", "exact Agent Session")
+    .requiredOption("--agent-network <uuid>", "exact Agent Network")
     .requiredOption("--targets <json>", "JSON array of explicit targets")
     .option("--broadcast-id <uuid>", "stable parent retry id")
     .option("--stdin", "read the message from standard input")
     .option("--external-agent <profile>", "use an enrolled external agent")
-    .description("send one bounded message to several session members")
+    .description("send one bounded message to several network members")
     .action(async (message: string[], opts, cmd) => {
       if (opts.stdin && message.length)
         throw new Error("use either message arguments or --stdin, not both");
@@ -159,7 +159,7 @@ export function registerChatAgentCommands(
         version: 3 as const,
         action: "broadcast" as const,
         broadcast_id: opts.broadcastId ?? randomUUID(),
-        agent_session_id: opts.agentSession,
+        agent_network_id: opts.agentNetwork,
         targets,
         body,
       };
@@ -175,7 +175,7 @@ export function registerChatAgentCommands(
   rpc
     .command("inspect <attempt-id>")
     .option("--external-agent <profile>", "use an enrolled external agent")
-    .requiredOption("--agent-session <uuid>", "exact Agent Session")
+    .requiredOption("--agent-network <uuid>", "exact Agent Network")
     .requiredOption("--to-agent <uuid>", "target from the original outcome")
     .requiredOption("--target-project <uuid>", "target project")
     .description("inspect an exact attempt without retrying or starting work")
@@ -185,7 +185,7 @@ export function registerChatAgentCommands(
         version: 3 as const,
         action: "inspect" as const,
         attempt_id,
-        agent_session_id: opts.agentSession,
+        agent_network_id: opts.agentNetwork,
         target: { project_id: opts.targetProject, agent_id: opts.toAgent },
       };
       emitSuccess(

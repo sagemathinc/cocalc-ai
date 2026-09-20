@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Alert, Button, Input, Modal, Radio, Space, Spin, Tag } from "antd";
+import { Alert, Button, Input, Modal, Radio, Space, Spin } from "antd";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
 import type {
-  AgentSession,
-  AgentSessionDirectory,
-  AgentSessionMember,
+  AgentNetwork,
+  AgentNetworkDirectory,
+  AgentNetworkMember,
   NamedAgent,
 } from "@cocalc/conat/agents/personal";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
@@ -19,10 +19,11 @@ import { useBoundAgentAccount } from "./use-bound-account";
 import { useSourceAgentName } from "./source-agent-name";
 import type { AgentNameContext } from "./name-context";
 import { cachedAgentNameContext } from "./name-context";
+import { AgentNetworkSummary } from "./agent-network-summary";
 
-const NEW_SESSION = "new";
+const NEW_NETWORK = "new";
 
-export interface SessionApprovalTarget {
+export interface NetworkApprovalTarget {
   source: AgentEndpoint;
   target: AgentEndpoint;
   sourceLabel: string;
@@ -34,48 +35,41 @@ export interface SessionApprovalTarget {
 }
 
 function registeredMember(
-  session: AgentSession,
+  network: AgentNetwork,
   endpoint: AgentEndpoint,
-): AgentSessionMember | undefined {
-  return session.members.find(
+): AgentNetworkMember | undefined {
+  return network.members.find(
     (member) =>
       member.kind === "registered" && sameEndpoint(member.endpoint, endpoint),
   );
 }
 
-function memberLabel(member: AgentSessionMember): string {
-  if (member.kind === "external") return member.label || "External agent";
-  return member.name
-    ? `@${member.name}`
-    : member.thread_title?.trim() || "Agent";
+function networkLabel(network: AgentNetwork): string {
+  return network.title?.trim() || "Untitled Agent Network";
 }
 
-function sessionLabel(session: AgentSession): string {
-  return session.title?.trim() || "Untitled Agent Session";
-}
-
-async function loadAllSessions(): Promise<AgentSessionDirectory> {
+async function loadAllNetworks(): Promise<AgentNetworkDirectory> {
   let cursor: string | undefined;
-  let directory: AgentSessionDirectory | undefined;
-  const sessions: AgentSession[] = [];
+  let directory: AgentNetworkDirectory | undefined;
+  const networks: AgentNetwork[] = [];
   do {
-    const page = await personalAgentApi().listAgentSessions({
+    const page = await personalAgentApi().listAgentNetworks({
       limit: 100,
       ...(cursor ? { cursor } : {}),
     });
     directory = page;
-    sessions.push(...page.sessions);
+    networks.push(...page.networks);
     cursor = page.next_cursor;
-  } while (cursor && sessions.length < 1000);
-  if (!directory) throw new Error("Agent Sessions are unavailable");
-  return { ...directory, sessions };
+  } while (cursor && networks.length < 1000);
+  if (!directory) throw new Error("Agent Networks are unavailable");
+  return { ...directory, networks };
 }
 
-export function SessionApproval({
+export function NetworkApproval({
   value,
   onClose,
 }: {
-  value: SessionApprovalTarget;
+  value: NetworkApprovalTarget;
   onClose: (approved: boolean) => void;
 }) {
   const boundAccount = useBoundAgentAccount();
@@ -83,7 +77,7 @@ export function SessionApproval({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
-  const [directory, setDirectory] = useState<AgentSessionDirectory>();
+  const [directory, setDirectory] = useState<AgentNetworkDirectory>();
   const [selection, setSelection] = useState("");
   const [newTitle, setNewTitle] = useState("");
   const lock = useRef(false);
@@ -101,43 +95,43 @@ export function SessionApproval({
     ? cachedAgentNameContext(value.sourceContext)
     : undefined;
 
-  const targetSessions =
-    directory?.sessions.filter(
-      (session) =>
-        session.state === "active" && !!registeredMember(session, value.target),
+  const targetNetworks =
+    directory?.networks.filter(
+      (network) =>
+        network.state === "active" && !!registeredMember(network, value.target),
     ) ?? [];
-  const sharedSession = targetSessions.find((session) =>
-    registeredMember(session, value.source),
+  const sharedNetwork = targetNetworks.find((network) =>
+    registeredMember(network, value.source),
   );
-  const joinableSessions = targetSessions.filter(
-    (session) =>
-      !registeredMember(session, value.source) &&
-      session.members.length < (directory?.usage.member_limit ?? 0),
+  const joinableNetworks = targetNetworks.filter(
+    (network) =>
+      !registeredMember(network, value.source) &&
+      network.members.length < (directory?.usage.member_limit ?? 0),
   );
-  const selectedSession = joinableSessions.find(
-    ({ agent_session_id }) => agent_session_id === selection,
+  const selectedNetwork = joinableNetworks.find(
+    ({ agent_network_id }) => agent_network_id === selection,
   );
   const selectedProjects = new Set(
-    selectedSession?.members.flatMap((member) =>
+    selectedNetwork?.members.flatMap((member) =>
       member.kind === "registered" ? [member.endpoint.project_id] : [],
     ) ?? [],
   );
-  const crossesProject = selectedSession
+  const crossesProject = selectedNetwork
     ? selectedProjects.size > 0 &&
       !selectedProjects.has(value.source.project_id)
     : value.source.project_id !== value.target.project_id;
-  const creating = selection === NEW_SESSION;
-  const atSessionLimit =
+  const creating = selection === NEW_NETWORK;
+  const atNetworkLimit =
     !!directory &&
-    directory.usage.active_sessions >= directory.usage.session_limit;
+    directory.usage.active_networks >= directory.usage.network_limit;
   const canSubmit =
     !busy &&
     !loading &&
     !loadError &&
     sourceNaming.canApprove &&
-    (!!sharedSession ||
-      !!selectedSession ||
-      (creating && !!newTitle.trim() && !atSessionLimit));
+    (!!sharedNetwork ||
+      !!selectedNetwork ||
+      (creating && !!newTitle.trim() && !atNetworkLimit));
 
   function requestId(key: string): string {
     let request = requestIds.current.get(key);
@@ -153,26 +147,26 @@ export function SessionApproval({
     setLoading(true);
     setLoadError("");
     try {
-      const next = await loadAllSessions();
+      const next = await loadAllNetworks();
       if (!alive.current || revision !== loadRevision.current) return;
       setDirectory(next);
-      const activeForTarget = next.sessions.filter(
-        (session) =>
-          session.state === "active" &&
-          !!registeredMember(session, value.target),
+      const activeForTarget = next.networks.filter(
+        (network) =>
+          network.state === "active" &&
+          !!registeredMember(network, value.target),
       );
-      const shared = activeForTarget.find((session) =>
-        registeredMember(session, value.source),
+      const shared = activeForTarget.find((network) =>
+        registeredMember(network, value.source),
       );
       const firstJoinable = activeForTarget.find(
-        (session) =>
-          !registeredMember(session, value.source) &&
-          session.members.length < next.usage.member_limit,
+        (network) =>
+          !registeredMember(network, value.source) &&
+          network.members.length < next.usage.member_limit,
       );
       setSelection(
-        shared?.agent_session_id ??
-          firstJoinable?.agent_session_id ??
-          NEW_SESSION,
+        shared?.agent_network_id ??
+          firstJoinable?.agent_network_id ??
+          NEW_NETWORK,
       );
     } catch (err) {
       if (alive.current && revision === loadRevision.current)
@@ -200,25 +194,25 @@ export function SessionApproval({
       boundAccount.assertCurrent();
       await sourceNaming.ensureNamed();
       boundAccount.assertCurrent();
-      if (!alive.current) throw new Error("The session context changed.");
-      if (sharedSession) {
+      if (!alive.current) throw new Error("The network context changed.");
+      if (sharedNetwork) {
         onClose(true);
         return;
       }
       const completed = await runFreshAuthAction(async () => {
         boundAccount.assertCurrent();
-        if (selectedSession) {
-          const key = `join:${selectedSession.agent_session_id}:${value.source.agent_id}:${selectedSession.generation}`;
-          await personalAgentApi().updateAgentSession({
+        if (selectedNetwork) {
+          const key = `join:${selectedNetwork.agent_network_id}:${value.source.agent_id}:${selectedNetwork.generation}`;
+          await personalAgentApi().updateAgentNetwork({
             request_id: requestId(key),
-            agent_session_id: selectedSession.agent_session_id,
+            agent_network_id: selectedNetwork.agent_network_id,
             action: "add-member",
             member: { kind: "registered", endpoint: value.source },
           });
         } else {
           const title = newTitle.trim();
           const key = `create:${title}:${value.source.agent_id}:${value.target.agent_id}`;
-          await personalAgentApi().createAgentSession({
+          await personalAgentApi().createAgentNetwork({
             request_id: requestId(key),
             title,
             delivery_mode: "queued",
@@ -251,11 +245,11 @@ export function SessionApproval({
         width={640}
         title="Connect agents"
         okText={
-          sharedSession
-            ? "Use shared session"
-            : selectedSession
-              ? "Join session"
-              : "Create session"
+          sharedNetwork
+            ? "Use shared network"
+            : selectedNetwork
+              ? "Join network"
+              : "Create network"
         }
         confirmLoading={busy}
         okButtonProps={{ disabled: !canSubmit }}
@@ -269,7 +263,7 @@ export function SessionApproval({
           <p style={{ margin: 0 }}>
             Connect <strong>{sourceLabel}</strong> with{" "}
             <strong>{value.targetLabel}</strong> through a topic-oriented Agent
-            Session.
+            Network.
           </p>
           <div style={{ color: UI_COLORS.secondary }}>
             {sourceContext?.thread_title ?? value.sourceLabel} /{" "}
@@ -281,13 +275,13 @@ export function SessionApproval({
           {sourceNaming.field}
           {loading && (
             <div role="status" style={{ textAlign: "center", padding: 20 }}>
-              <Spin /> Loading {value.targetLabel}&apos;s sessions...
+              <Spin /> Loading {value.targetLabel}&apos;s networks...
             </div>
           )}
           {loadError && (
             <Alert
               type="error"
-              title="Unable to load Agent Sessions"
+              title="Unable to load Agent Networks"
               description={
                 <Space orientation="vertical">
                   <span>{loadError}</span>
@@ -298,62 +292,52 @@ export function SessionApproval({
               }
             />
           )}
-          {!loading && !loadError && sharedSession && (
-            <Alert
-              type="success"
-              title="These agents already share a session"
-              description={sessionLabel(sharedSession)}
-            />
+          {!loading && !loadError && sharedNetwork && (
+            <Space orientation="vertical" style={{ width: "100%" }}>
+              <Alert
+                type="success"
+                title="These agents already share a network"
+              />
+              <AgentNetworkSummary network={sharedNetwork} compact />
+            </Space>
           )}
-          {!loading && !loadError && !sharedSession && (
+          {!loading && !loadError && !sharedNetwork && (
             <Radio.Group
-              aria-label="Choose an Agent Session"
+              aria-label="Choose an Agent Network"
               value={selection}
               onChange={(event) => setSelection(event.target.value)}
               style={{ width: "100%" }}
             >
               <Space orientation="vertical" style={{ width: "100%" }}>
-                {joinableSessions.length > 0 && (
-                  <strong>Join an existing session</strong>
+                {joinableNetworks.length > 0 && (
+                  <strong>Join an existing network</strong>
                 )}
-                {joinableSessions.map((session) => (
+                {joinableNetworks.map((network) => (
                   <div
-                    key={session.agent_session_id}
+                    key={network.agent_network_id}
                     style={{
-                      border: `1px solid ${selection === session.agent_session_id ? UI_COLORS.info : UI_COLORS.border}`,
+                      border: `1px solid ${selection === network.agent_network_id ? UI_COLORS.info : UI_COLORS.border}`,
                       borderRadius: 8,
                       padding: "10px 12px",
                       background:
-                        selection === session.agent_session_id
+                        selection === network.agent_network_id
                           ? UI_COLORS.infoBg
                           : UI_COLORS.surface,
                     }}
                   >
-                    <Radio value={session.agent_session_id}>
-                      <strong>{sessionLabel(session)}</strong>
+                    <Radio value={network.agent_network_id}>
+                      <strong>{networkLabel(network)}</strong>
                     </Radio>
-                    <div
-                      style={{
-                        margin: "7px 0 0 24px",
-                        color: UI_COLORS.secondary,
-                      }}
-                    >
-                      <Space wrap size={[4, 4]}>
-                        {session.members.map((member) => (
-                          <Tag key={member.member_id}>
-                            {memberLabel(member)}
-                          </Tag>
-                        ))}
-                        <Tag>{session.delivery_mode} delivery</Tag>
-                      </Space>
+                    <div style={{ margin: "7px 0 0 24px" }}>
+                      <AgentNetworkSummary network={network} compact />
                     </div>
                   </div>
                 ))}
-                {targetSessions.length > joinableSessions.length && (
+                {targetNetworks.length > joinableNetworks.length && (
                   <div style={{ color: UI_COLORS.secondary }}>
-                    {targetSessions.length - joinableSessions.length} other
-                    active session
-                    {targetSessions.length - joinableSessions.length === 1
+                    {targetNetworks.length - joinableNetworks.length} other
+                    active network
+                    {targetNetworks.length - joinableNetworks.length === 1
                       ? " is"
                       : "s are"}{" "}
                     full.
@@ -367,16 +351,16 @@ export function SessionApproval({
                     background: creating ? UI_COLORS.infoBg : UI_COLORS.surface,
                   }}
                 >
-                  <Radio value={NEW_SESSION} disabled={atSessionLimit}>
-                    <strong>Create a new topic session</strong>
+                  <Radio value={NEW_NETWORK} disabled={atNetworkLimit}>
+                    <strong>Create a new topic network</strong>
                   </Radio>
                   {creating && (
                     <div style={{ margin: "9px 0 0 24px" }}>
-                      <label htmlFor="new-agent-session-topic">
-                        Session topic
+                      <label htmlFor="new-agent-network-topic">
+                        Network topic
                       </label>
                       <Input
-                        id="new-agent-session-topic"
+                        id="new-agent-network-topic"
                         autoFocus
                         value={newTitle}
                         maxLength={120}
@@ -390,25 +374,25 @@ export function SessionApproval({
               </Space>
             </Radio.Group>
           )}
-          {selectedSession && (
+          {selectedNetwork && (
             <Alert
               type="info"
-              title={`Add ${sourceLabel} to ${sessionLabel(selectedSession)}`}
+              title={`Add ${sourceLabel} to ${networkLabel(selectedNetwork)}`}
               description={`${sourceLabel} will be able to message every current member, and every member will be able to message ${sourceLabel}.`}
             />
           )}
-          {crossesProject && !sharedSession && (
+          {crossesProject && !sharedNetwork && (
             <Alert
               type="warning"
               title="Cross-project prompt and data bridge"
-              description="This expands the session into another project. Fresh authentication is required before the change is applied."
+              description="This expands the network into another project. Fresh authentication is required before the change is applied."
             />
           )}
-          {!sharedSession && (
+          {!sharedNetwork && (
             <p style={{ margin: 0, color: UI_COLORS.secondary }}>
               Connecting grants permission only. It does not send this draft or
-              start any agent. Messages use the selected session&apos;s delivery
-              mode; new sessions start with queued delivery.
+              start any agent. Messages use the selected network&apos;s delivery
+              mode; new networks start with queued delivery.
             </p>
           )}
           {error && (

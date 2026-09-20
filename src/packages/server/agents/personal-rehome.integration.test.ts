@@ -11,7 +11,7 @@ import {
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
-describeDb("Agent Session account rehome fence", () => {
+describeDb("Agent Network account rehome fence", () => {
   const db = new AgentStore();
   const tables = [
     ...PERSONAL_AGENT_STATE_TABLES,
@@ -23,7 +23,7 @@ describeDb("Agent Session account rehome fence", () => {
     );
   });
 
-  test("every retained account-home session table participates in the fence", async () => {
+  test("every retained account-home network table participates in the fence", async () => {
     const account = randomUUID();
     await expect(
       assertNoPersonalStateForRehome(db, account),
@@ -40,9 +40,9 @@ describeDb("Agent Session account rehome fence", () => {
   test("the inventory contains no retired directional authority tables", () => {
     expect(tables).toEqual(
       expect.arrayContaining([
-        "agent_sessions",
-        "agent_session_proposals",
-        "agent_session_broadcasts",
+        "agent_networks",
+        "agent_network_proposals",
+        "agent_network_broadcasts",
         "agent_external_inbox",
       ]),
     );

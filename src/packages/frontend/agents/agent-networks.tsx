@@ -11,11 +11,11 @@ import {
   Tag,
 } from "antd";
 import type {
-  AgentSession,
-  AgentSessionActivity,
-  AgentSessionDeliveryMode,
-  AgentSessionDirectory,
-  AgentSessionProposal,
+  AgentNetwork,
+  AgentNetworkActivity,
+  AgentNetworkDeliveryMode,
+  AgentNetworkDirectory,
+  AgentNetworkProposal,
   NamedAgent,
 } from "@cocalc/conat/agents/personal";
 import {
@@ -27,12 +27,16 @@ import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
 import { personalAgentApi, sameEndpoint } from "./api";
 import { openAgentThread } from "./open-agent";
+import {
+  AgentNetworkProposalSummary,
+  AgentNetworkSummary,
+} from "./agent-network-summary";
 
 const memberKey = (agent: NamedAgent) =>
   `${agent.endpoint.project_id}:${agent.endpoint.agent_id}`;
 
-function sessionMemberLabel(session: AgentSession, memberId: string) {
-  const member = session.members.find(
+function networkMemberLabel(network: AgentNetwork, memberId: string) {
+  const member = network.members.find(
     ({ member_id }) => member_id === memberId,
   );
   if (!member) return memberId;
@@ -43,16 +47,18 @@ function sessionMemberLabel(session: AgentSession, memberId: string) {
     : member.label;
 }
 
-export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
-  const [directory, setDirectory] = useState<AgentSessionDirectory>();
+export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
+  const [directory, setDirectory] = useState<AgentNetworkDirectory>();
   const [activities, setActivities] = useState<
-    Record<string, AgentSessionActivity[]>
+    Record<string, AgentNetworkActivity[]>
   >({});
-  const [proposals, setProposals] = useState<AgentSessionProposal[]>([]);
+  const [proposals, setProposals] = useState<AgentNetworkProposal[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [title, setTitle] = useState("");
-  const [delivery, setDelivery] = useState<AgentSessionDeliveryMode>("queued");
+  const [renaming, setRenaming] = useState<AgentNetwork>();
+  const [renameTitle, setRenameTitle] = useState("");
+  const [delivery, setDelivery] = useState<AgentNetworkDeliveryMode>("queued");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -65,8 +71,8 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
     setError("");
     try {
       const [next, nextProposals] = await Promise.all([
-        personalAgentApi().listAgentSessions({ limit: 100 }),
-        personalAgentApi().listAgentSessionProposals({ limit: 100 }),
+        personalAgentApi().listAgentNetworks({ limit: 100 }),
+        personalAgentApi().listAgentNetworkProposals({ limit: 100 }),
       ]);
       if (current === revision.current) {
         setDirectory(next);
@@ -141,13 +147,13 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
     const completed = await mutate(
       key,
       () =>
-        personalAgentApi().createAgentSession({
+        personalAgentApi().createAgentNetwork({
           request_id: requestId(key),
-          title: title.trim() || undefined,
+          title: title.trim(),
           delivery_mode: delivery,
           members,
         }),
-      "Agent Session created.",
+      "Agent Network created.",
       projects.size > 1,
     );
     if (completed) {
@@ -158,29 +164,29 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
     }
   }
 
-  async function loadActivity(session: AgentSession) {
+  async function loadActivity(network: AgentNetwork) {
     try {
-      const rows = await personalAgentApi().listAgentSessionActivity({
-        agent_session_id: session.agent_session_id,
+      const rows = await personalAgentApi().listAgentNetworkActivity({
+        agent_network_id: network.agent_network_id,
         limit: 50,
       });
-      setActivities((old) => ({ ...old, [session.agent_session_id]: rows }));
+      setActivities((old) => ({ ...old, [network.agent_network_id]: rows }));
     } catch (err) {
       setError(`${err}`);
     }
   }
 
   const active =
-    directory?.sessions.filter(({ state }) => state !== "closed") ?? [];
+    directory?.networks.filter(({ state }) => state !== "closed") ?? [];
   return (
-    <section aria-labelledby="agent-sessions-heading">
+    <section aria-labelledby="agent-networks-heading">
       <Space orientation="vertical" size="middle" style={{ width: "100%" }}>
         <div>
-          <h2 id="agent-sessions-heading" style={{ marginBottom: 4 }}>
-            Agent Sessions
+          <h2 id="agent-networks-heading" style={{ marginBottom: 4 }}>
+            Agent Networks
           </h2>
           <p style={{ color: UI_COLORS.secondary }}>
-            Every member of a session can message every other member in both
+            Every member of a network can message every other member in both
             directions. Pausing or closing blocks future admission; it does not
             cancel work already accepted.
           </p>
@@ -191,15 +197,15 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
             disabled={agents.length < 2 || busy}
             onClick={() => setCreateOpen(true)}
           >
-            New Agent Session
+            New Agent Network
           </Button>
           <Button disabled={busy} onClick={() => void refresh()}>
-            Refresh sessions
+            Refresh networks
           </Button>
           {directory && (
             <span role="status">
-              {directory.usage.active_sessions} active; up to{" "}
-              {directory.usage.member_limit} members per session
+              {directory.usage.active_networks} active; up to{" "}
+              {directory.usage.member_limit} members per network
             </span>
           )}
         </Space>
@@ -207,7 +213,7 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
           <div role="alert">
             <Alert
               type="error"
-              title="Agent Sessions needs attention"
+              title="Agent Networks needs attention"
               description={error}
             />
           </div>
@@ -233,15 +239,19 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
               <Card
                 key={proposal.proposal_id}
                 size="small"
-                title={`Proposed: ${proposal.title || "Untitled Agent Session"}`}
+                title={`Proposed: ${proposal.title}`}
                 extra={<Tag color="gold">Needs approval</Tag>}
               >
                 <Space orientation="vertical" style={{ width: "100%" }}>
                   <p>
                     An authenticated agent proposed a {proposal.delivery_mode}{" "}
-                    session with {proposal.members.length} members. This grants
+                    network with {proposal.members.length} members. This grants
                     no authority until you approve it.
                   </p>
+                  <AgentNetworkProposalSummary
+                    proposal={proposal}
+                    agents={agents}
+                  />
                   {proposal.reason && <p>{proposal.reason}</p>}
                   {proposedProjects.size > 1 && (
                     <Alert
@@ -259,17 +269,17 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                         void mutate(
                           key,
                           () =>
-                            personalAgentApi().resolveAgentSessionProposal({
+                            personalAgentApi().resolveAgentNetworkProposal({
                               proposal_id: proposal.proposal_id,
                               action: "approve",
                               request_id: requestId(key),
                             }),
-                          "Agent Session proposal approved.",
+                          "Agent Network proposal approved.",
                           proposedProjects.size > 1,
                         );
                       }}
                     >
-                      Approve session
+                      Approve network
                     </Button>
                     <Button
                       disabled={busy}
@@ -278,12 +288,12 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                         void mutate(
                           key,
                           () =>
-                            personalAgentApi().resolveAgentSessionProposal({
+                            personalAgentApi().resolveAgentNetworkProposal({
                               proposal_id: proposal.proposal_id,
                               action: "reject",
                               request_id: requestId(key),
                             }),
-                          "Agent Session proposal rejected.",
+                          "Agent Network proposal rejected.",
                         );
                       }}
                     >
@@ -296,43 +306,22 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
           })}
         {active.length === 0 && directory && (
           <Card size="small">
-            No Agent Sessions yet. Select at least two named agents to create a
-            two-way communication session.
+            No Agent Networks yet. Select at least two named agents to create a
+            two-way communication network.
           </Card>
         )}
-        {active.map((session) => {
+        {active.map((network) => {
           const projects = new Set(
-            session.members.flatMap((member) =>
+            network.members.flatMap((member) =>
               member.kind === "registered" ? [member.endpoint.project_id] : [],
             ),
           );
-          const rows = activities[session.agent_session_id];
+          const rows = activities[network.agent_network_id];
           return (
-            <Card
-              key={session.agent_session_id}
-              size="small"
-              title={session.title || "Untitled Agent Session"}
-              extra={
-                <Space wrap>
-                  <Tag>{session.state}</Tag>
-                  <Tag>{session.delivery_mode}</Tag>
-                </Space>
-              }
-            >
+            <Card key={network.agent_network_id} size="small">
               <Space orientation="vertical" style={{ width: "100%" }}>
-                <div>
-                  {session.members.map((member) => (
-                    <Tag key={`${member.kind}:${member.member_id}`}>
-                      {sessionMemberLabel(session, member.member_id)}
-                    </Tag>
-                  ))}
-                </div>
-                <div>
-                  {session.members.length} members across {projects.size || 1}{" "}
-                  project{projects.size === 1 ? "" : "s"}. Created{" "}
-                  {new Date(session.created_at).toLocaleString()}.
-                </div>
-                {session.delivery_mode === "live" && (
+                <AgentNetworkSummary network={network} />
+                {network.delivery_mode === "live" && (
                   <Alert
                     type="warning"
                     title="Live delivery"
@@ -341,18 +330,27 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                 )}
                 <Space wrap>
                   <Button
-                    disabled={busy || session.state === "closed"}
+                    disabled={busy}
+                    onClick={() => {
+                      setRenaming(network);
+                      setRenameTitle(network.title);
+                    }}
+                  >
+                    Rename
+                  </Button>
+                  <Button
+                    disabled={busy || network.state === "closed"}
                     onClick={() => {
                       const next =
-                        session.delivery_mode === "live" ? "queued" : "live";
-                      const key = `${session.agent_session_id}:delivery:${next}:${session.generation}`;
+                        network.delivery_mode === "live" ? "queued" : "live";
+                      const key = `${network.agent_network_id}:delivery:${next}:${network.generation}`;
                       const apply = () =>
                         mutate(
                           key,
                           () =>
-                            personalAgentApi().updateAgentSession({
+                            personalAgentApi().updateAgentNetwork({
                               request_id: requestId(key),
-                              agent_session_id: session.agent_session_id,
+                              agent_network_id: network.agent_network_id,
                               action: "set-delivery",
                               delivery_mode: next,
                             }),
@@ -363,38 +361,38 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                         Modal.confirm({
                           title: "Enable live agent delivery?",
                           content:
-                            "Every session member may interrupt every other member's running turn. Peer messages remain agent-provided content, not human instructions.",
+                            "Every network member may interrupt every other member's running turn. Peer messages remain agent-provided content, not human instructions.",
                           okText: "Enable live delivery",
                           onOk: apply,
                         });
                       } else void apply();
                     }}
                   >
-                    Use {session.delivery_mode === "live" ? "queued" : "live"}{" "}
+                    Use {network.delivery_mode === "live" ? "queued" : "live"}{" "}
                     delivery
                   </Button>
                   <Button
                     disabled={busy}
                     onClick={() => {
                       const action =
-                        session.state === "paused" ? "resume" : "pause";
-                      const key = `${session.agent_session_id}:${action}:${session.generation}`;
+                        network.state === "paused" ? "resume" : "pause";
+                      const key = `${network.agent_network_id}:${action}:${network.generation}`;
                       void mutate(
                         key,
                         () =>
-                          personalAgentApi().updateAgentSession({
+                          personalAgentApi().updateAgentNetwork({
                             request_id: requestId(key),
-                            agent_session_id: session.agent_session_id,
+                            agent_network_id: network.agent_network_id,
                             action,
                           }),
-                        `Session ${action === "pause" ? "paused" : "resumed"}.`,
+                        `Network ${action === "pause" ? "paused" : "resumed"}.`,
                         action === "resume" && projects.size > 1,
                       );
                     }}
                   >
-                    {session.state === "paused" ? "Resume" : "Pause"}
+                    {network.state === "paused" ? "Resume" : "Pause"}
                   </Button>
-                  <Button onClick={() => void loadActivity(session)}>
+                  <Button onClick={() => void loadActivity(network)}>
                     {rows ? "Refresh activity" : "Recent activity"}
                   </Button>
                   <Button
@@ -402,22 +400,22 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                     disabled={busy}
                     onClick={() =>
                       Modal.confirm({
-                        title: "Close this Agent Session?",
+                        title: "Close this Agent Network?",
                         content:
                           "Closing is permanent and blocks future messages. It does not cancel accepted work or erase chat history.",
-                        okText: "Close session",
+                        okText: "Close network",
                         okButtonProps: { danger: true },
                         onOk: () => {
-                          const key = `${session.agent_session_id}:close:${session.generation}`;
+                          const key = `${network.agent_network_id}:close:${network.generation}`;
                           return mutate(
                             key,
                             () =>
-                              personalAgentApi().updateAgentSession({
+                              personalAgentApi().updateAgentNetwork({
                                 request_id: requestId(key),
-                                agent_session_id: session.agent_session_id,
+                                agent_network_id: network.agent_network_id,
                                 action: "close",
                               }),
-                            "Agent Session closed.",
+                            "Agent Network closed.",
                           );
                         },
                       })
@@ -428,7 +426,7 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                 </Space>
                 <details>
                   <summary>Members and controls</summary>
-                  {session.members.map((member) => (
+                  {network.members.map((member) => (
                     <div
                       key={member.member_id}
                       style={{
@@ -441,7 +439,7 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                       }}
                     >
                       <strong>
-                        {sessionMemberLabel(session, member.member_id)}
+                        {networkMemberLabel(network, member.member_id)}
                       </strong>
                       <span>{member.kind}</span>
                       {member.kind === "registered" && (
@@ -463,7 +461,7 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                           Open agent
                         </Button>
                       )}
-                      {session.members.length > 2 && (
+                      {network.members.length > 2 && (
                         <Button
                           size="small"
                           danger
@@ -482,24 +480,24 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                                       member.source.installation_id,
                                   };
                             Modal.confirm({
-                              title: `Remove ${sessionMemberLabel(session, member.member_id)}?`,
+                              title: `Remove ${networkMemberLabel(network, member.member_id)}?`,
                               content:
-                                "This removes every communication direction between this member and every other session member. It does not cancel work already accepted.",
+                                "This removes every communication direction between this member and every other network member. It does not cancel work already accepted.",
                               okText: "Remove member",
                               okButtonProps: { danger: true },
                               onOk: () => {
-                                const key = `${session.agent_session_id}:remove:${member.member_id}:${session.generation}`;
+                                const key = `${network.agent_network_id}:remove:${member.member_id}:${network.generation}`;
                                 return mutate(
                                   key,
                                   () =>
-                                    personalAgentApi().updateAgentSession({
+                                    personalAgentApi().updateAgentNetwork({
                                       request_id: requestId(key),
-                                      agent_session_id:
-                                        session.agent_session_id,
+                                      agent_network_id:
+                                        network.agent_network_id,
                                       action: "remove-member",
                                       member: locator,
                                     }),
-                                  "Member removed from the session.",
+                                  "Member removed from the network.",
                                 );
                               },
                             });
@@ -510,20 +508,20 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                       )}
                     </div>
                   ))}
-                  {session.state !== "closed" && (
+                  {network.state !== "closed" && (
                     <Select
-                      aria-label={`Add member to ${session.title || "Agent Session"}`}
+                      aria-label={`Add member to ${network.title || "Agent Network"}`}
                       placeholder="Add a named agent"
                       style={{ minWidth: 260, marginTop: 12 }}
                       disabled={
                         busy ||
-                        session.members.length >=
+                        network.members.length >=
                           (directory?.usage.member_limit ?? 0)
                       }
                       options={agents
                         .filter(
                           (agent) =>
-                            !session.members.some(
+                            !network.members.some(
                               (member) =>
                                 member.kind === "registered" &&
                                 sameEndpoint(member.endpoint, agent.endpoint),
@@ -539,18 +537,18 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                         );
                         if (!agent) return;
                         Modal.confirm({
-                          title: `Add @${agent.name} to this Agent Session?`,
+                          title: `Add @${agent.name} to this Agent Network?`,
                           content:
-                            "This immediately authorizes both directions between this agent and every current session member.",
+                            "This immediately authorizes both directions between this agent and every current network member.",
                           okText: "Add member",
                           onOk: () => {
-                            const key = `${session.agent_session_id}:add:${value}:${session.generation}`;
+                            const key = `${network.agent_network_id}:add:${value}:${network.generation}`;
                             return mutate(
                               key,
                               () =>
-                                personalAgentApi().updateAgentSession({
+                                personalAgentApi().updateAgentNetwork({
                                   request_id: requestId(key),
-                                  agent_session_id: session.agent_session_id,
+                                  agent_network_id: network.agent_network_id,
                                   action: "add-member",
                                   member: {
                                     kind: "registered",
@@ -569,11 +567,11 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                 </details>
                 {rows && (
                   <div
-                    aria-label={`Recent activity for ${session.title || "Agent Session"}`}
+                    aria-label={`Recent activity for ${network.title || "Agent Network"}`}
                   >
                     <strong>Recent activity</strong>
                     <div style={{ marginBlock: 6 }}>
-                      {session.members.map((member) => {
+                      {network.members.map((member) => {
                         const sent = rows.filter(
                           ({ source_member_id }) =>
                             source_member_id === member.member_id,
@@ -584,8 +582,8 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                         ).length;
                         return (
                           <Tag key={`activity:${member.member_id}`}>
-                            {sessionMemberLabel(session, member.member_id)}: {sent}{" "}
-                            sent, {received} received
+                            {networkMemberLabel(network, member.member_id)}:{" "}
+                            {sent} sent, {received} received
                           </Tag>
                         );
                       })}
@@ -596,9 +594,9 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                       <ul>
                         {rows.map((row) => (
                           <li key={row.attempt_id}>
-                            {sessionMemberLabel(session, row.source_member_id)}{" "}
+                            {networkMemberLabel(network, row.source_member_id)}{" "}
                             to{" "}
-                            {sessionMemberLabel(session, row.target_member_id)}:{" "}
+                            {networkMemberLabel(network, row.target_member_id)}:{" "}
                             {row.outcome ?? "pending"}
                             {row.effective_delivery
                               ? ` via ${row.effective_delivery}`
@@ -611,9 +609,9 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
                   </div>
                 )}
                 <details>
-                  <summary>Session identifiers</summary>
-                  <p>Session: {session.agent_session_id}</p>
-                  <p>Generation: {session.generation}</p>
+                  <summary>Network identifiers</summary>
+                  <p>Network: {network.agent_network_id}</p>
+                  <p>Generation: {network.generation}</p>
                 </details>
               </Space>
             </Card>
@@ -622,11 +620,12 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
       </Space>
       <Modal
         open={createOpen}
-        title="New Agent Session"
-        okText="Create session"
+        title="New Agent Network"
+        okText="Create network"
         confirmLoading={busy}
         okButtonProps={{
           disabled:
+            !title.trim() ||
             selected.length < 2 ||
             selected.length > (directory?.usage.member_limit ?? 0),
         }}
@@ -637,17 +636,17 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
         modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
       >
         <Space orientation="vertical" style={{ width: "100%" }}>
-          <label htmlFor="agent-session-title">Session title</label>
+          <label htmlFor="agent-network-title">Network title</label>
           <Input
-            id="agent-session-title"
+            id="agent-network-title"
             value={title}
             maxLength={120}
             onChange={(event) => setTitle(event.target.value)}
             placeholder="Release review"
           />
-          <label htmlFor="agent-session-members">Named agents</label>
+          <label htmlFor="agent-network-members">Named agents</label>
           <Select
-            id="agent-session-members"
+            id="agent-network-members"
             mode="multiple"
             value={selected}
             onChange={setSelected}
@@ -663,7 +662,7 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
             directions. Adding members later expands that complete graph.
           </div>
           <Radio.Group
-            aria-label="Agent Session delivery mode"
+            aria-label="Agent Network delivery mode"
             value={delivery}
             onChange={(event) => setDelivery(event.target.value)}
           >
@@ -688,10 +687,48 @@ export function AgentSessions({ agents }: { agents: NamedAgent[] }) {
             <Alert
               type="warning"
               title="Cross-project prompt and data bridge"
-              description="This session lets every selected agent send content to every selected agent across these projects. Fresh authentication is required."
+              description="This network lets every selected agent send content to every selected agent across these projects. Fresh authentication is required."
             />
           )}
         </Space>
+      </Modal>
+      <Modal
+        open={!!renaming}
+        title="Rename Agent Network"
+        okText="Rename"
+        confirmLoading={busy}
+        okButtonProps={{ disabled: !renameTitle.trim() }}
+        onCancel={() => {
+          if (!busy) setRenaming(undefined);
+        }}
+        onOk={() => {
+          if (!renaming || !renameTitle.trim()) return;
+          const key = `${renaming.agent_network_id}:title:${renameTitle.trim()}:${renaming.generation}`;
+          void mutate(
+            key,
+            () =>
+              personalAgentApi().updateAgentNetwork({
+                request_id: requestId(key),
+                agent_network_id: renaming.agent_network_id,
+                action: "set-title",
+                title: renameTitle.trim(),
+              }),
+            "Agent Network renamed.",
+          ).then((completed) => {
+            if (completed) setRenaming(undefined);
+          });
+        }}
+        modalRender={(node) => <KeyboardBoundary>{node}</KeyboardBoundary>}
+      >
+        <label htmlFor="rename-agent-network">Network title</label>
+        <Input
+          id="rename-agent-network"
+          autoFocus
+          value={renameTitle}
+          maxLength={120}
+          onChange={(event) => setRenameTitle(event.target.value)}
+          style={{ marginTop: 6 }}
+        />
       </Modal>
       <FreshAuthModal {...freshAuthModalProps} />
     </section>

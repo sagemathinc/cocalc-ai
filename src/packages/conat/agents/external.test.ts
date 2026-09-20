@@ -103,10 +103,10 @@ test.each(["", " ", "name\nlogin", "x".repeat(81)])(
   },
 );
 
-test("approval binds one finite installation to one two-way Agent Session", () => {
+test("approval binds one finite installation to one two-way Agent Network", () => {
   const request = {
     installation_id,
-    agent_session_id: randomUUID(),
+    agent_network_id: randomUUID(),
     ttl_seconds: 3600,
   };
   expect(() => validateExternalAgentApproval(request)).not.toThrow();
@@ -124,7 +124,7 @@ test("approval binds one finite installation to one two-way Agent Session", () =
   expect(() =>
     validateExternalAgentApproval({
       ...request,
-      agent_session_id: "not-a-session",
+      agent_network_id: "not-a-network",
     }),
   ).toThrow();
 });

@@ -393,7 +393,7 @@ function rpcSourceAttribution(message: ChatMessageTyped):
       source_agent_id: string;
       source_project_id?: string;
       direction: "incoming";
-      agent_session_id?: string;
+      agent_network_id?: string;
       attempt_id?: string;
     }
   | undefined {
@@ -413,9 +413,9 @@ function rpcSourceAttribution(message: ChatMessageTyped):
     source_agent_id: agentId,
     source_project_id:
       typeof source.project_id === "string" ? source.project_id : undefined,
-    agent_session_id:
-      typeof rpc.agent_session_id === "string"
-        ? rpc.agent_session_id
+    agent_network_id:
+      typeof rpc.agent_network_id === "string"
+        ? rpc.agent_network_id
         : undefined,
     attempt_id: typeof rpc.attempt_id === "string" ? rpc.attempt_id : undefined,
   };

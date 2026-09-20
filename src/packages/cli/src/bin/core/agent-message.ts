@@ -2,8 +2,8 @@ import { readFile } from "node:fs/promises";
 import { connect } from "@cocalc/conat/core/client";
 import { withTimeout } from "./context";
 import type {
-  AgentSessionDiscovery,
-  AgentSessionProposal,
+  AgentNetworkDiscovery,
+  AgentNetworkProposal,
 } from "@cocalc/conat/agents/personal";
 import {
   rpcOutcome,
@@ -68,11 +68,11 @@ export function sendIdentityMessage(
 export function sendIdentityMessage(
   request: Extract<AgentRpcRequest, { action: "destinations" }>,
   apiUrl?: string,
-): Promise<AgentSessionDiscovery>;
+): Promise<AgentNetworkDiscovery>;
 export function sendIdentityMessage(
-  request: Extract<AgentRpcRequest, { action: "propose-session" }>,
+  request: Extract<AgentRpcRequest, { action: "propose-network" }>,
   apiUrl?: string,
-): Promise<AgentSessionProposal>;
+): Promise<AgentNetworkProposal>;
 export function sendIdentityMessage(
   request: Extract<AgentRpcRequest, { action: "broadcast" }>,
   apiUrl?: string,
@@ -91,14 +91,14 @@ export function sendIdentityMessage(
 export function sendIdentityMessage(
   request: AgentRpcRequest,
   apiUrl?: string,
-): Promise<AgentSessionDiscovery | AgentRpcPreparation>;
+): Promise<AgentNetworkDiscovery | AgentRpcPreparation>;
 export async function sendIdentityMessage(
   request: AgentInspectionRequest | AgentRpcRequest,
   apiUrl?: string,
 ): Promise<
   | AgentInspectionResult
-  | AgentSessionDiscovery
-  | AgentSessionProposal
+  | AgentNetworkDiscovery
+  | AgentNetworkProposal
   | AgentRpcBroadcastOutcome
   | AgentRpcOutcome
   | AgentRpcPreparation

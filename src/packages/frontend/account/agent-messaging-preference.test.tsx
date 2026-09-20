@@ -20,7 +20,7 @@ test("default off is keyboard accessible and does not write a preference on moun
   const user = userEvent.setup();
   render(<AgentMessagingPreference />);
   const toggle = screen.getByRole("switch", {
-    name: "Enable Agent Sessions",
+    name: "Enable Agent Networks",
   });
   expect(toggle).toHaveAttribute("aria-checked", "false");
   expect(mockSave).not.toHaveBeenCalled();

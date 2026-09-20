@@ -68,32 +68,32 @@ Table({
 });
 
 Table({
-  name: "agent_sessions",
+  name: "agent_networks",
   rules: {
-    primary_key: "agent_session_id",
+    primary_key: "agent_network_id",
     pg_constraints: [
       {
-        name: "agent_sessions_state_check",
+        name: "agent_networks_state_check",
         type: "check",
         expression: "state IN ('active','paused','closed')",
       },
       {
-        name: "agent_sessions_delivery_check",
+        name: "agent_networks_delivery_check",
         type: "check",
         expression: "delivery_mode IN ('queued','live')",
       },
     ],
     pg_custom_indexes: [
       {
-        name: "agent_sessions_account_updated",
-        query: "(account_id,updated_at DESC,agent_session_id)",
+        name: "agent_networks_account_updated",
+        query: "(account_id,updated_at DESC,agent_network_id)",
       },
     ],
   },
   fields: {
-    agent_session_id: field("uuid", "Stable Agent Session identifier."),
+    agent_network_id: field("uuid", "Stable Agent Network identifier."),
     account_id: field("uuid", "Account-home authority and human principal."),
-    title: { type: "string", desc: "Optional human title, at most 120 chars." },
+    title: field("string", "Human title, from 1 to 120 characters."),
     state: {
       ...field("string", "active, paused, or closed."),
       pg_default: "'active'::character varying",
@@ -103,7 +103,7 @@ Table({
       pg_default: "'queued'::character varying",
     },
     generation: field("uuid", "Changes on every authority mutation."),
-    created_by: field("uuid", "Human account that created the session."),
+    created_by: field("uuid", "Human account that created the network."),
     created_at: created,
     updated_at: created,
     closed_at: time("Terminal close time."),
@@ -111,43 +111,43 @@ Table({
 });
 
 Table({
-  name: "agent_session_members",
+  name: "agent_network_members",
   rules: {
-    primary_key: ["agent_session_id", "member_kind", "member_id"],
+    primary_key: ["agent_network_id", "member_kind", "member_id"],
     pg_constraints: [
       {
-        name: "agent_session_member_kind_check",
+        name: "agent_network_member_kind_check",
         type: "check",
         expression: "member_kind IN ('registered','external')",
       },
       {
-        name: "agent_session_member_identity_check",
+        name: "agent_network_member_identity_check",
         type: "check",
         expression:
           "(member_kind='registered' AND registered_agent_id IS NOT NULL AND project_id IS NOT NULL AND external_agent_id IS NULL AND installation_id IS NULL) OR (member_kind='external' AND external_agent_id IS NOT NULL AND installation_id IS NOT NULL AND registered_agent_id IS NULL AND project_id IS NULL)",
       },
       {
-        name: "agent_session_members_session_fkey",
+        name: "agent_network_members_network_fkey",
         type: "foreign-key",
-        columns: ["agent_session_id"],
-        references: { table: "agent_sessions", columns: ["agent_session_id"] },
+        columns: ["agent_network_id"],
+        references: { table: "agent_networks", columns: ["agent_network_id"] },
       },
     ],
     pg_custom_indexes: [
       {
-        name: "agent_session_registered_member",
+        name: "agent_network_registered_member",
         query:
-          "(registered_agent_id,agent_session_id) WHERE removed_at IS NULL AND member_kind='registered'",
+          "(registered_agent_id,agent_network_id) WHERE removed_at IS NULL AND member_kind='registered'",
       },
       {
-        name: "agent_session_external_member",
+        name: "agent_network_external_member",
         query:
-          "(external_agent_id,agent_session_id) WHERE removed_at IS NULL AND member_kind='external'",
+          "(external_agent_id,agent_network_id) WHERE removed_at IS NULL AND member_kind='external'",
       },
     ],
   },
   fields: {
-    agent_session_id: field("uuid", "Containing Agent Session."),
+    agent_network_id: field("uuid", "Containing Agent Network."),
     member_kind: field("string", "registered or external."),
     member_id: field("uuid", "Stable member identity within the account."),
     registered_agent_id: { type: "uuid", desc: "Registered agent identity." },
@@ -161,12 +161,12 @@ Table({
 });
 
 Table({
-  name: "agent_session_mutations",
+  name: "agent_network_mutations",
   rules: {
     primary_key: ["account_id", "request_id"],
     pg_custom_indexes: [
       {
-        name: "agent_session_mutations_retention",
+        name: "agent_network_mutations_retention",
         query: "(account_id,created_at DESC)",
       },
     ],
@@ -175,18 +175,18 @@ Table({
     account_id: field("uuid", "Account authority."),
     request_id: field("uuid", "Human mutation idempotency key."),
     binding_hash: field("string", "Canonical mutation binding hash."),
-    agent_session_id: field("uuid", "Resulting or mutated session."),
+    agent_network_id: field("uuid", "Resulting or mutated network."),
     created_at: created,
   },
 });
 
 Table({
-  name: "agent_session_activity",
+  name: "agent_network_activity",
   rules: {
     primary_key: "attempt_id",
     pg_constraints: [
       {
-        name: "agent_session_activity_outcome_check",
+        name: "agent_network_activity_outcome_check",
         type: "check",
         expression:
           "outcome IS NULL OR outcome IN ('accepted','rejected','unknown')",
@@ -194,16 +194,16 @@ Table({
     ],
     pg_custom_indexes: [
       {
-        name: "agent_session_activity_recent",
-        query: "(account_id,agent_session_id,observed_at DESC)",
+        name: "agent_network_activity_recent",
+        query: "(account_id,agent_network_id,observed_at DESC)",
       },
     ],
   },
   fields: {
     attempt_id: field("uuid", "Exact send attempt correlation ID."),
-    account_id: field("uuid", "Session account principal."),
-    agent_session_id: field("uuid", "Authorizing session."),
-    session_generation: field("uuid", "Generation checked for this attempt."),
+    account_id: field("uuid", "Network account principal."),
+    agent_network_id: field("uuid", "Authorizing network."),
+    network_generation: field("uuid", "Generation checked for this attempt."),
     source_member_id: field("uuid", "Authenticated source member."),
     target_member_id: field("uuid", "Exact target member."),
     configured_delivery: field("string", "queued or live."),
@@ -214,19 +214,19 @@ Table({
 });
 
 Table({
-  name: "agent_session_proposals",
+  name: "agent_network_proposals",
   rules: {
     primary_key: "proposal_id",
     pg_constraints: [
       {
-        name: "agent_session_proposals_state_check",
+        name: "agent_network_proposals_state_check",
         type: "check",
         expression: "state IN ('pending','approved','rejected','expired')",
       },
     ],
     pg_custom_indexes: [
       {
-        name: "agent_session_proposals_pending",
+        name: "agent_network_proposals_pending",
         query: "(account_id,created_at DESC) WHERE state='pending'",
       },
     ],
@@ -238,7 +238,7 @@ Table({
       ...field("map", "Authenticated registered or external source."),
       pg_type: "JSONB",
     },
-    title: { type: "string", desc: "Optional proposed session title." },
+    title: field("string", "Proposed network title."),
     delivery_mode: field("string", "queued or live."),
     members: {
       ...field("map", "Bounded explicit proposed member locators."),
@@ -256,32 +256,32 @@ Table({
       not_null: true,
     },
     resolved_at: time("Human resolution time."),
-    agent_session_id: { type: "uuid", desc: "Approved resulting session." },
+    agent_network_id: { type: "uuid", desc: "Approved resulting network." },
   },
 });
 
 Table({
-  name: "agent_session_broadcasts",
+  name: "agent_network_broadcasts",
   rules: {
     primary_key: ["account_id", "broadcast_id"],
     pg_custom_indexes: [
       {
-        name: "agent_session_broadcasts_retention",
+        name: "agent_network_broadcasts_retention",
         query: "(account_id,created_at DESC)",
       },
     ],
   },
   fields: {
-    account_id: field("uuid", "Session authority account."),
+    account_id: field("uuid", "Network authority account."),
     broadcast_id: field("uuid", "Parent broadcast idempotency key."),
-    agent_session_id: field("uuid", "Exact authorizing session."),
+    agent_network_id: field("uuid", "Exact authorizing network."),
     source: {
       ...field("map", "Authenticated source principal."),
       pg_type: "JSONB",
     },
     binding_hash: field(
       "string",
-      "Canonical source/session/targets/body hash.",
+      "Canonical source/network/targets/body hash.",
     ),
     state: field("string", "pending or complete."),
     outcome: { type: "map", pg_type: "JSONB", desc: "Bounded child outcomes." },

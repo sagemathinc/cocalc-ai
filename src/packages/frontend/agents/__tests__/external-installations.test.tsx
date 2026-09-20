@@ -17,7 +17,7 @@ const installation = {
   installation_id: "test-installation",
   account_id: "test-account",
   agent_id: "test-agent",
-  agent_session_id: "test-session",
+  agent_network_id: "test-network",
   label: "Security assistant",
   state: "active",
   created_at: new Date().toISOString(),

@@ -54,7 +54,7 @@ export function agentRpcSourceKey(source: AgentRpcSource): string {
 export interface AgentRpcAttempt {
   version: 3;
   attempt_id: string;
-  agent_session_id: string;
+  agent_network_id: string;
   target: AgentRpcTarget;
 }
 
@@ -85,7 +85,7 @@ export interface AgentRpcBroadcast {
   version: 3;
   action: "broadcast";
   broadcast_id: string;
-  agent_session_id: string;
+  agent_network_id: string;
   targets: AgentRpcTarget[];
   body: string;
 }
@@ -93,7 +93,7 @@ export interface AgentRpcBroadcast {
 export interface AgentRpcBroadcastOutcome {
   version: 3;
   broadcast_id: string;
-  agent_session_id: string;
+  agent_network_id: string;
   outcome: "accepted" | "rejected" | "unknown";
   observed_at: number;
   children: AgentRpcOutcome[];
@@ -114,8 +114,8 @@ export const AGENT_RPC_FAILURE_CODES = [
   "attachment_preparation_unavailable",
   "attachment_invalid",
   "attachment_limit_exceeded",
-  "session_unavailable",
-  "session_stale",
+  "network_unavailable",
+  "network_stale",
   "principal_mismatch",
 ] as const;
 export type AgentRpcFailureCode = (typeof AGENT_RPC_FAILURE_CODES)[number];
@@ -130,8 +130,8 @@ export type AgentRpcRequest =
   | AgentRpcBroadcast
   | ({
       version: 3;
-      action: "propose-session";
-    } & import("./personal").ProposeAgentSessionOptions);
+      action: "propose-network";
+    } & import("./personal").ProposeAgentNetworkOptions);
 
 export function validateAgentEndpoint(value: AgentEndpoint): void {
   requireUuid(value?.project_id, "project_id");
@@ -154,9 +154,9 @@ export function validateAgentRpcRequest(
     )
   ) {
     if (!("attempt_id" in value)) throw new Error("attempt required");
-    keys.push("attempt_id", "agent_session_id", "target");
+    keys.push("attempt_id", "agent_network_id", "target");
     requireUuid(value.attempt_id, "attempt_id");
-    requireUuid(value.agent_session_id, "agent_session_id");
+    requireUuid(value.agent_network_id, "agent_network_id");
     validateAgentRpcTarget(value.target);
     if (value.action !== "inspect") {
       keys.push(
@@ -214,11 +214,15 @@ export function validateAgentRpcRequest(
   } else if (value.action === "ack-inbox") {
     keys.push("message_id");
     requireUuid(value.message_id, "message_id");
-  } else if (value.action === "propose-session") {
+  } else if (value.action === "propose-network") {
     keys.push("proposal_id", "title", "delivery_mode", "members", "reason");
     requireUuid(value.proposal_id, "proposal_id");
-    if (value.title !== undefined && value.title.length > 120)
-      throw new Error("proposal title is too long");
+    if (
+      typeof value.title !== "string" ||
+      !value.title.trim() ||
+      value.title.length > 120
+    )
+      throw new Error("proposal title must contain 1 to 120 characters");
     if (
       value.delivery_mode !== undefined &&
       !["queued", "live"].includes(value.delivery_mode)
@@ -233,9 +237,9 @@ export function validateAgentRpcRequest(
     if (value.reason !== undefined && value.reason.length > 500)
       throw new Error("proposal reason is too long");
   } else if (value.action === "broadcast") {
-    keys.push("broadcast_id", "agent_session_id", "targets", "body");
+    keys.push("broadcast_id", "agent_network_id", "targets", "body");
     requireUuid(value.broadcast_id, "broadcast_id");
-    requireUuid(value.agent_session_id, "agent_session_id");
+    requireUuid(value.agent_network_id, "agent_network_id");
     if (
       !Array.isArray(value.targets) ||
       value.targets.length < 1 ||
@@ -272,7 +276,7 @@ export function validateAgentRpcPreparation(
   if (
     value.version !== 3 ||
     value.attempt_id !== request.attempt_id ||
-    value.agent_session_id !== request.agent_session_id ||
+    value.agent_network_id !== request.agent_network_id ||
     agentRpcSourceKey(value.target) !== agentRpcSourceKey(request.target) ||
     !Number.isFinite(value.expires_at)
   )
@@ -291,7 +295,7 @@ export function rpcOutcome(
   return {
     version: 3,
     target: attempt.target,
-    agent_session_id: attempt.agent_session_id,
+    agent_network_id: attempt.agent_network_id,
     attempt_id: attempt.attempt_id,
     outcome,
     observed_at: Date.now(),
@@ -307,7 +311,7 @@ export function validateAgentRpcOutcome(
   if (
     value?.version !== 3 ||
     value.attempt_id !== attempt.attempt_id ||
-    value.agent_session_id !== attempt.agent_session_id ||
+    value.agent_network_id !== attempt.agent_network_id ||
     agentRpcSourceKey(value.target) !== agentRpcSourceKey(attempt.target) ||
     !["accepted", "rejected", "unknown"].includes(value.outcome) ||
     !Number.isFinite(value.observed_at) ||
@@ -332,7 +336,7 @@ export function validateAgentRpcBroadcastOutcome(
   if (
     value?.version !== 3 ||
     value.broadcast_id !== request.broadcast_id ||
-    value.agent_session_id !== request.agent_session_id ||
+    value.agent_network_id !== request.agent_network_id ||
     !["accepted", "rejected", "unknown"].includes(value.outcome) ||
     !Number.isFinite(value.observed_at) ||
     !Array.isArray(value.children) ||
@@ -344,7 +348,7 @@ export function validateAgentRpcBroadcastOutcome(
       (candidate) =>
         agentRpcSourceKey(candidate) === agentRpcSourceKey(child.target),
     );
-    if (!target || child.agent_session_id !== request.agent_session_id)
+    if (!target || child.agent_network_id !== request.agent_network_id)
       throw new Error("Broadcast child acknowledgment is mismatched");
   }
 }
@@ -358,9 +362,9 @@ export interface AgentRpcEnvelope extends Omit<AgentRpcSend, "target"> {
   target_label: string;
   run_id?: string;
   account_id: string;
-  session_generation: string;
+  network_generation: string;
   account_generation: number;
-  configured_delivery: import("./personal").AgentSessionDeliveryMode;
+  configured_delivery: import("./personal").AgentNetworkDeliveryMode;
   guidance: boolean;
   path: string;
   thread_id: string;
@@ -380,8 +384,8 @@ export function agentRpcEnvelopeKey(e: AgentRpcEnvelope): string {
     e.target.agent_id,
     e.target_label,
     e.run_id,
-    e.agent_session_id,
-    e.session_generation,
+    e.agent_network_id,
+    e.network_generation,
     e.account_generation,
     e.configured_delivery,
     e.account_id,

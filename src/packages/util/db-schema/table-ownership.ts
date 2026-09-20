@@ -290,11 +290,11 @@ export const TABLE_OWNERSHIP = {
     [
       "agent_personal_controls",
       "agent_personal_names",
-      "agent_sessions",
-      "agent_session_mutations",
-      "agent_session_activity",
-      "agent_session_proposals",
-      "agent_session_broadcasts",
+      "agent_networks",
+      "agent_network_mutations",
+      "agent_network_activity",
+      "agent_network_proposals",
+      "agent_network_broadcasts",
       "agent_external_identities",
       "agent_external_installations",
       "agent_external_inbox",
@@ -308,16 +308,16 @@ export const TABLE_OWNERSHIP = {
           "Named-agent locator for an account-home record, not project placement authority.",
       },
       notes:
-        "Human-scoped agent names, sessions, controls, activity evidence, and external installations are authoritative only on the account home bay. Account rehome must remain fenced until these rows have explicit migration support.",
+        "Human-scoped agent names, networks, controls, activity evidence, and external installations are authoritative only on the account home bay. Account rehome must remain fenced until these rows have explicit migration support.",
     },
   ),
 
-  ...entries(["agent_session_members"], {
+  ...entries(["agent_network_members"], {
     ownership: "account-home",
     authority: "mixed",
     portability: "unsupported",
     notes:
-      "Membership is subordinate to the account-home Agent Session row and must never be routed independently.",
+      "Membership is subordinate to the account-home Agent Network row and must never be routed independently.",
   }),
 
   ...entries(["agent_identities", "agent_message_project_fences"], {

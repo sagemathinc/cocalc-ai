@@ -12,7 +12,7 @@ import { claimExternalAgentLoginChallenge } from "@cocalc/server/auth/cli-auth";
 const mockEnroll = jest.fn(),
   mockStatus = jest.fn(),
   mockRevoke = jest.fn(),
-  mockUpdateSession = jest.fn(),
+  mockUpdateNetwork = jest.fn(),
   mockRemote = jest.fn();
 jest.mock("./external-store", () => ({
   ExternalAgentStore: jest.fn().mockImplementation(() => ({
@@ -26,7 +26,7 @@ jest.mock("./api", () => ({ getIdentity: jest.fn() }));
 jest.mock("./personal", () => ({
   personalAgentLimits: async () => ({ named: 5, members: 3 }),
   personalStore: () => ({
-    updateSession: (...args) => mockUpdateSession(...args),
+    updateNetwork: (...args) => mockUpdateNetwork(...args),
   }),
 }));
 jest.mock("@cocalc/server/bay-directory", () => ({
@@ -55,7 +55,7 @@ jest.mock("@cocalc/conat/inter-bay/agent-rpc", () => ({
 
 const account_id = randomUUID(),
   challenge_id = randomUUID(),
-  agent_session_id = randomUUID(),
+  agent_network_id = randomUUID(),
   external_agent_id = randomUUID();
 const challenge = {
   label: "External QA",
@@ -67,7 +67,7 @@ const opts = {
   challenge_id,
   session_hash: "human-home-session",
   origin_bay_id: "origin",
-  agent_session_id,
+  agent_network_id,
   ttl_seconds: 3600,
 };
 beforeEach(() => {
@@ -81,7 +81,7 @@ beforeEach(() => {
     installation_id: challenge_id,
     agent_id: external_agent_id,
   });
-  mockUpdateSession.mockResolvedValue(undefined);
+  mockUpdateNetwork.mockResolvedValue(undefined);
 });
 
 test("human approves at home; only a short attestation, never their credential, reaches origin", async () => {
@@ -115,16 +115,16 @@ test("human approves at home; only a short attestation, never their credential, 
       installation_id: challenge_id,
       secret_hash: challenge.secret_hash,
       label: challenge.label,
-      agent_session_id,
+      agent_network_id,
       ttl_seconds: 3600,
     },
     Date.parse(challenge.expires_at),
   );
-  expect(mockUpdateSession).toHaveBeenCalledWith(
+  expect(mockUpdateNetwork).toHaveBeenCalledWith(
     account_id,
     {
       request_id: challenge_id,
-      agent_session_id,
+      agent_network_id,
       action: "add-member",
       member: {
         kind: "external",
@@ -137,11 +137,11 @@ test("human approves at home; only a short attestation, never their credential, 
   );
 });
 
-test("failed Agent Session membership revokes the enrolled external credential", async () => {
-  mockUpdateSession.mockRejectedValueOnce(new Error("session unavailable"));
+test("failed Agent Network membership revokes the enrolled external credential", async () => {
+  mockUpdateNetwork.mockRejectedValueOnce(new Error("network unavailable"));
 
   await expect(approveExternalAgentLogin(opts)).rejects.toThrow(
-    "session unavailable",
+    "network unavailable",
   );
   expect(mockRevoke).toHaveBeenCalledWith(account_id, challenge_id);
 });

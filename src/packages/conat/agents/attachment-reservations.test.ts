@@ -20,8 +20,8 @@ function setup() {
     target_label: "@target",
     run_id: randomUUID(),
     account_id: randomUUID(),
-    agent_session_id: randomUUID(),
-    session_generation: randomUUID(),
+    agent_network_id: randomUUID(),
+    network_generation: randomUUID(),
     account_generation: 0,
     configured_delivery: "queued",
     guidance: false,
@@ -166,8 +166,8 @@ describe("attachment preparation admission", () => {
   test.each([
     "run_id",
     "account_id",
-    "agent_session_id",
-    "session_generation",
+    "agent_network_id",
+    "network_generation",
     "attempt_id",
     "body",
   ] as const)("%s cannot change after preparation", async (key) => {

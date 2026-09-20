@@ -39,7 +39,7 @@ beforeEach(() => {
     session_hash: "forged-session",
     origin_bay_id: "origin",
     challenge_id: "challenge",
-    agent_session_id: "session",
+    agent_network_id: "session",
     ttl_seconds: 3600,
   });
   mockApprove
@@ -76,7 +76,7 @@ test("external approval takes principal and bound session only from authenticate
     session_hash: "real-session",
     origin_bay_id: "origin",
     challenge_id: "challenge",
-    agent_session_id: "session",
+    agent_network_id: "session",
     ttl_seconds: 3600,
     agent_id: undefined,
   });

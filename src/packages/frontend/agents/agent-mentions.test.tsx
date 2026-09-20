@@ -44,7 +44,7 @@ const api = {
   resolveIdentity: jest.fn(async () => ({ ...source, thread_id: "source" })),
   getIdentity: jest.fn(async () => ({ ...target, disabled_at: null })),
   registerIdentity: jest.fn(),
-  listAgentSessions: jest.fn(),
+  listAgentNetworks: jest.fn(),
 };
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
@@ -70,9 +70,9 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
     },
   }),
 }));
-jest.mock("./session-approval", () => ({
-  SessionApproval: ({ onClose }) => (
-    <button onClick={() => onClose(false)}>Cancel session approval</button>
+jest.mock("./network-approval", () => ({
+  NetworkApproval: ({ onClose }) => (
+    <button onClick={() => onClose(false)}>Cancel network approval</button>
   ),
 }));
 
@@ -81,14 +81,14 @@ function directory({ paused = false, active = true } = {}) {
     enabled: true,
     controls: { paused, generation: 0 },
     usage: {
-      active_sessions: active ? 1 : 0,
-      session_limit: 100,
+      active_networks: active ? 1 : 0,
+      network_limit: 100,
       member_limit: 8,
     },
-    sessions: active
+    networks: active
       ? [
           {
-            agent_session_id: "66666666-6666-4666-8666-666666666666",
+            agent_network_id: "66666666-6666-4666-8666-666666666666",
             state: "active",
             members: [
               { kind: "registered", endpoint: source },
@@ -121,26 +121,26 @@ function Composer({ send }: { send: () => void }) {
 
 beforeEach(() => {
   jest.clearAllMocks();
-  api.listAgentSessions.mockResolvedValue(directory());
+  api.listAgentNetworks.mockResolvedValue(directory());
 });
 
-test("an active complete-graph session permits exactly one send", async () => {
+test("an active complete-graph network permits exactly one send", async () => {
   const send = jest.fn();
   const user = userEvent.setup();
   render(<Composer send={send} />);
   await user.click(screen.getByRole("button", { name: "Send" }));
   await waitFor(() => expect(send).toHaveBeenCalledTimes(1));
-  expect(api.listAgentSessions).toHaveBeenCalledWith({ limit: 100 });
+  expect(api.listAgentNetworks).toHaveBeenCalledWith({ limit: 100 });
 });
 
-test("missing session preserves the draft and opens explicit approval", async () => {
-  api.listAgentSessions.mockResolvedValue(directory({ active: false }));
+test("missing network preserves the draft and opens explicit approval", async () => {
+  api.listAgentNetworks.mockResolvedValue(directory({ active: false }));
   const send = jest.fn();
   const user = userEvent.setup();
   render(<Composer send={send} />);
   await user.click(screen.getByRole("button", { name: "Send" }));
   expect(
-    await screen.findByRole("button", { name: "Cancel session approval" }),
+    await screen.findByRole("button", { name: "Cancel network approval" }),
   ).toBeTruthy();
   expect(
     (screen.getByRole("textbox", { name: "Draft" }) as HTMLTextAreaElement)
@@ -150,7 +150,7 @@ test("missing session preserves the draft and opens explicit approval", async ()
 });
 
 test("account-wide pause fails closed without opening approval", async () => {
-  api.listAgentSessions.mockResolvedValue(directory({ paused: true }));
+  api.listAgentNetworks.mockResolvedValue(directory({ paused: true }));
   const send = jest.fn();
   const user = userEvent.setup();
   render(<Composer send={send} />);
@@ -159,6 +159,6 @@ test("account-wide pause fails closed without opening approval", async () => {
   expect(alerts.some((alert) => /paused/.test(alert.textContent ?? ""))).toBe(
     true,
   );
-  expect(screen.queryByText("Cancel session approval")).toBeNull();
+  expect(screen.queryByText("Cancel network approval")).toBeNull();
   expect(send).not.toHaveBeenCalled();
 });

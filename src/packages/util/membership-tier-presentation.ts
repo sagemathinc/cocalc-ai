@@ -286,9 +286,9 @@ function buildMembershipTierDetailGroups({
   });
   add({
     group: "ai-automation",
-    key: "max_agent_session_members",
-    label: "Agent Session members",
-    value: formatLimitCount(usageLimits.max_agent_session_members),
+    key: "max_agent_network_members",
+    label: "Agent Network members",
+    value: formatLimitCount(usageLimits.max_agent_network_members),
   });
   add({
     group: "compute-projects",

@@ -112,7 +112,7 @@ export async function startAgentMessaging(
                 .respond({
                   error:
                     error instanceof Error &&
-                    /^(approval_required|session_paused|session_closed|session_stale|not_a_member|principal_mismatch|account_disabled|agent_unavailable)$/.test(
+                    /^(approval_required|network_paused|network_closed|network_stale|not_a_member|principal_mismatch|account_disabled|agent_unavailable)$/.test(
                       error.message,
                     )
                       ? error.message

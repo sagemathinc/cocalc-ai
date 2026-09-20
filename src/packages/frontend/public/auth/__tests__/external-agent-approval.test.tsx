@@ -16,7 +16,7 @@ jest.mock("@cocalc/frontend/auth/fresh-auth", () => ({
   FreshAuthModal: () => null,
 }));
 
-const sessionId = "11111111-1111-4111-8111-111111111111";
+const networkId = "11111111-1111-4111-8111-111111111111";
 const api = jest.mocked(postAuthApi);
 const props = {
   challengeId: "challenge",
@@ -26,16 +26,21 @@ const props = {
 };
 const directory = {
   enabled: true,
-  sessions: [
+  networks: [
     {
-      agent_session_id: sessionId,
+      agent_network_id: networkId,
+      account_id: "22222222-2222-4222-8222-222222222222",
       title: "Security review",
       state: "active",
       delivery_mode: "queued",
+      generation: "33333333-3333-4333-8333-333333333333",
+      created_by: "22222222-2222-4222-8222-222222222222",
+      created_at: "2026-09-20T00:00:00.000Z",
+      updated_at: "2026-09-20T00:00:00.000Z",
       members: [],
     },
   ],
-  usage: { active_sessions: 1, session_limit: 100, member_limit: 8 },
+  usage: { active_networks: 1, network_limit: 100, member_limit: 8 },
   controls: { paused: false, generation: 0 },
 };
 
@@ -56,14 +61,14 @@ beforeEach(() => {
   api.mockReset().mockResolvedValue(directory as any);
 });
 
-test("human selects one complete-graph session and approves at the home origin", async () => {
+test("human selects one complete-graph network and approves at the home origin", async () => {
   const user = userEvent.setup();
   render(<ExternalAgentApproval {...props} />);
-  const select = await screen.findByRole("combobox", { name: "Agent Session" });
+  const select = await screen.findByRole("combobox", { name: "Agent Network" });
   await user.click(select);
   await user.click(await screen.findByText(/Security review/));
   await user.click(
-    screen.getByRole("button", { name: "Approve Session Membership" }),
+    screen.getByRole("button", { name: "Approve Network Membership" }),
   );
   await waitFor(() =>
     expect(api).toHaveBeenCalledWith({
@@ -72,7 +77,7 @@ test("human selects one complete-graph session and approves at the home origin",
       body: {
         challenge_id: "challenge",
         origin_bay_id: "origin",
-        agent_session_id: sessionId,
+        agent_network_id: networkId,
         ttl_seconds: 86400,
       },
     }),
@@ -80,11 +85,11 @@ test("human selects one complete-graph session and approves at the home origin",
   expect(await screen.findByRole("status")).toBeTruthy();
 });
 
-test("signed-out visitors cannot enumerate or approve sessions", () => {
+test("signed-out visitors cannot enumerate or approve networks", () => {
   render(<ExternalAgentApproval {...props} isAuthenticated={false} />);
-  expect(screen.queryByRole("combobox", { name: "Agent Session" })).toBeNull();
+  expect(screen.queryByRole("combobox", { name: "Agent Network" })).toBeNull();
   expect(
-    screen.queryByRole("button", { name: "Approve Session Membership" }),
+    screen.queryByRole("button", { name: "Approve Network Membership" }),
   ).toBeNull();
   expect(api).not.toHaveBeenCalled();
 });

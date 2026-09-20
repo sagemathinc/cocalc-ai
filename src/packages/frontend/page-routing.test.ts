@@ -40,6 +40,16 @@ describe("page-routing", () => {
     const create = parsePageTarget("agents/new");
     expect(create).toEqual({ page: "agents", agent_id: "new" });
     expect(getPageUrlPath(create)).toBe("/agents/new");
+
+    const filtered = parsePageTarget("agents/agent-123?network=network-456");
+    expect(filtered).toEqual({
+      page: "agents",
+      agent_id: "agent-123",
+      network_id: "network-456",
+    });
+    expect(getPageUrlPath(filtered)).toBe(
+      "/agents/agent-123?network=network-456",
+    );
   });
 
   it("parses auth and ssh routes explicitly", () => {

@@ -20,16 +20,16 @@ jest.mock("@cocalc/database/pool", () => ({
 const tables = [
   "agent_personal_controls",
   "agent_personal_names",
-  "agent_sessions",
-  "agent_session_members",
-  "agent_session_mutations",
-  "agent_session_activity",
-  "agent_session_proposals",
-  "agent_session_broadcasts",
+  "agent_networks",
+  "agent_network_members",
+  "agent_network_mutations",
+  "agent_network_activity",
+  "agent_network_proposals",
+  "agent_network_broadcasts",
 ];
 const schema = Object.fromEntries(tables.map((name) => [name, SCHEMA[name]]));
 
-describe("Agent Session account-home schema", () => {
+describe("Agent Network account-home schema", () => {
   beforeEach(async () => {
     process.env.COCALC_DB = agentSchemaBackend();
     db = await createAgentSchemaFixture();
@@ -40,7 +40,7 @@ describe("Agent Session account-home schema", () => {
     expect(await schemaNeedsSync(schema)).toBe(true);
     await syncSchema(schema);
     const account = randomUUID();
-    const session = randomUUID();
+    const network = randomUUID();
     const project = randomUUID();
     const first = randomUUID();
     const second = randomUUID();
@@ -49,17 +49,17 @@ describe("Agent Session account-home schema", () => {
       [account],
     );
     await db.query(
-      `INSERT INTO agent_sessions
-       (agent_session_id,account_id,title,delivery_mode,generation,created_by)
+      `INSERT INTO agent_networks
+       (agent_network_id,account_id,title,delivery_mode,generation,created_by)
        VALUES($1,$2,'Review','queued',$3,$2)`,
-      [session, account, randomUUID()],
+      [network, account, randomUUID()],
     );
     for (const agent of [first, second])
       await db.query(
-        `INSERT INTO agent_session_members
-         (agent_session_id,member_kind,member_id,registered_agent_id,project_id,added_by)
+        `INSERT INTO agent_network_members
+         (agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by)
          VALUES($1,'registered',$2,$2,$3,$4)`,
-        [session, agent, project, account],
+        [network, agent, project, account],
       );
     await syncSchema(schema);
     await syncSchema(schema);
@@ -67,7 +67,7 @@ describe("Agent Session account-home schema", () => {
     expect(
       (
         await db.query(
-          "SELECT count(*)::int AS count FROM agent_session_members",
+          "SELECT count(*)::int AS count FROM agent_network_members",
         )
       ).rows,
     ).toEqual([{ count: 2 }]);

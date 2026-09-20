@@ -7,7 +7,7 @@ const targetAgent = randomUUID();
 const runId = randomUUID();
 const account = randomUUID();
 const host = randomUUID();
-const session = randomUUID();
+const network = randomUUID();
 const generation = randomUUID();
 
 const identities = new Map([
@@ -30,7 +30,7 @@ const identities = new Map([
     },
   ],
 ]);
-const checkSession = jest.fn();
+const checkNetwork = jest.fn();
 const assertHost = jest.fn(async () => {});
 const submitAgentRpc = jest.fn();
 const query = jest.fn(async () => ({
@@ -50,7 +50,7 @@ jest.mock("./access", () => ({
   assertRun: async () => {},
 }));
 jest.mock("./personal", () => ({
-  withPersonalHome: (...args: unknown[]) => checkSession(...args),
+  withPersonalHome: (...args: unknown[]) => checkNetwork(...args),
   personalControl: jest.fn(),
 }));
 jest.mock("@cocalc/server/conat/api/project-host-token-auth", () => ({
@@ -110,8 +110,8 @@ function authorization() {
     target,
     target_path: "/home/user/target.chat",
     target_thread_id: "target",
-    agent_session_id: session,
-    session_generation: generation,
+    agent_network_id: network,
+    network_generation: generation,
     account_generation: 4,
     configured_delivery: "queued" as const,
     principal_account_id: account,
@@ -126,13 +126,13 @@ beforeEach(() => {
     version: 3,
     target: envelope.target,
     attempt_id: envelope.attempt_id,
-    agent_session_id: envelope.agent_session_id,
+    agent_network_id: envelope.agent_network_id,
     outcome: "accepted",
     observed_at: Date.now(),
   }));
-  checkSession.mockReset().mockResolvedValue({
-    agent_session_id: session,
-    session_generation: generation,
+  checkNetwork.mockReset().mockResolvedValue({
+    agent_network_id: network,
+    network_generation: generation,
     account_generation: 4,
     account_id: account,
     delivery_mode: "queued",
@@ -155,7 +155,7 @@ test("cross-bay submission does not require the source identity in the target ba
         request: {
           version: 3,
           attempt_id: randomUUID(),
-          agent_session_id: session,
+          agent_network_id: network,
           target,
           body: "hello",
         },
@@ -167,7 +167,7 @@ test("cross-bay submission does not require the source identity in the target ba
   }
 });
 
-test("queued execution rechecks the exact session authority and host principal", async () => {
+test("queued execution rechecks the exact network authority and host principal", async () => {
   const auth = authorization();
   await expect(
     authorizeRpcExecution({
@@ -181,10 +181,10 @@ test("queued execution rechecks the exact session authority and host principal",
     host_id: host,
     project_id: targetProject,
   });
-  expect(checkSession).toHaveBeenCalledWith(account, {
-    action: "checkSession",
+  expect(checkNetwork).toHaveBeenCalledWith(account, {
+    action: "checkNetwork",
     options: {
-      agent_session_id: session,
+      agent_network_id: network,
       source,
       run_id: runId,
       target,
@@ -193,7 +193,7 @@ test("queued execution rechecks the exact session authority and host principal",
 });
 
 test.each([
-  ["session generation", { session_generation: randomUUID() }],
+  ["network generation", { network_generation: randomUUID() }],
   ["account generation", { account_generation: 5 }],
   ["delivery mode", { configured_delivery: "live", guidance: true }],
 ])("%s mutation rejects already queued work", async (_label, patch) => {
@@ -203,10 +203,10 @@ test.each([
       host_id: host,
       authorization: { ...authorization(), ...patch } as any,
     }),
-  ).rejects.toThrow("session_stale");
+  ).rejects.toThrow("network_stale");
 });
 
-test("a different execution principal fails before session use", async () => {
+test("a different execution principal fails before network use", async () => {
   await expect(
     authorizeRpcExecution({
       account_id: randomUUID(),
@@ -214,7 +214,7 @@ test("a different execution principal fails before session use", async () => {
       authorization: authorization(),
     }),
   ).rejects.toThrow("principal_mismatch");
-  expect(checkSession).not.toHaveBeenCalled();
+  expect(checkNetwork).not.toHaveBeenCalled();
 });
 
 test("changed target identity fails before queued execution", async () => {

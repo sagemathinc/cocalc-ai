@@ -9,8 +9,8 @@ import {
 } from "@cocalc/util/agent-mentions";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
 import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
-import { SessionApproval } from "./session-approval";
-import type { SessionApprovalTarget } from "./session-approval";
+import { NetworkApproval } from "./network-approval";
+import type { NetworkApprovalTarget } from "./network-approval";
 import { hasUnboundAgentName } from "./unbound-mentions";
 import { useAgentMessagingUI } from "./use-ui-preference";
 
@@ -32,7 +32,7 @@ export function useAgentMentions({
   const accountId = useTypedRedux("account", "account_id");
   const enabled = useAgentMessagingUI();
   const { directory } = useNamedAgents(enabled && runnable);
-  const [approval, setApproval] = useState<SessionApprovalTarget>();
+  const [approval, setApproval] = useState<NetworkApprovalTarget>();
   const [error, setError] = useState("");
   const [states, setStates] = useState<Record<string, string>>({});
   const pending = useRef<((approved: boolean) => void) | undefined>(undefined);
@@ -101,21 +101,21 @@ export function useAgentMentions({
       throw new Error(
         `@${reference.name} is unavailable. Remove or replace its reference before sending.`,
       );
-    const sessions = await api.listAgentSessions({ limit: 100 });
+    const networks = await api.listAgentNetworks({ limit: 100 });
     if (epoch !== generation.current) return false;
-    if (sessions.controls.paused)
+    if (networks.controls.paused)
       throw new Error(
         "Your agent communication is paused. Resume it in Agents before sending.",
       );
-    const active = sessions.sessions.some(
-      (session) =>
-        session.state === "active" &&
-        session.members.some(
+    const active = networks.networks.some(
+      (network) =>
+        network.state === "active" &&
+        network.members.some(
           (member) =>
             member.kind === "registered" &&
             sameEndpoint(member.endpoint, source),
         ) &&
-        session.members.some(
+        network.members.some(
           (member) =>
             member.kind === "registered" &&
             sameEndpoint(member.endpoint, reference.target),
@@ -123,17 +123,17 @@ export function useAgentMentions({
     );
     const stateKey = reference.target.agent_id;
     if (active) {
-      setStates((states) => ({ ...states, [stateKey]: "Session active" }));
+      setStates((states) => ({ ...states, [stateKey]: "Network active" }));
       return true;
     }
-    const inactive = sessions.sessions.some(
-      (session) =>
-        session.members.some(
+    const inactive = networks.networks.some(
+      (network) =>
+        network.members.some(
           (member) =>
             member.kind === "registered" &&
             sameEndpoint(member.endpoint, source),
         ) &&
-        session.members.some(
+        network.members.some(
           (member) =>
             member.kind === "registered" &&
             sameEndpoint(member.endpoint, reference.target),
@@ -141,9 +141,9 @@ export function useAgentMentions({
     );
     if (inactive)
       throw new Error(
-        `The shared Agent Session with @${reference.name} is paused or closed. Review it in Agents; your draft has not been sent.`,
+        `The shared Agent Network with @${reference.name} is paused or closed. Review it in Agents; your draft has not been sent.`,
       );
-    setStates((states) => ({ ...states, [stateKey]: "Needs session" }));
+    setStates((states) => ({ ...states, [stateKey]: "Needs network" }));
     if (pending.current) return false;
     const approved = await new Promise<boolean>((resolve) => {
       pending.current = resolve;
@@ -172,18 +172,18 @@ export function useAgentMentions({
       });
     });
     if (!approved || epoch !== generation.current) return false;
-    const refreshed = await api.listAgentSessions({ limit: 100 });
+    const refreshed = await api.listAgentNetworks({ limit: 100 });
     const connected =
       !refreshed.controls.paused &&
-      refreshed.sessions.some(
-        (session) =>
-          session.state === "active" &&
-          session.members.some(
+      refreshed.networks.some(
+        (network) =>
+          network.state === "active" &&
+          network.members.some(
             (member) =>
               member.kind === "registered" &&
               sameEndpoint(member.endpoint, source),
           ) &&
-          session.members.some(
+          network.members.some(
             (member) =>
               member.kind === "registered" &&
               sameEndpoint(member.endpoint, reference.target),
@@ -191,9 +191,9 @@ export function useAgentMentions({
       );
     if (!connected)
       throw new Error(
-        "The Agent Session is not active. Your draft has not been sent.",
+        "The Agent Network is not active. Your draft has not been sent.",
       );
-    setStates((states) => ({ ...states, [stateKey]: "Session active" }));
+    setStates((states) => ({ ...states, [stateKey]: "Network active" }));
     return true;
   }
 
@@ -302,15 +302,15 @@ export function useAgentMentions({
           </div>
         )}
         {Object.entries(states).some(
-          ([, state]) => state === "Needs session",
+          ([, state]) => state === "Needs network",
         ) && (
           <div role="status">
-            Agent reference needs an Agent Session. Your draft is preserved;
+            Agent reference needs an Agent Network. Your draft is preserved;
             Send will check again.
           </div>
         )}
         {approval && (
-          <SessionApproval value={approval} onClose={closeApproval} />
+          <NetworkApproval value={approval} onClose={closeApproval} />
         )}
       </>
     ),

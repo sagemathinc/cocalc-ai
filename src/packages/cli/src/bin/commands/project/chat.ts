@@ -19,7 +19,7 @@ import type {
   AgentRpcSend,
   AgentRpcTarget,
 } from "@cocalc/conat/agents/rpc";
-import type { AgentSessionDiscovery } from "@cocalc/conat/agents/personal";
+import type { AgentNetworkDiscovery } from "@cocalc/conat/agents/personal";
 import { encodeAgentMessageRuntimeEvent } from "@cocalc/conat/agents/runtime-events";
 import {
   isExternalAgentSource,
@@ -321,18 +321,18 @@ export function registerProjectChatCommands(
       (value: string, paths: string[]) => [...paths, value],
       [],
     )
-    .option("--rpc", "send one session-authorized attempt (no retries)")
+    .option("--rpc", "send one network-authorized attempt (no retries)")
     .option(
       "--external-agent <profile>",
-      "use only this session-enrolled external agent profile",
+      "use only this network-enrolled external agent profile",
     )
     .option(
       "--attempt-id <uuid>",
       "attempt identifier; deliberate retries require a NEW identifier",
     )
     .option(
-      "--agent-session <uuid>",
-      "exact Agent Session authorizing the send",
+      "--agent-network <uuid>",
+      "exact Agent Network authorizing the send",
     )
     .option(
       "--guidance",
@@ -353,7 +353,7 @@ export function registerProjectChatCommands(
           rpc?: boolean;
           externalAgent?: string;
           attemptId?: string;
-          agentSession?: string;
+          agentNetwork?: string;
           attach?: string[];
         },
         command: Command,
@@ -365,7 +365,7 @@ export function registerProjectChatCommands(
         if (opts.rpc || opts.to || opts.externalAgent) {
           if (opts.guidance)
             throw new Error(
-              "Agent delivery is determined by --agent-session; --guidance is not accepted",
+              "Agent delivery is determined by --agent-network; --guidance is not accepted",
             );
           if (
             (!opts.toAgent && !opts.to) ||
@@ -379,7 +379,7 @@ export function registerProjectChatCommands(
               "Use --to name or --rpc --to-agent ID, not both; cannot use legacy --request-id or project/path/thread options",
             );
           if (opts.toAgent) requireUuid(opts.toAgent, "to-agent");
-          requireUuid(opts.agentSession, "agent-session");
+          requireUuid(opts.agentNetwork, "agent-network");
           const attempt_id = opts.attemptId || randomUUID();
           requireUuid(attempt_id, "attempt-id");
           const globals = deps.globalsFrom(command);
@@ -391,38 +391,38 @@ export function registerProjectChatCommands(
               : sendIdentityMessage(request, globals.api);
           let target: AgentRpcTarget;
           let targetName: string | undefined;
-          let agent_session_id = opts.agentSession!;
+          let agent_network_id = opts.agentNetwork!;
           if (opts.to) {
             const resolved = opts.externalAgent
               ? await resolveExternalAgentName(
                   opts.externalAgent,
                   opts.to,
-                  agent_session_id,
+                  agent_network_id,
                 )
               : await resolveRuntimeAgentName(
                   opts.to,
                   globals.api,
-                  agent_session_id,
+                  agent_network_id,
                 );
             target = resolved.target;
             targetName = opts.to.trim().replace(/^@/, "");
-            agent_session_id = resolved.agent_session_id;
+            agent_network_id = resolved.agent_network_id;
           } else {
             const destinations = (await send({
               version: 3,
               action: "destinations",
-            })) as AgentSessionDiscovery;
+            })) as AgentNetworkDiscovery;
             const destination = destinations.peers.find(
-              ({ member, sessions }) =>
+              ({ member, networks }) =>
                 member.kind === "registered" &&
                 member.endpoint.agent_id === opts.toAgent &&
-                sessions.some(
-                  (session) => session.agent_session_id === agent_session_id,
+                networks.some(
+                  (network) => network.agent_network_id === agent_network_id,
                 ),
             );
             if (!destination || destination.member.kind !== "registered")
               throw new Error(
-                "Target is not a registered member of the exact Agent Session; no submission attempted",
+                "Target is not a registered member of the exact Agent Network; no submission attempted",
               );
             target = destination.member.endpoint;
             targetName = destination.member.name;
@@ -437,7 +437,7 @@ export function registerProjectChatCommands(
           if (opts.attach?.length) {
             if (isExternalAgentSource(target))
               throw new Error(
-                "Attachments to external session members are not supported",
+                "Attachments to external network members are not supported",
               );
             const self = opts.externalAgent
               ? undefined
@@ -457,7 +457,7 @@ export function registerProjectChatCommands(
           const request: AgentRpcSend = {
             version: 3,
             attempt_id,
-            agent_session_id,
+            agent_network_id,
             target,
             body: prompt,
             ...(file_references ? { file_references } : {}),
@@ -506,7 +506,7 @@ export function registerProjectChatCommands(
                 target,
                 ...(targetName ? { target_name: targetName } : {}),
                 body: prompt,
-                agent_session_id,
+                agent_network_id,
                 attempt_id,
                 outcome: result.outcome,
                 observed_at: result.observed_at,

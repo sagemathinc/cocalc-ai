@@ -6,8 +6,9 @@ import {
   useFreshAuthAction,
 } from "@cocalc/frontend/auth/fresh-auth";
 import { getControlPlaneOrigin } from "@cocalc/frontend/control-plane-origin";
-import type { AgentSessionDirectory } from "@cocalc/conat/agents/personal";
+import type { AgentNetworkDirectory } from "@cocalc/conat/agents/personal";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { AgentNetworkSummary } from "@cocalc/frontend/agents/agent-network-summary";
 
 export function ExternalAgentApproval({
   challengeId,
@@ -22,7 +23,7 @@ export function ExternalAgentApproval({
   isAuthenticated: boolean;
   accountLabel?: string;
 }) {
-  const [directory, setDirectory] = useState<AgentSessionDirectory>();
+  const [directory, setDirectory] = useState<AgentNetworkDirectory>();
   const [selected, setSelected] = useState<string>();
   const [duration, setDuration] = useState(86400);
   const [error, setError] = useState("");
@@ -33,10 +34,13 @@ export function ExternalAgentApproval({
   const { runFreshAuthAction, freshAuthModalProps } = useFreshAuthAction({
     origin,
   });
+  const selectedNetwork = directory?.networks.find(
+    ({ agent_network_id }) => agent_network_id === selected,
+  );
   useEffect(() => {
     let disposed = false;
     if (isAuthenticated) {
-      void postAuthApi<AgentSessionDirectory>({
+      void postAuthApi<AgentNetworkDirectory>({
         origin,
         endpoint: "auth/cli/agent/destinations",
         body: {},
@@ -65,7 +69,7 @@ export function ExternalAgentApproval({
           body: {
             challenge_id: challengeId,
             origin_bay_id: originBayId,
-            agent_session_id: selected,
+            agent_network_id: selected,
             ttl_seconds: duration,
           },
         });
@@ -86,7 +90,7 @@ export function ExternalAgentApproval({
     >
       <h2>Connect External Agent</h2>
       <p>
-        <strong>{label}</strong> is requesting a session-scoped external agent
+        <strong>{label}</strong> is requesting a network-scoped external agent
         identity, not access to your CoCalc account.
       </p>
       {isAuthenticated && accountLabel && (
@@ -98,7 +102,7 @@ export function ExternalAgentApproval({
         <Alert
           type="info"
           role="note"
-          title="Sign in to select the Agent Session this installation may join."
+          title="Sign in to select the Agent Network this installation may join."
         />
       ) : approved ? (
         <Alert
@@ -112,7 +116,7 @@ export function ExternalAgentApproval({
             type="warning"
             role="note"
             title="Only approve a request you started."
-            description="Anyone who can read this installation's credential can send and receive messages as this external agent within the selected session until it expires or you revoke it. Every session member can exchange prompt data with it. This does not permit browsing project files."
+            description="Anyone who can read this installation's credential can send and receive messages as this external agent within the selected network until it expires or you revoke it. Every network member can exchange prompt data with it. This does not permit browsing project files."
           />
           {error && <Alert type="error" role="alert" title={error} />}
           {!directory ? (
@@ -123,41 +127,46 @@ export function ExternalAgentApproval({
                 disabled={busy}
                 style={{ border: 0, padding: 0, minWidth: 0 }}
               >
-                <legend>Join one Agent Session</legend>
-                {directory.sessions.filter(
-                  (session) =>
-                    session.state === "active" &&
-                    session.members.length < directory.usage.member_limit,
+                <legend>Join one Agent Network</legend>
+                {directory.networks.filter(
+                  (network) =>
+                    network.state === "active" &&
+                    network.members.length < directory.usage.member_limit,
                 ).length === 0 && (
                   <p>
-                    Create an Agent Session with room for another member, then
+                    Create an Agent Network with room for another member, then
                     reopen this approval page.
                   </p>
                 )}
                 <Select
-                  aria-label="Agent Session"
+                  aria-label="Agent Network"
                   value={selected}
                   onChange={setSelected}
                   style={{ width: "100%" }}
-                  placeholder="Select an Agent Session"
-                  options={directory.sessions
+                  placeholder="Select an Agent Network"
+                  options={directory.networks
                     .filter(
-                      (session) =>
-                        session.state === "active" &&
-                        session.members.length < directory.usage.member_limit,
+                      (network) =>
+                        network.state === "active" &&
+                        network.members.length < directory.usage.member_limit,
                     )
-                    .map((session) => ({
-                      value: session.agent_session_id,
-                      label: `${session.title || "Untitled Agent Session"} (${session.members.length} members, ${session.delivery_mode})`,
+                    .map((network) => ({
+                      value: network.agent_network_id,
+                      label: `${network.title} (${network.members.length} members, ${network.delivery_mode})`,
                     }))}
                 />
-                {selected && (
-                  <Alert
-                    style={{ marginTop: 12 }}
-                    type="info"
-                    title="Two-way complete-graph membership"
-                    description="This external agent and every current or future member of the selected session may message one another in both directions."
-                  />
+                {selectedNetwork && (
+                  <Space
+                    orientation="vertical"
+                    style={{ width: "100%", marginTop: 12 }}
+                  >
+                    <AgentNetworkSummary network={selectedNetwork} />
+                    <Alert
+                      type="info"
+                      title="Two-way complete-graph membership"
+                      description="This external agent and every current or future member of the selected network may message one another in both directions."
+                    />
+                  </Space>
                 )}
               </fieldset>
               <label htmlFor={durationId}>Credential expires after</label>
@@ -181,7 +190,7 @@ export function ExternalAgentApproval({
                 loading={busy}
                 disabled={busy || !selected || directory.controls.paused}
               >
-                Approve Session Membership
+                Approve Network Membership
               </Button>
               {directory.controls.paused && (
                 <Alert

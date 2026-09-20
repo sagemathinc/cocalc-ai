@@ -6,15 +6,15 @@ export function isRestrictiveAgentManagement(
 ): boolean {
   switch (request.action) {
     case "listNamedAgents":
-    case "listAgentSessions":
-    case "listAgentSessionActivity":
-    case "inspectAgentSessionAttempt":
-    case "listAgentSessionProposals":
+    case "listAgentNetworks":
+    case "listAgentNetworkActivity":
+    case "inspectAgentNetworkAttempt":
+    case "listAgentNetworkProposals":
     case "retireNamedAgent":
       return true;
-    case "resolveAgentSessionProposal":
+    case "resolveAgentNetworkProposal":
       return request.options.action === "reject";
-    case "updateAgentSession":
+    case "updateAgentNetwork":
       return ["pause", "remove-member", "close"].includes(
         request.options.action,
       );

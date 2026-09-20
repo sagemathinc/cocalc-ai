@@ -7,14 +7,14 @@ import { cleanupAgentMessagingHistory } from "./maintenance";
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
-describeDb("Agent Session retention", () => {
+describeDb("Agent Network retention", () => {
   const db = new AgentStore();
   const tables = [
     "agent_rpc_admission_state",
-    "agent_session_mutations",
-    "agent_session_activity",
-    "agent_session_proposals",
-    "agent_session_broadcasts",
+    "agent_network_mutations",
+    "agent_network_activity",
+    "agent_network_proposals",
+    "agent_network_broadcasts",
     "agent_external_inbox",
   ];
   beforeAll(async () => {
@@ -33,15 +33,15 @@ describeDb("Agent Session retention", () => {
   test("removes expired bounded coordination state", async () => {
     const account = randomUUID();
     await db.query(
-      `INSERT INTO agent_session_mutations
-       (account_id,request_id,binding_hash,agent_session_id,created_at)
+      `INSERT INTO agent_network_mutations
+       (account_id,request_id,binding_hash,agent_network_id,created_at)
        VALUES($1,$2,'hash',$3,now()-interval '31 days')`,
       [account, randomUUID(), randomUUID()],
     );
     await db.query(
-      `INSERT INTO agent_session_proposals
-       (proposal_id,account_id,source,delivery_mode,members,state,binding_hash,expires_at)
-       VALUES($1,$2,$3,'queued',$4,'expired','hash',now()-interval '31 days')`,
+      `INSERT INTO agent_network_proposals
+       (proposal_id,account_id,source,title,delivery_mode,members,state,binding_hash,expires_at)
+       VALUES($1,$2,$3,'Expired network','queued',$4,'expired','hash',now()-interval '31 days')`,
       [
         randomUUID(),
         account,
@@ -50,7 +50,7 @@ describeDb("Agent Session retention", () => {
       ],
     );
     const result = await cleanupAgentMessagingHistory();
-    expect(result.session_mutations).toBe(1);
-    expect(result.session_proposals).toBe(1);
+    expect(result.network_mutations).toBe(1);
+    expect(result.network_proposals).toBe(1);
   });
 });
