@@ -60,6 +60,7 @@ import {
   denyCourseVmMutation,
   meterCourseVm,
   meterCourseVmEgress,
+  observeCourseVmLiveEgress,
   enforceCourseVmFunding,
   refreshCourseVmForProvider,
   reserveCourseVmLaunch,
@@ -166,6 +167,16 @@ const logger = getLogger("server:compute:worker");
 const COMPUTE_PUBLIC_EGRESS_USD_PER_GB = 0.1;
 const COMPUTE_EGRESS_FINALIZATION_DELAY_MS = 5 * 60_000;
 const COMPUTE_EGRESS_METER_LOCK_KEY = "managed-compute-egress-meter";
+const COMPUTE_LIVE_EGRESS_LOCK_KEY = "managed-compute-live-egress";
+const COMPUTE_LIVE_EGRESS_INTERVAL_MS = Math.min(
+  60_000,
+  Math.max(
+    10_000,
+    Number(process.env.COCALC_COMPUTE_LIVE_EGRESS_INTERVAL_MS ?? 30_000) ||
+      30_000,
+  ),
+);
+const COMPUTE_LIVE_EGRESS_CONCURRENCY = 8;
 const COMPUTE_PROVIDER_OBSERVATION_LOCK_KEY =
   "managed-compute-provider-observation";
 const COMPUTE_PROVIDER_OBSERVATION_INTERVAL_MS = 30_000;
@@ -973,6 +984,68 @@ async function meterComputeVmPublicEgress() {
       });
     }
   }
+}
+
+/** Best-effort near-live enforcement.  This intentionally rereads from the
+ * delayed billing watermark and never advances it: late Monitoring samples
+ * are therefore picked up by a later live pass and by finalized billing.
+ */
+async function enforceCourseVmLiveEgress() {
+  const candidates = (await listComputeVmsForEgressMetering()).filter(
+    (vm) =>
+      vm.provider === "gcp" &&
+      vm.desired_state === "running" &&
+      !vm.deleted_at &&
+      hasCourseVmFunding(vm) &&
+      !!vm.metadata?.billing?.course_funding?.binding,
+  );
+  let cursor = 0;
+  const observeNext = async () => {
+    while (cursor < candidates.length) {
+      const vm = candidates[cursor++];
+      const start = new Date(
+        vm.metadata?.billing?.egress?.metered_through_at ?? vm.created_at,
+      );
+      const end = new Date();
+      if (!Number.isFinite(start.valueOf()) || start >= end) continue;
+      try {
+        const bytes = await getProviderComputePublicEgressBytes({
+          vm,
+          start,
+          end,
+        });
+        const observed = await observeCourseVmLiveEgress(vm, {
+          bytes,
+          start,
+          end,
+        });
+        if (observed?.threshold_reached) {
+          logger.warn("course VM reached its live GCP egress stop threshold", {
+            vm_id: vm.id,
+            total_bytes: observed.total_bytes,
+          });
+          await queueCourseVmEnforcement(vm, "stop");
+        }
+      } catch (err) {
+        // The finalized pass records durable errors. Its 15-minute stale-data
+        // guard stops sponsored service if provider telemetry stays unavailable.
+        logger.warn("failed to observe live course VM egress", {
+          vm_id: vm.id,
+          start,
+          end,
+          err,
+        });
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      {
+        length: Math.min(COMPUTE_LIVE_EGRESS_CONCURRENCY, candidates.length),
+      },
+      () => observeNext(),
+    ),
+  );
 }
 
 export async function reconcileComputeProviderInventory() {
@@ -3085,10 +3158,12 @@ export function startComputeVmWorker(
   let stopped = false;
   let lastReconcile = 0;
   let lastEgressMeter = 0;
+  let lastLiveEgress = 0;
   let lastProviderInventory = 0;
   let lastProviderObservation = 0;
   let providerObservationRunning = false;
   let egressMeterRunning = false;
+  let liveEgressRunning = false;
   let providerInventoryRunning = false;
   let vmFundingRunning = false;
   let volumeFundingRunning = false;
@@ -3307,6 +3382,23 @@ export function startComputeVmWorker(
       if (Date.now() - lastReconcile >= 15_000) {
         lastReconcile = Date.now();
         const config = await getComputeVmConfig();
+        if (
+          !liveEgressRunning &&
+          Date.now() - lastLiveEgress >= COMPUTE_LIVE_EGRESS_INTERVAL_MS
+        ) {
+          lastLiveEgress = Date.now();
+          liveEgressRunning = true;
+          void withSessionAdvisoryLock({
+            lockKey: COMPUTE_LIVE_EGRESS_LOCK_KEY,
+            fn: enforceCourseVmLiveEgress,
+          })
+            .catch((err) =>
+              logger.warn("managed compute live egress pass failed", { err }),
+            )
+            .finally(() => {
+              liveEgressRunning = false;
+            });
+        }
         if (!egressMeterRunning && Date.now() - lastEgressMeter >= 5 * 60_000) {
           lastEgressMeter = Date.now();
           egressMeterRunning = true;

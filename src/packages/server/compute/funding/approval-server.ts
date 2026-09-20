@@ -285,6 +285,7 @@ function fundingReview(
     <dt>Total student ceilings</dt><dd>${usd(ceilings.toString())}</dd><dt>Approval expires (UTC)</dt><dd>${escapeHtml(intent.expires_at)}</dd>
     <dt>Status</dt><dd>${intent.status}</dd></dl>
     <h2>Students</h2><table><thead><tr><th scope="col">Student account</th><th scope="col">Allowance</th></tr></thead><tbody>${rows}</tbody></table>
+    <h2>GCP Network Charges</h2><p>Public Internet traffic from a course-funded GCP VM costs USD 0.10/GB and is measured after traffic is sent. CoCalc checks current usage about every 30 seconds and automatically stops a VM after its network spending threshold is observed, but provider reporting and shutdown take additional time. The payer accepts the actual finalized GCP egress charge, including usage reported after a student's allowance or the displayed pool commitment is exhausted. This exception applies only to measured GCP public egress; it does not increase student ceilings or authorize additional compute or storage.</p>
     <h2>Storage Obligation</h2><p>Stopped disks can continue to incur charges. Each runtime reservation protects cleanup and storage costs within its allowance. Retained storage is deleted after the ${review.storage_retention_hours}-hour retention window unless another authorized funding source takes over. Sponsorship ending does not authorize personal charges.</p>`;
 }
 

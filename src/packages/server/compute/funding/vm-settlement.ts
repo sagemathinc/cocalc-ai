@@ -105,6 +105,12 @@ export async function settleComputeVmFundingLocal(
     )
       fundingConflict("Invalid trusted VM metering interval.");
     const previous = row.pricing_snapshot.meter;
+    const postedCharge = moneyToDbString(
+      toDecimal(row.spent_usd).plus(previous?.payer_egress_overage_usd ?? 0),
+    );
+    const previousOverrun =
+      toDecimal(previous?.platform_overrun_usd ?? 0).gt(0) ||
+      toDecimal(previous?.payer_egress_overage_usd ?? 0).gt(0);
     const meterAsOf = new Date(
       fundingDate(opts.meter_as_of ?? opts.stopped_until ?? opts.running_until),
     );
@@ -126,10 +132,10 @@ export async function settleComputeVmFundingLocal(
     // Older observations are no-ops, not permanent no-rewind settlement errors.
     if (previous?.meter_as_of && meterAsOf < new Date(previous.meter_as_of))
       return {
-        charged_usd: row.spent_usd,
+        charged_usd: postedCharge,
         authorized_usd: row.authorized_usd,
         committed_usd: currentCommitment,
-        overrun: toDecimal(previous.platform_overrun_usd ?? 0).gt(0),
+        overrun: previousOverrun,
       };
     if (
       previous?.running_started_at &&
@@ -197,18 +203,18 @@ export async function settleComputeVmFundingLocal(
             storageEnd < new Date(previous.stopped_until)))
       )
         return {
-          charged_usd: row.spent_usd,
+          charged_usd: postedCharge,
           authorized_usd: row.authorized_usd,
           committed_usd: currentCommitment,
-          overrun: toDecimal(previous.platform_overrun_usd ?? 0).gt(0),
+          overrun: previousOverrun,
         };
     }
     if (row.state === "settled")
       return {
-        charged_usd: row.spent_usd,
+        charged_usd: postedCharge,
         authorized_usd: row.authorized_usd,
         committed_usd: currentCommitment,
-        overrun: false,
+        overrun: previousOverrun,
       };
     const request = row.pricing_snapshot.request;
     const runMs = runStart
@@ -246,13 +252,25 @@ export async function settleComputeVmFundingLocal(
       request.provider === "gcp"
         ? toDecimal(egressBytes).div(1_000_000_000).mul("0.1")
         : toDecimal(0);
-    const egress = egressExact.gt(binding.egress_usd)
+    const allocatedEgress = egressExact.gt(binding.egress_usd)
       ? toDecimal(binding.egress_usd)
       : egressExact;
-    const exact = toDecimal(running.exact).plus(storage.exact).plus(egress);
-    const charged = moneyRoundToCents(exact);
-    const delta = charged.minus(row.spent_usd);
-    if (delta.lt(0))
+    const allocatedExact = toDecimal(running.exact)
+      .plus(storage.exact)
+      .plus(allocatedEgress);
+    const allocatedCharged = moneyRoundToCents(allocatedExact);
+    const payerExact = pool
+      ? toDecimal(running.exact).plus(storage.exact).plus(egressExact)
+      : allocatedExact;
+    const payerCharged = moneyRoundToCents(payerExact);
+    const payerEgressOverage = payerCharged.minus(allocatedCharged);
+    const previousPayerEgressOverage = toDecimal(
+      previous?.payer_egress_overage_usd ?? 0,
+    );
+    const allocationDelta = allocatedCharged.minus(row.spent_usd);
+    const overageDelta = payerEgressOverage.minus(previousPayerEgressOverage);
+    const purchaseDelta = allocationDelta.plus(overageDelta);
+    if (allocationDelta.lt(0) || overageDelta.lt(0))
       fundingConflict("VM metering would reverse a posted charge.");
     const protectedRemaining = toDecimal(binding.protected_usd).minus(
       storage.charged,
@@ -264,7 +282,7 @@ export async function settleComputeVmFundingLocal(
         storageEnd &&
         storageEnd > new Date(binding.storage_delete_at)
       ) ||
-      egressExact.gt(egress);
+      egressExact.gt(allocatedEgress);
     const platformOverrun = toDecimal(request.hourly_cost_usd)
       .mul(
         runStart
@@ -285,8 +303,8 @@ export async function settleComputeVmFundingLocal(
           )
           .div(3600_000),
       )
-      .plus(egressExact.minus(egress));
-    if (delta.gt(0)) {
+      .plus(pool ? 0 : egressExact.minus(allocatedEgress));
+    if (purchaseDelta.gt(0)) {
       // Each ledger segment is closed and has an explicit cost. In particular,
       // no cost_per_hour-only purchase can extrapolate beyond authorization.
       let start =
@@ -299,13 +317,15 @@ export async function settleComputeVmFundingLocal(
       if (new Date(start) >= end)
         start =
           previous?.egress_complete_through ?? runStart?.toISOString() ?? start;
-      const exactWithCarry = exact.minus(row.spent_usd);
+      const exactWithCarry = payerExact
+        .minus(row.spent_usd)
+        .minus(previousPayerEgressOverage);
       const operation = randomUUID();
       const purchaseId = await createPurchase({
         client,
         account_id: opts.account_id,
         service: "dedicated-host",
-        cost: delta,
+        cost: purchaseDelta,
         unrounded_cost: exactWithCarry,
         time: end,
         period_start: new Date(start),
@@ -326,8 +346,8 @@ export async function settleComputeVmFundingLocal(
       });
       await client.query(
         `INSERT INTO compute_funding_purchase_attributions
-        (purchase_id,payer_account_id,reservation_id,operation_id,request_hash,started_at,ended_at,exact_cost_usd,charged_usd)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        (purchase_id,payer_account_id,reservation_id,operation_id,request_hash,started_at,ended_at,exact_cost_usd,charged_usd,course_egress_overage_usd)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
         [
           purchaseId,
           opts.account_id,
@@ -337,14 +357,16 @@ export async function settleComputeVmFundingLocal(
           start,
           end,
           moneyToDbString(exactWithCarry),
-          moneyToDbString(delta),
+          moneyToDbString(purchaseDelta),
+          moneyToDbString(overageDelta),
         ],
       );
-      await reduceAccountFundingBacking(client, {
-        payer_account_id: opts.account_id,
-        hold_id: pool ? pool.hold_id : source.hold_id!,
-        amount_usd: moneyToDbString(delta),
-      });
+      if (allocationDelta.gt(0))
+        await reduceAccountFundingBacking(client, {
+          payer_account_id: opts.account_id,
+          hold_id: pool ? pool.hold_id : source.hold_id!,
+          amount_usd: moneyToDbString(allocationDelta),
+        });
     }
     // A validated handoff ends network use at the confirmed stop, but bills
     // retained storage until cutover. Its frozen egress snapshot need not cover
@@ -358,22 +380,24 @@ export async function settleComputeVmFundingLocal(
           new Date(completeThrough) >=
             (transferredAt ? runEnd : (storageEnd ?? runEnd))));
     const release = finalized
-      ? toDecimal(row.authorized_usd).minus(charged).minus(row.released_usd)
+      ? toDecimal(row.authorized_usd)
+          .minus(allocatedCharged)
+          .minus(row.released_usd)
       : toDecimal(0);
-    const reduction = moneyToDbString(delta.plus(release));
+    const reduction = moneyToDbString(allocationDelta.plus(release));
     if (pool && grant) {
       await client.query(
         "UPDATE compute_funding_pools SET spent_usd=spent_usd+$2,reserved_usd=reserved_usd-$3,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
-        [pool.id, moneyToDbString(delta), reduction],
+        [pool.id, moneyToDbString(allocationDelta), reduction],
       );
       await client.query(
         "UPDATE compute_funding_grants SET spent_usd=spent_usd+$2,reserved_usd=reserved_usd-$3,version=version+1,updated_at=clock_timestamp() WHERE id=$1",
-        [grant.id, moneyToDbString(delta), reduction],
+        [grant.id, moneyToDbString(allocationDelta), reduction],
       );
     } else {
       await client.query(
         "UPDATE compute_vm_personal_consents SET spent_usd=spent_usd+$2,committed_usd=committed_usd-$3,updated_at=clock_timestamp() WHERE id=$1",
-        [source.consent!.id, moneyToDbString(delta), reduction],
+        [source.consent!.id, moneyToDbString(allocationDelta), reduction],
       );
       if (release.gt(0))
         await reduceAccountFundingBacking(client, {
@@ -392,6 +416,7 @@ export async function settleComputeVmFundingLocal(
       egress_finalized:
         opts.egress_finalized ?? previous?.egress_finalized ?? false,
       platform_overrun_usd: moneyToDbString(platformOverrun),
+      payer_egress_overage_usd: moneyToDbString(payerEgressOverage),
       transferred_at: transferredAt,
       successor_reservation_id: successorId,
     };
@@ -400,7 +425,7 @@ export async function settleComputeVmFundingLocal(
       protected_usd=$4,state=$5,pricing_snapshot=jsonb_set(pricing_snapshot,'{meter}',$6::jsonb),updated_at=clock_timestamp() WHERE id=$1`,
       [
         row.id,
-        moneyToDbString(charged),
+        moneyToDbString(allocatedCharged),
         moneyToDbString(release),
         finalized ? "0" : moneyToDbString(protectedRemaining),
         finalized
@@ -415,18 +440,20 @@ export async function settleComputeVmFundingLocal(
     );
     await fundingEvent(client, row, overrun ? "uncertain" : "charged", {
       ...meter,
-      delta_usd: moneyToDbString(delta),
+      delta_usd: moneyToDbString(purchaseDelta),
+      allocated_delta_usd: moneyToDbString(allocationDelta),
+      course_egress_overage_delta_usd: moneyToDbString(overageDelta),
       released_usd: moneyToDbString(release),
-      cumulative_exact_usd: moneyToDbString(exact),
+      cumulative_exact_usd: moneyToDbString(payerExact),
       overrun,
       deleted: opts.deleted === true,
     });
     return {
-      charged_usd: moneyToDbString(charged),
+      charged_usd: moneyToDbString(payerCharged),
       authorized_usd: row.authorized_usd,
       committed_usd: moneyToDbString(
         toDecimal(row.authorized_usd)
-          .minus(charged)
+          .minus(allocatedCharged)
           .minus(row.released_usd)
           .minus(release),
       ),

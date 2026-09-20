@@ -1,21 +1,5 @@
 # Trusted Financial Approval
 
-## Release Restrictions
-
-Course-funded GCP VMs are disabled until network spending can be enforced
-outside the root-controlled guest. The application egress reservation is an
-accounting limit, not a cap on provider liability. Course-funded Nebius VMs
-remain supported; this restriction does not change retained-volume accounting.
-
-Before deploying, stop any existing course-funded GCP VMs and verify their
-provider state. Deploy the updated API and compute workers on every bay before
-resuming sponsored service. Updated workers reject GCP launch/restart dispatch
-and request a stop for already-running sponsored GCP VMs; do not rely on a
-mixed-version rolling deployment to stop existing traffic immediately. Retained
-disks remain billable and continue through normal funded retention/settlement.
-Re-enabling GCP requires a separately reviewed network-boundary enforcement
-design and a provider-level traffic test, not a configuration override.
-
 The isolated approval listener admits at most five pending sign-ins per payer
 and ten sign-in starts per rolling minute, across all intent IDs and browser
 cookies. Capacity is checked both before factor work and synchronously before
@@ -137,6 +121,47 @@ immediate versus conditional activation, allowed exhaustion/expiry triggers,
 named VM and volumes, generation/epoch, compute price, protected storage/egress,
 and exact storage deletion deadlines. Revocation/suspension are not fallback
 triggers. No browser/CLI endpoint may call the handler's `apply` directly.
+
+## Course-Funded GCP Egress
+
+The GCP egress amount in a student reservation is an automatic-stop threshold,
+not a promise that provider charges cannot cross that amount. Network telemetry
+is necessarily retrospective: bytes have already left the VM before Cloud
+Monitoring can report them, and stopping an observed VM also takes time. The
+course payer therefore accepts the actual finalized `$0.10/GB` charge,
+including a small amount reported after a student's threshold or remaining
+allocation is reached. That overage is posted directly to the payer and is
+recorded separately from the student's bounded grant and reservation.
+
+Enforcement deliberately uses two clocks:
+
+- A near-live pass queries GCP from the durable billing watermark through the
+  current time every 30 seconds by default. The interval is configurable with
+  `COCALC_COMPUTE_LIVE_EGRESS_INTERVAL_MS`, clamped to 10--60 seconds. Crossing
+  the threshold immediately queues a VM stop.
+- The authoritative billing pass retains a five-minute watermark delay so late
+  provider samples cannot be skipped. Live observations never advance this
+  watermark; finalized measurements are monotonic and idempotently charged.
+- If finalized telemetry remains unavailable, the existing 15-minute stale
+  observation guard stops sponsored service. Worker health and provider API
+  failures must be monitored because no in-VM mechanism is trusted as the
+  financial enforcement boundary.
+
+Managed GCP VMs use one interface and Standard network tier; Tier 1 bandwidth
+is not enabled. For the supported machine families, [Google's documented
+maximum traffic rate to destinations outside the
+VPC](https://docs.cloud.google.com/compute/docs/network-bandwidth#egress_to_destinations_outside_of_a_vpc_network)
+is 7 Gbit/s. At the conservative
+CoCalc rate of `$0.10` per decimal GB, that is at most `$0.0875` per second:
+`$2.625` during one 30-second poll, `$26.25` during five minutes, or `$78.75`
+during the 15-minute stale-data window, plus [up to 30 seconds before an
+automatic provider stop begins](https://docs.cloud.google.com/compute/docs/instances/limit-vm-runtime#restrictions).
+These are conservative exposure calculations, not normal charges or timing guarantees.
+The deployment's active-VM limits, course shutdown timers, and site exposure
+policy bound aggregate risk; operators must size and monitor them together.
+An extended control-plane outage increases exposure linearly at no more than
+that per-VM bandwidth bound until the configured shutdown timer or service
+recovery stops the VM.
 
 ## Paid Credit Transfers
 

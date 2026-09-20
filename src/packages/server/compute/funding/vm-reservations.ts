@@ -67,6 +67,7 @@ export interface VmFundingReservation {
       egress_complete_through?: string;
       egress_finalized?: boolean;
       platform_overrun_usd?: string;
+      payer_egress_overage_usd?: string;
       transferred_at?: string;
       successor_reservation_id?: string;
     };

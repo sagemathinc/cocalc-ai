@@ -491,7 +491,7 @@ export function ComputeBudget({
                     [
                       "Reserved",
                       "reserved_usd",
-                      "Unspent credit set aside for the next VM runtime interval, keeping disks after compute stops, and an approved network spending cap. It is part of the student's unspent credit, not an extra charge. Network usage is charged as reports arrive; GCP public egress costs $0.10/GB. Unused reservations are released when the resource's remaining costs are accounted for.",
+                      "Unspent credit set aside for the next VM runtime interval, keeping disks after compute stops, and a GCP network stop threshold. It is part of the student's unspent credit, not an extra charge. GCP public egress costs $0.10/GB and is measured after traffic is sent, so the course payer can be charged slightly beyond this threshold before automatic shutdown completes. Unused reservations are released when the resource's remaining costs are accounted for.",
                     ],
                     [
                       "Returned",

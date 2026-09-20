@@ -4,7 +4,6 @@
  */
 
 import getPool from "@cocalc/database/pool";
-import { requireSponsoredVmProvider } from "./sponsored-provider";
 import { withFundingResourceMeterLock } from "./resource-meter-lock";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
@@ -254,7 +253,6 @@ export async function reserveCourseVmLaunch(
   vm: ComputeVmRow,
 ): Promise<ComputeVmRow> {
   if (!hasCourseVmFunding(vm)) return vm;
-  requireSponsoredVmProvider(vm.provider);
   await requireSponsoredVmAdmission();
   const course = vm.metadata.billing.course_funding;
   if (course.binding) return vm;
@@ -346,7 +344,6 @@ export async function requireCourseVmService(
   renew = false,
 ) {
   if (!hasCourseVmFunding(vm)) return;
-  requireSponsoredVmProvider(vm.provider);
   const binding = courseVmBinding(vm);
   if (vm.stopped_at || vm.deleted_at || vm.desired_state !== "running")
     fundingConflict("Restart requires a new sponsored reservation.");
@@ -577,16 +574,13 @@ export async function meterCourseVmEgress(
   const measuredCost = toDecimal(bytes)
     .div(1_000_000_000)
     .mul(current.provider === "gcp" ? "0.1" : "0");
-  const customerCap = courseVmBinding(current).egress_usd;
   const metadata = {
     ...previous,
     error: null,
     total_bytes: bytes,
     metered_through_at: opts.end.toISOString(),
     finalized: opts.finalize,
-    total_cost_usd: moneyToDbString(
-      measuredCost.gt(customerCap) ? customerCap : measuredCost,
-    ),
+    total_cost_usd: moneyToDbString(measuredCost),
     unit_cost_usd_per_gb: current.provider === "gcp" ? "0.1" : "0",
   };
   // pg timestamps may include microseconds, but the interval returned to the
@@ -603,6 +597,60 @@ export async function meterCourseVmEgress(
       current.metadata.billing.course_funding.funding_epoch,
     ],
   );
+}
+
+/** Persist a current best-effort observation without advancing the finalized
+ * billing watermark. Provider monitoring data can still arrive late, so this
+ * is an enforcement signal only; the delayed pass remains authoritative for
+ * charges and reconciliation.
+ */
+export async function observeCourseVmLiveEgress(
+  vm: ComputeVmRow,
+  opts: { bytes: number; start: Date; end: Date },
+): Promise<{ total_bytes: number; threshold_reached: boolean } | undefined> {
+  const current = await getComputeVmById(vm.id);
+  if (
+    !current ||
+    current.provider !== "gcp" ||
+    current.instance_generation !== vm.instance_generation ||
+    current.metadata?.billing?.course_funding?.funding_epoch !==
+      vm.metadata?.billing?.course_funding?.funding_epoch
+  )
+    return;
+  const previous = current.metadata?.billing?.egress ?? {};
+  const through = previous.metered_through_at
+    ? new Date(previous.metered_through_at)
+    : current.created_at;
+  if (through.valueOf() !== opts.start.valueOf()) return;
+  const totalBytes = Number(previous.total_bytes ?? 0) + opts.bytes;
+  const live = {
+    live_total_bytes: totalBytes,
+    live_observed_at: new Date().toISOString(),
+    live_complete_through: opts.end.toISOString(),
+    live_error: null,
+  };
+  const result = await getPool().query(
+    `UPDATE compute_vms SET metadata=jsonb_set(metadata,'{billing,egress}',
+      COALESCE(metadata#>'{billing,egress}','{}'::jsonb) || $2::jsonb)
+    WHERE id=$1 AND owning_bay_id=$3
+      AND COALESCE((metadata#>>'{billing,egress,metered_through_at}')::timestamptz,date_trunc('milliseconds',created_at))=$4
+      AND metadata#>>'{billing,course_funding,funding_epoch}'=$5`,
+    [
+      current.id,
+      JSON.stringify(live),
+      current.owning_bay_id,
+      opts.start,
+      current.metadata.billing.course_funding.funding_epoch,
+    ],
+  );
+  if (!result.rowCount) return;
+  return {
+    total_bytes: totalBytes,
+    threshold_reached: toDecimal(totalBytes)
+      .div(1_000_000_000)
+      .mul("0.1")
+      .gte(courseVmBinding(current).egress_usd),
+  };
 }
 
 export async function queueCourseVmEnforcement(
@@ -672,7 +720,6 @@ export async function enqueueCourseFundingDeadlines(): Promise<void> {
 export async function enforceCourseVmFunding(
   vm: ComputeVmRow,
 ): Promise<"stop" | "delete" | undefined> {
-  if (vm.provider === "gcp" && vm.desired_state === "running") return "stop";
   if (
     !vm.metadata?.billing?.course_funding?.binding &&
     Date.now() - vm.created_at.valueOf() < VM_FUNDING_MARGIN_MS

@@ -996,6 +996,17 @@ export function VmCreateModal({
             />
           </Form.Item>
         )}
+        {!recommendationMode &&
+          draft.funding_source &&
+          draft.provider === "gcp" && (
+            <Alert
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+              title="GCP network charges can slightly exceed course credit"
+              description="Outgoing GCP traffic is measured after it occurs. CoCalc checks current usage about every 30 seconds and stops the VM after its network spending threshold is observed, but provider reporting and shutdown take additional time. The course payer is responsible for the actual $0.10/GB charge, including usage reported after the student's allocation is exhausted."
+            />
+          )}
         {!recommendationMode && (
           <Form.Item name="connected_project_ids" label="Project SSH access">
             <ConnectedProjectsSelect
@@ -4407,7 +4418,11 @@ export function ProjectComputeVms({
                 charged as reports are processed, with a five-minute
                 finalization delay plus provider/reporting latency. Totals
                 normally update within minutes, not once per day; delayed
-                reports can take longer. Incoming traffic is not egress. The
+                reports can take longer. Course-funded GCP VMs are checked about
+                every 30 seconds and stopped after their network spending
+                threshold is observed. Because measurement happens after traffic
+                is sent, the course payer remains responsible for usage reported
+                after that threshold. Incoming traffic is not egress. The
                 provider's rate shown here applies.
               </FundingHelp>
             </Text>

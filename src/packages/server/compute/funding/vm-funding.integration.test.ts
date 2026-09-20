@@ -24,6 +24,7 @@ import { setPolicy } from "./__tests__/policy-source";
 import {
   meterCourseVm,
   meterCourseVmEgress,
+  observeCourseVmLiveEgress,
   reserveCourseVmLaunch,
   requireCourseVmService,
 } from "./vm-funding";
@@ -247,7 +248,7 @@ describe("actual sponsored VM reservation and settlement", () => {
       const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
       process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "short-create-test";
       try {
-        const { request } = await fixture("nebius");
+        const { request } = await fixture();
         const stop = new Date(Date.now() + minutes * 60_000),
           deletion = new Date(Date.now() + 10 * 60_000);
         const rate = {
@@ -257,7 +258,7 @@ describe("actual sponsored VM reservation and settlement", () => {
         await getPool().query(
           `INSERT INTO compute_vms
         (id,owner_account_id,owning_bay_id,provider,instance_generation,state,desired_state,stop_at,expires_at,metadata,effective_pricing_model,created_at)
-        VALUES ($1,$2,$3,'nebius',1,'requested','running',$4,$5,$6,'spot',NOW())`,
+        VALUES ($1,$2,$3,'gcp',1,'requested','running',$4,$5,$6,'spot',NOW())`,
           [
             request.resource_id,
             request.owner_account_id,
@@ -288,7 +289,7 @@ describe("actual sponsored VM reservation and settlement", () => {
         expect(
           new Date(binding.authorized_until).valueOf(),
         ).toBeLessThanOrEqual(deletion.valueOf());
-        expect(Number(binding.authorized_usd)).toBeGreaterThan(2.7);
+        expect(Number(binding.authorized_usd)).toBeGreaterThan(3.7);
         expect(
           (await reserveCourseVmLaunch(vm)).metadata.billing.course_funding
             .binding,
@@ -312,11 +313,11 @@ describe("actual sponsored VM reservation and settlement", () => {
     const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
     process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "short-denial-test";
     try {
-      const { request } = await fixture("nebius");
+      const { request } = await fixture();
       await getPool().query(
         `INSERT INTO compute_vms
         (id,owner_account_id,owning_bay_id,provider,instance_generation,state,desired_state,stop_at,metadata,effective_pricing_model,created_at)
-        VALUES ($1,$2,$3,'nebius',1,'requested','running',NOW()-interval '1 second',$4,'spot',NOW())`,
+        VALUES ($1,$2,$3,'gcp',1,'requested','running',NOW()-interval '1 second',$4,'spot',NOW())`,
         [
           request.resource_id,
           request.owner_account_id,
@@ -417,7 +418,7 @@ describe("actual sponsored VM reservation and settlement", () => {
     ).rejects.toThrow(/beneficiary/);
   });
 
-  it("keeps owner access separate, caps customer egress, stops on exhaustion and settles idempotently after revocation", async () => {
+  it("keeps owner access separate, charges course egress overage to the payer, and settles idempotently", async () => {
     const { request, payer, student } = await fixture();
     const binding = await reserveComputeVmFundingLocal(request);
     await checkComputeVmFundingLocal({
@@ -441,7 +442,7 @@ describe("actual sponsored VM reservation and settlement", () => {
     };
     const result = await settleComputeVmFundingLocal(usage);
     expect(result.overrun).toBe(true);
-    expect(Number(result.charged_usd)).toBeCloseTo(1.1, 2);
+    expect(Number(result.charged_usd)).toBeCloseTo(2.1, 2);
     expect(await settleComputeVmFundingLocal(usage)).toEqual(result);
     await expect(
       checkComputeVmFundingLocal({ account_id: payer, binding }),
@@ -464,12 +465,20 @@ describe("actual sponsored VM reservation and settlement", () => {
     );
     expect(pending.state).toBe("settling");
     expect(Number(pending.released_usd)).toBe(0);
-    await settleComputeVmFundingLocal({
+    const finalized = await settleComputeVmFundingLocal({
       ...usage,
       stopped_until: end.toISOString(),
       deleted: true,
       egress_finalized: true,
     });
+    expect(
+      await settleComputeVmFundingLocal({
+        ...usage,
+        stopped_until: end.toISOString(),
+        deleted: true,
+        egress_finalized: true,
+      }),
+    ).toEqual(finalized);
     const {
       rows: [settled],
     } = await getPool().query(
@@ -481,13 +490,18 @@ describe("actual sponsored VM reservation and settlement", () => {
       Number(settled.spent_usd) + Number(settled.released_usd),
     ).toBeCloseTo(Number(settled.authorized_usd), 8);
     const { rows: purchases } = await getPool().query(
-      "SELECT account_id,cost FROM purchases WHERE tag=$1",
+      `SELECT p.account_id,p.cost,a.course_egress_overage_usd,
+        r.pricing_snapshot#>>'{meter,platform_overrun_usd}' AS platform_overrun_usd
+       FROM purchases p JOIN compute_funding_purchase_attributions a ON a.purchase_id=p.id
+       JOIN compute_funding_reservations r ON r.id=a.reservation_id WHERE p.tag=$1`,
       [`course-compute:${binding.funding_epoch}`],
     );
     expect(purchases).toHaveLength(1);
     expect(purchases[0].account_id).toBe(payer);
     expect(purchases[0].account_id).not.toBe(student);
-    expect(purchases[0].cost).not.toBeNull();
+    expect(Number(purchases[0].cost)).toBeCloseTo(2.1, 2);
+    expect(Number(purchases[0].course_egress_overage_usd)).toBeCloseTo(1, 2);
+    expect(Number(purchases[0].platform_overrun_usd)).toBe(0);
   });
 
   it("does not convert an expired service reservation into student debt", async () => {
@@ -664,6 +678,37 @@ describe("persisted provider running intervals", () => {
     expect(
       Number(reservation.spent_usd) + Number(reservation.released_usd),
     ).toBe(Number(reservation.authorized_usd));
+  });
+
+  it("records live GCP egress for enforcement without advancing billing", async () => {
+    const f = await vmFixture("gcp");
+    await getPool().query("UPDATE compute_vms SET created_at=$2 WHERE id=$1", [
+      f.vm.id,
+      f.start,
+    ]);
+    const current = (await getComputeVmById(f.vm.id))!;
+    const start = current.created_at;
+    const end = new Date(start.valueOf() + 30_000);
+    const observed = await observeCourseVmLiveEgress(current, {
+      bytes: 11_000_000_000,
+      start,
+      end,
+    });
+    expect(observed).toEqual({
+      total_bytes: 11_000_000_000,
+      threshold_reached: true,
+    });
+    const stored = (await getComputeVmById(f.vm.id))!.metadata.billing.egress;
+    expect(stored.live_total_bytes).toBe(11_000_000_000);
+    expect(stored.live_complete_through).toBe(end.toISOString());
+    expect(stored.metered_through_at).toBeUndefined();
+    const {
+      rows: [reservation],
+    } = await getPool().query(
+      "SELECT spent_usd FROM compute_funding_reservations WHERE id=$1",
+      [f.binding.reservation_id],
+    );
+    expect(Number(reservation.spent_usd)).toBe(0);
   });
 
   it("does not charge a reservation or dispatch, including failed create and cleanup", async () => {

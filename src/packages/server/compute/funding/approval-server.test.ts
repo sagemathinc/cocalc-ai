@@ -344,6 +344,9 @@ describe("isolated financial browser approval", () => {
     expect(await page.locator("body").innerText()).toContain(
       "72-hour retention",
     );
+    expect(await page.locator("body").innerText()).toContain(
+      "payer accepts the actual finalized GCP egress charge",
+    );
     expect(await page.locator("img,script").count()).toBe(0);
     const button = page.getByRole("button", {
       name: "Approve Funding",

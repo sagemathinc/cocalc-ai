@@ -208,6 +208,13 @@ export function CourseVmRecommendationsEditor({
   return (
     <section aria-label="Recommended VM templates" style={{ marginBlock: 20 }}>
       <Typography.Title level={5}>Recommended VM templates</Typography.Title>
+      <Alert
+        type="info"
+        showIcon
+        style={{ marginBottom: 12 }}
+        title="GCP public network usage is a course-payer charge"
+        description="CoCalc stops a course-funded GCP VM after its network spending threshold is observed, but GCP reports usage after traffic is sent. The course payer is responsible for the actual $0.10/GB charge, which can slightly exceed a student's remaining allocation before automatic shutdown completes."
+      />
       <ul style={{ paddingInlineStart: 20 }}>
         {templates.map((template) => (
           <li key={template.id} style={{ marginBlock: 8 }}>

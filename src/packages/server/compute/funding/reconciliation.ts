@@ -90,7 +90,7 @@ export async function auditFundingSnapshot(
     ), reservation_totals AS (
       SELECT r.*,COALESCE(a.charged,0) AS attributed_charged
       FROM compute_funding_reservations r
-      LEFT JOIN LATERAL (SELECT SUM(charged_usd) AS charged FROM compute_funding_purchase_attributions WHERE reservation_id=r.id) a ON true
+      LEFT JOIN LATERAL (SELECT SUM(charged_usd-course_egress_overage_usd) AS charged FROM compute_funding_purchase_attributions WHERE reservation_id=r.id) a ON true
       WHERE r.payer_account_id=$1
     ), issues AS (
       SELECT 'pool_backing_mismatch' AS code,id::text AS resource_id,'Pool backing differs from unspent, unreleased authorization.' AS message

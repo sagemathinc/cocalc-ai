@@ -285,6 +285,10 @@ Table({
     ended_at: { type: "timestamp", not_null: true },
     exact_cost_usd: amount("exact_cost_usd"),
     charged_usd: amount("charged_usd"),
+    // Course-funded GCP egress can cross its automatic-stop threshold before
+    // delayed provider telemetry is visible.  This component is charged to
+    // the payer but deliberately does not consume or overdraw a student grant.
+    course_egress_overage_usd: amount("course_egress_overage_usd"),
     created_at: { type: "timestamp", not_null: true, pg_default: "now()" },
   },
 });
