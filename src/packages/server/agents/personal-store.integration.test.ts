@@ -415,9 +415,13 @@ describeDb("account-home Agent Networks", () => {
       targets: [peer, secondPeer],
       body: "Review",
     };
+    identity.mockClear();
+    principal.mockClear();
     await expect(
       store.beginBroadcast(account, source, run_id, broadcast),
     ).resolves.toMatchObject({ claimed: true });
+    expect(principal).toHaveBeenCalledTimes(1);
+    expect(identity).toHaveBeenCalledTimes(3);
     await expect(
       store.beginBroadcast(account, source, run_id, broadcast),
     ).resolves.toMatchObject({ claimed: false });
@@ -427,5 +431,55 @@ describeDb("account-home Agent Networks", () => {
         body: "Changed",
       }),
     ).rejects.toThrow("broadcast_idempotency_conflict");
+  });
+
+  test("broadcast generation changes during endpoint checks fail closed", async () => {
+    const network = await store.createNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        title: "Generation race",
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: peer },
+          { kind: "registered", endpoint: secondPeer },
+        ],
+      },
+      8,
+    );
+    let changed = false;
+    identity.mockImplementation(async (_account, endpoint) => {
+      if (!changed && endpoint.agent_id === peer.agent_id) {
+        changed = true;
+        await db.query(
+          "UPDATE agent_networks SET generation=$2 WHERE agent_network_id=$1",
+          [network.agent_network_id, randomUUID()],
+        );
+      }
+      return {
+        ...endpoint,
+        path: "/home/user/test.chat",
+        thread_id: endpoint.agent_id,
+        created_by: account,
+      } as AgentIdentity;
+    });
+    await expect(
+      store.beginBroadcast(account, source, run_id, {
+        version: 3,
+        action: "broadcast",
+        broadcast_id: randomUUID(),
+        agent_network_id: network.agent_network_id,
+        targets: [peer, secondPeer],
+        body: "Review",
+      }),
+    ).rejects.toThrow("network_stale");
+    expect(
+      +(
+        await db.query(
+          "SELECT count(*) AS count FROM agent_network_broadcasts WHERE agent_network_id=$1",
+          [network.agent_network_id],
+        )
+      ).rows[0].count,
+    ).toBe(0);
   });
 });

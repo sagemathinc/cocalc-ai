@@ -102,6 +102,7 @@ async function submitBroadcast(
   request: AgentRpcBroadcast,
   dispatch: (
     child: Extract<AgentRpcRequest, { action: "send" }>,
+    authorization: AgentNetworkAuthorization,
   ) => Promise<unknown>,
 ): Promise<AgentRpcBroadcastOutcome> {
   const claim = (await withPersonalHome(account_id, {
@@ -111,6 +112,7 @@ async function submitBroadcast(
     claimed: boolean;
     binding_hash: string;
     outcome?: AgentRpcBroadcastOutcome;
+    authorizations?: AgentNetworkAuthorization[];
   };
   if (claim.outcome) return claim.outcome;
   if (!claim.claimed)
@@ -122,6 +124,8 @@ async function submitBroadcast(
       observed_at: Date.now(),
       children: [],
     };
+  if (claim.authorizations?.length !== request.targets.length)
+    throw new Error("broadcast authorization snapshot unavailable");
   const children: import("@cocalc/conat/agents/rpc").AgentRpcOutcome[] = [];
   for (const [index, target] of request.targets.entries()) {
     const child = {
@@ -136,6 +140,7 @@ async function submitBroadcast(
       children.push(
         (await dispatch(
           child,
+          claim.authorizations[index],
         )) as import("@cocalc/conat/agents/rpc").AgentRpcOutcome,
       );
     } catch {
@@ -275,6 +280,28 @@ async function networkProof(
   })) as AgentNetworkAuthorization | PersonalAgentDenial;
 }
 
+function memberSource(member: AgentNetworkMember): AgentRpcSource {
+  return member.kind === "registered" ? member.endpoint : member.source;
+}
+
+function validateSnapshotAuthorization(
+  proof: AgentNetworkAuthorization,
+  account_id: string,
+  source: AgentRpcSource,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+) {
+  if (
+    proof.account_id !== account_id ||
+    proof.agent_network_id !== request.agent_network_id ||
+    agentRpcSourceKey(memberSource(proof.source)) !==
+      agentRpcSourceKey(source) ||
+    agentRpcSourceKey(memberSource(proof.target)) !==
+      agentRpcSourceKey(request.target)
+  )
+    throw new PersonalAgentAuthorizationError("network_stale");
+  return proof;
+}
+
 async function observeActivity(
   proof: AgentNetworkAuthorization,
   request: import("@cocalc/conat/agents/rpc").AgentRpcAttempt,
@@ -343,13 +370,20 @@ async function submitAgentRpcOperation(
     | import("@cocalc/conat/agents/rpc").AgentRpcOutcome
     | undefined;
   try {
-    const checked = await networkProof(
-      opts.account_id,
-      opts.source,
-      opts.run_id,
-      opts.request.target,
-      opts.request.agent_network_id,
-    );
+    const checked = opts.authorization
+      ? validateSnapshotAuthorization(
+          opts.authorization,
+          opts.account_id,
+          opts.source,
+          opts.request,
+        )
+      : await networkProof(
+          opts.account_id,
+          opts.source,
+          opts.run_id,
+          opts.request.target,
+          opts.request.agent_network_id,
+        );
     if ("denied" in checked)
       return rpcOutcome(opts.request, "rejected", {
         code: "network_unavailable",
@@ -711,6 +745,28 @@ async function submitExternalInbox(
   }
 }
 
+async function submitAuthorizedBroadcastChild(
+  account_id: string,
+  source: AgentRpcSource,
+  run_id: string | undefined,
+  request: import("@cocalc/conat/agents/rpc").AgentRpcSend,
+  authorization: AgentNetworkAuthorization,
+) {
+  if (isExternalAgentSource(request.target))
+    return submitExternalInbox(account_id, source, run_id, request);
+  const target = request.target;
+  return routed(target.project_id, (api, route) =>
+    api.submit({
+      ...route,
+      account_id,
+      source,
+      ...(run_id ? { run_id } : {}),
+      request: { ...request, target },
+      authorization,
+    }),
+  );
+}
+
 export async function acceptAgentRpc(
   subject: string,
   request: AgentRpcRequest,
@@ -733,8 +789,19 @@ export async function acceptAgentRpc(
     });
   }
   if (request.action === "broadcast")
-    return submitBroadcast(run.account_id, source, run_id, request, (child) =>
-      acceptAgentRpc(subject, child),
+    return submitBroadcast(
+      run.account_id,
+      source,
+      run_id,
+      request,
+      (child, authorization) =>
+        submitAuthorizedBroadcastChild(
+          run.account_id,
+          source,
+          run_id,
+          child,
+          authorization,
+        ),
     );
   if (request.action === "inbox" || request.action === "ack-inbox")
     throw new Error("native agents do not have an external inbox");
@@ -832,8 +899,19 @@ export async function acceptExternalAgentRpc(
     });
   }
   if (request.action === "broadcast")
-    return submitBroadcast(account_id, source, undefined, request, (child) =>
-      acceptExternalAgentRpc(subject, child),
+    return submitBroadcast(
+      account_id,
+      source,
+      undefined,
+      request,
+      (child, authorization) =>
+        submitAuthorizedBroadcastChild(
+          account_id,
+          source,
+          undefined,
+          child,
+          authorization,
+        ),
     );
   if (request.action === "inbox")
     return externalStore().inbox(account_id, installation_id, request.limit);

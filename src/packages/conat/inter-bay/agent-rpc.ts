@@ -94,6 +94,7 @@ export type PersonalControlResult =
       claimed: boolean;
       binding_hash: string;
       outcome?: import("@cocalc/conat/agents/rpc").AgentRpcBroadcastOutcome;
+      authorizations?: AgentNetworkAuthorization[];
     };
 export interface RpcRoute {
   project_id: string;
@@ -135,6 +136,8 @@ export interface AgentRpcControlApi {
       RpcSubmissionSource & {
         request: RegisteredRpcSend;
         snapshot_payload?: AgentSnapshot[];
+        /** Account-home proof from a just-claimed broadcast snapshot. */
+        authorization?: AgentNetworkAuthorization;
       },
   ): Promise<AgentRpcOutcome>;
   prepareAttachments(

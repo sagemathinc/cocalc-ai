@@ -6,6 +6,7 @@ import {
   isExternalAgentSource,
   validateAgentEndpoint,
   validateAgentRpcSource,
+  validateAgentRpcTarget,
   type AgentEndpoint,
   type AgentRpcBroadcast,
   type AgentRpcBroadcastOutcome,
@@ -503,23 +504,78 @@ export class PersonalAgentStore {
     claimed: boolean;
     binding_hash: string;
     outcome?: AgentRpcBroadcastOutcome;
+    authorizations?: AgentNetworkAuthorization[];
   }> {
-    for (const target of broadcast.targets)
-      await this.checkNetwork(
-        account,
-        broadcast.agent_network_id,
-        source,
-        run_id,
-        target,
-      );
+    requireUuid(broadcast.agent_network_id, "agent_network_id");
+    requireUuid(broadcast.broadcast_id, "broadcast_id");
+    await this.authenticateSource(account, source, run_id);
+    for (const target of broadcast.targets) validateAgentRpcTarget(target);
     const binding_hash = digest({
       source: agentRpcSourceKey(source),
       agent_network_id: broadcast.agent_network_id,
       targets: broadcast.targets.map(agentRpcSourceKey),
       body: broadcast.body,
     });
+    const snapshot = await this.locked(account, async (db, controls) => {
+      const authorizations = await this.authorizationSnapshot(
+        db,
+        controls,
+        account,
+        broadcast.agent_network_id,
+        source,
+        broadcast.targets,
+      );
+      const existing = (
+        await db.query(
+          `SELECT binding_hash,state,outcome FROM agent_network_broadcasts
+           WHERE account_id=$1 AND broadcast_id=$2`,
+          [account, broadcast.broadcast_id],
+        )
+      ).rows[0];
+      if (existing) {
+        if (existing.binding_hash !== binding_hash)
+          throw new Error("broadcast_idempotency_conflict");
+        return {
+          existing: true as const,
+          claimed: false,
+          binding_hash,
+          ...(existing.state === "complete" && existing.outcome
+            ? { outcome: existing.outcome }
+            : {}),
+        };
+      }
+      return {
+        existing: false as const,
+        authorizations,
+        account_generation: controls.generation,
+        network_generation: authorizations[0].network_generation,
+        delivery_mode: authorizations[0].delivery_mode,
+      };
+    });
+    if (snapshot.existing) return snapshot;
+
+    // Project/account identity checks may route across bays. Never perform
+    // them while holding the account-home controls or network row locks.
+    for (const target of broadcast.targets)
+      if (!isExternalAgentSource(target)) await this.endpoint(account, target);
+
     return this.locked(account, async (db, controls) => {
-      if (controls.paused) throw new Error("messaging_paused");
+      if (
+        controls.paused ||
+        controls.generation !== snapshot.account_generation
+      )
+        throw new PersonalAgentAuthorizationError("network_stale");
+      const row = await this.lockedNetwork(
+        db,
+        account,
+        broadcast.agent_network_id,
+      );
+      if (
+        row.state !== "active" ||
+        row.generation !== snapshot.network_generation ||
+        row.delivery_mode !== snapshot.delivery_mode
+      )
+        throw new PersonalAgentAuthorizationError("network_stale");
       const existing = (
         await db.query(
           `SELECT binding_hash,state,outcome FROM agent_network_broadcasts
@@ -550,7 +606,11 @@ export class PersonalAgentStore {
           binding_hash,
         ],
       );
-      return { claimed: true, binding_hash };
+      return {
+        claimed: true,
+        binding_hash,
+        authorizations: snapshot.authorizations,
+      };
     });
   }
 
@@ -1045,39 +1105,134 @@ export class PersonalAgentStore {
     );
   }
 
-  async checkNetwork(
+  private async authenticateSource(
+    account: string,
+    source: AgentRpcSource,
+    run_id?: string,
+  ) {
+    validateAgentRpcSource(source, run_id);
+    if (isExternalAgentSource(source)) {
+      if (source.account_id !== account)
+        throw new PersonalAgentAuthorizationError("principal_mismatch");
+      const active = (
+        await this.db.query(
+          `SELECT 1 FROM agent_external_installations i
+           JOIN agent_external_identities e USING(agent_id)
+           WHERE i.account_id=$1 AND i.agent_id=$2 AND i.installation_id=$3
+             AND i.state='active' AND i.expires_at>now()
+             AND e.disabled_at IS NULL`,
+          [account, source.agent_id, source.installation_id],
+        )
+      ).rows[0];
+      if (!active)
+        throw new PersonalAgentAuthorizationError("agent_unavailable");
+      return;
+    }
+    requireUuid(run_id, "run_id");
+    if ((await this.principal(source, run_id!)) !== account)
+      throw new PersonalAgentAuthorizationError("principal_mismatch");
+    await this.endpoint(account, source);
+  }
+
+  private async authorizationMembers(
+    db: Query,
+    account: string,
+    agent_network_id: string,
+    principals: AgentRpcSource[],
+  ): Promise<AgentNetworkMember[]> {
+    const memberIds = [...new Set(principals.map(({ agent_id }) => agent_id))];
+    const rows = (
+      await db.query(
+        `SELECT m.*,
+                n.name AS registered_name,
+                n.metadata AS registered_metadata,
+                i.label AS external_label,
+                i.state AS external_state,
+                i.expires_at AS external_expires_at,
+                e.disabled_at AS external_disabled_at
+         FROM agent_network_members m
+         LEFT JOIN agent_personal_names n
+           ON m.member_kind='registered' AND n.account_id=$2
+          AND n.project_id=m.project_id AND n.agent_id=m.registered_agent_id
+          AND n.retired_at IS NULL
+         LEFT JOIN agent_external_installations i
+           ON m.member_kind='external' AND i.account_id=$2
+          AND i.agent_id=m.external_agent_id
+          AND i.installation_id=m.installation_id
+          AND i.agent_network_id=m.agent_network_id
+         LEFT JOIN agent_external_identities e
+           ON e.agent_id=m.external_agent_id AND e.account_id=$2
+         WHERE m.agent_network_id=$1 AND m.removed_at IS NULL
+           AND m.member_id=ANY($3::uuid[])
+         ORDER BY m.added_at,m.member_id`,
+        [agent_network_id, account, memberIds],
+      )
+    ).rows;
+    return rows.map((row) => {
+      if (row.member_kind === "registered") {
+        return {
+          kind: "registered" as const,
+          member_id: row.member_id,
+          endpoint: {
+            project_id: row.project_id,
+            agent_id: row.registered_agent_id,
+          },
+          name: row.registered_name,
+          project_title: row.registered_metadata?.project_title,
+          thread_title: row.registered_metadata?.thread_title,
+          available: !!row.registered_name,
+          added_at: iso(row.added_at),
+          removed_at: null,
+        };
+      }
+      return {
+        kind: "external" as const,
+        member_id: row.member_id,
+        source: {
+          kind: "external" as const,
+          account_id: account,
+          agent_id: row.external_agent_id,
+          installation_id: row.installation_id,
+        },
+        label: row.external_label ?? "External agent",
+        available:
+          row.external_state === "active" &&
+          !row.external_disabled_at &&
+          new Date(row.external_expires_at ?? 0).getTime() > Date.now(),
+        added_at: iso(row.added_at),
+        removed_at: null,
+      };
+    });
+  }
+
+  private async authorizationSnapshot(
+    db: Query,
+    controls: PersonalMessagingControls,
     account: string,
     agent_network_id: string,
     source: AgentRpcSource,
-    run_id: string | undefined,
-    target: AgentRpcSource,
-  ): Promise<AgentNetworkAuthorization> {
-    requireUuid(agent_network_id, "agent_network_id");
-    if (!isExternalAgentSource(source)) {
-      requireUuid(run_id, "run_id");
-      if ((await this.principal(source, run_id!)) !== account)
-        throw new PersonalAgentAuthorizationError("principal_mismatch");
-    } else if (source.account_id !== account) {
-      throw new PersonalAgentAuthorizationError("principal_mismatch");
-    }
-    return this.locked(account, async (db, controls) => {
-      if (controls.paused)
-        throw new PersonalAgentAuthorizationError("network_paused");
-      const row = await this.lockedNetwork(db, account, agent_network_id);
-      if (row.state === "closed")
-        throw new PersonalAgentAuthorizationError("network_closed");
-      if (row.state !== "active")
-        throw new PersonalAgentAuthorizationError("network_paused");
-      const network = await this.network(db, account, row);
-      const sourceMember = this.findMember(network.members, source);
-      const targetMember = this.findMember(network.members, target);
+    targets: AgentRpcSource[],
+  ): Promise<AgentNetworkAuthorization[]> {
+    if (controls.paused)
+      throw new PersonalAgentAuthorizationError("network_paused");
+    const row = await this.lockedNetwork(db, account, agent_network_id);
+    if (row.state === "closed")
+      throw new PersonalAgentAuthorizationError("network_closed");
+    if (row.state !== "active")
+      throw new PersonalAgentAuthorizationError("network_paused");
+    const members = await this.authorizationMembers(
+      db,
+      account,
+      agent_network_id,
+      [source, ...targets],
+    );
+    const sourceMember = this.findMember(members, source);
+    if (!sourceMember?.available)
+      throw new PersonalAgentAuthorizationError("not_a_member");
+    return targets.map((target) => {
+      const targetMember = this.findMember(members, target);
       if (
-        !sourceMember ||
-        !targetMember ||
-        sourceMember.removed_at ||
-        targetMember.removed_at ||
-        !sourceMember.available ||
-        !targetMember.available ||
+        !targetMember?.available ||
         sourceMember.member_id === targetMember.member_id
       )
         throw new PersonalAgentAuthorizationError("not_a_member");
@@ -1090,6 +1245,30 @@ export class PersonalAgentStore {
         source: sourceMember,
         target: targetMember,
       };
+    });
+  }
+
+  async checkNetwork(
+    account: string,
+    agent_network_id: string,
+    source: AgentRpcSource,
+    run_id: string | undefined,
+    target: AgentRpcSource,
+  ): Promise<AgentNetworkAuthorization> {
+    requireUuid(agent_network_id, "agent_network_id");
+    await this.authenticateSource(account, source, run_id);
+    if (!isExternalAgentSource(target)) await this.endpoint(account, target);
+    return this.locked(account, async (db, controls) => {
+      return (
+        await this.authorizationSnapshot(
+          db,
+          controls,
+          account,
+          agent_network_id,
+          source,
+          [target],
+        )
+      )[0];
     });
   }
 

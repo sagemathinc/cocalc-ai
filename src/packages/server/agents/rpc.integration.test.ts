@@ -119,6 +119,18 @@ function authorization() {
   };
 }
 
+function networkAuthorization() {
+  return {
+    agent_network_id: network,
+    network_generation: generation,
+    account_generation: 4,
+    account_id: account,
+    delivery_mode: "queued" as const,
+    source: sourceMember,
+    target: targetMember,
+  };
+}
+
 beforeEach(() => {
   assertHost.mockClear();
   query.mockClear();
@@ -165,6 +177,62 @@ test("cross-bay submission does not require the source identity in the target ba
   } finally {
     identities.set(sourceAgent, sourceIdentity);
   }
+});
+
+test("broadcast snapshot skips redundant pre-submit network materialization", async () => {
+  await expect(
+    agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "hello",
+      },
+      authorization: networkAuthorization(),
+    }),
+  ).resolves.toMatchObject({ outcome: "accepted" });
+  expect(
+    checkNetwork.mock.calls.filter(
+      ([, request]) => request?.action === "checkNetwork",
+    ),
+  ).toHaveLength(0);
+  expect(submitAgentRpc).toHaveBeenCalledTimes(1);
+});
+
+test("mismatched broadcast snapshots fail before host submission", async () => {
+  await expect(
+    agentRpcControl.submit({
+      account_id: account,
+      project_id: targetProject,
+      route: { bay_id: "target-bay", epoch: 1 },
+      source,
+      run_id: runId,
+      request: {
+        version: 3,
+        attempt_id: randomUUID(),
+        agent_network_id: network,
+        target,
+        body: "hello",
+      },
+      authorization: {
+        ...networkAuthorization(),
+        network_generation: randomUUID(),
+        agent_network_id: randomUUID(),
+      },
+    }),
+  ).resolves.toMatchObject({ outcome: "rejected" });
+  expect(
+    checkNetwork.mock.calls.filter(
+      ([, request]) => request?.action === "checkNetwork",
+    ),
+  ).toHaveLength(0);
+  expect(submitAgentRpc).not.toHaveBeenCalled();
 });
 
 test("queued execution rechecks the exact network authority and host principal", async () => {
