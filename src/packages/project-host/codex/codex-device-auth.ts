@@ -257,6 +257,9 @@ export async function startCodexDeviceAuth(
       },
       authRuntime,
       touchReason: "codex-device-auth",
+      // This is a staging home. The verified lifecycle operation below is the
+      // only path allowed to publish it to the account credential registry.
+      syncSubscriptionAuthOnExit: false,
     });
   } catch (err) {
     await rm(codexHome, { recursive: true, force: true }).catch(() => {});

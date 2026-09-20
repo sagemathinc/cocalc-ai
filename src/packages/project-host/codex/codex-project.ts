@@ -1634,6 +1634,7 @@ export type SpawnCodexInProjectContainerOptions = {
   forceRefreshSiteKey?: boolean;
   paymentSource?: import("@cocalc/util/ai/codex").CodexPaymentSourcePreference;
   credentialId?: string;
+  syncSubscriptionAuthOnExit?: boolean;
 };
 
 export type SpawnCodexInProjectContainerResult = {
@@ -1659,6 +1660,7 @@ export async function spawnCodexInProjectContainer({
   forceRefreshSiteKey = false,
   paymentSource = "auto",
   credentialId,
+  syncSubscriptionAuthOnExit = true,
 }: SpawnCodexInProjectContainerOptions): Promise<SpawnCodexInProjectContainerResult> {
   const authRuntime =
     explicitAuthRuntime ??
@@ -1775,6 +1777,7 @@ export async function spawnCodexInProjectContainer({
   proc.on("exit", async () => {
     try {
       if (
+        syncSubscriptionAuthOnExit &&
         authRuntime.source === "subscription" &&
         accountId &&
         authRuntime.codexHome

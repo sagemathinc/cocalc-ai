@@ -116,6 +116,7 @@ describe("codex device auth", () => {
         execOnlyEnv: {
           CODEX_HOME: "/run/cocalc/codex-subscription",
         },
+        syncSubscriptionAuthOnExit: false,
       }),
     );
     proc.emit("exit", 0, null);
