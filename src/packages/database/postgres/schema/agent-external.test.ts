@@ -97,6 +97,12 @@ describe("external agent schema persistence", () => {
     expect(await objects()).toEqual(ids);
     expect(before.installations).toHaveLength(2);
     expect(before.installations[0].agent_network_id).toBeTruthy();
+    expect(
+      before.installations.every(
+        ({ destinations }) =>
+          Array.isArray(destinations) && destinations.length === 0,
+      ),
+    ).toBe(true);
   });
 
   test("repairs index and default drift without rewriting existing installations", async () => {
