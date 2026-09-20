@@ -2605,10 +2605,12 @@ async function waitForLro(
     timeoutMs,
     pollMs,
     onUpdate,
+    scope,
   }: {
     timeoutMs: number;
     pollMs: number;
     onUpdate?: Parameters<typeof waitForLroCore>[0]["onUpdate"];
+    scope?: Parameters<typeof waitForLroCore>[0]["scope"];
   },
 ): Promise<LroStatus> {
   return await waitForLroCore({
@@ -2618,6 +2620,7 @@ async function waitForLro(
     pollMs,
     terminalStatuses: TERMINAL_LRO_STATUSES,
     onUpdate,
+    scope,
   });
 }
 
