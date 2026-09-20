@@ -51,6 +51,8 @@ import {
   type ProjectDocsOpenDetail,
 } from "@cocalc/frontend/docs/navigation";
 import { Icon, Loading, ThemeEditorModal } from "@cocalc/frontend/components";
+import { lite } from "@cocalc/frontend/lite";
+import { WorkspaceSidebarActions } from "./workspace-sidebar-actions";
 import {
   DragHandle,
   SortableItem,
@@ -2628,20 +2630,22 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       }}
     >
       <Space direction="vertical" size={10} style={{ width: "100%" }}>
-        <Button
-          type="primary"
-          block
-          icon={<Icon name="plus" />}
-          onClick={() => {
+        <WorkspaceSidebarActions
+          onProjects={
+            lite
+              ? undefined
+              : () => {
+                  void redux.getActions("page").set_active_tab("projects");
+                }
+          }
+          onNewAgent={() => {
             setCreatingSourceAgentId(selected?.endpoint.agent_id);
             setCreating(true);
             redux.getActions("page").setState({ active_agent_id: "new" });
             set_url(getPageUrlPath({ page: "agents", agent_id: "new" }));
             setMobileList(false);
           }}
-        >
-          New Agent
-        </Button>
+        />
         <Input.Search
           allowClear
           aria-label="Search agents"

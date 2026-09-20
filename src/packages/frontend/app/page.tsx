@@ -65,7 +65,6 @@ import usePostSurfaceWork from "./use-post-surface-work";
 import useSignedInSurfaceReady from "./use-signed-in-surface-ready";
 import useStartupPerformancePolicy from "./use-startup-performance-policy";
 import { useMyAgentsUI } from "@cocalc/frontend/agents/use-workspace-ui-preference";
-import { BackToProjects } from "@cocalc/frontend/agents/back-to-projects";
 
 const PostSurfaceRightNav = lazyWithRetry(async () => {
   const [{ ensureNotificationsInitialized }, postSurface] = await Promise.all([
@@ -594,16 +593,6 @@ export const Page: React.FC = () => {
       {examMode && !isAuthView && (
         <ScratchpadSessionControls deleteAt={scratchpadDeleteAt} />
       )}
-      {!lite &&
-        !examMode &&
-        !isAuthView &&
-        fullscreen !== "kiosk" &&
-        fullscreen !== "project" &&
-        compactAgentsNavigation && (
-          <BackToProjects
-            onBack={() => page_actions.set_active_tab("projects")}
-          />
-        )}
       <CocalcErrorBoundary
         autoRetry={false}
         scope="app.active-content"
