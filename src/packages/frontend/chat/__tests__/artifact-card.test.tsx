@@ -73,6 +73,30 @@ test("unchanged artifacts retain their stable message version", async () => {
   ).toBeTruthy();
 });
 
+test("card can expose conversation navigation in its shared menu", async () => {
+  const user = userEvent.setup();
+  const showInConversation = jest.fn();
+  render(
+    <ArtifactCard
+      publication={
+        {
+          operation_id: "version",
+          snapshot: { title: "Plan", markdown: "Current plan" },
+        } as any
+      }
+      open={jest.fn()}
+      showInConversation={showInConversation}
+    />,
+  );
+  await user.click(
+    screen.getByRole("button", { name: "More options for Plan" }),
+  );
+  await user.click(
+    screen.getByRole("menuitem", { name: "Show in conversation" }),
+  );
+  expect(showInConversation).toHaveBeenCalledTimes(1);
+});
+
 test("compact attachment bounds its width and keeps metadata on one line", () => {
   render(
     <ArtifactCard

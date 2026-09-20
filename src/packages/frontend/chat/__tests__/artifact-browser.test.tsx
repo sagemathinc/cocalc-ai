@@ -89,9 +89,13 @@ test("conversation navigation uses the publication's message and thread", async 
     frameTreeActions: { gotoFragment },
   };
   render(<ArtifactResults actions={actions} query="hello" onOpen={close} />);
-  await userEvent
-    .setup()
-    .click(screen.getByRole("button", { name: "Show in conversation: Plan" }));
+  const user = userEvent.setup();
+  await user.click(
+    screen.getByRole("button", { name: "More options for Plan" }),
+  );
+  await user.click(
+    await screen.findByRole("menuitem", { name: "Show in conversation" }),
+  );
   expect(actions.getMessagesInThread).toHaveBeenCalledWith("source");
   expect(gotoFragment).toHaveBeenCalledWith({
     chat: "12345",

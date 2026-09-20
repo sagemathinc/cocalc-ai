@@ -74,12 +74,14 @@ export function ArtifactCard({
   publication,
   current,
   open,
+  showInConversation,
   syncdb,
   projectId,
 }: {
   publication: ArtifactPublication;
   current?: ArtifactRecord;
   open?: (version?: string) => void;
+  showInConversation?: () => void | Promise<void>;
   syncdb?: any;
   projectId?: string;
 }) {
@@ -159,6 +161,9 @@ export function ArtifactCard({
     },
     ...(current && syncdb
       ? [{ key: "appearance", label: "Edit appearance" }]
+      : []),
+    ...(showInConversation
+      ? [{ key: "conversation", label: "Show in conversation" }]
       : []),
   ];
   return (
@@ -266,7 +271,7 @@ export function ArtifactCard({
             {updated && <span> · Updated</span>}
           </span>
         </span>
-        {open && (
+        {(open || showInConversation) && (
           <Dropdown
             autoFocus
             trigger={["click"]}
@@ -275,7 +280,8 @@ export function ArtifactCard({
               onClick: ({ key, domEvent }) => {
                 domEvent.stopPropagation();
                 if (key === "appearance") setEditing(true);
-                else open(publication.operation_id);
+                else if (key === "conversation") void showInConversation?.();
+                else open?.(publication.operation_id);
               },
             }}
           >

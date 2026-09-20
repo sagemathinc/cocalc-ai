@@ -1,12 +1,12 @@
 import { useDeferredValue, useRef, useState } from "react";
 import type { InputRef } from "antd";
-import { Button, Empty, Input, Modal, Select, Space, Tag, message } from "antd";
+import { Button, Empty, Input, Modal, Select, Space, message } from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import type { ChatActions } from "./actions";
 import { artifactCatalog, filterArtifacts } from "./artifact-catalog";
 import type { ArtifactCatalogEntry } from "./artifact-catalog";
-import { ArtifactIdentity } from "./artifact-card";
+import { ArtifactCard } from "./artifact-card";
 import { artifactSyncdbReady, useArtifactChanges } from "./artifacts";
 import { openArtifact } from "./open-artifact";
 import { dateValue } from "./access";
@@ -78,11 +78,6 @@ export function ArtifactResults({
   });
   if (!artifactSyncdbReady(actions.syncdb))
     return <div role="status">Loading artifacts...</div>;
-  const threadNames = new Map<string, string>();
-  for (const row of actions.listThreadConfigRows?.() ?? []) {
-    const config = row?.toJS?.() ?? row;
-    if (config?.name) threadNames.set(config.thread_id, config.name);
-  }
   return (
     <section aria-label="Artifact results">
       <div
@@ -98,80 +93,39 @@ export function ArtifactResults({
         />
       )}
       {entries.slice(0, limit).map((entry) => {
-        const data = entry.current ?? entry.publication.snapshot;
+        const canOpen = !!actions.frameTreeActions && !!actions.frameId;
         return (
-          <article
+          <div
             key={`${entry.publication.thread_id}:${entry.publication.artifact_id}`}
             style={{
-              padding: "12px 0",
-              borderBottom: `1px solid ${UI_COLORS.border}`,
+              marginBottom: 10,
             }}
           >
-            <Button
-              type="text"
-              aria-label={`Open artifact: ${entry.title}`}
-              disabled={!actions.frameTreeActions || !actions.frameId}
-              style={{
-                height: "auto",
-                width: "100%",
-                whiteSpace: "normal",
-                textAlign: "left",
-                justifyContent: "start",
-              }}
-              onClick={() => {
-                openArtifact(
-                  actions,
-                  entry.publication,
-                  entry.current ? undefined : entry.publication.operation_id,
-                );
-                onOpen?.();
-              }}
-            >
-              <ArtifactIdentity
-                title={entry.title}
-                theme={data.theme}
-                icon={
-                  data.commit || data.github_pr
-                    ? "git"
-                    : data.actions
-                      ? "tasks"
-                      : "file"
-                }
-              />
-            </Button>
-            <div
-              style={{
-                margin: "6px 12px",
-                overflowWrap: "anywhere",
-                color: UI_COLORS.secondary,
-              }}
-            >
-              <Tag>{entry.kind}</Tag>
-              {data.file?.path ?? data.theme?.description ?? data.title}
-              <div>
-                {entry.published
-                  ? `Added ${new Date(entry.published).toLocaleString()}`
-                  : "Date added unknown"}
-              </div>
-              {!threadId && (
-                <div>
-                  Thread:{" "}
-                  {threadNames.get(entry.publication.thread_id) ??
-                    entry.publication.thread_id}
-                </div>
-              )}
-            </div>
-            <Button
-              size="small"
-              type="link"
-              aria-label={`Show in conversation: ${entry.title}`}
-              onClick={async () => {
+            <ArtifactCard
+              publication={entry.publication}
+              current={entry.current}
+              syncdb={actions.syncdb}
+              projectId={actions.store?.get("project_id")}
+              open={
+                canOpen
+                  ? (version) => {
+                      openArtifact(
+                        actions,
+                        entry.publication,
+                        version ??
+                          (entry.current
+                            ? undefined
+                            : entry.publication.operation_id),
+                      );
+                      onOpen?.();
+                    }
+                  : undefined
+              }
+              showInConversation={async () => {
                 if (await showConversation(actions, entry)) onOpen?.();
               }}
-            >
-              Show in conversation
-            </Button>
-          </article>
+            />
+          </div>
         );
       })}
       {entries.length > limit && (
