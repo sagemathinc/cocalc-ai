@@ -5953,7 +5953,7 @@ describe("CodexAppServerAgent", () => {
         case "model/list":
           expect(message.params).toEqual({
             limit: 100,
-            includeHidden: true,
+            includeHidden: false,
           });
           fake.sendResponse(message.id, {
             data: [

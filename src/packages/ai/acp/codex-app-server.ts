@@ -2157,9 +2157,7 @@ export async function getCodexAppServerAccountStatus(opts: {
           value: normalizeCodexModelCatalog(
             await client.request(
               "model/list",
-              // Codex hides legacy models from its own default picker, but
-              // they remain valid choices for users who explicitly want them.
-              { limit: MAX_MODEL_CATALOG_ENTRIES, includeHidden: true },
+              { limit: MAX_MODEL_CATALOG_ENTRIES, includeHidden: false },
               remainingTimeoutMs(),
             ),
           ),
