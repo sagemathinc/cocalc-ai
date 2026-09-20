@@ -28,6 +28,10 @@ import {
 import { verifyPaymentPurchase } from "./payment-verification";
 import { moneyToDbString } from "@cocalc/util/money";
 import { isBillingAuthorityEnabled } from "../billing-authority/config";
+import {
+  creditTransfersEnabled,
+  requireCreditTransfersEnabled,
+} from "./config";
 
 const remote = (bay: string) =>
   createInterBayAccountLocalClient({
@@ -80,16 +84,12 @@ export function registerCreditTransferApprovalService(
   };
 }
 
-function enabled(): boolean {
-  return (
-    process.env.COCALC_ENABLE_CREDIT_TRANSFERS === "yes" && approvals != null
-  );
-}
-function requireEnabled() {
-  if (!enabled())
+async function requireEnabled() {
+  if (approvals == null)
     throw Error(
       "Credit transfers are not enabled with trusted financial approval on this bay",
     );
+  await requireCreditTransfersEnabled();
 }
 async function actorHome(value?: string) {
   const account_id = fundingId(value, "Signed-in account");
@@ -108,7 +108,7 @@ export const previewCreditTransfer: CreditTransferApi["previewCreditTransfer"] =
   async (opts) => {
     const { account_id, client } = await actorHome(opts.account_id);
     if (client) return client.previewCreditTransfer({ ...opts, account_id });
-    requireEnabled();
+    await requireEnabled();
     const recipient_account_id = fundingId(
       opts.recipient_account_id,
       "Recipient",
@@ -150,7 +150,7 @@ export const proposeCreditTransfer: CreditTransferApi["proposeCreditTransfer"] =
   async (opts) => {
     const { account_id, client } = await actorHome(opts.account_id);
     if (client) return client.proposeCreditTransfer({ ...opts, account_id });
-    requireEnabled();
+    await requireEnabled();
     const operation_id = fundingId(opts.operation_id, "Transfer operation");
     const terms = normalizeCreditTransferTerms(opts.terms);
     // This creates only an intent. Approval preflight revalidates every term and payment root.
@@ -196,7 +196,9 @@ export const listCreditTransfers: CreditTransferApi["listCreditTransfers"] =
       [account_id],
     );
     const pending_approvals: CreditTransferPendingApproval[] = [];
-    if (enabled()) {
+    const administratorEnabled = await creditTransfersEnabled();
+    const transfersEnabled = approvals != null && administratorEnabled;
+    if (transfersEnabled) {
       const { rows: pending } = await getPool().query(
         `SELECT operation_id,terms,review FROM course_funding_approval_intents
          WHERE payer_account_id=$1 AND terms->>'kind'='creditTransfer'
@@ -222,10 +224,13 @@ export const listCreditTransfers: CreditTransferApi["listCreditTransfers"] =
       }
     }
     return {
-      enabled: enabled(),
-      ...(!enabled()
+      enabled: transfersEnabled,
+      ...(!transfersEnabled
         ? {
-            unavailable_reason: "Credit transfers are not enabled on this bay.",
+            unavailable_reason:
+              approvals == null
+                ? "Credit transfers require secure financial authorization, which is not ready on this site."
+                : "Credit transfers have been disabled by the site administrator.",
           }
         : {}),
       receipts: rows.map(({ receipt }) => receipt),

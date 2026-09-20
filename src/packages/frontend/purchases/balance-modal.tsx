@@ -1,4 +1,4 @@
-import { Button, Flex, Modal, Space, Spin } from "antd";
+import { Button, Divider, Flex, Modal, Space, Spin } from "antd";
 import Balance from "./balance";
 import { useEffect, useRef, useState } from "react";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
@@ -11,6 +11,7 @@ import {
   AIUsageStatus,
 } from "@cocalc/frontend/misc/ai-usage-status";
 import { HelpIcon, Text } from "@cocalc/frontend/components";
+import CreditTransfers from "./credit-transfers";
 
 export default function BalanceModal({
   onRefresh,
@@ -94,6 +95,8 @@ export default function BalanceModal({
         </div>
       </div>
       <ShowError error={error} setError={setError} />
+      <Divider />
+      <CreditTransfers onApplied={handleRefresh} />
       {stripeEnabled && (
         <Payments
           unfinished

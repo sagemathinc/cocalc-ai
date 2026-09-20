@@ -5,6 +5,7 @@
 import {
   Alert,
   Button,
+  Flex,
   Form,
   Input,
   Space,
@@ -158,16 +159,22 @@ export default function CreditTransfers({
       aria-labelledby="credit-transfers-heading"
       style={{ width: "100%", minWidth: 0 }}
     >
-      <Typography.Title id="credit-transfers-heading" level={4}>
-        Credit transfers
-      </Typography.Title>
-      <Button
-        aria-label="Refresh transfers"
-        title="Refresh transfers"
-        icon={<Icon name="refresh" />}
-        onClick={load}
-        disabled={busy}
-      />
+      <Flex align="center" justify="space-between" gap={8}>
+        <Typography.Title
+          id="credit-transfers-heading"
+          level={4}
+          style={{ margin: 0 }}
+        >
+          Credit transfers
+        </Typography.Title>
+        <Button
+          aria-label="Refresh transfers"
+          title="Refresh transfers"
+          icon={<Icon name="refresh" />}
+          onClick={load}
+          disabled={busy}
+        />
+      </Flex>
       {error && <Alert type="error" title={error} showIcon />}
       {data && !data.enabled && (
         <Alert

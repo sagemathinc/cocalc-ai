@@ -36,10 +36,30 @@ import { ComputePoolManagement } from "./compute-pool-management";
 import { usableCeiling } from "./compute-pool-management-model";
 import { FinancialApprovalLink } from "@cocalc/frontend/purchases/financial-approval-link";
 import { SponsoredComputeReminder } from "@cocalc/frontend/account/low-credit-notification-setting";
+import HelpPopover from "./common/help-popover";
 
 type Summary = Awaited<ReturnType<ComputeFundingApi["getCourseSummary"]>>;
 type Preview = Awaited<ReturnType<ComputeFundingApi["previewAllocation"]>>;
 type Intent = Awaited<ReturnType<ComputeFundingApi["proposeAllocation"]>>;
+
+function BudgetColumnTitle({
+  title,
+  explanation,
+}: {
+  title: string;
+  explanation: string;
+}) {
+  return (
+    <Space size={2} wrap={false}>
+      <span>{title}</span>
+      <HelpPopover
+        ariaLabel={`Explain ${title}`}
+        title={title}
+        content={explanation}
+      />
+    </Space>
+  );
+}
 
 export function ComputeBudgetPanel(props: PanelProps) {
   const courseId = props.settings.get("course_id");
@@ -417,19 +437,47 @@ export function ComputeBudget({
                       : moneyToCurrency(grant.hourly_usd),
                 },
                 {
-                  title: "Estimated compute limit",
+                  title: (
+                    <BudgetColumnTitle
+                      title="Projected funding cutoff"
+                      explanation="When the student's currently running VMs are projected to exhaust their usable course funding at the observed hourly cost. This estimate can move as usage changes and is also capped by funding-window and course-budget end dates."
+                    />
+                  ),
                   render: (_, grant) =>
                     grant.forecast_exhausts_at
                       ? new Date(grant.forecast_exhausts_at).toLocaleString()
                       : "Unknown",
                 },
-                ...[
-                  ["Allocated", "authorized_usd"],
-                  ["Spent", "spent_usd"],
-                  ["Reserved", "reserved_usd"],
-                  ["Returned", "released_usd"],
-                ].map(([title, dataIndex]) => ({
-                  title,
+                ...(
+                  [
+                    [
+                      "Allocated",
+                      "authorized_usd",
+                      "The total course credit assigned to this student for this funding grant.",
+                    ],
+                    [
+                      "Spent",
+                      "spent_usd",
+                      "Course credit already charged for the student's finalized compute usage.",
+                    ],
+                    [
+                      "Reserved",
+                      "reserved_usd",
+                      "Credit committed to active VMs, retained storage, and bounded network usage but not yet finalized as spent. Reserved credit is not available to start additional resources.",
+                    ],
+                    [
+                      "Returned",
+                      "released_usd",
+                      "Credit released from this student back to the course pool. It is no longer available to this student unless allocated again.",
+                    ],
+                  ] as const
+                ).map(([title, dataIndex, explanation]) => ({
+                  title: (
+                    <BudgetColumnTitle
+                      title={title}
+                      explanation={explanation}
+                    />
+                  ),
                   dataIndex,
                   render: (value: string) => moneyToCurrency(value),
                 })),

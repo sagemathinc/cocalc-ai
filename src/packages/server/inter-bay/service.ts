@@ -595,7 +595,7 @@ function isLegacyProjectIdUnavailableError(err: unknown): boolean {
   const message = `${(err as any)?.message ?? err}`;
   return (
     message.includes("project_id already exists") ||
-    message.includes("project_id belongs to a permanently deleted workspace") ||
+    message.includes("project_id belongs to a permanently deleted project") ||
     message.includes("if project_id is given, it must be a valid uuid")
   );
 }

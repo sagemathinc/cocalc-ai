@@ -25,10 +25,23 @@ test("shows resource funding deadlines and preserves the notebook distinction", 
   expect(screen.getByText("Runtime authorized until")).toBeTruthy();
   expect(screen.getByText("Storage deletion deadline")).toBeTruthy();
   expect(screen.getByText("$0.12")).toBeTruthy();
+  expect(screen.getByText("$1.02")).toBeTruthy();
   expect(
     screen.getByText(/not notebooks saved in your CoCalc project/),
   ).toBeTruthy();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+test("shows remaining course funding as visible progress", () => {
+  render(<VmFundingStatus funding={funding} now={now} compact />);
+  expect(
+    screen.getByRole("region", { name: "Course funding summary" }),
+  ).toBeVisible();
+  expect(screen.getByText("$0.90 remaining of $1.02")).toBeVisible();
+  expect(
+    screen.getByLabelText("Course funding: $0.90 remaining of $1.02"),
+  ).toBeVisible();
+  expect(screen.getByText(/Funding stops this VM/)).toBeVisible();
 });
 
 test("does not present stale funding as current", () => {

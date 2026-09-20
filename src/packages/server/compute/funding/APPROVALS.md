@@ -118,9 +118,11 @@ triggers. No browser/CLI endpoint may call the handler's `apply` directly.
 ## Paid Credit Transfers
 
 `approval-transfer.ts` wires the supplied transfer core into this same listener
-with stored `kind: "creditTransfer"`. `COCALC_ENABLE_CREDIT_TRANSFERS=yes` is a
-separate, default-off gate in addition to isolated approval configuration. No
-transfer feature flag is enabled by this implementation.
+with stored `kind: "creditTransfer"`. Transfers are enabled by default when the
+isolated approval service is configured. The `credit_transfers_enabled` site
+setting is an emergency opt-out, as is setting
+`COCALC_ENABLE_CREDIT_TRANSFERS=no`; neither setting can bypass the requirement
+for trusted financial approval.
 
 `prepareTransferApproval` refreshes `prepareCreditTransferApproval` evidence
 before locks on every attempt. The factory's optional `prepare` returns an

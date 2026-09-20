@@ -16,6 +16,7 @@ import {
   applyCreditTransferInTransaction,
 } from "@cocalc/server/purchases/credit-transfers/core";
 import { registerCreditTransferApprovalService } from "@cocalc/server/purchases/credit-transfers/api";
+import { requireCreditTransfersEnabled } from "@cocalc/server/purchases/credit-transfers/config";
 
 jest.mock("@cocalc/server/purchases/credit-transfers/core", () => ({
   prepareCreditTransferApproval: jest.fn(),
@@ -26,6 +27,9 @@ jest.mock("@cocalc/server/purchases/credit-transfers/core", () => ({
 jest.mock("@cocalc/server/purchases/credit-transfers/api", () => ({
   creditTransferTransport: {},
   registerCreditTransferApprovalService: jest.fn(),
+}));
+jest.mock("@cocalc/server/purchases/credit-transfers/config", () => ({
+  requireCreditTransfersEnabled: jest.fn().mockResolvedValue(undefined),
 }));
 const terms = {
   kind: "creditTransfer" as const,
@@ -39,25 +43,25 @@ const terms = {
     display_name: "Recipient",
   },
 };
-const env = process.env.COCALC_ENABLE_CREDIT_TRANSFERS;
 beforeEach(() => {
   jest.resetAllMocks();
-  delete process.env.COCALC_ENABLE_CREDIT_TRANSFERS;
-});
-afterAll(() => {
-  if (env == null) delete process.env.COCALC_ENABLE_CREDIT_TRANSFERS;
-  else process.env.COCALC_ENABLE_CREDIT_TRANSFERS = env;
+  (registerCreditTransferApprovalService as jest.Mock).mockReturnValue(
+    jest.fn(),
+  );
+  (requireCreditTransfersEnabled as jest.Mock).mockResolvedValue(undefined);
 });
 
-it("does not register or prepare disabled transfers", async () => {
-  registerTransferApprovals({} as any)();
-  expect(registerCreditTransferApprovalService).not.toHaveBeenCalled();
+it("registers by default and rejects operations after an administrator opt-out", async () => {
+  registerTransferApprovals({} as any);
+  expect(registerCreditTransferApprovalService).toHaveBeenCalledTimes(1);
+  (requireCreditTransfersEnabled as jest.Mock).mockRejectedValue(
+    new Error("Credit transfers are disabled"),
+  );
   await expect(
     resolveTransferApprovalReview(randomUUID(), terms),
   ).rejects.toThrow("disabled");
 });
 it("refreshes evidence per approval and uses only the core sorted transaction", async () => {
-  process.env.COCALC_ENABLE_CREDIT_TRANSFERS = "yes";
   const prepared = {};
   (prepareCreditTransferApproval as jest.Mock).mockResolvedValue(prepared);
   const db = {};
@@ -87,11 +91,12 @@ it("refreshes evidence per approval and uses only the core sorted transaction", 
   );
   await prepareTransferApproval(intent);
   expect(prepareCreditTransferApproval).toHaveBeenCalledTimes(2);
-  delete process.env.COCALC_ENABLE_CREDIT_TRANSFERS;
+  (requireCreditTransfersEnabled as jest.Mock).mockRejectedValue(
+    new Error("Credit transfers are disabled"),
+  );
   await expect(execute!.apply({ ...intent, db })).rejects.toThrow("disabled");
 });
 it("stores verified transferable and remaining USD for human review", async () => {
-  process.env.COCALC_ENABLE_CREDIT_TRANSFERS = "yes";
   (prepareCreditTransferApproval as jest.Mock).mockResolvedValue({});
   (withCreditTransferApprovalTransaction as jest.Mock).mockImplementation(
     async (_p, fn) => fn({}),
@@ -111,7 +116,6 @@ it("stores verified transferable and remaining USD for human review", async () =
   ).rejects.toThrow("Insufficient");
 });
 it("adapts public operation status and rejects a different stored operation kind", async () => {
-  process.env.COCALC_ENABLE_CREDIT_TRANSFERS = "yes";
   const value = {
     operation_id: randomUUID(),
     intent_id: randomUUID(),

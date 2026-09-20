@@ -11,6 +11,7 @@ import {
 } from "@cocalc/frontend/hosts/navigation";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import VmFundingStatus from "@cocalc/frontend/project/compute-vm-funding-status";
 
 const STALE_MS = 120000;
 
@@ -106,16 +107,12 @@ export function RunningGpuIndicator({ narrow = false }: { narrow?: boolean }) {
   const label = unknown
     ? "VM status unknown"
     : `${summary.running} ${summary.running === 1 ? "VM" : "VMs"} running`;
-  const reminderKey = JSON.stringify(
-    (current?.rows ?? [])
-      .filter(
-        (vm) =>
-          !vm.deleted_at &&
-          (vm.provider_state === "running" || vm.provider_state === "starting"),
-      )
-      .map((vm) => vm.id)
-      .sort(),
+  const runningVms = (current?.rows ?? []).filter(
+    (vm) =>
+      !vm.deleted_at &&
+      (vm.provider_state === "running" || vm.provider_state === "starting"),
   );
+  const reminderKey = JSON.stringify(runningVms.map((vm) => vm.id).sort());
   const expanded =
     !narrow &&
     dismissedSnapshot !== reminderKey &&
@@ -199,6 +196,25 @@ export function RunningGpuIndicator({ narrow = false }: { narrow?: boolean }) {
             Running VMs continue to use their selected funding. Scheduled stops
             do not delete retained disks.
           </Typography.Paragraph>
+          {runningVms.map((vm) => (
+            <section
+              key={vm.id}
+              aria-label={`${vm.name} funding`}
+              style={{
+                borderTop: `1px solid ${UI_COLORS.border}`,
+                paddingBlock: 12,
+              }}
+            >
+              <Typography.Text strong>{vm.name}</Typography.Text>
+              {vm.funding_status ? (
+                <VmFundingStatus funding={vm.funding_status} compact />
+              ) : (
+                <Typography.Paragraph type="secondary">
+                  Paid using {vm.funding_mode.replaceAll("-", " ")} funding.
+                </Typography.Paragraph>
+              )}
+            </section>
+          ))}
         </div>
       </Modal>
     </>

@@ -2738,6 +2738,43 @@ function VmStartModal({
   );
 }
 
+function VmStopScheduleModal({
+  vm,
+  onCancel,
+  onSave,
+}: {
+  vm?: ComputeVm;
+  onCancel: () => void;
+  onSave: (vm: ComputeVm, stopAfterMinutes: number | null) => Promise<boolean>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [stopAfterMinutes, setStopAfterMinutes] = useState<number | null>(null);
+
+  useEffect(() => setSaving(false), [vm]);
+  useEffect(() => setStopAfterMinutes(vm?.stop_after_minutes ?? null), [vm]);
+  if (!vm) return null;
+  return (
+    <Modal
+      open
+      title={`Shutdown timer for ${vm.name}`}
+      okText="Save timer"
+      cancelText="Cancel"
+      confirmLoading={saving}
+      onCancel={onCancel}
+      onOk={async () => {
+        setSaving(true);
+        try {
+          await onSave(vm, stopAfterMinutes);
+        } finally {
+          setSaving(false);
+        }
+      }}
+    >
+      <VmStopAfter value={stopAfterMinutes} onChange={setStopAfterMinutes} />
+    </Modal>
+  );
+}
+
 export function VmDetailsModal({
   open,
   vm,
@@ -3147,6 +3184,7 @@ export function ProjectComputeVms({
   const [ttlVm, setTtlVm] = useState<ComputeVm>();
   const [machineTypeVm, setMachineTypeVm] = useState<ComputeVm>();
   const [startVm, setStartVm] = useState<ComputeVm>();
+  const [stopScheduleVm, setStopScheduleVm] = useState<ComputeVm>();
   const [machineTypeError, setMachineTypeError] = useState<string>();
   const [vmInitial, setVmInitial] = useState<VmDraft>();
   const [projectSshPublicKey, setProjectSshPublicKey] = useState<string | null>(
@@ -3706,6 +3744,30 @@ export function ProjectComputeVms({
     }
   };
 
+  const saveVmStopSchedule = async (
+    vm: ComputeVm,
+    stopAfterMinutes: number | null,
+  ): Promise<boolean> => {
+    setError(undefined);
+    try {
+      const completed = await runFreshAuthAction(async () => {
+        await webapp_client.conat_client.hub.compute.startVm({
+          id_or_name: vm.id,
+          idempotency_key: uuid(),
+          browser_id: webapp_client.browser_id,
+          stop_after_minutes: stopAfterMinutes,
+        });
+      });
+      if (!completed) return false;
+      setNotice(`Shutdown timer for '${vm.name}' was updated.`);
+      await load();
+      return true;
+    } catch (err) {
+      setError(`${err}`);
+      return false;
+    }
+  };
+
   const changeVmPricing = async (vm: ComputeVm) => {
     const pricing_model =
       vm.desired_pricing_model === "spot" ? "on_demand" : "spot";
@@ -4072,10 +4134,16 @@ export function ProjectComputeVms({
                 </Button>
               </Popover>
             )}
-            {vm.stop_at && (
-              <div>
+            {vm.stop_at && vm.desired_state === "running" && (
+              <Button
+                type="link"
+                size="small"
+                aria-label={`Change shutdown timer for ${vm.name}`}
+                onClick={() => setStopScheduleVm(vm)}
+                style={{ height: "auto", padding: 0, textAlign: "left" }}
+              >
                 Stops <TimeAgo date={new Date(vm.stop_at)} />
-              </div>
+              </Button>
             )}
             {vm.expires_at && (
               <Text type="secondary">
@@ -4177,110 +4245,115 @@ export function ProjectComputeVms({
         const egressLabel = egressRateLabel(vm);
         const freeEgress = providerEgressIsFree(vm.provider);
         return (
-          <Popover
-            trigger="click"
-            title={`Cost and usage for ${vm.name}`}
-            content={
-              <Space
-                direction="vertical"
-                size={10}
-                style={{ width: 430, maxWidth: "80vw" }}
-              >
-                <VmFundingStatus funding={vm.funding_status} />
-                {estimate ? (
-                  <HostPriceBreakdown
-                    estimate={estimate}
-                    title={`${pricingLabel(vm.effective_pricing_model)} running cost`}
-                  />
-                ) : (
-                  <Text>Running cost: {hourlyPrice(vm)}</Text>
-                )}
-                {stoppedEstimate && (
-                  <HostPriceBreakdown
-                    compact
-                    estimate={stoppedEstimate}
-                    title="Stopped cost"
-                  />
-                )}
-                <Text>
-                  Current-month egress: {gb.toFixed(gb >= 10 ? 1 : 3)} GB ·{" "}
-                  {freeEgress
-                    ? "free"
-                    : vm.funding_mode === "site-funded"
-                      ? "$0.10/GB · paid by site"
-                      : `$0.10/GB · $${cost.toFixed(2)} charged`}
-                </Text>
-                <Text type="secondary">
-                  Lifetime egress:{" "}
-                  {(Number(egress.lifetime_bytes) / 1_000_000_000).toFixed(3)}{" "}
-                  GB · ${Number(egress.lifetime_cost_usd).toFixed(2)}.
-                  {egress.stale
-                    ? " Usage reporting is delayed; these totals may lag."
-                    : ""}
-                </Text>
-                <Text type="secondary">
-                  The boot disk remains billable while stopped and cannot
-                  currently be enlarged after creation.
-                </Text>
-              </Space>
-            }
-          >
-            <Button
-              type="link"
-              style={{
-                height: "auto",
-                maxWidth: "100%",
-                overflow: "hidden",
-                padding: 0,
-                textAlign: "left",
-                whiteSpace: "normal",
-                width: "100%",
-              }}
+          <Space direction="vertical" size={8} style={{ width: "100%" }}>
+            {vm.funding_status && (
+              <VmFundingStatus funding={vm.funding_status} compact />
+            )}
+            <Popover
+              trigger="click"
+              title={`Cost and usage for ${vm.name}`}
+              content={
+                <Space
+                  direction="vertical"
+                  size={10}
+                  style={{ width: 430, maxWidth: "80vw" }}
+                >
+                  <VmFundingStatus funding={vm.funding_status} />
+                  {estimate ? (
+                    <HostPriceBreakdown
+                      estimate={estimate}
+                      title={`${pricingLabel(vm.effective_pricing_model)} running cost`}
+                    />
+                  ) : (
+                    <Text>Running cost: {hourlyPrice(vm)}</Text>
+                  )}
+                  {stoppedEstimate && (
+                    <HostPriceBreakdown
+                      compact
+                      estimate={stoppedEstimate}
+                      title="Stopped cost"
+                    />
+                  )}
+                  <Text>
+                    Current-month egress: {gb.toFixed(gb >= 10 ? 1 : 3)} GB ·{" "}
+                    {freeEgress
+                      ? "free"
+                      : vm.funding_mode === "site-funded"
+                        ? "$0.10/GB · paid by site"
+                        : `$0.10/GB · $${cost.toFixed(2)} charged`}
+                  </Text>
+                  <Text type="secondary">
+                    Lifetime egress:{" "}
+                    {(Number(egress.lifetime_bytes) / 1_000_000_000).toFixed(3)}{" "}
+                    GB · ${Number(egress.lifetime_cost_usd).toFixed(2)}.
+                    {egress.stale
+                      ? " Usage reporting is delayed; these totals may lag."
+                      : ""}
+                  </Text>
+                  <Text type="secondary">
+                    The boot disk remains billable while stopped and cannot
+                    currently be enlarged after creation.
+                  </Text>
+                </Space>
+              }
             >
-              <span
+              <Button
+                type="link"
                 style={{
-                  alignItems: "stretch",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 3,
+                  height: "auto",
+                  maxWidth: "100%",
+                  overflow: "hidden",
+                  padding: 0,
+                  textAlign: "left",
+                  whiteSpace: "normal",
                   width: "100%",
                 }}
               >
-                <PriceSummaryRow
-                  label="Standard"
-                  current={
-                    vm.state !== "stopped" &&
-                    vm.effective_pricing_model === "on_demand"
-                  }
-                  estimate={standardEstimate}
-                />
-                <PriceSummaryRow
-                  label="Spot"
-                  current={
-                    vm.state !== "stopped" &&
-                    vm.effective_pricing_model === "spot"
-                  }
-                  estimate={spotEstimate}
-                />
-                <PriceSummaryRow
-                  label="Stopped"
-                  note="disk only"
-                  current={vm.state === "stopped"}
-                  estimate={stoppedEstimate}
-                />
-                {freeEgress ? (
-                  <Text type="secondary" style={{ paddingInline: 4 }}>
-                    Egress is free
-                  </Text>
-                ) : (
-                  <Text type="secondary" style={{ paddingInline: 4 }}>
-                    {egressLabel} · {gb.toFixed(gb >= 10 ? 1 : 3)} GB
-                    {egress.stale ? " · usage reporting delayed" : ""}
-                  </Text>
-                )}
-              </span>
-            </Button>
-          </Popover>
+                <span
+                  style={{
+                    alignItems: "stretch",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 3,
+                    width: "100%",
+                  }}
+                >
+                  <PriceSummaryRow
+                    label="Standard"
+                    current={
+                      vm.state !== "stopped" &&
+                      vm.effective_pricing_model === "on_demand"
+                    }
+                    estimate={standardEstimate}
+                  />
+                  <PriceSummaryRow
+                    label="Spot"
+                    current={
+                      vm.state !== "stopped" &&
+                      vm.effective_pricing_model === "spot"
+                    }
+                    estimate={spotEstimate}
+                  />
+                  <PriceSummaryRow
+                    label="Stopped"
+                    note="disk only"
+                    current={vm.state === "stopped"}
+                    estimate={stoppedEstimate}
+                  />
+                  {freeEgress ? (
+                    <Text type="secondary" style={{ paddingInline: 4 }}>
+                      Egress is free
+                    </Text>
+                  ) : (
+                    <Text type="secondary" style={{ paddingInline: 4 }}>
+                      {egressLabel} · {gb.toFixed(gb >= 10 ? 1 : 3)} GB
+                      {egress.stale ? " · usage reporting delayed" : ""}
+                    </Text>
+                  )}
+                </span>
+              </Button>
+            </Popover>
+          </Space>
         );
       },
     },
@@ -5013,6 +5086,15 @@ export function ProjectComputeVms({
           }}
         />
       )}
+      <VmStopScheduleModal
+        vm={stopScheduleVm}
+        onCancel={() => setStopScheduleVm(undefined)}
+        onSave={async (vm, stopAfterMinutes) => {
+          const saved = await saveVmStopSchedule(vm, stopAfterMinutes);
+          if (saved) setStopScheduleVm(undefined);
+          return saved;
+        }}
+      />
       {catalog && (
         <VolumeResizeModal
           sponsoredHomeVolumes={catalog?.sponsored_home_volumes}

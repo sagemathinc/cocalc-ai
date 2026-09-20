@@ -24,7 +24,10 @@ jest.mock("@cocalc/frontend/hosts/navigation", () => ({
 }));
 function vm(overrides: Partial<ComputeVm> = {}): ComputeVm {
   return {
+    id: "vm-one",
+    name: "Student VM",
     gpu_count: 1,
+    funding_mode: "account-prepaid",
     provider_state: "running",
     provider_observed_at: new Date().toISOString(),
     ...overrides,
@@ -38,6 +41,31 @@ beforeEach(() => {
   mockAccountId = "account-one";
   mockListVms.mockReset().mockResolvedValue([vm()]);
   mockOpenHostsPage.mockReset();
+});
+
+it("shows course funding remaining in the account VM dialog", async () => {
+  const user = userEvent.setup();
+  mockListVms.mockResolvedValue([
+    vm({
+      funding_status: {
+        source: { kind: "course", pool_id: "pool", grant_id: "grant" },
+        label: "Course funding",
+        state: "running",
+        spent_usd: "2",
+        committed_usd: "8",
+        remaining_usd: "8",
+        stop_at: new Date(Date.now() + 3_600_000).toISOString(),
+        as_of: new Date().toISOString(),
+      },
+    }),
+  ]);
+  render(<RunningGpuIndicator />);
+  await user.click(await screen.findByRole("button", { name: "1 VM running" }));
+
+  expect(
+    screen.getByRole("region", { name: "Course funding summary" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("$8.00 remaining of $10.00")).toBeInTheDocument();
 });
 afterEach(() => {
   jest.useRealTimers();

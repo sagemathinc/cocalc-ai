@@ -354,6 +354,7 @@ export type SiteSettingsExtrasKeys =
   | "compute_vm_mode"
   | "compute_vm_course_funding_enabled"
   | "compute_sponsorship_enabled"
+  | "credit_transfers_enabled"
   | "compute_vm_emergency_stop"
   | "compute_vm_admin_allowlist"
   | "compute_vm_gcp_service_account_json"
@@ -1792,6 +1793,16 @@ export const EXTRAS: SettingsExtras = {
     tags: ["Cloud", "Pay as you Go", "Security"],
     group: "Compute / Managed VMs",
     subgroup: "Admission",
+  },
+  credit_transfers_enabled: {
+    name: "Credit Transfers",
+    desc: "Allow users to transfer eligible account credit using secure financial authorization. Enabled by default when secure financial authorization is configured; disable only as an emergency administrative control.",
+    default: "yes",
+    to_val: to_bool,
+    valid: only_booleans,
+    tags: ["Pay as you Go", "Security"],
+    group: "Payments & Billing",
+    subgroup: "Pay as you Go",
   },
   compute_vm_emergency_stop: {
     name: "Managed Compute VMs: Emergency Stop",

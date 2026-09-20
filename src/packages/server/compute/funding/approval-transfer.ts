@@ -27,6 +27,7 @@ import type {
   FundingIntentStatus,
 } from "./approvals";
 import type { CourseFundingApprovalTerms } from "./approval-review";
+import { requireCreditTransfersEnabled } from "@cocalc/server/purchases/credit-transfers/config";
 
 export type CreditTransferApprovalTerms = CreditTransferTerms & {
   kind: "creditTransfer";
@@ -34,10 +35,6 @@ export type CreditTransferApprovalTerms = CreditTransferTerms & {
 export interface CreditTransferApprovalReview {
   transferable_usd: string;
   remaining_transferable_usd: string;
-}
-function requireEnabled() {
-  if (process.env.COCALC_ENABLE_CREDIT_TRANSFERS !== "yes")
-    throw new Error("Credit transfers are disabled");
 }
 export function normalizeTransferApprovalTerms(
   input: CreditTransferApprovalTerms,
@@ -50,7 +47,7 @@ export async function resolveTransferApprovalReview(
   payer_account_id: string,
   terms: CreditTransferApprovalTerms,
 ): Promise<CreditTransferApprovalReview> {
-  requireEnabled();
+  await requireCreditTransfersEnabled();
   const prepared = await prepareCreditTransferApproval(
     { payer_account_id, terms },
     creditTransferTransport,
@@ -76,7 +73,7 @@ export async function prepareTransferApproval(
 > {
   if (!("kind" in intent.terms) || intent.terms.kind !== "creditTransfer")
     return;
-  requireEnabled();
+  await requireCreditTransfersEnabled();
   // Refresh payment evidence for every approval attempt, never from its stored review.
   const prepared = await prepareCreditTransferApproval(
     { payer_account_id: intent.payer_account_id, terms: intent.terms },
@@ -86,7 +83,7 @@ export async function prepareTransferApproval(
     withTransaction: (fn) =>
       withCreditTransferApprovalTransaction(prepared, fn),
     apply: async (locked) => {
-      requireEnabled();
+      await requireCreditTransfersEnabled(locked.db);
       if (!("kind" in locked.terms) || locked.terms.kind !== "creditTransfer")
         throw new Error("Transfer intent kind changed");
       return {
@@ -105,7 +102,6 @@ export function registerTransferApprovals(
     FinancialApprovalResult
   >,
 ): () => void {
-  if (process.env.COCALC_ENABLE_CREDIT_TRANSFERS !== "yes") return () => {};
   const status = (
     value: FundingIntentStatus<FinancialApprovalResult>,
   ): CreditTransferApprovalStatus => ({

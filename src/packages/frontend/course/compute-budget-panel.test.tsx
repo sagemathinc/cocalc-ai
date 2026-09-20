@@ -10,6 +10,7 @@ import type { ComputeFundingApi } from "@cocalc/conat/hub/api/compute-funding";
 import { ComputeBudget } from "./compute-budget-panel";
 import type { CourseVmRecommendationsApi } from "./course-vm-recommendations";
 import { template } from "./test/course-vm-template-fixture";
+import type { CourseFundingPoolSummary } from "@cocalc/conat/hub/api/compute-funding";
 
 jest.mock("@cocalc/frontend/webapp-client", () => ({ webapp_client: {} }));
 jest.mock("@cocalc/frontend/components/icon", () => ({ Icon: () => null }));
@@ -31,6 +32,35 @@ const props = {
   students: [
     { id: "a", account_id: account, name: "Alice" },
     { id: "b", name: "Pending" },
+  ],
+};
+
+const pool: CourseFundingPoolSummary = {
+  id: "55555555-5555-4555-8555-555555555555",
+  state: "active",
+  lane: "prepaid",
+  authorized_usd: "100",
+  spent_usd: "12",
+  reserved_usd: "8",
+  released_usd: "5",
+  approval_limit_usd: "100",
+  approval_starts_at: "2026-01-01T00:00:00Z",
+  approval_ends_at: "2030-01-01T00:00:00Z",
+  starts_at: "2026-01-01T00:00:00Z",
+  ends_at: "2030-01-01T00:00:00Z",
+  grants: [
+    {
+      id: "66666666-6666-4666-8666-666666666666",
+      beneficiary_account_id: account,
+      state: "active",
+      authorized_usd: "100",
+      spent_usd: "12",
+      reserved_usd: "8",
+      released_usd: "5",
+      running_vms: 1,
+      hourly_usd: "1",
+      forecast_exhausts_at: "2026-01-02T00:00:00Z",
+    },
   ],
 };
 
@@ -135,6 +165,38 @@ it("previews by keyboard, focuses the result and requests separate authorization
     screen.getByRole("button", { name: "Preview allocation" }),
   ).toBeDisabled();
   expect(service.proposeAllocation).toHaveBeenCalledTimes(1);
+});
+
+it("explains each student budget accounting column", async () => {
+  const service = api();
+  service.getCourseSummary.mockResolvedValue({
+    as_of: new Date().toISOString(),
+    pools: [pool],
+    sponsorship: { enabled: true, available: true },
+    financial_approval: { state: "ready" },
+  });
+  const user = userEvent.setup();
+  render(<ComputeBudget {...props} api={service} />);
+
+  const projected = await screen.findByRole("button", {
+    name: "Explain Projected funding cutoff",
+  });
+  expect(
+    screen.getByRole("button", { name: "Explain Allocated" }),
+  ).toBeVisible();
+  expect(screen.getByRole("button", { name: "Explain Spent" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Explain Reserved" }),
+  ).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: "Explain Returned" }),
+  ).toBeVisible();
+  await user.click(projected);
+  expect(
+    await screen.findByText(
+      /projected to exhaust their usable course funding/i,
+    ),
+  ).toBeInTheDocument();
 });
 
 it.each([

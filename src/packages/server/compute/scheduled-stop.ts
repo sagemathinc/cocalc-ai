@@ -141,6 +141,12 @@ export async function requestScheduledVmState(opts: {
           };
     if (opts.prepared_funding)
       vm = await applyPreparedCourseRestart(client, vm, opts.prepared_funding);
+    const nextState =
+      opts.desired_state === "running"
+        ? vm.desired_state === "running"
+          ? vm.state
+          : "starting"
+        : "stopping";
     const updated = await client.query<ComputeVmRow>(
       `UPDATE compute_vms SET desired_state=$2, state=$3, stop_at=$4,
        stop_after_minutes=$5, stop_generation=$6, error=NULL, updated_at=NOW()
@@ -148,7 +154,7 @@ export async function requestScheduledVmState(opts: {
       [
         vm.id,
         opts.desired_state,
-        opts.desired_state === "running" ? "starting" : "stopping",
+        nextState,
         schedule.stop_at,
         schedule.stop_after_minutes,
         schedule.stop_generation,

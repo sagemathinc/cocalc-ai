@@ -167,6 +167,28 @@ describe("durable scheduled stops", () => {
       ).rows.every(({ action }) => action === "reconcile"),
     ).toBe(true);
   });
+  it("updates a running VM shutdown timer without changing its ready state", async () => {
+    const running = await vm(
+      getConfiguredBayId(),
+      new Date(Date.now() + 3_600_000),
+    );
+    const updated = await requestScheduledVmState({
+      vm: running,
+      desired_state: "running",
+      stop_after_minutes: 120,
+      actor_kind: "human",
+      idempotency_key: randomUUID(),
+    });
+    expect(updated).toMatchObject({
+      desired_state: "running",
+      state: "ready",
+      stop_after_minutes: 120,
+      stop_generation: 2,
+    });
+    expect(updated.stop_at!.valueOf()).toBeGreaterThan(
+      Date.now() + 119 * 60_000,
+    );
+  });
   it("rejects an expired agent restart without changing durable state", async () => {
     const due = await vm();
     await enqueueScheduledComputeStops();
