@@ -695,7 +695,9 @@ function ChatPanelContent({
   isCurrent = true,
 }: ChatPanelProps) {
   const narrow = useNarrowChatViewport();
-  const standalone = variant === "default";
+  const embeddingOptions = useChatEmbeddingOptions();
+  const standalone =
+    variant === "default" && !embeddingOptions.disableConversationFocus;
   const [focusOverride, setFocusOverride] = useState<boolean | undefined>();
   const focused =
     standalone &&
@@ -737,7 +739,6 @@ function ChatPanelContent({
     actionStoreReadStateVersion ??
     editorStoreReadStateVersion;
   const account_id = useTypedRedux("account", "account_id");
-  const embeddingOptions = useChatEmbeddingOptions();
   if (narrow) {
     variant = "compact";
   }

@@ -6,6 +6,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 
 export interface ChatEmbeddingOptions {
+  disableConversationFocus?: boolean;
   hideSingleFrameToolbar?: boolean;
   hideCompactThreadHeader?: boolean;
   hideComposerIdentity?: boolean;

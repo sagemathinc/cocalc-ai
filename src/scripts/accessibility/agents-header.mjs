@@ -46,37 +46,17 @@ export async function checkAgentsHeader(page) {
       bounds.x >= 0 &&
       bounds.x + bounds.width <= width,
   );
+  await page.getByRole("button", { name: /^Choose agent in project / }).click();
+  await page.getByRole("menuitem").first().waitFor();
+  await page.keyboard.press("Escape");
 }
 
-export async function checkConversationFocusLayout(page) {
-  const focus = page.getByRole("button", {
-    name: "Focus conversation",
-    exact: true,
-  });
-  await focus.focus();
-  await page.keyboard.press("Enter");
-  const exit = page.getByRole("button", {
-    name: "Show project navigation",
-    exact: true,
-  });
-  await exit.waitFor();
-  const geometry = await page.locator("[data-chat-focus]").evaluate((root) => {
-    const content = [...root.children].find((child) =>
-      child.contains(
-        document.querySelector('[data-testid="chat-composer-actions"]'),
-      ),
-    );
-    return {
-      rootTop: root.getBoundingClientRect().top,
-      contentTop: content?.getBoundingClientRect().top,
-    };
-  });
-  assert(
-    geometry.contentTop != null &&
-      Math.abs(geometry.contentTop - geometry.rootTop) < 2,
-    "Focus mode must not reserve a separate empty toolbar row",
+export async function checkConversationFocusUnavailable(page) {
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Focus conversation", exact: true })
+      .count(),
+    0,
+    "Embedded Agents conversations must not expose focus mode",
   );
-  await exit.focus();
-  await page.keyboard.press("Enter");
-  await focus.waitFor();
 }

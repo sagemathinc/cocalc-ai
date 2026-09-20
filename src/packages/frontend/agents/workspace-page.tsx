@@ -1388,6 +1388,7 @@ function AgentProjectContext({
     <ProjectContext.Provider value={projectContext}>
       <ChatEmbeddingOptionsProvider
         value={{
+          disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
@@ -1429,6 +1430,8 @@ function AgentsWorkspaceNavigation({
 
 function AgentWorkspace({
   onCopy,
+  projectAgents,
+  onSelectAgent,
   workspaceKey,
   agent,
   workspaceAgents,
@@ -1444,6 +1447,8 @@ function AgentWorkspace({
   onRegisteredThreadSelected,
 }: {
   onCopy: (agent: NamedAgent) => void;
+  projectAgents: NamedAgent[];
+  onSelectAgent: (agent: NamedAgent) => void;
   workspaceKey: string;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1777,19 +1782,46 @@ function AgentWorkspace({
               <Text style={{ color: "inherit" }}>Unregistered thread</Text>
             )}
             <span aria-hidden="true">·</span>
-            <span
-              title={displayedAgent.project_title || agent.endpoint.project_id}
-              style={{
-                flex: "0 1 auto",
-                maxWidth: "45%",
-                minWidth: 0,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
+            <Dropdown
+              trigger={["click"]}
+              menu={{
+                selectable: true,
+                selectedKeys: [displayedAgent.endpoint.agent_id],
+                items: projectAgents.map((projectAgent) => ({
+                  key: projectAgent.endpoint.agent_id,
+                  icon: <Icon name="robot" />,
+                  label: projectAgent.thread_title || `@${projectAgent.name}`,
+                  title: `@${projectAgent.name}`,
+                })),
+                onClick: ({ key }) => {
+                  const nextAgent = projectAgents.find(
+                    ({ endpoint }) => endpoint.agent_id === key,
+                  );
+                  if (nextAgent) onSelectAgent(nextAgent);
+                },
               }}
             >
-              {displayedAgent.project_title || agent.endpoint.project_id}
-            </span>
+              <Button
+                type="text"
+                aria-label={`Choose agent in project ${displayedAgent.project_title || agent.endpoint.project_id}`}
+                title="Choose another registered agent in this project"
+                style={{
+                  color: "inherit",
+                  flex: "0 1 auto",
+                  maxWidth: "45%",
+                  minWidth: 0,
+                  overflow: "hidden",
+                  padding: 0,
+                  height: "auto",
+                  fontSize: 12,
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {displayedAgent.project_title || agent.endpoint.project_id}
+                <Icon name="caret-down" style={{ marginLeft: 4 }} />
+              </Button>
+            </Dropdown>
             {workingDirectoryLabel && (
               <Button
                 type="text"
@@ -1854,6 +1886,7 @@ function AgentWorkspace({
               {
                 key: "workspace-appearance",
                 label: "Appearance",
+                icon: <Icon name="sun" />,
                 onClick: openAppearanceEditor,
               },
               ...(!unregistered
@@ -1861,6 +1894,7 @@ function AgentWorkspace({
                     {
                       key: "workspace-copy",
                       label: "Copy agent",
+                      icon: <Icon name="copy" />,
                       onClick: () => onCopy(displayedAgent),
                     },
                   ]
@@ -1868,10 +1902,12 @@ function AgentWorkspace({
               {
                 key: "workspace-collaborators",
                 label: sharing ?? "Collaborators",
+                icon: <Icon name="users" />,
                 onClick: () => openProject("settings", "people"),
               },
               {
                 key: "workspace-controls",
+                icon: <Icon name="sliders" />,
                 label: showEditorControls
                   ? "Hide editor controls"
                   : "Show editor controls",
@@ -1880,6 +1916,7 @@ function AgentWorkspace({
               {
                 key: "workspace-close",
                 label: "Close workbench",
+                icon: <Icon name="times" />,
                 onClick: onClose,
               },
               { type: "divider" },
@@ -1903,6 +1940,7 @@ function AgentWorkspace({
       >
         <DirectorySelector
           allowAbsolutePaths
+          style={{ width: "100%" }}
           project_id={agent.endpoint.project_id}
           startingPath={selectedWorkingDirectory}
           onSelect={(workingDirectory) => {
@@ -2860,6 +2898,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               return (
                 <AgentWorkspace
                   onCopy={openCopyAgent}
+                  projectAgents={agents.filter(
+                    ({ endpoint }) =>
+                      endpoint.project_id === agent.endpoint.project_id,
+                  )}
+                  onSelectAgent={selectAgent}
                   key={workspace}
                   workspaceKey={workspace}
                   agent={agent}
@@ -2921,9 +2964,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       >
         <Space orientation="vertical" size={12} style={{ width: "100%" }}>
           <Text>
-            Copy the complete conversation and Codex context into a new named
-            agent. Project, working directory, model, reasoning, and payment
-            source are preserved. The description starts blank.
+            Copy the Codex context into a new named agent linked to this
+            conversation. Project, working directory, model, reasoning, and
+            payment source are preserved. The description starts blank.
           </Text>
           <AgentNameInput
             id="copy-agent-name"
