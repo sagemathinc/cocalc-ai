@@ -220,7 +220,21 @@ describe("isolated financial browser approval", () => {
     });
   });
   beforeEach(async () => {
+    await close(server);
+    server = await startCourseFundingApprovalServer({
+      approvals,
+      config: {
+        origin,
+        listen_host: "127.0.0.2",
+        listen_port: Number(new URL(origin).port),
+        application_origins: [attackerOrigin],
+      },
+    });
     applied = false;
+    approvals.payerForSignIn.mockImplementation(async (intentId: string) => {
+      if (intentId !== id || applied) throw new Error("Funding intent missing");
+      return payer;
+    });
     loginEmail = `payer-${++loginNumber}@example.test`;
     apply.mockClear();
     approvals.retrieve.mockImplementation(async () => ({
@@ -387,6 +401,62 @@ describe("isolated financial browser approval", () => {
     await page.getByRole("textbox", { name: "Email address" }).fill(loginEmail);
     await page.getByRole("button", { name: "Continue with email" }).click();
     expect(beginFundingApprovalEmail).toHaveBeenCalledTimes(1);
+  });
+  it("bounds one payer across 30 intents and parallel cookie jars without blocking another payer", async () => {
+    const otherPayer = randomUUID(),
+      otherIntent = randomUUID();
+    const intents = Array.from({ length: 30 }, () => randomUUID());
+    approvals.payerForSignIn.mockImplementation(async (intentId: string) => {
+      if (intentId === otherIntent) return otherPayer;
+      if (intents.includes(intentId)) return payer;
+      throw new Error("Funding intent missing");
+    });
+    (requireFundingApprovalEmailForPayer as jest.Mock).mockResolvedValue(
+      undefined,
+    );
+    (beginFundingApprovalEmail as jest.Mock).mockImplementation(
+      async ({ intent_id }) => ({
+        account_id: intent_id === otherIntent ? otherPayer : payer,
+        intent_id,
+        origin,
+        email_address: loginEmail,
+        identity_generation: 1,
+        home_bay_id: "bay-0",
+        email_challenge_id: randomUUID(),
+        expires_at: Date.now() + 15 * 60_000,
+      }),
+    );
+    const jars: any[] = [];
+    const start = async (intentId: string) => {
+      const jar = await browser.newContext();
+      jars.push(jar);
+      const response = await jar.request.get(`${origin}/funding/${intentId}`);
+      const csrf = (await response.text()).match(
+        /name="csrf" value="([a-f0-9]+)"/,
+      )![1];
+      return await jar.request.post(
+        `${origin}/funding/${intentId}/sign-in/email`,
+        {
+          headers: { Origin: origin, "Sec-Fetch-Site": "same-origin" },
+          form: { csrf, email: loginEmail },
+          maxRedirects: 0,
+        },
+      );
+    };
+    try {
+      const results = await Promise.all(intents.map(start));
+      expect(results.filter((r) => r.status() === 303)).toHaveLength(5);
+      expect((await start(otherIntent)).status()).toBe(303);
+      const future = Date.now() + 16 * 60_000;
+      const clock = jest.spyOn(Date, "now").mockReturnValue(future);
+      try {
+        expect((await start(intents[0])).status()).toBe(303);
+      } finally {
+        clock.mockRestore();
+      }
+    } finally {
+      await Promise.all(jars.map((jar) => jar.close()));
+    }
   });
   it("supports passwordless email followed by a passkey", async () => {
     await context.addInitScript(() => {

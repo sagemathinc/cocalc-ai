@@ -4,6 +4,7 @@
  */
 
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { requireSponsoredVmProvider } from "@cocalc/server/compute/funding/sponsored-provider";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
 import type { ComputeProjectSshRequest } from "@cocalc/conat/inter-bay/api";
 import { getInterBayFabricClient } from "@cocalc/server/inter-bay/fabric";
@@ -849,6 +850,7 @@ export async function createVm(
   if (provider !== "gcp" && provider !== "nebius") {
     throw new Error("provider must be gcp or nebius");
   }
+  if (fundingSource) requireSponsoredVmProvider(provider);
   const operatingSystem = opts.operating_system ?? "linux";
   if (operatingSystem !== "linux" && operatingSystem !== "windows") {
     throw new Error("operating_system must be linux or windows");

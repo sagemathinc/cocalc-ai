@@ -247,7 +247,7 @@ describe("actual sponsored VM reservation and settlement", () => {
       const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
       process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "short-create-test";
       try {
-        const { request } = await fixture();
+        const { request } = await fixture("nebius");
         const stop = new Date(Date.now() + minutes * 60_000),
           deletion = new Date(Date.now() + 10 * 60_000);
         const rate = {
@@ -257,7 +257,7 @@ describe("actual sponsored VM reservation and settlement", () => {
         await getPool().query(
           `INSERT INTO compute_vms
         (id,owner_account_id,owning_bay_id,provider,instance_generation,state,desired_state,stop_at,expires_at,metadata,effective_pricing_model,created_at)
-        VALUES ($1,$2,$3,'gcp',1,'requested','running',$4,$5,$6,'spot',NOW())`,
+        VALUES ($1,$2,$3,'nebius',1,'requested','running',$4,$5,$6,'spot',NOW())`,
           [
             request.resource_id,
             request.owner_account_id,
@@ -288,7 +288,7 @@ describe("actual sponsored VM reservation and settlement", () => {
         expect(
           new Date(binding.authorized_until).valueOf(),
         ).toBeLessThanOrEqual(deletion.valueOf());
-        expect(Number(binding.authorized_usd)).toBeGreaterThan(3.7);
+        expect(Number(binding.authorized_usd)).toBeGreaterThan(2.7);
         expect(
           (await reserveCourseVmLaunch(vm)).metadata.billing.course_funding
             .binding,
@@ -312,11 +312,11 @@ describe("actual sponsored VM reservation and settlement", () => {
     const deployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
     process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "short-denial-test";
     try {
-      const { request } = await fixture();
+      const { request } = await fixture("nebius");
       await getPool().query(
         `INSERT INTO compute_vms
         (id,owner_account_id,owning_bay_id,provider,instance_generation,state,desired_state,stop_at,metadata,effective_pricing_model,created_at)
-        VALUES ($1,$2,$3,'gcp',1,'requested','running',NOW()-interval '1 second',$4,'spot',NOW())`,
+        VALUES ($1,$2,$3,'nebius',1,'requested','running',NOW()-interval '1 second',$4,'spot',NOW())`,
         [
           request.resource_id,
           request.owner_account_id,

@@ -1,5 +1,28 @@
 # Trusted Financial Approval
 
+## Release Restrictions
+
+Course-funded GCP VMs are disabled until network spending can be enforced
+outside the root-controlled guest. The application egress reservation is an
+accounting limit, not a cap on provider liability. Course-funded Nebius VMs
+remain supported; this restriction does not change retained-volume accounting.
+
+Before deploying, stop any existing course-funded GCP VMs and verify their
+provider state. Deploy the updated API and compute workers on every bay before
+resuming sponsored service. Updated workers reject GCP launch/restart dispatch
+and request a stop for already-running sponsored GCP VMs; do not rely on a
+mixed-version rolling deployment to stop existing traffic immediately. Retained
+disks remain billable and continue through normal funded retention/settlement.
+Re-enabling GCP requires a separately reviewed network-boundary enforcement
+design and a provider-level traffic test, not a configuration override.
+
+The isolated approval listener admits at most five pending sign-ins per payer
+and ten sign-in starts per rolling minute, across all intent IDs and browser
+cookies. Capacity is checked both before factor work and synchronously before
+inserting its result. Expired flows are reclaimed on admission. These quotas
+are process-local: a future multi-listener deployment needs shared enforcement
+before scaling out. The listener-wide 1,000-flow limit remains a memory bound.
+
 This is a dedicated HTTP listener, not an Express router installed on the
 application origin. When Stripe purchasing and CoCalc-managed Cloudflare are
 configured, the service is enabled automatically. It derives a

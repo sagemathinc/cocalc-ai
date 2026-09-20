@@ -639,10 +639,33 @@ describePg(
             "UPDATE compute_vms SET provider=$2,state='ready',stop_generation=1 WHERE id=$1",
             [f.vm.id, provider],
           );
-        const vm = await reserveCourseVmLaunch(
-          (await getComputeVmById(f.vm.id))!,
-        );
-        await requireCourseVmService(vm, true);
+        if (provider === "gcp") {
+          // Seed a legacy reservation to exercise settlement after GCP launches
+          // are disabled, without bypassing the production launch guard.
+          const binding = await onBay(payerBay, async () => {
+            const reserved = await reserveComputeVmFundingLocal({
+              ...f.request,
+              provider: "gcp",
+            });
+            return checkComputeVmFundingLocal({
+              account_id: f.payer,
+              binding: reserved,
+              dispatch: true,
+            });
+          });
+          await pools
+            .get(resourceBay)!
+            .query(
+              "UPDATE compute_vms SET metadata=jsonb_set(metadata,'{billing,course_funding,binding}',$2::jsonb) WHERE id=$1",
+              [f.vm.id, JSON.stringify(binding)],
+            );
+        } else {
+          const reserved = await reserveCourseVmLaunch(
+            (await getComputeVmById(f.vm.id))!,
+          );
+          await requireCourseVmService(reserved, true);
+        }
+        const vm = (await getComputeVmById(f.vm.id))!;
         const terms: VmPersonalFundingTerms = {
           vm_id: vm.id,
           expected_funding_version: f.request.funding_epoch,
@@ -686,14 +709,9 @@ describePg(
       const volumeId = randomUUID();
       await pools.get(resourceBay)!.query(
         `INSERT INTO compute_volumes (id,name,owner_account_id,owning_bay_id,provider,region,role,funding_mode,size_gb,desired_size_gb,effective_size_gb,state,desired_state,attachment_state,attachment_generation,created_at,metadata)
-         VALUES($1,'Existing home',$2,$3,'gcp','us-central1','home','account-prepaid',10,10,10,'ready','ready','detached',1,NOW(),'{}')`,
+         VALUES($1,'Existing home',$2,$3,'nebius','eu-north1','home','account-prepaid',10,10,10,'ready','ready','detached',1,NOW(),'{}')`,
         [volumeId, f.student, resourceBay],
       );
-      await pools
-        .get(resourceBay)!
-        .query("UPDATE compute_volumes SET zone='us-central1-a' WHERE id=$1", [
-          volumeId,
-        ]);
       await onBay(resourceBay, async () => {
         await ensureCourseCreditNoticeSchema();
         await rehomeAccountOnHomeBay({
@@ -740,6 +758,8 @@ describePg(
       // Provider catalog and price observations are controlled fixtures. The
       // caller, rehome, dispatch, authorization, SQL and payer reservation are real.
       const provider = await import("../provider");
+      const cloudProviders = await import("@cocalc/server/cloud/providers");
+      const hostUtil = await import("@cocalc/server/cloud/host-util");
       const hosts = await import("@cocalc/server/conat/api/hosts");
       const spend = await import("@cocalc/server/project-host/spend");
       const managedSsh =
@@ -752,6 +772,20 @@ describePg(
           [f.project, f.student],
         );
       const spies = [
+        jest
+          .spyOn(cloudProviders, "loadNebiusInstanceTypes")
+          .mockResolvedValue([
+            {
+              name: "cpu",
+              platform: "cpu",
+              vcpus: 2,
+              memory_gib: 8,
+              regions: ["eu-north1"],
+            },
+          ] as any),
+        jest
+          .spyOn(hostUtil, "getNebiusMinimumBootDiskGb")
+          .mockResolvedValue(20),
         jest
           .spyOn(provider, "getProviderComputeRegions")
           .mockResolvedValue(new Set(["us-central1"])),
@@ -771,7 +805,7 @@ describePg(
         } as any),
         jest.spyOn(spend, "estimateDedicatedHostRate").mockResolvedValue({
           hourly_cost_usd: "0.02",
-          pricing_snapshot: { provider: "gcp", components: [] },
+          pricing_snapshot: { provider: "nebius", components: [] },
         } as any),
         jest
           .spyOn(managedSsh, "getManagedVmProjectSshPublicKey")
@@ -784,10 +818,9 @@ describePg(
           account_id: f.student,
           session_hash,
           name: "new-vm-with-retained-disk",
-          provider: "gcp" as const,
-          region: "us-central1",
-          zone: "us-central1-a",
-          machine_type: "e2-standard-2",
+          provider: "nebius" as const,
+          region: "eu-north1",
+          machine_type: "cpu",
           pricing_model: "on_demand" as const,
           home_volume: volumeId,
           idempotency_key: randomUUID(),

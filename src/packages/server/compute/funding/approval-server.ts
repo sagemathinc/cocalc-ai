@@ -325,6 +325,31 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   const perIntent = new Map<string, number>();
   const perIntentEmail = new Map<string, number>();
   const pendingAuth = new Map<string, FundingApprovalPendingAuth>();
+  const payerAttempts = new Map<string, number[]>();
+  const MAX_PENDING_PER_PAYER = 5;
+  function checkPayerCapacity(payer: string, previousFlow?: string) {
+    removeExpiredPendingAuth();
+    let count = 0;
+    for (const [flow, auth] of pendingAuth) {
+      if (flow !== previousFlow && auth.account_id === payer) count++;
+    }
+    if (count >= MAX_PENDING_PER_PAYER)
+      throw new Error(
+        "Too many pending financial sign-ins for this account. Complete an existing sign-in or wait for it to expire.",
+      );
+  }
+  function rateLimitPayer(payer: string) {
+    const cutoff = Date.now() - 60_000;
+    for (const [account, attempts] of payerAttempts) {
+      const recent = attempts.filter((time) => time > cutoff);
+      if (recent.length) payerAttempts.set(account, recent);
+      else payerAttempts.delete(account);
+    }
+    const attempts = payerAttempts.get(payer) ?? [];
+    if (attempts.length >= 10)
+      throw new Error("Too many financial sign-in attempts for this account");
+    payerAttempts.set(payer, [...attempts, Date.now()]);
+  }
   function removeExpiredPendingAuth() {
     const now = Date.now();
     for (const [flow, auth] of pendingAuth) {
@@ -428,6 +453,9 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   ) {
     removeExpiredPendingAuth();
     const previousFlow = cookie(req, FLOW_COOKIE);
+    // Recheck after asynchronous authentication; parallel requests cannot
+    // all pass the preflight and then exceed the payer's quota.
+    checkPayerCapacity(auth.account_id, previousFlow);
     if (previousFlow) pendingAuth.delete(previousFlow);
     if (pendingAuth.size >= 1_000)
       throw new Error("Too many pending financial sign-in attempts");
@@ -663,6 +691,8 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       email_address,
       payer_account_id: payer,
     });
+    rateLimitPayer(payer);
+    checkPayerCapacity(payer, cookie(req, FLOW_COOKIE));
     rateLimitAccountEmail(id, payer, email_address);
     try {
       setPendingAuth(
@@ -693,6 +723,8 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
       email_address,
       payer_account_id: payer,
     });
+    rateLimitPayer(payer);
+    checkPayerCapacity(payer, cookie(req, FLOW_COOKIE));
     rateLimitAccountEmail(id, payer, email_address);
     try {
       const result = await beginFundingApprovalPassword({

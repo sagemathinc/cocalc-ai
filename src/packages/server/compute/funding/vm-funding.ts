@@ -4,6 +4,7 @@
  */
 
 import getPool from "@cocalc/database/pool";
+import { requireSponsoredVmProvider } from "./sponsored-provider";
 import { withFundingResourceMeterLock } from "./resource-meter-lock";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { createInterBayAccountLocalClient } from "@cocalc/conat/inter-bay/api";
@@ -253,6 +254,7 @@ export async function reserveCourseVmLaunch(
   vm: ComputeVmRow,
 ): Promise<ComputeVmRow> {
   if (!hasCourseVmFunding(vm)) return vm;
+  requireSponsoredVmProvider(vm.provider);
   await requireSponsoredVmAdmission();
   const course = vm.metadata.billing.course_funding;
   if (course.binding) return vm;
@@ -344,6 +346,7 @@ export async function requireCourseVmService(
   renew = false,
 ) {
   if (!hasCourseVmFunding(vm)) return;
+  requireSponsoredVmProvider(vm.provider);
   const binding = courseVmBinding(vm);
   if (vm.stopped_at || vm.deleted_at || vm.desired_state !== "running")
     fundingConflict("Restart requires a new sponsored reservation.");
@@ -669,6 +672,7 @@ export async function enqueueCourseFundingDeadlines(): Promise<void> {
 export async function enforceCourseVmFunding(
   vm: ComputeVmRow,
 ): Promise<"stop" | "delete" | undefined> {
+  if (vm.provider === "gcp" && vm.desired_state === "running") return "stop";
   if (
     !vm.metadata?.billing?.course_funding?.binding &&
     Date.now() - vm.created_at.valueOf() < VM_FUNDING_MARGIN_MS
