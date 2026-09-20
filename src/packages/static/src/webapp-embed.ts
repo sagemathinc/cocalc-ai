@@ -3,12 +3,13 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { cocalcStylesReady } from "./webapp-libraries";
+import { cocalcStylesReady, revealCocalcApp } from "./webapp-libraries";
 import { init } from "@cocalc/frontend/embed";
 import { startedUp } from "./webapp-error";
 
 async function start() {
   await cocalcStylesReady;
+  revealCocalcApp();
   init();
   startedUp();
 }
