@@ -1,6 +1,7 @@
 import {
   isFrontendBuildMismatch,
   isLikelyStaleChunkError,
+  urlWithoutFrontendRefreshToken,
 } from "./frontend-build-monitor";
 
 describe("frontend build monitor", () => {
@@ -28,5 +29,23 @@ describe("frontend build monitor", () => {
       }),
     ).toBe(true);
     expect(isLikelyStaleChunkError(new Error("ordinary failure"))).toBe(false);
+  });
+
+  it("removes only the one-time frontend refresh token", () => {
+    expect(
+      urlWithoutFrontendRefreshToken(
+        "https://cocalc.example/agents/name?tab=files&_cocalc_refresh=123#log",
+      ),
+    ).toBe("/agents/name?tab=files#log");
+    expect(
+      urlWithoutFrontendRefreshToken(
+        "https://cocalc.example/agents/name?_cocalc_refresh=123&tab=files",
+      ),
+    ).toBe("/agents/name?tab=files");
+    expect(
+      urlWithoutFrontendRefreshToken(
+        "https://cocalc.example/agents/name?tab=files#log",
+      ),
+    ).toBeUndefined();
   });
 });
