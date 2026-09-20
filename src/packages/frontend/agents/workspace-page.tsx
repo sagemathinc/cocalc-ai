@@ -34,6 +34,7 @@ import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-op
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
 import { AgentFileAttachment } from "@cocalc/frontend/chat/agent-file-attachment";
+import MarkdownInput from "@cocalc/frontend/editors/markdown-input/multimode";
 import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-draft";
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
@@ -142,7 +143,10 @@ import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
-import { relativeAgentWorkingDirectory } from "./workspace-path";
+import {
+  effectiveNewAgentWorkingDirectory,
+  relativeAgentWorkingDirectory,
+} from "./workspace-path";
 
 const { Text, Title } = Typography;
 
@@ -353,6 +357,7 @@ function NewAgentPanel({
           ? getProjectHomeDirectory(projectId)
           : ""),
   );
+  const [directoryProjectId, setDirectoryProjectId] = useState(projectId);
   const [config, setConfig] = useState<NewAgentCodexConfig>(() => ({
     ...(sourceConfig ?? {}),
     model: sourceConfig?.model || accountDefaults.model,
@@ -379,13 +384,16 @@ function NewAgentPanel({
   );
   const [description, setDescription] = useState("");
   const [firstRequest, setFirstRequest] = useState("");
+  const firstRequestRef = useRef<() => string>(() => "");
   const [directorySelectorOpen, setDirectorySelectorOpen] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [modelCatalog, setModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
   >();
   const [pending, setPending] = useState<PendingAgent>();
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
   const paymentPreference = (config.paymentSource ??
     "auto") as CodexPaymentSourcePreference;
@@ -426,7 +434,9 @@ function NewAgentPanel({
     const preferred = mostRecentlyEditedWritableProject(projectMap);
     if (preferred) {
       setProjectId(preferred);
-      setDirectory(getProjectHomeDirectory(preferred));
+      const home = getProjectHomeDirectory(preferred);
+      setDirectory(home);
+      setDirectoryProjectId(preferred);
     }
   }, [projectId, projectMap]);
 
@@ -487,11 +497,23 @@ function NewAgentPanel({
     if (!projectActions || !fs) {
       throw new Error("The selected project filesystem is unavailable");
     }
+    const projectHome = getProjectHomeDirectory(targetProjectId);
     const workingDirectory =
-      directory.trim() || getProjectHomeDirectory(targetProjectId);
-    const stat = await fs.stat(workingDirectory);
+      directoryProjectId === targetProjectId
+        ? directory.trim() || projectHome
+        : projectHome;
+    let stat;
+    try {
+      stat = await fs.stat(workingDirectory);
+    } catch {
+      throw new Error(
+        `Working directory ${JSON.stringify(workingDirectory)} does not exist in the selected project. Choose an existing directory.`,
+      );
+    }
     if (!stat.isDirectory()) {
-      throw new Error("The working directory is not a directory");
+      throw new Error(
+        `Working directory ${JSON.stringify(workingDirectory)} is not a directory. Choose an existing directory.`,
+      );
     }
     const path = joinAbsolutePath(
       getProjectHomeDirectory(targetProjectId),
@@ -528,8 +550,9 @@ function NewAgentPanel({
     return created;
   }
 
-  async function create() {
-    if (busy || problem || atLimit || !firstRequest.trim()) return;
+  async function create(requestValue?: string) {
+    const request = (requestValue ?? firstRequestRef.current()).trim();
+    if (busy || uploading || problem || atLimit || !request) return;
     setBusy(true);
     setError("");
     try {
@@ -565,7 +588,7 @@ function NewAgentPanel({
       });
       await waitForChatReady(actions);
       const sent = actions.sendChat({
-        input: firstRequest.trim(),
+        input: request,
         reply_thread_id: created.threadId,
         acpConfigOverride: config,
       });
@@ -578,7 +601,7 @@ function NewAgentPanel({
           project_id: created.projectId,
           path: created.path,
           composerDraftKey: stableDraftKeyFromThreadKey(created.threadId),
-          text: firstRequest,
+          text: request,
         });
         antdMessage.warning(
           "The agent was created, but the first request could not start. It is preserved as a draft.",
@@ -603,6 +626,16 @@ function NewAgentPanel({
     ? ((projectMap?.getIn([projectId, "title"]) as string | undefined) ??
       "Project")
     : "New project";
+  const projectHome = projectId ? getProjectHomeDirectory(projectId) : "";
+  const effectiveDirectory = effectiveNewAgentWorkingDirectory({
+    projectId,
+    directoryProjectId,
+    directory,
+    projectHome,
+  });
+  const directoryLabel =
+    relativeAgentWorkingDirectory(effectiveDirectory, projectHome) ??
+    (effectiveDirectory || "~/");
   const subscriptions =
     (paymentSource as PaymentSourceWithSubscriptions | undefined)
       ?.subscriptions ?? [];
@@ -642,7 +675,6 @@ function NewAgentPanel({
   const advancedSettings = (
     <div style={{ width: 360, maxWidth: "calc(100vw - 48px)" }}>
       <Space orientation="vertical" size={10} style={{ width: "100%" }}>
-        <label htmlFor="new-agent-name">Agent name</label>
         <AgentNameInput
           id="new-agent-name"
           value={name}
@@ -667,7 +699,9 @@ function NewAgentPanel({
           disabled={busy || !!pending}
           onChange={(nextProjectId) => {
             setProjectId(nextProjectId);
-            setDirectory(getProjectHomeDirectory(nextProjectId));
+            const home = getProjectHomeDirectory(nextProjectId);
+            setDirectory(home);
+            setDirectoryProjectId(nextProjectId);
           }}
         />
         {!projectId && (
@@ -679,9 +713,12 @@ function NewAgentPanel({
         <Space.Compact style={{ width: "100%" }}>
           <Input
             id="new-agent-directory"
-            value={directory}
+            value={effectiveDirectory}
             disabled={busy || !!pending}
-            onChange={(event) => setDirectory(event.target.value)}
+            onChange={(event) => {
+              setDirectory(event.target.value);
+              setDirectoryProjectId(projectId);
+            }}
           />
           <Button
             style={{ height: 31 }}
@@ -738,27 +775,31 @@ function NewAgentPanel({
             padding: 12,
           }}
         >
-          <label htmlFor="new-agent-first-request" style={{ display: "none" }}>
-            First request
-          </label>
-          <Input.TextArea
-            id="new-agent-first-request"
-            aria-label="First request"
-            value={firstRequest}
-            autoFocus
-            autoSize={{ minRows: 5, maxRows: 16 }}
-            variant="borderless"
-            disabled={busy}
-            placeholder="Ask your agent to build, research, debug, or explain…"
-            style={{ fontSize: 16, resize: "none" }}
-            onChange={(event) => setFirstRequest(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.shiftKey && event.key === "Enter") {
-                event.preventDefault();
-                void create();
-              }
-            }}
-          />
+          <div inert={busy ? true : undefined}>
+            <MarkdownInput
+              project_id={projectId}
+              cacheId={`new-agent:${boundAccount.accountId ?? "account"}`}
+              value={firstRequest}
+              getValueRef={firstRequestRef}
+              onChange={setFirstRequest}
+              onShiftEnter={(value) => void create(value)}
+              onCtrlEnter={() => undefined}
+              autoFocus
+              autoGrow
+              autoGrowMinHeight={128}
+              autoGrowMaxHeight={420}
+              enableUpload
+              onUploadStart={() => setUploading(true)}
+              onUploadEnd={() => setUploading(false)}
+              hideHelp
+              modeSwitchPlacement="toolbar"
+              reserveModeSwitchSpace
+              undoMode="local"
+              redoMode="local"
+              placeholder="Ask your agent to build, research, debug, or explain…"
+              style={{ fontSize: 16 }}
+            />
+          </div>
           <div
             style={{
               alignItems: "center",
@@ -772,7 +813,7 @@ function NewAgentPanel({
             {projectId ? (
               <AgentFileAttachment
                 projectId={projectId}
-                workingDirectory={directory}
+                workingDirectory={effectiveDirectory}
                 disabled={busy || !!pending}
                 onInsert={(markdown) =>
                   setFirstRequest(
@@ -801,18 +842,41 @@ function NewAgentPanel({
             >
               <Button
                 icon={<Icon name="folder-open" />}
-                style={{ maxWidth: 240, overflow: "hidden" }}
-                title={`${projectTitle} / ${directory}`}
+                style={{ height: "auto", maxWidth: 280, overflow: "hidden" }}
+                title={`${projectTitle} / ${effectiveDirectory}`}
               >
                 <span
                   style={{
-                    display: "block",
+                    alignItems: "flex-start",
+                    display: "flex",
+                    flexDirection: "column",
+                    lineHeight: 1.25,
+                    minWidth: 0,
                     overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
+                    textAlign: "left",
                   }}
                 >
-                  {projectTitle} / {directory || "~"}
+                  <span
+                    style={{
+                      maxWidth: "100%",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {projectTitle}
+                  </span>
+                  <span
+                    style={{
+                      color: UI_COLORS.secondary,
+                      maxWidth: "100%",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {directoryLabel}
+                  </span>
                 </span>
               </Button>
             </Popover>
@@ -881,7 +945,9 @@ function NewAgentPanel({
               icon={<Icon name="arrow-up" />}
               style={{ height: 32, minWidth: 32, width: 32 }}
               loading={busy}
-              disabled={!!problem || !firstRequest.trim() || atLimit}
+              disabled={
+                uploading || !!problem || !firstRequest.trim() || atLimit
+              }
               onClick={() => void create()}
             />
           </div>
@@ -895,9 +961,21 @@ function NewAgentPanel({
             justifyContent: "space-between",
           }}
         >
-          <Text type="secondary">
-            @{name} · {paymentLabel} · Shift+Enter to start
-          </Text>
+          <Space size={4} wrap>
+            <Button
+              type="link"
+              size="small"
+              aria-label={`Change agent name @${name}`}
+              disabled={busy || !!pending}
+              style={{ height: "auto", padding: 0 }}
+              onClick={() => setNameOpen(true)}
+            >
+              @{name}
+            </Button>
+            <Text type="secondary">
+              · {paymentLabel} · Shift+Enter to start
+            </Text>
+          </Space>
           <Space>
             <NamedAgentUsage directory={namedAgentDirectory} />
             {agents.length > 0 && (
@@ -928,15 +1006,36 @@ function NewAgentPanel({
         {projectId && (
           <DirectorySelector
             project_id={projectId}
-            startingPath={directory}
+            startingPath={effectiveDirectory}
             allowAbsolutePaths
             closable={false}
             onSelect={(path) => {
               setDirectory(path);
+              setDirectoryProjectId(projectId);
               setDirectorySelectorOpen(false);
             }}
           />
         )}
+      </Modal>
+      <Modal
+        open={nameOpen}
+        title="Agent name"
+        okText="Done"
+        okButtonProps={{ disabled: !!problem }}
+        cancelButtonProps={{ style: { display: "none" } }}
+        onOk={() => setNameOpen(false)}
+        onCancel={() => setNameOpen(false)}
+      >
+        <AgentNameInput
+          id="new-agent-name-dialog"
+          value={name}
+          onChange={setName}
+          problem={name.trim() ? problem : undefined}
+          busy={busy || !!pending}
+          onEnter={() => {
+            if (!problem) setNameOpen(false);
+          }}
+        />
       </Modal>
     </div>
   );
@@ -1582,14 +1681,32 @@ function AgentWorkspace({
               type="link"
               size="small"
               onClick={() => openProject("files/")}
-              style={{ color: "inherit", height: "auto", padding: 0 }}
+              style={{
+                color: "inherit",
+                flex: "0 1 auto",
+                height: "auto",
+                maxWidth: 280,
+                minWidth: 0,
+                overflow: "hidden",
+                padding: 0,
+                textOverflow: "ellipsis",
+              }}
             >
               {displayedAgent.project_title || agent.endpoint.project_id}
             </Button>
             {workingDirectoryLabel ? (
               <>
                 <span aria-hidden="true">&nbsp;·&nbsp;</span>
-                <span title={selectedWorkingDirectory}>
+                <span
+                  title={selectedWorkingDirectory}
+                  style={{
+                    flex: "0 1 240px",
+                    maxWidth: 240,
+                    minWidth: 120,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  }}
+                >
                   {workingDirectoryLabel}
                 </span>
               </>
@@ -1731,7 +1848,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     | string
     | undefined;
   const [search, setSearch] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState(activeAgentId === "new");
+  const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
   const [copyName, setCopyName] = useState("");
   const [copyBusy, setCopyBusy] = useState(false);
@@ -1770,10 +1888,19 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }, [active]);
   const agents = directory?.agents ?? [];
   const agentOrganization = useAgentWorkspaceOrganization(agents);
-  const selected = activeAgentId
-    ? agents.find((agent) => agent.endpoint.agent_id === activeAgentId)
-    : (agentOrganization.groups.pinned[0] ??
-      agentOrganization.groups.unpinned[0]);
+  const selected =
+    activeAgentId && activeAgentId !== "new"
+      ? agents.find((agent) => agent.endpoint.agent_id === activeAgentId)
+      : (agentOrganization.groups.pinned[0] ??
+        agentOrganization.groups.unpinned[0]);
+  const creatingSourceAgent =
+    agents.find(
+      ({ endpoint }) => endpoint.agent_id === creatingSourceAgentId,
+    ) ?? selected;
+
+  useEffect(() => {
+    setCreating(activeAgentId === "new");
+  }, [activeAgentId]);
 
   const handleAgentAppearance = useCallback(
     (agentId: string, appearance: AgentHeaderAppearance) => {
@@ -2193,7 +2320,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           block
           icon={<Icon name="plus" />}
           onClick={() => {
+            setCreatingSourceAgentId(selected?.endpoint.agent_id);
             setCreating(true);
+            redux.getActions("page").setState({ active_agent_id: "new" });
+            set_url(getPageUrlPath({ page: "agents", agent_id: "new" }));
             setMobileList(false);
           }}
         >
@@ -2503,9 +2633,18 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           <NewAgentPanel
             agents={agents}
             namedAgentDirectory={directory}
-            sourceAgent={selected}
+            sourceAgent={creatingSourceAgent}
             onCancel={() => {
               setCreating(false);
+              setCreatingSourceAgentId(undefined);
+              if (selected) {
+                selectAgentId(selected.endpoint.agent_id);
+              } else {
+                redux.getActions("page").setState({
+                  active_agent_id: undefined,
+                });
+                set_url(getPageUrlPath({ page: "agents" }));
+              }
               setMobileList(true);
             }}
             onCreated={(agentId) => {
@@ -2515,6 +2654,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               if (agent) mountAgent(agent);
               selectAgentId(agentId);
               setCreating(false);
+              setCreatingSourceAgentId(undefined);
             }}
           />
         ) : error ? (

@@ -16,3 +16,19 @@ export function relativeAgentWorkingDirectory(
   }
   return `${directory}/`;
 }
+
+export function effectiveNewAgentWorkingDirectory({
+  projectId,
+  directoryProjectId,
+  directory,
+  projectHome,
+}: {
+  projectId?: string;
+  directoryProjectId?: string;
+  directory: string;
+  projectHome: string;
+}): string {
+  return projectId && directoryProjectId !== projectId
+    ? projectHome
+    : directory;
+}

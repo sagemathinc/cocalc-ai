@@ -12,7 +12,10 @@ import {
   readAgentSubscriptionSelection,
   writeAgentSubscriptionSelection,
 } from "./agent-subscription-selection";
-import { relativeAgentWorkingDirectory } from "./workspace-path";
+import {
+  effectiveNewAgentWorkingDirectory,
+  relativeAgentWorkingDirectory,
+} from "./workspace-path";
 
 function agent(name: string): NamedAgent {
   return {
@@ -78,5 +81,24 @@ describe("agent workspace paths", () => {
     expect(relativeAgentWorkingDirectory("/home/user", "/home/user")).toBe(
       "~/",
     );
+  });
+
+  it("does not carry a working directory into another project", () => {
+    expect(
+      effectiveNewAgentWorkingDirectory({
+        projectId: "project-b",
+        directoryProjectId: "project-a",
+        directory: "/home/user/stuff",
+        projectHome: "/home/user",
+      }),
+    ).toBe("/home/user");
+    expect(
+      effectiveNewAgentWorkingDirectory({
+        projectId: "project-a",
+        directoryProjectId: "project-a",
+        directory: "/home/user/stuff",
+        projectHome: "/home/user",
+      }),
+    ).toBe("/home/user/stuff");
   });
 });

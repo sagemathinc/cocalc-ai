@@ -2,6 +2,7 @@ import { Input } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { normalizeAgentName } from "@cocalc/conat/agents/personal";
 import type { AgentEndpoint } from "@cocalc/conat/agents/rpc";
+import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
 export function agentNameProblem(
   value: string,
@@ -63,7 +64,12 @@ export function AgentNameInput({
         1-32 letters, digits or internal hyphens, beginning with a letter. Old
         names are retired after renaming.
       </div>
-      <div id={`${id}-availability`} role="status" aria-live="polite">
+      <div
+        id={`${id}-availability`}
+        role="status"
+        aria-live="polite"
+        style={problem ? { color: UI_COLORS.danger } : undefined}
+      >
         {value.trim()
           ? (problem ??
             "No conflict in your loaded agent names. Availability is checked again when saved.")
