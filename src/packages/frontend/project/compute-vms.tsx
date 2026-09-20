@@ -220,6 +220,7 @@ import VmStopAfter from "./compute-vm-stop-after";
 import ComputeFundingSelect from "./compute-funding-select";
 import VmFundingStatus from "./compute-vm-funding-status";
 import VmPowerControls from "./compute-vm-power-controls";
+import VmShutdownButton from "./compute-vm-shutdown-button";
 import FundingHelp from "./compute-funding-help";
 import VmPersonalFunding from "./compute-vm-personal-funding";
 import CourseCreditSummary from "./course-credit-summary";
@@ -4082,7 +4083,11 @@ export function ProjectComputeVms({
             : undefined;
         const startupExpectation = vmStartupExpectation(vm);
         return (
-          <Space direction="vertical" size={1} style={{ minWidth: 0 }}>
+          <Space
+            direction="vertical"
+            size={1}
+            style={{ minWidth: 0, width: "100%", maxWidth: "100%" }}
+          >
             <Popover
               trigger="click"
               title={`Status of ${vm.name}`}
@@ -4153,21 +4158,29 @@ export function ProjectComputeVms({
                   </Text>
                 }
               >
-                <Button danger size="small" type="link" style={{ padding: 0 }}>
+                <Button
+                  danger
+                  size="small"
+                  type="link"
+                  style={{
+                    padding: 0,
+                    height: "auto",
+                    maxWidth: "100%",
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    textAlign: "left",
+                  }}
+                >
                   Cloud check issue
                 </Button>
               </Popover>
             )}
             {vm.stop_at && vm.desired_state === "running" && (
-              <Button
-                type="link"
-                size="small"
-                aria-label={`Change shutdown timer for ${vm.name}`}
+              <VmShutdownButton
+                name={vm.name}
+                stopAt={vm.stop_at}
                 onClick={() => setStopScheduleVm(vm)}
-                style={{ height: "auto", padding: 0, textAlign: "left" }}
-              >
-                Stops <TimeAgo date={new Date(vm.stop_at)} />
-              </Button>
+              />
             )}
             {vm.expires_at && (
               <Text type="secondary">
@@ -4212,7 +4225,19 @@ export function ProjectComputeVms({
                   </Space>
                 }
               >
-                <Button danger size="small" type="link" style={{ padding: 0 }}>
+                <Button
+                  danger
+                  size="small"
+                  type="link"
+                  style={{
+                    padding: 0,
+                    height: "auto",
+                    maxWidth: "100%",
+                    whiteSpace: "normal",
+                    overflowWrap: "anywhere",
+                    textAlign: "left",
+                  }}
+                >
                   {providerErrorSummary(vm.error)}
                 </Button>
               </Popover>

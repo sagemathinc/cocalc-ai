@@ -137,7 +137,7 @@ export default function VmFundingStatus({
           <Typography.Text type="secondary">
             {personal
               ? "VM funding unavailable."
-              : "Course balance unavailable."}
+              : "See Compute budget in the course for this student's balance."}
           </Typography.Text>
         )}
         {runtime && funding.state === "running" && (

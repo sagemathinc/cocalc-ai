@@ -119,6 +119,16 @@ test("does not present stale funding as current", () => {
   expect(screen.getByRole("alert").textContent).toContain("out of date");
 });
 
+test("directs viewers without a beneficiary balance to the course budget", () => {
+  render(<VmFundingStatus funding={funding} now={now} compact />);
+  expect(
+    screen.getByText(
+      "See Compute budget in the course for this student's balance.",
+    ),
+  ).toBeVisible();
+  expect(screen.queryByText("Course balance unavailable.")).toBeNull();
+});
+
 test("distinguishes unavailable commitments from settled zero", () => {
   const { rerender } = render(
     <VmFundingStatus
