@@ -115,3 +115,28 @@ it("persists message activity without writing merely because an agent exists", a
   save.resolve();
   await act(async () => await save.promise);
 });
+
+it("persists project grouping and collapsed projects", async () => {
+  const first = deferred();
+  const second = deferred();
+  mockSave
+    .mockImplementationOnce(() => first.promise)
+    .mockImplementationOnce(() => second.promise);
+  const { result } = renderHook(() =>
+    useAgentWorkspaceOrganization([agent("a"), agent("b")]),
+  );
+
+  act(() => result.current.setGroupByProject(true));
+  act(() => result.current.setProjectCollapsed("project", true));
+
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(1));
+  first.resolve();
+  await waitFor(() => expect(mockSave).toHaveBeenCalledTimes(2));
+  expect(mockSave.mock.calls[1][1]).toMatchObject({
+    groupByProject: true,
+    collapsedProjects: '["project"]',
+  });
+
+  second.resolve();
+  await act(async () => await second.promise);
+});

@@ -1,11 +1,13 @@
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import {
   DEFAULT_AGENT_WORKSPACE_ORGANIZATION,
+  groupAgentsByProject,
   groupAgentsByRecency,
   markAgentActive,
   moveAgent,
   moveAgentBefore,
   moveAgentToIndex,
+  moveAgentWithinProject,
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
   serializeAgentWorkspaceOrganization,
@@ -37,9 +39,11 @@ it("normalizes malformed and oversized organization data", () => {
   expect(normalized).toEqual({
     version: 1,
     mode: "recent",
+    groupByProject: false,
     pinned: ["b"],
     custom: [],
     hidden: [],
+    collapsedProjects: [],
     lastOpened: { a: 20 },
   });
 });
@@ -64,6 +68,7 @@ it("serializes replaceable collections as account-setting scalars", () => {
     pinned: "[]",
     custom: '["b"]',
     hidden: "[]",
+    collapsedProjects: "[]",
     lastOpened: '{"b":123}',
   });
   expect(normalizeAgentWorkspaceOrganization(serialized)).toMatchObject({
@@ -163,6 +168,58 @@ it("groups recent agents into the workspace time buckets", () => {
     ["Last 7 days", ["b"]],
     ["Older", ["c"]],
   ]);
+});
+
+it("groups ordered agents by project and orders projects by activity", () => {
+  const projectA = {
+    ...agent("a", "A"),
+    project_title: "Alpha",
+  };
+  const projectB = {
+    ...agent("b", "B"),
+    endpoint: { project_id: "project-b", agent_id: "b" },
+    project_title: "Beta",
+  };
+  const projectBPin = {
+    ...agent("c", "C"),
+    endpoint: { project_id: "project-b", agent_id: "c" },
+    project_title: "Beta",
+  };
+
+  expect(
+    groupAgentsByProject([projectBPin], [projectA, projectB], {
+      a: 10,
+      b: 30,
+      c: 20,
+    }).map(({ projectTitle, pinned, unpinned }) => ({
+      projectTitle,
+      pinned: pinned.map(({ name }) => name),
+      unpinned: unpinned.map(({ name }) => name),
+    })),
+  ).toEqual([
+    { projectTitle: "Beta", pinned: ["C"], unpinned: ["B"] },
+    { projectTitle: "Alpha", pinned: [], unpinned: ["A"] },
+  ]);
+});
+
+it("reorders agents within a project without disturbing other projects", () => {
+  const mixed = [
+    agent("a"),
+    {
+      ...agent("x"),
+      endpoint: { project_id: "other", agent_id: "x" },
+    },
+    agent("b"),
+  ];
+  const organization = {
+    ...DEFAULT_AGENT_WORKSPACE_ORGANIZATION,
+    mode: "custom" as const,
+    custom: ["a", "x", "b"],
+  };
+
+  expect(
+    moveAgentWithinProject(mixed, organization, "b", ["a", "b"], 0).custom,
+  ).toEqual(["b", "x", "a"]);
 });
 
 it("hides and restores an agent without disabling its identity", () => {

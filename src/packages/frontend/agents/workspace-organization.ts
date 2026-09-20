@@ -13,9 +13,11 @@ const MAX_REMEMBERED_AGENTS = 500;
 export interface AgentWorkspaceOrganization {
   version: 1;
   mode: "recent" | "custom";
+  groupByProject: boolean;
   pinned: string[];
   custom: string[];
   hidden: string[];
+  collapsedProjects: string[];
   lastOpened: Record<string, number>;
 }
 
@@ -23,9 +25,11 @@ export const DEFAULT_AGENT_WORKSPACE_ORGANIZATION: AgentWorkspaceOrganization =
   {
     version: 1,
     mode: "recent",
+    groupByProject: false,
     pinned: [],
     custom: [],
     hidden: [],
+    collapsedProjects: [],
     lastOpened: {},
   };
 
@@ -87,9 +91,11 @@ export function normalizeAgentWorkspaceOrganization(
   return {
     version: 1,
     mode: input.mode === "custom" ? "custom" : "recent",
+    groupByProject: input.groupByProject === true,
     pinned: uniqueIds(input.pinned),
     custom: uniqueIds(input.custom),
     hidden: uniqueIds(input.hidden),
+    collapsedProjects: uniqueIds(input.collapsedProjects),
     lastOpened,
   };
 }
@@ -103,9 +109,11 @@ export function serializeAgentWorkspaceOrganization(
   return {
     version: 1 as const,
     mode: normalized.mode,
+    groupByProject: normalized.groupByProject,
     pinned: JSON.stringify(normalized.pinned),
     custom: JSON.stringify(normalized.custom),
     hidden: JSON.stringify(normalized.hidden),
+    collapsedProjects: JSON.stringify(normalized.collapsedProjects),
     lastOpened: JSON.stringify(normalized.lastOpened),
   };
 }
@@ -189,6 +197,88 @@ export function groupAgentsByRecency(
     section.agents.push(agent);
   }
   return sections.filter(({ agents }) => agents.length > 0);
+}
+
+export type AgentProjectGroup = {
+  projectId: string;
+  projectTitle: string;
+  pinned: NamedAgent[];
+  unpinned: NamedAgent[];
+  lastOpened: number;
+};
+
+export function groupAgentsByProject(
+  pinned: NamedAgent[],
+  unpinned: NamedAgent[],
+  lastOpened: Record<string, number>,
+): AgentProjectGroup[] {
+  const groups = new Map<string, AgentProjectGroup>();
+  for (const [agents, isPinned] of [
+    [pinned, true],
+    [unpinned, false],
+  ] as const) {
+    for (const agent of agents) {
+      const projectId = agent.endpoint.project_id;
+      const group = groups.get(projectId) ?? {
+        projectId,
+        projectTitle: agent.project_title?.trim() || projectId,
+        pinned: [],
+        unpinned: [],
+        lastOpened: 0,
+      };
+      if (group.projectTitle === projectId && agent.project_title?.trim()) {
+        group.projectTitle = agent.project_title.trim();
+      }
+      (isPinned ? group.pinned : group.unpinned).push(agent);
+      group.lastOpened = Math.max(
+        group.lastOpened,
+        lastOpened[agent.endpoint.agent_id] ?? 0,
+      );
+      groups.set(projectId, group);
+    }
+  }
+  return [...groups.values()].sort(
+    (a, b) =>
+      b.lastOpened - a.lastOpened ||
+      a.projectTitle.localeCompare(b.projectTitle) ||
+      a.projectId.localeCompare(b.projectId),
+  );
+}
+
+export function moveAgentWithinProject(
+  agents: NamedAgent[],
+  organization: AgentWorkspaceOrganization,
+  agentId: string,
+  projectAgentIds: string[],
+  newIndex: number,
+): AgentWorkspaceOrganization {
+  const current = organizeAgents(agents, organization);
+  const inPinned = current.pinned.some(
+    ({ endpoint }) => endpoint.agent_id === agentId,
+  );
+  const groupIds = orderedIds(inPinned ? current.pinned : current.unpinned);
+  const projectSet = new Set(projectAgentIds);
+  const localIds = groupIds.filter((id) => projectSet.has(id));
+  const oldIndex = localIds.indexOf(agentId);
+  if (
+    oldIndex < 0 ||
+    newIndex < 0 ||
+    newIndex >= localIds.length ||
+    oldIndex === newIndex
+  ) {
+    return organization;
+  }
+  localIds.splice(oldIndex, 1);
+  localIds.splice(newIndex, 0, agentId);
+  let replacementIndex = 0;
+  const nextIds = groupIds.map((id) =>
+    projectSet.has(id) ? localIds[replacementIndex++] : id,
+  );
+  return {
+    ...organization,
+    mode: inPinned ? organization.mode : "custom",
+    ...(inPinned ? { pinned: nextIds } : { custom: nextIds }),
+  };
 }
 
 export function setAgentHidden(

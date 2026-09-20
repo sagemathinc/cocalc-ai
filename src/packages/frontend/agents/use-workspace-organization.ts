@@ -18,6 +18,7 @@ import {
   moveAgent,
   moveAgentBefore,
   moveAgentToIndex,
+  moveAgentWithinProject,
   MY_AGENTS_ORGANIZATION_SETTING,
   normalizeAgentWorkspaceOrganization,
   organizeAgents,
@@ -104,6 +105,16 @@ export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
     setMode(mode: AgentWorkspaceOrganization["mode"]) {
       save({ ...latestRef.current, mode });
     },
+    setGroupByProject(groupByProject: boolean) {
+      save({ ...latestRef.current, groupByProject });
+    },
+    setProjectCollapsed(projectId: string, collapsed: boolean) {
+      const collapsedProjects = latestRef.current.collapsedProjects.filter(
+        (id) => id !== projectId,
+      );
+      if (collapsed) collapsedProjects.push(projectId);
+      save({ ...latestRef.current, collapsedProjects });
+    },
     setPinned(agentId: string, pinned: boolean) {
       save(setAgentPinned(agents, latestRef.current, agentId, pinned));
     },
@@ -122,6 +133,21 @@ export function useAgentWorkspaceOrganization(agents: NamedAgent[]) {
     },
     moveToIndex(agentId: string, newIndex: number) {
       save(moveAgentToIndex(agents, latestRef.current, agentId, newIndex));
+    },
+    moveWithinProject(
+      agentId: string,
+      projectAgentIds: string[],
+      newIndex: number,
+    ) {
+      save(
+        moveAgentWithinProject(
+          agents,
+          latestRef.current,
+          agentId,
+          projectAgentIds,
+          newIndex,
+        ),
+      );
     },
   };
 }
