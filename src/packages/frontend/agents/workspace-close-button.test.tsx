@@ -22,7 +22,7 @@ it("keeps the close control on the themed header surface", () => {
   );
 
   const button = screen.getByRole("button", {
-    name: "Close workspace for review.chat",
+    name: "Close workbench for review.chat",
   });
   expect(button).toHaveClass("ant-btn-text");
   expect(button).toHaveStyle({ color: "#ffffff" });

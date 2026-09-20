@@ -2445,10 +2445,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             {!mountedWorkspaces.has(agentWorkspaceKey(selected)) && (
               <Empty
                 style={{ marginTop: 80 }}
-                description={`Workspace for @${selected.name} is closed.`}
+                description={`Workbench for @${selected.name} is closed.`}
               >
                 <Button type="primary" onClick={() => mountAgent(selected)}>
-                  Open workspace
+                  Open workbench
                 </Button>
               </Empty>
             )}

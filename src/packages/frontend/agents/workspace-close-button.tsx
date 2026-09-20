@@ -19,8 +19,8 @@ export function AgentWorkspaceCloseButton({
     <Button
       type="text"
       icon={<Icon name="times" />}
-      aria-label={`Close workspace for ${agentPath}`}
-      title="Close this mounted workspace view"
+      aria-label={`Close workbench for ${agentPath}`}
+      title="Close this agent workbench"
       onClick={onClose}
       style={{ color }}
     />
