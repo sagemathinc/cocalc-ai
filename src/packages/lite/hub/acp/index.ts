@@ -52,7 +52,10 @@ import {
   normalizeCodexSessionId,
   resolveCodexSessionMode,
 } from "@cocalc/util/ai/codex";
-import { projectRuntimeHomeRelativePath } from "@cocalc/util/project-runtime";
+import {
+  DEFAULT_PROJECT_RUNTIME_HOME,
+  projectRuntimeHomeRelativePath,
+} from "@cocalc/util/project-runtime";
 import { type Client as ConatClient } from "@cocalc/conat/core/client";
 import type {
   FileAdapter,
@@ -89,6 +92,7 @@ import {
   buildSafeBlobFilename,
   dedupeBlobReferences,
   extractBlobReferences,
+  projectBlobMaterializationRoots,
   rewriteBlobReferencesInPrompt,
   type MaterializedBlobAttachment,
 } from "./blob-materialization";
@@ -7698,6 +7702,12 @@ async function executeAcpRequest({
   const { prompt, local_images, cleanup } = await materializeBlobs(
     request.prompt ?? "",
     projectId,
+    useContainer && hostProjectRoot
+      ? projectBlobMaterializationRoots({
+          hostProjectRoot,
+          runtimeProjectRoot: DEFAULT_PROJECT_RUNTIME_HOME,
+        })
+      : undefined,
   );
   if (!conatClient) {
     throw Error("conat client must be initialized");
@@ -11757,6 +11767,7 @@ export async function init(
 async function materializeBlobs(
   prompt: string,
   projectId: string,
+  projectRoots?: { host: string; runtime: string },
 ): Promise<{
   prompt: string;
   local_images: string[];
@@ -11774,9 +11785,14 @@ async function materializeBlobs(
     return { prompt, local_images: [], cleanup: async () => {} };
   }
   const started = performance.now();
+  const hostTempRoot = projectRoots?.host ?? os.tmpdir();
+  await fs.mkdir(hostTempRoot, { recursive: true });
   const tempDir = await fs.mkdtemp(
-    path.join(os.tmpdir(), `cocalc-blobs-${randomUUID()}-`),
+    path.join(hostTempRoot, `cocalc-blobs-${randomUUID()}-`),
   );
+  const runtimeTempDir = projectRoots
+    ? path.posix.join(projectRoots.runtime, path.basename(tempDir))
+    : tempDir;
   const attachments: MaterializedBlobAttachment[] = [];
   let bytes = 0;
   try {
@@ -11801,10 +11817,13 @@ async function materializeBlobs(
         if (data == null) continue;
         const buffer = Buffer.isBuffer(data) ? data : Buffer.from(data);
         const safeName = buildSafeBlobFilename(ref);
-        const filePath = path.join(tempDir, safeName);
-        await fs.writeFile(filePath, buffer);
+        const hostFilePath = path.join(tempDir, safeName);
+        const runtimeFilePath = projectRoots
+          ? path.posix.join(runtimeTempDir, safeName)
+          : hostFilePath;
+        await fs.writeFile(hostFilePath, buffer);
         bytes += buffer.byteLength;
-        attachments.push({ ref, path: filePath });
+        attachments.push({ ref, path: runtimeFilePath });
       } catch (err) {
         logger.warn("failed to materialize blob", { ref, err });
       }

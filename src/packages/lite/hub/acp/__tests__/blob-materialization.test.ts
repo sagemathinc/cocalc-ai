@@ -1,7 +1,22 @@
 import {
   extractBlobReferences,
+  projectBlobMaterializationRoots,
   rewriteBlobReferencesInPrompt,
 } from "../blob-materialization";
+
+describe("projectBlobMaterializationRoots", () => {
+  it("maps a host project mount to the path visible inside its container", () => {
+    expect(
+      projectBlobMaterializationRoots({
+        hostProjectRoot: "/mnt/projects/project-1",
+        runtimeProjectRoot: "/home/user",
+      }),
+    ).toEqual({
+      host: "/mnt/projects/project-1/.local/share/cocalc/tmp",
+      runtime: "/home/user/.local/share/cocalc/tmp",
+    });
+  });
+});
 
 describe("extractBlobReferences", () => {
   it("extracts the HTML image markup emitted by the rich chat composer", () => {
