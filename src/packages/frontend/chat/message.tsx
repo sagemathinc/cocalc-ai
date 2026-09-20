@@ -130,6 +130,7 @@ import {
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
   getQueuedMessageEditHelpText,
   limitCodexActivityBlocks,
+  resolveCodexOverflowMenuLocation,
   resolveCodexShowActivityButtonState,
   resolveEditedMessageForSave,
   resolveEffectiveGenerating,
@@ -705,6 +706,10 @@ export default function Message({
     });
   }, [acpInterrupted, generating, isCodexThread]);
   const showDeleteButton = showEditButton && !effectiveGenerating;
+  const codexOverflowMenuLocation = resolveCodexOverflowMenuLocation({
+    generating: effectiveGenerating,
+    isAgentMessage: isCodexAgentMessage,
+  });
 
   useEffect(() => {
     if (isEditing) return;
@@ -1634,6 +1639,11 @@ export default function Message({
           message={message}
           edit={showEditButton ? edit_message : undefined}
         />
+        {useCodexSelectToolbar && codexOverflowMenuLocation === "header" ? (
+          <span style={{ marginLeft: "auto" }}>
+            {renderCodexOverflowMenu()}
+          </span>
+        ) : null}
       </div>
     );
   }
@@ -1850,7 +1860,7 @@ export default function Message({
     );
   }
 
-  function renderCodexMessageActions() {
+  function getCodexOverflowItems(): MenuItems {
     const hasVisibleCompletedActivity =
       inlineCodexActivityMode === "completed" &&
       Array.isArray(completedCodexActivityBlocks) &&
@@ -1872,10 +1882,6 @@ export default function Message({
       effectiveGenerating,
       isLastMessageInThread,
     });
-    const buttons: ReactNode[] = [];
-    const readAloud = renderReadAloudButton();
-    if (readAloud) buttons.push(readAloud);
-
     const overflowItems: MenuItems = [
       {
         key: "info",
@@ -2014,17 +2020,33 @@ export default function Message({
       });
     }
 
-    if (overflowItems.length > 0) {
-      buttons.push(
-        <DropdownMenu
-          key="more"
-          items={overflowItems}
-          title={<Icon name="ellipsis-vertical" />}
-          size="small"
-          style={{ color: UI_COLORS.muted }}
-        />,
-      );
+    return overflowItems;
+  }
+
+  function renderCodexOverflowMenu() {
+    const overflowItems = getCodexOverflowItems();
+    if (overflowItems.length === 0) return null;
+    return (
+      <DropdownMenu
+        items={overflowItems}
+        title={<Icon name="ellipsis-vertical" />}
+        size="small"
+        style={{ color: UI_COLORS.muted }}
+        ariaLabel="More message actions"
+      />
+    );
+  }
+
+  function renderCodexMessageActions() {
+    const buttons: ReactNode[] = [];
+    const readAloud = renderReadAloudButton();
+    if (readAloud) buttons.push(readAloud);
+
+    if (codexOverflowMenuLocation === "footer") {
+      buttons.push(<span key="more">{renderCodexOverflowMenu()}</span>);
     }
+
+    if (buttons.length === 0) return null;
 
     return (
       <div data-testid="chat-message-actions" style={MESSAGE_ACTIONS_STYLE}>

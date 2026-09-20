@@ -50,6 +50,19 @@ const CHAT_FRAME_FOCUS_SELECTORS = [
 
 type ChatEditorState = CodeEditorState & ChatState;
 
+export function chatTerminalWorkingDirectory(
+  selectedThreadKey: unknown,
+  config: { workingDirectory?: unknown } | undefined,
+): string | undefined {
+  if (typeof selectedThreadKey !== "string" || !selectedThreadKey.trim()) {
+    return;
+  }
+  const workingDirectory = config?.workingDirectory;
+  return typeof workingDirectory === "string" && workingDirectory.trim()
+    ? workingDirectory.trim()
+    : undefined;
+}
+
 export function focusChatFrameInput(
   frameId: string,
   { waitForInput = false }: { waitForInput?: boolean } = {},
@@ -400,6 +413,23 @@ export class Actions extends CodeEditorActions<ChatEditorState> {
   scrollToTop = (frameId) => {
     this.getChatActions(frameId)?.scrollToIndex(0);
   };
+
+  override async terminal(
+    frameId: string,
+    noSwitch: boolean = false,
+  ): Promise<void> {
+    const selectedThreadKey = this._get_frame_node(frameId)?.get(
+      "data-selectedThreadKey",
+    );
+    const chatActions = this.getChatActions(frameId);
+    const workingDirectory = chatTerminalWorkingDirectory(
+      selectedThreadKey,
+      typeof selectedThreadKey === "string"
+        ? chatActions?.getCodexConfig(selectedThreadKey)
+        : undefined,
+    );
+    await super.terminal(frameId, noSwitch, workingDirectory);
+  }
 
   override focus(id?: string): void {
     if (id == null) {

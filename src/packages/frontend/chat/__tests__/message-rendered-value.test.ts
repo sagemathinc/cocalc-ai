@@ -10,10 +10,40 @@ import {
   resolveLiveCodexActivityBlocks,
   canUseCompletedCachedCodexActivity,
   resolveCodexShowActivityButtonState,
+  resolveCodexOverflowMenuLocation,
   shouldLoadCodexPreviewBody,
   shouldShowCodexShowActivityButton,
   shouldSuppressAcpPlaceholderBody,
 } from "../message-state";
+
+describe("resolveCodexOverflowMenuLocation", () => {
+  it("puts human message actions in the header", () => {
+    expect(
+      resolveCodexOverflowMenuLocation({
+        generating: false,
+        isAgentMessage: false,
+      }),
+    ).toBe("header");
+  });
+
+  it("hides agent message actions while output is generating", () => {
+    expect(
+      resolveCodexOverflowMenuLocation({
+        generating: true,
+        isAgentMessage: true,
+      }),
+    ).toBe("hidden");
+  });
+
+  it("puts completed agent message actions in the footer", () => {
+    expect(
+      resolveCodexOverflowMenuLocation({
+        generating: false,
+        isAgentMessage: true,
+      }),
+    ).toBe("footer");
+  });
+});
 
 describe("resolveLiveCodexActivityBlocks", () => {
   it("retains cached output while both network streams are unavailable", () => {
