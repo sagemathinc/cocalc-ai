@@ -103,7 +103,7 @@ describe("codex device auth", () => {
   });
 
   it("does not report completed until subscription auth is synced to registry", async () => {
-    const sync = deferred<{ ok: boolean; id?: string }>();
+    const sync = deferred<{ ok: boolean; id?: string; created?: boolean }>();
     const proc = new FakeProc();
     spawnCodexInProjectContainerMock.mockResolvedValue({ proc });
     pushSubscriptionAuthToRegistryMock.mockReturnValue(sync.promise);
@@ -125,13 +125,14 @@ describe("codex device auth", () => {
       syncedToRegistry: undefined,
     });
 
-    sync.resolve({ ok: true, id: "cred-1" });
+    sync.resolve({ ok: true, id: "cred-1", created: false });
     await sync.promise;
     await Promise.resolve();
 
     expect(getCodexDeviceAuthStatus(started.id)).toMatchObject({
       state: "completed",
       syncedToRegistry: true,
+      registryCreated: false,
     });
   });
 

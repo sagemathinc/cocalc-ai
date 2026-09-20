@@ -44,6 +44,7 @@ type DeviceAuthSession = {
   verificationUrl?: string;
   userCode?: string;
   syncedToRegistry?: boolean;
+  registryCreated?: boolean;
   syncError?: string;
   leaseId: string;
 };
@@ -339,6 +340,7 @@ export async function startCodexDeviceAuth(
             return;
           }
           session.credentialId = result.id;
+          session.registryCreated = result.created;
           session.syncError = undefined;
           session.state = "completed";
           session.updatedAt = Date.now();
@@ -404,6 +406,7 @@ function snapshot(session: DeviceAuthSession) {
     signal: session.signal,
     error: session.error,
     syncedToRegistry: session.syncedToRegistry,
+    registryCreated: session.registryCreated,
     syncError: session.syncError,
   };
 }

@@ -296,7 +296,7 @@ export async function pushSubscriptionAuthToRegistry({
   codexHome: string;
   content?: string;
   descriptorMetadata?: { email?: string; label?: string };
-}): Promise<{ ok: boolean; id?: string }> {
+}): Promise<{ ok: boolean; id?: string; created?: boolean }> {
   const caller = getHubCaller();
   if (!caller) {
     return { ok: false };
@@ -351,7 +351,7 @@ export async function pushSubscriptionAuthToRegistry({
       ],
       timeout: 15000,
     });
-    return { ok: true, id: result?.id };
+    return { ok: true, id: result?.id, created: result?.created };
   } catch (err) {
     logger.debug("pushSubscriptionAuthToRegistry failed", {
       projectId,
