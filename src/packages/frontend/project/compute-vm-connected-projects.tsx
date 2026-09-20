@@ -63,6 +63,39 @@ export function defaultCourseConnectedProjectIds(
     .map(({ project_id }) => project_id);
 }
 
+export async function resolveCourseConnectedProjectIds({
+  projects,
+  getCourseInfo,
+  concurrency = 8,
+}: {
+  projects: VmConnectedProject[];
+  getCourseInfo: (projectId: string) => Promise<unknown>;
+  concurrency?: number;
+}): Promise<Set<string>> {
+  const courseProjectIds = new Set(defaultCourseConnectedProjectIds(projects));
+  const unresolved = projects.filter(({ course }) => !course);
+  let index = 0;
+  await Promise.all(
+    Array.from(
+      { length: Math.min(Math.max(1, concurrency), unresolved.length) },
+      async () => {
+        while (index < unresolved.length) {
+          const project = unresolved[index++];
+          try {
+            if ((await getCourseInfo(project.project_id)) != null) {
+              courseProjectIds.add(project.project_id);
+            }
+          } catch {
+            // Course detection is a convenience; project access is enforced
+            // independently when the user selects a project.
+          }
+        }
+      },
+    ),
+  );
+  return courseProjectIds;
+}
+
 export function ConnectedProjectsSelect({
   projects,
   value = [],

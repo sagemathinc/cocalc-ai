@@ -14,6 +14,7 @@ import { useState } from "react";
 import {
   ConnectedProjectsSelect,
   defaultCourseConnectedProjectIds,
+  resolveCourseConnectedProjectIds,
   vmConnectedProjects,
   type VmConnectedProject,
 } from "./compute-vm-connected-projects";
@@ -67,6 +68,24 @@ it("orders eligible projects by account activity and identifies course projects"
     "newest",
     "older",
   ]);
+});
+
+it("resolves course metadata that is omitted from the project list", async () => {
+  const projects: VmConnectedProject[] = [
+    { project_id: "student", title: "Student project", course: false },
+    { project_id: "personal", title: "Personal project", course: false },
+    { project_id: "embedded", title: "Known course", course: true },
+  ];
+  const getCourseInfo = jest.fn(async (projectId: string) =>
+    projectId === "student" ? { type: "student" } : null,
+  );
+
+  expect(
+    Array.from(
+      await resolveCourseConnectedProjectIds({ projects, getCourseInfo }),
+    ),
+  ).toEqual(["embedded", "student"]);
+  expect(getCourseInfo).toHaveBeenCalledTimes(2);
 });
 
 it("toggles projects and provides a clear unselect-all action", async () => {

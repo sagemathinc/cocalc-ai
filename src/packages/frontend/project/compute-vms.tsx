@@ -107,6 +107,7 @@ import {
 import {
   ConnectedProjectsSelect,
   defaultCourseConnectedProjectIds,
+  resolveCourseConnectedProjectIds,
   vmConnectedProjects,
   type VmConnectedProject,
 } from "./compute-vm-connected-projects";
@@ -130,6 +131,7 @@ import {
   ensureProjectDeployPublicKey,
   readProjectDeployPublicKey,
 } from "./settings/project-to-project-ssh-service";
+import { ensureProjectCourseInfo } from "./use-project-course";
 import { NebiusCapacityPicker } from "../hosts/components/nebius-capacity-picker";
 import { getHostsPageHref, openHostsPage } from "../hosts/navigation";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -3066,7 +3068,7 @@ export function ProjectComputeVms({
   const accountSshKeys = useRedux("account", "ssh_keys");
   const accountId = useTypedRedux("account", "account_id");
   const projectMap = useTypedRedux("projects", "project_map");
-  const connectedProjects = useMemo(
+  const connectedProjectCandidates = useMemo(
     () => vmConnectedProjects(projectMap, accountId),
     [accountId, projectMap],
   );
@@ -3103,6 +3105,31 @@ export function ProjectComputeVms({
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [vmModalOpen, setVmModalOpen] = useState(false);
+  const [courseConnectedProjectIds, setCourseConnectedProjectIds] = useState<
+    Set<string>
+  >(new Set());
+  useEffect(() => {
+    if (!vmModalOpen) return;
+    let active = true;
+    void resolveCourseConnectedProjectIds({
+      projects: connectedProjectCandidates,
+      getCourseInfo: ensureProjectCourseInfo,
+    }).then((projectIds) => {
+      if (active) setCourseConnectedProjectIds(projectIds);
+    });
+    return () => {
+      active = false;
+    };
+  }, [connectedProjectCandidates, vmModalOpen]);
+  const connectedProjects = useMemo(
+    () =>
+      connectedProjectCandidates.map((project) => ({
+        ...project,
+        course:
+          project.course || courseConnectedProjectIds.has(project.project_id),
+      })),
+    [connectedProjectCandidates, courseConnectedProjectIds],
+  );
   const [vmCreateError, setVmCreateError] = useState<string>();
   const vmCreateAttempt = useRef<VmCreationAttempt | undefined>(undefined);
   const [volumeModalOpen, setVolumeModalOpen] = useState(false);
