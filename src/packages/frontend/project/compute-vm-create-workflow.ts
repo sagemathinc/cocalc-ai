@@ -15,6 +15,49 @@ export interface VmCreationAttempt {
   volumeKey: string;
 }
 
+export async function prepareConnectedProjectSshKeys({
+  projectIds,
+  ensureProjectKey,
+}: {
+  projectIds: string[];
+  ensureProjectKey: (projectId: string) => Promise<string>;
+}): Promise<Map<string, string>> {
+  const keys = new Map<string, string>();
+  for (const projectId of Array.from(new Set(projectIds))) {
+    const key = (await ensureProjectKey(projectId)).trim();
+    if (!key) throw new Error(`Project ${projectId} has an empty SSH key.`);
+    keys.set(projectId, key);
+  }
+  return keys;
+}
+
+export async function grantAdditionalVmProjectAccess({
+  api,
+  browser_id,
+  vm_id,
+  primary_project_id,
+  projectKeys,
+  idempotencyKey,
+}: {
+  api: Pick<ComputeApi, "grantVmProjectAccess">;
+  browser_id?: string;
+  vm_id: string;
+  primary_project_id?: string;
+  projectKeys: Map<string, string>;
+  idempotencyKey: string;
+}): Promise<void> {
+  for (const [project_id, ssh_public_key] of projectKeys) {
+    if (project_id === primary_project_id) continue;
+    await api.grantVmProjectAccess({
+      browser_id,
+      id_or_name: vm_id,
+      project_id,
+      ssh_public_key,
+      idempotency_key: `${idempotencyKey}:project:${project_id}`,
+    });
+  }
+}
+
 export async function prepareCourseFundedVmValues<T extends VmCreateCliValues>({
   values,
   project_id,

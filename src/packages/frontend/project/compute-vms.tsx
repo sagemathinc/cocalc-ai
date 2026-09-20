@@ -27,7 +27,7 @@ import {
   Typography,
 } from "antd";
 import type { ColumnsType } from "antd/es/table";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { useComputeVmCatalog } from "./use-compute-vm-catalog";
@@ -98,10 +98,18 @@ import {
 } from "./compute-vms-cli";
 import {
   createVmWithHomeVolume,
+  grantAdditionalVmProjectAccess,
   prepareCourseFundedVmValues,
+  prepareConnectedProjectSshKeys,
   vmCreationAttempt,
   type VmCreationAttempt,
 } from "./compute-vm-create-workflow";
+import {
+  ConnectedProjectsSelect,
+  defaultCourseConnectedProjectIds,
+  vmConnectedProjects,
+  type VmConnectedProject,
+} from "./compute-vm-connected-projects";
 import VolumeFundingStatus, {
   VolumeRetentionNotice,
   VolumeFundingDetailsButton,
@@ -118,7 +126,10 @@ import {
 } from "@cocalc/util/compute-volume-funding";
 import { egressRateLabel, providerEgressIsFree } from "./compute-vms-egress";
 import { vmStartupExpectation } from "./compute-vms-startup";
-import { readProjectDeployPublicKey } from "./settings/project-to-project-ssh-service";
+import {
+  ensureProjectDeployPublicKey,
+  readProjectDeployPublicKey,
+} from "./settings/project-to-project-ssh-service";
 import { NebiusCapacityPicker } from "../hosts/components/nebius-capacity-picker";
 import { getHostsPageHref, openHostsPage } from "../hosts/navigation";
 import { SelectProject } from "@cocalc/frontend/projects/select-project";
@@ -213,6 +224,7 @@ import type { CourseFundingSourceSummary } from "@cocalc/conat/hub/api/compute-f
 
 export interface VmDraft extends VmCreateCliValues {
   use_project_ssh_key: boolean;
+  connected_project_ids?: string[];
 }
 
 type VolumeDraft = VolumeCreateCliValues;
@@ -451,6 +463,7 @@ export function VmCreateModal({
   volumes,
   initial,
   projectSshPublicKey,
+  connectedProjects = [],
   sshKeys,
   saving,
   error,
@@ -470,6 +483,7 @@ export function VmCreateModal({
   volumes: ComputeVolume[];
   initial: VmDraft;
   projectSshPublicKey: string | null;
+  connectedProjects?: VmConnectedProject[];
   sshKeys: Array<{ label: string; value: string }>;
   saving: boolean;
   error?: string;
@@ -536,12 +550,20 @@ export function VmCreateModal({
     ((!!draft.funding_source &&
       (!!draft.create_home_volume || !!draft.home_volume)) ||
       (selectedVolume != null && !!volumeCourseSource(selectedVolume)));
+  const courseFundingNeedsProject =
+    !recommendationMode &&
+    !!draft.funding_source &&
+    !draft.connected_project_ids?.length;
   const creationBlocked =
     catalogLoading ||
     !!creationUnavailable ||
     fundingUnavailable ||
     recommendationPending ||
+    courseFundingNeedsProject ||
     volumeUnsupported;
+  const courseProjectIds = defaultCourseConnectedProjectIds(connectedProjects);
+  const creationProjectId =
+    project_id ?? draft.connected_project_ids?.[0] ?? undefined;
   const selection: ProviderSelection = {
     operating_system: operatingSystem,
     architecture: draft.architecture,
@@ -821,6 +843,10 @@ export function VmCreateModal({
                         confirmedDraft.funding_source && (
                           <VolumeRetentionNotice />
                         )}
+                      <Text>
+                        Connected projects:{" "}
+                        {confirmedDraft.connected_project_ids?.length ?? 0}
+                      </Text>
                     </Space>
                   )
                 }
@@ -920,6 +946,14 @@ export function VmCreateModal({
             <ComputeFundingSelect
               disabled={saving}
               defaultToCourseFunding={open}
+              onChange={(funding_source) =>
+                patchDraft({
+                  funding_source,
+                  ...(funding_source
+                    ? { connected_project_ids: courseProjectIds }
+                    : undefined),
+                })
+              }
               onLaneChange={(funding_mode) =>
                 patchDraft({
                   funding_mode,
@@ -930,6 +964,27 @@ export function VmCreateModal({
               onSourceLoaded={setRecommendedSource}
             />
           </Form.Item>
+        )}
+        {!recommendationMode && (
+          <Form.Item
+            name="connected_project_ids"
+            label="Project SSH access"
+            extra="Checked projects receive a managed SSH alias and can connect as soon as the VM is ready."
+          >
+            <ConnectedProjectsSelect
+              projects={connectedProjects}
+              disabled={saving}
+            />
+          </Form.Item>
+        )}
+        {courseFundingNeedsProject && (
+          <Alert
+            showIcon
+            type="error"
+            title="Select at least one connected project for course funding."
+            description="Course-funded VMs require a CoCalc project for SSH access and funding admission."
+            style={{ marginBottom: 16 }}
+          />
         )}
         {!recommendationMode &&
           recommendedSource?.grant_id === draft.funding_source?.grant_id &&
@@ -1914,7 +1969,7 @@ export function VmCreateModal({
                         <CopyToClipBoard
                           value={vmCreateCli({
                             api,
-                            project_id,
+                            project_id: creationProjectId,
                             values: withResolvedSshKey(draft as VmDraft),
                           })}
                           {...COPYABLE_PROPS}
@@ -2994,6 +3049,11 @@ export function ProjectComputeVms({
   const accountMode = projectId == null;
   const accountSshKeys = useRedux("account", "ssh_keys");
   const accountId = useTypedRedux("account", "account_id");
+  const projectMap = useTypedRedux("projects", "project_map");
+  const connectedProjects = useMemo(
+    () => vmConnectedProjects(projectMap, accountId),
+    [accountId, projectMap],
+  );
   const sshKeys = sshKeyOptions(accountSshKeys);
   const cloudflareCountry = useTypedRedux("customize", "country");
   const cloudflareRegionCode = useTypedRedux(
@@ -3253,6 +3313,7 @@ export function ProjectComputeVms({
         volumes.map((volume) => volume.name),
       ),
       new_home_volume_size_gb: 50,
+      connected_project_ids: [],
       use_project_ssh_key: projectSshPublicKey != null,
       configure_project_ssh: projectSshPublicKey != null,
       ssh_public_key: sshKeys[0]?.value ?? "",
@@ -3286,6 +3347,7 @@ export function ProjectComputeVms({
         volumes.map((volume) => volume.name),
       ),
       new_home_volume_size_gb: 50,
+      connected_project_ids: [],
       use_project_ssh_key: projectSshPublicKey != null,
       configure_project_ssh: projectSshPublicKey != null,
       ssh_public_key: sshKeys[0]?.value ?? "",
@@ -3432,36 +3494,49 @@ export function ProjectComputeVms({
     setSaving(true);
     setVmCreateError(undefined);
     let createdVolumeName: string | undefined;
+    let createdVmName: string | undefined;
+    const connectedProjectIds = Array.from(
+      new Set(values.connected_project_ids ?? []),
+    );
+    const creationProjectId = projectId ?? connectedProjectIds[0];
     const attempt = vmCreationAttempt(
       vmCreateAttempt.current,
       values,
-      projectId,
+      creationProjectId,
     );
     vmCreateAttempt.current = attempt;
     const { vmKey, volumeKey } = attempt;
     try {
       const completed = await runFreshAuthAction(async () => {
+        const projectKeys = await prepareConnectedProjectSshKeys({
+          projectIds: connectedProjectIds,
+          ensureProjectKey: ensureProjectDeployPublicKey,
+        });
+        const primaryProjectKey = creationProjectId
+          ? (projectKeys.get(creationProjectId) ??
+            (await ensureProjectDeployPublicKey(creationProjectId)).trim())
+          : null;
         const prepared = await prepareCourseFundedVmValues({
           values,
-          project_id: projectId,
-          projectSshPublicKey,
-          generateProjectSshKey: async () =>
-            (
-              await webapp_client.conat_client.hub.projects.generateProjectSshKeySecret(
-                {
-                  browser_id: webapp_client.browser_id,
-                  project_id: projectId!,
-                },
-              )
-            ).public_key,
+          project_id: creationProjectId,
+          projectSshPublicKey: primaryProjectKey,
+          generateProjectSshKey: async () => primaryProjectKey ?? "",
         });
-        if (prepared.projectSshPublicKey !== projectSshPublicKey) {
+        if (projectId && prepared.projectSshPublicKey !== projectSshPublicKey) {
           setProjectSshPublicKey(prepared.projectSshPublicKey);
         }
-        await createVmWithHomeVolume({
+        const createValues =
+          creationProjectId && primaryProjectKey
+            ? {
+                ...prepared.values,
+                configure_project_ssh: true,
+                ssh_public_key: primaryProjectKey,
+              }
+            : prepared.values;
+        const vm = await createVmWithHomeVolume({
           api: webapp_client.conat_client.hub.compute,
-          values: prepared.values,
-          project_id: projectId,
+          values: createValues,
+          project_id: creationProjectId,
           browser_id: webapp_client.browser_id,
           vmKey,
           volumeKey,
@@ -3469,6 +3544,28 @@ export function ProjectComputeVms({
             createdVolumeName = volume.name;
           },
         });
+        createdVmName = vm.name;
+        await grantAdditionalVmProjectAccess({
+          api: webapp_client.conat_client.hub.compute,
+          browser_id: webapp_client.browser_id,
+          vm_id: vm.id,
+          primary_project_id: creationProjectId,
+          projectKeys,
+          idempotencyKey: vmKey,
+        });
+        const directSshKey = `${values.ssh_public_key ?? ""}`.trim();
+        if (
+          !values.funding_source &&
+          directSshKey &&
+          directSshKey !== primaryProjectKey
+        ) {
+          await webapp_client.conat_client.hub.compute.authorizeSshKey({
+            browser_id: webapp_client.browser_id,
+            id_or_name: vm.id,
+            ssh_public_key: directSshKey,
+            idempotency_key: `${vmKey}:direct-ssh`,
+          });
+        }
       });
       if (!completed) return;
       vmCreateAttempt.current = undefined;
@@ -3478,12 +3575,14 @@ export function ProjectComputeVms({
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       setVmCreateError(
-        createdVolumeName
-          ? "Volume '" +
+        createdVmName
+          ? `VM '${createdVmName}' was created, but SSH access setup did not finish: ${message}. Retry creation to safely resume the same request.`
+          : createdVolumeName
+            ? "Volume '" +
               createdVolumeName +
               "' was created and retained, but VM creation failed: " +
               message
-          : message,
+            : message,
       );
     } finally {
       setSaving(false);
@@ -4807,6 +4906,7 @@ export function ProjectComputeVms({
           volumes={volumes}
           initial={vmInitial}
           projectSshPublicKey={projectSshPublicKey}
+          connectedProjects={connectedProjects}
           sshKeys={sshKeys}
           saving={saving}
           error={vmCreateError}

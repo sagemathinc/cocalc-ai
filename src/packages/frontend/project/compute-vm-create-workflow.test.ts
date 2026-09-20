@@ -1,7 +1,9 @@
 import type { ComputeVolume } from "@cocalc/conat/hub/api/compute";
 import {
   createVmWithHomeVolume,
+  grantAdditionalVmProjectAccess,
   prepareCourseFundedVmValues,
+  prepareConnectedProjectSshKeys,
   vmCreationAttempt,
 } from "./compute-vm-create-workflow";
 import type { VmCreateCliValues } from "./compute-vms-cli";
@@ -12,6 +14,59 @@ const source = {
   pool_id: "pool",
   grant_id: "grant",
 };
+
+it("prepares every selected project key before VM creation", async () => {
+  const ensureProjectKey = jest.fn(async (projectId: string) =>
+    projectId === "course-a" ? " key-a " : "key-b",
+  );
+  const keys = await prepareConnectedProjectSshKeys({
+    projectIds: ["course-a", "course-b", "course-a"],
+    ensureProjectKey,
+  });
+
+  expect([...keys]).toEqual([
+    ["course-a", "key-a"],
+    ["course-b", "key-b"],
+  ]);
+  expect(ensureProjectKey).toHaveBeenCalledTimes(2);
+});
+
+it("grants every additional selected project with stable retry keys", async () => {
+  const grantVmProjectAccess = jest.fn(async () => ({}) as any);
+  await grantAdditionalVmProjectAccess({
+    api: { grantVmProjectAccess },
+    browser_id: "browser",
+    vm_id: "vm",
+    primary_project_id: "course-a",
+    projectKeys: new Map([
+      ["course-a", "key-a"],
+      ["course-b", "key-b"],
+      ["course-c", "key-c"],
+    ]),
+    idempotencyKey: "attempt",
+  });
+
+  expect(grantVmProjectAccess.mock.calls).toEqual([
+    [
+      {
+        browser_id: "browser",
+        id_or_name: "vm",
+        project_id: "course-b",
+        ssh_public_key: "key-b",
+        idempotency_key: "attempt:project:course-b",
+      },
+    ],
+    [
+      {
+        browser_id: "browser",
+        id_or_name: "vm",
+        project_id: "course-c",
+        ssh_public_key: "key-c",
+        idempotency_key: "attempt:project:course-c",
+      },
+    ],
+  ]);
+});
 function harness() {
   const volume = {
     id: "volume-id",
