@@ -150,11 +150,6 @@ export class AgentRpcAttempts {
         });
       return previous.promise;
     }
-    if (!this.makeRoom(principal))
-      return rpcOutcome(request, "rejected", {
-        reason: "Attempt evidence capacity reached",
-        chat_effect: "none",
-      });
     const sourceKey = accountId
       ? principal
       : isExternalAgentSource(source)
@@ -172,6 +167,11 @@ export class AgentRpcAttempts {
     if (window.count >= 60 || window.active >= 8)
       return rpcOutcome(request, "rejected", {
         reason: "Source rate or concurrency limit reached",
+        chat_effect: "none",
+      });
+    if (!this.makeRoom(principal))
+      return rpcOutcome(request, "rejected", {
+        reason: "Attempt evidence capacity reached",
         chat_effect: "none",
       });
     window.count++;

@@ -286,6 +286,83 @@ test("native agents in one account share rate and concurrency admission", async 
   await Promise.all(work);
 });
 
+test("rate rejection does not evict retained evidence", async () => {
+  const evidence = new AgentRpcAttempts({
+    maxEntries: 60,
+    maxEntriesPerPrincipal: 60,
+  });
+  const source = endpoint();
+  const account = randomUUID();
+  const sends = Array.from({ length: 60 }, () => request());
+  for (const send of sends)
+    await evidence.send(
+      source,
+      send,
+      async () => rpcOutcome(send, "accepted"),
+      account,
+    );
+
+  const rejected = request();
+  expect(
+    (
+      await evidence.send(
+        source,
+        rejected,
+        async () => rpcOutcome(rejected, "accepted"),
+        account,
+      )
+    ).outcome,
+  ).toBe("rejected");
+  expect(evidence.inspect(source, sends[0], account).outcome).toBe("accepted");
+});
+
+test("concurrency rejection cannot evict another principal's evidence", async () => {
+  const evidence = new AgentRpcAttempts({
+    maxEntries: 9,
+    maxEntriesPerPrincipal: 9,
+  });
+  const accountP = randomUUID();
+  const accountQ = randomUUID();
+  const sourceP = endpoint();
+  const sourceQ = endpoint();
+  const retained = request();
+  await evidence.send(
+    sourceQ,
+    retained,
+    async () => rpcOutcome(retained, "accepted"),
+    accountQ,
+  );
+  const pending: Array<() => void> = [];
+  const active = Array.from({ length: 8 }, () => request()).map((send) =>
+    evidence.send(
+      sourceP,
+      send,
+      () =>
+        new Promise((resolve) => {
+          pending.push(() => resolve(rpcOutcome(send, "accepted")));
+        }),
+      accountP,
+    ),
+  );
+
+  const rejected = request();
+  expect(
+    (
+      await evidence.send(
+        sourceP,
+        rejected,
+        async () => rpcOutcome(rejected, "accepted"),
+        accountP,
+      )
+    ).outcome,
+  ).toBe("rejected");
+  expect(evidence.inspect(sourceQ, retained, accountQ).outcome).toBe(
+    "accepted",
+  );
+  for (const finish of pending) finish();
+  await Promise.all(active);
+});
+
 test("validation bounds UTF-8 payloads and forbids claimed sender fields", () => {
   const send = { ...request(), action: "send" as const };
   expect(() => validateAgentRpcRequest(send)).not.toThrow();

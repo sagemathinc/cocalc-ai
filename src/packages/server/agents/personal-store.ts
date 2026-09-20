@@ -295,8 +295,7 @@ export class PersonalAgentStore {
       : `external/${locator.agent_id}/${locator.installation_id}`;
   }
 
-  private async validateMembers(
-    account: string,
+  private validateMemberList(
     members: AgentNetworkMemberLocator[],
     memberLimit: number,
   ) {
@@ -310,17 +309,40 @@ export class PersonalAgentStore {
       const key = this.locatorKey(member);
       if (seen.has(key)) throw new Error("duplicate_network_member");
       seen.add(key);
-      if (member.kind === "registered") {
-        await this.endpoint(account, member.endpoint);
-        const named = (
-          await this.db.query(
-            "SELECT 1 FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
-            [account, member.endpoint.project_id, member.endpoint.agent_id],
-          )
-        ).rows[0];
-        if (!named) throw new Error("network_member_not_named");
-      }
     }
+  }
+
+  private async validateRegisteredMember(
+    account: string,
+    member: AgentNetworkMemberLocator,
+  ) {
+    if (member.kind !== "registered") return;
+    await this.endpoint(account, member.endpoint);
+    await this.assertRegisteredName(this.db, account, member.endpoint);
+  }
+
+  private async assertRegisteredName(
+    db: Query,
+    account: string,
+    endpoint: AgentEndpoint,
+  ) {
+    const named = (
+      await db.query(
+        "SELECT 1 FROM agent_personal_names WHERE account_id=$1 AND project_id=$2 AND agent_id=$3 AND retired_at IS NULL",
+        [account, endpoint.project_id, endpoint.agent_id],
+      )
+    ).rows[0];
+    if (!named) throw new Error("network_member_not_named");
+  }
+
+  private async validateMembers(
+    account: string,
+    members: AgentNetworkMemberLocator[],
+    memberLimit: number,
+  ) {
+    this.validateMemberList(members, memberLimit);
+    for (const member of members)
+      await this.validateRegisteredMember(account, member);
   }
 
   private proposal(row: any): AgentNetworkProposal {
@@ -813,6 +835,17 @@ export class PersonalAgentStore {
     };
   }
 
+  private async networkById(account: string, agent_network_id: string) {
+    const row = (
+      await this.db.query(
+        "SELECT * FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2",
+        [account, agent_network_id],
+      )
+    ).rows[0];
+    if (!row) throw new Error("agent_network_not_found");
+    return this.network(this.db, account, row);
+  }
+
   async networks(account: string, limit = 100, cursor?: string) {
     const bounded = Math.max(1, Math.min(100, Math.floor(limit)));
     const values: unknown[] = [account, bounded + 1];
@@ -865,6 +898,7 @@ export class PersonalAgentStore {
     requireUuid(options.request_id, "request_id");
     const title = this.validateTitle(options.title);
     const delivery = this.validateDelivery(options.delivery_mode);
+    await this.assertHome(account);
     await this.validateMembers(account, options.members, memberLimit);
     const projects = new Set(
       options.members
@@ -881,56 +915,53 @@ export class PersonalAgentStore {
       delivery,
       members: options.members.map((x) => this.locatorKey(x)).sort(),
     });
-    return this.locked(account, async (db, controls) => {
-      if (controls.paused) throw new Error("messaging_paused");
-      const replay = await this.replay(
-        db,
-        account,
-        options.request_id,
-        binding,
-      );
-      if (replay) {
-        const row = (
+    const agent_network_id = await this.locked(
+      account,
+      async (db, controls) => {
+        if (controls.paused) throw new Error("messaging_paused");
+        const replay = await this.replay(
+          db,
+          account,
+          options.request_id,
+          binding,
+        );
+        if (replay) return replay;
+        await this.assertExpansiveMutationRate(db, account);
+        const counts = (
           await db.query(
-            "SELECT * FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2",
-            [account, replay],
-          )
-        ).rows[0];
-        return this.network(db, account, row);
-      }
-      await this.assertExpansiveMutationRate(db, account);
-      const counts = (
-        await db.query(
-          `SELECT count(*) AS retained,
+            `SELECT count(*) AS retained,
              count(*) FILTER(WHERE state<>'closed') AS active
            FROM agent_networks WHERE account_id=$1`,
-          [account],
-        )
-      ).rows[0];
-      if (+counts.retained >= MAX_RETAINED_NETWORKS)
-        throw new Error("agent_network_history_capacity");
-      if (+counts.active >= MAX_ACTIVE_NETWORKS)
-        throw new Error("agent_network_capacity");
-      const agent_network_id = randomUUID();
-      const row = (
+            [account],
+          )
+        ).rows[0];
+        if (+counts.retained >= MAX_RETAINED_NETWORKS)
+          throw new Error("agent_network_history_capacity");
+        if (+counts.active >= MAX_ACTIVE_NETWORKS)
+          throw new Error("agent_network_capacity");
+        const created = randomUUID();
+        for (const member of options.members)
+          if (member.kind === "registered")
+            await this.assertRegisteredName(db, account, member.endpoint);
         await db.query(
           `INSERT INTO agent_networks
            (agent_network_id,account_id,title,state,delivery_mode,generation,created_by)
-           VALUES($1,$2,$3,'active',$4,$5,$2) RETURNING *`,
-          [agent_network_id, account, title, delivery, randomUUID()],
-        )
-      ).rows[0];
-      for (const member of options.members)
-        await this.insertMember(db, account, agent_network_id, member);
-      await this.recordMutation(
-        db,
-        account,
-        options.request_id,
-        binding,
-        agent_network_id,
-      );
-      return this.network(db, account, row);
-    });
+           VALUES($1,$2,$3,'active',$4,$5,$2)`,
+          [created, account, title, delivery, randomUUID()],
+        );
+        for (const member of options.members)
+          await this.insertMember(db, account, created, member);
+        await this.recordMutation(
+          db,
+          account,
+          options.request_id,
+          binding,
+          created,
+        );
+        return created;
+      },
+    );
+    return this.networkById(account, agent_network_id);
   }
 
   private async lockedNetwork(db: Query, account: string, id: string) {
@@ -961,137 +992,158 @@ export class PersonalAgentStore {
         : {}),
     };
     const binding = this.mutationBinding("update", normalized);
-    return this.locked(account, async (db, controls) => {
-      const replay = await this.replay(
-        db,
-        account,
-        options.request_id,
-        binding,
-      );
-      if (replay) {
-        const row = await this.lockedNetwork(db, account, replay);
-        return this.network(db, account, row);
-      }
-      const row = await this.lockedNetwork(
-        db,
-        account,
-        options.agent_network_id,
-      );
-      if (row.state === "closed") throw new Error("agent_network_closed");
-      if (
-        options.action === "add-member" ||
-        options.action === "resume" ||
-        options.action === "set-title" ||
-        (options.action === "set-delivery" && options.delivery_mode === "live")
-      )
-        await this.assertExpansiveMutationRate(db, account);
-      const activeMembers = (
-        await db.query(
-          "SELECT * FROM agent_network_members WHERE agent_network_id=$1 AND removed_at IS NULL FOR UPDATE",
-          [row.agent_network_id],
+    let validatedGeneration: string | undefined;
+    if (
+      options.action === "add-member" &&
+      options.member.kind === "registered"
+    ) {
+      await this.assertHome(account);
+      const row = (
+        await this.db.query(
+          "SELECT generation,state FROM agent_networks WHERE account_id=$1 AND agent_network_id=$2",
+          [account, options.agent_network_id],
         )
-      ).rows;
-      const projectSet = new Set(
-        activeMembers
-          .filter((x) => x.member_kind === "registered")
-          .map((x) => x.project_id),
-      );
-      if (options.action === "resume" && projectSet.size > 1 && !fresh)
-        throw new Error("fresh_auth_required");
-      if (
-        options.action === "set-delivery" &&
-        options.delivery_mode === "live" &&
-        row.delivery_mode !== "live" &&
-        projectSet.size > 1 &&
-        !fresh
-      )
-        throw new Error("fresh_auth_required");
-      if (options.action === "add-member") {
-        await this.validateMembers(
+      ).rows[0];
+      if (!row) throw new Error("agent_network_not_found");
+      if (row.state === "closed") throw new Error("agent_network_closed");
+      validatedGeneration = row.generation;
+      await this.validateRegisteredMember(account, options.member);
+    }
+    const agent_network_id = await this.locked(
+      account,
+      async (db, controls) => {
+        const replay = await this.replay(
+          db,
           account,
-          [
-            ...activeMembers.map((x) =>
-              x.member_kind === "registered"
-                ? ({
-                    kind: "registered",
-                    endpoint: {
-                      project_id: x.project_id,
-                      agent_id: x.registered_agent_id,
-                    },
-                  } as const)
-                : ({
-                    kind: "external",
-                    agent_id: x.external_agent_id,
-                    installation_id: x.installation_id,
-                  } as const),
-            ),
-            options.member,
-          ],
-          memberLimit,
+          options.request_id,
+          binding,
         );
+        if (replay) return replay;
+        const row = await this.lockedNetwork(
+          db,
+          account,
+          options.agent_network_id,
+        );
+        if (validatedGeneration && row.generation !== validatedGeneration)
+          throw new PersonalAgentAuthorizationError("network_stale");
+        if (row.state === "closed") throw new Error("agent_network_closed");
         if (
-          options.member.kind === "registered" &&
-          projectSet.size > 0 &&
-          !projectSet.has(options.member.endpoint.project_id) &&
+          options.action === "add-member" ||
+          options.action === "resume" ||
+          options.action === "set-title" ||
+          (options.action === "set-delivery" &&
+            options.delivery_mode === "live")
+        )
+          await this.assertExpansiveMutationRate(db, account);
+        const activeMembers = (
+          await db.query(
+            "SELECT * FROM agent_network_members WHERE agent_network_id=$1 AND removed_at IS NULL FOR UPDATE",
+            [row.agent_network_id],
+          )
+        ).rows;
+        const projectSet = new Set(
+          activeMembers
+            .filter((x) => x.member_kind === "registered")
+            .map((x) => x.project_id),
+        );
+        if (options.action === "resume" && projectSet.size > 1 && !fresh)
+          throw new Error("fresh_auth_required");
+        if (
+          options.action === "set-delivery" &&
+          options.delivery_mode === "live" &&
+          row.delivery_mode !== "live" &&
+          projectSet.size > 1 &&
           !fresh
         )
           throw new Error("fresh_auth_required");
-        await this.insertMember(
-          db,
-          account,
-          row.agent_network_id,
-          options.member,
-        );
-      } else if (options.action === "remove-member") {
-        const memberId =
-          options.member.kind === "registered"
-            ? options.member.endpoint.agent_id
-            : options.member.agent_id;
-        const result = await db.query(
-          `UPDATE agent_network_members SET removed_at=now()
-           WHERE agent_network_id=$1 AND member_kind=$2 AND member_id=$3 AND removed_at IS NULL RETURNING member_id`,
-          [row.agent_network_id, options.member.kind, memberId],
-        );
-        if (!result.rows.length)
-          throw new Error("agent_network_member_not_found");
-        if (activeMembers.length - 1 < 2)
-          throw new Error("agent_network_requires_two_members");
-      } else if (options.action === "pause") {
-        row.state = "paused";
-      } else if (options.action === "resume") {
-        if (controls.paused) throw new Error("messaging_paused");
-        row.state = "active";
-      } else if (options.action === "close") {
-        row.state = "closed";
-      } else if (options.action === "set-delivery") {
-        row.delivery_mode = this.validateDelivery(options.delivery_mode);
-      } else if (options.action === "set-title") {
-        row.title = this.validateTitle(options.title);
-      }
-      const updated = (
-        await db.query(
-          `UPDATE agent_networks SET title=$3,state=$4,delivery_mode=$5,
-             generation=$6,updated_at=now(),closed_at=CASE WHEN $4='closed' THEN now() ELSE closed_at END
-           WHERE account_id=$1 AND agent_network_id=$2 RETURNING *`,
-          [
+        if (options.action === "add-member") {
+          if (activeMembers.length >= Math.min(memberLimit, 64))
+            throw new Error(
+              `agent_network_member_limit_reached:${memberLimit}`,
+            );
+          const memberId =
+            options.member.kind === "registered"
+              ? options.member.endpoint.agent_id
+              : options.member.agent_id;
+          if (
+            activeMembers.some(
+              (member) =>
+                member.member_kind === options.member.kind &&
+                member.member_id === memberId,
+            )
+          )
+            throw new Error("duplicate_network_member");
+          if (options.member.kind === "registered")
+            await this.assertRegisteredName(
+              db,
+              account,
+              options.member.endpoint,
+            );
+          if (
+            options.member.kind === "registered" &&
+            projectSet.size > 0 &&
+            !projectSet.has(options.member.endpoint.project_id) &&
+            !fresh
+          )
+            throw new Error("fresh_auth_required");
+          await this.insertMember(
+            db,
             account,
             row.agent_network_id,
-            row.title,
-            row.state,
-            row.delivery_mode,
-            randomUUID(),
-          ],
-        )
-      ).rows[0];
-      await this.recordMutation(
-        db,
-        account,
-        options.request_id,
-        binding,
-        row.agent_network_id,
-      );
-      return this.network(db, account, updated);
-    });
+            options.member,
+          );
+        } else if (options.action === "remove-member") {
+          const memberId =
+            options.member.kind === "registered"
+              ? options.member.endpoint.agent_id
+              : options.member.agent_id;
+          const result = await db.query(
+            `UPDATE agent_network_members SET removed_at=now()
+           WHERE agent_network_id=$1 AND member_kind=$2 AND member_id=$3 AND removed_at IS NULL RETURNING member_id`,
+            [row.agent_network_id, options.member.kind, memberId],
+          );
+          if (!result.rows.length)
+            throw new Error("agent_network_member_not_found");
+          if (activeMembers.length - 1 < 2)
+            throw new Error("agent_network_requires_two_members");
+        } else if (options.action === "pause") {
+          row.state = "paused";
+        } else if (options.action === "resume") {
+          if (controls.paused) throw new Error("messaging_paused");
+          row.state = "active";
+        } else if (options.action === "close") {
+          row.state = "closed";
+        } else if (options.action === "set-delivery") {
+          row.delivery_mode = this.validateDelivery(options.delivery_mode);
+        } else if (options.action === "set-title") {
+          row.title = this.validateTitle(options.title);
+        }
+        const updated = (
+          await db.query(
+            `UPDATE agent_networks SET title=$3,state=$4,delivery_mode=$5,
+             generation=$6,updated_at=now(),closed_at=CASE WHEN $4='closed' THEN now() ELSE closed_at END
+           WHERE account_id=$1 AND agent_network_id=$2 RETURNING *`,
+            [
+              account,
+              row.agent_network_id,
+              row.title,
+              row.state,
+              row.delivery_mode,
+              randomUUID(),
+            ],
+          )
+        ).rows[0];
+        await this.recordMutation(
+          db,
+          account,
+          options.request_id,
+          binding,
+          row.agent_network_id,
+        );
+        return updated.agent_network_id;
+      },
+    );
+    return this.networkById(account, agent_network_id);
   }
 
   private findMember(members: AgentNetworkMember[], source: AgentRpcSource) {

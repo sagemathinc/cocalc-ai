@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PoolClient } from "@cocalc/database/pool";
 import { syncSchema } from "@cocalc/database/postgres/schema/sync";
 import { SCHEMA } from "@cocalc/util/db-schema";
 import type { AgentIdentity } from "@cocalc/conat/agents/protocol";
@@ -9,6 +10,23 @@ import { PersonalAgentStore } from "./personal-store";
 const describeDb =
   process.env.COCALC_TEST_USE_PGLITE === "1" ? describe : describe.skip;
 
+class TrackingAgentStore extends AgentStore {
+  transactionDepth = 0;
+
+  override async transaction<T>(
+    fn: (client: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    return super.transaction(async (client) => {
+      this.transactionDepth++;
+      try {
+        return await fn(client);
+      } finally {
+        this.transactionDepth--;
+      }
+    });
+  }
+}
+
 describeDb("account-home Agent Networks", () => {
   const account = randomUUID();
   const project = randomUUID();
@@ -18,16 +36,15 @@ describeDb("account-home Agent Networks", () => {
   const secondPeer = { project_id: project, agent_id: randomUUID() };
   const remote = { project_id: otherProject, agent_id: randomUUID() };
   const run_id = randomUUID();
-  const db = new AgentStore();
-  const identity = jest.fn(
-    async (_account, endpoint) =>
-      ({
-        ...endpoint,
-        path: "/home/user/test.chat",
-        thread_id: endpoint.agent_id,
-        created_by: account,
-      }) as AgentIdentity,
-  );
+  const db = new TrackingAgentStore();
+  const identityResult = async (_account: string, endpoint) =>
+    ({
+      ...endpoint,
+      path: "/home/user/test.chat",
+      thread_id: endpoint.agent_id,
+      created_by: account,
+    }) as AgentIdentity;
+  const identity = jest.fn(identityResult);
   const principal = jest.fn(async () => account);
   const store = new PersonalAgentStore(db, identity, principal, async () => {});
   const tables = [
@@ -53,7 +70,7 @@ describeDb("account-home Agent Networks", () => {
   beforeEach(async () => {
     for (const table of tables.slice().reverse())
       await db.query(`DELETE FROM ${table}`);
-    identity.mockClear();
+    identity.mockReset().mockImplementation(identityResult);
     principal.mockReset().mockResolvedValue(account);
     for (const [endpoint, name] of [
       [source, "builder"],
@@ -174,6 +191,79 @@ describeDb("account-home Agent Networks", () => {
     await expect(
       store.createNetwork(account, { ...options, title: "Changed" }, 8),
     ).rejects.toThrow("network_mutation_idempotency_conflict");
+  });
+
+  test("management endpoint routing never occurs inside a transaction", async () => {
+    const transactionDepths: number[] = [];
+    identity.mockImplementation(async (_account, endpoint) => {
+      transactionDepths.push(db.transactionDepth);
+      return identityResult(_account, endpoint);
+    });
+    const create = {
+      request_id: randomUUID(),
+      title: "Unlocked routing",
+      members: [
+        { kind: "registered" as const, endpoint: source },
+        { kind: "registered" as const, endpoint: peer },
+      ],
+    };
+    const network = await store.createNetwork(account, create, 8);
+    await store.createNetwork(account, create, 8);
+    const update = {
+      request_id: randomUUID(),
+      agent_network_id: network.agent_network_id,
+      action: "add-member" as const,
+      member: { kind: "registered" as const, endpoint: secondPeer },
+    };
+    await store.updateNetwork(account, update, 8);
+    await store.updateNetwork(account, update, 8);
+
+    expect(transactionDepths.length).toBeGreaterThan(0);
+    expect(transactionDepths.every((depth) => depth === 0)).toBe(true);
+  });
+
+  test("add-member fails closed when remote validation races a mutation", async () => {
+    const network = await store.createNetwork(
+      account,
+      {
+        request_id: randomUUID(),
+        title: "Management generation race",
+        members: [
+          { kind: "registered", endpoint: source },
+          { kind: "registered", endpoint: peer },
+        ],
+      },
+      8,
+    );
+    identity.mockImplementation(async (_account, endpoint) => {
+      if (endpoint.agent_id === secondPeer.agent_id)
+        await db.query(
+          "UPDATE agent_networks SET generation=$2 WHERE agent_network_id=$1",
+          [network.agent_network_id, randomUUID()],
+        );
+      return identityResult(_account, endpoint);
+    });
+
+    await expect(
+      store.updateNetwork(
+        account,
+        {
+          request_id: randomUUID(),
+          agent_network_id: network.agent_network_id,
+          action: "add-member",
+          member: { kind: "registered", endpoint: secondPeer },
+        },
+        8,
+      ),
+    ).rejects.toThrow("network_stale");
+    expect(
+      +(
+        await db.query(
+          "SELECT count(*) AS count FROM agent_network_members WHERE agent_network_id=$1 AND member_id=$2 AND removed_at IS NULL",
+          [network.agent_network_id, secondPeer.agent_id],
+        )
+      ).rows[0].count,
+    ).toBe(0);
   });
 
   test("fresh auth tracks project-set expansion, not every added agent", async () => {
