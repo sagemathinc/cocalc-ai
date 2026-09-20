@@ -1709,63 +1709,116 @@ function AgentWorkspace({
             minWidth: 0,
             flex: 1,
             display: "flex",
-            alignItems: "center",
-            gap: 12,
-            flexWrap: "wrap",
+            flexDirection: "column",
+            gap: 0,
           }}
         >
-          {!unregistered ? (
-            <NameAgent
-              agent={displayedAgent}
-              projectId={agent.endpoint.project_id}
-              path={agent.path}
-              threadId={selectedThread}
-              threadTitle={title}
-              projectTitle={agent.project_title}
-              triggerLabel={`@${displayedAgent.name}`}
-              triggerButtonProps={{
-                type: "text",
-                title: displayedAgent.description || title,
-                style: {
-                  color: "inherit",
-                  fontSize: 16,
-                  fontWeight: 600,
-                  padding: 0,
-                  maxWidth: "100%",
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                },
-              }}
-            />
-          ) : (
-            <Text style={{ color: "inherit" }}>{title}</Text>
-          )}
-          {workingDirectoryLabel && (
-            <Button
-              type="text"
-              aria-label={`Change working directory: ${workingDirectoryLabel}`}
-              title={`${displayedAgent.project_title || agent.endpoint.project_id}: ${selectedWorkingDirectory}`}
-              onClick={() => setDirectoryOpen(true)}
+          <Button
+            type="text"
+            aria-label={`Edit thread title: ${title}`}
+            title={title}
+            onClick={openAppearanceEditor}
+            style={{
+              color: "inherit",
+              fontSize: 16,
+              fontWeight: 600,
+              height: "auto",
+              padding: 0,
+              justifyContent: "flex-start",
+              minWidth: 0,
+              maxWidth: "100%",
+            }}
+          >
+            <span
               style={{
-                color: "inherit",
-                textAlign: "left",
-                flex: "1 1 180px",
-                justifyContent: "flex-start",
-                minWidth: 0,
-                padding: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
               }}
             >
-              <span
+              {title}
+            </span>
+          </Button>
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              minWidth: 0,
+              width: "100%",
+              flexWrap: "wrap",
+              fontSize: 12,
+            }}
+          >
+            {!unregistered ? (
+              <NameAgent
+                agent={displayedAgent}
+                projectId={agent.endpoint.project_id}
+                path={agent.path}
+                threadId={selectedThread}
+                threadTitle={title}
+                projectTitle={agent.project_title}
+                triggerLabel={`@${displayedAgent.name}`}
+                triggerButtonProps={{
+                  type: "text",
+                  title: displayedAgent.description || title,
+                  style: {
+                    color: "inherit",
+                    fontSize: 12,
+                    height: "auto",
+                    padding: 0,
+                    maxWidth: "100%",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                  },
+                }}
+              />
+            ) : (
+              <Text style={{ color: "inherit" }}>Unregistered thread</Text>
+            )}
+            <span aria-hidden="true">·</span>
+            <span
+              title={displayedAgent.project_title || agent.endpoint.project_id}
+              style={{
+                flex: "0 1 auto",
+                maxWidth: "45%",
+                minWidth: 0,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {displayedAgent.project_title || agent.endpoint.project_id}
+            </span>
+            {workingDirectoryLabel && (
+              <Button
+                type="text"
+                aria-label={`Change working directory: ${workingDirectoryLabel}`}
+                title={`${displayedAgent.project_title || agent.endpoint.project_id}: ${selectedWorkingDirectory}`}
+                onClick={() => setDirectoryOpen(true)}
                 style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
+                  color: "inherit",
+                  textAlign: "left",
+                  flex: "1 1 180px",
+                  justifyContent: "flex-start",
+                  minWidth: 0,
+                  padding: 0,
+                  height: "auto",
+                  fontSize: 12,
                 }}
               >
-                {workingDirectoryLabel}
-              </span>
-            </Button>
-          )}
+                <span
+                  style={{
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {workingDirectoryLabel}
+                </span>
+              </Button>
+            )}
+          </div>
         </div>
         {canRegisterSelectedThread && (
           <NameAgent

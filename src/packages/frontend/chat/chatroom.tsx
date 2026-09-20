@@ -2890,7 +2890,7 @@ function ChatPanelContent({
         topRightControlsPrefix={
           <>
             {threadPanelTopRightPrefix}
-            {!narrow && !focused && focusButton}
+            {!narrow && focusButton}
           </>
         }
         compactTopRightControls={effectiveThreadPanelCompactTopRightControls}
@@ -3025,10 +3025,8 @@ function ChatPanelContent({
           : {}),
       }}
     >
-      {!narrow && focused && (
-        <div
-          style={{ display: "flex", justifyContent: "flex-end", flexShrink: 0 }}
-        >
+      {!narrow && focused && hideTopControls && (
+        <div style={{ position: "absolute", top: 0, right: 0, zIndex: 30 }}>
           {focusButton}
         </div>
       )}
