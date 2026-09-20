@@ -626,6 +626,8 @@ describe("CodexCredentialsPanel", () => {
       id: "auth-1",
       projectId: "project-1",
       accountId: "account-1",
+      create: true,
+      registryCreated: false,
       codexHome: "/tmp/.codex",
       state: "completed",
       output: "",
@@ -679,6 +681,16 @@ describe("CodexCredentialsPanel", () => {
 
     await waitFor(() => {
       expect(onPaymentSourceChanged).toHaveBeenCalled();
+      expect(
+        screen.getByText((text) =>
+          text.includes("Existing ChatGPT subscription refreshed"),
+        ),
+      ).toBeTruthy();
+      expect(
+        screen.getByText((text) =>
+          text.includes("sign in to a different ChatGPT account"),
+        ),
+      ).toBeTruthy();
     });
     expect(
       readCachedCodexModelCatalog({

@@ -15,6 +15,20 @@ test("renders the shared public head placeholder into the app template", () => {
   expect(html).not.toContain("cocalc-entry-placeholder");
 });
 
+test("hides app markup until the global stylesheet is ready", () => {
+  const html = renderAppTemplate("app");
+  const guardIndex = html.indexOf('id="cocalc-app-startup-guard"');
+  const containerIndex = html.indexOf('id="cocalc-webapp-container"');
+
+  expect(guardIndex).toBeGreaterThanOrEqual(0);
+  expect(guardIndex).toBeLessThan(containerIndex);
+  expect(html).toContain("html.cocalc-app-starting");
+  expect(html).toContain('[data-cocalc-entry="app"]');
+  expect(html).toContain('[data-cocalc-entry="embed"]');
+  expect(html).toContain("root.classList.remove(className)");
+  expect(html).toContain("30000");
+});
+
 test("identifies each generated shell independently", () => {
   expect(renderAppTemplate("public-viewer")).toContain(
     'data-cocalc-entry="public-viewer"',

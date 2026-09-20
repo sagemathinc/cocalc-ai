@@ -44,6 +44,7 @@ type DeviceAuthSession = {
   verificationUrl?: string;
   userCode?: string;
   syncedToRegistry?: boolean;
+  registryCreated?: boolean;
   syncError?: string;
   leaseId: string;
 };
@@ -256,6 +257,9 @@ export async function startCodexDeviceAuth(
       },
       authRuntime,
       touchReason: "codex-device-auth",
+      // This is a staging home. The verified lifecycle operation below is the
+      // only path allowed to publish it to the account credential registry.
+      syncSubscriptionAuthOnExit: false,
     });
   } catch (err) {
     await rm(codexHome, { recursive: true, force: true }).catch(() => {});
@@ -339,6 +343,7 @@ export async function startCodexDeviceAuth(
             return;
           }
           session.credentialId = result.id;
+          session.registryCreated = result.created;
           session.syncError = undefined;
           session.state = "completed";
           session.updatedAt = Date.now();
@@ -404,6 +409,7 @@ function snapshot(session: DeviceAuthSession) {
     signal: session.signal,
     error: session.error,
     syncedToRegistry: session.syncedToRegistry,
+    registryCreated: session.registryCreated,
     syncError: session.syncError,
   };
 }

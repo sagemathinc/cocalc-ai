@@ -304,6 +304,7 @@ type DeviceAuthStatus = {
   signal?: string | null;
   error?: string;
   syncedToRegistry?: boolean;
+  registryCreated?: boolean;
   syncError?: string;
   credentialId?: string;
   create?: boolean;
@@ -971,7 +972,9 @@ function CodexCredentialsPanelBody({
                 : deviceAuth.state === "syncing"
                   ? "Saving ChatGPT sign-in"
                   : deviceAuth.state === "completed"
-                    ? "Codex is connected"
+                    ? deviceAuth.create && deviceAuth.registryCreated === false
+                      ? "Existing ChatGPT subscription refreshed"
+                      : "Codex is connected"
                     : `Codex sign-in ${deviceAuth.state}`
             }
             description={
@@ -983,7 +986,11 @@ function CodexCredentialsPanelBody({
                     ? deviceAuth.error
                     : deviceAuth.syncError
                       ? `Verification failed: ${deviceAuth.syncError}. Please run the ChatGPT sign-in again.`
-                      : undefined
+                      : deviceAuth.state === "completed" &&
+                          deviceAuth.create &&
+                          deviceAuth.registryCreated === false
+                        ? "This ChatGPT account was already saved, so CoCalc refreshed it instead of adding a duplicate. To add another subscription, repeat Add and sign in to a different ChatGPT account."
+                        : undefined
             }
           />
         ) : null}

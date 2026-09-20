@@ -8174,6 +8174,7 @@ async function enqueueAutomationRun(
   const assistant_message_id = randomUUID();
   const userDate = new Date(now).toISOString();
   const assistantDate = new Date(now + 1).toISOString();
+  const userMessageContent = automationMessageLabel(row, opts.manual);
   let automationSenderId = DEFAULT_AUTOMATION_CHAT_SENDER_ID;
   let automationConfig = buildAutomationAcpConfig({ chatPath: row.path });
 
@@ -8200,7 +8201,7 @@ async function enqueueAutomationRun(
           sender_id: automationSenderId,
           date: userDate,
           prevHistory: [],
-          content: automationMessageLabel(row, opts.manual),
+          content: userMessageContent,
           generating: false,
           message_id: user_message_id,
           thread_id: row.thread_id,
@@ -8223,6 +8224,7 @@ async function enqueueAutomationRun(
     automation_id: row.automation_id,
     automation_title: row.title ?? undefined,
     automation_revision: automationSettingsRevision(row),
+    user_message_content: userMessageContent,
   };
   let request: AcpJobRequest =
     row.run_kind === "command"
