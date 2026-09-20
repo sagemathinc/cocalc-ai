@@ -19,7 +19,11 @@ import type {
   AgentNetworkDiscovery,
   AgentNetworkProposal,
 } from "@cocalc/conat/agents/personal";
-import type { ResolvedAgentDestination } from "./agent-destination";
+import {
+  matchesAgentNetwork,
+  selectAgentNetwork,
+  type ResolvedAgentDestination,
+} from "./agent-destination";
 import { readExternalAgentCredential } from "./external-agent-profile";
 import { withTimeout } from "./context";
 
@@ -181,23 +185,18 @@ export async function resolveExternalAgentName(
     ({ member, networks }) =>
       member.kind === "registered" &&
       member.name === normalized &&
-      networks.some(
-        ({ agent_network_id }) =>
-          agentNetworkId === undefined || agent_network_id === agentNetworkId,
-      ),
+      networks.some((network) => matchesAgentNetwork(network, agentNetworkId)),
   );
   if (matches.length !== 1 || matches[0].member.kind !== "registered")
     throw new Error(
-      "No unambiguous network peer; run agent destinations and specify --agent-network",
+      "No unambiguous network peer; run agent destinations and specify --agent-network with the exact network title",
     );
-  const networks = matches[0].networks.filter(
-    ({ agent_network_id }) =>
-      agentNetworkId === undefined || agent_network_id === agentNetworkId,
-  );
-  if (networks.length !== 1)
-    throw new Error("Specify the exact --agent-network for this peer");
+  const network = selectAgentNetwork(matches[0].networks, agentNetworkId);
+  if (!network)
+    throw new Error("No active unambiguous Agent Network authorizes this peer");
   return {
     target: matches[0].member.endpoint,
-    agent_network_id: networks[0].agent_network_id,
+    agent_network_id: network.agent_network_id,
+    agent_network_title: network.title,
   };
 }

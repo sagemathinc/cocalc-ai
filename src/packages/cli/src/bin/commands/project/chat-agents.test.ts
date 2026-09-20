@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test, { mock } from "node:test";
 import { Command } from "commander";
-import { registerChatAgentCommands } from "./chat-agents";
+import {
+  friendlyAgentDestinations,
+  registerChatAgentCommands,
+} from "./chat-agents";
 
 function program(calls: unknown[]) {
   const command = new Command();
@@ -37,6 +40,44 @@ test("destinations discovers network peers with the runtime identity", async () 
   } finally {
     transport.mock.restore();
   }
+});
+
+test("friendly discovery omits internal identifiers", () => {
+  const value = friendlyAgentDestinations({
+    peers: [
+      {
+        member: {
+          kind: "registered",
+          member_id: randomUUID(),
+          endpoint: { project_id: randomUUID(), agent_id: randomUUID() },
+          name: "reviewer",
+          project_title: "CoCalc",
+          available: true,
+          added_at: new Date().toISOString(),
+        },
+        networks: [
+          {
+            agent_network_id: randomUUID(),
+            title: "Development",
+            delivery_mode: "live",
+            generation: randomUUID(),
+          },
+        ],
+      },
+    ],
+  });
+  assert.deepEqual(value, {
+    peers: [
+      {
+        kind: "registered",
+        name: "reviewer",
+        project: "CoCalc",
+        available: true,
+        networks: [{ title: "Development", delivery_mode: "live" }],
+      },
+    ],
+  });
+  assert.doesNotMatch(JSON.stringify(value), /agent_network_id|project_id/);
 });
 
 test("network proposal and broadcast carry explicit bounded topology", async () => {

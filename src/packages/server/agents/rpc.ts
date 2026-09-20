@@ -403,6 +403,7 @@ async function submitAgentRpcOperation(
       source: opts.source,
       source_label: networkMemberLabel(proof.source),
       target_label: networkMemberLabel(proof.target),
+      network_title: proof.network_title,
       ...(opts.run_id ? { run_id: opts.run_id } : {}),
       permit_id: randomUUID(),
       account_id: proof.account_id,

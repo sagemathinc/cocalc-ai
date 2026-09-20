@@ -42,6 +42,7 @@ test("keyboard revocation removes action and restores focus to the section headi
   const revoke = await screen.findByRole("button", {
     name: "Revoke Security assistant",
   });
+  expect(screen.queryByText("test-network")).toBeNull();
   await user.tab();
   expect(document.activeElement).toBe(revoke);
   jest.mocked(postAuthApi).mockResolvedValueOnce({

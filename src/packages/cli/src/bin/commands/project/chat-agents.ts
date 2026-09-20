@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { Command } from "commander";
-import type { AgentNetworkMemberLocator } from "@cocalc/conat/agents/personal";
+import type {
+  AgentNetworkDiscovery,
+  AgentNetworkMemberLocator,
+} from "@cocalc/conat/agents/personal";
 import type { AgentRpcTarget } from "@cocalc/conat/agents/rpc";
 import type { ProjectCommandDeps } from "../project";
 import { sendIdentityMessage } from "../../core/agent-message";
@@ -29,11 +32,14 @@ export function registerChatAgentCommands(
     return value;
   };
 
-  const destinations = async (opts, cmd, label: string) => {
+  const destinations = async (
+    opts,
+    cmd,
+    label: string,
+    includeInternalIds = false,
+  ) => {
     const globals = globalsFrom(cmd);
-    emitSuccess(
-      { globals },
-      label,
+    const result = (
       opts.externalAgent
         ? await sendExternalAgentMessage(opts.externalAgent, {
             version: 3,
@@ -42,7 +48,12 @@ export function registerChatAgentCommands(
         : await sendIdentityMessage(
             { version: 3, action: "destinations" },
             globals.api,
-          ),
+          )
+    ) as AgentNetworkDiscovery;
+    emitSuccess(
+      { globals },
+      label,
+      includeInternalIds ? result : friendlyAgentDestinations(result),
     );
   };
 
@@ -58,7 +69,7 @@ export function registerChatAgentCommands(
     .option("--external-agent <profile>", "use an enrolled external agent")
     .description("discover peers and exact network identifiers")
     .action((opts, cmd) =>
-      destinations(opts, cmd, "project chat agent rpc destinations"),
+      destinations(opts, cmd, "project chat agent rpc destinations", true),
     );
   agent
     .command("inbox")
@@ -238,4 +249,21 @@ export function registerChatAgentCommands(
         ctx.hub.agent.disableIdentity({ agent_id }),
       ),
     );
+}
+
+export function friendlyAgentDestinations(directory: AgentNetworkDiscovery) {
+  return {
+    peers: directory.peers.map(({ member, networks }) => ({
+      kind: member.kind,
+      name: member.kind === "registered" ? member.name : member.label,
+      ...(member.kind === "registered" && member.project_title
+        ? { project: member.project_title }
+        : {}),
+      available: member.available,
+      networks: networks.map(({ title, delivery_mode }) => ({
+        title,
+        delivery_mode,
+      })),
+    })),
+  };
 }

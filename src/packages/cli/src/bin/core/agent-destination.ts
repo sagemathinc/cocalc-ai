@@ -16,6 +16,34 @@ export interface AgentNameBinding {
 export interface ResolvedAgentDestination {
   target: AgentRpcTarget;
   agent_network_id: string;
+  agent_network_title: string;
+}
+
+export function matchesAgentNetwork(
+  network: AgentNetworkDiscovery["peers"][number]["networks"][number],
+  selector?: string,
+): boolean {
+  return (
+    selector === undefined ||
+    network.agent_network_id === selector ||
+    network.title === selector
+  );
+}
+
+export function selectAgentNetwork(
+  networks: AgentNetworkDiscovery["peers"][number]["networks"],
+  selector?: string,
+) {
+  const matches = networks.filter((network) =>
+    matchesAgentNetwork(network, selector),
+  );
+  if (selector !== undefined && matches.length !== 1) return;
+  return [...matches].sort(
+    (a, b) =>
+      Number(b.delivery_mode === "live") - Number(a.delivery_mode === "live") ||
+      a.title.localeCompare(b.title) ||
+      a.agent_network_id.localeCompare(b.agent_network_id),
+  )[0];
 }
 
 export function resolveAgentName(
@@ -68,19 +96,17 @@ export function resolveAgentName(
     })
   )
     throw new Error(`Ambiguous agent reference @${name}; no message was sent`);
-  const networks = first.networks.filter(
-    ({ agent_network_id }) =>
-      requestedNetwork === undefined || agent_network_id === requestedNetwork,
-  );
-  if (networks.length !== 1)
+  const network = selectAgentNetwork(first.networks, requestedNetwork);
+  if (!network)
     throw new Error(
-      networks.length
-        ? `Multiple Agent Networks include @${name}; specify --agent-network ID`
-        : `@${name} is not in Agent Network ${requestedNetwork}; no message was sent`,
+      requestedNetwork === undefined
+        ? `No active Agent Network includes @${name}; no message was sent`
+        : `@${name} is not in one unambiguous Agent Network named ${JSON.stringify(requestedNetwork)}; no message was sent`,
     );
   return {
     target,
-    agent_network_id: networks[0].agent_network_id,
+    agent_network_id: network.agent_network_id,
+    agent_network_title: network.title,
   };
 }
 

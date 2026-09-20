@@ -27,12 +27,15 @@ const rpc = {
     project_id: "1ce4fe78-19c7-40a8-a598-947975744cd9",
   },
   agent_network_id: "4a0715b5-a7a0-4963-b2b2-292ba36776a1",
+  network_title: "CoCalc development",
   attempt_id: "192eab37-391c-40fe-a317-adcccb1f24af",
 };
 
 test("hides the exact model-facing agent message envelope", () => {
   const prefix = agentRpcPromptPrefix(rpc);
   expect(prefix).toContain("Agent-provided content");
+  expect(prefix).toContain("Agent Network: CoCalc development");
+  expect(prefix).not.toContain(rpc.agent_network_id);
   expect(stripAgentRpcPrompt(`${prefix}Review complete.`, rpc)).toBe(
     "Review complete.",
   );

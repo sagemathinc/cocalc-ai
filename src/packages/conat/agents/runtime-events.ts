@@ -13,6 +13,7 @@ export interface AgentMessageRuntimeEvent {
   target_name?: string;
   body: string;
   agent_network_id: string;
+  agent_network_title?: string;
   attempt_id: string;
   outcome: "accepted" | "rejected" | "unknown";
   observed_at: number;

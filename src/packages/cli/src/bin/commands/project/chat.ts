@@ -331,8 +331,8 @@ export function registerProjectChatCommands(
       "attempt identifier; deliberate retries require a NEW identifier",
     )
     .option(
-      "--agent-network <uuid>",
-      "exact Agent Network authorizing the send",
+      "--agent-network <title-or-uuid>",
+      "exact Agent Network title (or internal id) when disambiguation is needed",
     )
     .option(
       "--guidance",
@@ -379,7 +379,6 @@ export function registerProjectChatCommands(
               "Use --to name or --rpc --to-agent ID, not both; cannot use legacy --request-id or project/path/thread options",
             );
           if (opts.toAgent) requireUuid(opts.toAgent, "to-agent");
-          requireUuid(opts.agentNetwork, "agent-network");
           const attempt_id = opts.attemptId || randomUUID();
           requireUuid(attempt_id, "attempt-id");
           const globals = deps.globalsFrom(command);
@@ -391,41 +390,55 @@ export function registerProjectChatCommands(
               : sendIdentityMessage(request, globals.api);
           let target: AgentRpcTarget;
           let targetName: string | undefined;
-          let agent_network_id = opts.agentNetwork!;
+          let agent_network_id: string;
+          let agent_network_title: string;
           if (opts.to) {
             const resolved = opts.externalAgent
               ? await resolveExternalAgentName(
                   opts.externalAgent,
                   opts.to,
-                  agent_network_id,
+                  opts.agentNetwork,
                 )
               : await resolveRuntimeAgentName(
                   opts.to,
                   globals.api,
-                  agent_network_id,
+                  opts.agentNetwork,
                 );
             target = resolved.target;
             targetName = opts.to.trim().replace(/^@/, "");
             agent_network_id = resolved.agent_network_id;
+            agent_network_title = resolved.agent_network_title;
           } else {
+            if (!opts.agentNetwork)
+              throw new Error(
+                "--to-agent requires --agent-network with the exact network title",
+              );
             const destinations = (await send({
               version: 3,
               action: "destinations",
             })) as AgentNetworkDiscovery;
             const destination = destinations.peers.find(
-              ({ member, networks }) =>
+              ({ member }) =>
                 member.kind === "registered" &&
-                member.endpoint.agent_id === opts.toAgent &&
-                networks.some(
-                  (network) => network.agent_network_id === agent_network_id,
-                ),
+                member.endpoint.agent_id === opts.toAgent,
             );
             if (!destination || destination.member.kind !== "registered")
               throw new Error(
-                "Target is not a registered member of the exact Agent Network; no submission attempted",
+                "Target is not a registered network member; no submission attempted",
+              );
+            const networks = destination.networks.filter(
+              (network) =>
+                network.agent_network_id === opts.agentNetwork ||
+                network.title === opts.agentNetwork,
+            );
+            if (networks.length !== 1)
+              throw new Error(
+                "--agent-network must identify one exact network title; no submission attempted",
               );
             target = destination.member.endpoint;
             targetName = destination.member.name;
+            agent_network_id = networks[0].agent_network_id;
+            agent_network_title = networks[0].title;
           }
           process.stderr.write(
             `Agent RPC attempt ${attempt_id}; target ${JSON.stringify(target)}\n`,
@@ -507,6 +520,7 @@ export function registerProjectChatCommands(
                 ...(targetName ? { target_name: targetName } : {}),
                 body: prompt,
                 agent_network_id,
+                agent_network_title,
                 attempt_id,
                 outcome: result.outcome,
                 observed_at: result.observed_at,

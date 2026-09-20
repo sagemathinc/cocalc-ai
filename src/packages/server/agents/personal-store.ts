@@ -1290,6 +1290,7 @@ export class PersonalAgentStore {
         throw new PersonalAgentAuthorizationError("not_a_member");
       return {
         agent_network_id,
+        network_title: row.title,
         network_generation: row.generation,
         account_generation: controls.generation,
         account_id: account,

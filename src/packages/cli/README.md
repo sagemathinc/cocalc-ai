@@ -397,13 +397,15 @@ account/project credential:
 
 ```bash
 cocalc project chat agent destinations --json
-cocalc project chat send --to reviewer --agent-session SESSION_ID --stdin --json <<'EOF'
+cocalc project chat send --to reviewer --stdin --json <<'EOF'
 {"kind":"review-request","correlation_id":"review-42","text":"Please review the PR."}
 EOF
 ```
 
-`--to` resolves an exact named member of the exact `--agent-session`; it never
-selects the only matching session or guesses from project titles. Agents may use
+`--to` resolves an exact named member and uses an active shared Agent Network.
+When more than one is active, it prefers live delivery and otherwise makes a
+stable choice. The caller does not need to track the underlying network.
+Agents may use
 `agent propose-network` to place a bounded typed proposal in the Agents page,
 but only a human can approve it. Approval never replays a send.
 
@@ -424,7 +426,7 @@ computer can obtain its own identity without obtaining a human account session:
 ```sh
 cocalc --api https://your-cocalc-site.example auth login --agent security --agent-label "Security assistant"
 cocalc project chat agent rpc destinations --external-agent security --json
-cocalc project chat send --external-agent security --to reviewer --agent-session SESSION_ID "Please review this."
+cocalc project chat send --external-agent security --to reviewer "Please review this."
 cocalc project chat agent inbox --external-agent security --json
 ```
 

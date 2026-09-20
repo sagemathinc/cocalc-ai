@@ -161,6 +161,7 @@ export interface SetPersonalMessagingStateOptions {
 
 export interface AgentNetworkAuthorization {
   agent_network_id: string;
+  network_title: string;
   network_generation: string;
   account_generation: number;
   account_id: string;

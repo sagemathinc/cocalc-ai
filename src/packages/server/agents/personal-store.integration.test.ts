@@ -102,7 +102,10 @@ describeDb("account-home Agent Networks", () => {
         run_id,
         peer,
       ),
-    ).resolves.toMatchObject({ delivery_mode: "queued" });
+    ).resolves.toMatchObject({
+      delivery_mode: "queued",
+      network_title: "Review",
+    });
     await expect(
       store.checkNetwork(
         account,

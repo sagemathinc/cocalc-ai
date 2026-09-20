@@ -608,11 +608,6 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
                     )}
                   </div>
                 )}
-                <details>
-                  <summary>Network identifiers</summary>
-                  <p>Network: {network.agent_network_id}</p>
-                  <p>Generation: {network.generation}</p>
-                </details>
               </Space>
             </Card>
           );

@@ -61,9 +61,7 @@ export function PeerMessageCard({ event }: { event: PeerMessageEvent }) {
             </div>
             <div>
               <Text strong>Agent Network: </Text>
-              <Text copyable={{ text: event.agent_network_id }}>
-                {event.agent_network_id}
-              </Text>
+              <Text>{event.agent_network_title || "Agent Network"}</Text>
             </div>
             {event.reason ? (
               <div>

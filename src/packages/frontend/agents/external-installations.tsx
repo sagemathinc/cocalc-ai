@@ -95,13 +95,6 @@ export function ExternalAgentInstallations({
                     : "Expired"}
                 . Expires {new Date(item.expires_at).toLocaleString()}.
               </p>
-              <p>
-                Agent Network <code>{item.agent_network_id}</code>. Installation{" "}
-                <code style={{ overflowWrap: "anywhere" }}>
-                  {item.installation_id}
-                </code>
-                .
-              </p>
               {active && (
                 <Button
                   danger

@@ -548,6 +548,7 @@ describe("CodexActivity terminal rows", () => {
               target_name: "reviewer",
               body: "Please check the proof.",
               agent_network_id: "session",
+              agent_network_title: "CoCalc development",
               attempt_id: "attempt",
               outcome: "accepted",
               observed_at: 1,
@@ -562,5 +563,8 @@ describe("CodexActivity terminal rows", () => {
     ).not.toBeNull();
     expect(screen.getByText("To @reviewer")).not.toBeNull();
     expect(screen.getByText("Please check the proof.")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Inspect" }));
+    expect(screen.getByText("CoCalc development")).not.toBeNull();
+    expect(screen.queryByText("session")).toBeNull();
   });
 });

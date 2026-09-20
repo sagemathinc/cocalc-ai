@@ -15,10 +15,15 @@ test("named send uses one scoped attempt and never the human send path", async (
   const resolver = mock.method(
     require("../../core/agent-destination"),
     "resolveRuntimeAgentName",
-    async (name: string) => {
+    async (name: string, _api: string | undefined, network?: string) => {
       assert.equal(name, "@reviewer");
+      assert.equal(network, undefined);
       resolved++;
-      return { target, agent_network_id };
+      return {
+        target,
+        agent_network_id,
+        agent_network_title: "Development",
+      };
     },
   );
   const transport = mock.method(
@@ -53,16 +58,7 @@ test("named send uses one scoped attempt and never the human send path", async (
     process.env.COCALC_CODEX_CHAT_PATH = "agent.chat";
     process.env.COCALC_CODEX_THREAD_ID = randomUUID();
     await program.parseAsync(
-      [
-        "project",
-        "chat",
-        "send",
-        "--to",
-        "@reviewer",
-        "--agent-network",
-        agent_network_id,
-        "Review this",
-      ],
+      ["project", "chat", "send", "--to", "@reviewer", "Review this"],
       { from: "user" },
     );
     assert.equal(resolved, 1);
@@ -75,6 +71,7 @@ test("named send uses one scoped attempt and never the human send path", async (
     assert.equal(event.target_name, "reviewer");
     assert.equal(event.body, "Review this");
     assert.equal(event.outcome, "accepted");
+    assert.equal(event.agent_network_title, "Development");
     await assert.rejects(
       program.parseAsync(
         [
@@ -116,7 +113,11 @@ test("attachment sends preserve same-project references and prepare cross-projec
   const resolver = mock.method(
     require("../../core/agent-destination"),
     "resolveRuntimeAgentName",
-    async () => ({ target, agent_network_id }),
+    async () => ({
+      target,
+      agent_network_id,
+      agent_network_title: "Development",
+    }),
   );
   const reader = mock.method(
     require("../../core/agent-attachments"),

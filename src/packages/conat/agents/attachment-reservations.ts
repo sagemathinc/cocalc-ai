@@ -131,6 +131,7 @@ function snapshot(
       ...(e.run_id ? { run_id: e.run_id } : {}),
       account_id: e.account_id,
       agent_network_id: e.agent_network_id,
+      network_title: e.network_title,
       network_generation: e.network_generation,
       account_generation: e.account_generation,
       configured_delivery: e.configured_delivery,

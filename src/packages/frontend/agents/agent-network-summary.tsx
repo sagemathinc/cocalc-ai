@@ -12,7 +12,6 @@ import type {
 } from "@cocalc/conat/agents/personal";
 import { isExternalAgentSource } from "@cocalc/conat/agents/rpc";
 import { Icon } from "@cocalc/frontend/components/icon";
-import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { networkColor, networkProjectCount } from "./agent-network-utils";
 
 const { Text } = Typography;
@@ -78,20 +77,6 @@ export function AgentNetworkSummary({
             </Tag>
           ))}
         </Space>
-        {!compact && (
-          <Descriptions size="small" column={1}>
-            <Descriptions.Item label="Network ID">
-              <Text copyable code style={{ color: UI_COLORS.secondary }}>
-                {network.agent_network_id}
-              </Text>
-            </Descriptions.Item>
-            <Descriptions.Item label="Generation">
-              <Text copyable code style={{ color: UI_COLORS.secondary }}>
-                {network.generation}
-              </Text>
-            </Descriptions.Item>
-          </Descriptions>
-        )}
       </Space>
     </Card>
   );

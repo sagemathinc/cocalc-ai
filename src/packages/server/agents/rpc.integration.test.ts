@@ -122,6 +122,7 @@ function authorization() {
 function networkAuthorization() {
   return {
     agent_network_id: network,
+    network_title: "Review",
     network_generation: generation,
     account_generation: 4,
     account_id: account,
@@ -144,6 +145,7 @@ beforeEach(() => {
   }));
   checkNetwork.mockReset().mockResolvedValue({
     agent_network_id: network,
+    network_title: "Review",
     network_generation: generation,
     account_generation: 4,
     account_id: account,
@@ -174,6 +176,9 @@ test("cross-bay submission does not require the source identity in the target ba
       }),
     ).resolves.toMatchObject({ outcome: "accepted" });
     expect(submitAgentRpc).toHaveBeenCalledTimes(1);
+    expect(submitAgentRpc.mock.calls[0][0]).toMatchObject({
+      network_title: "Review",
+    });
   } finally {
     identities.set(sourceAgent, sourceIdentity);
   }

@@ -360,6 +360,7 @@ export interface AgentRpcEnvelope extends Omit<AgentRpcSend, "target"> {
   source: AgentRpcSource;
   source_label: string;
   target_label: string;
+  network_title: string;
   run_id?: string;
   account_id: string;
   network_generation: string;
@@ -385,6 +386,7 @@ export function agentRpcEnvelopeKey(e: AgentRpcEnvelope): string {
     e.target_label,
     e.run_id,
     e.agent_network_id,
+    e.network_title,
     e.network_generation,
     e.account_generation,
     e.configured_delivery,
