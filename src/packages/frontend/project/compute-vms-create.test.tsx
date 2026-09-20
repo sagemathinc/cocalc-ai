@@ -73,6 +73,12 @@ it("distinguishes loading, unknown failure, and a ready catalog", async () => {
   expect(
     screen.getByRole("button", { name: "Create VM", exact: true }),
   ).toBeEnabled();
+  const requiredLabels = screen
+    .getByRole("dialog", { name: "Create Test VM" })
+    .querySelectorAll("label.ant-form-item-required");
+  expect(Array.from(requiredLabels, (label) => label.textContent)).toEqual([
+    "VM title",
+  ]);
   expect(screen.getByRole("checkbox", { name: "Stop after" })).toBeChecked();
   expect(
     screen.getByRole("spinbutton", { name: "Stop after hours" }),

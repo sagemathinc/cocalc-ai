@@ -1047,6 +1047,7 @@ export function VmCreateModal({
               name="funding_mode"
               label="Funding"
               hidden={!!draft.funding_source}
+              required={false}
               rules={[{ required: true }]}
               style={{ flex: "1 1 320px" }}
             >
@@ -1074,6 +1075,7 @@ export function VmCreateModal({
           <Form.Item
             name="operating_system"
             label="Operating system"
+            required={false}
             rules={[{ required: true }]}
             style={{ flex: "1 1 260px" }}
           >
@@ -1109,6 +1111,7 @@ export function VmCreateModal({
           <Form.Item
             name="provider"
             label="Cloud provider"
+            required={false}
             rules={[{ required: true }]}
             style={{ flex: "1 1 220px" }}
           >
@@ -1197,6 +1200,7 @@ export function VmCreateModal({
           <Form.Item
             name="architecture"
             label="Architecture"
+            required={false}
             rules={[{ required: true }]}
             style={{ flex: "1 1 180px", order: -1 }}
           >
@@ -1311,6 +1315,7 @@ export function VmCreateModal({
           <Flex gap={12} wrap>
             <Form.Item
               name="region"
+              required={false}
               label={
                 <Flex align="center" justify="space-between" gap={12}>
                   <span>Region</span>
@@ -1376,6 +1381,7 @@ export function VmCreateModal({
             <Form.Item
               name="zone"
               label="Zone"
+              required={false}
               rules={[{ required: provider === "gcp" }]}
               style={{ flex: "1 1 280px" }}
             >
@@ -1474,6 +1480,7 @@ export function VmCreateModal({
           {provider === "gcp" && (
             <Form.Item
               name="machine_type"
+              required={false}
               label={
                 <Flex align="center" justify="space-between" gap={12}>
                   <span>Machine</span>
@@ -1518,6 +1525,7 @@ export function VmCreateModal({
           <Form.Item
             name="boot_disk_gb"
             label="Boot disk (GB)"
+            required={false}
             rules={[
               { required: true },
               {
@@ -1674,6 +1682,7 @@ export function VmCreateModal({
                   <Form.Item
                     name="new_home_volume_name"
                     label="New home volume name"
+                    required={false}
                     rules={[
                       { required: true },
                       {
@@ -1689,6 +1698,7 @@ export function VmCreateModal({
                   <Form.Item
                     name="new_home_volume_size_gb"
                     label="Size (GB)"
+                    required={false}
                     rules={volumeSizeRules(provider)}
                     style={{ flex: "1 1 160px" }}
                   >
