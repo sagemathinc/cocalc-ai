@@ -219,6 +219,7 @@ function effectiveVolumeSizeGb(
 import VmStopAfter from "./compute-vm-stop-after";
 import ComputeFundingSelect from "./compute-funding-select";
 import VmFundingStatus from "./compute-vm-funding-status";
+import VmPowerControls from "./compute-vm-power-controls";
 import VmPersonalFunding from "./compute-vm-personal-funding";
 import CourseCreditSummary from "./course-credit-summary";
 import { CourseVmTemplateSelect } from "./course-vm-template-select";
@@ -2812,84 +2813,106 @@ export function VmDetailsModal({
       onCancel={onClose}
       width={760}
     >
-      <Paragraph type="secondary">
-        Account-owned virtual machine created{" "}
-        <TimeAgo date={new Date(vm.created_at)} />.
-      </Paragraph>
-      <VmFundingStatus funding={vm.funding_status} />
-      {vm.owner_account_id === accountId &&
-        vm.funding_status?.funding_version && (
-          <VmPersonalFunding
-            key={vm.id}
-            vmId={vm.id}
-            fundingVersion={vm.funding_status.funding_version}
-            homeVolumeIds={vm.home_volume_id ? [vm.home_volume_id] : []}
-            api={webapp_client.conat_client.hub.compute}
-          />
-        )}
-      <Descriptions bordered column={{ xs: 1, sm: 2 }} size="small">
-        <Descriptions.Item label="Name">{vm.name}</Descriptions.Item>
-        <Descriptions.Item label="VM ID">
-          <Text copyable={{ text: vm.id }} code>
-            {vm.id}
+      <Flex vertical gap={20} style={{ minWidth: 0 }}>
+        <section aria-label="Machine configuration">
+          <Text strong style={{ fontSize: 18 }}>
+            {vm.cpu} vCPU · {vm.ram_gb} GB RAM
+            {vm.gpu_type ? ` · ${machineLabel}` : ""}
           </Text>
-        </Descriptions.Item>
-        <Descriptions.Item label="Provider">
-          {getProviderDescriptor(vm.provider).label}
-        </Descriptions.Item>
-        <Descriptions.Item label="Location">
-          {vm.zone ?? vm.region}
-        </Descriptions.Item>
-        <Descriptions.Item label="Instance">{machineLabel}</Descriptions.Item>
-        <Descriptions.Item label="Machine type">
-          {vm.machine_type}
-        </Descriptions.Item>
-        <Descriptions.Item label="Resources">
-          {vm.cpu} vCPU · {vm.ram_gb} GB RAM
-        </Descriptions.Item>
-        <Descriptions.Item label="Architecture">
-          {vm.architecture}
-        </Descriptions.Item>
-        <Descriptions.Item label="Operating system">
-          {vm.operating_system === "windows"
-            ? "Windows Server 2022"
-            : vm.operating_system_version || "Linux"}
-        </Descriptions.Item>
-        <Descriptions.Item label="Pricing">
-          {pricingLabel(vm.effective_pricing_model)} · {hourlyPrice(vm)}
-        </Descriptions.Item>
-        <Descriptions.Item label="Boot disk">
-          {vm.boot_disk_gb} GB
-        </Descriptions.Item>
-        <Descriptions.Item label="Home volume">
-          {homeVolume
-            ? `${homeVolume.name} · ${homeVolume.effective_size_gb} GB · ${homeVolume.attachment_state}`
-            : vm.home_volume_id
-              ? `ID ${vm.home_volume_id}`
-              : "None"}
-          {homeVolume && (
-            <VolumeFundingDetailsButton
-              volume={homeVolume}
-              label="Storage funding and retention"
+          <div>
+            <Text type="secondary">
+              {getProviderDescriptor(vm.provider).label} ·{" "}
+              {vm.zone ?? vm.region}
+            </Text>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            {vm.operating_system === "windows"
+              ? "Windows Server 2022"
+              : vm.operating_system_version || "Linux"}
+            {" · "}
+            {vm.boot_disk_gb} GB boot disk
+          </div>
+          <div>
+            <Text strong>{hourlyPrice(vm)}</Text>
+            {" · "}
+            {pricingLabel(vm.effective_pricing_model)}
+          </div>
+        </section>
+        <VmFundingStatus funding={vm.funding_status} />
+        {vm.owner_account_id === accountId &&
+          vm.funding_status?.funding_version && (
+            <VmPersonalFunding
+              key={vm.id}
+              vmId={vm.id}
+              fundingVersion={vm.funding_status.funding_version}
+              homeVolumeIds={vm.home_volume_id ? [vm.home_volume_id] : []}
+              api={webapp_client.conat_client.hub.compute}
             />
           )}
-        </Descriptions.Item>
-        <Descriptions.Item label="Created">
-          {new Date(vm.created_at).toLocaleString()}
-        </Descriptions.Item>
-        <Descriptions.Item label="Updated">
-          {new Date(vm.updated_at).toLocaleString()}
-        </Descriptions.Item>
-        <Descriptions.Item label="SSH hostname" span={2}>
-          {vm.public_hostname ? (
-            <Text copyable={{ text: vm.public_hostname }} code>
-              {vm.public_hostname}
-            </Text>
-          ) : (
-            "Not assigned"
-          )}
-        </Descriptions.Item>
-      </Descriptions>
+        <section aria-label="Connection and storage">
+          <Text strong>Connection and storage</Text>
+          <Descriptions
+            column={1}
+            size="small"
+            styles={{
+              label: { minWidth: 110 },
+              content: { minWidth: 0, overflowWrap: "anywhere" },
+            }}
+          >
+            <Descriptions.Item label="SSH hostname">
+              {vm.public_hostname ? (
+                <Text copyable style={{ overflowWrap: "anywhere" }}>
+                  {vm.public_hostname}
+                </Text>
+              ) : (
+                "Available when the VM is ready"
+              )}
+            </Descriptions.Item>
+            <Descriptions.Item label="Home volume">
+              <Space orientation="vertical" size={4}>
+                {homeVolume
+                  ? `${homeVolume.name} · ${homeVolume.effective_size_gb} GB`
+                  : vm.home_volume_id
+                    ? "Attached"
+                    : "None"}
+                {homeVolume && (
+                  <VolumeFundingDetailsButton
+                    volume={homeVolume}
+                    label="Storage funding and retention"
+                  />
+                )}
+              </Space>
+            </Descriptions.Item>
+          </Descriptions>
+        </section>
+        <details>
+          <summary style={{ cursor: "pointer" }}>Technical details</summary>
+          <Descriptions
+            column={1}
+            size="small"
+            style={{ marginTop: 12 }}
+            styles={{ content: { overflowWrap: "anywhere" } }}
+          >
+            <Descriptions.Item label="VM ID">
+              <Text copyable={{ text: vm.id }} code>
+                {vm.id}
+              </Text>
+            </Descriptions.Item>
+            <Descriptions.Item label="Machine type">
+              {vm.machine_type}
+            </Descriptions.Item>
+            <Descriptions.Item label="Architecture">
+              {vm.architecture}
+            </Descriptions.Item>
+            <Descriptions.Item label="Created">
+              <TimeAgo date={new Date(vm.created_at)} />
+            </Descriptions.Item>
+            <Descriptions.Item label="Updated">
+              <TimeAgo date={new Date(vm.updated_at)} />
+            </Descriptions.Item>
+          </Descriptions>
+        </details>
+      </Flex>
     </Modal>
   );
 }
@@ -4361,12 +4384,6 @@ export function ProjectComputeVms({
       title: "Actions",
       width: 185,
       render: (_, vm) => {
-        const transitioning = ["starting", "stopping", "deleting"].includes(
-          vm.state,
-        );
-        const stopDisabled = ["stopping", "deleting"].includes(vm.state);
-        const running =
-          vm.desired_state === "running" && vm.state !== "stopped";
         const cliCommand = `cocalc vm ssh ${vm.name}`;
         const directCommand = vm.public_hostname
           ? `ssh ${vm.ssh_user || "user"}@${vm.public_hostname}`
@@ -4490,34 +4507,19 @@ export function ProjectComputeVms({
                 Connect
               </Button>
             </Popover>
-            {accountMode &&
-              (running ? (
-                <Popconfirm
-                  title={`Stop ${vm.name}?`}
-                  description="Compute and Windows license charges stop, but persistent disk charges continue."
-                  okText="Stop VM"
-                  cancelText="Keep running"
-                  onConfirm={() => void setVmRunning(vm, false)}
-                >
-                  <Button size="small" disabled={stopDisabled}>
-                    Stop
-                  </Button>
-                </Popconfirm>
-              ) : (
-                <Button
-                  size="small"
-                  disabled={transitioning}
-                  onClick={() => {
-                    if (vm.provider === "nebius") {
-                      setStartVm(vm);
-                    } else {
-                      void setVmRunning(vm, true);
-                    }
-                  }}
-                >
-                  Start
-                </Button>
-              ))}
+            <VmPowerControls
+              vm={vm}
+              accountMode={accountMode}
+              accountId={accountId}
+              onStop={() => void setVmRunning(vm, false)}
+              onStart={() => {
+                if (vm.provider === "nebius") {
+                  setStartVm(vm);
+                } else {
+                  void setVmRunning(vm, true);
+                }
+              }}
+            />
             {accountMode && (
               <Button size="small" onClick={() => setAccessVm(vm)}>
                 Projects ({linkedProjectCount})
