@@ -26,6 +26,7 @@ function network(
 test("network pills filter from the keyboard and expose overflow", async () => {
   const user = userEvent.setup();
   const onSelect = jest.fn();
+  const onOpen = jest.fn();
   const first = network("11111111-1111-4111-8111-111111111111", "Release");
   const second = network(
     "22222222-2222-4222-8222-222222222222",
@@ -37,13 +38,15 @@ test("network pills filter from the keyboard and expose overflow", async () => {
       networks={[first, second]}
       selectedNetworkId={first.agent_network_id}
       onSelect={onSelect}
+      onOpen={onOpen}
     />,
   );
 
   const release = screen.getByRole("button", { name: "Release" });
   release.focus();
   await user.keyboard("{Enter}");
-  expect(onSelect).toHaveBeenCalledWith(first);
+  expect(onOpen).toHaveBeenCalledWith(first);
+  expect(onSelect).not.toHaveBeenCalled();
 
   await user.click(screen.getByText("+1"));
   await user.click(await screen.findByRole("button", { name: "Support" }));

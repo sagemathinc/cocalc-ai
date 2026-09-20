@@ -15,32 +15,43 @@ function NetworkPill({
   network,
   selected,
   onSelect,
+  onOpen,
 }: {
   network: AgentNetwork;
   selected?: boolean;
   onSelect?: (network: AgentNetwork) => void;
+  onOpen?: (network: AgentNetwork) => void;
 }) {
   const projects = networkProjectCount(network);
-  const tooltip = `${network.members.length} members · ${network.delivery_mode} delivery · ${projects} project${projects === 1 ? "" : "s"}`;
+  const interactive = !!onSelect || (selected && !!onOpen);
+  const tooltip = `${network.members.length} members · ${network.delivery_mode} delivery · ${projects} project${projects === 1 ? "" : "s"}${selected && onOpen ? " · Open network details" : ""}`;
+  const activate = () => {
+    if (selected && onOpen) {
+      onOpen(network);
+    } else {
+      onSelect?.(network);
+    }
+  };
   return (
     <Tooltip title={tooltip}>
       <Tag
         color={network.state === "paused" ? undefined : networkColor(network)}
-        role={onSelect ? "button" : undefined}
-        tabIndex={onSelect ? 0 : undefined}
-        aria-pressed={onSelect ? selected : undefined}
+        role={interactive ? "button" : undefined}
+        tabIndex={interactive ? 0 : undefined}
+        aria-pressed={interactive ? selected : undefined}
         onClick={(event) => {
           event.stopPropagation();
-          onSelect?.(network);
+          activate();
         }}
         onKeyDown={(event) => {
-          if (!onSelect || (event.key !== "Enter" && event.key !== " ")) return;
+          if (!interactive || (event.key !== "Enter" && event.key !== " "))
+            return;
           event.preventDefault();
           event.stopPropagation();
-          onSelect(network);
+          activate();
         }}
         style={{
-          cursor: onSelect ? "pointer" : undefined,
+          cursor: interactive ? "pointer" : undefined,
           marginInlineEnd: 0,
           maxWidth: 150,
           opacity: network.state === "paused" ? 0.72 : 1,
@@ -62,11 +73,13 @@ export function AgentNetworkPills({
   maxVisible = 1,
   selectedNetworkId,
   onSelect,
+  onOpen,
 }: {
   networks: AgentNetwork[];
   maxVisible?: number;
   selectedNetworkId?: string;
   onSelect?: (network: AgentNetwork) => void;
+  onOpen?: (network: AgentNetwork) => void;
 }) {
   if (!networks.length) return null;
   const visible = networks.slice(0, maxVisible);
@@ -79,6 +92,7 @@ export function AgentNetworkPills({
           network={network}
           selected={network.agent_network_id === selectedNetworkId}
           onSelect={onSelect}
+          onOpen={onOpen}
         />
       ))}
       {overflow.length > 0 && (
@@ -94,7 +108,14 @@ export function AgentNetworkPills({
                   size="small"
                   onClick={(event) => {
                     event.stopPropagation();
-                    onSelect?.(network);
+                    if (
+                      network.agent_network_id === selectedNetworkId &&
+                      onOpen
+                    ) {
+                      onOpen(network);
+                    } else {
+                      onSelect?.(network);
+                    }
                   }}
                 >
                   {network.title}

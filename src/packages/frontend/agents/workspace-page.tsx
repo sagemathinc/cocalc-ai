@@ -90,11 +90,16 @@ import {
 import { openAgentThread } from "./open-agent";
 import {
   personalAgentApi,
+  refreshAgentNetworks,
   refreshNamedAgents,
   useAgentNetworks,
   useNamedAgents,
 } from "./api";
 import { AgentNetworkPills } from "./agent-network-pills";
+import {
+  AgentNetworkDetailsModal,
+  AgentNetworkFilterBar,
+} from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
@@ -1513,6 +1518,7 @@ function AgentWorkspace({
   networks,
   selectedNetworkId,
   onSelectNetwork,
+  onOpenNetwork,
 }: {
   onCopy: (agent: NamedAgent) => void;
   projectAgents: NamedAgent[];
@@ -1536,6 +1542,7 @@ function AgentWorkspace({
   networks: AgentNetwork[];
   selectedNetworkId?: string;
   onSelectNetwork: (network: AgentNetwork) => void;
+  onOpenNetwork: (network: AgentNetwork) => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [selectedThread, setSelectedThread] = useState(agent.thread_id);
@@ -1861,6 +1868,7 @@ function AgentWorkspace({
                 maxVisible={2}
                 selectedNetworkId={selectedNetworkId}
                 onSelect={onSelectNetwork}
+                onOpen={onOpenNetwork}
               />
             )}
             <span aria-hidden="true">·</span>
@@ -2138,6 +2146,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [networkFilterId, setNetworkFilterId] = useState(
     initialAgentNetworkFilter,
   );
+  const [networkDetailsId, setNetworkDetailsId] = useState<string>();
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
@@ -2181,6 +2190,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const networks = networkDirectory?.networks ?? [];
   const selectedNetwork = networks.find(
     ({ agent_network_id }) => agent_network_id === networkFilterId,
+  );
+  const detailsNetwork = networks.find(
+    ({ agent_network_id }) => agent_network_id === networkDetailsId,
   );
   const agentOrganization = useAgentWorkspaceOrganization(agents);
   const selected =
@@ -2594,6 +2606,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               networks={networksForAgent(networks, agent)}
               selectedNetworkId={networkFilterId}
               onSelect={selectNetwork}
+              onOpen={(network) =>
+                setNetworkDetailsId(network.agent_network_id)
+              }
             />
           </div>
         </div>
@@ -2775,22 +2790,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           onChange={(event) => setSearch(event.target.value)}
         />
         {selectedNetwork && (
-          <div
-            role="status"
-            style={{ display: "flex", alignItems: "center", gap: 6 }}
-          >
-            <Text type="secondary">Filtered by</Text>
-            <Tag
-              closable
-              onClose={(event) => {
-                event.preventDefault();
-                selectNetwork();
-              }}
-              style={{ marginInlineEnd: 0, maxWidth: "100%" }}
-            >
-              {selectedNetwork.title}
-            </Tag>
-          </div>
+          <AgentNetworkFilterBar
+            network={selectedNetwork}
+            onOpen={() => setNetworkDetailsId(selectedNetwork.agent_network_id)}
+            onClear={() => selectNetwork()}
+          />
         )}
         {networkError && (
           <Alert
@@ -3203,6 +3207,9 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                   networks={networksForAgent(networks, agent)}
                   selectedNetworkId={networkFilterId}
                   onSelectNetwork={selectNetwork}
+                  onOpenNetwork={(network) =>
+                    setNetworkDetailsId(network.agent_network_id)
+                  }
                   onClose={() => {
                     setMountedWorkspaces((old) => {
                       const next = new Set(old);
@@ -3264,6 +3271,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           )}
         </Space>
       </Modal>
+      <AgentNetworkDetailsModal
+        network={detailsNetwork}
+        onClose={() => setNetworkDetailsId(undefined)}
+        onChanged={refreshAgentNetworks}
+      />
     </main>
   );
 }
