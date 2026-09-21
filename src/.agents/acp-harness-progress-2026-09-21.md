@@ -1727,6 +1727,23 @@ Resizing after opening can remount the originating toolbar; this check does not
 claim focus restoration across that remount. The remote project-host backend was
 not upgraded by this frontend build.
 
+## Snapshot Deadline Boundary
+
+A read-only typed snapshot listing at 18:08 UTC found retained automatic
+snapshots at 16:54:43, 17:24:37 and 17:54:34 on the disposable qualification
+project. This confirms recent scheduling, not a strict 15-minute cadence: the
+inventory is retention-filtered and the host can defer work.
+
+Inspection found a reproducible exact-deadline bug in rolling snapshot creation:
+the age comparison used `>` instead of `>=`, skipping changed data when the
+snapshot was exactly one configured interval old. Four focused tests failed
+before the fix, covering frequent, daily, weekly and monthly intervals. They
+now pass and also verify no creation one millisecond early. The 19 file-server
+snapshot tests and file-server TypeScript build pass. Host resource-admission
+and unchanged-data safeguards are unchanged. This narrow boundary fix does not
+explain all observed live gaps or eliminate scheduler drift/restart delays.
+No live snapshot was created, restored or deleted for this investigation.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
