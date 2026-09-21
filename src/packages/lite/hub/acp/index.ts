@@ -317,6 +317,12 @@ import { buildCodexRuntimeEnv } from "./runtime-env";
 import { automationAfterScheduledEnqueueFailure } from "./automation-enqueue-failure";
 import { validateAttentionAnswers } from "@cocalc/ai/acp";
 import { pinCodexCredentialAtAdmission } from "./codex-credential-admission";
+import {
+  prepareHarnessRequest,
+  harnessRuntimeKey,
+  createHarnessAgent,
+} from "./harness-runtime";
+export { setHarnessLauncher } from "./harness-runtime";
 
 export {
   pinCodexCredentialAtAdmission,
@@ -415,6 +421,7 @@ export function setGeneratedImageBlobWriter(
 }
 
 const agents = new Map<string, AcpAgent>();
+const harnessConversationProfiles = new Map<string, string>();
 const agentProjectIds = new WeakMap<AcpAgent, string>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
@@ -2064,6 +2071,7 @@ export class ChatStreamWriter {
   private finishedBy?: "summary" | "error" | "interrupt";
   private completionNoticePublished = false;
   private approverAccountId: string;
+  private runtimeKind: "codex" | "acp";
   private interruptedMessage?: string;
   private contentBeforeInterrupt?: string;
   private interruptNotified = false;
@@ -2550,7 +2558,7 @@ export class ChatStreamWriter {
       state,
       payment_source_kind: "unknown",
       model: undefined,
-      agent_kind: "codex",
+      agent_kind: this.runtimeKind,
       run_kind: this.metadata.automation_id ? "automation" : "interactive",
       title: this.metadata.thread_title || this.metadata.automation_title,
       prompt_snippet: this.metadata.user_message_content,
@@ -2675,8 +2683,10 @@ export class ChatStreamWriter {
     logStoreFactory,
     liveLogStreamFactory,
     livePreviewStreamFactory,
+    runtimeKind = "codex",
   }: {
     metadata: AcpChatContext;
+    runtimeKind?: "codex" | "acp";
     client: ConatClient;
     approverAccountId: string;
     sessionKey?: string;
@@ -2697,6 +2707,7 @@ export class ChatStreamWriter {
       throw new Error("acp chat metadata is missing required thread_id");
     }
     this.metadata = metadata;
+    this.runtimeKind = runtimeKind;
     this.approverAccountId = approverAccountId;
     this.client = client;
     this.chatKey = chatKey(metadata);
@@ -6357,6 +6368,23 @@ export async function recoverOrphanedRunningAcpJobsWithoutLease(
     ) {
       continue;
     }
+    const orphanedRequest = decodeAcpJobRequest(job);
+    if (
+      orphanedRequest.request_kind !== "command" &&
+      orphanedRequest.runtime !== undefined
+    ) {
+      setAcpJobState({
+        op_id: job.op_id,
+        state: "error",
+        error:
+          "ACP harness completion is unknown after worker loss; explicit continuation is required",
+        worker_id: job.worker_id ?? undefined,
+      });
+      noteDetachedWorkerQueueProgress();
+      recovered += 1;
+      terminalized += 1;
+      continue;
+    }
     requeueRunningAcpJob({
       op_id: job.op_id,
       error: recoveryReason,
@@ -7672,11 +7700,15 @@ async function executeAcpRequest({
   stream: (payload?: AcpStreamPayload | null) => Promise<void>;
 }): Promise<AcpExecutionResult> {
   const reqId = randomUUID();
+  request = prepareHarnessRequest(request);
+  const harness = request.runtime?.kind === "acp";
   const startedAt = Date.now();
   const { config } = request;
   const projectId = request.chat?.project_id ?? request.project_id;
   const sessionMode = resolveCodexSessionMode(config);
-  const workspaceRoot = resolveWorkspaceRoot(config);
+  const workspaceRoot = harness
+    ? request.runtime!.profile.cwd
+    : resolveWorkspaceRoot(config);
   logger.debug("evaluate: start", {
     reqId,
     session_id: request.session_id,
@@ -7690,10 +7722,9 @@ async function executeAcpRequest({
     throw Error("project_id must be set");
   }
   await authorizeAgentDeliveryExecution(request, hubApi.agent);
-  const mentionReferences = await resolveHumanTurnMentions(
-    request,
-    hubApi.agent,
-  );
+  const mentionReferences = harness
+    ? []
+    : await resolveHumanTurnMentions(request, hubApi.agent);
   const artifactReferences = await resolveHumanTurnArtifactMentions(
     request,
     hubApi.artifactCatalog,
@@ -7710,12 +7741,14 @@ async function executeAcpRequest({
     workingDirectory: workspaceRoot,
   };
   const useContainer = preferContainerExecutor();
-  const runtimeEnv = await buildCodexRuntimeEnv({
-    request,
-    projectId,
-    includeCliBin: !useContainer,
-    useContainer,
-  });
+  const runtimeEnv = harness
+    ? undefined
+    : await buildCodexRuntimeEnv({
+        request,
+        projectId,
+        includeCliBin: !useContainer,
+        useContainer,
+      });
   const hostRoot =
     useContainer && executor instanceof ContainerExecutor
       ? executor.getMountPoint()
@@ -7738,11 +7771,29 @@ async function executeAcpRequest({
     throw Error("conat client must be initialized");
   }
   const bindings = buildExecutorAdapters(executor, workspaceRoot, hostRoot);
-  const currentAgent = await ensureAgent(
-    projectId,
-    useNativeTerminal,
-    bindings,
-  );
+  const harnessKey = harness ? harnessRuntimeKey(request) : undefined;
+  if (harnessKey) {
+    const conversationKey = JSON.stringify([
+      projectId,
+      request.account_id,
+      request.chat!.path,
+      request.chat!.thread_id,
+    ]);
+    const previousKey = harnessConversationProfiles.get(conversationKey);
+    if (previousKey && previousKey !== harnessKey && agents.has(previousKey)) {
+      throw Error(
+        "Start a fresh conversation to change a retained ACP harness profile",
+      );
+    }
+    harnessConversationProfiles.set(conversationKey, harnessKey);
+  }
+  let currentAgent = harnessKey ? agents.get(harnessKey) : undefined;
+  if (harnessKey && !currentAgent) {
+    currentAgent = await createHarnessAgent(request);
+    agents.set(harnessKey, currentAgent);
+    agentProjectIds.set(currentAgent, projectId);
+  }
+  currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
   const { prompt, local_images, cleanup } = await materializeBlobs(
     request.prompt ?? "",
     projectId,
@@ -7768,6 +7819,7 @@ async function executeAcpRequest({
   const chatWriter = chatContext
     ? new ChatStreamWriter({
         metadata: chatContext,
+        runtimeKind: harness ? "acp" : "codex",
         client: conatClient,
         approverAccountId: request.account_id,
         sessionKey: request.session_id,
@@ -7780,6 +7832,7 @@ async function executeAcpRequest({
   let recoveryCode: CodexAcpRecoveryErrorCode | undefined;
   let recoveryDetail: string | undefined;
   const captureRecoveryCode = (payload?: AcpStreamPayload | null) => {
+    if (harness) return;
     if (payload?.type !== "error") return;
     const directive = failureRecoveryDirective(payload.code, payload.error);
     if (!directive || recoveryCode) return;
@@ -7800,6 +7853,7 @@ async function executeAcpRequest({
       try {
         await chatWriter.handle(payload);
       } catch (err) {
+        if (harness) throw err;
         if (payload?.type === "event" && payload.event.type === "goal")
           throw err;
         logger.warn("chat writer handle failed", err);
@@ -7827,19 +7881,24 @@ async function executeAcpRequest({
       await currentAgent.evaluate({
         ...request,
         mentionReferences,
-        readPendingGoal: chatWriter?.readPendingGoal,
+        readPendingGoal: harness ? undefined : chatWriter?.readPendingGoal,
         prompt: artifactReferences.length
           ? `${augmentPromptWithAgentMentions(prompt, mentionReferences)}\n\nBound artifact references for this human turn (identity only, not access permission):\n${JSON.stringify(artifactReferences)}\nUse these exact source locators, not the displayed @names. These artifacts are in the current project; read their current content through the project chat artifact tools before editing. Do not infer other artifacts or projects from names.`
           : augmentPromptWithAgentMentions(prompt, mentionReferences),
         local_images,
         runtime_env: runtimeEnv,
-        config: effectiveConfig,
+        config: harness ? undefined : effectiveConfig,
         stream: wrappedStream,
       });
       logger.debug("evaluate: done", { reqId });
     } catch (err) {
       logger.warn("evaluate: agent failed", { reqId, err });
-      terminalFallbackError = `codex agent failed: ${(err as Error)?.message ?? err}`;
+      if (harnessKey) {
+        agents.delete(harnessKey);
+        agentProjectIds.delete(currentAgent);
+        await currentAgent.dispose?.();
+      }
+      terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
       try {
         await wrappedStream({
           type: "error",
@@ -9589,7 +9648,7 @@ async function enqueueRecoveryContinuationForJob({
   const sourceJob = current ?? job;
   if (sourceJob.error === ACP_PROJECT_RESTART_FENCE_REASON) return undefined;
   const request = decodeAcpJobRequest(sourceJob);
-  if (request.request_kind === "command") {
+  if (request.request_kind === "command" || request.runtime !== undefined) {
     return undefined;
   }
   const session_id =
@@ -12651,6 +12710,7 @@ export async function disposeAcpAgents(): Promise<void> {
   }
   await Promise.all(pending);
   agents.clear();
+  harnessConversationProfiles.clear();
 }
 
 export async function fenceAcpProjectAfterStop({

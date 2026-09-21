@@ -6,7 +6,8 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 ## Implemented
 
 - Strict, versioned project-managed launch profiles and a separate generic runtime
-  configuration type. These are not yet part of production admission requests.
+  configuration type, now accepted by the durable request path only when the
+  project host explicitly sets `COCALC_ACP_HARNESSES=1` and registers its launcher.
 - An isolated ACP v1 client with initialization, capability discovery, new/load
   session, streaming, sequential prompts, cancellation and disposal. Its launcher
   is injected: there is deliberately no fallback to spawning on the host.
@@ -23,7 +24,8 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   existing `AcpAgent` interface. It emits status, streamed text, preserved generic
   updates/permissions, explicit stop reason and summary without fabricated usage.
   Four additional subprocess tests cover reuse, binding/unsupported options,
-  uncertain delivery and cancellation. It is not yet selected by admission.
+  uncertain delivery and cancellation. Opt-in durable execution selects this
+  adapter, not Codex, and writes events through the existing chat writer.
 - A disposable-project smoke tool with a loopback fake OpenAI-compatible provider.
   It scripts a real harness file-write tool call and streamed response. This is
   development tooling, not the production launcher or an inference service.
@@ -36,7 +38,7 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   read-only. It strips stale image credential fields and revokes its lease even
   when container removal fails. Failed removal can be retried without unmounting
   beneath surviving processes. Six mocked lifecycle tests pass; live host
-  qualification remains. It is internal and not wired into admission;
+  qualification remains. It is registered in the host and detached worker;
   abrupt-worker orphan reconciliation and live validation are still needed.
 
 ## Validation And Real Harnesses
@@ -96,9 +98,24 @@ No application restart or deployment was needed for this standalone checkpoint.
 
 ## Next Integration Slice
 
-1. Wire runtime selection/profile revision into durable admission and the worker
-   adapter boundary without entering Codex-specific credentials, billing, goals,
-   or automatic recovery. Persist principal/project/session/run bindings.
+The admission checkpoint adds four tests (including a real SQLite profile
+round-trip and proof that Codex payment resolution is bypassed), two explicit
+worker-recovery regressions and host registration. The chat writer records
+`agent_kind=acp`. Profile changes currently require a fresh conversation while
+the previous profile is retained. Codex funding/options, automation and inbound
+agent-network delivery are rejected for this experimental path, not silently
+ignored. Recovery never automatically resubmits an uncertain generic turn.
+
+Validation: 106 chat-writer/admission/queued-message tests, 47 detached-worker
+tests and 11 project-host worker/launcher tests passed, plus the project-host
+TypeScript build. This is not yet browser-to-container end-to-end validation.
+Before exposing UI, add a versioned RPC method that old hosts cannot silently
+interpret as Codex. Also qualify live sidecars, interrupted-chat projection,
+native session resume and orphan-container cleanup. Do not enable the host flag
+for general use yet.
+
+1. Qualify the opt-in durable admission/worker path live, including interruption
+   and persistence failures. Add mixed-version-safe RPC and capability discovery.
 2. Implement a supervised container launcher through existing project-host
    execution. Preserve scoped run identity/agent-network grants, structured argv,
    cancellation and descendant termination. The smoke launcher is not reusable

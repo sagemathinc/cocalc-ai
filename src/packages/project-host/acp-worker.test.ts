@@ -26,6 +26,12 @@ const initProjectRunnerConatClientMock = jest.fn();
 const initProjectRunnerFilesystemMock = jest.fn();
 const sandboxExecMock = jest.fn();
 const initCodexProjectRunnerMock = jest.fn();
+jest.mock("./acp/harness-launcher", () => ({
+  launchHarnessInProject: jest.fn(),
+}));
+jest.mock("@cocalc/lite/hub/acp/harness-runtime", () => ({
+  setHarnessLauncher: jest.fn(),
+}));
 const initCodexAttachmentBlobReaderMock = jest.fn();
 const initCodexGeneratedImageBlobWriterMock = jest.fn();
 const initCodexSiteKeyGovernorMock = jest.fn();

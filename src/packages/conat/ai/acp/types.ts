@@ -2,6 +2,7 @@ import type {
   CodexPaymentSourcePreference,
   CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
+import type { AcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
@@ -142,6 +143,8 @@ export interface AcpChatContext {
 
 export type AcpRequest = {
   request_kind?: "codex";
+  // Omitted for legacy/native Codex. A profile is snapshotted at admission.
+  runtime?: { version: 1; kind: "acp"; profile: AcpHarnessProfile };
   project_id: string;
   account_id: string;
   prompt: string;

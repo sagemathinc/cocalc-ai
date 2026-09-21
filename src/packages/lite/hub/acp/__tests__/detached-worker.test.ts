@@ -11,6 +11,7 @@ import {
   recoverCurrentWorkerStuckAcpTurns,
   recoverDetachedWorkerStartupState,
   recoverOrphanedAcpTurns,
+  recoverOrphanedRunningAcpJobsWithoutLease,
   shouldCompleteAcpTurnAfterTerminalStorageFailure,
   shouldStopDetachedWorkerForDrain,
   shouldStopDetachedWorkerForIdle,
@@ -409,6 +410,49 @@ function makeSyncdb(rows: any[] = []) {
 }
 
 describe("terminal failure recovery", () => {
+  it("never creates a Codex recovery continuation for a generic harness", async () => {
+    const queued = enqueueAcpJob({
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    } as any);
+    const resumed = await acpTestInternals.enqueueFailureRecoveryContinuation({
+      client: {} as ConatClient,
+      job: { ...queued, started_at: Date.now() },
+      recoveryCode: "codex_model_capacity",
+    });
+    expect(resumed).toBeUndefined();
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
+    ).toHaveLength(0);
+  });
+
+  it("terminalizes an orphaned harness rather than replaying ambiguous delivery", async () => {
+    const queued = enqueueAcpJob({
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    } as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "gone",
+      worker_bundle_version: "old",
+    });
+    getAcpDatabase()
+      .prepare(
+        "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
+      )
+      .run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
+    await recoverOrphanedRunningAcpJobsWithoutLease({ graceMs: 0 });
+    const after = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(after?.state).toBe("error");
+    expect(after?.error).toContain("completion is unknown");
+  });
+
   it("schedules a same-process wakeup for a delayed continuation", () => {
     const previous = process.env.COCALC_LITE_ACP_DETACHED_WORKER;
     process.env.COCALC_LITE_ACP_DETACHED_WORKER = "0";

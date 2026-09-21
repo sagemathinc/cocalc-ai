@@ -5,6 +5,7 @@
 
 import type { AcpJobRequest } from "@cocalc/conat/ai/acp/types";
 import { hubApi } from "../api";
+import { prepareHarnessRequest } from "./harness-runtime";
 
 type CodexCredentialAdmissionResolver = (opts: {
   account_id: string;
@@ -33,6 +34,7 @@ export async function pinCodexCredentialAtAdmission<T extends AcpJobRequest>(
   request: T,
 ): Promise<T> {
   if (request.request_kind === "command") return request;
+  if (request.runtime !== undefined) return prepareHarnessRequest(request) as T;
   const preference = request.config?.paymentSource ?? "auto";
   if (
     preference !== "auto" &&
