@@ -7,8 +7,10 @@ qualification tools are implemented. Opt-in admission, sidecar launching and
 durable chat wiring have passed a live deterministic-fixture check, including
 two-turn reuse and cancellation. Experimental Agents workspace creation has now
 passed browser submission, reload, follow-up and interruption using a fixture.
-Manual full-project snapshot recovery passed; home-only restore exposed an
-existing rootfs staging failure. OpenCode and Pi have passed
+Manual full-project snapshot recovery passed. Home-only restore exposed a rootfs
+staging failure; preparing the clone before swapping now fixes that case, with
+live checks that home content reverts while newer rootfs content survives.
+Rootfs-only restore and broader failure cases remain unqualified. OpenCode and Pi have passed
 real-process, local-fake-provider smoke tests, including network-disabled tests.
 Pi also passed actual local Qwen inference in a separate network-disabled
 container. Durable OpenCode resume, same-project queued agent messaging, external

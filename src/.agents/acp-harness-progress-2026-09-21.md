@@ -214,6 +214,25 @@ without a new error or resubmit prompt. No fixture turn remained running.
 
 ### Partial Restore Diagnosis
 
+Home-only restore is now fixed and live-qualified by `48bbf9f4d2`. It prepares
+the disposable snapshot clone with an anchored reflink copy of the current
+rootfs before swapping homes, leaving the original home/rootfs intact for the
+existing rollback path. Rootfs-only restore is unchanged and remains unqualified.
+Five preparation regressions, 76 combined snapshot/project-API tests and the
+project-host TypeScript build passed; the existing Jest open-handle warning was
+observed before the test process exited successfully.
+
+Deployed artifact `20260921T122709Z-48bbf9f4d252`, SHA-256
+`70f63925e4b740496ef4391bf64599f7f292f598c138e2bf026b81471a48c657`, upgrade
+`d861201f-dcc0-412c-9425-7758f0c5eb0d`. Snapshot
+`acp-home-restore-20260921-qualify` captured distinct home/rootfs marker contents;
+both markers were changed afterward. Typed home-only restore operation
+`f4bced7c-7f5b-44a4-9b3e-0dc5809c79e0` succeeded, including safety snapshot
+`acp-home-restore-20260921-safety`. The home marker reverted to its pre-snapshot
+value, the rootfs marker retained its newer value, and the project container
+restarted. This proves the successful home-only case and preparation-failure
+invariants, not every existing home-swap/rollback failure path.
+
 The later live probe reproduced the home-only restore failure without touching
 the working project: create a disposable Btrfs subvolume under
 `.snapshot-restore-staging`, create an ordinary `rootfs/sentinel` directory in
