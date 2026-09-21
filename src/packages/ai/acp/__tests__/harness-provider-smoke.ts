@@ -246,6 +246,8 @@ async function main() {
     );
     const capabilities = client.capabilities;
     await client.open();
+    const controls = client.controls;
+    await client.configure({});
     assert.equal(
       calls,
       0,
@@ -275,6 +277,13 @@ async function main() {
         ok: true,
         agent: capabilities.agentInfo,
         loadSession: capabilities.agentCapabilities?.loadSession,
+        controls: {
+          configOptions: controls.configOptions.map(({ id, options }) => ({
+            id,
+            choices: options.length,
+          })),
+          modes: controls.mode?.options.length ?? 0,
+        },
         providerCalls: calls,
         fileWriteVerified: true,
         followupVerified: true,

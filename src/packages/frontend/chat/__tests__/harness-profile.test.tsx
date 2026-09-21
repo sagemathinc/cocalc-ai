@@ -1,7 +1,8 @@
 /** @jest-environment jsdom */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import { harnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import {
   HarnessProfileFields,
   HarnessRuntimeSummary,
@@ -14,6 +15,57 @@ const draft = {
   executable: "/home/user/bin/pi-acp",
   args: "--flag\nvalue with spaces",
 };
+
+test("advertised model selector supports keyboard selection for future submissions", async () => {
+  const runtime = harnessRuntimeFromDraft(draft, "/home/user");
+  const onSettings = jest.fn();
+  const reported = {
+    profile: runtime.profile,
+    controls: harnessSessionControls({
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          type: "select",
+          currentValue: "fast",
+          options: [
+            { value: "fast", name: "Fast" },
+            { value: "deep", name: "Deep" },
+          ],
+        },
+      ],
+    }),
+  };
+  const { rerender } = render(
+    <HarnessRuntimeSummary
+      runtime={runtime}
+      reported={reported}
+      onSettings={onSettings}
+    />,
+  );
+  const user = userEvent.setup();
+  const selector = screen.getByRole("combobox", { name: "Model" });
+  await user.click(selector);
+  await screen.findByRole("option", { name: "Deep" });
+  // rc-select reads legacy keyCode, which user-event/jsdom leaves at zero.
+  fireEvent.keyDown(selector, { key: "ArrowDown", keyCode: 40 });
+  fireEvent.keyDown(selector, { key: "Enter", keyCode: 13 });
+  expect(onSettings).toHaveBeenCalledWith({
+    configOptions: [{ id: "model", value: "deep" }],
+  });
+  expect(screen.getByText(/next submitted turn/)).toBeTruthy();
+  rerender(
+    <HarnessRuntimeSummary
+      runtime={runtime}
+      reported={{
+        ...reported,
+        profile: { ...runtime.profile, revision: "different" },
+      }}
+      onSettings={onSettings}
+    />,
+  );
+  expect(screen.queryByRole("combobox", { name: "Model" })).toBeNull();
+});
 
 test("profile fields have visible labels and support keyboard editing", async () => {
   function Form() {

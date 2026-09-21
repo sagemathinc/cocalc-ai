@@ -20,10 +20,14 @@ const profile = {
   executionPolicy: "full-access",
 };
 
-function adapter(t) {
+function adapter(t, flags = []) {
   let launches = 0;
   const agent = new HarnessAgent(
-    { projectId: "project-a", accountId: "account-a", profile },
+    {
+      projectId: "project-a",
+      accountId: "account-a",
+      profile: { ...profile, args: [...profile.args, ...flags] },
+    },
     { path: "a.chat", threadId: "conversation-a" },
     async ({ profile }) => {
       launches++;
@@ -91,6 +95,31 @@ test("agent adapter rejects mismatched authority and unsupported options before 
   assert.equal(launches(), 0);
   await agent.evaluate(request);
   await assert.rejects(agent.evaluate({ ...request, session_id: "other" }));
+  assert.equal(launches(), 1);
+});
+
+test("agent applies admitted settings and publishes controls while retaining its process", async (t) => {
+  const { agent, request, events, launches } = adapter(t, ["--config-options"]);
+  const runtime = {
+    version: 1,
+    kind: "acp",
+    profile,
+    settings: { configOptions: [{ id: "model", value: "deep" }] },
+  };
+  await agent.evaluate({ ...request, prompt: "settings", runtime });
+  assert.equal(events.at(-1).finalResponse, "deep/code");
+  const controls = events.find((event) => event.event?.kind === "controls")
+    .event.data.controls;
+  assert.equal(controls.configOptions[0].currentValue, "deep");
+  await agent.evaluate({
+    ...request,
+    prompt: "settings",
+    runtime: {
+      ...runtime,
+      settings: { configOptions: [{ id: "model", value: "fast" }] },
+    },
+  });
+  assert.equal(events.at(-1).finalResponse, "fast/code");
   assert.equal(launches(), 1);
 });
 
@@ -169,6 +198,59 @@ async function start(t, args = []) {
   t.after(() => client.dispose());
   return client;
 }
+test("advertised grouped config options apply before inference and survive follow-up", async (t) => {
+  const client = await start(t, ["--config-options"]);
+  await client.open();
+  assert.deepEqual(client.controls.configOptions[0].options, [
+    { value: "fast", name: "Fast" },
+    { value: "deep", name: "Deep" },
+  ]);
+  await assert.rejects(
+    client.configure({ configOptions: [{ id: "model", value: "invented" }] }),
+    { code: "unsupported" },
+  );
+  await client.configure({ configOptions: [{ id: "model", value: "deep" }] });
+  const events = [];
+  await client.prompt("settings", async (event) => {
+    events.push(event);
+  });
+  assert.equal(events[0].text, "deep/code");
+  assert.equal(client.controls.configOptions[0].currentValue, "deep");
+  const clone = client.controls;
+  clone.configOptions[0].options.length = 0;
+  assert.equal(client.controls.configOptions[0].options.length, 2);
+});
+
+test("legacy modes are session-scoped and cannot change during a prompt", async (t) => {
+  const client = await start(t, ["--modes"]);
+  await client.open("fixture-session");
+  await client.configure({ modeId: "plan" });
+  assert.equal(client.controls.mode.currentValue, "plan");
+  let ready;
+  const started = new Promise((resolve) => (ready = resolve));
+  const run = client.prompt("hang", async () => ready());
+  await started;
+  await assert.rejects(client.configure({ modeId: "code" }), {
+    code: "unavailable",
+  });
+  await client.cancel();
+  await run;
+  assert.equal(client.controls.mode.currentValue, "plan");
+});
+
+test("unsupported controls are not silently accepted", async (t) => {
+  const client = await start(t);
+  await client.open();
+  assert.deepEqual(client.controls, { configOptions: [] });
+  await assert.rejects(client.configure({ modeId: "plan" }), {
+    code: "unsupported",
+  });
+  await assert.rejects(
+    client.configure({ configOptions: [{ id: "model", value: "deep" }] }),
+    { code: "unsupported" },
+  );
+});
+
 test("strict profile validation and defensive copy", () => {
   const parsed = parseAcpHarnessProfile(profile);
   assert.deepEqual(parsed, profile);

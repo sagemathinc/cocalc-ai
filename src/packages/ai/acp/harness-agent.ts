@@ -66,11 +66,26 @@ export class HarnessAgent implements AcpAgent {
         await client.open(request.session_id);
       }
       const client = this.client;
+      await client.configure(request.runtime?.settings ?? {});
+      const publishControls = () =>
+        request.stream({
+          type: "event",
+          event: {
+            type: "harness",
+            source: "acp",
+            kind: "controls",
+            data: {
+              profile: this.binding.profile,
+              controls: client.controls,
+            },
+          },
+        });
       await request.stream({
         type: "status",
         state: "running",
         threadId: client.sessionId,
       });
+      await publishControls();
       let finalResponse = "";
       const result = await client.prompt(request.prompt, async (event) => {
         if (event.type === "message") {
@@ -102,6 +117,7 @@ export class HarnessAgent implements AcpAgent {
           });
         }
       });
+      await publishControls();
       await request.stream({
         type: "event",
         event: {

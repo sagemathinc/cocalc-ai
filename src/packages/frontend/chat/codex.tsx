@@ -511,11 +511,22 @@ export function CodexPaymentCredentialsModal({
 export function CodexConfigButton(
   props: CodexConfigButtonProps,
 ): React.ReactElement {
-  const runtime = props.actions?.getThreadMetadata?.(
-    props.threadKey,
-  )?.agent_runtime;
+  const metadata = props.actions?.getThreadMetadata?.(props.threadKey);
+  const runtime = metadata?.agent_runtime;
   return runtime != null ? (
-    <HarnessRuntimeSummary runtime={runtime} />
+    <HarnessRuntimeSummary
+      runtime={runtime}
+      reported={metadata?.agent_runtime_controls}
+      onSettings={
+        props.actions?.setHarnessSessionSettings && props.threadKey
+          ? (settings) =>
+              props.actions!.setHarnessSessionSettings(
+                props.threadKey!,
+                settings,
+              )
+          : undefined
+      }
+    />
   ) : (
     <NativeCodexConfigButton {...props} />
   );

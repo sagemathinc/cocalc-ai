@@ -142,10 +142,41 @@ the exact original marker content. Harness files remained present. This qualifie
 that manual full-project restore scenario, not guaranteed 15-minute scheduling,
 home-only restore, editor convergence, or every interruption case.
 
-The UI remains experimental: dynamic model/mode controls, rich generic tool
-rendering, incoming network requests, task QA and images are not qualified.
+The UI remains experimental: rich generic tool rendering, incoming network
+requests, task QA and images are not qualified.
 Some shared completion notifications still use Codex wording. A feature flag on
 the host remains required; discovery/old-host UX needs further work.
+
+## Harness Configuration Controls
+
+Generic threads now render bounded, harness-advertised select controls (including
+model choices), preferring ACP config options over legacy session modes. Settings
+are saved with the thread and defensively copied into the admitted request. A
+queued turn retains its submitted selection. The adapter validates each choice
+against the live session catalog and applies it before prompting, reusing the
+same process. Returned configuration must confirm the selected value. Unknown
+choices fail explicitly rather than falling back to a model or native Codex.
+
+The UI states that changes affect the next submitted turn, not running or queued
+turns; harness modes do not change container isolation. Controls are reported as
+advisory chat metadata, not authority or executable UI. Stale metadata from a
+different profile is ignored. Stable ACP select options and legacy modes are
+supported; boolean options and private model-selection extensions are not.
+
+The first turn still uses project configuration. Pre-prompt discovery and choices
+in the new-agent form remain a follow-up. Protocol coverage now includes 27 real
+subprocess tests, with model changes on a retained adapter. Admission tests cover
+settings snapshots through SQLite, writer tests cover catalog persistence only
+for generic runtimes, and the frontend selector has keyboard coverage. A shutdown
+race exposed by failed output persistence was also corrected: all connection
+promises are observed even when the runtime has already failed.
+
+The refreshed standalone smoke passed against both pinned installations: Pi
+advertised `model` (one fake-provider model) and `thought_level` (six choices);
+OpenCode advertised `model` (one choice) and `mode` (two choices). Both catalogs
+normalized successfully and both harnesses repeated the file-write/follow-up
+check with three/four local fake-provider calls respectively. This is catalog
+discovery evidence, not qualification of every individual control value.
 
 ## Validation And Real Harnesses
 

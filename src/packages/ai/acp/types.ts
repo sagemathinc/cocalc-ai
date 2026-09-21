@@ -7,6 +7,7 @@ import type {
 import type { CodexSessionConfig } from "@cocalc/util/ai/codex";
 import type { CodexGoalCommand } from "@cocalc/util/ai/codex-goal";
 import type { AgentMentionReference } from "@cocalc/util/agent-mentions";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 
 export type AcpStreamUsage = SharedAcpStreamUsage;
 export type AcpStreamEvent = SharedAcpStreamEvent;
@@ -37,6 +38,7 @@ export type AcpStreamHandler = (
 ) => Promise<void>;
 
 export interface AcpEvaluateRequest {
+  runtime?: AcpHarnessRuntime;
   // Internal, validated by the execution service for this human's current input.
   mentionReferences?: AgentMentionReference[];
   // Internal project-local chat replica accessor, never a wire-supplied callback.

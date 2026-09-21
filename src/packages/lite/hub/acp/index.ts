@@ -2935,6 +2935,16 @@ export class ChatStreamWriter {
       return;
     }
     if (
+      this.runtimeKind === "acp" &&
+      payload.type === "event" &&
+      payload.event.type === "harness" &&
+      payload.event.kind === "controls"
+    ) {
+      await this.patchThreadConfig({
+        agent_runtime_controls: payload.event.data,
+      });
+    }
+    if (
       payload.type === "event" &&
       payload.event.type === "goal" &&
       !this.metadata.automation_id

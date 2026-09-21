@@ -103,6 +103,8 @@ import { ChatMessageCache, type ThreadIndexEntry } from "./message-cache";
 import { processAI as processAIExternal } from "./actions/ai";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import { parseHarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
+import type { HarnessSessionSettings } from "@cocalc/util/ai/harness-controls";
 import { getDefaultCodexSessionMode } from "./codex-defaults";
 import {
   readCodexSubscriptionSelection,
@@ -223,6 +225,7 @@ export interface PreparedChatSendIdentity {
 
 export interface ThreadMetadataSnapshot {
   agent_runtime?: AcpHarnessRuntime;
+  agent_runtime_controls?: unknown;
   agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
@@ -2245,6 +2248,7 @@ export class ChatActions extends Actions<ChatState> {
       agent_model,
       agent_mode,
       agent_runtime: field<AcpHarnessRuntime>(cfg, "agent_runtime"),
+      agent_runtime_controls: field(cfg, "agent_runtime_controls"),
       agent_session_id: readString("agent_session_id"),
       acp_config,
       codex_completion_notification:
@@ -2930,6 +2934,23 @@ export class ChatActions extends Actions<ChatState> {
       return;
     }
     this.syncdb.commit();
+    void this.saveSyncdb();
+  };
+
+  setHarnessSessionSettings = (
+    threadKey: string,
+    settings: HarnessSessionSettings,
+  ): void => {
+    const runtime = parseAcpHarnessRuntime(
+      this.getThreadMetadata(threadKey).agent_runtime,
+    );
+    const next = {
+      ...runtime,
+      settings: parseHarnessSessionSettings(settings),
+    };
+    if (!this.setThreadConfigRecord(threadKey, { agent_runtime: next }))
+      throw Error("Unable to save ACP settings");
+    this.syncdb?.commit();
     void this.saveSyncdb();
   };
 

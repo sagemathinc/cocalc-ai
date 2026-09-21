@@ -1,4 +1,6 @@
 import type { CodexSessionConfig } from "./codex";
+import { parseHarnessSessionSettings } from "./harness-controls";
+import type { HarnessSessionSettings } from "./harness-controls";
 
 /** Project-managed configuration only. Never store credential values here. */
 export interface AcpHarnessProfile {
@@ -15,7 +17,12 @@ export interface AcpHarnessProfile {
 
 export type AgentRuntimeConfig =
   | { version: 1; kind: "codex-native"; codex: CodexSessionConfig }
-  | { version: 1; kind: "acp"; profile: AcpHarnessProfile };
+  | {
+      version: 1;
+      kind: "acp";
+      profile: AcpHarnessProfile;
+      settings?: HarnessSessionSettings;
+    };
 
 export type AcpHarnessRuntime = Extract<AgentRuntimeConfig, { kind: "acp" }>;
 
@@ -27,7 +34,7 @@ export function parseAcpHarnessRuntime(value: unknown): AcpHarnessRuntime {
     obj.version !== 1 ||
     obj.kind !== "acp" ||
     Object.keys(obj).some(
-      (key) => !["version", "kind", "profile"].includes(key),
+      (key) => !["version", "kind", "profile", "settings"].includes(key),
     )
   )
     throw Error("Unsupported agent runtime");
@@ -35,6 +42,9 @@ export function parseAcpHarnessRuntime(value: unknown): AcpHarnessRuntime {
     version: 1,
     kind: "acp",
     profile: parseAcpHarnessProfile(obj.profile),
+    ...(obj.settings === undefined
+      ? {}
+      : { settings: parseHarnessSessionSettings(obj.settings) }),
   };
 }
 

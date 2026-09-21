@@ -3501,6 +3501,22 @@ describe("ChatStreamWriter", () => {
       await writer.waitUntilReady();
       await writer.persistSessionId("session-123");
       await delay(0);
+      const controls = {
+        profile: { id: "fixture" },
+        controls: { configOptions: [] },
+      };
+      await writer.handle({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "controls",
+          data: controls,
+        },
+      });
+      expect(sets.some((row) => row.agent_runtime_controls === controls)).toBe(
+        runtimeKind === "acp",
+      );
 
       const threadCfgUpdate = sets.find(
         (x) =>

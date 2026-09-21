@@ -84,12 +84,19 @@ test("generic admission snapshots profile and bypasses Codex credentials through
   const resolver = jest.fn();
   setCodexCredentialAdmissionResolver(resolver);
   const source = request();
+  source.runtime!.settings = {
+    configOptions: [{ id: "model", value: "fast" }],
+  };
   const admitted = await pinCodexCredentialAtAdmission(source);
   const job = enqueueAcpJob(admitted);
   source.runtime!.profile.args.push("changed");
   source.runtime!.profile.revision = "2";
+  source.runtime!.settings.configOptions![0].value = "deep";
   expect(decodeAcpJobRequest(job)).toMatchObject({
-    runtime: { profile: { revision: "1", args: [] } },
+    runtime: {
+      profile: { revision: "1", args: [] },
+      settings: { configOptions: [{ id: "model", value: "fast" }] },
+    },
   });
   expect(resolver).not.toHaveBeenCalled();
 });

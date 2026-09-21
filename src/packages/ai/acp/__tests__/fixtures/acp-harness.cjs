@@ -6,6 +6,41 @@ const result = (id, value) => send({ id, result: value });
 let pendingPrompt;
 let permissionPrompt;
 let counter = 0;
+let selectedModel = "fast";
+let selectedMode = "code";
+const controls = () =>
+  process.argv.includes("--config-options")
+    ? {
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            type: "select",
+            currentValue: selectedModel,
+            options: [
+              {
+                group: "fixture",
+                name: "Fixture",
+                options: [
+                  { value: "fast", name: "Fast" },
+                  { value: "deep", name: "Deep" },
+                ],
+              },
+            ],
+          },
+        ],
+      }
+    : process.argv.includes("--modes")
+      ? {
+          modes: {
+            currentModeId: selectedMode,
+            availableModes: [
+              { id: "code", name: "Code" },
+              { id: "plan", name: "Plan" },
+            ],
+          },
+        }
+      : {};
 const update = (text, sessionId = "fixture-session") =>
   send({
     method: "session/update",
@@ -36,12 +71,30 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         authMethods: [],
       });
     case "session/new":
-      return result(message.id, { sessionId: "fixture-session" });
+      return result(message.id, {
+        sessionId: "fixture-session",
+        ...controls(),
+      });
     case "session/load":
       update("old replayed answer");
+      return result(message.id, controls());
+    case "session/set_config_option":
+      if (
+        message.params.configId !== "model" ||
+        !["fast", "deep"].includes(message.params.value)
+      )
+        return result(message.id, {});
+      selectedModel = message.params.value;
+      return result(message.id, controls());
+    case "session/set_mode":
+      selectedMode = message.params.modeId;
       return result(message.id, {});
     case "session/prompt": {
       const text = message.params.prompt[0].text;
+      if (text === "settings") {
+        update(`${selectedModel}/${selectedMode}`);
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "flood") {
         for (let i = 0; i < 100; i++) update("x".repeat(65536));
         return;

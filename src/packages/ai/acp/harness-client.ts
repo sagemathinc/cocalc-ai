@@ -11,6 +11,14 @@ import type { Readable, Writable } from "node:stream";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import { harnessTransport } from "./harness-transport";
+import {
+  harnessSessionControls,
+  parseHarnessSessionSettings,
+} from "@cocalc/util/ai/harness-controls";
+import type {
+  HarnessSessionControls,
+  HarnessSessionSettings,
+} from "@cocalc/util/ai/harness-controls";
 
 export interface HarnessProcess {
   stdout: Readable;
@@ -59,6 +67,7 @@ export class AcpHarnessClient {
   private session?: NewSessionResponse;
   private active = false;
   private opening = false;
+  private configuring = false;
   private canceled = false;
   private disposed = false;
   private failure?: Error;
@@ -142,6 +151,76 @@ export class AcpHarnessClient {
   get running(): boolean {
     return this.active;
   }
+  get controls(): HarnessSessionControls {
+    return harnessSessionControls(this.session ?? {});
+  }
+
+  /** Apply the admitted choices while idle; never mutate an in-flight turn. */
+  async configure(settings: HarnessSessionSettings): Promise<void> {
+    if (
+      !this.session ||
+      this.active ||
+      this.opening ||
+      this.configuring ||
+      this.disposed
+    )
+      throw new HarnessError(
+        "unavailable",
+        "ACP session must be idle and open",
+      );
+    const selected = parseHarnessSessionSettings(settings);
+    this.configuring = true;
+    try {
+      if (selected.modeId != null) {
+        const control = this.controls.mode;
+        if (!control?.options.some(({ value }) => value === selected.modeId))
+          throw new HarnessError(
+            "unsupported",
+            "Selected ACP mode is not advertised by this session",
+          );
+        if (control.currentValue !== selected.modeId) {
+          await this.request(
+            this.connection.setSessionMode({
+              sessionId: this.session.sessionId,
+              modeId: selected.modeId,
+            }),
+          );
+          this.session.modes!.currentModeId = selected.modeId;
+        }
+      }
+      for (const choice of selected.configOptions ?? []) {
+        const control = this.controls.configOptions.find(
+          ({ id }) => id === choice.id,
+        );
+        if (!control?.options.some(({ value }) => value === choice.value))
+          throw new HarnessError(
+            "unsupported",
+            "Selected ACP configuration value is not advertised by this session",
+          );
+        if (control.currentValue === choice.value) continue;
+        const response = await this.request(
+          this.connection.setSessionConfigOption({
+            sessionId: this.session.sessionId,
+            configId: choice.id,
+            value: choice.value,
+          }),
+        );
+        this.session.configOptions = response.configOptions;
+        // Changing a model can change the other controls. Use the returned
+        // catalog for subsequent selections and verify the effective value.
+        const effective = this.controls.configOptions.find(
+          ({ id }) => id === choice.id,
+        );
+        if (effective?.currentValue !== choice.value)
+          throw new HarnessError(
+            "rejected",
+            "Harness did not apply the selected ACP configuration value",
+          );
+      }
+    } finally {
+      this.configuring = false;
+    }
+  }
 
   private fail(error: Error) {
     this.failure ??= error;
@@ -161,8 +240,16 @@ export class AcpHarnessClient {
         );
     });
     try {
-      if (this.failure || this.disposed) throw Error("ACP runtime unavailable");
-      return await Promise.race([operation, closed, deadline]);
+      // Observe every promise even when a prior output failure already closed
+      // the runtime. Otherwise the close rejection can escape unhandled.
+      return await Promise.race([
+        operation,
+        closed,
+        deadline,
+        ...(this.failure || this.disposed
+          ? [Promise.reject(Error("ACP runtime unavailable"))]
+          : []),
+      ]);
     } catch (error) {
       const protocolRejection =
         !this.failure &&
@@ -220,7 +307,7 @@ export class AcpHarnessClient {
   ): Promise<{ stopReason: StopReason }> {
     if (this.disposed || this.failure)
       throw new HarnessError("unavailable", "ACP runtime is closed");
-    if (!this.session || this.active)
+    if (!this.session || this.active || this.configuring)
       throw Error("ACP session must be idle and open");
     if (
       typeof text !== "string" ||
@@ -255,12 +342,21 @@ export class AcpHarnessClient {
   }
 
   private onUpdate(notification: SessionNotification): Promise<void> {
-    if (!this.active || !this.session) return Promise.resolve();
+    if (!this.session) return Promise.resolve();
     if (notification.sessionId !== this.session.sessionId) {
       this.fail(Error("ACP update has wrong session"));
       return Promise.resolve();
     }
     const update = notification.update;
+    if (update.sessionUpdate === "config_option_update") {
+      this.session.configOptions = update.configOptions;
+    } else if (
+      update.sessionUpdate === "current_mode_update" &&
+      this.session.modes
+    ) {
+      this.session.modes.currentModeId = update.currentModeId;
+    }
+    if (!this.active) return Promise.resolve();
     if (
       (update.sessionUpdate === "agent_message_chunk" ||
         update.sessionUpdate === "agent_thought_chunk") &&
