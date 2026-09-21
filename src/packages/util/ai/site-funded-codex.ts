@@ -35,9 +35,9 @@ export const DEFAULT_SITE_FUNDED_CODEX_POLICY: SiteFundedCodexPolicy = {
   model: "gpt-5.6-luna",
   reasoning: "medium",
   serviceTier: "standard",
-  // Site-funded turns use the account's effective ACP concurrency entitlement.
-  // This fallback matches generic ACP admission when a tier omits the field.
-  maxConcurrentTurnsPerAccount: 50,
+  // Explicit membership entitlements may raise this. Keep the site-funded
+  // fallback conservative when an entitlement is missing or malformed.
+  maxConcurrentTurnsPerAccount: 2,
   maxTurnCostMicrousd: 250_000,
   maxTurnDurationMs: 60 * 60_000,
   contextWindowTokens: 128_000,

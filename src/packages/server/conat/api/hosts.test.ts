@@ -688,6 +688,95 @@ describe("site-funded Codex account directory routing", () => {
     );
   });
 
+  it.each([
+    ["missing", undefined],
+    ["negative", -1],
+    ["not numeric", "20"],
+    ["not finite", Number.NaN],
+  ])(
+    "uses conservative site-funded concurrency for a %s entitlement",
+    async (_description, entitlement) => {
+      membership.mockResolvedValue({
+        source: "subscription",
+        class: "custom",
+        effective_limits: { acp_max_running_per_account: entitlement },
+      });
+      overview.mockResolvedValue({
+        meters: [
+          { id: "ai-5h", limit: 10, remaining: 5 },
+          { id: "ai-7d", limit: 20, remaining: 15 },
+        ],
+      });
+      jest
+        .spyOn(
+          await import("@cocalc/server/cluster-config"),
+          "getConfiguredClusterSeedBayId",
+        )
+        .mockReturnValue(
+          (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+        );
+      const reserve = jest
+        .spyOn(
+          await import("@cocalc/server/ai/site-funded-codex-reservations"),
+          "reserveSiteFundedCodexTurn",
+        )
+        .mockResolvedValue({ allowed: true } as any);
+
+      const { reserveSiteFundedCodexTurn } = await import("./hosts");
+      await expect(reserveSiteFundedCodexTurn(request)).resolves.toEqual({
+        allowed: true,
+      });
+      expect(reserve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          policy: expect.objectContaining({
+            maxConcurrentTurnsPerAccount: 2,
+          }),
+        }),
+      );
+    },
+  );
+
+  it("preserves a zero concurrency entitlement", async () => {
+    membership.mockResolvedValue({
+      source: "subscription",
+      class: "custom",
+      effective_limits: { acp_max_running_per_account: 0 },
+    });
+    overview.mockResolvedValue({
+      meters: [
+        { id: "ai-5h", limit: 10, remaining: 5 },
+        { id: "ai-7d", limit: 20, remaining: 15 },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    const reserve = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({
+        allowed: false,
+        code: "account_concurrency",
+      } as any);
+
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await reserveSiteFundedCodexTurn(request);
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        policy: expect.objectContaining({
+          maxConcurrentTurnsPerAccount: 0,
+        }),
+      }),
+    );
+  });
+
   it("finds a remote account absent locally, then checks its home-bay entitlement", async () => {
     const { reserveSiteFundedCodexTurn } = await import("./hosts");
     await expect(reserveSiteFundedCodexTurn(request)).resolves.toMatchObject({

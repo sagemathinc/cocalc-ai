@@ -313,6 +313,43 @@ describe("site-funded Codex reservations", () => {
     });
   });
 
+  it("atomically shares remaining allowance across parallel reservations", async () => {
+    const accountId = uuid();
+    const attempts = await Promise.all(
+      Array.from({ length: 20 }, () =>
+        reserveSiteFundedCodexTurn({
+          ...options({
+            accountId,
+            maxTurnCostMicrousd: 3_000,
+            poolLimitMicrousd: 1_000_000,
+            globalPoolLimitMicrousd: 1_000_000,
+          }),
+          policy: {
+            ...options().policy,
+            maxConcurrentTurnsPerAccount: 20,
+            maxTurnCostMicrousd: 3_000,
+          },
+          accountRemaining5hMicrousd: 5_000,
+          accountRemaining7dMicrousd: 8_000,
+        }),
+      ),
+    );
+    const admitted = attempts.filter((entry) => entry.allowed);
+    expect(admitted).toHaveLength(2);
+    expect(
+      admitted.reduce(
+        (total, entry) =>
+          total + (entry.allowed ? entry.reservation.reservedMicrousd : 0),
+        0,
+      ),
+    ).toBe(5_000);
+    expect(
+      attempts
+        .filter((entry) => !entry.allowed)
+        .every((entry) => !entry.allowed && entry.code === "account_limit_5h"),
+    ).toBe(true);
+  });
+
   it("commits recorded usage when an active reservation expires", async () => {
     const admission = await reserveSiteFundedCodexTurn(
       options({ maxTurnCostMicrousd: 50_000 }),

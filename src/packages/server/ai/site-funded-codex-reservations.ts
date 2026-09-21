@@ -549,7 +549,11 @@ export async function reserveSiteFundedCodexTurn(
       `
         SELECT
           COUNT(*)::int AS global_active,
-          COUNT(*) FILTER (WHERE account_id = $1)::int AS account_active
+          COUNT(*) FILTER (WHERE account_id = $1)::int AS account_active,
+          COALESCE(
+            SUM(reserved_microusd) FILTER (WHERE account_id = $1),
+            0
+          ) AS account_reserved_microusd
         FROM site_ai_turn_reservations
         WHERE status = 'active'
       `,
@@ -572,14 +576,27 @@ export async function reserveSiteFundedCodexTurn(
         "Site-funded Codex is temporarily at its global concurrency limit.",
       );
     }
+    // The canonical usage snapshot does not reserve future provider spend.
+    // Admissions are serialized by the global period lock above, so charging
+    // every active account reservation here prevents concurrent starts from
+    // each claiming the same remaining 5-hour or 7-day allowance.
+    const accountReservedMicrousd = int(
+      active.rows[0]?.account_reserved_microusd,
+    );
     const remaining5h =
       opts.accountRemaining5hMicrousd == null
         ? Number.MAX_SAFE_INTEGER
-        : Math.max(0, opts.accountRemaining5hMicrousd);
+        : Math.max(
+            0,
+            opts.accountRemaining5hMicrousd - accountReservedMicrousd,
+          );
     const remaining7d =
       opts.accountRemaining7dMicrousd == null
         ? Number.MAX_SAFE_INTEGER
-        : Math.max(0, opts.accountRemaining7dMicrousd);
+        : Math.max(
+            0,
+            opts.accountRemaining7dMicrousd - accountReservedMicrousd,
+          );
     const requested = Math.min(
       opts.policy.maxTurnCostMicrousd,
       remaining5h,
