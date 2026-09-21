@@ -1,5 +1,6 @@
 #!/usr/bin/env ts-node
 import { randomUUID } from "node:crypto";
+import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import {
   closeAcpDatabase,
   getAcpDatabase,
@@ -74,6 +75,63 @@ afterAll(() => {
 });
 
 describe("acp session registry", () => {
+  it("preserves generic runtime identity through queue, execution and terminal mirroring", () => {
+    const request: AcpRequest = {
+      ...makeRequest(),
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 1,
+          kind: "acp",
+          id: "Pi",
+          revision: "fixture",
+          executable: "/usr/bin/pi-acp",
+          args: [],
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    };
+    const direct = upsertAcpSessionFromRequest({
+      request,
+      op_id: request.chat!.message_id,
+      state: "queued",
+    });
+    expect(direct.agent_kind).toBe("acp");
+    const queued = enqueueAcpJob(request);
+    expect(getAcpSessionByOpId(queued.op_id)?.agent_kind).toBe("acp");
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "worker-1",
+    });
+    expect(getAcpSessionByOpId(queued.op_id)).toMatchObject({
+      state: "running",
+      agent_kind: "acp",
+    });
+    setAcpJobState({
+      op_id: queued.op_id,
+      state: "completed",
+      worker_id: "worker-1",
+    });
+    expect(getAcpSessionByOpId(queued.op_id)).toMatchObject({
+      state: "completed",
+      agent_kind: "acp",
+      terminal: 1,
+    });
+    // A sparse status publisher must not apply the INSERT-only native default.
+    const sparse = upsertAcpSession({
+      op_id: queued.op_id,
+      project_id: request.project_id,
+      state: "completed",
+    });
+    expect(sparse.agent_kind).toBe("acp");
+  });
+
   it("automatically retries a lost final update without another heartbeat", async () => {
     jest.useFakeTimers();
     try {

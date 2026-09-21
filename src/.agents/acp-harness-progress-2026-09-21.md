@@ -485,6 +485,24 @@ An [operator guide](../../docs/acp-harnesses.md) documents setup, full-project
 trust, project-managed credentials, offline provisioning, supported capability
 limits and rollback. It is explicitly experimental, not release certification.
 
+Bundle `20260921T102116Z-902a576589d7` deployed through operation
+`694f0c5f-ccaa-4502-bab2-38d95f5c4a18`. After the old worker exited, the normal
+reaper removed its retained local-model sidecar. A deliberate new UI turn,
+`dd5f3ef0-064a-4725-9e58-680d84985fd2`, loaded the same native session and
+completed with `Five plus five is ten.` The newly persisted reply renders a
+neutral robot avatar with accessible name `ACP agent`, including after reload.
+This is explicit resume of a completed conversation, not an automatic replay of
+an uncertain turn. Earlier experimental replies without runtime metadata retain
+their old rendering.
+
+An additional registry inspection found terminal job mirroring was overwriting
+the writer's generic kind with `codex`. Follow-up fixes derive kind from the
+admitted request for both direct and job mirrors; sparse updates preserve the
+existing kind instead of applying the INSERT-only native default. A real SQLite
+regression exercises queue, claim, terminal mirror and sparse publication.
+The registry/writer run passes 107 tests, chat helpers pass six, avatar/author
+tests pass eight, and frontend/project-host TypeScript plus frontend lint pass.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
