@@ -127,6 +127,24 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- Non-success prompt stop reasons now have explicit subprocess coverage for
+  `max_tokens`, `max_turn_requests` and `refusal`, each with and without partial
+  output. Tests assert exact stop events, preserved partial text, no success
+  summary, process disposal and no implicit retry. Together with existing
+  end-turn and cancellation checks, all 57 real-SDK subprocess tests pass;
+  AI TypeScript passes. No production behavior change was needed.
+
+  A live token-limit case after disposable-project restart
+  `763bcdd9-5b84-49a5-8789-8b3bc142e014` also passed. Operation
+  `6c83b9b3-d802-4c85-8c47-3c8132c86381` ended in `error` with
+  `ACP harness failed: ACP prompt stopped: max_tokens`; its partial output and
+  error remained visible after reload. SQLite showed no recovery child. A new,
+  deliberately submitted fixture turn `6b1696bd-2181-4620-bceb-7f551d5457c2`
+  completed and survived reload in the same conversation, using its existing
+  native session ID. No queued/running jobs remained. Only the token-limit case
+  was checked through the live browser; request-limit/refusal cases used the
+  real subprocess adapter tests. No provider calls were made.
+
 - Opt-out/re-enable now has live evidence on the existing qualification host.
   With no queued/running jobs anywhere on that host, the operator set
   `COCALC_ACP_HARNESSES=0` and restarted the host service. The running process's
