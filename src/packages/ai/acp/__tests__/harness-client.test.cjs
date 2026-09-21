@@ -6,6 +6,7 @@ const { spawn } = require("node:child_process");
 const path = require("node:path");
 const { AcpHarnessClient } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
+const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
 
 const profile = {
   version: 1,
@@ -18,6 +19,118 @@ const profile = {
   credentialMode: "project-managed",
   executionPolicy: "full-access",
 };
+
+function adapter(t) {
+  let launches = 0;
+  const agent = new HarnessAgent(
+    { projectId: "project-a", accountId: "account-a", profile },
+    { path: "a.chat", threadId: "conversation-a" },
+    async ({ profile }) => {
+      launches++;
+      const child = spawn(profile.executable, profile.args, {
+        env: {},
+        stdio: "pipe",
+      });
+      const closed = new Promise((resolve) => {
+        child.once("close", resolve);
+        child.once("error", resolve);
+      });
+      return {
+        stdin: child.stdin,
+        stdout: child.stdout,
+        stderr: child.stderr,
+        closed,
+        stop: async () => {
+          child.kill("SIGKILL");
+          await closed;
+        },
+      };
+    },
+  );
+  t.after(() => agent.dispose());
+  const events = [];
+  const request = {
+    project_id: "project-a",
+    account_id: "account-a",
+    prompt: "hello",
+    chat: {
+      project_id: "project-a",
+      path: "a.chat",
+      thread_id: "conversation-a",
+    },
+    stream: async (event) => {
+      events.push(event);
+    },
+  };
+  return { agent, request, events, launches: () => launches };
+}
+
+test("agent adapter persists streaming and stop before summary and reuses its session", async (t) => {
+  const { agent, request, events, launches } = adapter(t);
+  await agent.evaluate(request);
+  assert.equal(events.at(-1).finalResponse, "Hello world 1");
+  assert.equal(events.at(-2).event.data.stopReason, "end_turn");
+  assert.equal(events.at(-1).usage, undefined);
+  assert.equal(events[0].threadId, "fixture-session");
+  await agent.evaluate({ ...request, session_id: "fixture-session" });
+  assert.equal(events.at(-1).finalResponse, "Hello world 2");
+  assert.equal(launches(), 1);
+});
+
+test("agent adapter rejects mismatched authority and unsupported options before launching", async (t) => {
+  const { agent, request, launches } = adapter(t);
+  for (const change of [
+    { account_id: "other" },
+    { project_id: "other" },
+    { chat: { ...request.chat, thread_id: "other" } },
+    { local_images: ["image.png"] },
+    { config: { model: "codex" } },
+    { runtime_env: { SECRET: "not-forwarded" } },
+  ])
+    await assert.rejects(agent.evaluate({ ...request, ...change }));
+  assert.equal(launches(), 0);
+  await agent.evaluate(request);
+  await assert.rejects(agent.evaluate({ ...request, session_id: "other" }));
+  assert.equal(launches(), 1);
+});
+
+test("agent adapter never summarizes or relaunches an uncertain prompt", async (t) => {
+  const { agent, request, events, launches } = adapter(t);
+  await assert.rejects(agent.evaluate({ ...request, prompt: "crash" }), {
+    code: "outcome_unknown",
+  });
+  assert.ok(!events.some((event) => event.type === "summary"));
+  await assert.rejects(agent.evaluate(request));
+  assert.equal(launches(), 1);
+});
+
+test("agent adapter preserves permission policy events and cancellation stop reason", async (t) => {
+  const { agent, request, events } = adapter(t);
+  await agent.evaluate({ ...request, prompt: "permission" });
+  assert.ok(events.some((event) => event.event?.kind === "permission"));
+  events.length = 0;
+  let started;
+  const ready = new Promise((resolve) => {
+    started = resolve;
+  });
+  const run = agent.evaluate({
+    ...request,
+    prompt: "hang",
+    stream: async (event) => {
+      events.push(event);
+      if (event.event?.type === "message") started();
+    },
+  });
+  const rejected = assert.rejects(run, /cancelled/);
+  await ready;
+  assert.equal(await agent.interruptOutstanding("other"), false);
+  assert.equal(await agent.interruptOutstanding("fixture-session"), true);
+  await rejected;
+  assert.ok(
+    events.some((event) => event.event?.data?.stopReason === "cancelled"),
+  );
+  assert.ok(!events.some((event) => event.type === "summary"));
+});
 async function start(t, args = []) {
   let child;
   const client = await AcpHarnessClient.start(

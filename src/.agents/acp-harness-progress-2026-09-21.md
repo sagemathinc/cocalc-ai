@@ -19,13 +19,18 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   unsupported choices, stale sessions and cancellation do not grant permission.
   No host filesystem/terminal or authentication callbacks are advertised.
 - A real subprocess fixture and 19 protocol/lifecycle regression tests.
+- A conversation-bound `HarnessAgent` adapter implementing the durable service's
+  existing `AcpAgent` interface. It emits status, streamed text, preserved generic
+  updates/permissions, explicit stop reason and summary without fabricated usage.
+  Four additional subprocess tests cover reuse, binding/unsupported options,
+  uncertain delivery and cancellation. It is not yet selected by admission.
 - A disposable-project smoke tool with a loopback fake OpenAI-compatible provider.
   It scripts a real harness file-write tool call and streamed response. This is
   development tooling, not the production launcher or an inference service.
 
 ## Validation And Real Harnesses
 
-Passed the AI package build, all 140 existing AI Jest tests, 19 new subprocess
+Passed the AI package build, all 140 existing AI Jest tests, 23 new subprocess
 tests, and workspace dependency version consistency check. No frontend changed.
 
 Both of these pinned installations completed initialization, session creation,

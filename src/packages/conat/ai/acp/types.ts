@@ -446,6 +446,13 @@ export type AcpStreamUsage = {
 export type AcpStreamEvent =
   | CodexGoalEvent
   | {
+      // Generic ACP metadata/tool updates; never interpret data as authority.
+      type: "harness";
+      source: "acp";
+      kind: "update" | "permission" | "stop";
+      data: Record<string, unknown>;
+    }
+  | {
       type: "config";
       model: string;
       reasoning?: string;
