@@ -72,6 +72,13 @@ test("drawer preserves query, filters and results through unmount; inspecting a 
   expect(screen.getByRole("tooltip").textContent).toContain(
     "Current conversations are included even when agents are idle",
   );
+  expect(
+    screen.getByRole("region", { name: "Conversation search help" })
+      .textContent,
+  ).toContain("Search is not fuzzy or semantic");
+  expect(screen.getByRole("tooltip").textContent).toContain(
+    "Quotes are literal characters",
+  );
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   expect(document.activeElement).toBe(help);

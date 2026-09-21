@@ -51,7 +51,47 @@ function SearchHelp() {
         onOpenChange={setOpen}
         placement="bottomRight"
         content={
-          <div style={{ maxWidth: "min(360px, calc(100vw - 48px))" }}>
+          <div
+            style={{
+              maxWidth: "min(400px, calc(100vw - 48px))",
+              maxHeight: "min(600px, calc(100dvh - 120px))",
+              overflowY: "auto",
+            }}
+            tabIndex={0}
+            role="region"
+            aria-label="Conversation search help"
+          >
+            <strong>How matching works</strong>
+            <p>
+              Search is not fuzzy or semantic: there is no typo correction or
+              meaning-based matching. Results are newest first, not ranked by
+              relevance.
+            </p>
+            <p>
+              Recent saved messages use case-insensitive substring matching:
+              <code> build error</code> finds that text together, and
+              <code> build</code> also finds <code>building</code>. Quotes are
+              literal characters here, not special phrase syntax.
+            </p>
+            <p>
+              Older messages in SQLite history use case-insensitive word-based
+              search: <code>build error</code> requires both words, in any
+              order;
+              <code> "build error"</code> matches a phrase;
+              <code> build OR error</code> matches either word; and
+              <code> build*</code> matches word prefixes. If this finds no hits
+              or the syntax is invalid, search falls back to substring-like
+              matching of stored text, where <code>%</code> and <code>_</code>
+              act as wildcards.
+            </p>
+            <p>
+              These two matching methods are currently different, including in
+              single-conversation search. Their results are combined, not two
+              interpretations applied to every message. Plain words are the
+              simplest starting point; quotes and operators are not supported
+              consistently across all messages.
+            </p>
+            <strong>Availability and scope</strong>
             <p>
               Searches saved conversations without starting agents or projects.
               Unavailable projects are reported separately, not as no matches.

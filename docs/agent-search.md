@@ -7,6 +7,29 @@ the existing project-routed chat-store API rather than a central content index.
 
 ## Scope and budgets
 
+### Matching semantics
+
+Search currently merges two different matchers; there is no fuzzy, semantic,
+or typo-tolerant search. Results are sorted newest first rather than by relevance.
+
+- Saved chat-head messages (and live single-thread messages) use JavaScript
+  lowercase substring matching after stripping HTML tags. The trimmed query is
+  literal, including quotes and operators; multiple words must occur together.
+- SQLite history uses FTS5 with the `unicode61` tokenizer. Bare terms are ANDed,
+  quoted phrases match token sequences, uppercase `OR` provides alternatives,
+  and a trailing `*` supports token prefixes. Matching is case-insensitive under
+  the tokenizer's Unicode rules, which are not identical to JavaScript lowercase.
+- When FTS yields no rows or errors, SQLite falls back to `LOWER(...) LIKE`
+  against the excerpt and serialized row JSON. `%` and `_` are unescaped SQL
+  wildcards, and SQLite's default lowercase behavior is primarily ASCII.
+  This fallback is not unioned with successful FTS results.
+
+Thus moving a message into SQLite history can change which queries match it.
+Quotes/operators are not a consistent syntax across all messages. The help
+popover documents this limitation; this is not a unified search language.
+
+### Limits
+
 - Current threads are searched by default. Past conversations are opt-in and
   include the five most recent recorded historical threads per agent.
 - Candidates are ordered by known agent activity, with identity update time as
