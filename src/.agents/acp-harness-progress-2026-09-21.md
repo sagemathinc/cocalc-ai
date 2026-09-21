@@ -125,6 +125,29 @@ This closes the project-egress-blocked browser/local-inference demonstration,
 not the broader audit of an entirely air-gapped CoCalc host/control plane.
 Network-policy product support remains a follow-up, not a new implicit feature.
 
+## Current Regression Check
+
+At `8fdc24ebaf` on 2026-09-21, a fresh full development build and a broader
+regression pass completed successfully:
+
+- `pnpm -C src build:dev`: passed, including generated translations, frontend
+  TypeScript/bundling and backend packages; no tracked files changed. The
+  existing optional debug-file logging EACCES warning remained nonfatal.
+- AI `pnpm test --runInBand`: 12 suites, 140 tests.
+- Lite `pnpm exec jest --runInBand`: all 48 configured ACP suites, 446 tests.
+- Project-host `pnpm exec jest --runInBand
+  --testPathPatterns='(codex|acp|snapshot-(rootfs-restore|home-swap|home-rootfs)).*test'`:
+  17 suites, 119 tests.
+- AI `node --test acp/__tests__/harness-client.test.cjs`: 57 real subprocess tests.
+- Frontend focused Jest: harness-profile, harness-tool, acp-api,
+  composer-delivery, composer-resize-handle and agent-networks: 6 suites, 56 tests.
+- `pnpm -C src lint:frontend`: zero errors/warnings and Tooltip import check passed.
+- `pnpm -C src version-check` and `git diff --check`: passed.
+
+The 818 tests above are the selected current regression run, not all repository
+tests and not additional live release qualification. Remaining gates below still
+apply. No paid inference or real credential changes were needed.
+
 ## Implemented
 
 - Non-success prompt stop reasons now have explicit subprocess coverage for
