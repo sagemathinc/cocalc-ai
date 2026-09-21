@@ -85,6 +85,20 @@ The Pi chat is `/home/user/acp-qualification/pi.chat`, thread
 snapshot recovery or blocked-egress operation. The UI is not yet runtime-aware;
 use these chats as read-only test evidence, not as a generic-harness composer.
 
+The latest deployed host bundle is `20260921T075347Z-60b71b9912c7`. On it, another
+explicit Pi resume succeeded and a deliberately mismatched native session was
+rejected without inference. Service disposal removed the retained Pi sidecar;
+no ACP containers remained afterward. Direct manual Podman removal had exposed
+its known stop-timeout issue earlier, so the launcher also reuses project-runner's
+existing process-kill/retry workaround for that specific failure. The fallback
+has unit coverage but was not exercised by this successful live service disposal.
+Project-runner's 34 Podman tests and 14 launcher/reaper tests pass.
+
+Snapshot inspection found existing automatic snapshots at 06:38 and 07:08 UTC.
+The configured defaults use a 15-minute sweep and frequent interval, but repeated
+host restarts and maintenance scheduling mean this observation does not establish
+an actual 15-minute recovery guarantee. Destructive restore qualification remains.
+
 ## Validation And Real Harnesses
 
 Passed the AI package build, all 140 existing AI Jest tests, 23 new subprocess
