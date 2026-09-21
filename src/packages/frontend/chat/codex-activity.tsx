@@ -907,6 +907,9 @@ function normalizeEvents(
   activitySteers?: AttachedSteerMessage[],
 ): ActivityEntry[] {
   const rows: ActivityEntry[] = [];
+  const harness = events.some(
+    (message) => message.type === "event" && message.event.type === "harness",
+  );
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
   const harnessTools = new Map<string, HarnessToolEntry>();
@@ -948,7 +951,9 @@ function normalizeEvents(
         time,
         label:
           message.state === "running"
-            ? "Codex started"
+            ? harness
+              ? "ACP started"
+              : "Codex started"
             : message.state === "queued"
               ? "Queued"
               : "Starting",
@@ -2455,7 +2460,10 @@ export function codexActivityToMarkdown(
   },
 ): string {
   const body = codexEventsToMarkdown(events, options?.activitySteers);
-  const sections = ["## Codex Activity"];
+  const harness = events.some(
+    (message) => message.type === "event" && message.event.type === "harness",
+  );
+  const sections = [harness ? "## ACP Activity" : "## Codex Activity"];
   const durationLabel = options?.durationLabel?.trim();
   if (options?.generating === true) {
     sections.push(

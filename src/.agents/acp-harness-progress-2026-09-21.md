@@ -189,6 +189,24 @@ the selection survived a full reload, and the next turn returned `deep/code`.
 
 ## Validation And Real Harnesses
 
+### Generic Tool Activity
+
+Commit `a156b59fe0` adds compact tool rows to the existing activity log. Updates
+merge by tool-call ID; omitted fields retain their prior values and supplied
+content replaces prior content. Display output is bounded and rendered literally,
+not interpreted as HTML. Missing status stays unknown; turn completion does not
+invent tool completion. Non-text content is descriptive only, and reported edits
+are not presented as verified filesystem diffs.
+
+Frontend typecheck, lint and 22 focused activity/tool tests passed, along with
+28 real-subprocess ACP tests. Browser-created `agent-4` in the disposable project
+ran the fixture's `tools` scenario through the deployed backend. Opening its
+activity drawer displayed one completed Inspect fixture row; keyboard Enter
+expanded it and showed `Fixture tool output verified.`. The initial browser
+probe targeted a hidden cached view; selecting the visible activity chip resolved
+that test issue without resubmitting the turn. Generic drawer/status/export labels
+now distinguish ACP from native Codex; the generic avatar remains a follow-up.
+
 The initial backend checkpoint passed the AI package build, all 140 existing AI
 Jest tests, 23 new subprocess tests, and workspace dependency version consistency
 check. Later frontend validation is recorded above.

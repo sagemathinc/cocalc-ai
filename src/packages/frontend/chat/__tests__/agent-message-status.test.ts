@@ -14,6 +14,25 @@ import {
 } from "../agent-message-status";
 
 describe("reconcileAvailableSubagentEvents", () => {
+  it("identifies generic activity before lazy log loading", () => {
+    render(
+      React.createElement(AgentMessageStatus, {
+        show: true,
+        generating: false,
+        durationLabel: "0:01",
+        date: 1000,
+        runtimeKind: "acp",
+        logRefs: {},
+        activityContext: {} as any,
+      }),
+    );
+    const chip = screen.getByRole("button", {
+      name: "Open ACP activity details",
+    });
+    fireEvent.keyDown(chip, { key: "Enter" });
+    expect(screen.getByText("ACP activity")).toBeTruthy();
+    expect(screen.queryByText("Codex activity")).toBeNull();
+  });
   it("preserves missing events so the activity panel can load its persisted log", () => {
     expect(reconcileAvailableSubagentEvents(undefined, [])).toBeUndefined();
     expect(reconcileAvailableSubagentEvents(null, [])).toBeNull();
