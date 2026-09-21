@@ -778,6 +778,32 @@ test("unavailable ACP question callbacks fail explicitly instead of hanging", as
   });
   assert.deepEqual(JSON.parse(chunks.join("")), { rejected: true });
 });
+for (const variant of ["optional", "pattern", "boolean"]) {
+  test(`unsupported ${variant} form never opens QA and leaves valid follow-up usable`, async (t) => {
+    let questions = 0;
+    const client = await start(t, [], async () => {
+      questions++;
+      return { target: { answers: ["local"] } };
+    });
+    await client.open();
+    const rejected = [];
+    await client.prompt(`question-${variant}`, async (event) => {
+      if (event.type === "message") rejected.push(event.text);
+    });
+    assert.deepEqual(JSON.parse(rejected.join("")), { rejected: true });
+    assert.equal(questions, 0);
+    assert.equal(client.running, false);
+    const accepted = [];
+    await client.prompt("question", async (event) => {
+      if (event.type === "message") accepted.push(event.text);
+    });
+    assert.equal(questions, 1);
+    assert.deepEqual(JSON.parse(accepted.join("")), {
+      action: "accept",
+      content: { target: "local" },
+    });
+  });
+}
 test("advertised grouped config options apply before inference and survive follow-up", async (t) => {
   const client = await start(t, ["--config-options"]);
   await client.open();

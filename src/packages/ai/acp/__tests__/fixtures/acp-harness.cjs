@@ -115,7 +115,15 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update(contextLine ?? "No publication context");
         return result(message.id, { stopReason: "end_turn" });
       }
-      if (text === "question" || text === "question-wrong-session") {
+      if (
+        [
+          "question",
+          "question-wrong-session",
+          "question-optional",
+          "question-pattern",
+          "question-boolean",
+        ].includes(text)
+      ) {
         questionPrompt = message.id;
         pendingPrompt = message.id;
         return send({
@@ -123,16 +131,22 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
           method: "elicitation/create",
           params: {
             mode: "form",
-            sessionId: text === "question" ? "fixture-session" : "wrong",
+            sessionId:
+              text === "question-wrong-session" ? "wrong" : "fixture-session",
             message: "Choose the target.",
             requestedSchema: {
               type: "object",
-              required: ["target"],
+              required: text === "question-optional" ? [] : ["target"],
               properties: {
                 target: {
-                  type: "string",
+                  type: text === "question-boolean" ? "boolean" : "string",
                   title: "Target",
-                  enum: ["local", "staging"],
+                  ...(text === "question-boolean"
+                    ? {}
+                    : { enum: ["local", "staging"] }),
+                  ...(text === "question-pattern"
+                    ? { pattern: "^local$" }
+                    : {}),
                 },
               },
             },
