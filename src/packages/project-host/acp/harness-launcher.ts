@@ -18,6 +18,7 @@ import {
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
   projectSecretsHostPath,
+  forceKillContainerProcesses,
 } from "@cocalc/project-runner/run/podman";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
@@ -74,8 +75,18 @@ export async function launchHarnessInProject(
           timeout: 30_000,
           maxBuffer: 1024 * 1024,
         },
-        (error) =>
-          error ? reject(Error("ACP container operation failed")) : resolve(),
+        (error, _stdout, stderr) => {
+          if (!error) return resolve();
+          const stopTimeout =
+            args[0] === "rm" &&
+            (error.killed ||
+              /given PID did not die within timeout/.test(`${stderr}`));
+          reject(
+            Object.assign(Error("ACP container operation failed"), {
+              code: stopTimeout ? "ACP_CONTAINER_STOP_TIMEOUT" : undefined,
+            }),
+          );
+        },
       );
     });
   const { home, scratch } = await localPath({ project_id: projectId });
@@ -98,8 +109,23 @@ export async function launchHarnessInProject(
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
       try {
-        if (created)
-          await command(["rm", "--ignore", "--force", "--time", "0", name]);
+        if (created) {
+          const remove = () =>
+            command(["rm", "--ignore", "--force", "--time", "0", name]);
+          try {
+            await remove();
+          } catch (error) {
+            if (
+              (error as NodeJS.ErrnoException).code !==
+              "ACP_CONTAINER_STOP_TIMEOUT"
+            )
+              throw error;
+            // Same bounded Podman-hang recovery used by project stop. Target only
+            // this generated sidecar, never the primary project container.
+            await forceKillContainerProcesses(projectId, name);
+            await remove();
+          }
+        }
       } finally {
         // Revoke scoped authority even if a failed runtime removal needs repair.
         await cliLease?.close();

@@ -37,8 +37,8 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   scoped CLI/agent identity lease and mounts the project's live secrets directory
   read-only. It strips stale image credential fields and revokes its lease even
   when container removal fails. Failed removal can be retried without unmounting
-  beneath surviving processes. Six mocked lifecycle tests pass; live host
-  qualification remains. It is registered in the host and detached worker;
+  beneath surviving processes. Eight mocked lifecycle tests pass, as do the live
+  qualification checks below. It is registered in the host and detached worker;
   a host-side reconciler now removes sidecars whose owning worker has died,
   using PID, boot ID and process start time (not PID alone). Unknown inspection
   failures preserve the container. Six focused reaper tests pass. Live worker-kill
@@ -161,16 +161,21 @@ selectors, and the harness endpoint requires ACP v1 while retaining the same
 account/project subject binding. There is no native fallback on failure.
 Protocol/client tests cover this behavior, and project-host authorization tests
 cover matching and mismatched identities on the new subject.
-Before exposing UI, qualify live sidecars, interrupted-chat projection,
-native session resume and orphan-container cleanup. Do not enable the host flag
+Before exposing UI, qualify interrupted-chat projection and broaden real-harness
+coverage beyond the live checks above. Do not enable the host flag
 for general use yet.
 
-1. Qualify the opt-in durable admission/worker path live, including interruption
-   and persistence failures. Add capability discovery for the versioned RPC.
-2. Implement a supervised container launcher through existing project-host
-   execution. Preserve scoped run identity/agent-network grants, structured argv,
-   cancellation and descendant termination. The smoke launcher is not reusable
-   as a privileged host execution path.
+1. Broaden live qualification to persistence failures and OpenCode native resume.
+   Add capability discovery for the versioned RPC.
+2. Extend the supervised launcher's live tests to resource exhaustion and forced
+   descendant termination. The smoke launcher is not reusable as a privileged
+   host execution path. Direct Podman removal of the retained Pi sidecar failed
+   with "given PID did not die within timeout", even with a five-second grace
+   period. The launcher now reuses project-runner's existing container-process
+   kill/retry workaround for this specific timeout, targeting only its generated
+   sidecar. Unit tests pass; live qualification of that fallback remains a release
+   gate. Do not mistake fixture cancellation for proof of forced real-harness
+   termination.
 3. Adapt normalized events to durable CoCalc chat events and expose minimal
    profile selection in the existing Agents workspace. Support model/mode controls
    from advertised capabilities; do not substitute Codex presets.

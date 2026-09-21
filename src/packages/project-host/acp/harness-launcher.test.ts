@@ -12,6 +12,7 @@ const mockUnmount = jest.fn();
 const mockStart = jest.fn();
 const mockLease = jest.fn();
 const mockCloseLease = jest.fn();
+const mockForceKill = jest.fn();
 jest.mock("node:child_process", () => ({
   execFile: (...args) => mockExec(...args),
   spawn: (...args) => mockSpawn(...args),
@@ -51,6 +52,7 @@ jest.mock("@cocalc/project-runner/run/mounts", () => ({
 jest.mock("@cocalc/project-runner/run/podman", () => ({
   podmanRuntimeArgs: async () => [],
   projectSecretsHostPath: () => "/project-secrets",
+  forceKillContainerProcesses: (...args) => mockForceKill(...args),
   projectPoolPodmanLauncher: () => ({
     command: "pool-launcher",
     argsPrefix: ["project-pool", "podman"],
@@ -153,6 +155,30 @@ test("invalid bindings and profiles never start a container", async () => {
   ).rejects.toThrow();
   expect(mockStart).not.toHaveBeenCalled();
   expect(mockExec).not.toHaveBeenCalled();
+});
+
+test("Podman stop timeout uses the existing recovery only for this sidecar", async () => {
+  const handle = await launchHarnessInProject(binding);
+  mockExec.mockImplementationOnce((_cmd, _args, _opts, cb) =>
+    cb(Error("stop failed"), "", "given PID did not die within timeout"),
+  );
+  await handle.stop();
+  const sidecar = mockExec.mock.calls[1][1].at(-1);
+  expect(sidecar).toMatch(/^acp-/);
+  expect(mockForceKill).toHaveBeenCalledWith(binding.projectId, sidecar);
+  expect(mockExec.mock.calls[2][1].at(-1)).toBe(sidecar);
+  expect(mockUnmount).toHaveBeenCalledTimes(1);
+});
+
+test("unrelated removal errors never trigger process-kill recovery", async () => {
+  const handle = await launchHarnessInProject(binding);
+  mockExec.mockImplementationOnce((_cmd, _args, _opts, cb) =>
+    cb(Error("denied")),
+  );
+  await expect(handle.stop()).rejects.toThrow("container operation failed");
+  expect(mockForceKill).not.toHaveBeenCalled();
+  expect(mockUnmount).not.toHaveBeenCalled();
+  await handle.stop();
 });
 
 test("ambiguous create failure attempts removal before releasing rootfs", async () => {
