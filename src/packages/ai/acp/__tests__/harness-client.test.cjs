@@ -98,6 +98,23 @@ test("agent adapter rejects mismatched authority and unsupported options before 
   assert.equal(launches(), 1);
 });
 
+test("adapter preserves generic tool lifecycle updates for activity rendering", async (t) => {
+  const { agent, request, events } = adapter(t);
+  await agent.evaluate({ ...request, prompt: "tools" });
+  const updates = events
+    .filter((event) => event.event?.kind === "update")
+    .map((event) => event.event.data);
+  assert.deepEqual(
+    updates.map((update) => update.status),
+    ["in_progress", "completed"],
+  );
+  assert.equal(updates[1].toolCallId, "inspect");
+  assert.equal(
+    updates[1].content[0].content.text,
+    "Fixture tool output verified.",
+  );
+});
+
 test("agent applies admitted settings and publishes controls while retaining its process", async (t) => {
   const { agent, request, events, launches } = adapter(t, ["--config-options"]);
   const runtime = {

@@ -39,6 +39,8 @@ import { PeerMessageCard, type PeerMessageEvent } from "./peer-message-card";
 import { useChatEmbeddingOptions } from "./embedding-options";
 import { openProjectFileResult } from "./open-result";
 import { projectFileTargetFromHref } from "./project-file-target";
+import { HarnessToolRow, updateHarnessTool } from "./harness-tool";
+import type { HarnessToolEntry } from "./harness-tool";
 
 const { Text } = Typography;
 const OpenActivityFileContext = React.createContext<
@@ -47,6 +49,7 @@ const OpenActivityFileContext = React.createContext<
 type SubagentEvent = Extract<AcpStreamEvent, { type: "subagent" }>;
 type SubagentActivityItem = SubagentEvent & { seq: number; time?: number };
 type ActivityEntry =
+  | HarnessToolEntry
   | {
       kind: "reasoning";
       id: string;
@@ -608,6 +611,8 @@ function ActivityRow({
   const secondarySize = Math.max(11, fontSize - 2);
   const timestamp = formatEntryTimestamp(entry.time);
   switch (entry.kind) {
+    case "harness-tool":
+      return <HarnessToolRow entry={entry} />;
     case "subagents": {
       const active = entry.agents.filter((agent) =>
         isActiveSubagentState(agent.state),
@@ -904,6 +909,7 @@ function normalizeEvents(
   const rows: ActivityEntry[] = [];
   let fallbackId = 0;
   const terminals = new Map<string, ActivityEntry & { kind: "terminal" }>();
+  const harnessTools = new Map<string, HarnessToolEntry>();
   const subagents = new Map<string, SubagentActivityItem>();
   let sawTerminalFinalizer = false;
   for (const message of events) {
@@ -970,6 +976,7 @@ function normalizeEvents(
         continue;
       }
       const entry = createEventEntry({
+        harnessTools,
         event: message.event,
         seq,
         time,
@@ -1201,18 +1208,23 @@ function coalesceStatusEntries(entries: ActivityEntry[]): ActivityEntry[] {
 }
 
 function createEventEntry({
+  harnessTools,
   event,
   seq,
   time,
   rows,
   terminals,
 }: {
+  harnessTools: Map<string, HarnessToolEntry>;
   event: AcpStreamEvent;
   seq: number;
   time?: number;
   rows: ActivityEntry[];
   terminals: Map<string, ActivityEntry & { kind: "terminal" }>;
 }): ActivityEntry | undefined {
+  if (event?.type === "harness") {
+    return updateHarnessTool(event, harnessTools, seq, time);
+  }
   if (event?.type === "goal") {
     const goal = event.snapshot?.goal;
     return {
@@ -2309,6 +2321,11 @@ function activityEntriesToMarkdown(entries: ActivityEntry[]): string {
   const lines: string[] = [];
   for (const entry of entries) {
     switch (entry.kind) {
+      case "harness-tool":
+        lines.push(
+          `- ACP tool: ${entry.title} (${entry.status})\n\n${entry.output}`,
+        );
+        break;
       case "reasoning":
         lines.push(
           entry.text ? `- Reasoning: ${entry.text}` : "- Reasoning step",

@@ -91,6 +91,37 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       return result(message.id, {});
     case "session/prompt": {
       const text = message.params.prompt[0].text;
+      if (text === "tools") {
+        for (const tool of [
+          {
+            sessionUpdate: "tool_call",
+            toolCallId: "inspect",
+            title: "Inspect fixture",
+            status: "in_progress",
+            kind: "read",
+          },
+          {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "inspect",
+            status: "completed",
+            content: [
+              {
+                type: "content",
+                content: {
+                  type: "text",
+                  text: "Fixture tool output verified.",
+                },
+              },
+            ],
+          },
+        ])
+          send({
+            method: "session/update",
+            params: { sessionId: "fixture-session", update: tool },
+          });
+        update("Tool activity completed.");
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "settings") {
         update(`${selectedModel}/${selectedMode}`);
         return result(message.id, { stopReason: "end_turn" });
