@@ -1,5 +1,9 @@
 // Separate entrypoint: importing native Codex must not load the new ACP SDK.
-export { AcpHarnessClient, HarnessError } from "./harness-client";
+export {
+  AcpHarnessClient,
+  HarnessError,
+  disposeFailedHarness,
+} from "./harness-client";
 export { HarnessAgent } from "./harness-agent";
 export type {
   HarnessBinding,

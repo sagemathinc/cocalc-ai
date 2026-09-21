@@ -60,7 +60,8 @@ export async function discoverHarnessControls(request: AcpRequest) {
     }),
   });
   try {
-    const { AcpHarnessClient } = await import("@cocalc/ai/acp/harness");
+    const { AcpHarnessClient, disposeFailedHarness } =
+      await import("@cocalc/ai/acp/harness");
     const factory = launcher!;
     const conversation = {
       path: prepared.chat!.path,
@@ -74,13 +75,16 @@ export async function discoverHarnessControls(request: AcpRequest) {
       },
       (binding) => factory(binding, conversation),
     );
+    let controls: typeof client.controls;
     try {
       await client.open();
       await client.configure(prepared.runtime.settings ?? {});
-      return { profile: prepared.runtime.profile, controls: client.controls };
-    } finally {
-      await client.dispose();
+      controls = client.controls;
+    } catch (error) {
+      return await disposeFailedHarness(error, () => client.dispose());
     }
+    await client.dispose();
+    return { profile: prepared.runtime.profile, controls };
   } finally {
     discovering.delete(key);
     finished();

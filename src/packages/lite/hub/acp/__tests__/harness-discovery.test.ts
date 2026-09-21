@@ -4,11 +4,12 @@ import {
   pauseHarnessDiscovery,
   setHarnessLauncher,
 } from "../harness-runtime";
-import { AcpHarnessClient } from "@cocalc/ai/acp/harness";
+import { AcpHarnessClient, disposeFailedHarness } from "@cocalc/ai/acp/harness";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 
 jest.mock("@cocalc/ai/acp/harness", () => ({
   AcpHarnessClient: { start: jest.fn() },
+  disposeFailedHarness: jest.fn(),
 }));
 
 const request: AcpRequest = {
@@ -48,6 +49,12 @@ beforeEach(() => {
   };
   launch = jest.fn(async () => ({}));
   setHarnessLauncher(launch);
+  (disposeFailedHarness as jest.Mock).mockImplementation(
+    async (error, dispose) => {
+      await dispose();
+      throw error;
+    },
+  );
   (AcpHarnessClient.start as jest.Mock).mockImplementation(
     async (binding, launcher) => {
       await launcher(binding);
@@ -92,6 +99,31 @@ test.each(["open", "configure"])(
     await expect(discoverHarnessControls(request)).resolves.toBeDefined();
   },
 );
+
+test("setup and cleanup failure use the shared classifier and release the slot", async () => {
+  const primary = Error("session rejected");
+  const classified = Error("classified cleanup failure");
+  client.open.mockRejectedValueOnce(primary);
+  client.dispose.mockRejectedValueOnce(Error("stop failed"));
+  (disposeFailedHarness as jest.Mock).mockImplementationOnce(
+    async (error, dispose) => {
+      expect(error).toBe(primary);
+      await expect(dispose()).rejects.toThrow("stop failed");
+      throw classified;
+    },
+  );
+  await expect(discoverHarnessControls(request)).rejects.toBe(classified);
+  expect(disposeFailedHarness).toHaveBeenCalledTimes(1);
+  expect(client.dispose).toHaveBeenCalledTimes(1);
+  await expect(discoverHarnessControls(request)).resolves.toBeDefined();
+});
+
+test("cleanup failure after successful discovery does not return controls or hold the slot", async () => {
+  client.dispose.mockRejectedValueOnce(Error("stop failed"));
+  await expect(discoverHarnessControls(request)).rejects.toThrow("stop failed");
+  expect(disposeFailedHarness).not.toHaveBeenCalled();
+  await expect(discoverHarnessControls(request)).resolves.toBeDefined();
+});
 
 test("duplicate discovery cannot launch a second process", async () => {
   let release!: () => void;
