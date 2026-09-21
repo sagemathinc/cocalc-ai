@@ -4006,6 +4006,12 @@ export class ChatStreamWriter {
       });
   }
 
+  notifyInterruptRequested(text: string): void {
+    // ACP session/cancel is a notification, not a confirmation. Wait for the
+    // cancelled stop reason; a timeout/process loss must retain its uncertainty.
+    if (this.runtimeKind !== "acp") this.notifyInterrupted(text);
+  }
+
   notifyInterrupted(text: string): void {
     if (this.interruptNotified) return;
     this.interruptNotified = true;
@@ -10803,7 +10809,7 @@ async function tryInterruptCandidateIds({
 
   for (const id of ids) {
     if (await interruptCodexSession(id, projectId, expectedMessageId)) {
-      if (!expectedMessageId) writer?.notifyInterrupted(notifyText);
+      if (!expectedMessageId) writer?.notifyInterruptRequested(notifyText);
       return true;
     }
   }

@@ -357,6 +357,8 @@ describe("ChatStreamWriter", () => {
         type: "event",
         event: { type: "message", text: "partial result", delta: true },
       });
+      writer.notifyInterruptRequested("Conversation interrupted.");
+      expect(writer.wasInterrupted()).toBe(false);
       await writer.handle({
         type: "event",
         event: {
@@ -378,6 +380,53 @@ describe("ChatStreamWriter", () => {
       writer.dispose(true);
     },
   );
+
+  it("preserves uncertain generic cancellation instead of reporting a confirmed interrupt", async () => {
+    const { syncdb, sets } = makeFakeSyncDB();
+    const writer = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      runtimeKind: "acp",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    await writer.handle({
+      type: "event",
+      event: { type: "message", text: "partial result", delta: true },
+    });
+    writer.notifyInterruptRequested("Conversation interrupted.");
+    await writer.handle({
+      type: "error",
+      error:
+        "ACP delivery or completion is uncertain; do not automatically resend this turn",
+    });
+    await writer.handle(null);
+    await flush(writer);
+    expect(writer.wasInterrupted()).toBe(false);
+    expect(writer.getTerminalState()).toBe("error");
+    const final = findLastChatSet(sets)!;
+    expect(final.generating).toBe(false);
+    expect(final.acp_interrupted).not.toBe(true);
+    expect(final.history[0].content).toContain("partial result");
+    expect(final.history[0].content).toContain("completion is uncertain");
+    writer.dispose(true);
+  });
+
+  it("retains the existing native interrupt notification behavior", async () => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    await writer.waitUntilReady();
+    writer.notifyInterruptRequested("Conversation interrupted.");
+    expect(writer.wasInterrupted()).toBe(true);
+    writer.dispose(true);
+  });
 
   it("clears generating on summary when live preview is unavailable", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
