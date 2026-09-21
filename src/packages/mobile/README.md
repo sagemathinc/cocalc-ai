@@ -24,9 +24,10 @@ pnpm start
 pnpm ios
 ```
 
-For a simulator-only loop that launches straight into the local Metro server
-without the development-launcher chooser, use `pnpm ios:sim`. The configured
-`localhost` URL is intentionally not suitable for a physical device.
+For a simulator build use `pnpm ios:sim` and select a simulator. The visual
+runner opens an explicit Metro deep link. Do not bake a forced
+`DEV_CLIENT_DEFAULT_LAUNCHER_URL` into the native app: it caused startup crashes
+when combined with development-client deep-link launches in this setup.
 
 `pnpm ios` requires the full Xcode application and a selected Xcode developer
 directory. A physical device also needs a trusted HTTPS development site; it
@@ -65,8 +66,9 @@ Open **Open local UI preview** on the welcome screen. Preview requires both a
 React Native development build and `EXPO_PUBLIC_MOBILE_PREVIEW=1`; a production
 bundle cannot activate it through a URL. Browser management and settings are
 intentionally unavailable for these sample agents. The preview currently covers
-idle conversations, earlier messages, search, and pinning; it does not simulate
-approvals, live voice, attachments, or server failures.
+idle/running conversations, earlier messages, search, pinning, dictation drafts,
+resume, and read-aloud controls; it does not simulate approvals, live voice,
+attachments, or server failures.
 
 Install the **mobile-dev-inc Maestro CLI** from
 [its official installer](https://docs.maestro.dev/maestro-cli/how-to-install-maestro-cli)
@@ -88,7 +90,8 @@ the device with `MOBILE_SIMULATOR_ID=<uuid>` and port with
 `MOBILE_PREVIEW_PORT=<port>` if needed. It never clears app data or keychain state.
 
 The Maestro flow checks search, pin/unpin, opening a conversation, typing,
-sending a local message, dismissing the keyboard, scrolling, earlier messages,
+dictating into a draft, background/resume, sending a local message, following
+activity, read-aloud/stop, dismissing the keyboard, scrolling, earlier messages,
 and iOS edge-swipe back navigation. Screenshots, hierarchy/debug data, and logs go under the
 ignored `dist/visual/<timestamp>/` directory. Inspect the screenshots after a
 run: passing accessibility assertions alone does **not** prove absence of
@@ -103,3 +106,33 @@ changes. Reserve physical-device checks for touch feel, audio routing,
 permissions, background/resume, and performance; the simulator cannot qualify
 those experiences. The Expo floating Tools button belongs to the development
 client and may appear in screenshots.
+
+## Dictation and read-aloud
+
+The conversation composer has **Dictate**, **Finish dictation**, and **Cancel**.
+Finishing transcribes into the current draft; review/edit it and press Send.
+Recording is limited to 90 seconds (or the site's lower limit). Each completed
+agent message has **Read aloud**; **Stop read-aloud** stops playback and pending
+speech work. Both modes use the site's existing speech capabilities, billing,
+and account limits. No live voice session is started.
+
+Switching away stops microphone/playback and cancels unfinished transcription.
+The text draft persists, and returning reconnects to the conversation without
+starting project compute merely to read. Completed agent work remains on the
+server. Sending retains the existing compute-start behavior.
+
+This adds native audio modules and microphone permission. Rebuild the development
+app once after updating. Stop the old Metro process, then run
+`pnpm start:clear` to start a fresh development server. In another terminal,
+from this directory:
+
+```bash
+pnpm exec expo prebuild --platform ios
+pnpm exec expo run:ios --device
+```
+
+Subsequent JavaScript changes use Fast Refresh as before. On a real account,
+check microphone permission, dictate a short task, review/send it, switch away
+while it runs, return, and try Read aloud/Stop. Also check headset routing and
+an interrupted recording. The local UI preview simulates transcription/playback;
+it never records or calls the speech provider.

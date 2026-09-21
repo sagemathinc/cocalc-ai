@@ -2,92 +2,288 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-
+import { useMemo, type ReactNode } from "react";
+import MarkdownIt from "markdown-it";
+import type Token from "markdown-it/lib/token";
+import {
+  Linking,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
+import * as Clipboard from "expo-clipboard";
 import type { AppearancePalette } from "@cocalc/util/appearance-palette";
 import { usePalette } from "../ui/palette";
-import { Linking, StyleSheet, Text, View } from "react-native";
 
-const INLINE = /(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;
-
-function InlineMarkdown({ value }: { value: string }) {
-  const styles = makeStyles(usePalette());
-  const parts = value.split(INLINE);
-  return (
-    <Text selectable style={styles.text}>
-      {parts.map((part, index) => {
-        if (part.startsWith("`") && part.endsWith("`")) {
+const parser = new MarkdownIt({ html: false, linkify: true, breaks: false });
+interface Node {
+  token: Token;
+  children: Node[];
+}
+function tree(tokens: Token[]): Node[] {
+  const root: Node[] = [],
+    stack = [root];
+  for (const token of tokens) {
+    if (token.nesting === -1) {
+      stack.pop();
+      continue;
+    }
+    const node = {
+      token,
+      children: token.children ? tree(token.children) : [],
+    };
+    stack.at(-1)!.push(node);
+    if (token.nesting === 1) stack.push(node.children);
+  }
+  return root;
+}
+export function Markdown({ value }: { value: string }) {
+  const colors = usePalette();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const nodes = useMemo(() => tree(parser.parse(value, {})), [value]);
+  function render(nodes: Node[]): ReactNode {
+    return nodes.map(({ token: t, children }, index) => {
+      const body = () => render(children);
+      switch (t.type) {
+        case "text":
+          return t.content;
+        case "softbreak":
+          return " ";
+        case "hardbreak":
+          return "\n";
+        case "code_inline":
           return (
             <Text key={index} style={styles.inlineCode}>
-              {part.slice(1, -1)}
+              {t.content}
             </Text>
           );
-        }
-        const link = part.match(/^\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)$/);
-        if (link) {
+        case "strong_open":
+          return (
+            <Text key={index} style={styles.bold}>
+              {body()}
+            </Text>
+          );
+        case "em_open":
+          return (
+            <Text key={index} style={styles.italic}>
+              {body()}
+            </Text>
+          );
+        case "s_open":
+          return (
+            <Text key={index} style={styles.strike}>
+              {body()}
+            </Text>
+          );
+        case "link_open": {
+          const href = t.attrGet("href") ?? "";
+          const allowed = /^https?:\/\//i.test(href);
           return (
             <Text
-              accessibilityRole="link"
               key={index}
-              onPress={() => void Linking.openURL(link[2])}
-              style={styles.link}
+              accessibilityRole={allowed ? "link" : undefined}
+              style={allowed ? styles.link : undefined}
+              onPress={
+                allowed
+                  ? () => {
+                      void Linking.openURL(href).catch(() => {});
+                    }
+                  : undefined
+              }
             >
-              {link[1]}
+              {body()}
             </Text>
           );
         }
-        return part;
-      })}
-    </Text>
-  );
-}
-
-export function Markdown({ value }: { value: string }) {
-  const styles = makeStyles(usePalette());
-  const blocks = value
-    .split(/(```[\s\S]*?```)/g)
-    .map((block) => block.trim())
-    .filter(Boolean);
-  return (
-    <View style={styles.container}>
-      {blocks.map((block, index) => {
-        if (block.startsWith("```") && block.endsWith("```")) {
-          const content = block
-            .replace(/^```[^\n]*\n?/, "")
-            .replace(/```$/, "");
+        case "image":
           return (
-            <Text key={index} selectable style={styles.codeBlock}>
-              {content}
+            <Text key={index} style={styles.italic}>
+              [Image: {t.content || "attachment"}]
             </Text>
           );
-        }
-        return <InlineMarkdown key={index} value={block} />;
-      })}
-    </View>
-  );
+        case "inline":
+          return (
+            <Text key={index} selectable style={styles.text}>
+              {body()}
+            </Text>
+          );
+        case "paragraph_open":
+          return (
+            <View key={index} style={styles.paragraph}>
+              {body()}
+            </View>
+          );
+        case "heading_open":
+          return (
+            <Text
+              key={index}
+              selectable
+              accessibilityRole="header"
+              style={[
+                styles.text,
+                styles.heading,
+                { fontSize: t.tag === "h1" ? 25 : t.tag === "h2" ? 22 : 19 },
+              ]}
+            >
+              {render(
+                children.flatMap((child) =>
+                  child.token.type === "inline" ? child.children : [child],
+                ),
+              )}
+            </Text>
+          );
+        case "fence":
+        case "code_block":
+          return (
+            <View key={index} style={styles.code}>
+              <View style={styles.codeHeader}>
+                <Text style={styles.language}>{t.info.trim() || "Code"}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Copy code block"
+                  onPress={() => void Clipboard.setStringAsync(t.content)}
+                  style={styles.copy}
+                >
+                  <Text style={styles.link}>Copy code</Text>
+                </Pressable>
+              </View>
+              <ScrollView
+                horizontal
+                style={styles.horizontalScroll}
+                accessibilityLabel="Scrollable code block"
+              >
+                <Text selectable style={styles.codeText}>
+                  {t.content.trimEnd()}
+                </Text>
+              </ScrollView>
+            </View>
+          );
+        case "bullet_list_open":
+        case "ordered_list_open":
+          return (
+            <View key={index} style={styles.list}>
+              {children.map((child, n) => (
+                <View key={n} style={styles.listRow}>
+                  <Text style={styles.text}>
+                    {t.type === "ordered_list_open"
+                      ? `${(Number(t.attrGet("start")) || 1) + n}.`
+                      : "•"}
+                  </Text>
+                  <View style={styles.listBody}>{render(child.children)}</View>
+                </View>
+              ))}
+            </View>
+          );
+        case "blockquote_open":
+          return (
+            <View key={index} style={styles.quote}>
+              {body()}
+            </View>
+          );
+        case "hr":
+          return <View key={index} style={styles.rule} />;
+        case "table_open":
+          return (
+            <ScrollView
+              key={index}
+              horizontal
+              style={styles.horizontalScroll}
+              accessibilityLabel="Scrollable table"
+            >
+              <View>{body()}</View>
+            </ScrollView>
+          );
+        case "tr_open":
+          return (
+            <View key={index} style={styles.tableRow}>
+              {body()}
+            </View>
+          );
+        case "th_open":
+        case "td_open":
+          return (
+            <View
+              key={index}
+              style={[styles.cell, t.type === "th_open" && styles.tableHeading]}
+            >
+              {body()}
+            </View>
+          );
+        default:
+          return (
+            <View key={index}>
+              {children.length ? (
+                body()
+              ) : (
+                <Text selectable style={styles.text}>
+                  {t.content}
+                </Text>
+              )}
+            </View>
+          );
+      }
+    });
+  }
+  return <View style={styles.container}>{render(nodes)}</View>;
 }
-
 const makeStyles = (colors: AppearancePalette) =>
   StyleSheet.create({
-    container: { gap: 8 },
-    text: {
-      color: colors.text,
-      fontSize: 16,
-      lineHeight: 23,
-    },
+    container: { gap: 8, minWidth: 0 },
+    horizontalScroll: { flexGrow: 0, flexShrink: 0 },
+    text: { color: colors.text, fontSize: 16, lineHeight: 24 },
+    paragraph: { marginBottom: 6 },
+    heading: { fontWeight: "700", marginTop: 8, lineHeight: undefined },
+    bold: { fontWeight: "700" },
+    italic: { fontStyle: "italic" },
+    strike: { textDecorationLine: "line-through" },
     inlineCode: {
-      backgroundColor: colors.page,
-      fontFamily: "Menlo",
+      fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
       fontSize: 14,
-    },
-    codeBlock: {
       backgroundColor: colors.page,
-      borderRadius: 8,
+    },
+    code: {
+      backgroundColor: colors.page,
+      borderRadius: 10,
+      padding: 10,
+      gap: 8,
+    },
+    codeHeader: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    language: { color: colors.secondary, fontSize: 13 },
+    copy: { minHeight: 44, justifyContent: "center", paddingHorizontal: 8 },
+    codeText: {
+      fontFamily: Platform.OS === "ios" ? "Menlo" : "monospace",
+      fontSize: 14,
+      lineHeight: 22,
       color: colors.text,
-      fontFamily: "Menlo",
-      fontSize: 13,
-      lineHeight: 19,
-      overflow: "hidden",
-      padding: 12,
     },
     link: { color: colors.link, textDecorationLine: "underline" },
+    list: { gap: 4 },
+    listRow: { flexDirection: "row", gap: 8 },
+    listBody: { flex: 1, minWidth: 0 },
+    quote: {
+      borderLeftWidth: 3,
+      borderLeftColor: colors.border,
+      paddingLeft: 12,
+    },
+    rule: {
+      height: StyleSheet.hairlineWidth,
+      backgroundColor: colors.border,
+      marginVertical: 8,
+    },
+    tableRow: { flexDirection: "row" },
+    cell: {
+      width: 180,
+      padding: 8,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: colors.border,
+    },
+    tableHeading: { backgroundColor: colors.page },
   });

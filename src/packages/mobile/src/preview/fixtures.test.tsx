@@ -1,3 +1,8 @@
+beforeEach(() => jest.useFakeTimers());
+afterEach(() => {
+  jest.runOnlyPendingTimers();
+  jest.useRealTimers();
+});
 import {
   createPreviewChat,
   isPreviewProfile,

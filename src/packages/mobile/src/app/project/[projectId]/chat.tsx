@@ -14,6 +14,7 @@ import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
 import * as Clipboard from "expo-clipboard";
 import { Stack, useLocalSearchParams } from "expo-router";
+import { useSpeech } from "../../../speech/use-speech";
 import { useHeaderHeight } from "expo-router/react-navigation";
 import {
   useCallback,
@@ -56,14 +57,16 @@ import { projectWebUrl } from "../../../cocalc/web-links";
 
 import {
   isPreviewProfile,
-  createPreviewChat,
+  resumePreviewChat,
   type ConversationClient,
 } from "../../../preview/fixtures";
 
 function useChatSnapshot(
   client: ConversationClient | undefined,
+  profileId: string,
   projectId: string,
   path: string,
+  threadId: string,
 ): ChatSnapshot {
   const fallback = useMemo<ChatSnapshot>(
     () => ({
@@ -72,30 +75,55 @@ function useChatSnapshot(
       ready: false,
       project_id: projectId,
       path,
+      selected_thread_id: threadId,
       threads: [],
       messages: [],
     }),
-    [path, projectId],
+    [path, profileId, projectId, threadId],
   );
+  const cached = useRef({ fallback, snapshot: fallback, source: fallback });
+  if (cached.current.fallback !== fallback)
+    cached.current = { fallback, snapshot: fallback, source: fallback };
   const subscribe = useCallback(
     (notify: () => void) =>
       client ? client.subscribe(() => notify()) : () => undefined,
     [client],
   );
-  const getSnapshot = useCallback(
-    () => client?.getSnapshot() ?? fallback,
-    [client, fallback],
-  );
+  const getSnapshot = useCallback(() => {
+    if (client) {
+      const next = client.getSnapshot();
+      if (next !== cached.current.source) {
+        const previous = cached.current.snapshot;
+        cached.current.source = next;
+        cached.current.snapshot =
+          !next.ready && previous.messages.length
+            ? {
+                ...next,
+                messages: previous.messages,
+                threads: previous.threads,
+              }
+            : next;
+      }
+    }
+    return cached.current.snapshot;
+  }, [client, fallback]);
   return useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
-function Message({ item }: { item: ProjectedChatMessage }) {
+function Message({
+  item,
+  read,
+  speechBusy,
+}: {
+  item: ProjectedChatMessage;
+  read: (item: ProjectedChatMessage) => void;
+  speechBusy: boolean;
+}) {
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const human = item.role === "human";
   return (
     <View
-      accessibilityLabel={`${human ? "You" : item.role} message${item.state ? `, ${item.state}` : ""}`}
       style={[
         styles.message,
         human ? styles.humanMessage : styles.agentMessage,
@@ -123,14 +151,30 @@ function Message({ item }: { item: ProjectedChatMessage }) {
         </Text>
       ) : null}
       <Markdown value={item.content || (item.generating ? "Working…" : "")} />
-      <Pressable
-        accessibilityLabel={`Copy ${human ? "your" : "Codex"} message`}
-        accessibilityRole="button"
-        hitSlop={10}
-        onPress={() => void Clipboard.setStringAsync(item.content)}
-      >
-        <Text style={styles.smallLink}>Copy</Text>
-      </Pressable>
+      <View style={styles.messageActions}>
+        {item.role === "agent" && !item.generating && !!item.content && (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Read response aloud"
+            testID={`read-response-${item.message_id}`}
+            accessibilityState={{ disabled: speechBusy }}
+            disabled={speechBusy}
+            onPress={() => read(item)}
+            style={styles.messageAction}
+          >
+            <Text style={styles.smallLink}>Read aloud</Text>
+          </Pressable>
+        )}
+        <Pressable
+          style={styles.messageAction}
+          accessibilityLabel={`Copy ${human ? "your" : "Codex"} message`}
+          accessibilityRole="button"
+          hitSlop={10}
+          onPress={() => void Clipboard.setStringAsync(item.content)}
+        >
+          <Text style={styles.smallLink}>Copy</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -158,6 +202,8 @@ export default function ChatScreen() {
   const shouldFollowNewest = useRef(true);
   const userControlsScroll = useRef(false);
   const [draft, setDraft] = useState("");
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [draftLoaded, setDraftLoaded] = useState(false);
   const [draftRevision, setDraftRevision] = useState(0);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -165,7 +211,13 @@ export default function ChatScreen() {
   const [interrupting, setInterrupting] = useState(false);
   const [status, setStatus] = useState("Connecting…");
   const [error, setError] = useState<string>();
-  const snapshot = useChatSnapshot(client, projectId, chatPath);
+  const snapshot = useChatSnapshot(
+    client,
+    profileId,
+    projectId,
+    chatPath,
+    threadId,
+  );
   const draftKey = useMemo(
     () => ({ profileId, projectId, path: chatPath, threadId }),
     [chatPath, profileId, projectId, threadId],
@@ -181,6 +233,7 @@ export default function ChatScreen() {
   const connect = useCallback(async () => {
     const current = ++generation.current;
     await disconnect();
+    if (current !== generation.current) return;
     setError(undefined);
     setStatus("Connecting…");
     if (!projectId || !profileId || !chatPath || !threadId) {
@@ -189,7 +242,7 @@ export default function ChatScreen() {
     }
     try {
       if (isPreviewProfile(profileId)) {
-        const next = createPreviewChat();
+        const next = resumePreviewChat();
         clientRef.current = next;
         setClient(next);
         setStatus("Local preview · no network");
@@ -280,11 +333,18 @@ export default function ChatScreen() {
   }, [hasMessages, scrollToNewest, snapshot.ready, threadId]);
 
   const changeDraft = (value: string) => {
+    draftRef.current = value;
     setDraft(value);
     void saveChatDraft(draftKey, value).catch((err) =>
       setError(`Could not save your draft: ${err}`),
     );
   };
+
+  const speech = useSpeech(profileId, projectId, chatPath, threadId, (text) => {
+    const before = draftRef.current;
+    changeDraft(`${before}${before && !/\s$/.test(before) ? " " : ""}${text}`);
+  });
+  const speechBusy = speech.state.phase !== "idle";
 
   useEffect(() => {
     void connect();
@@ -299,6 +359,7 @@ export default function ChatScreen() {
       if (state === "active") {
         if (!clientRef.current) void connect();
       } else if (state === "background") {
+        setStatus("Paused · reconnecting when you return");
         generation.current += 1;
         if (!isPreviewProfile(profileId))
           peekActiveSiteSession()?.projectHosts.invalidateProject(projectId);
@@ -326,7 +387,10 @@ export default function ChatScreen() {
     (thread) => thread.thread_id === threadId,
   );
   const canSend =
+    !!client &&
+    (!speechBusy || speech.state.phase === "speaking") &&
     snapshot.ready &&
+    snapshot.connection === "connected" &&
     draftLoaded &&
     !submitting &&
     !!draft.trim() &&
@@ -525,10 +589,60 @@ export default function ChatScreen() {
           }}
           onScroll={updateFollowNewest}
           ref={listRef}
-          renderItem={({ item }) => <Message item={item} />}
+          renderItem={({ item }) => (
+            <Message
+              item={item}
+              speechBusy={speechBusy}
+              read={(item) =>
+                void speech.controller.read(item.content, item.message_id)
+              }
+            />
+          )}
           scrollEventThrottle={16}
         />
         <View style={styles.composer}>
+          {speech.state.error ? (
+            <Text accessibilityRole="alert" style={styles.errorText}>
+              {speech.state.error}
+            </Text>
+          ) : null}
+          {speechBusy ? (
+            <View style={styles.actions}>
+              <Text accessibilityLiveRegion="polite" style={styles.statusText}>
+                {speech.state.phase === "recording"
+                  ? "Recording · up to 90 seconds"
+                  : speech.state.phase === "transcribing"
+                    ? "Transcribing…"
+                    : speech.state.phase === "speaking"
+                      ? "Read-aloud · preparing or playing"
+                      : "Preparing microphone…"}
+              </Text>
+              {speech.state.phase === "recording" ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Finish dictation"
+                  onPress={() => void speech.controller.finish()}
+                  style={styles.messageAction}
+                >
+                  <Text style={styles.link}>Finish</Text>
+                </Pressable>
+              ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={
+                  speech.state.phase === "speaking"
+                    ? "Stop read-aloud"
+                    : "Cancel dictation"
+                }
+                onPress={speech.controller.cancel}
+                style={styles.messageAction}
+              >
+                <Text style={styles.link}>
+                  {speech.state.phase === "speaking" ? "Stop" : "Cancel"}
+                </Text>
+              </Pressable>
+            </View>
+          ) : null}
           <TextInput
             accessibilityLabel="Message Codex"
             editable={draftLoaded && !submitting}
@@ -540,6 +654,18 @@ export default function ChatScreen() {
             value={draft}
           />
           <View style={styles.actions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Dictate message"
+              accessibilityState={{
+                disabled: speechBusy || !draftLoaded || submitting,
+              }}
+              disabled={speechBusy || !draftLoaded || submitting}
+              onPress={() => void speech.controller.start()}
+              style={styles.messageAction}
+            >
+              <Text style={styles.link}>Dictate</Text>
+            </Pressable>
             {running ? (
               <Pressable
                 accessibilityRole="button"
@@ -556,7 +682,7 @@ export default function ChatScreen() {
               <Pressable
                 accessibilityLabel="Interrupt Codex turn"
                 accessibilityRole="button"
-                disabled={interrupting}
+                disabled={interrupting || !client}
                 onPress={() => void interrupt()}
                 style={({ pressed }) => [
                   styles.interruptButton,
@@ -615,6 +741,12 @@ const makeStyles = (colors: AppearancePalette) =>
     agentMessage: {
       alignSelf: "flex-start",
       backgroundColor: colors.inset,
+    },
+    messageActions: { flexDirection: "row", flexWrap: "wrap", gap: 16 },
+    messageAction: {
+      minHeight: 44,
+      justifyContent: "center",
+      paddingHorizontal: 4,
     },
     messageHeader: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
     activity: {

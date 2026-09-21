@@ -20,12 +20,38 @@ appId: com.sagemath.cocalc.mobile.dev
 - tapOn: "Message Codex.*"
 - eraseText
 - inputText: "Hello from the simulator"
+- tapOn: "Dictate message"
+- assertVisible: "Finish dictation"
+- takeScreenshot: recording
+- tapOn: "Finish dictation"
+- assertVisible: ".*Please summarize the result.*"
+- pressKey: Home
+- launchApp:
+    stopApp: false
+- assertVisible: ".*Please summarize the result.*"
 - assertVisible: "Send message to Codex"
 - takeScreenshot: keyboard
 - tapOn: "Send message to Codex"
+- takeScreenshot: progress
+- pressKey: Home
+- launchApp:
+    stopApp: false
 - assertVisible: ".*Preview reply: your message stayed on this device.*"
 - hideKeyboard
 - takeScreenshot: reply
+- scrollUntilVisible:
+    element:
+      id: "read-response-preview-message-5"
+    direction: DOWN
+    centerElement: true
+    timeout: 15000
+- tapOn:
+    id: "read-response-preview-message-5"
+    text: "Read response aloud"
+- assertVisible: "Stop read-aloud"
+- takeScreenshot: read-aloud
+- tapOn: "Stop read-aloud"
+- assertNotVisible: "Stop read-aloud"
 - swipe:
     direction: DOWN
     duration: 600

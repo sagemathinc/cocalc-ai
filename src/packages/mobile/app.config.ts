@@ -1,8 +1,6 @@
 import type { ExpoConfig, ConfigContext } from "expo/config";
 
 const isProduction = process.env.COCALC_MOBILE_VARIANT === "production";
-const defaultDevelopmentServer =
-  process.env.COCALC_MOBILE_DEV_SERVER_URL?.trim();
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -20,9 +18,6 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       : "com.sagemath.cocalc.mobile.dev",
     infoPlist: {
       ITSAppUsesNonExemptEncryption: false,
-      ...(defaultDevelopmentServer
-        ? { DEV_CLIENT_DEFAULT_LAUNCHER_URL: defaultDevelopmentServer }
-        : {}),
     },
   },
   android: {
@@ -30,7 +25,19 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       ? "com.sagemath.cocalc.mobile"
       : "com.sagemath.cocalc.mobile.dev",
   },
-  plugins: ["expo-router", "expo-secure-store"],
+  plugins: [
+    "expo-router",
+    "expo-secure-store",
+    [
+      "expo-audio",
+      {
+        microphonePermission:
+          "Allow CoCalc to record dictation for your message drafts.",
+        enableBackgroundRecording: false,
+        enableBackgroundPlayback: false,
+      },
+    ],
+  ],
   experiments: {
     typedRoutes: true,
   },

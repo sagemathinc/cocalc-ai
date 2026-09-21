@@ -10,6 +10,19 @@ import {
   saveChatDraft,
 } from "./drafts";
 
+let mockTranscript: (text: string) => void;
+jest.mock("../speech/use-speech", () => ({
+  useSpeech: (
+    _profile: string,
+    _project: string,
+    _path: string,
+    _thread: string,
+    receive: (text: string) => void,
+  ) => {
+    mockTranscript = receive;
+    return { state: { phase: "idle" }, controller: {} };
+  },
+}));
 jest.mock("expo-router/react-navigation", () => ({
   useHeaderHeight: () => 116,
 }));
@@ -152,4 +165,58 @@ it("retains a draft when submission acknowledgement is unknown", async () => {
   expect(
     renderer.root.findByProps({ accessibilityRole: "alert" }).props.children,
   ).toBe("timeout");
+});
+
+it("keeps the transcript and draft through backgrounding and reconnects without starting compute", async () => {
+  const { AppState } = require("react-native");
+  let changeState!: (state: string) => void;
+  const listener = jest
+    .spyOn(AppState, "addEventListener")
+    .mockImplementation((_event: any, callback: any) => {
+      changeState = callback;
+      return { remove() {} };
+    });
+  const original = client.getSnapshot();
+  original.messages = [
+    {
+      message_id: "result",
+      role: "agent",
+      content: "An existing result",
+      generating: false,
+    },
+  ];
+  const resumedSnapshot = { ...original, revision: 2 };
+  const replacement = { ...client, getSnapshot: () => resumedSnapshot };
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => input().props.onChangeText("Continue with this"));
+  await act(async () => changeState("background"));
+  expect(client.close).toHaveBeenCalled();
+  expect(
+    renderer.root.findAllByProps({ value: "An existing result" }).length,
+  ).toBeGreaterThan(0);
+  expect(input().props.value).toBe("Continue with this");
+  expect(button("Send message to Codex").props.disabled).toBe(true);
+  jest.mocked(createRemoteHeadlessChatClient).mockReturnValue(replacement);
+  await act(async () => changeState("active"));
+  expect(createRemoteHeadlessChatClient).toHaveBeenCalledTimes(2);
+  expect(input().props.value).toBe("Continue with this");
+  expect(ensureProjectRunning).not.toHaveBeenCalled();
+  listener.mockRestore();
+});
+
+it("appends dictation to the latest edited draft and never sends automatically", async () => {
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  await act(async () => input().props.onChangeText("Please investigate:"));
+  await act(async () => mockTranscript("the failing build"));
+  expect(input().props.value).toBe("Please investigate: the failing build");
+  expect(saveChatDraft).toHaveBeenLastCalledWith(
+    expect.anything(),
+    "Please investigate: the failing build",
+  );
+  expect(client.sendToExistingCodexThread).not.toHaveBeenCalled();
+  expect(ensureProjectRunning).not.toHaveBeenCalled();
 });

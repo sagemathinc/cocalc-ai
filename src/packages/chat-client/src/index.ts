@@ -12,3 +12,5 @@ export * from "./send";
 export * from "./types";
 export * from "./agent-organization";
 export * from "./named-agents";
+
+export { markdownToSpeechText, splitSpeechText } from "./speech-text";

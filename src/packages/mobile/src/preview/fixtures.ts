@@ -117,15 +117,44 @@ export function createPreviewChat(): ConversationClient {
     thread_id,
   }) => {
     const sent = message("human", text);
+    const response = {
+      ...message("agent", ""),
+      generating: true,
+      state: "running" as const,
+      activity: {
+        state: "ready" as const,
+        events: [],
+        markdown: "Checking the task and preparing the result…",
+      },
+    };
     snapshot = {
       ...snapshot,
-      messages: [
-        ...snapshot.messages,
-        sent,
-        message("agent", "Preview reply: your message stayed on this device."),
-      ],
+      messages: [...snapshot.messages, sent, response],
+    };
+    snapshot = {
+      ...snapshot,
+      threads: [{ ...snapshot.threads[0], state: "running" }],
     };
     publish();
+    setTimeout(() => {
+      snapshot = {
+        ...snapshot,
+        threads: [{ ...snapshot.threads[0], state: "idle" }],
+        messages: snapshot.messages.map((item) =>
+          item.message_id === response.message_id
+            ? {
+                ...item,
+                generating: false,
+                state: "complete",
+                activity: undefined,
+                content:
+                  "Preview reply: your message stayed on this device.\n\n## Result\n\n- **Reviewed** the task.\n- Ready for your next instruction.\n\nYou can leave and return to this conversation.",
+              }
+            : item,
+        ),
+      };
+      publish();
+    }, 8000);
     return { message_id: sent.message_id, thread_id };
   };
   return {
@@ -155,4 +184,9 @@ export function createPreviewChat(): ConversationClient {
       publish();
     },
   };
+}
+
+let resumedChat: ConversationClient | undefined;
+export function resumePreviewChat(): ConversationClient {
+  return (resumedChat ??= createPreviewChat());
 }

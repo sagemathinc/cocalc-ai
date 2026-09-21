@@ -50,7 +50,8 @@ recorded below. No push, audio, or store release is claimed.
 
 This is an agent-first foundation, not full plan completion. Native agent
 creation, attachments, rich output/artifact viewing and selection feedback,
-terminals, dictation/TTS, live voice, push notifications, and distribution remain.
+terminals, live voice, push notifications, and distribution remain. Dictation/TTS
+implementation and qualification are recorded in the later milestone below.
 A clearly labeled web Agents management action is available while creation and
 other management screens are implemented. It is a temporary capability gap.
 
@@ -113,3 +114,59 @@ production bundle export. Final visual artifacts are local and ignored at
 `src/packages/mobile/dist/visual/2026-09-21T21-15-04.993Z/`. Directory/chat and
 keyboard screenshots were visually inspected, including dark mode and enlarged
 text. This establishes the development feedback loop, not full visual polish.
+
+## Dictate, follow, return, and listen milestone
+
+Implemented the native conversation loop:
+
+- Dictate records bounded mono MP4 audio, checks existing site speech capabilities,
+  and transcribes through the existing account-authorized speech RPC. Finish adds
+  recognized text to the latest editable draft; it never sends automatically.
+- Cancelling, leaving the screen, or backgrounding cancels speech work, stops
+  recording/playback, and fences late results. Temporary recordings and generated
+  speech files are disposed. Permission, capability, and provider errors remain
+  visible beside the composer.
+- Completed agent replies have Read aloud and a Stop control. Markdown-to-speech
+  conversion is shared with web via chat-client. Long responses are synthesized
+  and played in bounded chunks using the site's default voice and existing
+  account limits/billing. This does not open a live voice session.
+- Background/resume preserves the current transcript and draft while reconnecting
+  to project-host chat; reading/reconnecting does not start compute. Incomplete
+  connection snapshots retain visible messages. Sending requires a ready,
+  connected client. Existing uncertain-send behavior retains the draft.
+- Native Markdown now renders headings, emphasis, nested lists, quotes, code
+  blocks with Copy, and horizontally scrollable tables. Images/advanced math and
+  artifact interaction remain outside this increment.
+- Local preview simulates dictation, running activity, completion after leaving
+  the app, and read-aloud controls. Those simulations do not prove actual audio
+  capture, provider calls, or physical-device behavior.
+
+Native audio dependencies require one development-app rebuild; subsequent JS
+changes retain the normal Fast Refresh loop. Background speech is deliberately
+stopped for this increment. Push notifications and live voice remain later work.
+
+Validation passed: mobile typecheck, 23 domain/controller tests, 22 native
+component/adapter/fixture tests, chat-client build and 32 tests, the three web
+speech conversion tests, frontend typecheck/lint, dependency consistency, and
+iOS production bundle export. A native iOS Simulator build succeeded. All three
+Maestro flows passed on iPhone 17 Pro / iOS 26.5, producing 24 screenshots at
+`src/packages/mobile/dist/visual/2026-09-21T23-14-32.326Z/`. Recording, progress,
+reply, and read-aloud screenshots were inspected, including dark mode and
+enlarged text. Horizontal code-block scrolling initially expanded message
+heights; bounding its flex growth fixed that observed layout regression.
+Message actions remain individually accessible instead of being swallowed by a
+message-level accessibility label.
+
+The native build now uses Expo SDK 57's recommended React Native 0.86.0. During
+qualification, startup crashes occurred before application JavaScript with the
+forced `DEV_CLIENT_DEFAULT_LAUNCHER_URL` setting. Clean builds and source-built
+Expo modules alone did not resolve them. Removing that forced URL and restarting
+Metro after dependency changes restored repeatable cold launches through the
+explicit deep link. No dependency patch or source-build override is required.
+The previously observed native-header tap issue remains; the acceptance flow
+uses the iOS back gesture.
+
+Real microphone, speaker/headset routing, interruptions, and actual provider
+usage still require a physical-device smoke check. The new modules and
+microphone permission require a native rebuild, with a freshly restarted Metro
+server; see the mobile README for the exact commands.
