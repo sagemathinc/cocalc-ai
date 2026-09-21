@@ -16,7 +16,7 @@ Updated: 2026-09-21. Status: release preparation; not merged or deployed to prod
 
 ## Release checks
 
-- [ ] Resolve or explicitly disposition previous CI failures; do not dismiss
+- [x] Resolve or explicitly disposition previous CI failures; do not dismiss
       repeated failures as flakes without evidence.
 - [x] Full development build, typecheck, frontend lint, dependency consistency,
       and dependency declarations pass on the reconciled tree.
@@ -69,16 +69,26 @@ Updated: 2026-09-21. Status: release preparation; not merged or deployed to prod
 - Full `build:dev`, `static` (including workspace typecheck), frontend lint,
   dependency version checks, depcheck, and accessibility tooling tests passed.
   Static emitted two bundle-size warnings, not build failures.
-- Main CI run `35624839847` independently reproduces the outstanding funding
+- Main CI run `35624839847` independently reproduced the funding
   schema-ownership failure: `financial_approval_identities` and
   `financial_approval_sessions` have both canonical schema declarations and
   runtime CREATE TABLE bootstraps in `server/compute/funding/approvals.ts`.
-  Do not bypass the audit by expanding its legacy exception list. Resolve the
-  separate approval-service schema initialization before merging/releasing.
+  Follow-up removes duplicate initialization from both the approval service and
+  account directory, relying on canonical schema sync. The unchanged ownership
+  audit passes; new fresh/legacy schema migration tests preserve session rows,
+  revocation, and null identity-verification fields. The legacy exception list
+  was not expanded.
 - That main CI run also failed two VM documentation anchors after power controls
   were extracted. The anchors now point at `compute-vm-power-controls.tsx`;
   documentation verification passes without changing the visible labels.
 - Local logs for this preparation are `/tmp/agents-release-*.log`; CI on the
   pushed candidate remains authoritative for the full test matrix.
+- Candidate CI run `35631647914` passed build, checks, both server shards and
+  backend/database. Frontend failed on a mock of the removed messaging preference;
+  the VM form integration test also exceeded five seconds but passed on retry.
+  Removed the stale mock, gave the real two-form test an explicit 15-second bound,
+  and moved mock cleanup to `afterEach`. Both focused frontend tests pass.
+  The rest lane failed only on the schema audit resolved above. Follow-up local
+  logs are `/tmp/ci-fix-*.log`; a new exact-head CI run is still required.
 - Jupyter PR: https://github.com/sagemathinc/cocalc-ai/pull/668.
 - Production has not been changed by this release-preparation work.

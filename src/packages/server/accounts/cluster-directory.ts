@@ -222,14 +222,8 @@ export async function ensureClusterAccountDirectorySchema(): Promise<void> {
     "email_address_verified",
     "email_address_verified BOOLEAN",
   );
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS ${FINANCIAL_IDENTITY_TABLE} (
-      account_id UUID PRIMARY KEY,
-      email_address VARCHAR(254) NOT NULL,
-      generation BIGINT NOT NULL DEFAULT 1,
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
+  // FINANCIAL_IDENTITY_TABLE is initialized by the canonical database schema,
+  // not by directory reads/writes.
   await pool.query(`
     UPDATE ${TABLE}
        SET display_name = LEFT(

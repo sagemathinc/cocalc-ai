@@ -50,6 +50,10 @@ jest.mock("../hosts/hooks/use-host-pricing-settings", () => ({
   useHostPricingSettings: () => ({}),
 }));
 
+afterEach(() => jest.restoreAllMocks());
+
+// This renders and submits two real Ant Design forms; shared CI runners can
+// exceed Jest's five-second default even when every bounded wait succeeds.
 it("carries a selected recommendation through the real create form without changing funding, keys or deadlines", async () => {
   const user = userEvent.setup();
   const onCreate = jest.fn();
@@ -126,5 +130,4 @@ it("carries a selected recommendation through the real create form without chang
     ttl_minutes: 1440,
     ssh_public_key: "preserved-public-key",
   });
-  jest.restoreAllMocks();
-});
+}, 15_000);
