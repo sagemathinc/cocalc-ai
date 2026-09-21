@@ -127,6 +127,19 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- ACP settings passed an actual Chrome 200% browser-zoom check, not just a
+  smaller viewport or CSS transform. Chrome's appearance setting changed from
+  100% to 200%; CDP reported `zoom: 2`, layout/visual width changed from 1120 to
+  560 CSS pixels and device-pixel ratio doubled. In both light and dark themes,
+  the settled settings dialog had no horizontal page overflow, the discovery
+  control was visible and keyboard-focusable, and Escape restored focus to the
+  toolbar button. Native full-surface screenshots showed the advertised Model
+  and Thinking controls with vertical scrolling available. The initial run was
+  discarded because the dev stale-build overlay and entry animation obscured
+  the result; the recorded rerun followed a frontend rebuild at `2df8e2fb61`.
+  Chrome zoom was restored and temporary tabs closed. No discovery or inference
+  was invoked. This is the settings-dialog check, not an audit of all Agents UI.
+
 - Rootfs-only snapshot restore now prepares a reflink copy beside the live
   rootfs and swaps sibling directories rather than moving an ordinary directory
   across Btrfs subvolumes. Failed installation restores the preserved original;
