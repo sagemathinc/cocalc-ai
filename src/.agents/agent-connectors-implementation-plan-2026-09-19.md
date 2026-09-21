@@ -35,6 +35,12 @@ API/MCP coverage is frequently incomplete, so agents need to combine connector
 tools with browser interaction. Reuse the existing Blit integration rather than
 treating graphical browser access as a greenfield feature.
 
+The toolbox also includes **dedicated VMs**: give an agent a concrete machine it
+can use over configured passwordless SSH, with optional human guidance. Reuse the
+pay-as-you-go and course-funded VM product rather than building another compute
+allocator. This is primarily resource setup and useful context, not a new system
+for restricting every command the agent runs.
+
 ## 2. Recommended Decisions
 
 1. Use two main user-facing concepts: **Connections** on the account and **Access**
@@ -120,7 +126,7 @@ the first. Show both a user-editable label and recognizable provider identity,
 for example "Work Google - alex@company.example" and "Personal Google -
 alex@example.net". Provider identity, connection ID and editable label are distinct.
 
-The add flow offers Google, GitHub, Browser, CoCalc Project, and MCP Server.
+The add flow offers Google, GitHub, Virtual Machine, Browser, CoCalc Project, and MCP Server.
 Technical configuration is behind an Advanced section, not required for curated
 connectors. Never ask users to paste credentials into chat. API keys, where
 unavoidable, use a dedicated secret input and are not shown again after saving.
@@ -145,6 +151,7 @@ not the owner's private account labels or enabled connections.
   Reports Drive   Read selected files
   GitHub          acme/reports: read code, create pull requests
   Analysis data   Project Q /datasets: read
+  GPU workspace  VM training-box: passwordless SSH; start/stop when authorized
   Browser         Work research profile; full browser control
 ```
 
@@ -182,6 +189,9 @@ Use these distinct actions consistently:
 | This run only                 | Explicit advanced alternative to the persistent default; no later-turn carryover                     |
 
 Deleting a mention chip only edits the prompt; it does not remove enabled access.
+For ordinary mediated service connections, removal revokes the agent grant as
+above. VM toolbox bindings instead describe an existing SSH resource: removing
+one detaches it from the toolbox, not from project SSH access (see section 13a).
 Keep persistent enabled connections visible in a compact composer indicator and
 the Access panel, separately from textual references. Do not introduce a second
 hidden per-turn selection policy or make users reattach services repeatedly.
@@ -215,6 +225,10 @@ Return to the same draft, agent and human after OAuth or setup. Handle canceled
 setup and account changes without inserting a chip or grant into the wrong draft.
 Preserve file attachment and goal controls; do not crowd the composer with an
 always-open connector catalog or repeat setup instructions on every turn.
+
+Offer **Virtual machine...** as a direct resource choice in `+`, not only as an
+OAuth-style service. The toolbox can contain both data connections and machines;
+the setup, status and effective authority should reflect the resource kind.
 
 ### The @ Picker
 
@@ -514,8 +528,13 @@ Proposed records; names are illustrative, not a committed wire API:
 
 Resource policies are discriminated per kind: Gmail operations, Drive file IDs,
 Calendar IDs, GitHub repository IDs, MCP tool identities/schema versions, browser
-profile IDs, project file roots, or project execution targets. Avoid a universal
+profile IDs, VM IDs/lifecycle capabilities, project file roots, or project execution targets. Avoid a universal
 JSON bag that each caller interprets differently.
+
+A VM toolbox binding references the existing durable VM ID, human/agent/source
+runtime, attachment lifetime, SSH alias/configuration status and advisory notes.
+It does not duplicate VM ownership, project SSH grants, funding or lifecycle
+records. Notes and desired attachment state are separate from observed readiness.
 
 Persistent enabled access is the active grant keyed by human, stable agent and
 connection; do not duplicate it in shared thread settings. Multiple connection
@@ -957,6 +976,83 @@ An agent executing in Q does not acquire another named agent's connections or
 ability to delegate further projects. A read-only source grant cannot become exec
 through Jupyter, app startup, terminal, file preview or a generic proxy endpoint.
 
+## 13a. Dedicated VMs In The Agent Toolbox
+
+### Reuse The Working Compute Product
+
+The existing [VM CLI](../packages/cli/src/bin/commands/vm.ts) already implements
+`vm list/get`, `vm access grant/revoke`, `vm start/stop --wait`, `vm wait`,
+`vm ttl`, `vm funding`, `vm ssh`, `vm rsync`, and `vm ssh-config add/remove`.
+Managed SSH entries use public-key authentication and batch mode with password
+prompts disabled. SSH authorization has account/project paths; start/stop uses
+account/agent authentication rather than granting lifecycle control to any ambient
+project credential. These are reuse points, not proof that every connector run
+already has the required authority or a working SSH identity.
+
+Adding a VM should normally mean choosing an existing owned or accessible VM,
+including a student's course-funded VM. Link to the existing create-VM flow when
+necessary; creation is not an implicit consequence of opening the picker. Keep
+the selected VM's existing payer, budget and shutdown policy. Adding it to an
+agent must not change funding, extend a lease or bypass course restrictions.
+
+### Add, Prepare And Use
+
+1. In `+` choose **Virtual machine...**, then select a VM and inspect its current
+   state, configuration, funding and scheduled shutdown.
+2. Choose persistent attachment (the normal default) or **This run only**. Scope
+   the binding to this human and agent; support several agents using the same VM
+   without implying each has an isolated machine or filesystem.
+3. Enter optional **Instructions for this VM** such as "Feel free to use sudo
+   to install whatever you need" or "Please try not to use much disk space".
+   Label these as guidance, not enforced limits. Preserve and allow editing them.
+4. Reuse the existing project-access/key setup and managed SSH configuration from
+   the actual execution environment. Resolve alias collisions, preserve unrelated
+   SSH config and keep private key material out of model context. Check existing
+   authorization; if project access must be added, use its normal approval flow
+   and explain that project access is shared, not private to this agent.
+5. If stopped, offer **Start and attach**, showing that starting incurs charges.
+   Allow explicit standing start permission for future uses within existing VM
+   and funding policy. Otherwise leave it visibly stopped; merely opening a turn
+   or listing the toolbox must not start a billable machine.
+6. Wait for readiness and verify a bounded, noninteractive SSH probe from the
+   agent's runtime. Report **SSH ready**, **Starting**, **Stopped**, or a repairable
+   setup error. A provider `ready` record alone is not proof that this runtime's
+   SSH key, route and alias work. Do not disable host-key checking to make a probe
+   succeed; repair changed identities through the managed compute path.
+
+On each turn, supply a compact structured resource description: exact VM ID,
+label, SSH command/alias and username, known working directory if configured,
+observed readiness/time, available lifecycle commands, shutdown/funding context
+and separately attributed human guidance. The agent should not have to rediscover
+which machine it was given or ask for an SSH password. Distinguish the local
+project shell from the remote VM shell, and explain that files are not implicitly
+shared; use existing SSH/rsync paths for explicit transfer.
+
+Refresh observations before use or after failure; a successful probe cannot
+guarantee uninterrupted access for the whole turn. Show when a shutdown timer,
+funding exhaustion, owner action or infrastructure failure stops availability.
+Authorized agents can use existing start/stop/status tools, but cannot infer
+permission to create, resize, delete, change payer or extend a timer from a note
+about installing packages. Ambiguous lifecycle results are inspected, not blindly
+replayed. Keep this resource description and tool delivery harness-neutral.
+
+### Detach Is Not Stop Or Revoke SSH
+
+Removing the VM from the toolbox stops future automatic inclusion for that
+human/agent; it does not stop/delete the VM, erase remote jobs or revoke a shared
+project SSH grant. A run-only binding ends with the run, but neither bills nor
+SSH access automatically end with it. Offer separately labeled stop and project
+access-management actions, with their existing authority checks and warnings
+about other users/jobs. Do not silently stop a shared VM when one agent finishes.
+
+SSH is broad shell access with the remote user's actual privileges. Advisory
+notes do not enforce disk limits or grant sudo privileges the OS does not provide.
+Keys/config in a shared project are usable by that project's code; attachment
+selection is not an isolation boundary. Remote output may enter shared chat/files.
+Do not automatically copy Gmail/GitHub credentials or grant the VM all other
+toolbox connections. A future remote agent harness needs its own explicit runtime
+binding; an SSH destination is not automatically a new agent execution principal.
+
 ## 14. Observability And Daily Management
 
 Show concise human-readable activity, not UUID dumps:
@@ -1079,6 +1175,23 @@ Only that mode may claim another project/agent cannot borrow the browser or read
 its profile. Test crash/restart, stale commands and revocation. Keep Chromium's
 sandbox requirement for the managed protected mode; the user's existing launch
 script is not evidence that this gate has passed.
+
+### Small Resource Slice: Add An Existing VM
+
+Reuse the compute APIs/CLI and agent-first `+` flow for one existing VM: select,
+configure passwordless SSH, probe, attach persistently or for one run, and provide
+the agent its command and advisory notes. This can land independently of provider
+OAuth and browser hosting; do not make a universal connector framework its gate.
+Keep create/resize/remote-harness provisioning outside this first slice.
+
+Exit: an agent successfully runs a harmless command on the selected VM without
+password prompts, uses the same binding on the next turn, and can use existing
+start/stop operations only where authorized. Cover a student's course-funded VM,
+different humans on the same agent, multiple agents sharing a VM, stopped/start
+failure, SSH failure, alias collision, IP/host-key changes and scheduled shutdown.
+Detaching or ending a run must neither claim SSH revocation nor silently stop a
+machine another agent uses. Notes reach the model as attributed user guidance;
+they are not represented as enforced resource policy.
 
 ### Later Slices: MCP, Drive And Cross-Project Access
 
