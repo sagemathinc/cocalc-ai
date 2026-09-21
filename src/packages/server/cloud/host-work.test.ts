@@ -1013,6 +1013,65 @@ describe("cloud host start failures", () => {
     });
   });
 
+  it("retains a route retry when reclaimed readiness work precedes migration expiry", async () => {
+    const hostId = "47a18b25-b832-45f3-8eef-c1b9abf656e4";
+    const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const payload = { provider: "gcp", started_at: startedAt };
+    await upsertProjectHost({
+      id: hostId,
+      name: "Interrupted route migration",
+      region: "us-west3",
+      status: "running",
+      last_seen: new Date() as any,
+      metadata: {
+        machine: { cloud: "gcp" },
+        public_route: {
+          status: "preparing",
+          started_at: startedAt,
+          active_mode: "cloudflare-tunnel",
+          desired_mode: "cloudflare-proxy",
+        },
+      },
+    });
+    const { enqueueCloudVmWork, claimCloudVmWork, markCloudVmWorkDone } =
+      await import("./db");
+    await enqueueCloudVmWork({
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload,
+    });
+    const [work] = await claimCloudVmWork({ worker_id: "route-recovery" });
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready(work);
+    await markCloudVmWorkDone(work.id);
+
+    expect(migrateHostPublicRouteInternalMock).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      `SELECT * FROM cloud_vm_work
+       WHERE vm_id=$1 AND action='verify_host_ready' AND state='queued'`,
+      [hostId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].payload).toEqual(payload);
+    expect(new Date(rows[0].not_before).getTime()).toBeGreaterThan(Date.now());
+
+    // Simulate the later retry after the abandoned marker becomes stale.
+    await getPool().query(
+      `UPDATE project_hosts
+       SET metadata=jsonb_set(metadata, '{public_route,started_at}', $2::jsonb)
+       WHERE id=$1`,
+      [
+        hostId,
+        JSON.stringify(new Date(Date.now() - 2 * 60 * 60_000).toISOString()),
+      ],
+    );
+    await cloudHostHandlers.verify_host_ready(rows[0]);
+    expect(migrateHostPublicRouteInternalMock).toHaveBeenCalledWith({
+      id: hostId,
+      mode: "cloudflare-proxy",
+    });
+  });
+
   it("pre-pulls configured and catalog RootFS images for the host architecture", async () => {
     const hostId = "9c7f0920-7f87-446a-a6d7-e1ab8a79116d";
     const pullRootfsImage = jest.fn(async () => ({}));
