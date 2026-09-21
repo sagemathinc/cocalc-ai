@@ -969,14 +969,22 @@ describe("cloud host start failures", () => {
           disk_type: "balanced",
           storage_mode: "persistent",
         },
-        public_route: {
+      },
+    });
+    // Route state is control-plane owned; host heartbeat upserts discard it.
+    await getPool().query(
+      `UPDATE project_hosts SET metadata=jsonb_set(metadata, '{public_route}', $2::jsonb)
+       WHERE id=$1`,
+      [
+        hostId,
+        JSON.stringify({
           status: "preparing",
           started_at: staleRouteStartedAt,
           active_mode: "cloudflare-tunnel",
           desired_mode: "cloudflare-proxy",
-        },
-      },
-    });
+        }),
+      ],
+    );
 
     const { cloudHostHandlers } = await import("./host-work");
     await cloudHostHandlers.verify_host_ready({
@@ -1025,14 +1033,21 @@ describe("cloud host start failures", () => {
       last_seen: new Date() as any,
       metadata: {
         machine: { cloud: "gcp" },
-        public_route: {
+      },
+    });
+    await getPool().query(
+      `UPDATE project_hosts SET metadata=jsonb_set(metadata, '{public_route}', $2::jsonb)
+       WHERE id=$1`,
+      [
+        hostId,
+        JSON.stringify({
           status: "preparing",
           started_at: startedAt,
           active_mode: "cloudflare-tunnel",
           desired_mode: "cloudflare-proxy",
-        },
-      },
-    });
+        }),
+      ],
+    );
     const { enqueueCloudVmWork, claimCloudVmWork, markCloudVmWorkDone } =
       await import("./db");
     await enqueueCloudVmWork({
