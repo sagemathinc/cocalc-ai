@@ -2852,6 +2852,7 @@ export class ChatStreamWriter {
         content: ":robot: Thinking...",
         generating: true,
         acp_account_id: this.approverAccountId,
+        acp_runtime_kind: this.runtimeKind,
         acp_started_at_ms:
           Number(this.metadata.started_at_ms) > 0
             ? Number(this.metadata.started_at_ms)
@@ -3285,6 +3286,7 @@ export class ChatStreamWriter {
           : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      acp_runtime_kind: this.runtimeKind,
       acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
       acp_recovery_reason: (this.metadata as any).recovery_reason,
       acp_recovery_count:
@@ -3336,6 +3338,7 @@ export class ChatStreamWriter {
           : undefined,
       acp_usage: this.usage,
       acp_account_id: this.approverAccountId,
+      acp_runtime_kind: this.runtimeKind,
       acp_recovery_parent_op_id: (this.metadata as any).recovery_parent_op_id,
       acp_recovery_reason: (this.metadata as any).recovery_reason,
       acp_recovery_count:
@@ -9976,6 +9979,7 @@ async function writeQueuedJobFailureToChat({
     });
     const writer = new ChatStreamWriter({
       metadata: request.chat,
+      runtimeKind: request.runtime?.kind === "acp" ? "acp" : "codex",
       client: conatClient,
       approverAccountId: request.account_id,
       sessionKey: request.session_id,

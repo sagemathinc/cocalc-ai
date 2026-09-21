@@ -452,6 +452,39 @@ subscriptions or spend paid inference tokens.
 Sources: [llama.cpp release](https://github.com/ggml-org/llama.cpp/releases/tag/b11068),
 [pinned model repository](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/tree/9217f5db79a29953eb74d5343926648285ec7e67).
 
+## Durable Local Model And Runtime Identity Checkpoint
+
+The normal Agents UI created `agent-6` (Pi local Qwen) in the disposable project.
+Its operator-provisioned wrapper starts the pinned local llama.cpp model service
+and Pi adapter inside the supervised project sidecar. It uses a separate Pi HOME
+and local-only provider configuration, not real subscriptions or account keys.
+The persisted conversation is
+`/home/user/.local/share/cocalc/agents/7ed6dd0f-fb79-44e4-b425-0b8a65780915.chat`,
+thread `7e459cde-2ace-4f20-b705-8212e2650157`.
+
+Initial operation `3d066c38-0b41-4420-b959-e5b9d036b916` completed with the rendered
+model-generated answer `Two plus two is four.` After full browser reload,
+follow-up `3ba4717a-3f80-47e8-b3e6-e993ab1aa098` completed using native session
+`01a0c373-055c-72d0-98c2-b4adfb21919d`. llama.cpp reused its prompt cache for the
+follow-up. This qualifies actual local inference through the durable UI path,
+but the project network still permits public egress. Attempting an unprivileged
+nested network namespace was rejected by the existing container policy; no
+container policy was weakened to work around that. Keep this distinct from the
+separate, successful standalone `--network=none` evidence.
+
+Live inspection also caught an identity presentation gap: the session registry
+stored runtime kind but individual chat replies did not. The writer now records
+`acp_runtime_kind` on placeholder, full and metadata-only updates, including
+queued failure replies. Generic reply avatars and activity labels use that
+field; they no longer infer an OpenAI vendor from the shared legacy sender ID.
+Network-attributed sender avatars are likewise neutral. Native Codex and human
+avatars remain unchanged. Old experimental messages lacking this metadata are
+not rewritten or relabeled speculatively.
+
+An [operator guide](../../docs/acp-harnesses.md) documents setup, full-project
+trust, project-managed credentials, offline provisioning, supported capability
+limits and rollback. It is explicitly experimental, not release certification.
+
 ## Reproduce
 
 Local protocol tests (includes package build):

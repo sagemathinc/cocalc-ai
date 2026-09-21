@@ -3500,6 +3500,17 @@ describe("ChatStreamWriter", () => {
       });
       await writer.waitUntilReady();
       await writer.persistSessionId("session-123");
+      expect(writer.buildChatUpdate(true).acp_runtime_kind).toBe(runtimeKind);
+      expect(writer.buildChatUpdate(false).acp_runtime_kind).toBe(runtimeKind);
+      expect(writer.buildChatMetadataUpdate(true).acp_runtime_kind).toBe(
+        runtimeKind,
+      );
+      expect(writer.buildChatMetadataUpdate(false).acp_runtime_kind).toBe(
+        runtimeKind,
+      );
+      expect(sets.some((row) => row.acp_runtime_kind === runtimeKind)).toBe(
+        true,
+      );
       await delay(0);
       const controls = {
         profile: { id: "fixture" },

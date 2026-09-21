@@ -540,8 +540,12 @@ export default function Message({
     hasAcpAssistantMetadata,
   });
   const msgWrittenByLLM = hasLanguageModelServiceAuthor || isCodexAgentMessage;
+  const isGenericAgentMessage =
+    isCodexAgentMessage && field(message, "acp_runtime_kind") === "acp";
   const senderName = rpcAttribution
     ? rpcAttribution.label
+    : isGenericAgentMessage
+      ? "ACP agent"
     : isCodexAgentMessage
       ? codexAgentName(senderId)
       : get_user_name(senderId);
@@ -2425,7 +2429,9 @@ export default function Message({
       <>
         {renderForkNotice()}
         <AgentMessageStatus
-          runtimeKind={field(message, "agent_kind") === "acp" ? "acp" : "codex"}
+          runtimeKind={
+            field(message, "acp_runtime_kind") === "acp" ? "acp" : "codex"
+          }
           show={showCodexActivity && !suppressInlineCodexActivity}
           generating={effectiveGenerating}
           durationLabel={durationLabel}

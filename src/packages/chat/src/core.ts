@@ -132,6 +132,7 @@ export interface ChatMessage {
   acp_usage?: any;
   acp_config?: CodexThreadConfig;
   acp_account_id?: string;
+  acp_runtime_kind?: "codex" | "acp";
   acp_state?: "queued" | "running" | null;
   acp_manager_finished?: boolean;
   acp_active_descendant_thread_ids?: string[];
@@ -183,6 +184,7 @@ export interface BuildChatMessageOptions {
   historyAuthorId?: string;
   historyEntryDate?: string;
   acp_account_id?: string;
+  acp_runtime_kind?: "codex" | "acp";
   message_id?: string;
   thread_id?: string;
   parent_message_id?: string;
@@ -219,6 +221,7 @@ export function buildChatMessage(
     acp_started_at_ms: options.acp_started_at_ms,
     acp_usage: options.acp_usage,
     acp_account_id: options.acp_account_id,
+    acp_runtime_kind: options.acp_runtime_kind,
     message_id: options.message_id,
     thread_id: options.thread_id,
     parent_message_id: options.parent_message_id,
