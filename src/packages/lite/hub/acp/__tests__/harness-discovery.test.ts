@@ -1,6 +1,7 @@
 import {
   discoverHarnessControls,
   drainHarnessDiscovery,
+  pauseHarnessDiscovery,
   setHarnessLauncher,
 } from "../harness-runtime";
 import { AcpHarnessClient } from "@cocalc/ai/acp/harness";
@@ -125,4 +126,57 @@ test("disabled discovery never launches and never falls back to Codex", async ()
   delete process.env.COCALC_ACP_HARNESSES;
   await expect(discoverHarnessControls(request)).rejects.toThrow("not enabled");
   expect(launch).not.toHaveBeenCalled();
+});
+
+test("project stop blocks later discovery until container removal finishes", async () => {
+  let release!: () => void;
+  let opened!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    opened = resolve;
+  });
+  client.open.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+        opened();
+      }),
+  );
+  const first = discoverHarnessControls(request);
+  await ready;
+  const resume = pauseHarnessDiscovery("project");
+  try {
+    const draining = drainHarnessDiscovery("project");
+    await expect(discoverHarnessControls(request)).rejects.toThrow("stopping");
+    release();
+    await first;
+    await draining;
+    // The drain has finished, but the primary container is still being removed.
+    await expect(discoverHarnessControls(request)).rejects.toThrow("stopping");
+    expect(launch).toHaveBeenCalledTimes(1);
+  } finally {
+    release();
+    resume();
+  }
+  await expect(discoverHarnessControls(request)).resolves.toBeDefined();
+});
+
+test("discovery pauses are project scoped, nested and idempotently released", async () => {
+  const outer = pauseHarnessDiscovery("project");
+  const inner = pauseHarnessDiscovery("project");
+  try {
+    await expect(
+      discoverHarnessControls({
+        ...request,
+        project_id: "other",
+        chat: { ...request.chat!, project_id: "other" },
+      }),
+    ).resolves.toBeDefined();
+    inner();
+    inner();
+    await expect(discoverHarnessControls(request)).rejects.toThrow("stopping");
+  } finally {
+    inner();
+    outer();
+  }
+  await expect(discoverHarnessControls(request)).resolves.toBeDefined();
 });

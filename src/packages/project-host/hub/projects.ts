@@ -2599,6 +2599,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     runtime_exit_reason?: ProjectState["runtime_exit_reason"];
   }): Promise<void> {
     const activity_id = `stop:${project_id}:${Date.now()}`;
+    const { pauseHarnessDiscovery } =
+      await import("@cocalc/lite/hub/acp/harness-runtime");
+    const resumeDiscovery = pauseHarnessDiscovery(project_id);
     beginProjectHostActivity(activity_id, "stop");
     logger.debug("stop: project-host request received", { project_id, force });
     try {
@@ -2666,6 +2669,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
         force,
       });
     } finally {
+      resumeDiscovery();
       endProjectHostActivity(activity_id);
     }
   }

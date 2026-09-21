@@ -15,6 +15,20 @@ const discovering = new Map<
   string,
   { projectId: string; finished: Promise<void> }
 >();
+const discoveryPauses = new Map<string, number>();
+
+/** Hold across draining and container removal, not just the initial sweep. */
+export function pauseHarnessDiscovery(projectId: string): () => void {
+  discoveryPauses.set(projectId, (discoveryPauses.get(projectId) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const remaining = discoveryPauses.get(projectId)! - 1;
+    if (remaining) discoveryPauses.set(projectId, remaining);
+    else discoveryPauses.delete(projectId);
+  };
+}
 
 /** Project stop must not remove a network namespace beneath a discovery sidecar. */
 export async function drainHarnessDiscovery(projectId: string): Promise<void> {
@@ -31,6 +45,8 @@ export function setHarnessLauncher(next?: Factory): void {
 
 /** A temporary session for controls only; never load or mutate a chat session. */
 export async function discoverHarnessControls(request: AcpRequest) {
+  if (discoveryPauses.has(request.project_id))
+    throw Error("ACP discovery is unavailable while the project is stopping");
   const prepared = prepareHarnessRequest(request);
   if (!prepared.runtime) throw Error("This thread has no ACP harness");
   const key = harnessRuntimeKey(prepared);

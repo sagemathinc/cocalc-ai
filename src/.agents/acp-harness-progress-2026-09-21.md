@@ -28,6 +28,16 @@ focus restoration, without the development stale-build overlay.
 
 ## Implemented
 
+- Project stop now pauses new discovery before draining existing probes and
+  holds that pause through both worker fences and primary container removal.
+  Previously the drain took a snapshot while the discovery entry point remained
+  open, allowing a later probe to miss the sweep. Regression coverage verifies
+  rejection before and after drain completion, project isolation, nested/idempotent
+  release, and release after stop failure. Seven discovery and 60 project API
+  tests pass, plus the project-host TypeScript build. The project API test process
+  still reports its existing open-handle warning. This closes the local discovery
+  admission window; it is not evidence for all cross-process execution/stop races.
+
 - Compact chat toolbars now open harness controls in an **ACP harness settings**
   dialog. The previous inline panel was clipped by adjacent composer controls
   on narrow screens. Keyboard opening, Escape dismissal and focus restoration
