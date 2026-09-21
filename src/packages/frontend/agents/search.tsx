@@ -1,8 +1,16 @@
-import { useSyncExternalStore } from "react";
-import { Alert, Button, Checkbox, Drawer, Input, Select, Space } from "antd";
+import { useState, useSyncExternalStore } from "react";
+import {
+  Alert,
+  Button,
+  Checkbox,
+  Drawer,
+  Input,
+  Popover,
+  Select,
+  Space,
+} from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon } from "@cocalc/frontend/components";
-import { Tooltip } from "@cocalc/frontend/components/tip";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { SearchHitTime } from "@cocalc/frontend/chat/search-hit-time";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -22,6 +30,65 @@ function Excerpt({ text, query }: { text: string; query: string }) {
       <mark>{plain.slice(index, index + query.length)}</mark>
       {plain.slice(index + query.length)}
     </>
+  );
+}
+
+function SearchHelp() {
+  const [open, setOpen] = useState(false);
+  return (
+    <KeyboardBoundary
+      onKeyDown={(event) => {
+        if (open && event.key === "Escape") {
+          event.stopPropagation();
+          setOpen(false);
+        }
+      }}
+    >
+      <Popover
+        title="About conversation search"
+        trigger="click"
+        open={open}
+        onOpenChange={setOpen}
+        placement="bottomRight"
+        content={
+          <div style={{ maxWidth: "min(360px, calc(100vw - 48px))" }}>
+            <p>
+              Searches saved conversations without starting agents or projects.
+              Unavailable projects are reported separately, not as no matches.
+              Conversations in archived projects or on project hosts that are
+              offline cannot be searched. A stopped project can still be
+              searched when its host and files are available.
+            </p>
+            <p>
+              Current conversations are included even when agents are idle.
+              Include past conversations also searches up to five recent
+              conversations saved by "Start fresh conversation" per agent. Past
+              results open in the project chat file without changing the agent's
+              current conversation.
+            </p>
+            <p>
+              Most recently active agents are searched first. Use the project
+              filter to narrow the search. Each pass searches up to 100 agents,
+              150 threads and 20 seconds, with at most 3 projects at once.
+              Search more agents continues with agents not yet searched.
+            </p>
+            <p style={{ marginBottom: 0 }}>
+              Searches saved messages, not artifacts or unsaved changes. Access
+              errors and timeouts also appear under unavailable conversations.
+            </p>
+          </div>
+        }
+      >
+        <Button
+          aria-label="About conversation search"
+          aria-expanded={open}
+          type="text"
+          shape="circle"
+        >
+          ?
+        </Button>
+      </Popover>
+    </KeyboardBoundary>
   );
 }
 
@@ -145,6 +212,7 @@ export function AgentSearch({
       </Button>
       <Drawer
         title="Search all agents"
+        extra={<SearchHelp />}
         open={active && state.open}
         onClose={() => store.set({ open: false })}
         size={state.width}
@@ -183,26 +251,13 @@ export function AgentSearch({
             onChange={(projectId) => store.set({ projectId })}
             disabled={state.busy}
           />
-          <Tooltip
-            trigger={["hover", "focus"]}
-            title={
-              "Search up to five recent conversations saved by \"Start fresh conversation\" for each agent. An idle agent's current conversation is already included without this option. Past results open in the project chat file without changing the agent's current conversation."
-            }
+          <Checkbox
+            checked={state.past}
+            disabled={state.busy}
+            onChange={(e) => store.set({ past: e.target.checked })}
           >
-            <Checkbox
-              checked={state.past}
-              disabled={state.busy}
-              onChange={(e) => store.set({ past: e.target.checked })}
-            >
-              Include past conversations
-            </Checkbox>
-          </Tooltip>
-          <small>
-            Searches saved messages, most recently active agents first. Stopped
-            projects are not started. Up to 100 agents, 150 threads and 20
-            seconds per search; at most 3 projects at once. Includes up to five
-            recent past conversations per agent when enabled.
-          </small>
+            Include past conversations
+          </Checkbox>
           {state.error && (
             <Alert role="alert" type="error" title={state.error} />
           )}

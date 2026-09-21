@@ -18,7 +18,9 @@ the existing project-routed chat-store API rather than a central content index.
 - Each thread returns at most 20 hits. Each pass retains the newest 100 hits.
   **Search more agents** continues with unattempted candidates, retaining the
   previous results. Thread search provides deeper inspection within a thread.
-- Stopped projects are not started. Errors and timeouts are reported separately
+- Project running state is not a search prerequisite: the host reads saved files
+  without starting the project. Offline hosts and inaccessible storage cannot
+  be searched. Errors and timeouts are reported separately
   from successful searches with no matches. Coverage and partial-result notices
   remain visible.
 

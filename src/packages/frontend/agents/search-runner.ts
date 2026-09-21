@@ -115,9 +115,7 @@ export async function runAgentSearch({
         active.add(agent.endpoint.project_id);
         try {
           if (!available(agent))
-            throw new Error(
-              "Project is not running or its host is unavailable",
-            );
+            throw new Error("Agent conversation or its project is unavailable");
           const hits = await timed(
             boundedProjectSearch(agent.endpoint.project_id, async () => {
               const found: AgentSearchHit[] = [];

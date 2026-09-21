@@ -2181,7 +2181,6 @@ function AgentWorkspace({
 
 export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const searchNavigation = useRef(0);
-  const searchProjectMap = useTypedRedux("projects", "project_map");
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -2976,15 +2975,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             activity={agentOrganization.organization.lastOpened}
             active={active}
             onSelect={openSearchHit}
-            available={(agent) =>
-              agent.available &&
-              (lite ||
-                searchProjectMap?.getIn([
-                  agent.endpoint.project_id,
-                  "state",
-                  "state",
-                ]) === "running")
-            }
+            available={(agent) => agent.available}
           />
         )}
         <Input
