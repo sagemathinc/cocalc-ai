@@ -14,6 +14,33 @@ authorization and RPC-service suites pass 101 tests, and project-host typechecki
 passes. This is execution-boundary coverage, not live cross-project delivery or
 a live membership-revocation scenario.
 
+### Live Queued Network Revocation
+
+The execution-boundary tests now also have a same-project live counterpart on
+deployed artifact `20260921T123635Z-f3ef948ae811`. A temporary two-member network
+(`7472f124-2f00-40d9-9d3d-218687fe2804`) connected disposable fixture agents 4
+and 3. Agent 3's deliberately hanging operation
+`b1141098-be34-4460-83c1-2930a9af6c51` kept its conversation occupied. Agent 4
+used its scoped runtime identity, checked destinations, and sent exactly one
+message. CLI attempt `dd4eb4ee-9e9c-4578-8f7d-d73bebf6a1e3` returned accepted;
+the recipient operation `e99f6b0f-46e1-401d-badc-2017e39fb4fb` was independently
+observed queued with no start timestamp.
+
+After the network was closed through the UI, the running fixture was explicitly
+interrupted. The queued operation reached execution authorization and ended in
+error with `network_closed`, not a harness response. This distinguishes accepted
+delivery/queueing from execution authority: running work is not automatically
+canceled, but queued work is checked again before it starts. Settings copy and
+confirmation messages now describe that distinction instead of promising that
+all accepted work continues.
+
+The fixture used an exclusive on-disk attempt marker to prevent duplicate sends.
+The original fixture was restored, the temporary network was closed, and normal
+project restart `69b4c57d-9976-4f04-91c5-adeb45f21be9` completed successfully.
+Independent inspection then found no queued/running jobs or ACP sidecars for
+the disposable project. No other project's configuration or real credentials
+were changed. Live cross-project routing remains a separate qualification gate.
+
 At source commit `4f0f063038405cf6a2161156c1dfb9a7d3230de7`, the following
 checks completed successfully (2026-09-21):
 

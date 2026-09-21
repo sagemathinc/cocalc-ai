@@ -322,7 +322,7 @@ export function AgentNetworkDetailsModal({
                     Modal.confirm({
                       title: "Close this Agent Network?",
                       content:
-                        "Closing is permanent and blocks future messages. It does not cancel accepted work or erase chat history.",
+                        "Closing is permanent and blocks new messages and queued work that has not started. It does not cancel already-running work or erase chat history.",
                       okText: "Close network",
                       okButtonProps: { danger: true },
                       onOk: () => {
@@ -345,8 +345,9 @@ export function AgentNetworkDetailsModal({
                 </Button>
               </Space>
               <Text type="secondary">
-                Pausing blocks future message admission. It does not cancel work
-                already accepted or prevent membership and settings changes.
+                Pausing blocks new messages. Queued work is checked again before
+                execution; already-running work is not canceled. Membership and
+                settings changes remain available.
               </Text>
             </Space>
           </section>
