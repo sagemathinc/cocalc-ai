@@ -583,7 +583,11 @@ describe("site-funded Codex account directory routing", () => {
       home_bay_id: "remote-account-home",
       email_address_verified: true,
     });
-    membership = jest.fn(async () => ({ source: "free", class: "free" }));
+    membership = jest.fn(async () => ({
+      source: "free",
+      class: "free",
+      effective_limits: { acp_max_running_per_account: 3 },
+    }));
     overview = jest.fn(async () => ({ meters: [] }));
     jest
       .spyOn(
@@ -636,6 +640,50 @@ describe("site-funded Codex account directory routing", () => {
         hostId: HOST_ID,
         projectId: request.project_id,
         poolId: "site-funded-codex-free",
+        policy: expect.objectContaining({
+          maxConcurrentTurnsPerAccount: 3,
+        }),
+      }),
+    );
+  });
+
+  it("uses the paid membership ACP concurrency for site-funded turns", async () => {
+    membership.mockResolvedValue({
+      source: "subscription",
+      class: "instructor",
+      effective_limits: { acp_max_running_per_account: 20 },
+    });
+    overview.mockResolvedValue({
+      meters: [
+        { id: "ai-5h", limit: 10, remaining: 5 },
+        { id: "ai-7d", limit: 20, remaining: 15 },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    const reserve = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({ allowed: true } as any);
+
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toEqual({
+      allowed: true,
+    });
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        poolId: "site-funded-codex-paid",
+        policy: expect.objectContaining({
+          maxConcurrentTurnsPerAccount: 20,
+        }),
       }),
     );
   });

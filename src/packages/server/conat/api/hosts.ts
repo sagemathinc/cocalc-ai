@@ -107,6 +107,7 @@ import {
 } from "@cocalc/server/project-host/access";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import {
   enqueueCloudVmWork,
@@ -225,6 +226,7 @@ import {
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolStatus,
@@ -3582,6 +3584,10 @@ export async function reserveSiteFundedCodexTurn({
           ] as const;
         })();
   const paid = membership.source !== "free";
+  const accountConcurrency =
+    getEffectiveMembershipUsageLimits(membership).acp_max_running_per_account ??
+    configuration.policy?.maxConcurrentTurnsPerAccount ??
+    DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
   if (account5h.limit <= 0 || account7d.limit <= 0) {
     return {
       allowed: false,
@@ -3605,7 +3611,10 @@ export async function reserveSiteFundedCodexTurn({
     homeBayId,
     owningBayId: getConfiguredBayId(),
     membershipTier: membership.class,
-    policy: configuration.policy,
+    policy: {
+      ...configuration.policy,
+      maxConcurrentTurnsPerAccount: accountConcurrency,
+    },
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
     surface: path?.endsWith(".ipynb")

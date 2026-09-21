@@ -25,7 +25,7 @@ describe("site-funded Codex policy", () => {
       model: "gpt-5.6-luna",
       reasoning: "medium",
       serviceTier: "standard",
-      maxConcurrentTurnsPerAccount: 2,
+      maxConcurrentTurnsPerAccount: 50,
       maxTurnCostMicrousd: 25_000,
       maxTurnDurationMs: 600_000,
       contextWindowTokens: 90_000,
