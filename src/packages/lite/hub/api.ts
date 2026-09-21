@@ -1565,16 +1565,19 @@ export const hubApi: HubApi = {
       limit?: number;
       offset?: number;
     }) => {
-      return searchChatStore({
-        include_head: opts.include_head,
-        chat_path: opts.chat_path,
-        query: opts.query,
-        db_path: opts.db_path,
-        thread_id: opts.thread_id,
-        exclude_thread_ids: opts.exclude_thread_ids,
-        limit: opts.limit,
-        offset: opts.offset,
-      });
+      return searchChatStore(
+        {
+          include_head: opts.include_head,
+          chat_path: opts.chat_path,
+          query: opts.query,
+          db_path: opts.db_path,
+          thread_id: opts.thread_id,
+          exclude_thread_ids: opts.exclude_thread_ids,
+          limit: opts.limit,
+          offset: opts.offset,
+        },
+        "lite-local",
+      );
     },
     chatStoreDelete: (opts: {
       chat_path: string;

@@ -99,10 +99,13 @@ function SearchHelp() {
             <p>
               Most recently active agents are searched first. Use the project
               filter to narrow the search. Each pass searches up to 100 agents,
-              150 threads and 20 seconds, with at most 3 projects at once.
-              Search more agents continues with agents not yet searched. Very
-              large histories that exceed scan limits are reported as
-              unavailable, not as no matches.
+              150 threads and 20 seconds, searching one project at a time. Each
+              account can search up to 150 threads per minute on a host.
+              Expensive searches also have a per-account execution-time budget;
+              if reached, wait a minute before searching again. Search more
+              agents continues with agents not yet searched. Very large
+              histories that exceed scan limits are reported as unavailable, not
+              as no matches.
             </p>
             <p style={{ marginBottom: 0 }}>
               Searches saved messages, not artifacts or unsaved changes. Access

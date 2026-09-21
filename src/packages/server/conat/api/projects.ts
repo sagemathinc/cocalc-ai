@@ -7219,17 +7219,20 @@ export async function chatStoreSearch({
   offset?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await workspaceChatStoreSearch({
-    include_head,
-    project_id,
-    chat_path,
-    query,
-    db_path,
-    thread_id,
-    exclude_thread_ids,
-    limit,
-    offset,
-  });
+  return await workspaceChatStoreSearch(
+    {
+      include_head,
+      project_id,
+      chat_path,
+      query,
+      db_path,
+      thread_id,
+      exclude_thread_ids,
+      limit,
+      offset,
+    },
+    account_id ?? "",
+  );
 }
 
 export async function chatStoreDelete({
