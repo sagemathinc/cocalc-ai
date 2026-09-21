@@ -5,6 +5,17 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+Refreshed selected regression baseline at `daea800815`: 838 tests passed:
+448 Lite ACP tests (48 suites), 140 native AI tests (12 suites), 119 project-host
+Codex/ACP/snapshot tests (17 suites), 57 focused frontend tests (six suites), and
+74 real-SDK subprocess tests. Commands matched the preceding broad baseline:
+Lite `--testPathPatterns='acp/.*test'`; host
+`--testPathPatterns='(codex|acp|snapshot-(rootfs-restore|home-swap|home-rootfs)).*test'`;
+frontend `--testPathPatterns='(harness-profile|harness-tool|acp-api|composer-delivery|composer-resize-handle|agent-networks).test'`;
+AI `pnpm test --runInBand` and `node --test acp/__tests__/harness-client.test.cjs`.
+No package rebuild ran concurrently with these tests. This refreshes regression
+evidence after the discovery fix; it does not clear outstanding live release gates.
+
 Discovery cleanup fix `f023aa2cf2` is deployed as backend
 `20260921T160219Z-f023aa2cf21e-dirty-e3b0c442`, SHA256
 `15557398ed28627e38c4897fedfb09a75a544a97f656ebe1db0a4b5589439b4d`.
