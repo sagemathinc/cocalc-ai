@@ -2,6 +2,9 @@
 
 Date: 2026-09-19
 
+Revised: 2026-09-21, following product discussion. Implementation base:
+`feature/my-agents-workspace` ([PR #640](https://github.com/sagemathinc/cocalc-ai/pull/640)).
+
 Status: proposal for discussion, not an implementation or security signoff.
 
 ## 1. Product Goal
@@ -24,6 +27,13 @@ connection permissions.
 All seven requested capabilities are in this roadmap. They do not need to ship
 simultaneously. Deliver complete, useful vertical slices on a common foundation
 rather than a catalog of partially functioning integrations.
+
+The immediate dogfooding priorities are **GitHub, Gmail, and Google Calendar**
+for the user and an employee. Connect once, enable for an agent once, and use
+seamlessly for dozens or hundreds of turns. Browser assistance is also important:
+API/MCP coverage is frequently incomplete, so agents need to combine connector
+tools with browser interaction. Reuse the existing Blit integration rather than
+treating graphical browser access as a greenfield feature.
 
 ## 2. Recommended Decisions
 
@@ -52,6 +62,14 @@ rather than a catalog of partially functioning integrations.
    profiles and visible control state.
 10. Support self-hosting without requiring a CoCalc-operated credential service.
     Operators supply provider registrations and encryption keys where required.
+11. Enabled connections persist for the **human account + stable agent** until
+    explicitly removed, paused, expired or revoked. They are not attachments that
+    disappear after one turn and are not shared settings for everyone in a thread.
+12. Support multiple accounts of one provider in the same turn from the outset.
+    Every operation selects an exact connection; there is no global active account.
+13. Keep connector authority and execution harness-independent. Integrate native
+    Codex first without making it the connector protocol; share contracts with the
+    [ACP runtime plan](acp-runtime-integration-plan-2026-09-19.md).
 
 ## 3. Existing Foundation And Its Limits
 
@@ -72,6 +90,23 @@ Follow [scalable architecture](scalable-architecture.md) and
 [accessibility requirements](accessibility.md). Reuse implementation where its
 trust boundary fits; avoid mechanically reusing broad credentials or proxies.
 
+### Agent-First UI And Runtime Integration Points
+
+Build on PR #640's mounted agent workspace, draft preservation, account menu,
+Sessions and typed references; do not add a parallel agent dashboard. The current
+[`+` menu](../packages/frontend/chat/agent-file-attachment.tsx) already offers file
+attachment and goal actions. Extend that composer entry point with connections.
+The [account menu](../packages/frontend/agents/account-menu.tsx) owns account-level
+management. Extend the existing
+[mention groups](../packages/frontend/editors/markdown-input/mentionable-users.tsx)
+without displacing [agent ranking](../packages/frontend/agents/mention-suggestions.ts)
+or changing Session membership into connector permission.
+
+The ACP plan preserves native Codex and adds generic harness adapters. Connector
+records, grants, tool schemas, confirmations and results must not depend on Codex
+tool-call formats. Section 6 defines the small common integration contract; the
+full ACP implementation is not a dependency for the first connector result.
+
 ## 4. User Experience
 
 ### Account Connections
@@ -79,6 +114,11 @@ trust boundary fits; avoid mechanically reusing broad credentials or proxies.
 The account menu opens **Connections**. Each connection shows provider, a useful
 name such as "Work Google", the remote account/tenant, health, connected agents,
 last activity, and Disconnect. Multiple accounts from one provider are supported.
+
+Connecting another account creates a separate connection rather than replacing
+the first. Show both a user-editable label and recognizable provider identity,
+for example "Work Google - alex@company.example" and "Personal Google -
+alex@example.net". Provider identity, connection ID and editable label are distinct.
 
 The add flow offers Google, GitHub, Browser, CoCalc Project, and MCP Server.
 Technical configuration is behind an Advanced section, not required for curated
@@ -93,6 +133,10 @@ accidentally disconnect Google sign-in when removing a Google data connection.
 ### Agent Access
 
 Every agent has an **Access** panel listing its connections and precise limits:
+
+This panel is explicitly **Your connections for this agent**, scoped to the
+signed-in human. Another user opening the same agent sees their own configuration,
+not the owner's private account labels or enabled connections.
 
 ```text
 @assistant
@@ -119,6 +163,59 @@ over any impression of per-agent isolation. Agent rename preserves identity;
 cloning a thread/project or recreating an agent does not inherit access. Agent
 retirement disables its grants.
 
+### Persistent Availability, References And Turn Ownership
+
+The default is persistent availability, not per-turn attachment. Enabling an
+existing connection through `+` completes the Access grant if needed and leaves
+it enabled for later turns. Ordinary requests can use the enabled tools without
+reselecting or mentioning the connection. New conversations with the same stable
+agent retain this human's configuration. A new agent/clone does not inherit it.
+
+Use these distinct actions consistently:
+
+| Action                        | Meaning                                                                                              |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Enable for this agent         | Save this human's grant and make its permitted tools available across turns                          |
+| Mention in a request          | Identify relevant connection/context; does not create, remove or narrow a grant                      |
+| Remove from this agent        | Revoke this human's grant to this agent, including queued/future use; other agents remain configured |
+| Disconnect account connection | Stop all CoCalc use of that connection across the human's agents                                     |
+| This run only                 | Explicit advanced alternative to the persistent default; no later-turn carryover                     |
+
+Deleting a mention chip only edits the prompt; it does not remove enabled access.
+Keep persistent enabled connections visible in a compact composer indicator and
+the Access panel, separately from textual references. Do not introduce a second
+hidden per-turn selection policy or make users reattach services repeatedly.
+An explicit one-run restriction, if offered later, must be labeled and enforced
+server-side; merely mentioning Work Google is not a prohibition on Personal Google.
+
+The authenticated human initiating an execution determines its connector principal,
+not the agent owner or last person to speak in the thread. Alice's turns use Alice's
+grants; Bob's turns use Bob's. A busy Alice run must not consume Bob's connector
+credentials or silently treat Bob's message as Alice authorizing new operations.
+Queue different-principal input for a separately authorized run or reject steering
+with an explanation. Re-resolve authority before queued work starts and on resume.
+Do not reuse a harness session carrying Alice's capabilities or private connector
+context as Bob's execution. Shared chat/artifacts may already contain disclosed
+results; changing principals cannot make that history private again.
+
+Peer messages and native subagents do not select a new human principal or inherit
+the sender's connections. Use the receiving run's authorized principal and bounded
+parent authority as appropriate. A resumed/background execution remains bound to
+its original human and live grant checks, never to whoever currently views it.
+
+### Composer + Menu
+
+Extend the existing menu with **Connections...**, showing this human's enabled
+connections, available saved connections and **Connect a service...**. Enabling
+opens a focused grant flow only when needed; inspecting or mentioning an already
+enabled connection needs no new consent. Keep account setup separate from grant
+approval, while allowing them to be consecutive steps in one flow.
+
+Return to the same draft, agent and human after OAuth or setup. Handle canceled
+setup and account changes without inserting a chip or grant into the wrong draft.
+Preserve file attachment and goal controls; do not crowd the composer with an
+always-open connector catalog or repeat setup instructions on every turn.
+
 ### The @ Picker
 
 Use searchable groups: **Agents**, **People**, **Connections**, and the existing
@@ -131,6 +228,42 @@ Selecting an unavailable connection opens the grant/setup wizard, then returns
 to the draft. A reference chip carries a typed opaque reference, not credentials.
 The server resolves it against current access at submission and execution.
 Pasting a chip or an `@name` never creates authority.
+
+Only the human's picker may show their saved-but-not-enabled connections. Agent
+tool discovery exposes only currently granted connections and capabilities. The
+agent may request a service generically without learning private account labels.
+
+### Multiple Accounts In One Request
+
+"Find a slot when I'm free in both my work and personal calendars" is a core
+acceptance case, not a later account-switcher feature. The agent can call both
+enabled connections in one turn, combine results and attribute them to the correct
+accounts. Creating an event then needs an exact account/calendar destination;
+ask when ambiguous rather than defaulting to whichever account was used last.
+
+Bind tool discovery, invocation, resource IDs, caches, pagination cursors, approvals
+and activity to connection identity. Two servers may expose the same tool name;
+two accounts may both use a calendar called `primary`. Neither is a globally
+unique identity. Refresh/reconnect/revoke one connection independently. If one
+calendar fails, report incomplete availability rather than claiming free in both.
+
+Use provider-supplied stable profile IDs scoped to provider/issuer/tenant as
+appropriate, not mutable email addresses, as remote identity. Keep those separate
+from CoCalc connection IDs and labels. Reconnecting a saved connection must verify
+the same remote identity; choosing another account creates a new connection and
+requires its own grants. Never transfer grants silently during reconnection.
+If a provider cannot supply a reliable identity check, require an explicit reviewed
+replacement/regrant rather than claiming the old account has been verified.
+
+For compatible MCP servers, recognize the optional authenticated profile-tool
+convention described in [OpenAI's multi-account guidance](https://developers.openai.com/plugins/build/auth#support-multiple-accounts).
+Use it for identity recognition and useful labels, not as a source of authority.
+Missing profile tooling must not prevent multiple accounts: permit manual labels
+and state when reliable identity recognition is unavailable. A profile response
+does not widen scopes or establish trust in arbitrary server metadata. Validate
+the current convention during implementation rather than assuming all MCP servers
+implement it. The motivating [multi-account announcement](https://x.com/mxstbr/status/2100966048132718786)
+also illustrates same-prompt work/personal calendar use.
 
 ### Agent-Initiated Requests
 
@@ -218,6 +351,23 @@ processes. It does not make shared code safe to execute or prevent a malicious
 document from misleading an authorized agent. Code deliberately executed within
 an authorized compartment may exercise that compartment's granted authority.
 No claim of protection from a compromised host administrator is made.
+
+### Initial Release Boundary And Deferred Hardening
+
+Trust the bay/operator services, credential worker and assigned project host.
+Do not claim resilience to their compromise or require a new enterprise database,
+OS identity or host-isolation architecture before a useful connector can ship.
+Colocation alone is neither proof of isolation nor proof that it is impossible;
+record actual process/credential access for the deployed mode.
+
+Initial gates remain concrete: authentic human/run attribution, server-enforced
+grants, provider credentials outside ordinary project storage, explicit shared
+runtime disclosure where applicable, revocation, bounded operations and honest
+result states. Stronger per-agent driver/CLI isolation, separate service identities
+and infrastructure defense in depth are incremental work with their own tests,
+not guarantees inferred from a private-looking UI. A shared runtime cannot make
+the product's per-user selection a defense against malicious neighboring code.
+For that threat, use separate trusted projects until protected execution exists.
 
 ### Data And Actions
 
@@ -314,24 +464,64 @@ core dumps and redact diagnostics; tmpfs alone does not settle swap/host backups
 Provider data intentionally saved as an artifact remains ordinary project data
 and follows normal persistence/backup rules. This distinction must be documented.
 
+### Harness-Neutral Connector Contract
+
+Share the runtime boundary with the
+[ACP integration plan](acp-runtime-integration-plan-2026-09-19.md). CoCalc owns:
+
+- Discovery of tools for the authenticated human, stable agent and current run.
+- Invocation bound to connection, grant, typed arguments and an attempt ID.
+- Human attention/confirmation bound to that exact operation and principal.
+- Structured results, source-account attribution, bounded content/artifacts,
+  redacted failures, and explicit rejected/accepted/completed/unknown outcomes.
+- Refresh of available tools and revocation at the service, even when a harness
+  retains an old tool list or runs for many turns.
+
+Native Codex and generic ACP adapters deliver this contract through supported
+tool injection, a thin authenticated CoCalc MCP bridge, or scoped CLI calls.
+Choose and validate the native delivery mechanism in the first slice. Do not
+confuse consuming an external MCP connector with exposing CoCalc tools over MCP
+to a harness; they are separate adapter roles over the same authority checks.
+Do not build three delivery mechanisms before one works end to end.
+
+ACP permission prompts, runtime installation and model selection grant no CoCalc
+connector authority. Pass only authorized tool/configuration descriptors and
+short-lived capabilities, never upstream refresh tokens. A project-running harness
+does not become protected merely because it speaks ACP or MCP. Advertise actual
+capabilities: dynamic tool updates, confirmation, cancellation and reconnect may
+vary. If an adapter requires a new runtime session after access changes, explain
+that without silently losing a draft or replaying a side effect. Revocation must
+still take effect at the connector service immediately subject to the documented
+in-flight/cache window, regardless of tool-list support.
+
+Avoid Codex-specific fields in durable connector records. Qualify a fake second
+adapter early; test a real ACP harness when the ACP workstream provides one, not
+as a prerequisite for GitHub dogfooding. Preserve native Codex functionality.
+
 ## 7. Records, Permits And Lifecycle
 
 Proposed records; names are illustrative, not a committed wire API:
 
-| Record                   | Essential fields                                                                                                                               |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connection`             | ID, owner account/home bay, discriminated kind, label, remote account/tenant, nonsecret configuration, credential reference, state, generation |
-| `connection_credential`  | Connection ID, encrypted envelope/key version, provider scopes, expiry/refresh metadata; no generic read-back API                              |
-| `agent_connection_grant` | ID, owner, stable agent endpoint, source project, connection ID, typed operations/resources, confirmation policy, expiry, state, generation    |
-| `connection_proposal`    | Exact requested change, requester, expiry, reviewed version, approval/rejection state                                                          |
-| `connector_execution`    | Run/turn binding, parent identity, grant/connection/account generations, worker/host fence, lease deadline, active/canceled state              |
-| `connector_attempt`      | Attempt ID, operation and request digest, resource summary, admission/result state, timestamps, redacted failure, optional provider request ID |
-| `browser_attachment`     | Connection ID, device or hosted runtime identity, profile identity, incarnation, lease, online/control state                                   |
+| Record                   | Essential fields                                                                                                                                                                  |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection`             | ID, owner account/home bay, discriminated kind, label, remote account/tenant, nonsecret configuration, credential reference, state, generation                                    |
+| `connection_credential`  | Connection ID, encrypted envelope/key version, provider scopes, expiry/refresh metadata; no generic read-back API                                                                 |
+| `agent_connection_grant` | ID, owner, stable agent endpoint, source project, connection ID, typed operations/resources, confirmation policy, expiry, state, generation                                       |
+| `connection_proposal`    | Exact requested change, requester, expiry, reviewed version, approval/rejection state                                                                                             |
+| `connector_execution`    | Initiating human, stable agent, runtime session/run/turn binding, parent identity, grant/connection/account generations, worker/host fence, lease deadline, active/canceled state |
+| `connector_attempt`      | Attempt ID, operation and request digest, resource summary, admission/result state, timestamps, redacted failure, optional provider request ID                                    |
+| `browser_attachment`     | Connection ID, device or hosted runtime identity, profile identity, incarnation, lease, online/control state                                                                      |
 
 Resource policies are discriminated per kind: Gmail operations, Drive file IDs,
 Calendar IDs, GitHub repository IDs, MCP tool identities/schema versions, browser
 profile IDs, project file roots, or project execution targets. Avoid a universal
 JSON bag that each caller interprets differently.
+
+Persistent enabled access is the active grant keyed by human, stable agent and
+connection; do not duplicate it in shared thread settings. Multiple connection
+records of the same provider kind are valid. Per-message references store opaque
+connection IDs separately and do not become the authorization source. Keep
+runtime-session state partitioned by principal, including caches and tool handles.
 
 An admitted operation must satisfy:
 
@@ -570,6 +760,36 @@ universal command-policy language to ship the first connectors.
 
 ## 11. Hosted Chromium With Blit
 
+### Existing Browser Workflow And Incremental Delivery
+
+Blit is already integrated and used for interactive Chromium in CoCalc. The user
+currently launches `/usr/lib/chromium/chromium` with Wayland and
+`--remote-debugging-port=9222`, including `--no-sandbox` and `--disable-gpu` in their
+local script. This is evidence of a useful existing workflow, not a recommended
+managed browser security configuration. Inventory the actual launch, viewing,
+DevTools attachment and cleanup paths before replacing any of them.
+
+Keep browser work a high-priority parallel workstream, not a prerequisite for
+GitHub/Gmail/Calendar. First improve setup, readiness and visible agent/human
+control for an explicitly project-shared dedicated browser profile using existing
+Blit plumbing. Label project access and profile persistence honestly; do not
+describe credentials entered into that shared browser as broker-protected account
+connections. Do not copy managed OAuth tokens into it to simplify sign-in.
+Keep debugging endpoints off public project ports and prevent agent control of
+CoCalc permission/setup sessions. A browser login is separate authority, not an
+automatic extension of a read-only Gmail or GitHub grant.
+
+Agents should be able to use API/MCP tools and an explicitly authorized browser
+in the same workflow when tool coverage falls short. Do not silently launch a
+browser, transfer credentials or broaden permissions after an MCP failure. Reuse
+the harness's supported browser tooling through the runtime adapter; do not build
+a replacement browser agent or assume Codex's tooling exists in every harness.
+
+The following protected hosted-browser design is a later, separately qualified
+mode. It does not block the disclosed shared-project improvement above.
+
+### Protected Hosted Browser Target
+
 Offer **New hosted browser**: CoCalc starts Chromium and the Wayland/blit viewing
 stack in a dedicated protected runtime. The user can watch, log in, take control,
 and hand control back. Reuse graphical-app packaging and UI, not the shared
@@ -772,94 +992,124 @@ Avoid infinite auto-retry loops or sending credentials to a replacement endpoint
 
 ## 15. Implementation Sequence And Acceptance Gates
 
-### Milestone 0: Boundary Prototype And Provider Preparation
+This is a roadmap, not a checklist that must all be finished before dogfooding.
+Use small provider slices and a parallel browser track. GitHub, Gmail and Calendar
+are the first product priorities; Drive and cross-project access are not required
+to prove the connector foundation.
 
-Inventory the model driver, agent-run identity issuance and shell execution
-paths. Record the real boundary of the current runtime. Build a
-two-agent/same-project prototype before committing to stronger per-agent security
-claims. For a protected path, demonstrate that ordinary project code cannot
-invoke the broker, steal its token, inspect its process or reach its browser.
-Specify the extra isolated CLI work explicitly, but do not block a clearly
-disclosed shared-project release on it.
+### Slice 0: Confirm The Small Runtime Boundary
 
-In parallel, register test Google/GitHub applications, begin Google production
-verification, and test one actual remote MCP endpoint. Record supported versions,
-required scopes and self-host configuration. This avoids discovering external
-approval delays after the UI is complete.
+Inventory the native tool-delivery path, authenticated human/run identity and
+credential storage reuse points. Select one delivery adapter and document its
+actual shared or protected runtime boundary. Sketch the small neutral contract
+with the ACP workstream; do not implement a generic runtime platform here.
 
-### Milestone 1: Shared Foundation Plus Cross-Project Read
+In parallel, prepare GitHub App and Google test registrations and investigate
+applicable Google verification. These are external setup tasks, not a reason to
+build all OAuth providers or an MCP wizard before a useful read. Record existing
+Digits/Vanta setups as later compatibility targets without importing their tokens
+or assuming their current configuration satisfies the managed-connection model.
 
-Implement connection/grant records, vault, runtime binding, proposals, pause,
-revocation, activity, narrow host permits and the grouped @ picker. Add project-Q
-read through mediated tools where a protected driver exists, and the CLI path
-with ordinary filesystem verbs. Shared-project mode may ship first; add isolated
-CLI as a separately tested improvement. This exercises real account, project
-and bay authorization without OAuth.
+Exit: an explicit initial boundary and a testable native invocation path. No
+requirement for isolated CLI, hosted browsers or cross-project file permits.
 
-Exit: agent A can read explicitly granted Q data; lost collaboration/revocation
-stops queued reads; another account using the same thread does not automatically
-receive a grant. Protected mode must prove agent B cannot borrow A's authority;
-shared mode must show the explicit warning and demonstrate that the residual
-shared-runtime risk is understood, not hidden. Verify cross-bay routing and
-stale-host rejection, not just same-host success.
+### Slice 1: One Useful GitHub Read Workflow
 
-### Milestone 2: Google And GitHub Vertical Slices
+Connect a GitHub App installation, select an authorized repository, persist a
+human/agent grant, and let the native agent read repository content and inspect
+issues/PRs through a small typed tool set. Example: summarize an open PR using
+its diff and relevant files. Add only enough account Connections, composer `+`,
+Access, activity and revoke UI for this end-to-end flow. Follow with `@` references
+as a small UI increment; mentioning must not be necessary for ordinary use.
 
-Ship Drive selected-file reading, Calendar reading and confirmed event creation,
-Gmail reading/drafting/confirmed sending, and GitHub selected-repository read and
-PR creation. Reuse the same Access and Activity UI. Build managed CLI/git support
-after typed operations are stable, with honest command coverage.
+Required foundation is limited to the records/credential envelope this flow uses,
+home-bay routing, server-side policy, run binding, bounded result/attempt handling
+and pause/revoke. No universal catalog, proposal framework, all-provider schema,
+managed `gh`, browser service or new cross-project filesystem API is required.
+Use existing storage/identity utilities where suitable instead of replacing them.
 
-Exit: a user connects in the UI, grants one agent, sees an actual useful result,
-revokes access, and cannot recover credentials from project export or backup.
-Verify account switching, partial consent, token refresh races and provider-side
-revocation. Public Gmail availability depends on completing applicable review.
+Exit: connect once, use across repeated turns and reload/reconnect, then remove
+access and deny subsequent/queued operations. A second human using the same agent
+gets their own tool set, not the first human's. Provider secrets stay out of project
+exports/logs; shared-runtime capability exposure is disclosed and tested rather
+than mislabeled private. A fake adapter and two same-provider connection fixtures
+verify that neither the durable model nor routing assumes Codex or one account.
 
-### Milestone 3: Remote And Managed MCP
+### Slice 2: Gmail Read, Then Google Calendar Read
 
-Implement the transport/auth wizard, protected stdio runner, tool/resource grants,
-schema-change review and diagnostics. Validate a normal remote OAuth server, a
-configured API-key server, and a managed stdio server requiring interactive setup.
-Validate Vanta with an actual authorized test tenant if available; otherwise mark
-it unverified rather than blocking the generic connector or claiming support.
+Ship these as separate reviewable increments using the existing UI and tool path.
+Gmail first supplies search and thread/message reading; add bounded attachment
+retrieval where needed for real tasks. Calendar supplies selected-calendar events
+and free/busy. Request only scopes needed for each increment, independently of
+CoCalc sign-in. Draft/send and calendar mutations are not prerequisites for reads.
 
-Exit: users can complete tested setup flows without a terminal; malicious tool
-metadata, callbacks and endpoints cannot widen authority or read other secrets.
+Exit: useful daily mail/calendar questions without repeated selection; persistent
+refresh, partial consent, reconnect and provider revocation work. Connect two real
+Google accounts and answer "when am I free in both?" in one turn. Revoke one;
+the other continues working and missing results are not presented as complete.
+Reconnect with a different Google identity cannot inherit old grants. Run both
+human accounts through the same-agent ownership/queued-turn tests. Public Gmail
+release remains subject to applicable verification and data-use requirements;
+authorized test-user dogfooding is not public-release qualification.
 
-### Milestone 4: Hosted Browser
+### Slice 3: Useful Writes And Daily Polish
 
-Add isolated Chromium/blit lifecycle, private CDP gateway, human takeover,
-disposable/encrypted persistent profiles, file transfer and visible controls.
+Add Gmail drafts and confirmed send/reply, Calendar confirmed event changes, and
+GitHub PR creation as independent increments driven by dogfooding. Bind approvals
+to exact connection/destination/content and handle unknown outcomes without blind
+retry. Standing write permissions remain explicit. Complete grouped `@` references,
+repair flows and account-labeled activity where not already delivered.
 
-Exit: agent control works, human takeover fences commands, a second agent/project
-cannot reach the browser, and profile secrets stay out of project persistence.
-Test browser crashes, host restart, downloads and grant revocation mid-session.
+Exit: each supported action works with understandable confirmations and an exact
+account destination. An agent can use multiple enabled accounts without repeated
+setup; ambiguous writes ask rather than guess. Scope additions do not silently
+expand existing grants. Add managed CLI/git only when actual workflows need it.
 
-### Milestone 5: Desktop Browser
+### Parallel Browser Track: Existing Blit First
 
-Add device enrollment, local isolated profile launch, restricted SSH reverse
-tunnel, liveness and reconnect UI. Reuse forwarding components where verified.
+Start with the current project Chromium/Blit workflow: simpler launch/attach,
+readiness, dedicated profile, lifecycle and visible human/agent control. Explicitly
+label project-shared state and broad browser authority. Do not require a new
+desktop tunnel or private profile vault for this mode. Test an API/MCP task that
+needs browser completion without silently broadening authority.
 
-Exit: test sleep/wake, Wi-Fi changes, SSH loss, CLI restart, browser restart,
-revocation while offline, stale daemon reconnect and two simultaneous devices.
-No action replay, default-profile attachment, generic port forwarding, or silent
-switch to a different browser. Publish the tested OS matrix.
+Then deliver the protected hosted-browser mode separately: private CDP, protected
+profiles, authenticated viewing, takeover fencing, bounded transfer and cleanup.
+Only that mode may claim another project/agent cannot borrow the browser or read
+its profile. Test crash/restart, stale commands and revocation. Keep Chromium's
+sandbox requirement for the managed protected mode; the user's existing launch
+script is not evidence that this gate has passed.
 
-### Milestone 6: Cross-Project Write And Exec; Production Hardening
+### Later Slices: MCP, Drive And Cross-Project Access
 
-Complete safe write paths and live-editor integration, then managed execution,
-startup/spend policy and cancellation. Exercise long-lived multi-agent workflows
-with mixed connections, bounded subagent delegation and Session messages.
+Implement one real remote MCP setup before a universal wizard or managed stdio.
+Use the user's Digits and Vanta workflows as compatibility targets, verifying
+their actual transport/auth and authorized test availability. Support optional
+profile discovery, same-server multiple accounts, exact tool routing and schema
+review. Missing coverage can use an explicitly authorized browser, not an automatic
+credential-export escape hatch. Managed stdio is its own follow-up.
 
-Exit: full requested range works with published limits. Complete security review,
-backup/restore/key-rotation drills, accessibility checks, self-host setup docs and
-operator recovery procedures. Roll out a small connector cohort first; disabling
-new use must leave revoke, disconnect and cleanup functional.
+Add Drive selected-file access when needed. Cross-project read is a separate
+slice, followed by safe live-editor writes and then bounded exec. Their gates
+include current collaboration, path safety, cross-bay routing and stale-host
+rejection; these are not prerequisites for GitHub/Gmail/Calendar.
 
-Each milestone should land as a reviewable change-set. No time estimate is a
-substitute for passing its acceptance gates. Runtime isolation is the
-highest-risk dependency for the stronger privacy claim, not a prerequisite for
-every useful connector. Google verification is an external dependency.
+Desktop browser attachment follows the hosted/shared browser learning: enrollment,
+dedicated local profile, restricted tunnel, offline revoke, reconnect fencing,
+no action replay and a tested OS matrix. Do not bundle it into initial connectors.
+
+### Release And Incremental Hardening
+
+For each shipping slice, run its authority, credential, lifecycle and accessible
+UI checks; publish tested capabilities and remaining limits. Validate connector
+delivery against a real second harness as ACP becomes available. Do not block
+native dogfooding on that other project's completion or claim untested compatibility.
+
+Keep explicit follow-ups for protected driver/CLI isolation, independent service
+identities, profile encryption, broader self-host qualification and operational
+drills as their corresponding modes are delivered. Essential credential recovery,
+revoke and operator diagnostics accompany the first release, not only the final
+roadmap milestone. Disabling new use must leave stop/disconnect/cleanup functional.
 
 ## 16. Code Organization And Verification
 
@@ -868,8 +1118,10 @@ Proposed package-local additions:
 - `conat/connectors`: typed policies, permits, protocol schemas and client types.
 - `conat/hub/api`: connector setup/approval/control RPC surface.
 - `server/connectors`: home-bay records, grants, vault, provider OAuth and policy.
-- `project-host` and `lite/hub/acp`: protected invocation, host admission and
-  isolated execution integration; share semantics rather than bypassing in Lite.
+- `ai/acp`, `project-host` and `lite/hub/acp`: harness-neutral delivery adapters,
+  explicit runtime capability reporting, protected invocation where available,
+  host admission and isolated execution integration; share semantics rather than
+  bypassing in Lite.
 - A protected connector-worker service: provider adapters, managed MCP and browser
   control, deployed separately from project-user code.
 - `frontend/connections` plus `frontend/agents`: setup, Access, @ picker, activity
@@ -879,18 +1131,26 @@ Proposed package-local additions:
 
 Testing must include real authorization boundaries, not only mocked happy paths:
 
-| Area         | Required negative/race coverage                                                                                                    |
-| ------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Identity     | Different account on same thread, renamed/cloned agents, forged source, completed parent run, subagent scope escalation            |
-| Isolation    | Same-UID neighbors, project-root attempts, `/proc`, shared temp/config/socket paths, inherited descriptors, project-edited helpers |
-| Revocation   | Pause/remove/expiry versus queued work, refresh, startup, stream and reconnect; partitioned worker fails closed                    |
-| OAuth        | State replay, account/issuer mix-up, callback changes, partial scopes, parallel refresh, removed provider permission               |
-| MCP          | DNS rebinding/redirects, private endpoints, token audience, schema changes, deceptive annotations, server crash/update             |
-| Files        | Symlink/rename races, traversal, mounts, archives, alternative endpoints, read-to-exec escapes, removed collaboration              |
-| Browser      | Leaked CDP address, second agent/device, takeover race, offline revoke, stale incarnation, forbidden default profile               |
-| Side effects | Edited approval payload, duplicate attempt, provider timeout after success, intentional retry with unknown prior outcome           |
-| Persistence  | Grep controlled exports/backups/logs/core-dump policy for seeded test credentials; clone/restore does not restore authority        |
-| Limits       | Concurrent grant/connection creation, oversized discovery/output, worker pressure, restrictive actions while disabled/over quota   |
+Apply the rows relevant to the slice being shipped; this is not a demand to build
+browser/filesystem/managed-CLI infrastructure before read-only provider tools.
+Stronger isolation tests gate stronger isolation claims. In shared mode, test and
+document the expected exposure instead of asserting nonexistent process privacy.
+
+| Area          | Required negative/race coverage                                                                                                                                |
+| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Identity      | Different account on same thread, renamed/cloned agents, forged source, completed parent run, subagent scope escalation                                        |
+| Availability  | Repeated turns, reload, resume and new thread with same agent retain the human's grants; deleting a mention does not revoke; explicit remove does              |
+| Multi-account | Same provider/tool/resource names, concurrent refresh, exact write destination, identity-changing reconnect, revoke one not both, partial-result disclosure    |
+| Harness       | Native and fake second adapter use the same policy; stale tool list is denied after revoke; principal switch never reuses another human's capabilities/context |
+| Isolation     | Same-UID neighbors, project-root attempts, `/proc`, shared temp/config/socket paths, inherited descriptors, project-edited helpers                             |
+| Revocation    | Pause/remove/expiry versus queued work, refresh, startup, stream and reconnect; partitioned worker fails closed                                                |
+| OAuth         | State replay, account/issuer mix-up, callback changes, partial scopes, parallel refresh, removed provider permission                                           |
+| MCP           | DNS rebinding/redirects, private endpoints, token audience, schema changes, deceptive annotations, server crash/update                                         |
+| Files         | Symlink/rename races, traversal, mounts, archives, alternative endpoints, read-to-exec escapes, removed collaboration                                          |
+| Browser       | Leaked CDP address, second agent/device, takeover race, offline revoke, stale incarnation, forbidden default profile                                           |
+| Side effects  | Edited approval payload, duplicate attempt, provider timeout after success, intentional retry with unknown prior outcome                                       |
+| Persistence   | Grep controlled exports/backups/logs/core-dump policy for seeded test credentials; clone/restore does not restore authority                                    |
+| Limits        | Concurrent grant/connection creation, oversized discovery/output, worker pressure, restrictive actions while disabled/over quota                               |
 
 Use PostgreSQL barrier tests for authority mutations versus asynchronous dispatch
 and direct-host integration tests for capability enforcement. Test collaborator
@@ -927,6 +1187,11 @@ useful for testing but must not be labeled private multi-user connector hosting.
 
 ## 18. Decisions To Validate During The First Prototype
 
+- Which native tool-delivery mechanism gives the smallest useful GitHub slice?
+  Agree its interface with the ACP workstream without waiting for that rollout.
+- Where does the runtime partition resumed sessions by initiating human? Verify
+  different-account steering/queue behavior before offering personal connections
+  on a shared named agent. Do not infer identity from the latest chat message.
 - Exactly where can the existing model driver keep an invocation channel that
   project code cannot impersonate? Prefer extending a protected host service;
   measure the isolated CLI cost before choosing its container/process design.
@@ -934,8 +1199,11 @@ useful for testing but must not be labeled private multi-user connector hosting.
   and self-hosted deployments? Have an operator own this dependency immediately.
 - Which GitHub operations need user attribution rather than app-bot attribution?
   Start with repository-scoped app operations, not broad personal OAuth access.
-- Does the first real MCP customer need remote OAuth, managed stdio, or a private
-  intranet route? Test that exact setup instead of adding speculative transports.
+- What do the user's existing Digits and Vanta MCP setups actually require:
+  remote OAuth, API keys, managed stdio or a private route? Test those setups
+  instead of adding speculative transports; they do not gate the first providers.
+- Which existing Chromium/Blit controls can be reused for the disclosed shared
+  browser mode, and what additional boundary is needed for private hosted mode?
 - Should persistent browser profiles remain opt-in? Recommended yes; convenience
   is significant, but cookies carry durable account authority.
 
