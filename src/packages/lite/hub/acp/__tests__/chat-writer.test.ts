@@ -341,6 +341,44 @@ describe("ChatStreamWriter", () => {
     ).toThrow("missing required message_id");
   });
 
+  it.each(["cancelled", "end_turn", "max_tokens"])(
+    "only confirmed generic cancellation terminates as interrupted (%s)",
+    async (stopReason) => {
+      const { syncdb, sets } = makeFakeSyncDB();
+      const writer = new ChatStreamWriter({
+        metadata: baseMetadata,
+        client: makeFakeClient(),
+        approverAccountId: "u",
+        runtimeKind: "acp",
+        syncdbOverride: syncdb as any,
+        logStoreFactory: () => ({ set: async () => {} }) as any,
+      });
+      await writer.handle({
+        type: "event",
+        event: { type: "message", text: "partial result", delta: true },
+      });
+      await writer.handle({
+        type: "event",
+        event: {
+          type: "harness",
+          source: "acp",
+          kind: "stop",
+          data: { stopReason },
+        },
+      });
+      await flush(writer);
+      if (stopReason === "cancelled") {
+        expect(writer.getTerminalState()).toBe("interrupted");
+        const final = findLastChatSet(sets)!;
+        expect(final.generating).toBe(false);
+        expect(final.acp_interrupted).toBe(true);
+        expect(final.history[0].content).toContain("partial result");
+        expect(final.history[0].content).toContain("Conversation interrupted.");
+      } else expect(writer.getTerminalState()).toBeUndefined();
+      writer.dispose(true);
+    },
+  );
+
   it("clears generating on summary when live preview is unavailable", async () => {
     const { syncdb, sets, setCurrent } = makeFakeSyncDB();
     setCurrent({

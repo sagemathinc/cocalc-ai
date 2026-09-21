@@ -3047,6 +3047,19 @@ export class ChatStreamWriter {
     this.publishLivePreview(payload);
     if (payload.type === "event") {
       const { event } = payload;
+      if (
+        this.runtimeKind === "acp" &&
+        event.type === "harness" &&
+        event.kind === "stop" &&
+        event.data.stopReason === "cancelled"
+      ) {
+        this.notifyInterrupted(INTERRUPT_STATUS_TEXT);
+        this.finished = true;
+        this.trackTimeTravelOperation("finalize", this.metadata.path, () =>
+          this.timeTravel?.finalizeTurn(this.metadata.message_date),
+        );
+        return;
+      }
       if (event.type === "config") {
         const paymentSource = paymentSourceFromAuthSource({
           authSource: event.authSource,
@@ -7904,14 +7917,18 @@ async function executeAcpRequest({
         agentProjectIds.delete(currentAgent);
         await currentAgent.dispose?.();
       }
-      terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
-      try {
-        await wrappedStream({
-          type: "error",
-          error: terminalFallbackError,
-        });
-      } catch (streamErr) {
-        logger.warn("evaluate: failed to stream error", streamErr);
+      // A persisted, provider-confirmed cancellation is terminal, not a
+      // failure. The adapter still throws so its retained process is disposed.
+      if (!(harness && chatWriter?.getTerminalState() === "interrupted")) {
+        terminalFallbackError = `${harness ? "ACP harness" : "codex agent"} failed: ${(err as Error)?.message ?? err}`;
+        try {
+          await wrappedStream({
+            type: "error",
+            error: terminalFallbackError,
+          });
+        } catch (streamErr) {
+          logger.warn("evaluate: failed to stream error", streamErr);
+        }
       }
     }
     if (chatWriter != null) {
