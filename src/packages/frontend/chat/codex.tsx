@@ -15,7 +15,7 @@ import {
   Typography,
 } from "antd";
 import type { MenuProps } from "antd";
-import { HarnessRuntimeSummary } from "./harness-profile";
+import { HarnessRuntimeControl } from "./harness-profile";
 import {
   React,
   useEffect,
@@ -514,8 +514,9 @@ export function CodexConfigButton(
   const metadata = props.actions?.getThreadMetadata?.(props.threadKey);
   const runtime = metadata?.agent_runtime;
   return runtime != null ? (
-    <HarnessRuntimeSummary
+    <HarnessRuntimeControl
       key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
+      compact={!!props.compact}
       runtime={runtime}
       reported={metadata?.agent_runtime_controls}
       onDiscover={

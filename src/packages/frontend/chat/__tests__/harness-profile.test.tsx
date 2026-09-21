@@ -1,11 +1,12 @@
 /** @jest-environment jsdom */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { harnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import {
   HarnessProfileFields,
   HarnessRuntimeSummary,
+  HarnessRuntimeControl,
   harnessRuntimeFromDraft,
 } from "../harness-profile";
 
@@ -167,4 +168,34 @@ test("arguments remain structured and unknown runtimes do not display Codex cont
   expect(screen.getByText("ACP: Pi · Full project access")).toBeTruthy();
   rerender(<HarnessRuntimeSummary runtime={{ version: 200 }} />);
   expect(screen.getByRole("alert").textContent).toMatch("Invalid ACP");
+});
+
+test("compact runtime settings open by keyboard and restore focus on Escape", async () => {
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={harnessRuntimeFromDraft(draft, "/home/user")}
+      onDiscover={jest.fn()}
+    />,
+  );
+  const user = userEvent.setup();
+  const button = screen.getByRole("button", { name: "ACP: Pi settings" });
+  expect(
+    screen.queryByRole("button", { name: "Load model and mode options" }),
+  ).toBeNull();
+  await user.tab();
+  expect(document.activeElement).toBe(button);
+  await user.keyboard("{Enter}");
+  expect(
+    await screen.findByRole("dialog", { name: "ACP harness settings" }),
+  ).toBeTruthy();
+  const discovery = screen.getByRole("button", {
+    name: "Load model and mode options",
+  });
+  discovery.focus();
+  await user.keyboard("{Escape}");
+  await waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.activeElement).toBe(button);
+  });
 });

@@ -1,4 +1,4 @@
-import { Button, Input, Select, Space, Typography } from "antd";
+import { Button, Input, Modal, Select, Space, Typography } from "antd";
 import { useId, useState } from "react";
 import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type {
@@ -10,6 +10,62 @@ import {
   parseAcpHarnessRuntime,
 } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
+
+interface HarnessRuntimeSummaryProps {
+  runtime: unknown;
+  reported?: unknown;
+  onSettings?: (settings: HarnessSessionSettings) => void;
+  onDiscover?: () => Promise<{ profile: unknown; controls: unknown }>;
+}
+
+/** Composer toolbars cannot contain the full, wrapping runtime form. */
+export function HarnessRuntimeControl({
+  compact,
+  ...props
+}: HarnessRuntimeSummaryProps & { compact?: boolean }) {
+  const [open, setOpen] = useState(false);
+  let name = "harness";
+  try {
+    name = parseAcpHarnessRuntime(props.runtime).profile.id;
+  } catch {
+    /* The form explains invalid configuration. */
+  }
+  if (!compact) return <HarnessRuntimeSummary {...props} />;
+  return (
+    <>
+      <Button
+        size="small"
+        type="text"
+        aria-label={`ACP: ${name} settings`}
+        aria-haspopup="dialog"
+        title={`ACP: ${name} settings`}
+        onClick={() => setOpen(true)}
+        style={{ minWidth: 0, maxWidth: "100%", width: "100%" }}
+      >
+        <span
+          style={{
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+          }}
+        >
+          ACP: {name}
+        </span>
+      </Button>
+      <Modal
+        open={open}
+        title="ACP harness settings"
+        footer={null}
+        onCancel={() => setOpen(false)}
+        modalRender={(modal) => <KeyboardBoundary>{modal}</KeyboardBoundary>}
+        styles={{ body: { maxHeight: "70vh", overflowY: "auto" } }}
+      >
+        <HarnessRuntimeSummary {...props} />
+      </Modal>
+    </>
+  );
+}
 
 export interface HarnessProfileDraft {
   id: string;
@@ -23,12 +79,7 @@ export function HarnessRuntimeSummary({
   reported,
   onSettings,
   onDiscover,
-}: {
-  runtime: unknown;
-  reported?: unknown;
-  onSettings?: (settings: HarnessSessionSettings) => void;
-  onDiscover?: () => Promise<{ profile: unknown; controls: unknown }>;
-}) {
+}: HarnessRuntimeSummaryProps) {
   const id = useId();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -80,7 +131,11 @@ export function HarnessRuntimeSummary({
     }
   };
   return (
-    <Space orientation="vertical" size={4}>
+    <Space
+      orientation="vertical"
+      size={4}
+      style={{ width: "100%", minWidth: 0 }}
+    >
       <details>
         <summary>ACP: {profile.id} · Full project access</summary>
         <dl style={{ overflowWrap: "anywhere", margin: 8 }}>
@@ -99,6 +154,7 @@ export function HarnessRuntimeSummary({
       {onDiscover && (
         <Button
           loading={loading}
+          style={{ maxWidth: "100%", height: "auto", whiteSpace: "normal" }}
           onClick={async () => {
             setLoading(true);
             setError("");
