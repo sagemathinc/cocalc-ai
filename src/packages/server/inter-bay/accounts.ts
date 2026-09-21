@@ -21,6 +21,7 @@ import {
   type AccountLocalAdminRevokeAdminRoleResult,
   type AccountLocalQuarantineBillingResourcesRequest,
   type AccountLocalQuarantineBillingResourcesResult,
+  type AccountLocalAdminVerifyEmailAddressRequest,
   type AccountLocalAdminVerifyEmailAddressResult,
   type AccountLocalCreateCliLoginSessionRequest,
   type AccountLocalCreateCliLoginSessionResult,
@@ -510,21 +511,20 @@ export async function assertClusterAccountTrustedForProductAccess({
 
 export async function adminVerifyClusterAccountEmailAddress({
   account_id,
-}: {
-  account_id: string;
-}): Promise<AccountLocalAdminVerifyEmailAddressResult> {
+  email_address,
+}: AccountLocalAdminVerifyEmailAddressRequest): Promise<AccountLocalAdminVerifyEmailAddressResult> {
   const account = await getClusterAccountById(account_id);
   if (!account) {
     throw Error(`account ${account_id} not found`);
   }
   const homeBayId = `${account.home_bay_id ?? ""}`.trim();
   if (!homeBayId || homeBayId === currentBayId()) {
-    return await adminVerifyEmailAddressLocal({ account_id });
+    return await adminVerifyEmailAddressLocal({ account_id, email_address });
   }
   return await createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
     dest_bay: homeBayId,
-  }).adminVerifyEmailAddress({ account_id });
+  }).adminVerifyEmailAddress({ account_id, email_address });
 }
 
 export async function sendClusterEmailVerification({
@@ -865,6 +865,7 @@ export async function banClusterAccountAndEquivalentEmails({
 
 export async function setClusterAccountPasswordFromReset({
   account_id,
+  email_address,
   password,
 }: AccountLocalSetPasswordFromResetRequest): Promise<void> {
   const account = await getClusterAccountById(account_id);
@@ -873,13 +874,13 @@ export async function setClusterAccountPasswordFromReset({
   }
   const homeBayId = `${account.home_bay_id ?? ""}`.trim();
   if (!homeBayId || homeBayId === currentBayId()) {
-    await setPasswordFromResetLocal({ account_id, password });
+    await setPasswordFromResetLocal({ account_id, email_address, password });
     return;
   }
   await createInterBayAccountLocalClient({
     client: getInterBayFabricClient(),
     dest_bay: homeBayId,
-  }).setPasswordFromReset({ account_id, password });
+  }).setPasswordFromReset({ account_id, email_address, password });
 }
 
 export async function provisionLocalClusterAccount(

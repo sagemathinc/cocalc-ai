@@ -77,6 +77,10 @@ export class ConfigurationActions {
     }
   };
 
+  set_compute_budget_enabled = (compute_budget_enabled: boolean): void => {
+    this.set({ compute_budget_enabled, table: "settings" });
+  };
+
   set_allow_collabs = (allow_collabs: boolean): void => {
     this.set({ allow_collabs, table: "settings" });
     this.course_actions.student_projects.configure_all_projects();

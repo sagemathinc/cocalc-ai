@@ -893,6 +893,8 @@ describe("membership packages", () => {
   });
 
   it("reserves custom package periods for admin-assisted purchases", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
     const starts_at = new Date("2026-09-01T00:00:00.000Z");
     const expires_at = new Date("2027-09-01T00:00:00.000Z");
     const product = {
@@ -910,7 +912,7 @@ describe("membership packages", () => {
     );
     await expect(
       purchaseMembershipPackage({
-        account_id: uuid(),
+        account_id,
         amount: 20,
         product,
       }),

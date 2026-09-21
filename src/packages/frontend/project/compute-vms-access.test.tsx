@@ -4,7 +4,7 @@ import type {
   ComputeVm,
   ComputeVmProjectAccess,
 } from "@cocalc/conat/hub/api/compute";
-import { VmAccessModal } from "./compute-vms";
+import { VmAccessModal, VmDetailsModal } from "./compute-vms";
 
 jest.mock("@cocalc/frontend/projects/project-title", () => ({
   ProjectTitle: ({ project_id }: { project_id: string }) => (
@@ -29,6 +29,34 @@ const access = [
     state: "ready",
   } as ComputeVmProjectAccess,
 ];
+
+test("VM details lead with hardware and keep technical fields collapsed", () => {
+  render(
+    <VmDetailsModal
+      open
+      vm={{
+        ...vm,
+        provider: "gcp",
+        cpu: 4,
+        ram_gb: 16,
+        boot_disk_gb: 30,
+        machine_type: "n2-standard-4",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        state: "stopped",
+        desired_state: "stopped",
+      }}
+      onClose={jest.fn()}
+    />,
+  );
+  expect(
+    screen.getByRole("region", { name: "Machine configuration" }),
+  ).toHaveTextContent("4 vCPU");
+  const disclosure = screen.getByText("Technical details");
+  expect(disclosure.parentElement).not.toHaveAttribute("open");
+  fireEvent.click(disclosure);
+  expect(disclosure.parentElement).toHaveAttribute("open");
+});
 
 describe("VmAccessModal", () => {
   it("explains the one-way project boundary and manages direct public keys", async () => {

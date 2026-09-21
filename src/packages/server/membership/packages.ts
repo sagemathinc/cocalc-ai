@@ -225,10 +225,12 @@ function isMembershipTierVisibleForPackageKind({
 async function getPurchasableMembershipTierForPackageKind({
   kind,
   membership_class,
+  client,
   allow_course_tier_for_team = false,
 }: {
   kind: MembershipPackageKind;
   membership_class: MembershipClass;
+  client?: PoolClient;
   allow_course_tier_for_team?: boolean;
 }): Promise<MembershipTierRecord> {
   if (kind === "site") {
@@ -238,6 +240,7 @@ async function getPurchasableMembershipTierForPackageKind({
   }
   const tier = await getSeedMembershipTierById({
     id: membership_class,
+    client,
   });
   if (
     !tier ||
@@ -1700,6 +1703,7 @@ async function getTierSeatQuote({
   interval,
   starts_at,
   expires_at,
+  client,
   allow_course_tier_for_team = false,
 }: {
   product: MembershipPackageProduct;
@@ -1707,12 +1711,14 @@ async function getTierSeatQuote({
   interval: "month" | "year";
   starts_at?: Date;
   expires_at?: Date;
+  client?: PoolClient;
   allow_course_tier_for_team?: boolean;
 }): Promise<MembershipPackageQuote> {
   const kind = normalizePackageKind(product.kind);
   const tier = await getPurchasableMembershipTierForPackageKind({
     kind,
     membership_class,
+    client,
     allow_course_tier_for_team,
   });
   const seat_price = getMembershipPrice(tier, interval);
@@ -1774,6 +1780,7 @@ async function resolveMembershipPackageQuoteInternal(
     await getPurchasableMembershipTierForPackageKind({
       kind: existing.kind,
       membership_class: existing.membership_class,
+      client,
     });
     const seat_price =
       toNumber(existing.metadata?.seat_price) ??
@@ -1792,6 +1799,7 @@ async function resolveMembershipPackageQuoteInternal(
           ).seat_price
         : (
             await getTierSeatQuote({
+              client,
               product: { ...product, kind: existing.kind },
               membership_class: existing.membership_class,
               interval:
@@ -1848,6 +1856,7 @@ async function resolveMembershipPackageQuoteInternal(
     throw Error("membership_class is required");
   }
   return await getTierSeatQuote({
+    client,
     product: { ...product, kind, seat_count },
     membership_class,
     interval,

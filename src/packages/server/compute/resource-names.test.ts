@@ -9,9 +9,54 @@ import {
   managedComputeVmResourceBelongsToEnvironment,
   managedComputeVolumeProviderName,
   managedComputeVolumeResourceBelongsToEnvironment,
+  computeResourceIsOwned,
+  computeVmDnsLabelPrefix,
+  computeVmDnsLabelIsOwned,
 } from "./resource-names";
 
 const ID = "12345678-1234-4abc-9def-123456789abc";
+const originalDeployment = process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+const originalBay = process.env.COCALC_BAY_ID;
+beforeEach(() => {
+  delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+});
+afterEach(() => {
+  if (originalDeployment == null)
+    delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+  else process.env.COCALC_COMPUTE_DEPLOYMENT_ID = originalDeployment;
+  if (originalBay == null) delete process.env.COCALC_BAY_ID;
+  else process.env.COCALC_BAY_ID = originalBay;
+});
+
+it("isolates deployments and bays in both directions including legacy sweepers", () => {
+  const legacy = managedComputeVmProviderName(ID, "development");
+  expect(computeResourceIsOwned(legacy, "development")).toBe(false);
+  process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "isolated-19200";
+  process.env.COCALC_BAY_ID = "bay-0";
+  const own = managedComputeVmProviderName(ID, "development");
+  const dns = `${computeVmDnsLabelPrefix()}${"a".repeat(32)}`;
+  expect(computeResourceIsOwned(own, "development")).toBe(true);
+  expect(computeResourceIsOwned(`${own}-boot`, "development")).toBe(true);
+  expect(computeResourceIsOwned(legacy, "development")).toBe(false);
+  expect(computeResourceIsOwned(own, "staging")).toBe(false);
+  expect(computeVmDnsLabelIsOwned(dns)).toBe(true);
+  expect(/^vm-[a-f0-9]{32}$/.test(dns)).toBe(false);
+  expect(`${own}-boot`.length).toBeLessThanOrEqual(63);
+  expect(dns.length).toBeLessThanOrEqual(63);
+  process.env.COCALC_BAY_ID = "bay-other";
+  expect(computeResourceIsOwned(own, "development")).toBe(false);
+  expect(computeVmDnsLabelIsOwned(dns)).toBe(false);
+  process.env.COCALC_BAY_ID = "bay-0";
+  process.env.COCALC_COMPUTE_DEPLOYMENT_ID = "original-9100";
+  expect(computeResourceIsOwned(own, "development")).toBe(false);
+  delete process.env.COCALC_COMPUTE_DEPLOYMENT_ID;
+  expect(managedComputeVmResourceBelongsToEnvironment(own, "development")).toBe(
+    false,
+  );
+  expect(managedComputeVmResourceBelongsToEnvironment(own, "production")).toBe(
+    false,
+  );
+});
 
 describe("managed compute provider resource names", () => {
   it("preserves the production namespace", () => {

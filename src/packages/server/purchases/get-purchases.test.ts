@@ -10,6 +10,7 @@ import { toDecimal } from "@cocalc/util/money";
 import { uuid } from "@cocalc/util/misc";
 import dayjs from "dayjs";
 import { before, after, getPool } from "@cocalc/server/test";
+import { createTestAccount } from "./test-data";
 
 beforeAll(async () => {
   await before({ noConat: true });
@@ -140,6 +141,7 @@ describe("creates and get purchases using various options", () => {
 
   it("groups precise active estimates as whole-cent ledger amounts", async () => {
     const account_id = uuid();
+    await createTestAccount(account_id);
     await createPurchase({
       account_id,
       service: "dedicated-host",

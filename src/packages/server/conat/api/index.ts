@@ -53,6 +53,7 @@ import * as adminCrashes from "./admin-crashes";
 import * as aiSessions from "./ai-sessions";
 import * as legacyMigration from "./legacy-migration";
 import * as compute from "./compute";
+import * as computeFunding from "./compute-funding";
 import * as publicDirectoryShares from "./public-directory-shares";
 import * as growthAnalytics from "./growth-analytics";
 import * as commercialOrders from "./commercial-orders";
@@ -115,6 +116,7 @@ export const hubApi: HubApi = {
   aiSessions,
   legacyMigration,
   compute,
+  computeFunding,
   publicDirectoryShares,
   growthAnalytics,
   commercialOrders,

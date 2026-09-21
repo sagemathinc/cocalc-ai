@@ -4,7 +4,11 @@ import {
   ensureAccountSecurityStateReady,
   isAccountBannedCached,
 } from "@cocalc/server/accounts/security-state";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import {
+  isBillingAccountRestricted,
+  isValidBillingAccount,
+} from "./billing-account";
+import { isBillingAuthorityEnabled } from "./billing-authority/config";
 import {
   QUOTA_SPEC,
   Service,
@@ -18,7 +22,7 @@ import {
   toDecimal,
   type MoneyValue,
 } from "@cocalc/util/money";
-import getBalance from "./get-balance";
+import getSpendableBalance from "./get-spendable-balance";
 import { ALLOWED_SLACK } from "./allowed-slack";
 
 // Throws an exception if purchase is not allowed.  Code should
@@ -34,6 +38,8 @@ interface Options {
   service: Service;
   cost?: MoneyValue;
   client?: PoolClient;
+  // Internal server preflight, avoiding settings I/O while holding account locks.
+  minimumPayment?: MoneyValue;
 
   // if margin is set to a positive number, then the user's balance and all quotas are viewed as
   // increased by this amount when deciding of the purchase is allowed or not.
@@ -47,6 +53,7 @@ export async function isPurchaseAllowed({
   service,
   cost,
   client,
+  minimumPayment,
   margin = 0,
 }: Options): Promise<{
   allowed: boolean;
@@ -65,11 +72,17 @@ export async function isPurchaseAllowed({
   if (costValue != null && costValue.gte(0)) {
     costValue = moneyRound2Up(costValue);
   }
-  if (!(await isValidAccount(account_id))) {
+  if (!(await isValidBillingAccount(account_id, client))) {
     return { allowed: false, reason: `${account_id} is not a valid account` };
   }
-  await ensureAccountSecurityStateReady(client);
-  if (isAccountBannedCached(account_id)) {
+  if (isBillingAuthorityEnabled()) {
+    if (await isBillingAccountRestricted(account_id, client)) {
+      return { allowed: false, reason: `${account_id} is banned` };
+    }
+  } else {
+    await ensureAccountSecurityStateReady(client);
+  }
+  if (!isBillingAuthorityEnabled() && isAccountBannedCached(account_id)) {
     return { allowed: false, reason: `${account_id} is banned` };
   }
   if (QUOTA_SPEC[service] == null) {
@@ -118,13 +131,16 @@ export async function isPurchaseAllowed({
   if (costValue.lte(0)) {
     return { allowed: false, reason: `cost must be positive` };
   }
-  const { pay_as_you_go_min_payment } = await getServerSettings();
-  const minPayment = toDecimal(pay_as_you_go_min_payment ?? 0);
+  const minPayment = toDecimal(
+    minimumPayment ??
+      (await getServerSettings()).pay_as_you_go_min_payment ??
+      0,
+  );
 
   if (!isPaygService(service)) {
     // for non-PAYG, we only allow credit toward a purchase if your balance is positive.
     const balance = moneyRound2Down(
-      toDecimal(await getBalance({ account_id, client })),
+      toDecimal(await getSpendableBalance({ account_id, client })),
     );
     const required = moneyRound2Up(
       costValue.sub(balance.gt(0) ? balance : toDecimal(0)),
@@ -150,7 +166,7 @@ export async function isPurchaseAllowed({
   // Also, we round balance down since fractional pennies don't count, and
   // can cause required to be off by 1 below.
   const balance = moneyRound2Down(
-    toDecimal(await getBalance({ account_id, client })),
+    toDecimal(await getSpendableBalance({ account_id, client })),
   ).add(marginValue);
   const balanceAfterPurchase = balance.sub(costValue);
   // add 0.01 due to potential rounding errors

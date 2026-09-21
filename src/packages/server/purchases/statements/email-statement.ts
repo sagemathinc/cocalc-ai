@@ -17,6 +17,7 @@ import getLogger from "@cocalc/backend/logger";
 import send, { support } from "@cocalc/server/messages/send";
 import { toDecimal } from "@cocalc/util/money";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
+import { getBillingAccountProfile } from "../billing-account";
 
 const logger = getLogger("purchases:email-statement");
 
@@ -164,17 +165,10 @@ async function getPurchasesOnStatement(
 export async function getUser(
   account_id: string,
 ): Promise<{ name: string; email_address?: string }> {
-  const pool = getPool();
-  const { rows } = await pool.query(
-    "SELECT display_name, first_name, last_name, email_address FROM accounts WHERE account_id=$1",
-    [account_id],
-  );
-  if (rows.length != 1) {
-    throw Error(`no account with id ${account_id}`);
-  }
-  const { email_address } = rows[0];
+  const account = await getBillingAccountProfile(account_id);
+  const { email_address } = account;
   return {
-    name: displayNameFromAccount(rows[0]) || email_address || account_id,
+    name: displayNameFromAccount(account) || email_address || account_id,
     email_address,
   };
 }

@@ -320,6 +320,15 @@ describe("project-host conat router helpers", () => {
         statusCode: 200,
         body: { source: "outer-conat" },
       });
+      expect(
+        await requestJson({
+          url: `http://127.0.0.1:${ingressPort}/conat/`,
+          headers: { host: "direct-check-deadbeef.example.com" },
+        }),
+      ).toEqual({
+        statusCode: 200,
+        body: { source: "outer-conat" },
+      });
     } finally {
       await new Promise<void>((resolve) =>
         ingressServer.close(() => resolve()),
@@ -395,6 +404,11 @@ describe("project-host conat router helpers", () => {
       ).toContain("x-proxy-source: project-host-upstream");
       expect(
         (await requestUpgrade("exam-123.example.com")).toLowerCase(),
+      ).toContain("x-proxy-source: outer-conat");
+      expect(
+        (
+          await requestUpgrade("direct-check-deadbeef.example.com")
+        ).toLowerCase(),
       ).toContain("x-proxy-source: outer-conat");
     } finally {
       await new Promise<void>((resolve) =>

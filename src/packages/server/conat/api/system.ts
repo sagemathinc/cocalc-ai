@@ -144,6 +144,10 @@ import {
   type R2CredentialsTestResult,
 } from "@cocalc/server/project-backup/r2";
 import { applyLaunchpadCloudflareTunnelSettings } from "@cocalc/server/launchpad/onprem-sshd";
+import {
+  getFundingApprovalReadiness as getFundingApprovalReadiness0,
+  initCourseFundingApprovalService,
+} from "@cocalc/server/compute/funding/approval-startup";
 import { hasActiveSecondFactor } from "@cocalc/server/auth/two-factor";
 import { ensureStarInviteRegistrationToken } from "@cocalc/server/auth/bootstrap-admin";
 import { getNebiusRegionConfigFromSettings } from "@cocalc/server/cloud/nebius-credentials";
@@ -804,6 +808,15 @@ export async function getBayDrainPreflight({
 type SiteSettingUpdate = { name: string; value: string };
 export const SERVER_SETTINGS_CONFIG_SCOPE = "server_settings";
 
+export const SEED_ONLY_SITE_SETTINGS = new Set([
+  "stripe_secret_key",
+  "stripe_webhook_secret",
+]);
+
+export function isSeedOnlySiteSetting(name: string): boolean {
+  return SEED_ONLY_SITE_SETTINGS.has(`${name ?? ""}`.trim());
+}
+
 const SITE_SETTING_NAMES = new Set<string>([
   ...Object.keys(site_settings_conf),
   ...Object.keys(SITE_SETTINGS_EXTRAS),
@@ -1123,6 +1136,9 @@ async function propagateSiteSettingsToBays(
   ]
     .filter((bay_id) => bay_id !== local_bay_id)
     .sort();
+  const remoteSettings = settings.filter(
+    ({ name }) => !isSeedOnlySiteSetting(name),
+  );
   const bays: SiteSettingsSyncResult["bays"] = [
     { bay_id: local_bay_id, status: "local", count: settings.length, version },
   ];
@@ -1140,7 +1156,7 @@ async function propagateSiteSettingsToBays(
   const results = await Promise.allSettled(
     remoteBayIds.map(async (bay_id) => {
       const api = getInterBayBridge().bayOps(bay_id, { timeout_ms: 15_000 });
-      for (const setting of settings) {
+      for (const setting of remoteSettings) {
         await api.setServerSetting(setting);
       }
       return bay_id;
@@ -1161,11 +1177,11 @@ async function propagateSiteSettingsToBays(
     }
     bays.push(
       result.status === "fulfilled"
-        ? { bay_id, status: "applied", count: settings.length, version }
+        ? { bay_id, status: "applied", count: remoteSettings.length, version }
         : {
             bay_id,
             status: "failed",
-            count: settings.length,
+            count: remoteSettings.length,
             version,
             error,
           },
@@ -2455,6 +2471,18 @@ export async function getLaunchHealth({
     counts,
     checks,
   };
+}
+
+export async function getFundingApprovalReadiness({
+  account_id,
+  force,
+}: {
+  account_id?: string;
+  force?: boolean;
+} = {}) {
+  await assertAdmin(account_id);
+  if (force === true) await initCourseFundingApprovalService();
+  return await getFundingApprovalReadiness0({ force: force === true });
 }
 
 export async function getBillingAuthorityStatus({
@@ -5445,7 +5473,7 @@ export async function adminResetPasswordLink({
   if (!email) {
     throw Error("passwords are only defined for accounts with email");
   }
-  const id = await createReset(email, "", 60 * 60 * 24); // 24 hour ttl seems reasonable for this.
+  const id = await createReset(email, "", 60 * 60 * 24, user_account_id); // 24 hour ttl seems reasonable for this.
   return `/auth/password-reset/${id}`;
 }
 

@@ -12,7 +12,11 @@ import {
   getEnabledSsoDomainPolicyForEmail,
   passwordSignupBlockedBySsoPolicy,
 } from "@cocalc/database/settings/sso-policies";
-import { getClusterAccountByEmailDirect } from "@cocalc/server/accounts/cluster-directory";
+import {
+  getClusterAccountByEmailDirect,
+  getClusterAccountByIdDirect,
+  getFinancialApprovalIdentityDirect,
+} from "@cocalc/server/accounts/cluster-directory";
 import { getLogger } from "@cocalc/backend/logger";
 import { evaluateAccountCreationPolicy } from "@cocalc/server/auth/account-creation-policy";
 import { issueHomeBayRetryToken } from "@cocalc/server/auth/home-bay-retry-token";
@@ -91,6 +95,7 @@ type ChallengeRow = {
   normalized_email: string;
   email_lookup_hash: string;
   account_id?: string | null;
+  identity_generation?: string | number | null;
   selected_home_bay_id?: string | null;
   exchange_id?: string | null;
   auth_method?: "email_code" | "email_link" | null;
@@ -114,6 +119,7 @@ type ChallengeRow = {
   email_proved_at?: Date | null;
   account_created_at?: Date | null;
   expires_at: Date;
+  metadata?: Record<string, unknown> | null;
 };
 
 export async function ensureEmailAuthChallengeSchema(): Promise<void> {
@@ -135,6 +141,7 @@ async function ensureEmailAuthChallengeSchemaInner(): Promise<void> {
       normalized_email VARCHAR(254) NOT NULL,
       email_lookup_hash CHAR(64) NOT NULL,
       account_id UUID,
+      identity_generation BIGINT,
       selected_home_bay_id VARCHAR(64),
       exchange_id UUID,
       auth_method VARCHAR(32),
@@ -175,7 +182,8 @@ async function ensureEmailAuthChallengeSchemaInner(): Promise<void> {
     ALTER TABLE ${TABLE}
       ADD COLUMN IF NOT EXISTS registration_token_reservation_id UUID,
       ADD COLUMN IF NOT EXISTS registration_token_encrypted TEXT,
-      ADD COLUMN IF NOT EXISTS registration_token_validated_at TIMESTAMPTZ
+      ADD COLUMN IF NOT EXISTS registration_token_validated_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS identity_generation BIGINT
   `);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS ${TABLE}_email_lookup_hash_idx ON ${TABLE} (email_lookup_hash, created_at DESC)`,
@@ -330,12 +338,14 @@ async function deliverChallenge({
   email_address,
   link_token,
   purpose,
+  code_only,
 }: {
   challenge_id: string;
   code: string;
   email_address: string;
   link_token: string;
   purpose: EmailAuthChallengePublicStatus["purpose"];
+  code_only?: boolean;
 }): Promise<void> {
   const pool = getPool();
   try {
@@ -345,6 +355,7 @@ async function deliverChallenge({
       email_address,
       link_token,
       purpose,
+      code_only,
     });
     await pool.query(
       `
@@ -425,6 +436,12 @@ export async function startEmailAuthChallengeDirect(
       "not_allowed",
     );
   }
+  const accountIdentity = account?.account_id
+    ? await getFinancialApprovalIdentityDirect({
+        account_id: account.account_id,
+        email_address: email,
+      })
+    : undefined;
   const registrationToken = `${opts.registration_token ?? ""}`.trim();
   let registrationTokenReservationId: string | undefined;
   let registrationTokenEncrypted: string | undefined;
@@ -487,6 +504,9 @@ export async function startEmailAuthChallengeDirect(
     ).rows[0];
     if (
       active &&
+      active.account_id === (account?.account_id ?? null) &&
+      (accountIdentity == null ||
+        Number(active.identity_generation) === accountIdentity.generation) &&
       (await emailAuthSecretMatches({
         challenge_id: active.challenge_id,
         digest: active.browser_binding_digest,
@@ -527,7 +547,7 @@ export async function startEmailAuthChallengeDirect(
         `
           INSERT INTO ${TABLE} (
             challenge_id, normalized_email, email_lookup_hash, account_id,
-            selected_home_bay_id, purpose, state, code_digest,
+            identity_generation, selected_home_bay_id, purpose, state, code_digest,
             link_token_digest, browser_binding_digest, analytics_token,
             terms_accepted_at, terms_version,
             registration_token_reservation_id,
@@ -536,10 +556,10 @@ export async function startEmailAuthChallengeDirect(
             attempt_count, max_attempts, send_count, resend_available_at,
             message_queued_at, expires_at, request_ip_hash, metadata
           ) VALUES (
-            $1, $2, $3, $4, $5, $6, 'pending', $7, $8, $9, $10,
-            $11, $12, $13, $14, $15, $16::JSONB, 0, $17, 1, $18,
-            NOW(), $19, $20,
-            '{}'::JSONB
+            $1, $2, $3, $4, $5, $6, $7, 'pending', $8, $9, $10, $11,
+            $12, $13, $14, $15, $16, $17::JSONB, 0, $18, 1, $19,
+            NOW(), $20, $21,
+            $22::JSONB
           )
           RETURNING *
         `,
@@ -548,6 +568,7 @@ export async function startEmailAuthChallengeDirect(
           email,
           emailLookupHash,
           account?.account_id ?? null,
+          accountIdentity?.generation ?? null,
           account?.home_bay_id ?? opts.prospective_home_bay_id ?? null,
           purpose,
           codeDigest,
@@ -569,6 +590,7 @@ export async function startEmailAuthChallengeDirect(
           resendAvailableAt,
           expiresAt,
           requestIpHash ?? null,
+          JSON.stringify({ code_only: opts.code_only === true }),
         ],
       )
     ).rows[0];
@@ -585,6 +607,7 @@ export async function startEmailAuthChallengeDirect(
     email_address: email,
     link_token: linkToken,
     purpose,
+    code_only: opts.code_only === true,
   });
   return {
     ...publicStatus(row),
@@ -743,6 +766,7 @@ export async function resendEmailAuthChallengeDirect(
     email_address: row.normalized_email,
     link_token: linkToken,
     purpose: row.purpose as EmailAuthChallengePublicStatus["purpose"],
+    code_only: row.metadata?.code_only === true,
   });
   return {
     ...publicStatus(row),
@@ -784,8 +808,7 @@ async function redeemSecret({
     ].includes(row.state);
     if (
       (!provedState && row.state !== "pending") ||
-      (row.state === "pending" &&
-        new Date(row.expires_at).valueOf() <= Date.now())
+      new Date(row.expires_at).valueOf() <= Date.now()
     ) {
       throw new EmailAuthChallengeError(
         "This sign-in challenge has expired.",
@@ -935,9 +958,42 @@ async function resolveChallengeAccount(
   account_created: boolean;
   account_id: string;
   home_bay_id: string;
+  identity_generation: number;
 }> {
-  const existing = await getClusterAccountByEmailDirect(row.normalized_email);
-  if (existing?.account_id) {
+  if (row.account_id) {
+    const generation = Number(row.identity_generation);
+    if (!Number.isSafeInteger(generation)) {
+      throw new EmailAuthChallengeError(
+        "The account email changed. Start sign-in again.",
+        "invalid",
+      );
+    }
+    let identity: Awaited<
+      ReturnType<typeof getFinancialApprovalIdentityDirect>
+    >;
+    try {
+      identity = await getFinancialApprovalIdentityDirect({
+        account_id: row.account_id,
+        email_address: row.normalized_email,
+      });
+    } catch {
+      throw new EmailAuthChallengeError(
+        "The account email changed. Start sign-in again.",
+        "invalid",
+      );
+    }
+    const existing = await getClusterAccountByIdDirect(row.account_id);
+    if (
+      !existing?.account_id ||
+      `${existing.email_address ?? ""}`.trim().toLowerCase() !==
+        row.normalized_email ||
+      identity.generation !== generation
+    ) {
+      throw new EmailAuthChallengeError(
+        "The account email changed. Start sign-in again.",
+        "invalid",
+      );
+    }
     if (existing.banned) {
       throw new EmailAuthChallengeError(
         "This account is not allowed to sign in.",
@@ -950,12 +1006,24 @@ async function resolveChallengeAccount(
     }
     await adminVerifyClusterAccountEmailAddress({
       account_id: existing.account_id,
+      email_address: row.normalized_email,
     });
     return {
       account_created: false,
       account_id: existing.account_id,
       home_bay_id,
+      identity_generation: identity.generation,
     };
+  }
+
+  // A challenge issued for an unclaimed address is a signup proof. It must
+  // never turn into a sign-in proof merely because the address was claimed
+  // while the challenge was in flight.
+  if (await getClusterAccountByEmailDirect(row.normalized_email)) {
+    throw new EmailAuthChallengeError(
+      "This email address is now associated with an account. Start sign-in again.",
+      "invalid",
+    );
   }
 
   const settings = await getServerSettings();
@@ -1057,7 +1125,6 @@ async function resolveChallengeAccount(
     }
   }
   let account;
-  let accountCreated = false;
   const onboardingIntent = normalizeProjectOnboardingIntent(
     row.continuation?.onboarding_intent,
   );
@@ -1082,23 +1149,12 @@ async function resolveChallengeAccount(
         method: auth_method,
       },
     });
-    accountCreated = true;
   } catch (err) {
     if (tokenRedeemed && registrationToken) {
       await restoreRedeemedRegistrationTokenDirect(registrationToken);
       tokenRedeemed = false;
     }
-    // Another verified flow may have won the global email reservation.
-    account = await getClusterAccountByEmailDirect(row.normalized_email);
-    if (!account?.account_id) {
-      throw err;
-    }
-    if (account.banned) {
-      throw new EmailAuthChallengeError(
-        "This account is not allowed to sign in.",
-        "not_allowed",
-      );
-    }
+    throw err;
   }
   const account_id = `${account.account_id ?? ""}`.trim();
   const resolvedHomeBayId =
@@ -1109,11 +1165,19 @@ async function resolveChallengeAccount(
     }
     throw new Error("account creation did not return an account id");
   }
-  await adminVerifyClusterAccountEmailAddress({ account_id });
+  await adminVerifyClusterAccountEmailAddress({
+    account_id,
+    email_address: row.normalized_email,
+  });
+  const identity = await getFinancialApprovalIdentityDirect({
+    account_id,
+    email_address: row.normalized_email,
+  });
   return {
-    account_created: accountCreated,
+    account_created: true,
     account_id,
     home_bay_id: resolvedHomeBayId,
+    identity_generation: identity.generation,
   };
 }
 
@@ -1146,7 +1210,28 @@ export async function prepareEmailAuthExchangeDirect(
         "invalid",
       );
     }
+    if (new Date(row.expires_at).valueOf() <= Date.now()) {
+      throw new EmailAuthChallengeError(
+        "This sign-in challenge has expired.",
+        "expired",
+      );
+    }
     if (row.state === "account_ready") {
+      const currentIdentity = await db.query(
+        `SELECT 1
+           FROM financial_approval_identities
+          WHERE account_id=$1
+            AND email_address=$2
+            AND generation=$3::BIGINT
+          FOR SHARE`,
+        [row.account_id, row.normalized_email, row.identity_generation],
+      );
+      if (!row.account_id || currentIdentity.rows.length !== 1) {
+        throw new EmailAuthChallengeError(
+          "The account email changed. Start sign-in again.",
+          "invalid",
+        );
+      }
       await db.query("COMMIT");
       return exchangeResult(row);
     }
@@ -1174,9 +1259,27 @@ export async function prepareEmailAuthExchangeDirect(
     const ready = (
       await pool.query<ChallengeRow>(
         `
-          UPDATE ${TABLE}
+          WITH valid AS (
+            SELECT challenge.challenge_id
+              FROM ${TABLE} challenge
+              JOIN financial_approval_identities identity
+                ON identity.account_id=$2
+               AND identity.email_address=challenge.normalized_email
+               AND identity.generation=$6::BIGINT
+             WHERE challenge.challenge_id=$1
+               AND challenge.state='account_creating'
+               AND challenge.expires_at > NOW()
+               AND (
+                 challenge.account_id IS NULL OR
+                 challenge.account_id=identity.account_id
+               )
+             FOR UPDATE OF challenge
+             FOR SHARE OF identity
+          )
+          UPDATE ${TABLE} challenge
              SET state='account_ready',
                  account_id=$2,
+                 identity_generation=$6::BIGINT,
                  selected_home_bay_id=$3,
                  exchange_id=$4,
                  account_created_at=CASE
@@ -1185,8 +1288,8 @@ export async function prepareEmailAuthExchangeDirect(
                  END,
                  registration_token_encrypted=NULL,
                  updated_at=NOW()
-           WHERE challenge_id=$1
-             AND state='account_creating'
+            FROM valid
+           WHERE challenge.challenge_id=valid.challenge_id
            RETURNING *
         `,
         [
@@ -1195,6 +1298,7 @@ export async function prepareEmailAuthExchangeDirect(
           account.home_bay_id,
           exchange_id,
           account.account_created,
+          account.identity_generation,
         ],
       )
     ).rows[0];
@@ -1236,17 +1340,30 @@ export async function consumeEmailAuthExchangeDirect(
   await ensureEmailAuthChallengeSchema();
   const { rows } = await getPool().query<ChallengeRow>(
     `
-      UPDATE ${TABLE}
+      WITH valid AS (
+        SELECT challenge.challenge_id
+          FROM ${TABLE} challenge
+          JOIN financial_approval_identities identity
+            ON identity.account_id=challenge.account_id
+           AND identity.email_address=challenge.normalized_email
+           AND identity.generation=challenge.identity_generation
+         WHERE challenge.challenge_id=$1
+           AND challenge.exchange_id=$2
+           AND challenge.account_id=$3
+           AND challenge.selected_home_bay_id=$4
+           AND challenge.state='account_ready'
+           AND challenge.expires_at > NOW()
+         FOR UPDATE OF challenge
+         FOR SHARE OF identity
+      )
+      UPDATE ${TABLE} challenge
          SET state=$5::VARCHAR(32),
              completed_at=CASE WHEN $6::BOOLEAN THEN NOW() ELSE completed_at END,
              session_completed_at=CASE WHEN $6::BOOLEAN THEN NOW() ELSE session_completed_at END,
              updated_at=NOW()
-       WHERE challenge_id=$1
-         AND exchange_id=$2
-         AND account_id=$3
-         AND selected_home_bay_id=$4
-         AND state='account_ready'
-       RETURNING *
+        FROM valid
+       WHERE challenge.challenge_id=valid.challenge_id
+       RETURNING challenge.*
     `,
     [
       opts.challenge_id,
@@ -1277,15 +1394,28 @@ export async function completeEmailAuthMfaDirect(
   await ensureEmailAuthChallengeSchema();
   const result = await getPool().query(
     `
+      WITH valid AS (
+        SELECT challenge.challenge_id
+          FROM ${TABLE} challenge
+          JOIN financial_approval_identities identity
+            ON identity.account_id=challenge.account_id
+           AND identity.email_address=challenge.normalized_email
+           AND identity.generation=challenge.identity_generation
+         WHERE challenge.challenge_id=$1
+           AND challenge.account_id=$2
+           AND challenge.selected_home_bay_id=$3
+           AND challenge.state='mfa_required'
+           AND challenge.expires_at > NOW()
+         FOR UPDATE OF challenge
+         FOR SHARE OF identity
+      )
       UPDATE ${TABLE}
          SET state='completed',
              completed_at=NOW(),
              session_completed_at=NOW(),
              updated_at=NOW()
-       WHERE challenge_id=$1
-         AND account_id=$2
-         AND selected_home_bay_id=$3
-         AND state='mfa_required'
+        FROM valid
+       WHERE ${TABLE}.challenge_id=valid.challenge_id
     `,
     [opts.challenge_id, opts.account_id, opts.home_bay_id],
   );
@@ -1303,16 +1433,29 @@ export async function completeEmailFreshAuthDirect(
   await ensureEmailAuthChallengeSchema();
   const { rows } = await getPool().query<ChallengeRow>(
     `
-      UPDATE ${TABLE}
+      WITH valid AS (
+        SELECT challenge.challenge_id
+          FROM ${TABLE} challenge
+          JOIN financial_approval_identities identity
+            ON identity.account_id=challenge.account_id
+           AND identity.email_address=challenge.normalized_email
+           AND identity.generation=challenge.identity_generation
+         WHERE challenge.challenge_id=$1
+           AND challenge.account_id=$2
+           AND challenge.purpose='email_fresh_auth'
+           AND challenge.state='email_proved'
+           AND challenge.expires_at > NOW()
+         FOR UPDATE OF challenge
+         FOR SHARE OF identity
+      )
+      UPDATE ${TABLE} challenge
          SET state='completed',
              completed_at=NOW(),
              session_completed_at=NOW(),
              updated_at=NOW()
-       WHERE challenge_id=$1
-         AND account_id=$2
-         AND purpose='email_fresh_auth'
-         AND state='email_proved'
-       RETURNING *
+        FROM valid
+       WHERE challenge.challenge_id=valid.challenge_id
+       RETURNING challenge.*
     `,
     [opts.challenge_id, opts.account_id],
   );

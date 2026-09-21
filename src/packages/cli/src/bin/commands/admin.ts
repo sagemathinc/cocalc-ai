@@ -1150,6 +1150,38 @@ Merge comments are private unless their corresponding --*-comment-public flag is
   const adminSettings = admin
     .command("settings")
     .description("admin site settings inspection");
+  const adminFundingApproval = admin
+    .command("financial-approval")
+    .description("secure financial authorization diagnostics");
+
+  adminFundingApproval
+    .command("status")
+    .description(
+      "verify financial authorization configuration and public HTTPS routing",
+    )
+    .option("--force", "bypass the short readiness cache")
+    .action(async (opts: { force?: boolean }, command: Command) => {
+      await withContext(
+        command,
+        "admin financial-approval status",
+        async (ctx) => {
+          const status = await ctx.hub.system.getFundingApprovalReadiness({
+            force: opts.force === true,
+          });
+          if (status.state !== "ready") process.exitCode = 1;
+          if (
+            ctx.globals?.json ||
+            ctx.globals?.output === "json" ||
+            ctx.globals?.output === "yaml"
+          ) {
+            return status;
+          }
+          const detail = status.reason ? `\n${status.reason}` : "";
+          const origin = status.origin ? `\nOrigin: ${status.origin}` : "";
+          return `Secure financial authorization: ${status.state}${origin}${detail}`;
+        },
+      );
+    });
 
   registerReceivablesCommand(admin, {
     withContext,

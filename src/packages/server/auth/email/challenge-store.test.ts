@@ -7,6 +7,8 @@ import getPool, { initEphemeralDatabase } from "@cocalc/database/pool";
 
 const sendEmailAuthChallengeMessageMock = jest.fn(async () => undefined);
 const getClusterAccountByEmailDirectMock = jest.fn(async () => null);
+const getClusterAccountByIdDirectMock = jest.fn(async () => null);
+const getFinancialApprovalIdentityDirectMock = jest.fn();
 const adminVerifyClusterAccountEmailAddressMock = jest.fn(
   async () => undefined,
 );
@@ -31,6 +33,10 @@ jest.mock("./delivery", () => ({
 jest.mock("@cocalc/server/accounts/cluster-directory", () => ({
   getClusterAccountByEmailDirect: (...args: any[]) =>
     getClusterAccountByEmailDirectMock(...args),
+  getClusterAccountByIdDirect: (...args: any[]) =>
+    getClusterAccountByIdDirectMock(...args),
+  getFinancialApprovalIdentityDirect: (...args: any[]) =>
+    getFinancialApprovalIdentityDirectMock(...args),
 }));
 
 jest.mock("@cocalc/server/inter-bay/accounts", () => ({
@@ -89,6 +95,22 @@ describe("seed-global email authentication challenges", () => {
     sendEmailAuthChallengeMessageMock.mockClear();
     getClusterAccountByEmailDirectMock.mockClear();
     getClusterAccountByEmailDirectMock.mockResolvedValue(null);
+    getClusterAccountByIdDirectMock.mockClear();
+    getClusterAccountByIdDirectMock.mockImplementation(
+      async () => await getClusterAccountByEmailDirectMock(),
+    );
+    getFinancialApprovalIdentityDirectMock
+      .mockReset()
+      .mockImplementation(async ({ account_id, email_address }) => {
+        await getPool().query(
+          `INSERT INTO financial_approval_identities
+             (account_id,email_address,generation)
+           VALUES ($1,$2,1)
+           ON CONFLICT (account_id) DO NOTHING`,
+          [account_id, email_address],
+        );
+        return { email_address, generation: 1 };
+      });
     adminVerifyClusterAccountEmailAddressMock.mockClear();
     createClusterAccountMock.mockReset();
     issueHomeBayRetryTokenMock.mockClear();
@@ -107,7 +129,9 @@ describe("seed-global email authentication challenges", () => {
     restoreRedeemedRegistrationTokenDirectMock
       .mockReset()
       .mockResolvedValue(undefined);
-    await getPool().query("TRUNCATE email_auth_challenges");
+    await getPool().query(
+      "TRUNCATE email_auth_challenges, financial_approval_identities",
+    );
   });
 
   afterAll(async () => {
@@ -297,6 +321,7 @@ describe("seed-global email authentication challenges", () => {
     expect(exchange.exchange_token).toContain("signed-");
     expect(adminVerifyClusterAccountEmailAddressMock).toHaveBeenCalledWith({
       account_id: "22222222-2222-4222-8222-222222222222",
+      email_address: "person@example.edu",
     });
 
     const tokenArgs = issueHomeBayRetryTokenMock.mock.calls.at(-1)?.[0];
@@ -433,6 +458,7 @@ describe("seed-global email authentication challenges", () => {
     );
     expect(adminVerifyClusterAccountEmailAddressMock).toHaveBeenCalledWith({
       account_id: "33333333-3333-4333-8333-333333333333",
+      email_address: "new@example.edu",
     });
   });
 
@@ -547,6 +573,191 @@ describe("seed-global email authentication challenges", () => {
     expect(validateRegistrationTokenDirectMock).not.toHaveBeenCalled();
     expect(redeemRegistrationTokenDirectMock).not.toHaveBeenCalled();
     expect(createClusterAccountMock).not.toHaveBeenCalled();
+  });
+
+  it("does not move a proved sign-in to a later owner of the email", async () => {
+    const victimAccount = {
+      account_id: "22222222-2222-4222-8222-222222222222",
+      email_address: "person@example.edu",
+      home_bay_id: "bay-victim",
+      banned: false,
+    };
+    getClusterAccountByEmailDirectMock.mockResolvedValue(victimAccount);
+    const {
+      prepareEmailAuthExchangeDirect,
+      redeemEmailAuthCodeDirect,
+      startEmailAuthChallengeDirect,
+    } = await import("./challenge-store");
+    const started = await startEmailAuthChallengeDirect({
+      email_address: "person@example.edu",
+      browser_binding: "browser-reassignment",
+    });
+    await redeemEmailAuthCodeDirect({
+      challenge_id: started.challenge_id,
+      code: sendEmailAuthChallengeMessageMock.mock.calls.at(-1)?.[0].code,
+    });
+
+    getClusterAccountByEmailDirectMock.mockResolvedValue({
+      account_id: "99999999-9999-4999-8999-999999999999",
+      email_address: "person@example.edu",
+      home_bay_id: "bay-attacker",
+      banned: false,
+    });
+    getClusterAccountByIdDirectMock.mockResolvedValue({
+      ...victimAccount,
+      email_address: "victim-new@example.edu",
+    });
+    getFinancialApprovalIdentityDirectMock.mockRejectedValue(
+      new Error("financial approval identity changed"),
+    );
+
+    await expect(
+      prepareEmailAuthExchangeDirect({
+        challenge_id: started.challenge_id,
+        auth_method: "email_code",
+      }),
+    ).rejects.toMatchObject({ code: "invalid" });
+    expect(issueHomeBayRetryTokenMock).not.toHaveBeenCalled();
+  });
+
+  it("invalidates a ready exchange when the identity generation changes", async () => {
+    const account = {
+      account_id: "22222222-2222-4222-8222-222222222222",
+      email_address: "person@example.edu",
+      home_bay_id: "bay-home",
+      banned: false,
+    };
+    getClusterAccountByEmailDirectMock.mockResolvedValue(account);
+    getClusterAccountByIdDirectMock.mockResolvedValue(account);
+    const {
+      consumeEmailAuthExchangeDirect,
+      prepareEmailAuthExchangeDirect,
+      redeemEmailAuthCodeDirect,
+      startEmailAuthChallengeDirect,
+    } = await import("./challenge-store");
+    const started = await startEmailAuthChallengeDirect({
+      email_address: account.email_address,
+      browser_binding: "browser-ready-generation",
+    });
+    await redeemEmailAuthCodeDirect({
+      challenge_id: started.challenge_id,
+      code: sendEmailAuthChallengeMessageMock.mock.calls.at(-1)?.[0].code,
+    });
+    const ready = await prepareEmailAuthExchangeDirect({
+      challenge_id: started.challenge_id,
+      auth_method: "email_code",
+    });
+    const tokenArgs = issueHomeBayRetryTokenMock.mock.calls.at(-1)?.[0];
+    await getPool().query(
+      `UPDATE financial_approval_identities
+          SET generation=generation+1
+        WHERE account_id=$1`,
+      [account.account_id],
+    );
+
+    await expect(
+      prepareEmailAuthExchangeDirect({
+        challenge_id: started.challenge_id,
+        auth_method: "email_code",
+      }),
+    ).rejects.toMatchObject({ code: "invalid" });
+    await expect(
+      consumeEmailAuthExchangeDirect({
+        account_id: account.account_id,
+        challenge_id: started.challenge_id,
+        completion: "completed",
+        exchange_id: tokenArgs.token_id,
+        home_bay_id: ready.home_bay_id,
+      }),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("does not replay or consume a ready exchange after its original TTL", async () => {
+    const account = {
+      account_id: "22222222-2222-4222-8222-222222222222",
+      email_address: "person@example.edu",
+      home_bay_id: "bay-home",
+      banned: false,
+    };
+    getClusterAccountByEmailDirectMock.mockResolvedValue(account);
+    getClusterAccountByIdDirectMock.mockResolvedValue(account);
+    const {
+      consumeEmailAuthExchangeDirect,
+      prepareEmailAuthExchangeDirect,
+      redeemEmailAuthCodeDirect,
+      startEmailAuthChallengeDirect,
+    } = await import("./challenge-store");
+    const started = await startEmailAuthChallengeDirect({
+      email_address: account.email_address,
+      browser_binding: "browser-ready-expiry",
+    });
+    await redeemEmailAuthCodeDirect({
+      challenge_id: started.challenge_id,
+      code: sendEmailAuthChallengeMessageMock.mock.calls.at(-1)?.[0].code,
+    });
+    const ready = await prepareEmailAuthExchangeDirect({
+      challenge_id: started.challenge_id,
+      auth_method: "email_code",
+    });
+    const tokenArgs = issueHomeBayRetryTokenMock.mock.calls.at(-1)?.[0];
+    await getPool().query(
+      `UPDATE email_auth_challenges
+          SET expires_at=NOW() - INTERVAL '1 second'
+        WHERE challenge_id=$1`,
+      [started.challenge_id],
+    );
+
+    await expect(
+      prepareEmailAuthExchangeDirect({
+        challenge_id: started.challenge_id,
+        auth_method: "email_code",
+      }),
+    ).rejects.toMatchObject({ code: "expired" });
+    await expect(
+      consumeEmailAuthExchangeDirect({
+        account_id: account.account_id,
+        challenge_id: started.challenge_id,
+        completion: "completed",
+        exchange_id: tokenArgs.token_id,
+        home_bay_id: ready.home_bay_id,
+      }),
+    ).rejects.toMatchObject({ code: "invalid" });
+  });
+
+  it("does not transfer a signup proof to a concurrent account creator", async () => {
+    const winner = {
+      account_id: "99999999-9999-4999-8999-999999999999",
+      email_address: "new@example.edu",
+      home_bay_id: "bay-winner",
+      banned: false,
+    };
+    const {
+      prepareEmailAuthExchangeDirect,
+      redeemEmailAuthCodeDirect,
+      startEmailAuthChallengeDirect,
+    } = await import("./challenge-store");
+    const started = await startEmailAuthChallengeDirect({
+      email_address: winner.email_address,
+      browser_binding: "browser-signup-race",
+      prospective_home_bay_id: "bay-new",
+      terms_accepted: true,
+    });
+    await redeemEmailAuthCodeDirect({
+      challenge_id: started.challenge_id,
+      code: sendEmailAuthChallengeMessageMock.mock.calls.at(-1)?.[0].code,
+    });
+    createClusterAccountMock.mockImplementation(async () => {
+      getClusterAccountByEmailDirectMock.mockResolvedValue(winner);
+      throw new Error("email address already exists");
+    });
+
+    await expect(
+      prepareEmailAuthExchangeDirect({
+        challenge_id: started.challenge_id,
+        auth_method: "email_code",
+      }),
+    ).rejects.toThrow("email address already exists");
+    expect(issueHomeBayRetryTokenMock).not.toHaveBeenCalled();
   });
 
   it("restores a redeemed token when account creation fails", async () => {

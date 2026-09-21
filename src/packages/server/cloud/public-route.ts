@@ -85,6 +85,18 @@ export function activeHostPublicRouteMode(row: {
     : "cloudflare-tunnel";
 }
 
+export function desiredHostPublicRouteMode(row: {
+  metadata?: Record<string, any>;
+}): HostPublicRouteMode {
+  const desired = row.metadata?.public_route?.desired_mode;
+  if (desired === "cloudflare-proxy" || desired === "cloudflare-tunnel") {
+    return desired;
+  }
+  return normalizeProviderId(row.metadata?.machine?.cloud) === "gcp"
+    ? "cloudflare-proxy"
+    : "cloudflare-tunnel";
+}
+
 export function hostPublicRouteMigrationInProgress(row: {
   metadata?: Record<string, any>;
 }): boolean {

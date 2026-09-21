@@ -95,11 +95,13 @@ describe("AdminRefund", () => {
     });
   });
 
-  it("offers refunds for every finalized purchase except refunds", () => {
+  it("excludes refunds and transfers from generic purchase refunds", () => {
     expect(isRefundable("credit", -24)).toBe(true);
     expect(isRefundable("membership", 24)).toBe(true);
     expect(isRefundable("dedicated-host", 1)).toBe(true);
     expect(isRefundable("refund", -24)).toBe(false);
+    expect(isRefundable("credit-transfer", -24)).toBe(false);
+    expect(isRefundable("credit-transfer", 24)).toBe(false);
     expect(isRefundable("membership", null)).toBe(false);
   });
 

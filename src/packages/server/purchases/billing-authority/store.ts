@@ -23,6 +23,7 @@ import type {
   BillingAuthorityLane,
   BillingAuthoritySubmitRequest,
 } from "./protocol";
+import { billingAccountsTable } from "@cocalc/server/purchases/billing-account";
 import { normalizeBillingAuthorityError } from "./error-normalization";
 import {
   billingAuthorityAccountIds,
@@ -449,6 +450,7 @@ async function assertBillingAccountsAllowed(
   accountIds: string[],
 ): Promise<void> {
   if (accountIds.length === 0) return;
+  const accountTable = billingAccountsTable();
   const { rows } = await db.query<{ account_id: string }>(
     `SELECT account_id
        FROM (
@@ -457,7 +459,7 @@ async function assertBillingAccountsAllowed(
           WHERE account_id=ANY($1::UUID[]) AND frozen
          UNION ALL
          SELECT account_id
-           FROM accounts
+           FROM ${accountTable}
           WHERE account_id=ANY($1::UUID[])
             AND (banned IS TRUE OR deleted IS TRUE)
        ) AS blocked
@@ -489,6 +491,7 @@ async function migrateAccountFenceBatch({
   cursor?: string | null;
   batchSize: number;
 }): Promise<{ candidate_count: number; last_account_id?: string }> {
+  const accountTable = billingAccountsTable();
   const phasePredicate =
     phase === "scan"
       ? "AND ($2::UUID IS NULL OR accounts.account_id > $2::UUID)"
@@ -501,7 +504,7 @@ async function migrateAccountFenceBatch({
     `WITH candidates AS MATERIALIZED (
        SELECT accounts.account_id, accounts.banned, accounts.deleted,
               accounts.banned_at
-         FROM accounts
+         FROM ${accountTable} AS accounts
          LEFT JOIN billing_authority_account_fences AS fences
            ON fences.account_id=accounts.account_id
         WHERE (accounts.banned IS TRUE OR accounts.deleted IS TRUE)
@@ -572,9 +575,10 @@ async function migrateAccountFenceBatch({
 }
 
 async function hasMissingAccountSecurityFence(db: Queryable): Promise<boolean> {
+  const accountTable = billingAccountsTable();
   const { rows } = await db.query(
     `SELECT 1
-       FROM accounts
+       FROM ${accountTable} AS accounts
        LEFT JOIN billing_authority_account_fences AS fences
          ON fences.account_id=accounts.account_id
       WHERE ${MISSING_ACCOUNT_FENCE_SQL}
@@ -657,7 +661,7 @@ export async function advanceBillingAuthorityActivation({
       // Account lifecycle writes take ROW EXCLUSIVE. This final SHARE lock and
       // the admission lock make the no-missing-row observation and completion
       // marker one atomic activation boundary.
-      await db.query("LOCK TABLE accounts IN SHARE MODE");
+      await db.query(`LOCK TABLE ${billingAccountsTable()} IN SHARE MODE`);
       if (!(await hasMissingAccountSecurityFence(db))) {
         await db.query(
           `UPDATE billing_authority_migrations
