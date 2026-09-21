@@ -170,8 +170,9 @@ export function HarnessProfileFields({
         Install and configure the harness in this project first. It runs with
         full project access and project-managed credentials. Do not put secrets
         in these fields. The first turn uses the harness configuration;
-        supported model/mode selectors appear afterward. Images, automations and
-        incoming agent-network requests are not supported yet.
+        supported model/mode selectors appear afterward. Agent Networks support
+        queued messages. Images, automations and live guidance are not supported
+        yet.
       </Typography.Text>
       {(
         [

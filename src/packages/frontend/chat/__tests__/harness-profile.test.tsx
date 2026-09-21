@@ -73,6 +73,10 @@ test("profile fields have visible labels and support keyboard editing", async ()
     return <HarnessProfileFields value={value} onChange={setValue} />;
   }
   render(<Form />);
+  expect(
+    screen.getByText(/Agent Networks support queued messages/),
+  ).toBeTruthy();
+  expect(screen.getByText(/live guidance are not supported/)).toBeTruthy();
   const user = userEvent.setup();
   await user.tab();
   expect(document.activeElement).toBe(

@@ -272,9 +272,25 @@ automations and automatic uncertain-turn recovery remain unsupported.
 
 Validation: 104 focused tests across harness admission, RPC delivery, execution
 authorization, queued messages and detached workers passed, plus the project-host
-TypeScript build. These are backend tests, not proof of live agent-network delivery;
-qualification with two disposable named agents and their own scoped identities is
-still required before advertising this capability.
+TypeScript build.
+
+Live qualification then passed on host bundle
+`20260921T091811Z-8cc56397712d`, upgrade operation
+`d3452847-0b8c-4362-9ca6-19283d89d4d9`. Created a disposable queued network
+containing only fixture agents `agent-3` and `agent-4`. The source harness used
+its own injected identity with the supplied CLI for whoami, destination discovery
+and one personal send. No account-credential fallback was used. Network
+`cade61cd-8842-4411-8762-ea3e111f053e` admitted attempt
+`12c3a171-471e-4d86-803f-5f4d0fcf0e23`. Recipient execution
+`ae084ecf-2e78-42dc-b028-00e0e3dea7b3` completed with its own Deep setting,
+`fixture-session`, ACP runtime profile and network authorization in durable state.
+The browser displayed the peer attribution and completed `Hello world 1` answer.
+
+Closed the test network afterward (zero active networks) and restored the plain
+fixture executable. The temporary source wrapper only allowed a single explicit
+probe prompt, and never retried a send. This proves one same-project queued
+network delivery, not cross-project delivery, queued revocation races or live
+guidance. Those broader behaviors must not be inferred from this check.
 
 ## Reproduce
 
@@ -311,8 +327,8 @@ worker-recovery regressions and host registration. The chat writer records
 `agent_kind=acp`. Profile changes currently require a fresh conversation while
 the previous profile is retained. Codex funding/options, automation and immediate
 agent-network guidance are rejected for this experimental path, not silently
-ignored. Queued network delivery is implemented as recorded above but still needs
-live qualification. Recovery never automatically resubmits an uncertain generic turn.
+ignored. Queued network delivery has passed the same-project live check recorded
+above. Recovery never automatically resubmits an uncertain generic turn.
 
 Validation: 106 chat-writer/admission/queued-message tests, 47 detached-worker
 tests and 11 project-host worker/launcher tests passed, plus the project-host
