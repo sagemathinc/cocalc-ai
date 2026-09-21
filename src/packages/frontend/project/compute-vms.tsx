@@ -3479,6 +3479,12 @@ export function ProjectComputeVms({
   };
 
   const openSimilar = (vm: ComputeVm) => {
+    if (!catalog?.providers.includes(vm.provider)) {
+      setError(
+        `${getProviderDescriptor(vm.provider).label} is not configured for new managed compute VMs.`,
+      );
+      return;
+    }
     const ttlMinutes = originalTtlMinutes(vm);
     const suggestedVolumeStem = similarName(vm.name, allRows);
     setVmInitial({
@@ -4663,7 +4669,13 @@ export function ProjectComputeVms({
                         ? "Change deletion deadline"
                         : "Set deletion deadline",
                     },
-                    { key: "similar", label: "Create similar" },
+                    {
+                      key: "similar",
+                      disabled: !catalog?.providers.includes(vm.provider),
+                      label: catalog?.providers.includes(vm.provider)
+                        ? "Create similar"
+                        : "Create similar (provider unavailable)",
+                    },
                     { key: "funding", label: "Change funding" },
                     { type: "divider" },
                     {
