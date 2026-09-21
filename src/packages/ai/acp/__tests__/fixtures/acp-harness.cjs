@@ -159,6 +159,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update(`${selectedModel}/${selectedMode}`);
         return result(message.id, { stopReason: "end_turn" });
       }
+      const stopped =
+        /^stop:(max_tokens|max_turn_requests|refusal)(:partial)?$/.exec(text);
+      if (stopped) {
+        if (stopped[2]) update("Partial output before stopping.");
+        return result(message.id, { stopReason: stopped[1] });
+      }
       if (text === "quiet" || text === "quiet-long") {
         pendingPrompt = message.id;
         setTimeout(

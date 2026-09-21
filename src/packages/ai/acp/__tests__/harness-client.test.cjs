@@ -387,6 +387,42 @@ for (const phase of [
   }
 }
 
+for (const stopReason of ["max_tokens", "max_turn_requests", "refusal"]) {
+  for (const partial of [false, true]) {
+    test(`adapter preserves ${stopReason}, partial=${partial}, without reporting success`, async (t) => {
+      const { agent, request, events, launches, stops } = adapter(t);
+      await assert.rejects(
+        agent.evaluate({
+          ...request,
+          prompt: `stop:${stopReason}${partial ? ":partial" : ""}`,
+        }),
+        (error) =>
+          error.code === "rejected" &&
+          error.message === `ACP prompt stopped: ${stopReason}`,
+      );
+      assert.deepEqual(
+        events
+          .filter((e) => e.event?.type === "message")
+          .map((e) => e.event.text),
+        partial ? ["Partial output before stopping."] : [],
+      );
+      assert.deepEqual(
+        events.filter((e) => e.event?.kind === "stop").map((e) => e.event.data),
+        [{ stopReason }],
+      );
+      assert.ok(!events.some((e) => e.type === "summary"));
+      assert.equal(stops(), 1);
+      assert.equal(agent.hasRunningTurn("fixture-session"), false);
+      await assert.rejects(agent.evaluate(request), /not idle/);
+      assert.equal(
+        launches(),
+        1,
+        "non-success must not trigger an implicit retry",
+      );
+    });
+  }
+}
+
 test("agent adapter preserves permission policy events and cancellation stop reason", async (t) => {
   const { agent, request, events } = adapter(t);
   await agent.evaluate({ ...request, prompt: "permission" });
