@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { Alert, Button, Checkbox, Drawer, Input, Select, Space } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon } from "@cocalc/frontend/components";
+import { Tooltip } from "@cocalc/frontend/components/tip";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { SearchHitTime } from "@cocalc/frontend/chat/search-hit-time";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
@@ -182,13 +183,20 @@ export function AgentSearch({
             onChange={(projectId) => store.set({ projectId })}
             disabled={state.busy}
           />
-          <Checkbox
-            checked={state.past}
-            disabled={state.busy}
-            onChange={(e) => store.set({ past: e.target.checked })}
+          <Tooltip
+            trigger={["hover", "focus"]}
+            title={
+              "Search up to five recent conversations saved by \"Start fresh conversation\" for each agent. An idle agent's current conversation is already included without this option. Past results open in the project chat file without changing the agent's current conversation."
+            }
           >
-            Include past conversations
-          </Checkbox>
+            <Checkbox
+              checked={state.past}
+              disabled={state.busy}
+              onChange={(e) => store.set({ past: e.target.checked })}
+            >
+              Include past conversations
+            </Checkbox>
+          </Tooltip>
           <small>
             Searches saved messages, most recently active agents first. Stopped
             projects are not started. Up to 100 agents, 150 threads and 20

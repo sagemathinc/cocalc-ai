@@ -17,6 +17,7 @@ jest.mock("./api", () => ({
   }),
 }));
 jest.mock("@cocalc/frontend/app-framework", () => ({
+  useAccountOtherSetting: () => false,
   redux: {
     getActions: () => undefined,
     getStore: () => ({ get: () => "search-test" }),
@@ -60,6 +61,13 @@ test("drawer preserves query, filters and results through unmount; inspecting a 
   const trigger = screen.getByRole("button", { name: "Search conversations" });
   trigger.focus();
   await user.keyboard("{Enter}");
+  screen.getByRole("checkbox", { name: "Include past conversations" }).focus();
+  expect((await screen.findByRole("tooltip")).textContent).toContain(
+    'saved by "Start fresh conversation"',
+  );
+  expect(screen.getByRole("tooltip").textContent).toContain(
+    "current conversation is already included",
+  );
   await user.click(
     screen.getByRole("checkbox", { name: "Include past conversations" }),
   );
