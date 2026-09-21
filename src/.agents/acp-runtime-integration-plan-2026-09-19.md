@@ -34,7 +34,10 @@ of every process-removal fallback or abrupt-loss case.
 Orderly restart during a delivered prompt preserves an uncertain error outcome.
 Hard worker loss now invalidates its pending QA responder in the open browser
 and records an explicit unknown-outcome error that survives reload. No automatic
-resend was observed. Broader failure qualification remains below.
+resend was observed. Abrupt primary-container loss during a delivered fixture
+turn now also fences the job, removes its sidecar, preserves an uncertain-outcome
+error through reload, and allows a new explicit follow-up without replaying the
+failed turn. Broader failure qualification remains below.
 Explicit pre-first-turn discovery now has a deterministic live check: create an
 ACP agent without starting a turn, load its advertised options, and select a
 model before submitting the preserved draft. Real Pi/OpenCode catalogs and

@@ -3,7 +3,38 @@
 Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 `feature/my-agents-workspace` (#640).
 
-## Abrupt Primary-Container Loss: Failed Live Gate
+## Abrupt Primary-Container Loss: Failure And Requalification
+
+Fix `e074eee1d4` is deployed as
+`20260921T162442Z-e074eee1d4ba-dirty-e3b0c442`, SHA256
+`ec897ddd5e26a5d3a073cda649d11a6db7c5e0d289623f51d9c8c6182d294e12`.
+Upgrade `db4f65a9-8a70-4181-b7dd-0e91ded5641b` succeeded with managed-component
+alignment. The unrelated untracked PNG accounts for the dirty suffix.
+
+Live requalification: job `9fdee41f-4a38-4db4-ae85-378d3f200915` streamed
+`working` before its primary container's verified namespace-init process was
+killed. Podman's kill command failed without delivering its signal; the actual
+crash injection used a PID descriptor after checking the exact init process,
+mapped UID and namespace PID. Without manual interruption, reconciliation fenced
+the durable job as `error` (`project restart security fence`) and removed the
+sidecar. The UI displayed the explicit uncertain-delivery/completion error and
+that error survived reload. No recovery child was created. A subsequent explicit
+`settings` turn (`5bf2cf1b-69a3-4e18-ab4e-63c1685ed0dc`) completed with `fast/code`.
+No running or queued ACP jobs remained after verification.
+
+The project itself was started again by observed operation
+`5d228c9c-660c-4ab1-89ea-43093f94615f`; this was not a replay of the fenced turn.
+This qualifies the delivered-fixture/primary-init-loss path, not all persistence,
+resource-exhaustion or forced Podman-removal failures.
+
+Control-plane recovery: the supported local three-bay hub restart completed and
+restored typed project status responses. The previously timed-out restart had
+no corresponding new operation in the inspected project operation list. After
+confirming stopped state, explicit start
+`43187f8a-33e2-48e8-8ed6-a0e6506e8a3e` succeeded before the crash test. The test
+project is now running again. Other primary project containers were unchanged.
+
+Original failure evidence follows; it is retained rather than relabeled a pass.
 
 At deployed backend `f023aa2cf2`, fixture job
 `f10f60dd-0840-4933-9648-ee1bb791ac46` reached `running` and streamed `working`.
@@ -21,14 +52,14 @@ durable job/lease fence and worker runtime release as orderly project stop.
 It records the stopped state only after successful fencing. Tests cover missing
 and exited containers, a newly restarted container, failed confirming inventory,
 and retry after fencing failure. Eighty focused project-host tests passed;
-project-host TypeScript passed. This fix has not yet been live-qualified.
+project-host TypeScript passed. Live requalification is recorded above.
 
-Test cleanup confirmed no remaining ACP sidecar and the other two primary
-containers unchanged. The disposable project remains stopped. One typed restart
+Original test cleanup confirmed no remaining ACP sidecar and the other two primary
+containers unchanged. The disposable project was left stopped. One typed restart
 request timed out without an operation ID; its outcome is unknown and it was
 not blindly repeated. Subsequent read-only status requests, including a
-daemon-free request, also timed out. Restore control-plane responsiveness and
-qualify this fix before clearing the abrupt-loss gate. Do not infer success
+daemon-free request, also timed out. Restoring control-plane responsiveness and
+qualifying the fix were required before clearing this gate. Do not infer success
 from the existing orderly restart/worker-loss evidence.
 
 ## Broad Regression Checkpoint
@@ -1433,8 +1464,8 @@ Continue qualifying interrupted-chat projection and broaden real-harness
 coverage beyond the live checks above. Do not enable the host flag for general
 use yet; the current UI is an experimental operator-testing surface.
 
-1. Broaden live qualification to persistence failures and abrupt project loss
-   during a delivered prompt. Normal project restart with retained Pi and
+1. Broaden live qualification to persistence failures and further abrupt-loss
+   cases beyond the primary-init-loss fixture check above. Normal project restart with retained Pi and
    OpenCode native resume after worker restart passed, as recorded above.
    Real Pi/OpenCode discovery and restart during stalled discovery also pass;
    broaden to other provider catalogs and admission/stop races as needed.
