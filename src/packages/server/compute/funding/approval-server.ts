@@ -4,6 +4,8 @@
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { MONTHLY_COLLECTION_TERMS } from "@cocalc/util/monthly-collection";
 import { createServer } from "node:http";
 import express from "express";
@@ -46,6 +48,22 @@ import type {
 import { toDecimal } from "@cocalc/util/money";
 const logger = getLogger("compute:funding:approval-server");
 
+async function loadFavicon(): Promise<Buffer | undefined> {
+  for (const path of [
+    resolve(process.cwd(), "runtime/control-plane/webapp/favicon.ico"),
+    resolve(process.cwd(), "src/packages/assets/favicon.ico"),
+    resolve(process.cwd(), "packages/assets/favicon.ico"),
+    resolve(process.cwd(), "../assets/favicon.ico"),
+    resolve(__dirname, "../../../assets/favicon.ico"),
+  ]) {
+    try {
+      return await readFile(path);
+    } catch {
+      // Build layouts differ; only fixed trusted asset locations are checked.
+    }
+  }
+}
+
 function escapeHtml(value: string): string {
   return value.replace(
     /[&<>"']/g,
@@ -66,10 +84,10 @@ function page(
   const siteName = escapeHtml(opts.siteName ?? "CoCalc");
   res.setHeader(
     "Content-Security-Policy",
-    `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; form-action 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`,
+    `default-src 'none'; style-src 'nonce-${nonce}'; script-src 'nonce-${nonce}'; img-src 'self'; form-action 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'`,
   );
   res.type("html")
-    .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHtml(title)} - ${siteName}</title>
+    .send(`<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="/favicon.ico"><title>${escapeHtml(title)} - ${siteName}</title>
     <style nonce="${nonce}">${appearanceStyleSheet()}*{box-sizing:border-box}body{font:16px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:0;color:${UI_COLORS.text};background:${UI_COLORS.page};min-height:100vh}.top{height:64px;background:${UI_COLORS.surface};border-bottom:1px solid ${UI_COLORS.border};display:flex;align-items:center;padding:0 24px}.brand{font-size:21px;font-weight:700;color:${UI_COLORS.text};text-decoration:none}.secure{margin-left:auto;color:${UI_COLORS.secondary};font-size:14px}main{max-width:760px;margin:40px auto;padding:0 20px 40px}.card{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.border};border-radius:8px;box-shadow:0 12px 32px ${UI_COLORS.shadow};padding:32px}.auth-card{max-width:480px;margin:auto}h1{font-size:24px;line-height:1.25;margin:0 0 8px}h2{font-size:19px}.subtitle,.muted{color:${UI_COLORS.secondary};font-size:15px;line-height:1.5}.stack{display:flex;flex-direction:column;gap:16px;margin-top:20px}.field{display:flex;flex-direction:column;gap:6px}label{font-size:14px;font-weight:600}input,button{font:inherit;max-width:100%;border-radius:8px}input{display:block;width:100%;background:${UI_COLORS.surface};color:${UI_COLORS.text};border:1px solid ${UI_COLORS.border};padding:10px 12px;font-size:16px}button{border:0;background:${UI_COLORS.primary};color:${UI_COLORS.onPrimary};font-weight:600;padding:11px 16px;cursor:pointer}button.secondary{background:${UI_COLORS.surface};border:1px solid ${UI_COLORS.controlBorder};color:${UI_COLORS.text}}button:disabled{cursor:not-allowed;opacity:.65}.link-button{background:none!important;border:0!important;color:${UI_COLORS.link}!important;padding:0!important;font-weight:400!important}.center{text-align:center}.alert{border-radius:8px;padding:10px 12px;font-size:14px;line-height:1.45;background:${UI_COLORS.infoBg};border:1px solid ${UI_COLORS.info};color:${UI_COLORS.text}}.alert-error{background:${UI_COLORS.dangerBg};border-color:${UI_COLORS.danger}}.divider{display:flex;align-items:center;gap:12px;color:${UI_COLORS.secondary};font-size:13px}.divider:before,.divider:after{content:"";height:1px;background:${UI_COLORS.border};flex:1}.method-row{display:flex;gap:8px;flex-wrap:wrap}.method-row button{width:auto}.success{text-align:center;padding:18px 0 8px}.success-mark{align-items:center;background:${UI_COLORS.successBg};border:2px solid ${UI_COLORS.success};border-radius:50%;color:${UI_COLORS.success};display:flex;font-size:38px;font-weight:700;height:72px;justify-content:center;margin:0 auto 18px;width:72px}.success p{font-size:17px}.receipt{border-top:1px solid ${UI_COLORS.border};margin-top:28px;padding-top:18px}.receipt summary{color:${UI_COLORS.link};cursor:pointer;font-weight:600}.receipt-body{margin-top:18px;text-align:left}dt{font-weight:600;margin-top:12px}dd{margin:4px 0 0}pre,dd{white-space:pre-wrap;overflow-wrap:anywhere}table{width:100%;table-layout:fixed;border-collapse:collapse}th,td{text-align:left;vertical-align:top;padding:8px;overflow-wrap:anywhere;border-bottom:1px solid ${UI_COLORS.border}}th:first-child{width:60%}a{overflow-wrap:anywhere;color:${UI_COLORS.link}}:focus-visible{outline:3px solid ${UI_COLORS.focus};outline-offset:3px}@media(max-width:520px){.top{padding:0 16px}.secure{display:none}main{margin-top:20px;padding:0 12px 24px}.card{padding:22px 18px}}</style></head>
     <body><header class="top"><span class="brand">${siteName}</span><span class="secure">Secure financial confirmation</span></header><main><section class="card${content.includes("data-auth-card") ? " auth-card" : ""}"><h1>${escapeHtml(title)}</h1>${content}</section></main>${opts.script ? `<script nonce="${nonce}">${opts.script}</script>` : ""}</body></html>`);
 }
@@ -317,6 +335,7 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
     ? "__Host-cocalc-financial-flow"
     : "cocalc_financial_dev_flow";
   const app = express();
+  const favicon = await loadFavicon();
   app.disable("x-powered-by");
   app.set("trust proxy", false);
   const csrfKey = randomBytes(32);
@@ -560,6 +579,16 @@ export async function startCourseFundingApprovalServer<Result>(opts: {
   });
   app.use(express.urlencoded({ extended: false, limit: "16kb" }));
   app.use(express.json({ limit: "32kb" }));
+  app.get("/favicon.ico", (_req, res) => {
+    if (!favicon) {
+      res.status(404).end();
+      return;
+    }
+    res
+      .set("Cache-Control", "public, max-age=86400")
+      .type("image/x-icon")
+      .send(favicon);
+  });
   app.get(FUNDING_APPROVAL_HEALTH_PATH, (_req, res) => {
     res.status(200).json({
       service: FUNDING_APPROVAL_HEALTH_SERVICE,

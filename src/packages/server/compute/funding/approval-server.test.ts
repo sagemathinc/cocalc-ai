@@ -333,6 +333,20 @@ describe("isolated financial browser approval", () => {
     });
     expect(response.headers()["cache-control"]).toBe("no-store");
   });
+  it("serves the CoCalc favicon from the isolated approval origin", async () => {
+    const response = await context.request.get(`${origin}/favicon.ico`);
+    expect(response.status()).toBe(200);
+    expect(response.headers()["content-type"]).toContain("image/x-icon");
+    expect((await response.body()).length).toBeGreaterThan(1_000);
+
+    const approval = await page.goto(`${origin}/funding/${id}`);
+    expect(await page.locator('link[rel="icon"]').getAttribute("href")).toBe(
+      "/favicon.ico",
+    );
+    expect(approval?.headers()["content-security-policy"]).toContain(
+      "img-src 'self'",
+    );
+  });
   it("renders escaped identities and financial terms, with keyboard approval", async () => {
     await page.goto(`${origin}/funding/${id}`);
     expect(await page.locator(":focus").getAttribute("id")).toBe("email");
