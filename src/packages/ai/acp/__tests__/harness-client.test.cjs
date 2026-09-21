@@ -949,6 +949,59 @@ test("unsupported controls are not silently accepted", async (t) => {
   );
 });
 
+test("a later model change cannot silently reset an earlier admitted choice", async (t) => {
+  const { agent, request, events, stops } = adapter(t, [
+    "--config-options",
+    "--dependent-config",
+  ]);
+  await assert.rejects(
+    agent.evaluate({
+      ...request,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile,
+        settings: {
+          configOptions: [
+            { id: "thinking", value: "high" },
+            { id: "model", value: "deep" },
+          ],
+        },
+      },
+    }),
+    { code: "rejected" },
+  );
+  assert.equal(stops(), 1);
+  assert.ok(
+    !events.some(
+      (event) => event.type === "summary" || event.event?.type === "message",
+    ),
+  );
+});
+
+test("dependent choices work when the final catalog retains the entire selection", async (t) => {
+  const client = await start(t, ["--config-options", "--dependent-config"]);
+  await client.open();
+  await client.configure({
+    configOptions: [
+      { id: "model", value: "deep" },
+      { id: "thinking", value: "high" },
+    ],
+  });
+  assert.deepEqual(
+    client.controls.configOptions.map(({ id, currentValue }) => [
+      id,
+      currentValue,
+    ]),
+    [
+      ["thinking", "high"],
+      ["model", "deep"],
+    ],
+  );
+  const result = await client.prompt("hi", async () => {});
+  assert.equal(result.stopReason, "end_turn");
+});
+
 test("strict profile validation and defensive copy", () => {
   const parsed = parseAcpHarnessProfile(profile);
   assert.deepEqual(parsed, profile);

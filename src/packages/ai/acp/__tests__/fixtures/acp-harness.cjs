@@ -8,11 +8,26 @@ let permissionPrompt;
 let questionPrompt;
 let counter = 0;
 let selectedModel = "fast";
+let selectedThinking = "low";
 let selectedMode = "code";
 const controls = () =>
   process.argv.includes("--config-options")
     ? {
         configOptions: [
+          ...(process.argv.includes("--dependent-config")
+            ? [
+                {
+                  id: "thinking",
+                  name: "Thinking",
+                  type: "select",
+                  currentValue: selectedThinking,
+                  options: [
+                    { value: "low", name: "Low" },
+                    { value: "high", name: "High" },
+                  ],
+                },
+              ]
+            : []),
           {
             id: "model",
             name: "Model",
@@ -97,11 +112,19 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (process.argv.includes("--ignore-config"))
         return result(message.id, controls());
       if (
+        process.argv.includes("--dependent-config") &&
+        message.params.configId === "thinking"
+      ) {
+        selectedThinking = message.params.value;
+        return result(message.id, controls());
+      }
+      if (
         message.params.configId !== "model" ||
         !["fast", "deep"].includes(message.params.value)
       )
         return result(message.id, {});
       selectedModel = message.params.value;
+      if (process.argv.includes("--dependent-config")) selectedThinking = "low";
       return result(message.id, controls());
     case "session/set_mode":
       selectedMode = message.params.modeId;

@@ -267,6 +267,22 @@ export class AcpHarnessClient {
             "Harness did not apply the selected ACP configuration value",
           );
       }
+      // A later setting (such as model) can reset an earlier selection.
+      // Do not start inference unless the complete admitted selection survives.
+      if (selected.configOptions?.length) {
+        const effective = this.controls.configOptions;
+        if (
+          selected.configOptions.some(
+            ({ id, value }) =>
+              effective.find((control) => control.id === id)?.currentValue !==
+              value,
+          )
+        )
+          throw new HarnessError(
+            "rejected",
+            "Harness did not retain the complete selected ACP configuration",
+          );
+      }
     } finally {
       this.configuring = false;
     }
