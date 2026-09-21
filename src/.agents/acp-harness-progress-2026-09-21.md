@@ -127,6 +127,25 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- Rootfs-only snapshot restore now prepares a reflink copy beside the live
+  rootfs and swaps sibling directories rather than moving an ordinary directory
+  across Btrfs subvolumes. Failed installation restores the preserved original;
+  failed rollback retains that original and reports its location instead of
+  deleting it in unconditional cleanup. Home contents are not replaced.
+  Eight focused rootfs tests cover success, copy/preserve/install failure,
+  failed rollback, missing rootfs on either side, and identical-path rejection.
+  The combined rootfs/home preparation/swap suites pass 21 tests and project-host
+  TypeScript passes.
+
+  Compiled helper SHA-256
+  `a8960f5a4806567437aaddaada598fd78690964b3c305cf54a8d609f78d498fa`
+  also passed on disposable real Btrfs subvolumes using the host's existing
+  protected storage wrapper: injected install failure rolled back, successful
+  replacement left home/snapshot markers intact, and a missing snapshot rootfs
+  removed only the live rootfs. All temporary subvolumes were removed. This is
+  protected-helper qualification, not yet a deployed project-level restore or
+  evidence for crash recovery between rename operations.
+
 - Generic ACP composers no longer display native Codex goals or ChatGPT payment
   setup banners. The previous shared goal/agent flag also controlled naming and
   mention UI, so those conditions are now separate: agent naming, mentions and

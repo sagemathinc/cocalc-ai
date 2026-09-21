@@ -169,6 +169,7 @@ import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { planBackupRetention } from "./backup-retention";
 import { prepareHomeSnapshotRootfs } from "./snapshot-home-rootfs";
 import { swapSnapshotHome } from "./snapshot-home-swap";
+import { restoreSnapshotRootfs } from "./snapshot-rootfs-restore";
 import {
   assertFrozenVolumeMatchesBackup,
   deleteOrphanedStagedArchiveSnapshots,
@@ -789,11 +790,6 @@ async function ensureSnapshotRestoreRoot(): Promise<string> {
   return root;
 }
 
-async function createSnapshotRestoreTempPath(prefix: string): Promise<string> {
-  const root = await ensureSnapshotRestoreRoot();
-  return join(root, `${prefix}${randomUUID()}`);
-}
-
 async function createImageCacheTempSubvolume(prefix: string): Promise<string> {
   await mkdir(IMAGE_CACHE, { recursive: true });
   const path = join(IMAGE_CACHE, `${prefix}${randomUUID()}`);
@@ -810,47 +806,6 @@ async function createOverlayMountTempPath(): Promise<string> {
   const path = join(PROJECT_ROOTS_CACHE, randomUUID());
   await mkdir(path, { recursive: true });
   return path;
-}
-
-async function replaceTreeByMove({
-  src,
-  dest,
-}: {
-  src?: string;
-  dest: string;
-}): Promise<void> {
-  if (await exists(dest)) {
-    await sudo({ command: "rm", args: ["-rf", dest] });
-  }
-  if (!src || !(await exists(src))) {
-    return;
-  }
-  await sudo({ command: "mkdir", args: ["-p", dirname(dest)] });
-  await sudo({ command: "mv", args: [src, dest] });
-}
-
-async function replaceTreeByCopy({
-  src,
-  dest,
-}: {
-  src?: string;
-  dest: string;
-}): Promise<void> {
-  if (await exists(dest)) {
-    await sudo({ command: "rm", args: ["-rf", dest] });
-  }
-  if (!src || !(await exists(src))) {
-    return;
-  }
-  // A directory inside the old Btrfs project subvolume cannot be renamed into
-  // the restored subvolume (EXDEV). The privileged helper preserves ownership
-  // and metadata while reflinking file data when the filesystem permits it.
-  await sudo({ command: "mkdir", args: ["-p", dest] });
-  await sudo({
-    command: "copy-tree-reflink",
-    args: [src, dest],
-    timeout: ROOTFS_PUBLISH_TIMEOUT_S,
-  });
 }
 
 async function removeDirectoryTree(pathToRemove?: string): Promise<void> {
@@ -3278,22 +3233,12 @@ async function restoreSnapshot({
   const stagedRootfsPath = join(staged.path, PROJECT_IMAGE_PATH);
   let cleanupStagedClone = true;
   let oldHomePath: string | undefined;
-  let preservedRootfsPath: string | undefined;
   try {
     if (mode === "rootfs") {
-      preservedRootfsPath = await createSnapshotRestoreTempPath(
-        `${volName(project_id)}.rootfs-`,
-      );
-      await replaceTreeByMove({ src: rootfsPath, dest: preservedRootfsPath });
-      try {
-        await replaceTreeByMove({ src: stagedRootfsPath, dest: rootfsPath });
-      } catch (err) {
-        await replaceTreeByMove({
-          src: preservedRootfsPath,
-          dest: rootfsPath,
-        }).catch(() => {});
-        throw err;
-      }
+      await restoreSnapshotRootfs({
+        current: rootfsPath,
+        snapshot: stagedRootfsPath,
+      });
       invalidateProjectFsServer(project_id);
       void touchProjectLastEdited(project_id, "restore-snapshot");
       return;
@@ -3333,7 +3278,6 @@ async function restoreSnapshot({
     if (cleanupStagedClone) {
       await deleteSubvolumeTree(staged.path).catch(() => {});
     }
-    await removeDirectoryTree(preservedRootfsPath).catch(() => {});
   }
 
   if (oldHomePath) {
