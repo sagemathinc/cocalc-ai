@@ -22,7 +22,7 @@ import { NotificationList } from "./notification-list";
 import { NotificationNav } from "./notification-nav";
 import { MarkEverythingRead } from "./mark-everything-read";
 
-export function NotificationPage() {
+export function NotificationPage({ embedded = false }: { embedded?: boolean }) {
   const intl = useIntl();
   const account_id = useTypedRedux("account", "account_id");
   const mentions = useTypedRedux("mentions", "mentions");
@@ -46,8 +46,8 @@ export function NotificationPage() {
     ).size ?? 0;
 
   useEffect(() => {
-    Fragment.set({ page: filter });
-  }, [filter]);
+    if (!embedded) Fragment.set({ page: filter });
+  }, [filter, embedded]);
 
   const [showHelp, setShowHelp] = useState<boolean>(false);
 
@@ -185,7 +185,9 @@ export function NotificationPage() {
     <div
       className={`smc-vfill${IS_MOBILE ? " cocalc-notifications-mobile" : ""}`}
       style={{
-        padding: IS_MOBILE ? "0 10px 10px 10px" : "0 30px 15px 30px",
+        padding:
+          IS_MOBILE || embedded ? "0 10px 10px 10px" : "0 30px 15px 30px",
+        minWidth: 0,
         display: "flex",
         flexDirection: "row",
         justifyContent: "center",

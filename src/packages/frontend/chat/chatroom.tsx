@@ -165,6 +165,10 @@ import { getLiveCodexUsageStatus } from "@cocalc/frontend/account/codex-usage";
 import { CodexConfigButton, CodexPaymentCredentialsModal } from "./codex";
 import { showLocalCodexTurnCompletionToast } from "@cocalc/frontend/notifications/codex-turn-toast";
 import {
+  resultKey,
+  setUnseenResult,
+} from "@cocalc/frontend/agents/unseen-result";
+import {
   codexConnectionNeedsAttentionAfterSubmit,
   ensureProjectRunningForCodex,
   isCodexPaymentSourceNeedsUserConfiguration,
@@ -1737,6 +1741,20 @@ function ChatPanelContent({
     for (const [threadKey, current] of currentSnapshots) {
       const previous = previousSnapshots.get(threadKey);
       if (!previous?.active || current.active || current.interrupted) continue;
+      if (current.threadId) {
+        const viewing =
+          isCurrent &&
+          isChatForeground &&
+          isVisible &&
+          tabIsVisible &&
+          selectedThreadId === current.threadId &&
+          document.visibilityState === "visible" &&
+          document.hasFocus();
+        setUnseenResult(
+          resultKey(account_id, project_id, path, current.threadId),
+          !viewing,
+        );
+      }
       const completedAt = Number(current.newestMessageDate ?? "");
       if (Number.isFinite(completedAt) && completedAt > newestCompletedAt) {
         newestCompletedAt = completedAt;
@@ -1779,6 +1797,49 @@ function ChatPanelContent({
     threads,
     messages,
     readOnly,
+    isVisible,
+    tabIsVisible,
+    selectedThreadId,
+    isCurrent,
+  ]);
+
+  useEffect(() => {
+    if (
+      readOnly ||
+      !account_id ||
+      !selectedThreadId ||
+      !isChatForeground ||
+      !isVisible ||
+      !isCurrent ||
+      !tabIsVisible
+    )
+      return;
+    const acknowledge = () => {
+      if (document.visibilityState === "visible" && document.hasFocus()) {
+        setUnseenResult(
+          resultKey(account_id, project_id, path, selectedThreadId),
+          false,
+        );
+      }
+    };
+    acknowledge();
+    window.addEventListener("focus", acknowledge);
+    document.addEventListener("visibilitychange", acknowledge);
+    return () => {
+      window.removeEventListener("focus", acknowledge);
+      document.removeEventListener("visibilitychange", acknowledge);
+    };
+  }, [
+    readOnly,
+    account_id,
+    selectedThreadId,
+    isChatForeground,
+    isVisible,
+    tabIsVisible,
+    project_id,
+    path,
+    hasRunningAcpTurn,
+    isCurrent,
   ]);
 
   useEffect(() => {

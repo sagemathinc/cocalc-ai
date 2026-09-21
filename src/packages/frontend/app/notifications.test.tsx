@@ -10,6 +10,10 @@ let newsUnread: number | undefined = 0;
 let inviteUnread = 0;
 const setActiveTabMock = jest.fn();
 const setWindowTitleMock = jest.fn();
+const initializeMock = jest.fn().mockResolvedValue(undefined);
+jest.mock("../notifications/ensure-init", () => ({
+  ensureNotificationsInitialized: () => initializeMock(),
+}));
 
 jest.mock("antd", () => ({
   Badge: ({ count, children }) => (

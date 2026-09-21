@@ -37,6 +37,15 @@ export const Notification: React.FC<Props> = React.memo((props: Props) => {
   const account_id = useTypedRedux("account", "account_id");
   const invite_unread = useUnreadIncomingInviteCount(account_id);
 
+  useEffect(() => {
+    if (!account_id) return;
+    void import("../notifications/ensure-init")
+      .then(({ ensureNotificationsInitialized }) =>
+        ensureNotificationsInitialized(),
+      )
+      .catch(() => {});
+  }, [account_id]);
+
   const count = useMemo(
     () => mentions_unread + (news_unread ?? 0) + invite_unread,
     [invite_unread, mentions_unread, news_unread],

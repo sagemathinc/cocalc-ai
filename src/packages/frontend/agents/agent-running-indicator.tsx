@@ -5,7 +5,8 @@
 
 import type { ReactNode } from "react";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
-import { useEditorRedux } from "@cocalc/frontend/app-framework";
+import { useEditorRedux, useTypedRedux } from "@cocalc/frontend/app-framework";
+import { resultKey, useUnseenResult } from "./unseen-result";
 import { Tooltip } from "@cocalc/frontend/components";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 
@@ -32,6 +33,10 @@ export function AgentRunningIndicator({
   });
   const acpState = useEditor("acpState");
   const running = agentThreadIsRunning(acpState, agent.thread_id);
+  const account = useTypedRedux("account", "account_id") ?? "";
+  const unseen = useUnseenResult(
+    resultKey(account, agent.endpoint.project_id, agent.path, agent.thread_id),
+  );
 
   return (
     <span
@@ -42,23 +47,36 @@ export function AgentRunningIndicator({
       }}
     >
       {children}
-      {running ? (
-        <Tooltip title="Agent is running">
+      {running || unseen ? (
+        <Tooltip
+          title={running ? "Agent is running" : "Finished: unseen result"}
+        >
           <span
             role="status"
-            aria-label={`@${agent.name} is running`}
+            aria-label={
+              running
+                ? `@${agent.name} is running`
+                : `@${agent.name} has an unseen result`
+            }
             style={{
-              background: UI_COLORS.success,
+              background: running ? UI_COLORS.success : UI_COLORS.primary,
+              color: UI_COLORS.surface,
+              fontSize: 10,
+              fontWeight: "bold",
+              lineHeight: "12px",
+              textAlign: "center",
               border: `2px solid ${UI_COLORS.surface}`,
               borderRadius: "50%",
               bottom: -2,
               boxSizing: "border-box",
-              height: 11,
+              height: running ? 11 : 16,
               position: "absolute",
               right: -2,
-              width: 11,
+              width: running ? 11 : 16,
             }}
-          />
+          >
+            {unseen && !running ? "!" : null}
+          </span>
         </Tooltip>
       ) : null}
     </span>

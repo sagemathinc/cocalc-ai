@@ -199,6 +199,12 @@ export class PageActions extends Actions<PageState> {
       }
     }
 
+    if (key === "notifications" && change_history) {
+      const { setNotificationsOpen } =
+        await import("../notifications/drawer-state");
+      setNotificationsOpen(true);
+      return;
+    }
     const prev_key = this.redux.getStore("page").get("active_top_tab");
     const previousProjectNeedsRuntime =
       prev_key?.length === 36 && !hasReducedProjectState(prev_key);

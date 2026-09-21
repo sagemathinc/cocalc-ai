@@ -39,6 +39,7 @@ import QuickNavigation from "./quick-navigation";
 import { ActiveContent } from "./active-content";
 import { ConnectionIndicator } from "./connection-indicator";
 import { ConnectionInfo } from "./connection-info";
+import { NotificationsDrawer } from "../notifications/drawer";
 import { useAppContext } from "./context";
 import { CocalcErrorBoundary } from "./error-boundary";
 import { FullscreenButton } from "./fullscreen-button";
@@ -527,6 +528,7 @@ export const Page: React.FC = () => {
       onDrop={drop}
     >
       {show_connection && <ConnectionInfo />}
+      <NotificationsDrawer />
       <VersionWarning />
       {showPostSurfaceBanners ? (
         <PostSurfaceSlot scope="app.post-surface-banners">
