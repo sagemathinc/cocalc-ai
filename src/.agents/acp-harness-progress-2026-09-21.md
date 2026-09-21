@@ -214,6 +214,15 @@ without a new error or resubmit prompt. No fixture turn remained running.
 
 ### Partial Restore Diagnosis
 
+The home-swap boundary now also rolls back if installation or volume metadata
+recording throws before returning the preserved-home path. It moves a failed
+replacement back to staging without deleting either tree, restores the original
+home, and refreshes volume metadata even when the first move fails. If rollback
+also fails, a typed error retains both failures and the preserved-home location.
+Thirteen preparation/swap tests pass, including real temporary-directory content
+checks, plus project-host typechecking. This follow-up is not yet live-qualified;
+process crashes between moves remain distinct from these injected exceptions.
+
 Home-only restore is now fixed and live-qualified by `48bbf9f4d2`. It prepares
 the disposable snapshot clone with an anchored reflink copy of the current
 rootfs before swapping homes, leaving the original home/rootfs intact for the

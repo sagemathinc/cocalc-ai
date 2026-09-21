@@ -168,6 +168,7 @@ import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { planBackupRetention } from "./backup-retention";
 import { prepareHomeSnapshotRootfs } from "./snapshot-home-rootfs";
+import { swapSnapshotHome } from "./snapshot-home-swap";
 import {
   assertFrozenVolumeMatchesBackup,
   deleteOrphanedStagedArchiveSnapshots,
@@ -1193,12 +1194,17 @@ async function swapProjectHome({
     reason: "project home replacement started",
   });
   markProjectVolumeAbsent(project_id, "home");
-  await sudo({ command: "mv", args: [home, oldHomePath] });
-  await sudo({ command: "mv", args: [replacementPath, home] });
-  await recordManagedProjectVolume({
-    project_id,
-    path: home,
-    force: true,
+  await swapSnapshotHome({
+    home,
+    replacement: replacementPath,
+    previous: oldHomePath,
+    record: async () => {
+      await recordManagedProjectVolume({
+        project_id,
+        path: home,
+        force: true,
+      });
+    },
   });
   return { oldHomePath };
 }
