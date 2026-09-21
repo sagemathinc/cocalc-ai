@@ -37,6 +37,10 @@ import {
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
 import { setAcpAdmissionLimitsProvider } from "../admission";
+import {
+  enqueueAcpInterrupt,
+  listPendingAcpInterrupts,
+} from "../../sqlite/acp-interrupts";
 
 jest.mock("@cocalc/ai/acp", () => ({
   assertSameTurnPrincipal:
@@ -321,6 +325,97 @@ it("finalizes only the spoken turn when another turn starts in the same thread",
       }),
     }),
   );
+});
+
+it.each(["direct", "durable"])(
+  "%s harness cancel keeps the job running until the prompt outcome is known",
+  async (delivery) => {
+    const request = makeRequest();
+    const job = enqueueAcpJob(request);
+    claimNextQueuedAcpJobForThread({
+      project_id: job.project_id,
+      path: job.path,
+      thread_id: job.thread_id,
+      worker_id: "worker-P",
+    });
+    const interruptOutstanding = jest.fn(async () => true);
+    const unregister = acpTestInternals.registerInterruptAgentForTests(
+      "cancel-test",
+      request.project_id,
+      { interruptOutstanding } as any,
+      true,
+    );
+    try {
+      if (delivery === "direct") {
+        expect(
+          await acpTestInternals.handleInterruptRequest({
+            ...request,
+            threadId: request.chat.thread_id,
+          }),
+        ).toMatchObject({ ok: true, state: "queued" });
+      } else {
+        enqueueAcpInterrupt({
+          project_id: job.project_id,
+          path: job.path,
+          thread_id: job.thread_id,
+          chat: request.chat,
+        });
+        await acpTestInternals.processPendingAcpInterruptsOnce();
+        expect(listPendingAcpInterrupts()).toHaveLength(0);
+      }
+      expect(interruptOutstanding).toHaveBeenCalledTimes(1);
+      const key = {
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: job.user_message_id,
+      };
+      expect(getAcpJob(key)?.state).toBe("running");
+      expect(turns.finalizeAcpTurnLease).not.toHaveBeenCalled();
+      // The worker, not the cancellation transport, owns finalization.
+      setAcpJobState({
+        op_id: job.op_id,
+        state: "error",
+        worker_id: "worker-P",
+      });
+      expect(getAcpJob(key)?.state).toBe("error");
+    } finally {
+      unregister();
+    }
+  },
+);
+
+it("preserves native interruption finalization", async () => {
+  const request = makeRequest();
+  const job = enqueueAcpJob(request);
+  claimNextQueuedAcpJobForThread({
+    project_id: job.project_id,
+    path: job.path,
+    thread_id: job.thread_id,
+    worker_id: "worker-P",
+  });
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "native-cancel-test",
+    request.project_id,
+    { interruptOutstanding: async () => true } as any,
+    false,
+  );
+  try {
+    expect(
+      await acpTestInternals.handleInterruptRequest({
+        ...request,
+        threadId: request.chat.thread_id,
+      }),
+    ).toMatchObject({ ok: true, state: "interrupted" });
+    expect(
+      getAcpJob({
+        project_id: job.project_id,
+        path: job.path,
+        user_message_id: job.user_message_id,
+      })?.state,
+    ).toBe("interrupted");
+  } finally {
+    unregister();
+  }
 });
 
 it("rejects another human before durable steering while permitting an ordinary queued turn", () => {

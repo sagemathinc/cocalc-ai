@@ -425,6 +425,7 @@ export function setGeneratedImageBlobWriter(
 const agents = new Map<string, AcpAgent>();
 const harnessConversationProfiles = new Map<string, string>();
 const agentProjectIds = new WeakMap<AcpAgent, string>();
+const harnessAgents = new WeakSet<AcpAgent>();
 let conatClient: ConatClient | null = null;
 let cachedMockScriptPromise: Promise<AcpMockScript> | null = null;
 const pumpingAcpJobThreads = new Set<string>();
@@ -7834,6 +7835,7 @@ async function executeAcpRequest({
     );
     agents.set(harnessKey, currentAgent);
     agentProjectIds.set(currentAgent, projectId);
+    harnessAgents.add(currentAgent);
   }
   currentAgent ??= await ensureAgent(projectId, useNativeTerminal, bindings);
   const { prompt, local_images, cleanup } = await materializeBlobs(
@@ -10791,7 +10793,7 @@ async function tryInterruptCandidateIds({
   candidateIds?: string[];
   notifyText?: string;
   expectedMessageId?: string;
-}): Promise<boolean> {
+}): Promise<false | "requested" | "interrupted"> {
   const writer = findChatWriter({ threadId, chat });
   const ids = new Set<string>();
   for (const id of candidateIds ?? []) {
@@ -10808,9 +10810,10 @@ async function tryInterruptCandidateIds({
     });
 
   for (const id of ids) {
-    if (await interruptCodexSession(id, projectId, expectedMessageId)) {
+    const result = await interruptCodexSession(id, projectId, expectedMessageId);
+    if (result) {
       if (!expectedMessageId) writer?.notifyInterruptRequested(notifyText);
-      return true;
+      return result;
     }
   }
   return false;
@@ -10927,7 +10930,10 @@ async function processPendingAcpInterruptsOnce(): Promise<void> {
         ],
         expectedMessageId,
       });
-      if (handled) {
+      if (handled === "requested") {
+        // The worker retains the running job/lease until the prompt settles.
+        markAcpInterruptHandled({ id: row.id });
+      } else if (handled) {
         finalizeInterruptedAcpBackendState({
           turn: {
             project_id: row.project_id,
@@ -12572,15 +12578,24 @@ async function handleInterruptRequest(
     return { ok: false, state: "stale", threadId };
   }
 
-  if (
-    await tryInterruptCandidateIds({
-      projectId: project_id,
-      threadId,
-      chat: request.chat,
-      candidateIds,
-      expectedMessageId: expectedMessageId || undefined,
-    })
-  ) {
+  const interruption = await tryInterruptCandidateIds({
+    projectId: project_id,
+    threadId,
+    chat: request.chat,
+    candidateIds,
+    expectedMessageId: expectedMessageId || undefined,
+  });
+  if (interruption === "requested") {
+    if (project_id && path && threadId) {
+      markAcpInterruptsHandledForThread({
+        project_id,
+        path,
+        thread_id: threadId,
+      });
+    }
+    return { ok: true, state: "queued", threadId };
+  }
+  if (interruption) {
     if (conatClient && request.chat && project_id && path) {
       try {
         await repairInterruptedAcpTurn({
@@ -12729,7 +12744,7 @@ async function interruptCodexSession(
   threadId: string,
   projectId: string,
   expectedMessageId?: string,
-): Promise<boolean> {
+): Promise<false | "requested" | "interrupted"> {
   for (const agent of agentsForProject(projectId)) {
     if (
       "interruptOutstanding" in agent &&
@@ -12739,7 +12754,7 @@ async function interruptCodexSession(
         if (
           await (agent as any).interruptOutstanding(threadId, expectedMessageId)
         ) {
-          return true;
+          return harnessAgents.has(agent) ? "requested" : "interrupted";
         }
       } catch (err) {
         logger.warn("failed to stop outstanding Codex work", {
@@ -12755,7 +12770,7 @@ async function interruptCodexSession(
     ) {
       try {
         if (await (agent as any).interrupt(threadId)) {
-          return true;
+          return harnessAgents.has(agent) ? "requested" : "interrupted";
         }
       } catch (err) {
         logger.warn("failed to interrupt codex session", {
@@ -12864,6 +12879,19 @@ export function getAcpAgentRuntimeStatus(): {
 
 export const acpTestInternals = {
   handleAcpControlRequest,
+  handleInterruptRequest,
+  processPendingAcpInterruptsOnce,
+  registerInterruptAgentForTests: (
+    key: string,
+    projectId: string,
+    agent: AcpAgent,
+    harness: boolean,
+  ) => {
+    agents.set(key, agent);
+    agentProjectIds.set(agent, projectId);
+    if (harness) harnessAgents.add(agent);
+    return () => agents.delete(key);
+  },
   assertRunningJobSteerPrincipal,
   runQueuedAcpJob,
   asyncAttentionNotificationMetadata,
