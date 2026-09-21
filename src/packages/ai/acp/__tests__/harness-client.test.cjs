@@ -679,6 +679,57 @@ test("startup has a timeout, not an unlimited wait", async (t) => {
   await assert.rejects(start(t, ["--hang"]), (e) => e.code === "unavailable");
 });
 
+test(
+  "quiet prompts and idle sessions outlast the setup timeout",
+  { timeout: 15000 },
+  async (t) => {
+    const client = await start(t);
+    await client.open();
+    const sessionId = client.sessionId;
+    const events = [];
+    const started = performance.now();
+    const result = await client.prompt("quiet", async (e) => events.push(e));
+    assert.ok(performance.now() - started >= 3000);
+    assert.equal(result.stopReason, "end_turn");
+    assert.deepEqual(
+      events.map((e) => e.text),
+      ["Quiet turn completed."],
+    );
+    // start() uses a 1500ms setup timeout, not a prompt or idle deadline.
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    events.length = 0;
+    await client.prompt("hi", async (e) => events.push(e));
+    assert.equal(client.sessionId, sessionId);
+    assert.deepEqual(
+      events.map((e) => e.text),
+      ["Hello ", "world 1"],
+    );
+  },
+);
+
+test(
+  "large stderr output is drained separately without poisoning reuse",
+  { timeout: 10000 },
+  async (t) => {
+    const client = await start(t);
+    await client.open();
+    const events = [];
+    const result = await client.prompt("stderr-flood", async (e) =>
+      events.push(e),
+    );
+    assert.equal(result.stopReason, "end_turn");
+    assert.deepEqual(
+      events.map((e) => e.text),
+      ["Diagnostics drained."],
+    );
+    await client.prompt("hi", async (e) => events.push(e));
+    assert.deepEqual(
+      events.map((e) => e.text),
+      ["Diagnostics drained.", "Hello ", "world 1"],
+    );
+  },
+);
+
 test("concurrent session opens cannot replace the native session", async (t) => {
   const client = await start(t);
   const opening = client.open();

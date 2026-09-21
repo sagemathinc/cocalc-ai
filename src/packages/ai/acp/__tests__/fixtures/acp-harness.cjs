@@ -159,6 +159,30 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update(`${selectedModel}/${selectedMode}`);
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (text === "quiet" || text === "quiet-long") {
+        pendingPrompt = message.id;
+        setTimeout(
+          () => {
+            if (pendingPrompt !== message.id) return;
+            pendingPrompt = undefined;
+            update("Quiet turn completed.");
+            result(message.id, { stopReason: "end_turn" });
+          },
+          text === "quiet-long" ? 35000 : 3200,
+        );
+        return;
+      }
+      if (text === "stderr-flood") {
+        const diagnostic = "private diagnostic ".padEnd(65536, "x");
+        let remaining = 128;
+        const write = () => {
+          if (remaining-- > 0) return process.stderr.write(diagnostic, write);
+          update("Diagnostics drained.");
+          result(message.id, { stopReason: "end_turn" });
+        };
+        write();
+        return;
+      }
       if (text === "flood") {
         for (let i = 0; i < 100; i++) update("x".repeat(65536));
         return;
