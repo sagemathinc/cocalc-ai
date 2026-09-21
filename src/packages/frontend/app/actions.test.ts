@@ -137,6 +137,24 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
+  it.each([false, true])(
+    "keeps Agents navigation in the assigned exam project (AI disabled=%s)",
+    async (disabled) => {
+      redux.createActions("customize").setState({
+        exam_mode: true,
+        project_id: B,
+      });
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: disabled },
+      });
+      await actions.set_active_tab("agents");
+      expect(page().get("active_top_tab")).toBe(B);
+      expect(projectActions[B].show).toHaveBeenCalled();
+      expect(set_url).not.toHaveBeenCalledWith(
+        expect.stringContaining("/agents"),
+      );
+    },
+  );
   it.each([true, false])(
     "redirects disabled AI away from Agents (change_history=%s)",
     async (changeHistory) => {
