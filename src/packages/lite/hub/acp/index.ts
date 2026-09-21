@@ -5118,10 +5118,12 @@ export function finalizeInterruptedAcpBackendState({
   turn,
   recoveryReason = INTERRUPT_STATUS_TEXT,
   exactMessageId = false,
+  outcomeUnknown = false,
 }: {
   turn: InterruptedAcpTurnTarget;
   recoveryReason?: string;
   exactMessageId?: boolean;
+  outcomeUnknown?: boolean;
 }): boolean {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -5154,7 +5156,7 @@ export function finalizeInterruptedAcpBackendState({
       if (matches(row)) {
         setAcpJobState({
           op_id: row.op_id,
-          state: "interrupted",
+          state: outcomeUnknown ? "error" : "interrupted",
           error: recoveryReason,
           worker_id: row.worker_id ?? turn.owner_instance_id ?? undefined,
         });
@@ -5179,7 +5181,7 @@ export function finalizeInterruptedAcpBackendState({
             path: row.path,
             message_date: row.message_date,
           },
-          state: "aborted",
+          state: outcomeUnknown ? "error" : "aborted",
           reason: recoveryReason,
           owner_instance_id:
             turn.owner_instance_id ?? row.owner_instance_id ?? undefined,
@@ -5630,6 +5632,7 @@ type RepairInterruptedAcpTurnOptions = {
   interruptedReasonId?: string;
   recoveryReason?: string;
   exactMessageId?: boolean;
+  outcomeUnknown?: boolean;
 };
 
 type InterruptedAcpRepairResult = {
@@ -5644,6 +5647,7 @@ async function repairInterruptedAcpTurnOnce({
   interruptedReasonId = "interrupt",
   recoveryReason = INTERRUPT_STATUS_TEXT,
   exactMessageId = false,
+  outcomeUnknown = false,
 }: RepairInterruptedAcpTurnOptions): Promise<InterruptedAcpRepairResult> {
   const project_id = `${turn.project_id ?? ""}`.trim();
   const path = `${turn.path ?? ""}`.trim();
@@ -5728,7 +5732,11 @@ async function repairInterruptedAcpTurnOnce({
                     typeof first?.content === "string"
                       ? first.content
                       : `${(first as any)?.content ?? ""}`;
-                  if (/conversation interrupted/i.test(content)) {
+                  if (
+                    content.includes(interruptedNotice) ||
+                    (!outcomeUnknown &&
+                      /conversation interrupted/i.test(content))
+                  ) {
                     return currentHistory;
                   }
                   const sep = content.trim().length > 0 ? "\n\n" : "";
@@ -5751,7 +5759,7 @@ async function repairInterruptedAcpTurnOnce({
             date: rowDate,
             sender_id: rowSender,
             generating: false,
-            acp_interrupted: true,
+            acp_interrupted: !outcomeUnknown,
             acp_interrupted_reason: interruptedReasonId,
             acp_interrupted_text: interruptedNotice,
           };
@@ -5805,6 +5813,14 @@ async function repairInterruptedAcpTurnOnce({
             ];
           } else if (patchedHistory.length > 0) {
             update.history = patchedHistory;
+          } else if (outcomeUnknown) {
+            update.history = [
+              {
+                author_id: rowSender,
+                content: interruptedNotice,
+                date: rowDate,
+              },
+            ];
           }
           syncdb.set(update);
           touched = true;
@@ -5826,7 +5842,7 @@ async function repairInterruptedAcpTurnOnce({
             currentThreadId,
             buildThreadStateRecord({
               thread_id: currentThreadId,
-              state: "interrupted",
+              state: outcomeUnknown ? "error" : "interrupted",
               active_message_id: currentMessageId,
               updated_at: new Date().toISOString(),
               schema_version: THREAD_STATE_SCHEMA_VERSION,
@@ -5867,6 +5883,7 @@ async function repairInterruptedAcpTurnOnce({
     },
     recoveryReason,
     exactMessageId,
+    outcomeUnknown,
   });
 
   const durable = queuedPersistence.durable && chatDurable;
@@ -6098,6 +6115,15 @@ export async function recoverOrphanedAcpTurns(
         thread_id: turn.thread_id ?? undefined,
       }),
     );
+    const request = recoverySourceJob
+      ? decodeAcpJobRequest(recoverySourceJob)
+      : undefined;
+    const outcomeUnknown =
+      request?.request_kind !== "command" && request?.runtime?.kind === "acp";
+    const turnNotice = outcomeUnknown
+      ? "ACP harness completion is unknown after worker loss; inspect the workspace before explicitly continuing. This turn was not automatically resent."
+      : interruptedNotice;
+    const turnReason = outcomeUnknown ? turnNotice : recoveryReason;
     const autoResumeDecision =
       autoResume && recoverySourceJob
         ? shouldAutoResumeRecoveredTurn({
@@ -6124,9 +6150,10 @@ export async function recoverOrphanedAcpTurns(
             account_id:
               recoverySourceJob?.account_id ?? (turn as any).account_id,
           },
-          interruptedNotice,
+          interruptedNotice: turnNotice,
           interruptedReasonId,
-          recoveryReason,
+          recoveryReason: turnReason,
+          outcomeUnknown,
         })
       ) {
         if (shouldAutoResume && recoverySourceJob) {
@@ -6183,7 +6210,7 @@ export async function recoverOrphanedAcpTurns(
         if (current != null && generating === true) {
           const history = appendRestartNotice(syncdbField(current, "history"));
           const patchedHistory =
-            interruptedNotice === RESTART_INTERRUPTED_NOTICE
+            turnNotice === RESTART_INTERRUPTED_NOTICE
               ? history
               : (() => {
                   const currentHistory = historyToArray(
@@ -6197,14 +6224,18 @@ export async function recoverOrphanedAcpTurns(
                     typeof first?.content === "string"
                       ? first.content
                       : `${(first as any)?.content ?? ""}`;
-                  if (/conversation interrupted/i.test(content)) {
+                  if (
+                    content.includes(turnNotice) ||
+                    (!outcomeUnknown &&
+                      /conversation interrupted/i.test(content))
+                  ) {
                     return currentHistory;
                   }
                   const sep = content.trim().length > 0 ? "\n\n" : "";
                   return [
                     {
                       ...first,
-                      content: `${content}${sep}${interruptedNotice}`,
+                      content: `${content}${sep}${turnNotice}`,
                     },
                     ...currentHistory.slice(1),
                   ];
@@ -6220,9 +6251,9 @@ export async function recoverOrphanedAcpTurns(
             date: rowDate,
             sender_id: rowSender,
             generating: false,
-            acp_interrupted: true,
+            acp_interrupted: !outcomeUnknown,
             acp_interrupted_reason: interruptedReasonId,
-            acp_interrupted_text: interruptedNotice,
+            acp_interrupted_text: turnNotice,
           };
           if (turn.message_id) {
             update.message_id = turn.message_id;
@@ -6235,6 +6266,10 @@ export async function recoverOrphanedAcpTurns(
           }
           if (patchedHistory.length > 0) {
             update.history = patchedHistory;
+          } else if (outcomeUnknown) {
+            update.history = [
+              { author_id: rowSender, content: turnNotice, date: rowDate },
+            ];
           }
           syncdb.set(update);
           const threadId =
@@ -6246,7 +6281,7 @@ export async function recoverOrphanedAcpTurns(
               threadId,
               buildThreadStateRecord({
                 thread_id: threadId,
-                state: "interrupted",
+                state: outcomeUnknown ? "error" : "interrupted",
                 active_message_id: syncdbField<string>(current, "message_id"),
                 updated_at: new Date().toISOString(),
                 schema_version: THREAD_STATE_SCHEMA_VERSION,
@@ -6268,9 +6303,9 @@ export async function recoverOrphanedAcpTurns(
     try {
       if (turn.message_id) {
         setAcpJobState({
-          op_id: turn.message_id,
-          state: "interrupted",
-          error: recoveryReason,
+          op_id: recoverySourceJob?.op_id ?? turn.message_id,
+          state: outcomeUnknown ? "error" : "interrupted",
+          error: turnReason,
           worker_id: turn.owner_instance_id,
         });
       }
@@ -6304,8 +6339,8 @@ export async function recoverOrphanedAcpTurns(
           path: turn.path,
           message_date: turn.message_date,
         },
-        state: "aborted",
-        reason: recoveryReason,
+        state: outcomeUnknown ? "error" : "aborted",
+        reason: turnReason,
         owner_instance_id: ACP_INSTANCE_ID,
       });
       recovered += 1;

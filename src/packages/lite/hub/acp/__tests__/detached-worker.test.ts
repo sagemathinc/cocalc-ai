@@ -1495,6 +1495,89 @@ describe("recoverDetachedWorkerStartupState", () => {
     expect(recoveryRow?.sender_id).toBeTruthy();
   });
 
+  it.each(["partial", "empty", "unavailable"])(
+    "preserves unknown harness outcome after worker loss (%s chat)",
+    async (chatState) => {
+      const request = {
+        ...makeRequest(),
+        runtime: { version: 1, kind: "acp", profile: {} },
+      };
+      const job = enqueueAcpJob(request as any);
+      claimNextQueuedAcpJobForThread({
+        project_id: job.project_id,
+        path: job.path,
+        thread_id: job.thread_id,
+        worker_id: "worker-old",
+        worker_bundle_version: "bundle-old",
+      });
+      const rows: any[] = [
+        {
+          event: "chat",
+          date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          generating: true,
+          history:
+            chatState === "partial"
+              ? [{ content: "partial harness output" }]
+              : [],
+        },
+      ];
+      (chatServer.acquireChatSyncDB as jest.Mock).mockImplementation(
+        async () => {
+          if (chatState === "unavailable") throw new Error("chat unavailable");
+          return makeSyncdb(rows);
+        },
+      );
+      (turns.listRunningAcpTurnLeases as jest.Mock).mockReturnValue([
+        {
+          project_id: request.project_id,
+          path: request.chat.path,
+          message_date: request.chat.message_date,
+          sender_id: request.chat.sender_id,
+          message_id: request.chat.message_id,
+          thread_id: request.chat.thread_id,
+          owner_instance_id: "worker-old",
+          started_at: Date.now() - 60000,
+          heartbeat_at: Date.now() - 30000,
+        },
+      ]);
+      expect(
+        await recoverOrphanedAcpTurns({} as ConatClient, { autoResume: true }),
+      ).toBe(1);
+      expect(
+        getAcpJob({
+          project_id: job.project_id,
+          path: job.path,
+          user_message_id: job.user_message_id,
+        }),
+      ).toMatchObject({
+        state: "error",
+        error: expect.stringContaining("completion is unknown"),
+      });
+      expect(turns.finalizeAcpTurnLease).toHaveBeenCalledWith(
+        expect.objectContaining({ state: "error" }),
+      );
+      expect(
+        listAcpJobsByRecoveryParent({ recovery_parent_op_id: job.op_id }),
+      ).toHaveLength(0);
+      if (chatState !== "unavailable") {
+        const row = rows.find((x) => x.event === "chat");
+        expect(row).toMatchObject({
+          generating: false,
+          acp_interrupted: false,
+        });
+        expect(row.history[0].content).toContain("completion is unknown");
+        if (chatState === "partial")
+          expect(row.history[0].content).toContain("partial harness output");
+        expect(rows.find((x) => x.event === "chat-thread-state")?.state).toBe(
+          "error",
+        );
+      }
+    },
+  );
+
   it("does not let an unavailable chat block later orphan recovery", async () => {
     const badRequest = {
       ...makeRequest(),
