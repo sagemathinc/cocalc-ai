@@ -38,6 +38,13 @@ Discovery now pauses throughout project stop: a live late probe was rejected
 while an existing probe drained, and discovery succeeded again after restart.
 Other provider catalogs, broader execution/stop races and cleanup failures remain
 separate qualification cases.
+Explicit artifact publication now has live scoped-identity evidence, including
+readback and reopening the saved file after a browser reload. ACP settings and
+its model dropdown pass keyboard/focus and horizontal-reflow checks at 320 CSS
+pixels in light/dark themes, supplementing the actual 200-percent zoom check.
+These checks do not imply full artifact-workbench or workspace accessibility
+coverage. Automatic snapshots continue to appear, but a strict 15-minute recovery
+bound is not established by the retention-filtered observations.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.

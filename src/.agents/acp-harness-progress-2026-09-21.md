@@ -5,6 +5,31 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+### Narrow Settings Qualification
+
+At deployed source `efe501070d`, exercised agent-3 at a 320 by 800 CSS-pixel
+viewport in signed-in Chrome, separately in light and dark themes. The mobile
+Agents layout initially displays its list; keyboard-selecting agent-3 opens the
+chat. Opened ACP settings by keyboard, expanded the runtime details, focused the
+discovery control, and opened the advertised Model selector without committing
+a different value or starting discovery/inference.
+
+Both themes measured a 320-pixel page scroll width and a 304-pixel dialog with
+304-pixel scroll width. No dialog descendants overflowed horizontally. The
+140-pixel model popup stayed inside the viewport. Escape dismissed the popup
+without dismissing the dialog; the following Escape closed the dialog and
+restored focus to its trigger. Screenshots verified actual light/dark rendering.
+The temporary probe was `/tmp/acp-narrow-ui.cjs`; no settings or chat submissions
+were changed. This supplements the earlier actual 200-percent zoom check; it
+does not establish accessibility of the entire Agents workspace, every possible
+harness label, or all artifact split-pane layouts.
+
+A fresh typed snapshot listing also found automatic snapshots at 12:52:46,
+13:51:00, 14:08:43 and 14:30:51 UTC. This confirms continued automatic operation,
+not a strict 15-minute recovery bound: host upgrades reset scheduling, and the
+listing is retention-filtered. No scheduler safeguards were bypassed. PR #640
+remains open, and #663 remains a draft based on `feature/my-agents-workspace`.
+
 ### Current-Turn Context And Live Artifact Publication
 
 Commit `1e00bfe70d` adds current-turn project/chat/thread/message metadata to
