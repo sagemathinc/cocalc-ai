@@ -68,7 +68,7 @@ export function ComposerDeliverySelector({
               <div>
                 <strong>Post</strong> <kbd>Ctrl+Enter</kbd>
                 <div style={{ whiteSpace: "normal" }}>
-                  Notify mentioned people. Not sent to the agent.
+                  Not sent to the agent
                 </div>
               </div>
             ),
