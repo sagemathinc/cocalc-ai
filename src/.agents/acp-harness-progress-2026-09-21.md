@@ -1766,6 +1766,30 @@ rejection limitation. Network isolation was not requested or checked in these
 runs; Pi printed an available-version notice, and no update was installed.
 No real subscriptions, chat submissions or running harness profiles were changed.
 
+## Latest Qualification Host Deployment
+
+Built and deployed source `206fa06a2eff69c74bae3165f5689882241916b7` to the
+existing qualification host only. Artifact:
+`20260921T182737Z-206fa06a2eff-dirty-e3b0c442`, SHA256
+`bf9a6b18039e2bf6d4df5d48d038cc528b0f4471645c69d1e4b293f3f751073a`.
+The local bundle and public development-site manifest checksums match. The dirty
+suffix reflects an unrelated untracked attachment; tracked source was clean.
+
+The local hub's host-list RPC initially timed out, including without the CLI
+daemon. Restarting the development hub restored host discovery. No host mutation
+was requested before recovery. A fresh read-only check found no running or queued
+ACP jobs before upgrade. Operation `39891b08-167c-449a-830f-280042f00c27` succeeded;
+subsequent host status reports the exact artifact running and aligned for
+project-host, ACP worker, Conat router and Conat persistence. Project tools and
+project-bundle versions were not changed by this operation.
+
+After deployment, reloaded the existing disposable Pi rejection-probe agent in
+the browser and requested discovery once. Its settings modal reported
+"Harness options loaded" and displayed Model and Thinking controls. No prompt
+was submitted, and the modal was closed afterward. This checks live discovery
+through the upgraded runtime, not another provider-inference or recovery test.
+The broader release gates and unmodified Pi provider-error limitation still apply.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
