@@ -3,6 +3,23 @@
 Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 `feature/my-agents-workspace` (#640).
 
+## Unadvertised Callback Rejection
+
+A new real-SDK subprocess test exposed empty success from the SDK's legacy
+client adapter when an unadvertised terminal callback has no implementation.
+Its file-write and terminal-release/kill defaults similarly return an empty
+object. CoCalc now installs explicit method-not-found handlers for all seven
+unimplemented file/terminal callbacks while continuing not to advertise those
+capabilities. This prevents false success; it does not add filesystem or shell
+callbacks or change the harness's own in-container tools.
+
+Regression coverage sends each callback over actual stdio, verifies JSON-RPC
+`-32601`, and then verifies a valid follow-up on the same session. Additional
+tests verify denial-only, persistent-permission-only and wrong-session permission
+requests are cancelled without breaking follow-up. All 85 subprocess tests and
+140 native AI tests passed, as did the AI package build and project-host
+TypeScript. This callback fix is locally validated; deployment remains pending.
+
 ## Abrupt Primary-Container Loss: Failure And Requalification
 
 Fix `e074eee1d4` is deployed as

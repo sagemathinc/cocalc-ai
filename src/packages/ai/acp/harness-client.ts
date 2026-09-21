@@ -1,4 +1,7 @@
-import { ClientSideConnection } from "@agentclientprotocol/sdk-v1";
+import {
+  ClientSideConnection,
+  RequestError,
+} from "@agentclientprotocol/sdk-v1";
 import type {
   InitializeResponse,
   NewSessionResponse,
@@ -23,6 +26,12 @@ import type {
   HarnessSessionControls,
   HarnessSessionSettings,
 } from "@cocalc/util/ai/harness-controls";
+
+function unsupportedCallback(method: string): () => Promise<never> {
+  return async () => {
+    throw RequestError.methodNotFound(method);
+  };
+}
 
 export interface HarnessProcess {
   stdout: Readable;
@@ -126,6 +135,15 @@ export class AcpHarnessClient {
         sessionUpdate: (notification) => this.onUpdate(notification),
         requestPermission: (request) => this.permission(request),
         createElicitation: (request) => this.question(request),
+        // The SDK's legacy adapter otherwise reports empty success for absent
+        // optional callbacks, even though we do not advertise these capabilities.
+        readTextFile: unsupportedCallback("fs/read_text_file"),
+        writeTextFile: unsupportedCallback("fs/write_text_file"),
+        createTerminal: unsupportedCallback("terminal/create"),
+        terminalOutput: unsupportedCallback("terminal/output"),
+        releaseTerminal: unsupportedCallback("terminal/release"),
+        waitForTerminalExit: unsupportedCallback("terminal/wait_for_exit"),
+        killTerminal: unsupportedCallback("terminal/kill"),
       }),
       harnessTransport(process.stdout, process.stdin, (error) =>
         this.fail(error),

@@ -950,6 +950,52 @@ test("full-access permission chooses only offered allow-once", async (t) => {
   assert.equal(events[0].outcome, "allowed");
   assert.match(events[1].text, /"optionId":"allow"/);
 });
+for (const variant of ["deny-only", "persistent-only", "wrong-session"]) {
+  test(`permission ${variant} is cancelled without breaking the next prompt`, async (t) => {
+    const client = await start(t);
+    await client.open();
+    const events = [];
+    const response = await client.prompt(`permission-${variant}`, async (e) => {
+      events.push(e);
+    });
+    assert.equal(response.stopReason, "end_turn");
+    assert.deepEqual(JSON.parse(events.at(-1).text), {
+      outcome: { outcome: "cancelled" },
+    });
+    assert.ok(
+      !events.some((e) => e.type === "permission" && e.outcome === "allowed"),
+    );
+    if (variant === "wrong-session") {
+      assert.ok(!events.some((e) => e.type === "permission"));
+    }
+    const followup = [];
+    await client.prompt("hello", async (e) => followup.push(e));
+    assert.equal(followup.map((e) => e.text ?? "").join(""), "Hello world 1");
+  });
+}
+
+for (const callback of [
+  "terminal",
+  "terminal-output",
+  "terminal-release",
+  "terminal-wait",
+  "terminal-kill",
+  "file-read",
+  "file-write",
+]) {
+  test(`unadvertised ${callback} callback fails explicitly and leaves the session usable`, async (t) => {
+    const client = await start(t);
+    await client.open();
+    const events = [];
+    await client.prompt(`unsupported-${callback}`, async (e) => events.push(e));
+    const error = JSON.parse(events.at(-1).text);
+    assert.equal(error.code, -32601);
+    const followup = [];
+    await client.prompt("hello", async (e) => followup.push(e));
+    assert.equal(followup.map((e) => e.text ?? "").join(""), "Hello world 1");
+  });
+}
+
 test("resume does not append replayed history as a new answer", async (t) => {
   const client = await start(t);
   await client.open("fixture-session");

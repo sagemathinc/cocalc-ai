@@ -64,7 +64,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     return;
   }
   if (message.id === "permission") {
-    update(JSON.stringify(message.result));
+    update(JSON.stringify(message.error ?? message.result));
     result(permissionPrompt, { stopReason: "end_turn" });
     return;
   }
@@ -253,19 +253,69 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update("working");
         return;
       }
-      if (text === "permission") {
+      const unsupportedCallbacks = {
+        "unsupported-terminal": ["terminal/create", { command: "echo" }],
+        "unsupported-terminal-output": [
+          "terminal/output",
+          { terminalId: "missing" },
+        ],
+        "unsupported-terminal-release": [
+          "terminal/release",
+          { terminalId: "missing" },
+        ],
+        "unsupported-terminal-wait": [
+          "terminal/wait_for_exit",
+          { terminalId: "missing" },
+        ],
+        "unsupported-terminal-kill": [
+          "terminal/kill",
+          { terminalId: "missing" },
+        ],
+        "unsupported-file-read": [
+          "fs/read_text_file",
+          { path: "/not-a-real-file" },
+        ],
+        "unsupported-file-write": [
+          "fs/write_text_file",
+          { path: "/not-a-real-file", content: "test" },
+        ],
+      };
+      if (unsupportedCallbacks[text]) {
+        permissionPrompt = message.id;
+        const [method, params] = unsupportedCallbacks[text];
+        return send({
+          id: "permission",
+          method,
+          params: { sessionId: "fixture-session", ...params },
+        });
+      }
+      if (text.startsWith("permission")) {
         permissionPrompt = message.id;
         return send({
           id: "permission",
           method: "session/request_permission",
           params: {
-            sessionId: "fixture-session",
+            sessionId:
+              text === "permission-wrong-session"
+                ? "other-session"
+                : "fixture-session",
             toolCall: {
               toolCallId: "write-1",
               title: "Edit project file",
               status: "pending",
             },
-            options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+            options:
+              text === "permission-deny-only"
+                ? [{ optionId: "deny", kind: "reject_once", name: "Deny" }]
+                : text === "permission-persistent-only"
+                  ? [
+                      {
+                        optionId: "always",
+                        kind: "allow_always",
+                        name: "Always",
+                      },
+                    ]
+                  : [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
           },
         });
       }
