@@ -780,6 +780,50 @@ test("unavailable ACP question callbacks fail explicitly instead of hanging", as
   });
   assert.deepEqual(JSON.parse(chunks.join("")), { rejected: true });
 });
+for (const lateResult of ["answer", "rejection"]) {
+  test(
+    `late ${lateResult} from a cancelled question cannot affect a new pending question`,
+    { timeout: 10000 },
+    async (t) => {
+      const waiting = [];
+      const entered = [Promise.withResolvers(), Promise.withResolvers()];
+      const client = await start(t, [], async (_questions, signal) => {
+        const deferred = Promise.withResolvers();
+        const index = waiting.length;
+        waiting.push({ ...deferred, signal });
+        entered[index].resolve();
+        return deferred.promise;
+      });
+      await client.open();
+      const first = client.prompt("question", async () => {});
+      await entered[0].promise;
+      await client.cancel();
+      await first;
+      assert.equal(waiting[0].signal.aborted, true);
+
+      const chunks = [];
+      const second = client.prompt("question", async (event) => {
+        if (event.type === "message") chunks.push(event.text);
+      });
+      await entered[1].promise;
+      if (lateResult === "answer") {
+        waiting[0].resolve({ target: { answers: ["local"] } });
+      } else {
+        waiting[0].reject(Error("Old question failed after interruption"));
+      }
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(waiting[1].signal.aborted, false);
+      assert.equal(client.running, true);
+      waiting[1].resolve({ target: { answers: ["staging"] } });
+      await second;
+      assert.equal(waiting.length, 2);
+      assert.deepEqual(JSON.parse(chunks.join("")), {
+        action: "accept",
+        content: { target: "staging" },
+      });
+    },
+  );
+}
 for (const failure of ["handler rejection", "invalid answer"]) {
   test(`${failure} releases the question slot for a valid follow-up`, async (t) => {
     let calls = 0;
