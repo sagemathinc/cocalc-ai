@@ -221,6 +221,24 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Current Regression Check
 
+Post-finalization pass at `bea72c6136`: AI 140, Lite ACP 446 (48 suites),
+project-host Codex/ACP/snapshot helpers 119 (17 suites), subprocess harness 65,
+and focused frontend 56 (6 suites): 826 selected regressions passed. The Lite
+command added `--testPathPatterns='acp/.*test'`; host and frontend scopes are
+the same as below. Frontend lint and dependency consistency also passed.
+Project-host TypeScript, backend bundle and frontend development build passed
+at this head. The full monorepo development build remains the earlier baseline
+below, not a newly repeated full build.
+
+The deployed backend is `20260921T144846Z-bea72c613615` (SHA-256
+`d64879fb93cd2842723778e870708cd0229c5480ef12eda13b98f9047b7576dd`), upgrade
+`170d404f-2abb-4aa6-a754-2d97843cee55` succeeded. A single browser fixture QA
+exchange completed as `d361dff0-196e-4218-8cfb-c53c3930ef57` in
+`fixture-session`, with no error. A separate read-only reopen confirmed the
+latest accepted `local` answer in history. No prompt was repeated after the
+first reload returned before history rendering finished. These are normal-path
+live checks; injected cleanup/storage failures remain test evidence only.
+
 At `8fdc24ebaf` on 2026-09-21, a fresh full development build and a broader
 regression pass completed successfully:
 
