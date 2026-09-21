@@ -1,5 +1,6 @@
 #!/usr/bin/env ts-node
 import type { Client as ConatClient } from "@cocalc/conat/core/client";
+import { randomUUID } from "node:crypto";
 import { CHAT_THREAD_META_ROW_DATE, threadConfigSenderId } from "@cocalc/chat";
 import {
   ChatStreamWriter,
@@ -37,6 +38,8 @@ import {
   setAcpJobState,
 } from "../../sqlite/acp-jobs";
 import { setAcpAdmissionLimitsProvider } from "../admission";
+import { hubApi } from "../../api";
+import { setHarnessLauncher } from "../harness-runtime";
 import {
   enqueueAcpInterrupt,
   listPendingAcpInterrupts,
@@ -232,6 +235,79 @@ function makeRequest() {
     },
   };
 }
+
+it.each(["network membership revoked", "authorization service unavailable"])(
+  "persisted generic peer execution refuses launch when %s",
+  async (message) => {
+    const original = process.env.COCALC_ACP_HARNESSES;
+    process.env.COCALC_ACP_HARNESSES = "1";
+    const launch = jest.fn(async () => {
+      throw Error("must not launch");
+    });
+    setHarnessLauncher(launch);
+    const originalAuthorize = hubApi.agent.authorizeRpcExecution;
+    const authorize = jest.fn().mockRejectedValueOnce(Error(message));
+    hubApi.agent.authorizeRpcExecution = authorize;
+    const base = makeRequest();
+    const authorization = {
+      version: 3,
+      source: { agent_id: randomUUID(), project_id: randomUUID() },
+      source_run_id: randomUUID(),
+      target: { agent_id: randomUUID(), project_id: base.project_id },
+      target_path: base.chat.path,
+      target_thread_id: base.chat.thread_id,
+      agent_network_id: randomUUID(),
+      network_generation: randomUUID(),
+      account_generation: 0,
+      configured_delivery: "queued",
+      principal_account_id: base.account_id,
+      guidance: false,
+    };
+    const stream = jest.fn(async () => {});
+    try {
+      const job = enqueueAcpJob({
+        ...base,
+        config: undefined,
+        runtime: {
+          version: 1,
+          kind: "acp",
+          profile: {
+            version: 1,
+            kind: "acp",
+            id: "fixture",
+            revision: "1",
+            executable: "/home/user/fixture",
+            args: [],
+            cwd: "/home/user",
+            executionPolicy: "full-access",
+            credentialMode: "project-managed",
+          },
+        },
+        chat: { ...base.chat, agent_rpc_execution: authorization },
+      } as any);
+      const admitted = decodeAcpJobRequest(job);
+      await expect(
+        acpTestInternals.executeAcpRequest({
+          ...admitted,
+          stream,
+        } as any),
+      ).rejects.toThrow(message);
+      expect(authorize).toHaveBeenCalledWith({
+        account_id: base.account_id,
+        authorization,
+      });
+      expect(launch).not.toHaveBeenCalled();
+      expect(stream).not.toHaveBeenCalled();
+    } finally {
+      if (originalAuthorize === undefined)
+        delete (hubApi.agent as any).authorizeRpcExecution;
+      else hubApi.agent.authorizeRpcExecution = originalAuthorize;
+      setHarnessLauncher();
+      if (original === undefined) delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = original;
+    }
+  },
+);
 
 function makeCommandRequest() {
   return {

@@ -5,6 +5,15 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+Additional peer-execution regression coverage persists a generic RPC request
+through SQLite, decodes the admitted request, and invokes the actual execution
+entry point with a revoked membership or unavailable authorization service.
+Both cases reject before harness launch or streamed output, preserving the
+stored principal and authorization envelope. The detached-worker, delivery-
+authorization and RPC-service suites pass 101 tests, and project-host typechecking
+passes. This is execution-boundary coverage, not live cross-project delivery or
+a live membership-revocation scenario.
+
 At source commit `4f0f063038405cf6a2161156c1dfb9a7d3230de7`, the following
 checks completed successfully (2026-09-21):
 

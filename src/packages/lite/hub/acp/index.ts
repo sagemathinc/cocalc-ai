@@ -12944,6 +12944,7 @@ export function getAcpAgentRuntimeStatus(): {
 
 export const acpTestInternals = {
   handleAcpControlRequest,
+  executeAcpRequest,
   handleInterruptRequest,
   processPendingAcpInterruptsOnce,
   registerInterruptAgentForTests: (
