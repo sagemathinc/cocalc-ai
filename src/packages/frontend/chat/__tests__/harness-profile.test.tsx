@@ -17,6 +17,34 @@ const draft = {
   args: "--flag\nvalue with spaces",
 };
 
+test("existing harness settings explain limitations before capability discovery", async () => {
+  render(
+    <HarnessRuntimeControl
+      compact
+      runtime={harnessRuntimeFromDraft(draft, "/home/user")}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.tab();
+  const trigger = screen.getByRole("button", { name: "ACP: Pi settings" });
+  expect(document.activeElement).toBe(trigger);
+  await user.keyboard("{Enter}");
+  await screen.findByRole("dialog", { name: "ACP harness settings" });
+  expect(
+    screen.getByText(
+      /Text prompts only\. Agent Networks support queued messages/,
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      /Images, automations and live guidance are not supported yet/,
+    ),
+  ).toBeTruthy();
+  await user.keyboard("{Escape}");
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(document.activeElement).toBe(trigger);
+});
+
 test("advertised model selector supports keyboard selection for future submissions", async () => {
   const runtime = harnessRuntimeFromDraft(draft, "/home/user");
   const onSettings = jest.fn();

@@ -12,6 +12,9 @@ import {
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 
+const HARNESS_LIMITATIONS =
+  "Text prompts only. Agent Networks support queued messages. Images, automations and live guidance are not supported yet.";
+
 interface HarnessRuntimeSummaryProps {
   runtime: unknown;
   reported?: unknown;
@@ -156,6 +159,7 @@ export function HarnessRuntimeSummary({
           <dd>{profile.cwd}</dd>
         </dl>
       </details>
+      <Typography.Text type="secondary">{HARNESS_LIMITATIONS}</Typography.Text>
       {onDiscover && (
         <Button
           loading={loading}
@@ -294,8 +298,7 @@ export function HarnessProfileFields({
         Install and configure the harness in this project first. It runs with
         full project access and project-managed credentials. Do not put secrets
         in these fields. Load advertised model/mode options before the first
-        turn, or use the harness configuration. Agent Networks support queued
-        messages. Images, automations and live guidance are not supported yet.
+        turn, or use the harness configuration. {HARNESS_LIMITATIONS}
       </Typography.Text>
       {(
         [
