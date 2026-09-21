@@ -20,6 +20,10 @@ Normal project restart with a retained Pi/local-model session now passes. Live
 forced-cancellation testing also verifies detached-child cleanup and explicit
 uncertainty when a harness never acknowledges cancel; this is not qualification
 of every process-removal fallback or abrupt-loss case.
+Orderly restart during a delivered prompt preserves an uncertain error outcome.
+Hard worker loss now invalidates its pending QA responder in the open browser,
+but its generic turn classification still says interrupted rather than explicitly
+unknown; that remains a qualification gap. No automatic resend was observed.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.

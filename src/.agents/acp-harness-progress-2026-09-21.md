@@ -573,6 +573,59 @@ during a delivered prompt, resource exhaustion, and failure of the cleanup
 fallback still require separate qualification. The test project remains
 network-enabled; this does not expand the separate offline inference claim.
 
+## Active Restart And Lost Question Responder
+
+Active-prompt restart exposed a second distinction from native Codex: fencing a
+delivered generic prompt cannot certify cancellation. Commit `4662e3d7f4` makes
+the registry fence mark running generic prompts `error`, while queued requests
+remain canceled and native/command behavior is unchanged. The exact fence reason
+is retained to prevent automatic recovery. Late worker completion cannot overwrite
+the fence. Queue/detached-worker validation passed 97 tests and project-host
+TypeScript passed.
+
+Deployed artifact `20260921T110244Z-4662e3d7f488`, SHA-256
+`76d66afbab75e2687a9e46a52121795d6ef062ae81a7ab40e5cf4943ac7ae45f`, upgrade
+`01a8bed4-02c8-4de8-afd0-5e525af7dbe4`. Live operation
+`c5e6f792-2677-4a94-a8eb-37e3f1b1479e` visibly streamed `working` before project
+restart `35a69cad-d585-4c01-b990-d1551864cb37`. Restart succeeded, removed its
+sidecar, left the job `error` with the restart fence reason, and preserved the
+uncertainty warning after browser reload. No new turn was automatically created.
+This qualifies an orderly restart during a prompt, not arbitrary abrupt loss.
+
+A separate hard-worker-loss probe found that a pending question stayed actionable
+after its responder died. Startup reconciliation ran when the service API was
+initialized, but not when only its detached worker was replaced. Commit
+`51a91a611e` reconciles pending synchronous attention after detached-worker startup
+recovery and the periodic orphan sweep. Preservation requires a running lease
+and a live owner, not merely a live process. Existing notification and ownership
+paths are reused. Commit `dcce9c0be9` additionally tests rejection of late answers
+to questions made stale this way. The attention/detached-worker checkpoint passed
+75 tests and project-host TypeScript; the follow-up passed 53 detached-worker
+tests (overlapping suites, not additive).
+
+Deployed artifact `20260921T111100Z-51a91a611ea2`, SHA-256
+`8c105b5a6aed74b576819bbd0050229484ca243451426f5ae8073f9c598b3d3d`, upgrade
+`6a9f858a-b1d5-49bc-9313-6d2a1f8968f0`. Static UI was rebuilt at `dcce9c0be9`.
+Live retest operation `3303043f-f0e0-479d-81ec-9270c55d936c` was waiting on
+attention `364e254e-cc88-4571-be2b-d0507ca8e460`. After verifying that this was the
+host's only running job and checking worker PID/start time, deliberately killed
+only that worker once. Its supervisor replaced it without restarting the hub.
+The already-open UI removed Send response; the durable record became `stale`
+with no response ID. No recovery child was created, the old worker disappeared,
+and container inventory contained no ACP sidecar. No running jobs remained.
+
+One preceding submission failed before launch with `Scoped ACP CLI credentials
+unavailable` because host token issuance timed out. It did not fall back to other
+credentials or launch a harness; the subsequent deliberate submission succeeded.
+This transient failure was observed, not silently retried or treated as a model
+failure.
+
+Remaining limitation: hard worker loss with an existing turn lease still labels
+the generic job/UI `interrupted` with the worker-loss notice, rather than an
+explicit unknown-outcome classification. No automatic resend occurs, but this
+wording/state distinction still needs work. Passing the stale-question test does
+not qualify all async QA, abrupt-loss or persistence-failure behavior.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
@@ -648,8 +701,9 @@ use yet; the current UI is an experimental operator-testing surface.
 3. Broaden accessibility and layout qualification of implemented generic tool
    rendering and advertised model/mode controls. Correct remaining Codex-only
    branding; do not substitute Codex presets.
-4. Extend the qualified required-string form QA subset to failure/recovery
-   cases, including stale replies after worker loss. Text prompts remain the
+4. Extend the qualified required-string form QA subset to broader failure/recovery
+   cases. Worker-loss invalidation now has live evidence and late-answer regression
+   coverage above; async and cross-project cases remain. Text prompts remain the
    only supported input; attachment types and unsupported forms fail explicitly.
 5. Broaden the passing external text-write convergence check to simultaneous
    edits; verify snapshot scheduling, home-only restore and recovery protection.
