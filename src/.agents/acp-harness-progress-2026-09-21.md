@@ -1790,6 +1790,31 @@ was submitted, and the modal was closed afterward. This checks live discovery
 through the upgraded runtime, not another provider-inference or recovery test.
 The broader release gates and unmodified Pi provider-error limitation still apply.
 
+### Current Agent-First Base And Lifecycle Follow-Ups
+
+Merged the current `feature/my-agents-workspace` head `86188811ec` into this
+branch as `88bab83b45`. The base had advanced 127 commits since the original
+branch point. A dry run and the actual merge found one content conflict, where
+ACP creation controls and the newer cross-agent search imports occupied the same
+location. The resolution preserves both feature sets. PR #663 reports cleanly
+mergeable against its stacked base after the merge.
+
+Post-merge validation passed: full development build, dependency version check,
+frontend TypeScript and lint, 16 focused frontend suites / 61 tests, all 13 AI
+suites / 141 Jest tests including the 95-case real-stdio subprocess suite, all 48
+Lite ACP suites / 456 tests, and 19 focused project-host suites / 146 tests.
+
+Built and deployed artifact
+`20260921T195051Z-88bab83b45cd-dirty-e3b0c442`, SHA256
+`1ff2af88a7c0a8465615642a0d610b58ef6e1341b8744d32ab7dc8bcbeccd2a8`,
+to the qualification host only. Local and served manifest checksums matched, and
+a fresh read-only check found no running or queued ACP jobs. Upgrade operation
+`507ff7e2-2de3-468d-bb14-b16e3fb80075` succeeded; project-host, ACP worker,
+Conat router and Conat persistence all report the exact version running and
+aligned. Live Pi rejection-probe discovery again loaded Model and Thinking
+controls without submitting a prompt. The dirty suffix still reflects the
+unrelated untracked attachment rather than tracked source changes.
+
 ## Abandoned Sidecar Cleanup Failure Isolation
 
 A focused regression reproduced starvation in the abandoned-sidecar reaper:
