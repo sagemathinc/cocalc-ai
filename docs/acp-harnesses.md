@@ -13,8 +13,9 @@ is not. Do not interpret an empty completed turn as proof that inference succeed
 OpenCode `1.18.31` surfaced the same rejection correctly. Require a bridge fix or
 requalification before relying on Pi for unattended error reporting.
 An [experimental operator patch](../src/.agents/acp-harness-patches/README.md)
-passes standalone rejection and normal-inference probes, but is not an upstream
-release or automatically installed replacement.
+passes standalone rejection and normal-inference probes, plus a durable HTTP 401
+chat test whose error remains visible after reload. It is not an upstream release
+or automatically installed replacement, and does not qualify every Pi error path.
 
 OpenCode `1.18.31` returned `end_turn` when canceled during simulated provider
 retry backoff, rather than confirming `cancelled`. CoCalc tracks interruption
@@ -151,6 +152,43 @@ writable scratch space. The qualification record contains the exact tested
 versions/checksums and limits. Passing standalone offline probes is not proof
 that the complete CoCalc deployment is air-gapped.
 
+### Build And Run The Probes
+
+From a prepared source checkout, build portable CommonJS bundles. These commands
+use the existing frontend development dependency on esbuild; they do not install
+a harness or call a model:
+
+```sh
+pnpm -C src/packages/frontend exec esbuild ../ai/acp/__tests__/harness-provider-smoke.ts --bundle --platform=node --format=cjs --outfile=/tmp/cocalc-harness-provider-smoke.cjs
+pnpm -C src/packages/frontend exec esbuild ../ai/acp/__tests__/harness-local-model-smoke.ts --bundle --platform=node --format=cjs --outfile=/tmp/cocalc-harness-local-model-smoke.cjs
+```
+
+Transfer the needed bundle into a disposable project with its pinned harness
+already installed. Run **one** of these provider probes there, replacing the
+absolute executable path with the actual project path:
+
+```sh
+node cocalc-harness-provider-smoke.cjs /absolute/path/to/opencode
+node cocalc-harness-provider-smoke.cjs /absolute/path/to/pi-acp pi
+```
+
+The trailing `pi` selects Pi configuration; omit it for OpenCode. For example,
+append `--provider-reject` to check authentication failure reporting without a
+real key. Append `--require-loopback-only` only inside an already provisioned
+network-isolated test container. Each provider probe creates a fresh temporary
+HOME and workspace; the test's file writes do not target the project's real work.
+
+For actual local inference, provision the model and server first, then run inside
+the separate loopback-only container:
+
+```sh
+node cocalc-harness-local-model-smoke.cjs /absolute/path/to/pi-acp /absolute/path/to/llama-server /absolute/path/to/model.gguf
+```
+
+The local-model probe starts its own server on port 18995. Do not run overlapping
+copies in the same network namespace. Neither probe is a production launcher or
+a substitute for testing the durable chat UI.
+
 ### Simulated Provider Failures
 
 The provider smoke tool also accepts one optional fault mode per invocation:
@@ -194,3 +232,25 @@ Report the installed executable/adapter revisions, profile identifier, project
 and operation IDs, and a redacted error when diagnosing a failure. Do not paste
 provider keys, auth files, full process environments or unreviewed raw protocol
 logs. Project-host errors intentionally avoid logging launch arguments.
+
+## Failure Checklist
+
+- **Execution is not enabled:** verify the opt-in on the project host that owns
+  the project, not just the hub or browser. Keep native Codex separate; do not
+  change payment settings to work around an ACP admission error.
+- **Startup or protocol failure:** check the absolute executable, argument order,
+  project working directory and pinned adapter version. Launch stdout must be
+  ACP protocol only. Inspect bounded, redacted stderr locally rather than
+  posting environment dumps or auth files.
+- **Harness rejected the request:** check its project-managed provider/model
+  configuration. The displayed error is deliberately sanitized. Use the local
+  rejection probe to distinguish a bridge-reporting problem from real provider
+  configuration; the probe does not validate your real key.
+- **Unknown outcome after interruption:** inspect files and persisted activity
+  before choosing to resubmit. A cancellation request is not proof that an
+  external action was undone, and browser reload is not permission to replay it.
+- **Apparently missing container state during operator diagnostics:** use the
+  same Podman runtime directory and bundled container configuration as the
+  running host. A different `XDG_RUNTIME_DIR` can make an existing crun state
+  appear missing. Do not delete state or kill processes based on that error
+  alone. Production launchers already obtain this environment via `podmanEnv()`.
