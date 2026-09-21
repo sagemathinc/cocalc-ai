@@ -7,6 +7,7 @@ const path = require("node:path");
 const { AcpHarnessClient } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
+const { harnessPrompt } = require("../../dist/acp/harness-context.js");
 const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
 
 function questionForm() {
@@ -422,6 +423,57 @@ for (const stopReason of ["max_tokens", "max_turn_requests", "refusal"]) {
     });
   }
 }
+
+test("retained harness receives exact current-turn publication context without a relaunch", async (t) => {
+  const { agent, request, events, launches } = adapter(t);
+  for (const date of ["2026-09-21T14:00:00.000Z", "2026-09-21T14:01:00.000Z"]) {
+    events.length = 0;
+    await agent.evaluate({
+      ...request,
+      prompt: "turn-context",
+      chat: { ...request.chat, message_date: date },
+    });
+    const summary = events.find((e) => e.type === "summary");
+    assert.deepEqual(JSON.parse(summary.finalResponse), {
+      project_id: request.project_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id,
+      message_date: date,
+    });
+  }
+  assert.equal(launches(), 1);
+  assert.equal(request.chat.message_date, undefined);
+});
+
+test("harness context preserves user input and does not invent missing attribution", () => {
+  const request = {
+    project_id: "project",
+    prompt: "Please publish my report.",
+    chat: {
+      path: 'a"\n.chat',
+      thread_id: "thread",
+      message_date: "2026-09-21T14:00:00.000Z",
+    },
+  };
+  const prompt = harnessPrompt(request);
+  assert.ok(prompt.endsWith("\n\n" + request.prompt));
+  assert.ok(
+    prompt.includes(JSON.stringify({ project_id: "project", ...request.chat })),
+  );
+  assert.ok(
+    prompt.includes('"/opt/cocalc/bin/node" "/opt/cocalc/bin2/cocalc-cli.js"'),
+  );
+  assert.ok(prompt.includes("not an authorization grant"));
+  assert.equal(harnessPrompt({ ...request, prompt: "/compact" }), "/compact");
+  assert.equal(harnessPrompt({ ...request, chat: undefined }), request.prompt);
+  assert.equal(
+    harnessPrompt({
+      ...request,
+      chat: { ...request.chat, message_date: undefined },
+    }),
+    request.prompt,
+  );
+});
 
 test("agent adapter preserves permission policy events and cancellation stop reason", async (t) => {
   const { agent, request, events } = adapter(t);

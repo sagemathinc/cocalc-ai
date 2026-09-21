@@ -99,7 +99,18 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       selectedMode = message.params.modeId;
       return result(message.id, {});
     case "session/prompt": {
-      const text = message.params.prompt[0].text;
+      const rawText = message.params.prompt[0].text;
+      const contextEnd = "[/CoCalc project context]\n\n";
+      const text = rawText.startsWith("[CoCalc project context]\n")
+        ? rawText.slice(rawText.indexOf(contextEnd) + contextEnd.length)
+        : rawText;
+      if (text === "turn-context") {
+        const contextLine = rawText
+          .split("\n")
+          .find((line) => line.startsWith('{"project_id":'));
+        update(contextLine ?? "No publication context");
+        return result(message.id, { stopReason: "end_turn" });
+      }
       if (text === "question" || text === "question-wrong-session") {
         questionPrompt = message.id;
         pendingPrompt = message.id;

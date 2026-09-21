@@ -3,6 +3,7 @@ import type { HarnessBinding, HarnessLauncher } from "./harness-client";
 import type { AcpAgent, AcpEvaluateRequest } from "./types";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import { randomUUID } from "node:crypto";
+import { harnessPrompt } from "./harness-context";
 import type {
   CodexAttentionContext,
   CodexAttentionHandler,
@@ -129,36 +130,39 @@ export class HarnessAgent implements AcpAgent {
       });
       await publishControls();
       let finalResponse = "";
-      const result = await client.prompt(request.prompt, async (event) => {
-        if (event.type === "message") {
-          if (
-            Buffer.byteLength(finalResponse) + Buffer.byteLength(event.text) >
-            4 * 1024 * 1024
-          )
-            throw Error("ACP response exceeds persistence limit");
-          finalResponse += event.text;
-          await request.stream({
-            type: "event",
-            event: { type: "message", text: event.text, delta: true },
-          });
-        } else if (event.type === "thinking") {
-          await request.stream({
-            type: "event",
-            event: { type: "thinking", text: event.text },
-          });
-        } else {
-          await request.stream({
-            type: "event",
-            event: {
-              type: "harness",
-              source: "acp",
-              kind: event.type,
-              data:
-                event.type === "update" ? { ...event.update } : { ...event },
-            },
-          });
-        }
-      });
+      const result = await client.prompt(
+        harnessPrompt(request),
+        async (event) => {
+          if (event.type === "message") {
+            if (
+              Buffer.byteLength(finalResponse) + Buffer.byteLength(event.text) >
+              4 * 1024 * 1024
+            )
+              throw Error("ACP response exceeds persistence limit");
+            finalResponse += event.text;
+            await request.stream({
+              type: "event",
+              event: { type: "message", text: event.text, delta: true },
+            });
+          } else if (event.type === "thinking") {
+            await request.stream({
+              type: "event",
+              event: { type: "thinking", text: event.text },
+            });
+          } else {
+            await request.stream({
+              type: "event",
+              event: {
+                type: "harness",
+                source: "acp",
+                kind: event.type,
+                data:
+                  event.type === "update" ? { ...event.update } : { ...event },
+              },
+            });
+          }
+        },
+      );
       await publishControls();
       await request.stream({
         type: "event",
