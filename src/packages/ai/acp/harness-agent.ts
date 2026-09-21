@@ -183,6 +183,8 @@ export class HarnessAgent implements AcpAgent {
           `ACP prompt stopped: ${result.stopReason}`,
         );
       }
+      // Finalize pending attention before publishing a successful completion.
+      await this.attention?.runtimeClosed?.(this.attentionContext);
       await request.stream({
         type: "summary",
         finalResponse,
@@ -192,12 +194,8 @@ export class HarnessAgent implements AcpAgent {
       // Never silently start a fresh native session after an ambiguous failure.
       return await disposeFailedHarness(error, () => this.dispose());
     } finally {
-      try {
-        await this.attention?.runtimeClosed?.(this.attentionContext);
-      } finally {
-        this.attentionContext = undefined;
-        this.busy = false;
-      }
+      this.attentionContext = undefined;
+      this.busy = false;
     }
   }
 
@@ -213,7 +211,10 @@ export class HarnessAgent implements AcpAgent {
 
   async dispose(): Promise<void> {
     this.closed = true;
-    await this.client?.dispose();
-    await this.attention?.runtimeClosed?.(this.attentionContext);
+    try {
+      await this.client?.dispose();
+    } finally {
+      await this.attention?.runtimeClosed?.(this.attentionContext);
+    }
   }
 }

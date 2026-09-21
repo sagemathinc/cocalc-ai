@@ -346,6 +346,65 @@ test("cleanup failure preserves uncertain delivery and warns that termination is
   assert.equal(stops(), 1);
 });
 
+test("attention cleanup failure does not replace uncertain delivery", async (t) => {
+  let closes = 0;
+  const { agent, request, events, stops } = adapter(t, [], {
+    requestSyncQuestion: async () => ({}),
+    runtimeClosed: async (context) => {
+      if (!context) return;
+      closes++;
+      throw Error("test attention store unavailable");
+    },
+  });
+  await assert.rejects(
+    agent.evaluate({ ...request, prompt: "crash" }),
+    (error) => {
+      assert.equal(error.code, "outcome_unknown");
+      assert.match(error.message, /do not automatically resend/);
+      assert.match(error.message, /cleanup could not be confirmed/);
+      return true;
+    },
+  );
+  assert.equal(closes, 1);
+  assert.equal(stops(), 1);
+  assert.ok(!events.some((event) => event.type === "summary"));
+  await assert.rejects(agent.evaluate(request), /not idle/);
+});
+
+test("failed attention finalization does not publish a successful summary or retain the runtime", async (t) => {
+  const { agent, request, events, stops } = adapter(t, [], {
+    requestSyncQuestion: async () => ({}),
+    runtimeClosed: async (context) => {
+      if (context) throw Error("test attention store unavailable");
+    },
+  });
+  await assert.rejects(agent.evaluate(request));
+  assert.ok(!events.some((event) => event.type === "summary"));
+  assert.equal(stops(), 1);
+  await assert.rejects(agent.evaluate(request), /not idle/);
+});
+
+test("process cleanup failure still finalizes the current attention context", async (t) => {
+  const closed = [];
+  const { agent, request } = adapter(
+    t,
+    [],
+    {
+      requestSyncQuestion: async () => ({}),
+      runtimeClosed: async (context) => {
+        if (context) closed.push(context);
+      },
+    },
+    true,
+  );
+  await assert.rejects(agent.evaluate({ ...request, prompt: "crash" }), {
+    code: "outcome_unknown",
+  });
+  assert.equal(closed.length, 1);
+  assert.equal(closed[0].chat.thread_id, "conversation-a");
+  assert.equal(closed[0].accountId, "account-a");
+});
+
 for (const phase of ["startup", "retained rejection"]) {
   test(`cleanup failure preserves ${phase} classification`, async (t) => {
     const { agent, request, events, launches, stops } = adapter(

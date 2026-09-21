@@ -7,6 +7,18 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ### Cleanup Failure Classification
 
+Follow-up regressions found that the unconditional attention cleanup in
+`evaluate`'s `finally` could replace the preserved delivery error, and could fail
+after the success summary was already emitted. Attention now finalizes inside
+the guarded evaluation before the summary; failed evaluation goes through one
+disposal path instead of repeating cleanup in `finally`. Disposal attempts
+attention cleanup even when process cleanup fails. The final block only clears
+local busy/context state. Three real-subprocess regressions cover these cases,
+including refusal to reuse an adapter whose finalization failed. The subprocess
+suite now passes 65 tests; 140 native AI tests, two durable harness-attention
+tests and project-host TypeScript also pass. This is injected attention-store
+failure coverage, not a live database-outage test.
+
 A failing real-subprocess regression demonstrated that a launcher `stop()`
 rejection replaced the primary `outcome_unknown` error with an unclassified
 cleanup error. The startup and evaluation failure paths now retain the original
