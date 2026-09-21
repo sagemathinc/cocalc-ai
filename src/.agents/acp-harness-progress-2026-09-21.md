@@ -1502,6 +1502,23 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Pi Rejection Display After Reload
+
+Follow-up inspection found the persisted user/error messages correctly laid out
+inside the viewport, with visible ancestors and no clipping or opacity hiding.
+Foregrounding the exact qualification tab allowed a completed screenshot showing
+the error. After rebuilding frontend assets to remove the development stale-build
+overlay, a second reload initially showed a blank message area. At the next
+readiness observation (26 seconds after navigation) both messages were present;
+the subsequent completed screenshot showed the sanitized rejection, textual
+error state and explicit Resubmit action. No prompt was resubmitted.
+
+This closes visual persistence evidence for the patched Pi HTTP 401 test below.
+It does not resolve or assign a cause to the initial blank loading interval, and
+does not establish a general latency guarantee. The test screenshot is the local
+`/tmp/acp-pi-rejection.png`. No application rendering change was needed to verify
+the eventual persisted result.
+
 ## Patched Pi Durable Provider Rejection
 
 A new disposable `agent-11` uses the separately packaged Pi provider-error probe,

@@ -43,7 +43,7 @@ patched bundle passed local HTTP 401 propagation (one fake-provider request)
 and normal file-write/follow-up smoke (three local requests) with Pi `0.86.1`.
 No paid inference was used. These are standalone real-harness/client probes,
 not offline qualification of this modified bridge. See the subsequent durable
-check below; complete browser rendering qualification remains outstanding.
+and browser checks below.
 
 The subsequent `--provider-retry` probe also passes: one HTTP 503 on task
 inference triggers visible Pi retry/resume progress, followed by verified file
@@ -80,8 +80,13 @@ The typed chat activity API confirmed a persisted terminal error:
 `ACP harness failed: Harness rejected the ACP request; check its project configuration`.
 There was no successful message event or replacement job in that thread.
 
-After reload, the error eventually appeared in the browser DOM, but the viewport
-initially remained blank and a later screenshot timed out. This qualifies the
-durable rejection path, not reliable browser presentation or broad Pi behavior.
+After reload, the viewport initially remained blank and a screenshot timed out.
+A follow-up check foregrounded the exact test tab, rebuilt the frontend to remove
+its stale-build overlay, and reloaded. Once messages were present (observed at
+26 seconds after navigation), their geometry placed them inside the viewport;
+a completed screenshot verified the sanitized error and Resubmit action.
+This qualifies persisted rejection display after reload, not loading performance
+or broad Pi behavior. The cause of the initial blank loading interval remains
+unresolved; no speculative rendering fix was made.
 No real subscriptions or existing agent profiles were changed. The unmodified
 upstream bridge still has the previously documented limitation.
