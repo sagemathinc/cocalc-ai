@@ -747,6 +747,24 @@ the host remains required; discovery/old-host UX needs further work.
 
 ## Harness Configuration Controls
 
+Live queued-settings qualification now passes on the disposable agent-3 fixture.
+Started `quiet-long` with Fast, queued `settings` with Fast, then selected Deep
+before the queued turn began. Job `91df59c2-6625-4d06-8ad1-a9f8a68fcb5f` was
+observed queued without a start timestamp and with Fast in its persisted request.
+Deep was selected at `1790005737742`; that job started at `1790005747245`,
+completed and visibly returned `fast/code`. The next explicitly submitted job
+`cff73b57-6b34-4d95-a826-b33b59419a0f` persisted Deep, completed and returned
+`deep/code`. Restored the selector to Fast. No inference provider was involved.
+
+The fixture now recognizes the worker's queue-delay note before exact command
+matching, covered by a subprocess test. An earlier probe retained Fast in SQLite
+but returned a generic greeting because of that prefix; it was not counted as
+execution-model evidence. The refreshed fixture was loaded by successful
+disposable-project restart `2f32a094-ac56-437f-b003-2cabd9f78e83` after those jobs
+were terminal. Validation: 69 subprocess tests and eight runtime/admission tests
+passed. This is human-submitted queued-turn coverage, not a new cross-project
+Agent Network qualification.
+
 Generic threads now render bounded, harness-advertised select controls (including
 model choices), preferring ACP config options over legacy session modes. Settings
 are saved with the thread and defensively copied into the admitted request. A

@@ -254,6 +254,16 @@ test("agent adapter persists streaming and stop before summary and reuses its se
   assert.equal(launches(), 1);
 });
 
+test("fixture recognizes settings commands after the worker queue-delay note", async (t) => {
+  const { agent, request, events } = adapter(t);
+  await agent.evaluate({
+    ...request,
+    prompt:
+      "System note: this message was queued for 30 seconds while another turn was active, and is being sent automatically now.\n\nsettings",
+  });
+  assert.equal(events.at(-1).finalResponse, "fast/code");
+});
+
 test("agent adapter rejects mismatched authority and unsupported options before launching", async (t) => {
   const { agent, request, launches } = adapter(t);
   for (const change of [
