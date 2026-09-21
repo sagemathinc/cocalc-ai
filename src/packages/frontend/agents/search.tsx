@@ -69,7 +69,7 @@ function SearchHelp() {
             </p>
             <p>
               All conversation messages use case-insensitive substring matching,
-              including older SQLite history:
+              including older messages:
               <code> build error</code> finds that text together, and
               <code> build</code> also finds <code>building</code>. Quotes are
               literal characters, not special phrase syntax.
