@@ -7,6 +7,19 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ### Real Harness Provider Rejection
 
+Added `--provider-cancel`: fail task inference with HTTP 503, request cancellation
+after 250 ms, require the prompt to finish with `cancelled`, and observe task
+requests for another three seconds before disposing the harness. Patched Pi
+`0.0.33-cocalc-provider-error-probe.1` passes with one failed request and no
+further task requests. OpenCode `1.18.31` fails reproducibly: it returns
+`end_turn`, not `cancelled`. The diagnostic rerun observed one failed task
+request, two total provider calls, and no further task requests during the
+three-second window. This is a completion-reporting limitation; the observation
+does not establish indefinite retry cessation or durable cancellation behavior.
+The optional probe deliberately remains failing for that OpenCode version.
+AI TypeScript passes. These checks use fresh temporary HOME directories, fake
+loopback credentials and the disposable project only; no paid inference.
+
 Added `--provider-exhaust` for sustained HTTP 503 on task-inference requests.
 Patched Pi rejects after four failed local requests; OpenCode `1.18.31` rejects
 after six failed task requests (seven total provider calls, including auxiliary

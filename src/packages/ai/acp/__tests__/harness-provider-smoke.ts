@@ -53,9 +53,11 @@ async function main() {
   const rejectProvider = process.argv.includes("--provider-reject");
   const retryProvider = process.argv.includes("--provider-retry");
   const exhaustProvider = process.argv.includes("--provider-exhaust");
+  const cancelProvider = process.argv.includes("--provider-cancel");
   assert.ok(
-    [rejectProvider, retryProvider, exhaustProvider].filter(Boolean).length <=
-      1,
+    [rejectProvider, retryProvider, exhaustProvider, cancelProvider].filter(
+      Boolean,
+    ).length <= 1,
     "Choose one provider fault mode",
   );
   if (offline) await verifyLoopbackOnly();
@@ -65,6 +67,10 @@ async function main() {
   let calls = 0;
   let transientFailures = 0;
   let writes = 0;
+  let reportFailure!: () => void;
+  const firstFailure = new Promise<void>((resolve) => {
+    reportFailure = resolve;
+  });
   const target = join(cwd, "acp-fixture.txt");
   const server = createServer(async (req, res) => {
     if (req.url !== "/v1/chat/completions") {
@@ -85,7 +91,9 @@ async function main() {
     calls++;
     // Fail task inference, not an auxiliary title-generation request.
     if (
-      (exhaustProvider || (retryProvider && transientFailures === 0)) &&
+      (cancelProvider ||
+        exhaustProvider ||
+        (retryProvider && transientFailures === 0)) &&
       request.stream &&
       request.tools?.length
     ) {
@@ -99,6 +107,7 @@ async function main() {
           },
         }),
       );
+      reportFailure();
       return;
     }
     if (rejectProvider) {
@@ -328,6 +337,59 @@ async function main() {
       0,
       "Discovery and session creation must not perform inference",
     );
+    if (cancelProvider) {
+      // Observe rejection immediately, including failures before the first HTTP call.
+      const pending = client
+        .prompt("Greet me.", async () => {})
+        .then(
+          (result) => ({ result }),
+          (error: unknown) => ({ error }),
+        );
+      await Promise.race([
+        firstFailure,
+        pending.then(() => {
+          throw Error("Prompt settled before cancellation could be tested");
+        }),
+      ]);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      await client.cancel();
+      const outcome = await pending;
+      if ("error" in outcome) throw outcome.error;
+      const failuresAtCancellation = transientFailures;
+      const observationMs = 3000;
+      await new Promise((resolve) => setTimeout(resolve, observationMs));
+      if (outcome.result.stopReason !== "cancelled") {
+        process.stdout.write(
+          JSON.stringify({
+            observedCancellation: outcome.result,
+            agent: capabilities.agentInfo,
+            failuresAtCancellation,
+            transientFailures,
+            providerCalls: calls,
+            observationMs,
+          }) + "\n",
+        );
+      }
+      assert.equal(outcome.result.stopReason, "cancelled");
+      assert.equal(
+        transientFailures,
+        failuresAtCancellation,
+        "Task inference retried after cancellation",
+      );
+      assert.equal(writes, 0);
+      process.stdout.write(
+        JSON.stringify({
+          ok: true,
+          agent: capabilities.agentInfo,
+          providerCancellationVerified: true,
+          stopReason: outcome.result.stopReason,
+          providerCalls: calls,
+          transientFailures,
+          observationMs,
+        }) + "\n",
+      );
+      return;
+    }
     if (rejectProvider || exhaustProvider) {
       const messages: string[] = [];
       const updates: string[] = [];
