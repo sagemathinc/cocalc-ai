@@ -105,6 +105,7 @@ import {
   AgentNetworkFilterBar,
 } from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
+import { CopyAgentModal } from "./copy-agent-modal";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
@@ -2165,7 +2166,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
-  const [copyName, setCopyName] = useState("");
+  const [initialCopyName, setInitialCopyName] = useState("");
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
   const [retiringAgentId, setRetiringAgentId] = useState<string>();
@@ -2427,11 +2428,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   function openCopyAgent(agent: NamedAgent) {
     setCopyingAgent(agent);
-    setCopyName(suggestedAgentName(agents, accountId));
+    setInitialCopyName(suggestedAgentName(agents, accountId));
     setCopyError("");
   }
 
-  async function copyAgent() {
+  async function copyAgent(copyName: string) {
     if (!copyingAgent || copyBusy) return;
     const problem = agentNameProblem(copyName, agents);
     if (problem) {
@@ -3279,43 +3280,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           </>
         )}
       </section>
-      <Modal
-        title={`Copy @${copyingAgent?.name ?? "agent"}`}
-        open={!!copyingAgent}
-        okText="Copy agent"
-        okButtonProps={{
-          loading: copyBusy,
-          disabled: copyBusy || !!agentNameProblem(copyName, agents),
-        }}
-        cancelButtonProps={{ disabled: copyBusy }}
-        destroyOnHidden
-        onOk={() => void copyAgent()}
-        onCancel={() => {
-          setCopyingAgent(undefined);
-          setCopyError("");
-        }}
-      >
-        <Space orientation="vertical" size={12} style={{ width: "100%" }}>
-          <Text>
-            Copy the Codex context into a new named agent linked to this
-            conversation. Project, working directory, model, reasoning, and
-            payment source are preserved. The description starts blank.
-          </Text>
-          <AgentNameInput
-            id="copy-agent-name"
-            value={copyName}
-            onChange={setCopyName}
-            problem={
-              copyName.trim() ? agentNameProblem(copyName, agents) : undefined
-            }
-            busy={copyBusy}
-            onEnter={() => void copyAgent()}
-          />
-          {copyError && (
-            <Alert role="alert" type="error" showIcon title={copyError} />
-          )}
-        </Space>
-      </Modal>
+      {copyingAgent && (
+        <CopyAgentModal
+          agent={copyingAgent}
+          agents={agents}
+          initialName={initialCopyName}
+          busy={copyBusy}
+          error={copyError}
+          onCopy={(name) => void copyAgent(name)}
+          onCancel={() => {
+            setCopyingAgent(undefined);
+            setCopyError("");
+          }}
+        />
+      )}
       <AgentNetworkDetailsModal
         network={detailsNetwork}
         onClose={() => setNetworkDetailsId(undefined)}
