@@ -16,7 +16,10 @@
     "typecheck": "tsc --noEmit",
     "depcheck": "pnpm -w exec depcheck \"$PWD\" --ignores=@types/node,@types/react,buffer,expo-dev-client,react-native-worklets",
     "doctor": "pnpm dlx expo-doctor@latest",
-    "test:ui": "jest --config jest.config.cjs --runInBand"
+    "test:ui": "jest --config jest.config.cjs --runInBand",
+    "start:preview": "EXPO_PUBLIC_MOBILE_PREVIEW=1 expo start --dev-client --port 8082",
+    "ios:preview": "EXPO_PUBLIC_MOBILE_PREVIEW=1 COCALC_MOBILE_DEV_SERVER_URL=http://localhost:8082 expo run:ios --port 8082",
+    "test:visual": "node scripts/visual-test.mjs"
   },
   "expo": {
     "install": {

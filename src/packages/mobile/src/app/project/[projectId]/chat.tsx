@@ -6,7 +6,6 @@
 import {
   createRemoteHeadlessChatClient,
   type ChatSnapshot,
-  type HeadlessChatClient,
   type ProjectedChatMessage,
 } from "@cocalc/chat-client";
 import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
@@ -15,6 +14,7 @@ import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
 import * as Clipboard from "expo-clipboard";
 import { Stack, useLocalSearchParams } from "expo-router";
+import { useHeaderHeight } from "expo-router/react-navigation";
 import {
   useCallback,
   useEffect,
@@ -54,8 +54,14 @@ import {
 import { openProjectHost } from "../../../cocalc/site-session";
 import { projectWebUrl } from "../../../cocalc/web-links";
 
+import {
+  isPreviewProfile,
+  createPreviewChat,
+  type ConversationClient,
+} from "../../../preview/fixtures";
+
 function useChatSnapshot(
-  client: HeadlessChatClient | undefined,
+  client: ConversationClient | undefined,
   projectId: string,
   path: string,
 ): ChatSnapshot {
@@ -130,6 +136,7 @@ function Message({ item }: { item: ProjectedChatMessage }) {
 }
 
 export default function ChatScreen() {
+  const headerHeight = useHeaderHeight();
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const params = useLocalSearchParams<{
@@ -144,8 +151,8 @@ export default function ChatScreen() {
   const profileId = `${params.profile ?? ""}`;
   const chatPath = `${params.chatPath ?? ""}`;
   const threadId = `${params.thread ?? ""}`;
-  const [client, setClient] = useState<HeadlessChatClient>();
-  const clientRef = useRef<HeadlessChatClient | undefined>(undefined);
+  const [client, setClient] = useState<ConversationClient>();
+  const clientRef = useRef<ConversationClient | undefined>(undefined);
   const generation = useRef(0);
   const listRef = useRef<FlatList<ProjectedChatMessage>>(null);
   const shouldFollowNewest = useRef(true);
@@ -181,6 +188,13 @@ export default function ChatScreen() {
       return;
     }
     try {
+      if (isPreviewProfile(profileId)) {
+        const next = createPreviewChat();
+        clientRef.current = next;
+        setClient(next);
+        setStatus("Local preview · no network");
+        return;
+      }
       const session = await getActiveSiteSession(profileId);
       const resolvedHost = await resolveNamedAgentHost(
         session.hubApi,
@@ -286,7 +300,8 @@ export default function ChatScreen() {
         if (!clientRef.current) void connect();
       } else if (state === "background") {
         generation.current += 1;
-        peekActiveSiteSession()?.projectHosts.invalidateProject(projectId);
+        if (!isPreviewProfile(profileId))
+          peekActiveSiteSession()?.projectHosts.invalidateProject(projectId);
         void disconnect();
       }
     });
@@ -296,7 +311,8 @@ export default function ChatScreen() {
         AppState.currentState === "active" &&
         snapshot.connection === "disconnected"
       ) {
-        peekActiveSiteSession()?.projectHosts.invalidateProject(projectId);
+        if (!isPreviewProfile(profileId))
+          peekActiveSiteSession()?.projectHosts.invalidateProject(projectId);
         void connect();
       }
     });
@@ -304,7 +320,7 @@ export default function ChatScreen() {
       subscription.remove();
       unsubscribeNetwork();
     };
-  }, [connect, disconnect, projectId, snapshot.connection]);
+  }, [connect, disconnect, profileId, projectId, snapshot.connection]);
 
   const selectedThread = snapshot.threads.find(
     (thread) => thread.thread_id === threadId,
@@ -325,8 +341,10 @@ export default function ChatScreen() {
     setSubmitting(true);
     setError(undefined);
     try {
-      const session = await getActiveSiteSession(profileId);
-      await ensureProjectRunning(session, projectId, setStatus);
+      if (!isPreviewProfile(profileId)) {
+        const session = await getActiveSiteSession(profileId);
+        await ensureProjectRunning(session, projectId, setStatus);
+      }
       await (
         guidance
           ? activeClient.sendGuidanceToCodexThread.bind(activeClient)
@@ -374,6 +392,10 @@ export default function ChatScreen() {
   };
 
   const openBrowser = async () => {
+    if (isPreviewProfile(profileId)) {
+      setError("Browser chat is unavailable in local preview.");
+      return;
+    }
     try {
       const session = await getActiveSiteSession(profileId);
       await Linking.openURL(
@@ -411,7 +433,7 @@ export default function ChatScreen() {
       />
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={90}
+        keyboardVerticalOffset={headerHeight}
         style={styles.flex}
       >
         <View style={styles.statusBar}>
@@ -452,7 +474,10 @@ export default function ChatScreen() {
           />
         ) : null}
         <FlatList
-          contentInsetAdjustmentBehavior="automatic"
+          style={styles.flex}
+          keyboardDismissMode="interactive"
+          keyboardShouldPersistTaps="handled"
+          contentInsetAdjustmentBehavior="never"
           contentContainerStyle={styles.messages}
           data={snapshot.messages}
           keyExtractor={(item) => item.message_id}
@@ -591,7 +616,7 @@ const makeStyles = (colors: AppearancePalette) =>
       alignSelf: "flex-start",
       backgroundColor: colors.inset,
     },
-    messageHeader: { flexDirection: "row", gap: 8 },
+    messageHeader: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
     activity: {
       borderLeftColor: colors.border,
       borderLeftWidth: 3,
@@ -634,7 +659,12 @@ const makeStyles = (colors: AppearancePalette) =>
       paddingHorizontal: 12,
       paddingVertical: 10,
     },
-    actions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
+    actions: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      justifyContent: "flex-end",
+    },
     sendButton: {
       backgroundColor: colors.primary,
       borderRadius: 9,

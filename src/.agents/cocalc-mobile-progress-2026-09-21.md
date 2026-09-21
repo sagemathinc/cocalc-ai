@@ -42,8 +42,9 @@ The following checks passed for this milestone:
 - formatting and diff checks.
 
 A production JavaScript bundle export is not an installed iOS application.
-No live-account acceptance, simulator visual review, or physical-device test has
-been completed for this milestone. No push, audio, or store release is claimed.
+At the initial milestone, live-account acceptance, simulator visual review, and
+physical-device testing had not yet been performed. Subsequent evidence is
+recorded below. No push, audio, or store release is claimed.
 
 ## Current boundaries and next work
 
@@ -64,3 +65,51 @@ Next implement shared agent creation with recoverable intermediate state and
 native project/configuration selection, then attachments and artifact viewing.
 Prototype live delegation early alongside those features using configurable
 membership entitlements, retaining the existing less expensive speech modes.
+
+## Simulator feedback loop and first visual fixes
+
+William subsequently installed the development build on his iPhone and reported
+successfully sending a message to an agent and seeing its response. He also
+reported overlapping text. This is a real-device smoke check, not full acceptance.
+
+Added a repeatable local visual workflow in `src/packages/mobile`:
+
+- `pnpm ios:preview` installs the simulator development build;
+- `pnpm start:preview` runs explicitly enabled preview Metro on port 8082,
+  independently of the physical-phone Metro server on 8081;
+- `pnpm test:visual` drives the installed iPhone 17 Pro through Maestro, captures
+  screenshots and debug artifacts under `dist/visual`, and restores the prior
+  simulator theme and text size;
+- fixtures exercise the actual agent directory and conversation screens without
+  credentials, project startup, or agent charges. Both `__DEV__` and the explicit
+  preview environment flag are required. Production flag gating and independent
+  local conversation state have regression coverage.
+
+Simulator inspection reproduced directory content underneath the large native
+header/status bar. Use a regular native header for these layouts. Chat also used
+an assumed 90-point keyboard offset, partially covering Send; it now uses the
+actual navigation header height. The navigation theme follows system appearance,
+message/action rows can wrap, and Markdown removes extra block-edge whitespace
+and uses the same semantic palette as the conversation.
+
+The native flow covers search, pin/unpin, opening chat, keyboard input, local
+sending/reply, keyboard dismissal, scrolling, loading earlier messages, and iOS
+edge-swipe back navigation. It runs in light/dark mode and dark mode with
+`accessibility-medium` text. Screenshots require visual inspection in addition
+to passing flow assertions. Native header-back taps did not navigate reliably
+in the initial automation attempts; the tested navigation is the edge gesture.
+Do not treat that as qualification of the header button on physical devices.
+
+Remaining preview scenarios include running/streaming activity, failures,
+approvals, artifacts, voice, and agent settings. The fixture smoke test does not
+replace authenticated integration tests or physical-device audio/lifecycle QA.
+Keep source files stable during a flow: Fast Refresh can reset local fixtures
+and invalidate a run. The Expo floating Tools button is development-client UI.
+
+Follow-up validation passed: native iOS Simulator build, the three Maestro 2.10.0
+flows on iPhone 17 Pro / iOS 26.5 (15 captured screenshots), mobile typecheck,
+16 domain/storage tests, 14 component/fixture tests, frontend lint, and iOS
+production bundle export. Final visual artifacts are local and ignored at
+`src/packages/mobile/dist/visual/2026-09-21T21-15-04.993Z/`. Directory/chat and
+keyboard screenshots were visually inspected, including dark mode and enlarged
+text. This establishes the development feedback loop, not full visual polish.

@@ -38,6 +38,12 @@ import {
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { usePalette } from "../ui/palette";
 
+import {
+  isPreviewProfile,
+  previewWorkspace,
+  savePreviewOrganization,
+} from "../preview/fixtures";
+
 type Workspace = Awaited<ReturnType<typeof loadNamedAgentWorkspace>>;
 
 export default function AgentsScreen() {
@@ -65,11 +71,15 @@ export default function AgentsScreen() {
     setLoading(true);
     setError(undefined);
     try {
-      const session = await getActiveSiteSession(profile);
-      const next = await loadNamedAgentWorkspace(
-        session.hubApi,
-        session.profile.account_id,
-      );
+      const next = isPreviewProfile(profile)
+        ? previewWorkspace()
+        : await (async () => {
+            const session = await getActiveSiteSession(profile);
+            return loadNamedAgentWorkspace(
+              session.hubApi,
+              session.profile.account_id,
+            );
+          })();
       if (current !== generation.current) return;
       state.current = next;
       setWorkspace(next);
@@ -102,12 +112,16 @@ export default function AgentsScreen() {
     setSaving(true);
     setError(undefined);
     try {
-      const session = await getActiveSiteSession(profile);
-      await saveNamedAgentOrganization(
-        session.hubApi,
-        session.profile.account_id,
-        organization,
-      );
+      if (isPreviewProfile(profile)) {
+        savePreviewOrganization(organization);
+      } else {
+        const session = await getActiveSiteSession(profile);
+        await saveNamedAgentOrganization(
+          session.hubApi,
+          session.profile.account_id,
+          organization,
+        );
+      }
       if (current === generation.current && state.current) {
         const next = { ...state.current, organization };
         state.current = next;
@@ -154,6 +168,10 @@ export default function AgentsScreen() {
     search,
   );
   const openWebAgents = async () => {
+    if (isPreviewProfile(profile)) {
+      setError("Browser management is unavailable in local preview.");
+      return;
+    }
     try {
       const session = await getActiveSiteSession(profile);
       await Linking.openURL(
@@ -170,7 +188,9 @@ export default function AgentsScreen() {
     >
       <Stack.Screen
         options={{
-          title: "My Agents",
+          title: isPreviewProfile(profile)
+            ? "My Agents · Preview"
+            : "My Agents",
           headerRight: () => (
             <Link
               href="/transport"
@@ -285,7 +305,11 @@ export default function AgentsScreen() {
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Manage ${item.name}`}
-              onPress={() =>
+              onPress={() => {
+                if (isPreviewProfile(profile)) {
+                  setError("Agent settings are unavailable in local preview.");
+                  return;
+                }
                 router.push({
                   pathname: "/agent-details",
                   params: {
@@ -293,8 +317,8 @@ export default function AgentsScreen() {
                     agentId: item.endpoint.agent_id,
                     projectId: item.endpoint.project_id,
                   },
-                })
-              }
+                });
+              }}
               style={styles.button}
             >
               <Text style={{ color: colors.link }}>Details</Text>

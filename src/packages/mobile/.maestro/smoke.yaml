@@ -1,0 +1,46 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- extendedWaitUntil:
+    visible: "Open local UI preview"
+    timeout: 30000
+- tapOn: "Open local UI preview"
+- waitForAnimationToEnd
+- assertVisible: "Open Research"
+- takeScreenshot: agents
+- tapOn: "Search agents.*"
+- inputText: Research
+- assertNotVisible: "Open Writing"
+- tapOn: "Pin Research"
+- assertVisible: "Unpin Research"
+- tapOn: "Unpin Research"
+- tapOn: "Open Research"
+- waitForAnimationToEnd
+- assertVisible: "Message Codex.*"
+- takeScreenshot: chat
+- tapOn: "Message Codex.*"
+- eraseText
+- inputText: "Hello from the simulator"
+- assertVisible: "Send message to Codex"
+- takeScreenshot: keyboard
+- tapOn: "Send message to Codex"
+- assertVisible: ".*Preview reply: your message stayed on this device.*"
+- hideKeyboard
+- takeScreenshot: reply
+- swipe:
+    direction: DOWN
+    duration: 600
+- swipe:
+    direction: DOWN
+    duration: 600
+- scrollUntilVisible:
+    element: "Load earlier messages"
+    direction: UP
+    timeout: 15000
+- tapOn: "Load earlier messages"
+- assertVisible: ".*Earlier preview message.*"
+- takeScreenshot: history
+- swipe:
+    start: 1%, 45%
+    end: 90%, 45%
+    duration: 500
+- assertVisible: "Search agents.*"

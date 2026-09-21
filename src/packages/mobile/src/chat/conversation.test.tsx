@@ -10,6 +10,9 @@ import {
   saveChatDraft,
 } from "./drafts";
 
+jest.mock("expo-router/react-navigation", () => ({
+  useHeaderHeight: () => 116,
+}));
 jest.mock("expo-router", () => ({
   Stack: { Screen: () => null },
   useLocalSearchParams: () => ({

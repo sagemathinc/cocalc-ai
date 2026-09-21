@@ -8,6 +8,8 @@ import { Link, Stack } from "expo-router";
 import { PlatformColor, StyleSheet, Text, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
+import { previewEnabled, PREVIEW_PROFILE } from "../preview/fixtures";
+
 export default function WelcomeScreen() {
   return (
     <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
@@ -19,6 +21,16 @@ export default function WelcomeScreen() {
         <Text style={styles.body}>
           Connect to your CoCalc site and work with your agents.
         </Text>
+        {previewEnabled ? (
+          <Link
+            accessibilityRole="button"
+            accessibilityLabel="Open local UI preview"
+            href={{ pathname: "/agents", params: { profile: PREVIEW_PROFILE } }}
+            style={styles.primaryAction}
+          >
+            Open local UI preview
+          </Link>
+        ) : null}
         <Link
           accessibilityRole="button"
           accessibilityLabel="Configure a CoCalc site"

@@ -3,12 +3,14 @@
  * License: MS-RSL – see LICENSE.md for details
  */
 
-import { COLORS } from "@cocalc/util/theme";
-import { Linking, PlatformColor, StyleSheet, Text, View } from "react-native";
+import type { AppearancePalette } from "@cocalc/util/appearance-palette";
+import { usePalette } from "../ui/palette";
+import { Linking, StyleSheet, Text, View } from "react-native";
 
 const INLINE = /(`[^`]+`|\[[^\]]+\]\(https?:\/\/[^\s)]+\))/g;
 
 function InlineMarkdown({ value }: { value: string }) {
+  const styles = makeStyles(usePalette());
   const parts = value.split(INLINE);
   return (
     <Text selectable style={styles.text}>
@@ -40,7 +42,11 @@ function InlineMarkdown({ value }: { value: string }) {
 }
 
 export function Markdown({ value }: { value: string }) {
-  const blocks = value.split(/(```[\s\S]*?```)/g).filter(Boolean);
+  const styles = makeStyles(usePalette());
+  const blocks = value
+    .split(/(```[\s\S]*?```)/g)
+    .map((block) => block.trim())
+    .filter(Boolean);
   return (
     <View style={styles.container}>
       {blocks.map((block, index) => {
@@ -60,27 +66,28 @@ export function Markdown({ value }: { value: string }) {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { gap: 8 },
-  text: {
-    color: PlatformColor("label"),
-    fontSize: 16,
-    lineHeight: 23,
-  },
-  inlineCode: {
-    backgroundColor: PlatformColor("tertiarySystemBackground"),
-    fontFamily: "Menlo",
-    fontSize: 14,
-  },
-  codeBlock: {
-    backgroundColor: PlatformColor("tertiarySystemBackground"),
-    borderRadius: 8,
-    color: PlatformColor("label"),
-    fontFamily: "Menlo",
-    fontSize: 13,
-    lineHeight: 19,
-    overflow: "hidden",
-    padding: 12,
-  },
-  link: { color: COLORS.ANTD_LINK_BLUE, textDecorationLine: "underline" },
-});
+const makeStyles = (colors: AppearancePalette) =>
+  StyleSheet.create({
+    container: { gap: 8 },
+    text: {
+      color: colors.text,
+      fontSize: 16,
+      lineHeight: 23,
+    },
+    inlineCode: {
+      backgroundColor: colors.page,
+      fontFamily: "Menlo",
+      fontSize: 14,
+    },
+    codeBlock: {
+      backgroundColor: colors.page,
+      borderRadius: 8,
+      color: colors.text,
+      fontFamily: "Menlo",
+      fontSize: 13,
+      lineHeight: 19,
+      overflow: "hidden",
+      padding: 12,
+    },
+    link: { color: colors.link, textDecorationLine: "underline" },
+  });
