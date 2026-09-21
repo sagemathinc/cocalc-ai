@@ -73,6 +73,18 @@ export function harnessSessionControls(session: {
       })),
     };
   }
+  if (new Set(configOptions.map(({ id }) => id)).size !== configOptions.length)
+    throw Error("Duplicate ACP control identifier");
+  for (const control of [
+    ...configOptions,
+    ...(result.mode ? [result.mode] : []),
+  ]) {
+    if (
+      new Set(control.options.map(({ value }) => value)).size !==
+      control.options.length
+    )
+      throw Error("Duplicate ACP control option value");
+  }
   if (JSON.stringify(result).length > 256 * 1024)
     throw Error("ACP control catalog too large");
   return result;
