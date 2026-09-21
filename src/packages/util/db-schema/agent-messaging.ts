@@ -119,6 +119,11 @@ Table({
     project_id: required("uuid", "Project owned by this bay."),
     path: required("string", "Canonical absolute chat path."),
     thread_id: required("string", "Thread bound to this identity."),
+    conversation_history: {
+      type: "array",
+      pg_type: "JSONB",
+      desc: "Previous conversations of this stable identity, in chronological order.",
+    },
     name: required("string", "Agent display name captured at registration."),
     created_by: required("uuid", "Human registrant account."),
     created_at: created("Registration time."),

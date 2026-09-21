@@ -219,13 +219,19 @@ export type AcpControlRequest = {
   path: string;
   thread_id: string;
   user_message_id: string;
-  action: "cancel" | "send_immediately" | "resend" | "resend_with_model";
+  action:
+    | "cancel"
+    | "send_immediately"
+    | "resend"
+    | "resend_with_model"
+    | "prepare_fresh_conversation";
   // Only for retrying a confirmed ChatGPT model-unavailable rejection.
   model_recovery?: { model: string; expected_model: string };
 };
 
 export type AcpControlResponse = {
   ok: boolean;
+  successor_thread_id?: string;
   state?:
     | "queued"
     | "running"

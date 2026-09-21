@@ -110,6 +110,11 @@ export class AgentStore {
       if (recoverExpiredRunId === runId)
         throw new Error("expired identity recovery requires a new run");
       rowCount = await this.transaction(async (db) => {
+        const current = await db.query(
+          "SELECT agent_id FROM agent_identities WHERE agent_id=$1 AND thread_id=$2 AND disabled_at IS NULL FOR SHARE",
+          [agent.agent_id, agent.thread_id],
+        );
+        if (!current.rows[0]) throw new Error("agent conversation changed");
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);
@@ -159,6 +164,11 @@ export class AgentStore {
       });
     } else {
       rowCount = await this.transaction(async (db) => {
+        const current = await db.query(
+          "SELECT agent_id FROM agent_identities WHERE agent_id=$1 AND thread_id=$2 AND disabled_at IS NULL FOR SHARE",
+          [agent.agent_id, agent.thread_id],
+        );
+        if (!current.rows[0]) throw new Error("agent conversation changed");
         await db.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
           `agent-runs:${agent.agent_id}`,
         ]);

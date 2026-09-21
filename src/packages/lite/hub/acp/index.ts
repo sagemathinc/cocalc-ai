@@ -110,6 +110,7 @@ import {
 } from "@cocalc/chat";
 import { prepareChatSend } from "@cocalc/chat/send";
 import { acquireChatSyncDB, releaseChatSyncDB } from "@cocalc/chat/server";
+import { prepareFreshConversation } from "./fresh-conversation";
 import {
   appendStreamMessage,
   appendGeneratedImageMarkdown,
@@ -11716,6 +11717,12 @@ async function handleAcpControlRequest(
     throw new Error("conat client must be initialized");
   }
   const client = conatClient;
+  if (request.action === "prepare_fresh_conversation") {
+    return {
+      ok: true,
+      successor_thread_id: await prepareFreshConversation(request, client),
+    };
+  }
   if (request.action === "cancel") {
     const row = cancelQueuedAcpJob({
       project_id,

@@ -27,6 +27,7 @@ export const resolveAgentNetworkProposal = resolveAgentNetworkProposalImpl;
 export const authorizeRpcAdmission = rpc.authorizeRpcAdmission;
 export const authorizeRpcExecution = rpc.authorizeRpcExecution;
 export const registerIdentity = identities.registerIdentity;
+export const startFreshConversation = identities.startFreshConversation;
 export const listIdentities = identities.listIdentities;
 export const getIdentity = identities.getIdentity;
 export const resolveIdentity = identities.resolveIdentity;

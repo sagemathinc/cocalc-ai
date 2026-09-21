@@ -11,6 +11,7 @@ export interface AgentIdentity {
   thread_id: string;
   name: string;
   created_by: string;
+  conversation_history?: { thread_id: string; ended_at: string }[];
   disabled_at: Date | string | null;
 }
 

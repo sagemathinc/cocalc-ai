@@ -106,6 +106,7 @@ import {
 } from "./agent-network-details-modal";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { CopyAgentModal } from "./copy-agent-modal";
+import { FreshConversationModal } from "./fresh-conversation-modal";
 import { cachedAgentNameContext } from "./name-context";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useAgentWorkspaceOrganization } from "./use-workspace-organization";
@@ -1504,6 +1505,7 @@ function AgentsWorkspaceNavigation({
 
 function AgentWorkspace({
   onCopy,
+  onFresh,
   workspaceKey,
   agent,
   workspaceAgents,
@@ -1523,6 +1525,7 @@ function AgentWorkspace({
   onOpenNetwork,
 }: {
   onCopy: (agent: NamedAgent) => void;
+  onFresh: (agent: NamedAgent) => void;
   workspaceKey: string;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1978,6 +1981,11 @@ function AgentWorkspace({
                       icon: <Icon name="copy" />,
                       onClick: () => onCopy(displayedAgent),
                     },
+                    {
+                      key: "workspace-fresh",
+                      label: "Start fresh conversation…",
+                      onClick: () => onFresh(displayedAgent),
+                    },
                   ]
                 : []),
               {
@@ -2166,6 +2174,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   const [creating, setCreating] = useState(activeAgentId === "new");
   const [creatingSourceAgentId, setCreatingSourceAgentId] = useState<string>();
   const [copyingAgent, setCopyingAgent] = useState<NamedAgent>();
+  const [freshAgent, startFresh] = useState<NamedAgent>();
   const [initialCopyName, setInitialCopyName] = useState("");
   const [copyBusy, setCopyBusy] = useState(false);
   const [copyError, setCopyError] = useState("");
@@ -2432,6 +2441,26 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     setCopyError("");
   }
 
+  async function performFresh(agent: NamedAgent) {
+    const next = await personalAgentApi().startFreshConversation({
+      project_id: agent.endpoint.project_id,
+      agent_id: agent.endpoint.agent_id,
+      expected_thread_id: agent.thread_id,
+    });
+    writeAgentSubscriptionSelection({
+      accountId,
+      projectId: agent.endpoint.project_id,
+      threadId: next.thread_id,
+      credentialId: readAgentSubscriptionSelection({
+        accountId,
+        projectId: agent.endpoint.project_id,
+        threadId: agent.thread_id,
+      }),
+    });
+    refreshNamedAgents();
+    selectAgentId(agent.endpoint.agent_id);
+  }
+
   async function copyAgent(copyName: string) {
     if (!copyingAgent || copyBusy) return;
     const problem = agentNameProblem(copyName, agents);
@@ -2687,6 +2716,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 icon: <Icon name="copy" />,
                 label: "Copy agent…",
               },
+              { key: "fresh", label: "Start fresh conversation…" },
               {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
@@ -2708,6 +2738,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               domEvent.stopPropagation();
               if (key === "copy") {
                 openCopyAgent(agent);
+                return;
+              }
+              if (key === "fresh") {
+                startFresh(agent);
                 return;
               }
               if (key === "remove") {
@@ -3231,6 +3265,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               return (
                 <AgentWorkspace
                   onCopy={openCopyAgent}
+                  onFresh={startFresh}
                   key={workspace}
                   workspaceKey={workspace}
                   agent={agent}
@@ -3292,6 +3327,13 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             setCopyingAgent(undefined);
             setCopyError("");
           }}
+        />
+      )}
+      {freshAgent && (
+        <FreshConversationModal
+          name={freshAgent.name}
+          onConfirm={() => performFresh(freshAgent)}
+          onClose={() => startFresh(undefined)}
         />
       )}
       <AgentNetworkDetailsModal

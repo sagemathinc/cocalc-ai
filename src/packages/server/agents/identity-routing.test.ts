@@ -6,6 +6,8 @@ import {
   getIdentity,
   getMentionIdentity,
   recoverIdentity,
+  startFreshConversation,
+  startFreshConversationLocal,
 } from "./api";
 import { agentIdentityControl } from "./identity-control";
 
@@ -24,12 +26,20 @@ const remote = {
   resolve: jest.fn(),
   register: jest.fn(),
   recover: jest.fn(),
+  startFreshConversation: jest.fn(),
   get: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
 const sourceHostAccess = jest.fn();
 const localProject = jest.fn();
 const chatReady = jest.fn();
+const prepareFresh = jest.fn();
+jest.mock("@cocalc/conat/ai/acp/client", () => ({
+  controlAcp: (...args) => prepareFresh(...args),
+}));
+jest.mock("@cocalc/server/conat/route-client", () => ({
+  conatWithProjectRoutingForAccount: () => ({ routed: true }),
+}));
 let bay = "entry";
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: () => bay,
@@ -98,6 +108,98 @@ beforeEach(() => {
 });
 
 const inspections = [{ read: getIdentity, method: "get" as const }];
+
+test("fresh conversations route by project owner", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    agent_id: randomUUID(),
+    expected_thread_id: "old",
+  };
+  remote.startFreshConversation.mockResolvedValue({ thread_id: "new" });
+  await expect(startFreshConversation(opts)).resolves.toEqual({
+    thread_id: "new",
+  });
+  expect(remote.startFreshConversation).toHaveBeenCalledWith({
+    ...opts,
+    route: { bay_id: "owner", epoch: 3 },
+  });
+  expect(prepareFresh).not.toHaveBeenCalled();
+});
+
+test("fresh preparation precedes database locking and retries do not switch twice", async () => {
+  const agent_id = randomUUID(),
+    successor = randomUUID();
+  const opts = { account_id, project_id, agent_id, expected_thread_id: "old" };
+  const identity = {
+    agent_id,
+    project_id,
+    created_by: account_id,
+    thread_id: "old",
+    path: request.path,
+  };
+  get.mockResolvedValue(identity);
+  prepareFresh.mockImplementation(async () => {
+    expect(transaction).not.toHaveBeenCalled();
+    return { ok: true, successor_thread_id: successor };
+  });
+  query.mockImplementation(async (sql, params) => {
+    if (sql.startsWith("SELECT * FROM agent_identities"))
+      return { rows: [identity] };
+    if (sql.startsWith("UPDATE agent_identities SET thread_id")) {
+      expect(params[0]).toBe(agent_id);
+      expect(JSON.parse(params[2])[0].thread_id).toBe("old");
+      return {
+        rows: [
+          {
+            ...identity,
+            thread_id: successor,
+            conversation_history: JSON.parse(params[2]),
+          },
+        ],
+      };
+    }
+    return { rows: [] };
+  });
+  const next = await startFreshConversationLocal(opts);
+  expect(next.agent_id).toBe(agent_id);
+  expect(next.thread_id).toBe(successor);
+  expect(
+    query.mock.calls.some(([sql]) =>
+      sql.startsWith("UPDATE agent_identity_runs"),
+    ),
+  ).toBe(true);
+  get.mockResolvedValue(next);
+  await expect(startFreshConversationLocal(opts)).resolves.toEqual(next);
+  expect(prepareFresh).toHaveBeenCalledTimes(1);
+});
+
+test("non-registrants and host preparation failures cannot switch the identity", async () => {
+  const opts = {
+    account_id,
+    project_id,
+    agent_id: randomUUID(),
+    expected_thread_id: "old",
+  };
+  get.mockResolvedValue({
+    ...opts,
+    created_by: randomUUID(),
+    thread_id: "old",
+  });
+  await expect(startFreshConversationLocal(opts)).rejects.toThrow("registrant");
+  expect(prepareFresh).not.toHaveBeenCalled();
+  get.mockResolvedValue({
+    ...opts,
+    created_by: account_id,
+    thread_id: "old",
+    path: request.path,
+  });
+  prepareFresh.mockRejectedValue(new Error("Finish or cancel"));
+  await expect(startFreshConversationLocal(opts)).rejects.toThrow(
+    "Finish or cancel",
+  );
+  expect(transaction).not.toHaveBeenCalled();
+});
 
 test("host mention lookup validates source and routes target under the human, not embedded fields", async () => {
   const sourceProject = randomUUID();

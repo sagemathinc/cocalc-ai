@@ -7,6 +7,120 @@ import { agentStore, agentMessagingEnabled, normalizeAgentPath } from "./store";
 import { assertLocalAgentProject, assertActor, assertAgent } from "./access";
 import { withAgentChat } from "./chat";
 import { withAgentIdentityOwner } from "./identity-routing";
+import { controlAcp } from "@cocalc/conat/ai/acp/client";
+import { conatWithProjectRoutingForAccount } from "@cocalc/server/conat/route-client";
+
+export const startFreshConversation: AgentApi["startFreshConversation"] =
+  async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    const request = {
+      account_id: opts.account_id,
+      project_id: opts.project_id,
+      agent_id: opts.agent_id,
+      expected_thread_id: opts.expected_thread_id,
+    };
+    return withAgentIdentityOwner({
+      project_id: opts.project_id,
+      local: () => startFreshConversationLocal(request),
+      remote: (api, route) => api.startFreshConversation({ ...request, route }),
+    });
+  };
+
+export const startFreshConversationLocal: AgentApi["startFreshConversation"] =
+  async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    requireUuid(opts.project_id, "project_id");
+    requireUuid(opts.agent_id, "agent_id");
+    if (
+      typeof opts.expected_thread_id !== "string" ||
+      !opts.expected_thread_id ||
+      opts.expected_thread_id.length > 200
+    )
+      throw new Error("invalid expected_thread_id");
+    const db = agentStore();
+    await assertLocalAgentProject(opts.project_id);
+    await assertActor(opts.account_id, opts.project_id);
+    const previous = await db.get(opts.agent_id);
+    if (
+      previous.project_id !== opts.project_id ||
+      previous.created_by !== opts.account_id ||
+      previous.disabled_at
+    )
+      throw new Error(
+        "Only the active agent's registrant can start a fresh conversation",
+      );
+    if (previous.thread_id !== opts.expected_thread_id) {
+      if (
+        previous.conversation_history?.some(
+          (entry) => entry.thread_id === opts.expected_thread_id,
+        )
+      )
+        return previous;
+      throw new Error(
+        "The agent conversation changed; refresh before starting fresh",
+      );
+    }
+    if ((previous.conversation_history?.length ?? 0) >= 1000)
+      throw new Error("Agent conversation history capacity reached");
+    // Remote host work never runs under a database lock. The host durably fences
+    // old-thread admission and returns the same successor on an explicit retry.
+    const prepared = await controlAcp(
+      {
+        project_id: previous.project_id,
+        account_id: opts.account_id,
+        path: previous.path,
+        thread_id: previous.thread_id,
+        user_message_id: previous.thread_id,
+        action: "prepare_fresh_conversation",
+      },
+      conatWithProjectRoutingForAccount({ account_id: opts.account_id }),
+    );
+    if (!prepared.ok || !prepared.successor_thread_id)
+      throw new Error(
+        "Project host could not prepare a fresh conversation; retry to finish",
+      );
+    requireUuid(prepared.successor_thread_id, "successor_thread_id");
+    await assertActor(opts.account_id, opts.project_id);
+    return db.transaction(async (sql) => {
+      await sql.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [
+        `agent-identities:${opts.project_id}`,
+      ]);
+      const current = (
+        await sql.query(
+          "SELECT * FROM agent_identities WHERE agent_id=$1 FOR UPDATE",
+          [opts.agent_id],
+        )
+      ).rows[0];
+      if (
+        !current ||
+        current.disabled_at ||
+        current.created_by !== opts.account_id ||
+        current.project_id !== previous.project_id ||
+        current.path !== previous.path
+      )
+        throw new Error("Agent identity changed");
+      if (current.thread_id !== previous.thread_id) return current;
+      const history = [
+        ...(current.conversation_history ?? []),
+        { thread_id: previous.thread_id, ended_at: new Date().toISOString() },
+      ];
+      await sql.query(
+        "UPDATE agent_identity_runs SET ended_at=COALESCE(ended_at,now()) WHERE agent_id=$1",
+        [opts.agent_id],
+      );
+      return (
+        await sql.query(
+          `UPDATE agent_identities SET thread_id=$2,conversation_history=$3::jsonb
+      WHERE agent_id=$1 RETURNING *`,
+          [
+            opts.agent_id,
+            prepared.successor_thread_id,
+            JSON.stringify(history),
+          ],
+        )
+      ).rows[0];
+    });
+  };
 
 async function human(opts: AgentHumanAuth): Promise<string> {
   requireUuid(opts.account_id, "account_id");

@@ -2,6 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { AcpSteerRequest } from "@cocalc/conat/ai/acp/types";
 import { ensureAcpTableMigrated, getAcpDatabase } from "./acp-database";
 
+import { installThreadSuccessorFence } from "./acp-thread-successors";
+
 const TABLE = "acp_steers";
 
 export const ACP_STEER_CLAIM_LEASE_MS = 30_000;
@@ -57,6 +59,7 @@ function init(): void {
     `CREATE INDEX IF NOT EXISTS acp_steers_thread_state_idx ON ${TABLE}(project_id, path, thread_id, state, created_at)`,
   );
   ensureAcpTableMigrated(TABLE);
+  installThreadSuccessorFence(TABLE);
 }
 
 let initialized = false;

@@ -141,7 +141,9 @@ export class PersonalAgentStore {
     for (const row of rows) {
       const named = this.named(row);
       try {
-        await this.endpoint(account, named.endpoint);
+        const identity = await this.endpoint(account, named.endpoint);
+        named.path = identity.path;
+        named.thread_id = identity.thread_id;
       } catch {
         named.available = false;
       }

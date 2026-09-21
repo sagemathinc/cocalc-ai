@@ -51,6 +51,7 @@ export const agent = {
   authorizeRpcExecution: authFirstRequireHostWithAccountTarget,
   getMentionIdentity: authFirstRequireHostWithAccountTarget,
   registerIdentity: authFirstRequireAccount,
+  startFreshConversation: authFirstRequireAccount,
   listIdentities: authFirstRequireAccount,
   getIdentity: authFirstRequireAccount,
   resolveIdentity: authFirstRequireAccount,
@@ -258,6 +259,13 @@ export interface AgentApi {
       project_id: string;
       path: string;
       thread_id: string;
+    },
+  ): Promise<AgentIdentity>;
+  startFreshConversation(
+    opts: AgentHumanAuth & {
+      project_id: string;
+      agent_id: string;
+      expected_thread_id: string;
     },
   ): Promise<AgentIdentity>;
   listIdentities(opts: {

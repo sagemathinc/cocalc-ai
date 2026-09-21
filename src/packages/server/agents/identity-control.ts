@@ -11,6 +11,7 @@ import {
   registerIdentityLocal,
   getIdentityLocal,
   recoverIdentityLocal,
+  startFreshConversationLocal,
 } from "./api";
 
 async function assertOwner(opts: AgentIdentityReadRequest) {
@@ -29,6 +30,10 @@ async function assertOwner(opts: AgentIdentityReadRequest) {
 
 // Only exposed on the trusted inter-bay fabric, not the public hub agent API.
 export const agentIdentityControl: InterBayAgentIdentityApi = {
+  startFreshConversation: async (opts) => {
+    await assertOwner(opts);
+    return startFreshConversationLocal(opts);
+  },
   get: async (opts) => {
     await assertOwner(opts);
     return getIdentityLocal({

@@ -36,6 +36,9 @@ export interface InterBayAgentIdentityApi {
   resolve(opts: AgentIdentityThreadRequest): Promise<AgentIdentity | undefined>;
   get(opts: AgentIdentityLookupRequest): Promise<AgentIdentity>;
   register(opts: AgentIdentityThreadRequest): Promise<AgentIdentity>;
+  startFreshConversation(
+    opts: AgentIdentityLookupRequest & { expected_thread_id: string },
+  ): Promise<AgentIdentity>;
   recover(
     opts: AgentIdentityLookupRequest & {
       fresh_auth_at: number;
