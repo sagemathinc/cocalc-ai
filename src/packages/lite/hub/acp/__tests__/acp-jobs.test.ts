@@ -310,6 +310,53 @@ describe("acp job queue ordering", () => {
     expect(getAcpJobByOpId(queued.op_id)?.state).toBe("interrupted");
   });
 
+  it("fences a running generic harness as uncertain, not confirmed interrupted", () => {
+    const request = {
+      ...makeRequest({
+        userMessageId: "harness-running",
+        assistantMessageId: "harness-answer",
+        assistantDate: "2026-09-21T00:00:00.000Z",
+      }),
+      runtime: { version: 1, kind: "acp" },
+    };
+    const running = enqueueAcpJob(request as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: running.project_id,
+      path: running.path,
+      thread_id: running.thread_id,
+      worker_id: "worker-before-restart",
+    });
+    const queued = enqueueAcpJob({
+      ...request,
+      chat: {
+        ...request.chat,
+        parent_message_id: "harness-queued",
+        message_id: "harness-queued-answer",
+        message_date: "2026-09-21T00:00:01.000Z",
+      },
+    } as any);
+
+    expect(
+      fenceAcpJobsForProject({
+        project_id: running.project_id,
+        reason: "project restart fence",
+      }),
+    ).toEqual({ queued: 1, running: 1 });
+    expect(getAcpJobByOpId(running.op_id)).toMatchObject({
+      state: "error",
+      error: "project restart fence",
+      recovery_code: null,
+    });
+    expect(getAcpJobByOpId(queued.op_id)?.state).toBe("canceled");
+    setAcpJobState({
+      op_id: running.op_id,
+      state: "completed",
+      worker_id: "worker-before-restart",
+    });
+    expect(getAcpJobByOpId(running.op_id)?.state).toBe("error");
+    expect(listQueuedAcpJobs()).toHaveLength(0);
+  });
+
   it("does not claim a delayed recovery until its availability time", () => {
     const request = {
       ...makeRequest({
