@@ -1138,7 +1138,16 @@ function attentionResponderStillLive(
     path: record.path,
     message_date: messageDate,
   });
-  return lease != null && turnStillLikelyOwnedByLiveWorker(lease);
+  return lease?.state === "running" && turnStillLikelyOwnedByLiveWorker(lease);
+}
+
+function reconcileOrphanedAcpSyncAttention(client: ConatClient): void {
+  for (const record of markAllPendingAcpSyncAttentionStale(
+    "The agent attention responder was lost when its ACP runtime stopped",
+    { preserve: attentionResponderStillLive },
+  )) {
+    void publishStoredAttentionNoticeBestEffort({ client, record });
+  }
 }
 
 function jobStillLikelyOwnedByLiveWorker({
@@ -6945,6 +6954,7 @@ export async function recoverDetachedWorkerStartupState(
     recoveryReason,
   });
   await recoverPendingFailureRecoveryIntents({ client });
+  reconcileOrphanedAcpSyncAttention(client);
 }
 
 function initializeAcpRuntime(client: ConatClient): void {
@@ -7308,6 +7318,7 @@ export async function runDetachedAcpQueueWorker(
               : "ACP worker stopped before turn startup",
         });
         await recoverPendingFailureRecoveryIntents({ client });
+        reconcileOrphanedAcpSyncAttention(client);
       }
       const runtimeStatus = getAcpAgentRuntimeStatus();
       const hasWork =
@@ -12257,12 +12268,7 @@ export async function init(
     preferContainerExecutor(),
   );
   initializeAcpRuntime(client);
-  for (const record of markAllPendingAcpSyncAttentionStale(
-    "Codex attention responder was lost when the ACP service restarted",
-    { preserve: attentionResponderStillLive },
-  )) {
-    void publishStoredAttentionNoticeBestEffort({ client, record });
-  }
+  reconcileOrphanedAcpSyncAttention(client);
   process.once("exit", () => {
     void disposeAcpAgents();
   });

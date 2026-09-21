@@ -41,6 +41,15 @@ import {
   enqueueAcpInterrupt,
   listPendingAcpInterrupts,
 } from "../../sqlite/acp-interrupts";
+import {
+  getAcpAttention,
+  upsertAcpAttention,
+} from "../../sqlite/acp-attention";
+
+jest.mock("@cocalc/conat/hub/call-hub", () => ({
+  __esModule: true,
+  default: jest.fn(async () => undefined),
+}));
 
 jest.mock("@cocalc/ai/acp", () => ({
   assertSameTurnPrincipal:
@@ -326,6 +335,51 @@ it("finalizes only the spoken turn when another turn starts in the same thread",
     }),
   );
 });
+
+it.each(["lost", "terminal", "live"])(
+  "worker recovery reconciles synchronous questions with a %s responder",
+  async (responder) => {
+    const request = makeRequest();
+    const record = upsertAcpAttention({
+      project_id: request.project_id,
+      account_id: request.account_id,
+      path: request.chat.path,
+      thread_id: request.chat.thread_id,
+      turn_id: "question-turn",
+      source_kind: "codex_sync_question",
+      source_id: `worker-question-${responder}`,
+      attention_kind: "question",
+      is_blocking: true,
+      title: "ACP needs input",
+      questions: [
+        { id: "target", header: "Target", question: "Choose target" },
+      ],
+      chat: request.chat,
+    });
+    (turns.getAcpTurnLease as jest.Mock).mockReturnValue({
+      state: responder === "terminal" ? "completed" : "running",
+      owner_instance_id: "question-worker",
+      pid: responder === "lost" ? null : process.pid,
+      heartbeat_at: responder === "lost" ? 1 : Date.now(),
+      started_at: 1,
+    });
+    try {
+      await recoverDetachedWorkerStartupState({} as ConatClient);
+      expect(getAcpAttention(record.attention_id)?.state).toBe(
+        responder === "live" ? "pending" : "stale",
+      );
+      if (responder !== "live") {
+        expect(
+          getAcpAttention(record.attention_id)?.resolution_reason,
+        ).toContain("responder was lost");
+      }
+    } finally {
+      getAcpDatabase()
+        .prepare("DELETE FROM acp_attention_requests WHERE attention_id = ?")
+        .run(record.attention_id);
+    }
+  },
+);
 
 it.each(["direct", "durable"])(
   "%s harness cancel keeps the job running until the prompt outcome is known",
