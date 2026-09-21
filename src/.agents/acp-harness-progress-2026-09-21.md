@@ -5,6 +5,14 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+Full `pnpm -C src build:dev` passed at `a7db098b72`, including workspace install,
+generated translations/assets, frontend and backend compilation, and Python API
+documentation. The build was observed to terminal exit zero; no tests were run
+against its changing package outputs. The existing optional debug-log `EACCES`
+warning for `/home/user/.cache/cocalc/project/log` remained nonfatal. This updates
+the full-build baseline only, not the scope or date of prior runtime test results
+and live qualifications. The unrelated untracked PNG was left untouched.
+
 ### Interruption Versus Completion
 
 The real OpenCode cancellation probe exposed an adapter-level success race:
