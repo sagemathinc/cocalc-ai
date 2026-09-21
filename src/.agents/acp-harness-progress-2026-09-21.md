@@ -230,6 +230,13 @@ locations, the original metadata callback was retried, and both fixture
 subvolumes were deleted afterward. This is not an injected failure through the
 entire restore API or process-crash qualification between moves.
 
+The follow-up was deployed as `20260921T123635Z-f3ef948ae811`, SHA-256
+`9156e252cb66583a81b8b8b3d05f58f8fe6d421f399c482fec21da5ef384954a`.
+Upgrade `97b543f0-73aa-4018-88bd-db8c1aa8d336` succeeded after delayed convergence.
+Service-account `ctl status` confirmed the host running, and the typed snapshot
+listing returned successfully afterward. No real project restore failure was
+injected for this follow-up.
+
 Home-only restore is now fixed and live-qualified by `48bbf9f4d2`. It prepares
 the disposable snapshot clone with an anchored reflink copy of the current
 rootfs before swapping homes, leaving the original home/rootfs intact for the
