@@ -1363,14 +1363,14 @@ export function MarkdownInput(props: Props) {
     if (!mentionsOpen) {
       return;
     }
-    const v = mentionableUsers(undefined, {
+    const v = mentionableUsers(mentions_search, {
       avatarLLMSize: 20,
       avatarUserSize: 20,
     });
     if (v.length > 0) {
       set_mentions(v);
     }
-  }, [mentionableUsers, mentionsOpen]);
+  }, [mentionableUsers, mentionsOpen, mentions_search]);
 
   function close_mentions() {
     set_mentions(undefined);

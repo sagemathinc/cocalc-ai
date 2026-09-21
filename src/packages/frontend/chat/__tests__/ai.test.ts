@@ -47,6 +47,15 @@ function makeMessage(overrides: Record<string, any> = {}) {
 }
 
 describe("processAI Codex dispatch", () => {
+  it("never dispatches a posted message, even on regenerate", async () => {
+    await processAI({
+      actions: makeActions(),
+      message: makeMessage({ post_only: true }),
+      threadModel: "gpt-5.4",
+      tag: "regenerate",
+    });
+    expect(processAcpLLM).not.toHaveBeenCalled();
+  });
   afterEach(() => {
     jest.clearAllMocks();
   });

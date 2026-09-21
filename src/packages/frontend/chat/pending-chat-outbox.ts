@@ -34,6 +34,7 @@ export type PendingChatSend = {
   reply_thread_id?: string;
   parent_message_id?: string;
   send_mode?: "immediate";
+  postOnly?: boolean;
   name?: string;
   threadAgent?: NewThreadAgentOptions;
   threadAppearance?: NewThreadAppearanceOptions;

@@ -905,6 +905,7 @@ export class ChatActions extends Actions<ChatState> {
     threadAppearance,
     preserveSelectedThread,
     skipModelDispatch,
+    postOnly,
     parent_message_id,
     acpConfigOverride,
     chatIdentity,
@@ -931,6 +932,7 @@ export class ChatActions extends Actions<ChatState> {
     preserveSelectedThread?: boolean;
     // if true, append message but never dispatch to model/agent runtime
     skipModelDispatch?: boolean;
+    postOnly?: boolean;
     // direct parent for linear thread placement
     parent_message_id?: string;
     // explicit ACP config snapshot to use for immediate dispatch
@@ -1023,13 +1025,14 @@ export class ChatActions extends Actions<ChatState> {
       parent_message_id: resolvedParentMessageId,
       editing: {},
     } as ChatMessage;
-    if (send_mode === "immediate") {
+    if (postOnly) (message as any).post_only = true;
+    if (!postOnly && send_mode === "immediate") {
       (message as any).acp_send_mode = "immediate";
       if (recoveredNotSent !== true) {
         (message as any).acp_state = "sending";
       }
     }
-    if (recoveredNotSent === true) {
+    if (!postOnly && recoveredNotSent === true) {
       (message as any).acp_state = "not-sent";
     }
     if (trimmedAcpPrompt) {
@@ -1046,8 +1049,9 @@ export class ChatActions extends Actions<ChatState> {
     if (!this.setSyncdb(message)) {
       return "";
     }
-    const initialAcpState =
-      recoveredNotSent === true
+    const initialAcpState = postOnly
+      ? undefined
+      : recoveredNotSent === true
         ? "not-sent"
         : send_mode === "immediate"
           ? "sending"
@@ -1059,7 +1063,7 @@ export class ChatActions extends Actions<ChatState> {
       );
       this.store.setState({ acpState: nextAcpState });
     }
-    if (send_mode === "immediate") {
+    if (!postOnly && send_mode === "immediate") {
       // Syncdoc changes are throttled, but guidance must move from the composer
       // into the running activity immediately. The authoritative row replaces
       // this exact message_id/date when the syncdoc change arrives.
@@ -1177,7 +1181,7 @@ export class ChatActions extends Actions<ChatState> {
       });
     }
 
-    if (!skipModelDispatch) {
+    if (!skipModelDispatch && !postOnly) {
       (async () => {
         await this.processAI({
           message,
@@ -2783,6 +2787,7 @@ export class ChatActions extends Actions<ChatState> {
     if (!threadMessages) return history;
 
     for (const message of threadMessages) {
+      if (field<boolean>(message, "post_only")) continue;
       const mostRecent = historyArray(message)[0];
       // there must be at least one history entry, otherwise the message is broken
       if (!mostRecent) continue;
@@ -3284,6 +3289,7 @@ export class ChatActions extends Actions<ChatState> {
 
     const history: { author: string; content: string }[] = [];
     for (const message of threadMessages) {
+      if (field<boolean>(message, "post_only")) continue;
       const mostRecent = historyArray(message)[0];
       if (!mostRecent) continue;
       const sender_id: string = senderId(message) ?? "";

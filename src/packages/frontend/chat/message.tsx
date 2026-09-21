@@ -3066,6 +3066,8 @@ export default function Message({
   );
 
   const renderAcpState = () => {
+    if (field<boolean>(message, "post_only"))
+      return <Tag>Posted · Not sent to agent</Tag>;
     if (!acpStateToRender) return null;
     if (acpStateToRender === "queue") {
       return (
@@ -3166,7 +3168,7 @@ export default function Message({
           onOpenActivityLog={openActivityFromGitBrowser}
         />
       ) : null}
-      {acpStateToRender ? (
+      {acpStateToRender || field<boolean>(message, "post_only") ? (
         <div style={{ width: "100%" }}>
           <Divider>{renderAcpState()}</Divider>
         </div>

@@ -35,6 +35,7 @@ export async function processAI({
 }): Promise<void> {
   const { syncdb, store } = actions;
   if (!syncdb || !store) return;
+  if ((message as any).post_only) return;
 
   const inputRaw = message.history?.[0]?.content as string | undefined;
   if (inputRaw == null) return;

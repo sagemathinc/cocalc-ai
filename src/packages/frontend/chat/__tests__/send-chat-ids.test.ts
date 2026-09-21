@@ -97,6 +97,25 @@ function bindRealDeleteDraft(actions: any): void {
 }
 
 describe("sendChat identity fields", () => {
+  it("persists posts without dispatching and excludes them from agent history", () => {
+    const actions = makeActions();
+    actions.sendChat({
+      input: "note for people",
+      postOnly: true,
+      chatIdentity: {
+        date: "2025-01-01T00:00:00.000Z",
+        message_id: "post",
+        thread_id: "post-thread",
+      },
+    });
+    const row = actions.syncdb.set.mock.calls
+      .map(([row]) => row)
+      .find((row) => row.event === "chat");
+    expect(row.post_only).toBe(true);
+    expect(actions.processAI).not.toHaveBeenCalled();
+    actions.getMessagesInThread = () => [row];
+    expect(actions.getLLMHistory(row.thread_id)).toEqual([]);
+  });
   it("reads and updates the model from live ImmerDB thread rows without losing session settings", () => {
     const threadId = "37333333-3333-4333-8333-333333333333";
     const config = {

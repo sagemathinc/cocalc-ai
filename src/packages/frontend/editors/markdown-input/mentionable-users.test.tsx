@@ -35,6 +35,9 @@ jest.mock("@cocalc/frontend/agents/api", () => ({
     naming_account_id: agent.account_id,
   }),
   useNamedAgents: (enabled) => mockUseNamedAgents(enabled),
+  useAgentNetworks: () => ({
+    directory: { networks: [], controls: { paused: false } },
+  }),
 }));
 
 jest.mock("@cocalc/frontend/agents/mention-context", () => ({
@@ -193,8 +196,8 @@ describe("mentionableUsers", () => {
     mockStores(jest.fn().mockReturnValue("Ada Lovelace"));
     const { result } = renderHook(() => useMentionableUsers());
 
-    const items = result.current(undefined);
-    expect(items.map(({ group }) => group)).toContain("Agents");
+    const items = result.current("illustrator");
+    expect(items.map(({ group }) => group)).toContain("Other agents");
     expect(mockUseNamedAgents).toHaveBeenCalledWith(true);
   });
 });

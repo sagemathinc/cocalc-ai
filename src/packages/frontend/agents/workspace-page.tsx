@@ -1168,6 +1168,7 @@ function NewAgentPanel({
 }
 
 function AgentProjectContext({
+  selectedNetworkId,
   showEditorControls,
   agent,
   workspaceAgents,
@@ -1180,6 +1181,7 @@ function AgentProjectContext({
   onClose,
   onOpenDocs,
 }: {
+  selectedNetworkId?: string;
   showEditorControls: boolean;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1455,6 +1457,7 @@ function AgentProjectContext({
     <ProjectContext.Provider value={projectContext}>
       <ChatEmbeddingOptionsProvider
         value={{
+          selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
           hideTopControls: true,
@@ -2122,6 +2125,7 @@ function AgentWorkspace({
       )}
       <div style={{ position: "relative", minHeight: 0, flex: 1 }}>
         <AgentProjectContext
+          selectedNetworkId={selectedNetworkId}
           showEditorControls={showEditorControls}
           agent={agent}
           workspaceAgents={workspaceAgents}

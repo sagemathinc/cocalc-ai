@@ -1326,6 +1326,7 @@ function ChatPanelContent({
         }
         const sent = actions.sendChat({
           input: pending.input,
+          postOnly: pending.postOnly,
           acp_prompt: pending.acp_prompt,
           artifact_feedback: pending.artifact_feedback,
           sender_id: pending.sender_id,
@@ -2042,14 +2043,14 @@ function ChatPanelContent({
   }, []);
 
   const clearComposerNow = useCallback(
-    (draftKey: number) => {
+    (draftKey: number, preserveAgentPrompt = false) => {
       // Keep local guard state coherent immediately, before async state/render.
       inputRef.current = "";
-      acpPromptRef.current = "";
+      if (!preserveAgentPrompt) acpPromptRef.current = "";
       // Clear current composer draft before send switches selected thread context.
       actions.deleteDraft(draftKey);
       void clearInput();
-      void clearAcpPrompt();
+      if (!preserveAgentPrompt) void clearAcpPrompt();
     },
     [actions, clearAcpPrompt, clearInput],
   );
@@ -2093,20 +2094,22 @@ function ChatPanelContent({
 
   async function sendMessage(
     extraInput?: string,
-    opts?: { immediate?: boolean },
+    opts?: { immediate?: boolean; postOnly?: boolean },
   ): Promise<void> {
     const rawSendingText = `${extraInput ?? inputRef.current ?? ""}`;
     const rawAcpPrompt = `${acpPromptRef.current ?? ""}`.trim();
     let feedback;
     try {
-      feedback = artifactFeedback.read();
+      feedback = opts?.postOnly ? undefined : artifactFeedback.read();
     } catch (err) {
       antdMessage.error(String(err));
       return;
     }
-    const feedbackPrompt = feedback
-      ? `${rawAcpPrompt || rawSendingText}\n\n${artifactFeedbackPrompt(feedback)}`
-      : rawAcpPrompt;
+    const feedbackPrompt = opts?.postOnly
+      ? ""
+      : feedback
+        ? `${rawAcpPrompt || rawSendingText}\n\n${artifactFeedbackPrompt(feedback)}`
+        : rawAcpPrompt;
     const sendingText = rawSendingText.trim();
     if (sendingText.length === 0) return;
     const target = resolveReplyTarget(opts?.immediate === true);
@@ -2118,15 +2121,17 @@ function ChatPanelContent({
             threadId: reply_thread_id,
           })
         : undefined;
-    const isCodexSubmit = isCodexSubmitTarget({
-      newThreadAgentMode: !reply_thread_id
-        ? newThreadSetup.agentMode
-        : undefined,
-      existingThreadAgentKind: existingThreadMetadata?.agent_kind,
-      existingThreadAgentModel:
-        existingThreadMetadata?.agent_model ??
-        existingThreadMetadata?.acp_config?.model,
-    });
+    const isCodexSubmit =
+      !opts?.postOnly &&
+      isCodexSubmitTarget({
+        newThreadAgentMode: !reply_thread_id
+          ? newThreadSetup.agentMode
+          : undefined,
+        existingThreadAgentKind: existingThreadMetadata?.agent_kind,
+        existingThreadAgentModel:
+          existingThreadMetadata?.agent_model ??
+          existingThreadMetadata?.acp_config?.model,
+      });
     if (isCodexSubmit && !aiAgentPolicyAllowed) {
       Modal.error({
         title: "AI integrations are disabled",
@@ -2302,13 +2307,15 @@ function ChatPanelContent({
       reply_thread_id,
       parent_message_id,
       send_mode: sendMode,
+      postOnly: opts?.postOnly,
       name: newThreadName,
       threadAgent,
       threadAppearance,
       acpConfigOverride,
       shouldMarkNotSent:
-        (!reply_thread_id && newThreadSetup.agentMode === "codex") ||
-        existingThreadMetadata?.agent_kind === "acp",
+        !opts?.postOnly &&
+        ((!reply_thread_id && newThreadSetup.agentMode === "codex") ||
+          existingThreadMetadata?.agent_kind === "acp"),
     };
     let pendingStored = false;
     try {
@@ -2318,7 +2325,7 @@ function ChatPanelContent({
     }
 
     if (pendingStored) {
-      clearComposerNow(composerDraftKey);
+      clearComposerNow(composerDraftKey, opts?.postOnly);
     }
 
     const timeStamp = actions.sendChat({
@@ -2334,6 +2341,7 @@ function ChatPanelContent({
       acpConfigOverride,
       chatIdentity,
       skipDraftDelete: !pendingStored,
+      postOnly: opts?.postOnly,
     });
     if (!timeStamp) {
       await removePendingChatSend(pendingChatSend);
@@ -2988,6 +2996,7 @@ function ChatPanelContent({
             acpPrompt={acpPrompt}
             setAcpPrompt={setComposerAcpPrompt}
             on_send={on_send}
+            on_post={(value) => sendMessage(value, { postOnly: true })}
             onPrepareAgentThread={(draft) =>
               createThreadWithoutMessage(true, draft)
             }

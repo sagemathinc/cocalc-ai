@@ -304,6 +304,7 @@ export async function processAcpLLM({
   sendMode,
   acpConfigOverride,
 }: ProcessAcpRequest): Promise<void> {
+  if (field<boolean>(message, "post_only")) return;
   const { syncdb, store, chatStreams } = actions;
   if (syncdb == null || store == null) return;
 

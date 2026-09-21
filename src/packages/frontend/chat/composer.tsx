@@ -50,6 +50,8 @@ import { namedAgentReference } from "@cocalc/frontend/agents/api";
 import { AgentFileAttachment } from "./agent-file-attachment";
 import { CodexConfigButton } from "./codex";
 import { useChatEmbeddingOptions } from "./embedding-options";
+import { ComposerDeliverySelector } from "./composer-delivery";
+import type { ComposerDelivery } from "./composer-delivery";
 
 export interface ChatRoomComposerProps {
   actions: ChatActions;
@@ -63,6 +65,7 @@ export interface ChatRoomComposerProps {
   acpPrompt?: string;
   setAcpPrompt?: (value: string) => void;
   on_send: (value?: string) => void | Promise<void>;
+  on_post?: (value?: string) => void | Promise<void>;
   onPrepareAgentThread?: (draft?: string) => Promise<string | undefined>;
   on_send_immediately?: (value?: string) => void | Promise<void>;
   onIncreaseFontSize?: () => void;
@@ -125,6 +128,7 @@ export function ChatRoomComposer({
   acpPrompt = "",
   setAcpPrompt,
   on_send,
+  on_post,
   onPrepareAgentThread,
   on_send_immediately,
   onIncreaseFontSize,
@@ -146,6 +150,9 @@ export function ChatRoomComposer({
   mobile = false,
 }: ChatRoomComposerProps) {
   const embeddingOptions = useChatEmbeddingOptions();
+  const [delivery, setDelivery] = useState<ComposerDelivery>("agent");
+  useEffect(() => setDelivery("agent"), [selectedThread?.key]);
+  const postOnly = delivery === "post" && on_post != null;
   const visualViewport = useChatVisualViewport(mobile);
   const HEIGHT_STORAGE_KEY = "chat-composer-height-px";
   const DEFAULT_MAX_VH = 0.25;
@@ -461,7 +468,10 @@ export function ChatRoomComposer({
   ]);
   const agentMentionContext = {
     ...agentMentions.context,
+    source: { projectId: project_id, path, threadId: selectedThread?.key },
+    postOnly,
     onSelect: (reference: AgentMentionReference) => {
+      if (postOnly) return;
       if (!selectedThread && isNewThreadCodex)
         void prepareAgentThread({ reference });
       else agentMentions.context.onSelect(reference);
@@ -579,6 +589,15 @@ export function ChatRoomComposer({
   const handlePrimarySend = hasRunningCodexTurn
     ? handleSendImmediately
     : handleSend;
+  const handlePost = (value?: string | { preventDefault?: () => void }) => {
+    const draft =
+      typeof value === "string"
+        ? value
+        : (chatInputControlRef.current?.getValue?.() ?? input);
+    if (!draft.trim() || !on_post) return;
+    void on_post(draft);
+    refocusComposerInput();
+  };
 
   const composerStyle: CSSProperties = {
     display: "flex",
@@ -798,6 +817,7 @@ export function ChatRoomComposer({
               input={input}
               presenceThreadKey={presenceThreadKey}
               on_send={handlePrimarySend}
+              on_post={on_post ? handlePost : undefined}
               on_font_size_change={handleFontSizeChange}
               height={chatInputHeight}
               autoGrowMaxHeight={autoGrowMaxHeight}
@@ -817,7 +837,11 @@ export function ChatRoomComposer({
               date={composerDraftKey}
               sessionToken={composerSession}
               editBarStyle={{ overflow: "hidden" }}
-              placeholder={composerPlaceholder}
+              placeholder={
+                postOnly
+                  ? "Post a note; @mention people to notify them..."
+                  : composerPlaceholder
+              }
               externalMultilinePasteAsCodeBlock
               toolbarRightContent={
                 hasInput ? (
@@ -921,7 +945,7 @@ export function ChatRoomComposer({
               </Button>
             </Tooltip>
           ) : null}
-          {hasRunningCodexTurn ? (
+          {hasRunningCodexTurn && !postOnly ? (
             <Tooltip
               title={
                 <FormattedMessage
@@ -940,9 +964,20 @@ export function ChatRoomComposer({
               </Button>
             </Tooltip>
           ) : null}
+          {on_post && (isSelectedThreadAI || showGoal || isNewThreadCodex) && (
+            <ComposerDeliverySelector
+              value={delivery}
+              onChange={(value) => {
+                setDelivery(value);
+                refocusComposerInput();
+              }}
+            />
+          )}
           <Tooltip
             title={
-              hasRunningCodexTurn ? (
+              postOnly ? (
+                "Post without sending to the agent (Ctrl+Enter)"
+              ) : hasRunningCodexTurn ? (
                 <FormattedMessage
                   id="chatroom.chat_input.steer_button.tooltip"
                   defaultMessage={"Steer running turn (Shift+Enter)"}
@@ -956,11 +991,17 @@ export function ChatRoomComposer({
             }
           >
             <Button
-              onClick={hasRunningCodexTurn ? handleSendImmediately : handleSend}
+              onClick={postOnly ? handlePost : handlePrimarySend}
               disabled={!hasInput}
               type="primary"
               shape="circle"
-              aria-label={hasRunningCodexTurn ? "Steer" : "Send"}
+              aria-label={
+                postOnly
+                  ? "Post message"
+                  : hasRunningCodexTurn
+                    ? "Steer"
+                    : "Send"
+              }
               data-testid="chat-composer-send"
               icon={<Icon name="arrow-up" />}
               style={{ height: 32, minWidth: 32, width: 32 }}
