@@ -5,6 +5,22 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+### Interruption Versus Completion
+
+The real OpenCode cancellation probe exposed an adapter-level success race:
+`HarnessAgent` previously accepted `end_turn` even after CoCalc requested an
+interruption. It now records interruption separately from the raw harness stop
+reason. If normal completion arrives after interruption, the turn fails with
+`outcome_unknown` and the runtime is disposed; it does not invent confirmed
+cancellation or publish a successful summary. Interruption before submission
+prevents the prompt from being sent. The guard also covers attention finalization
+before summary publication. Three subprocess regressions cover these cases,
+including preserving the harness's raw `end_turn` event for diagnostics.
+
+Validation: 68 subprocess tests, 140 native AI tests and project-host TypeScript
+pass. This source fix still needs a backend deployment and live durable-path
+qualification; the earlier real-harness smoke observations remain unchanged.
+
 ### Real Harness Provider Rejection
 
 Added `--provider-cancel`: fail task inference with HTTP 503, request cancellation

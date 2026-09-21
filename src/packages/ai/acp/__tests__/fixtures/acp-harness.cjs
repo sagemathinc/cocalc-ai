@@ -252,7 +252,11 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       if (process.argv.includes("--ignore-cancel")) return;
       if (pendingPrompt != null) {
         questionPrompt = undefined;
-        result(pendingPrompt, { stopReason: "cancelled" });
+        result(pendingPrompt, {
+          stopReason: process.argv.includes("--cancel-as-completed")
+            ? "end_turn"
+            : "cancelled",
+        });
         pendingPrompt = undefined;
       }
       return;

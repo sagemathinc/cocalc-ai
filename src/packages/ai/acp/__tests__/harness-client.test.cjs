@@ -620,6 +620,68 @@ test("agent adapter preserves permission policy events and cancellation stop rea
   );
   assert.ok(!events.some((event) => event.type === "summary"));
 });
+test("normal completion after interruption is uncertain, not a successful summary", async (t) => {
+  const { agent, request, events } = adapter(t, ["--cancel-as-completed"]);
+  let started;
+  const ready = new Promise((resolve) => {
+    started = resolve;
+  });
+  const run = agent.evaluate({
+    ...request,
+    prompt: "hang",
+    stream: async (event) => {
+      events.push(event);
+      if (event.event?.type === "message") started();
+    },
+  });
+  const rejected = assert.rejects(run, (error) => {
+    assert.equal(error.code, "outcome_unknown");
+    assert.match(error.message, /cancellation was not confirmed/);
+    return true;
+  });
+  await ready;
+  assert.equal(await agent.interruptOutstanding("fixture-session"), true);
+  await rejected;
+  assert.ok(
+    events.some((event) => event.event?.data?.stopReason === "end_turn"),
+  );
+  assert.ok(!events.some((event) => event.type === "summary"));
+  await assert.rejects(agent.evaluate(request), /not idle/);
+});
+
+test("interruption before prompt submission does not send inference", async (t) => {
+  const { agent, request, events, stops } = adapter(t);
+  await assert.rejects(
+    agent.evaluate({
+      ...request,
+      stream: async (event) => {
+        events.push(event);
+        if (event.type === "status" && event.state === "running")
+          assert.equal(
+            await agent.interruptOutstanding("fixture-session"),
+            true,
+          );
+      },
+    }),
+    /interrupted before submission/,
+  );
+  assert.ok(!events.some((event) => event.event?.type === "message"));
+  assert.ok(!events.some((event) => event.type === "summary"));
+  assert.equal(stops(), 1);
+});
+
+test("interruption during attention finalization cannot publish success", async (t) => {
+  const { agent, request, events, stops } = adapter(t, [], {
+    requestSyncQuestion: async () => ({}),
+    runtimeClosed: async (context) => {
+      if (context) await agent.interruptOutstanding("fixture-session");
+    },
+  });
+  await assert.rejects(agent.evaluate(request), { code: "outcome_unknown" });
+  assert.ok(!events.some((event) => event.type === "summary"));
+  assert.equal(stops(), 1);
+});
+
 async function start(t, args = [], questionHandler) {
   let child;
   const client = await AcpHarnessClient.start(

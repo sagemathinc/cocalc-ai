@@ -18,6 +18,7 @@ export class HarnessAgent implements AcpAgent {
   private client?: AcpHarnessClient;
   private busy = false;
   private closed = false;
+  private interrupted = false;
   private binding: HarnessBinding;
   private conversation: { path: string; threadId: string };
   private attentionContext?: CodexAttentionContext;
@@ -66,6 +67,7 @@ export class HarnessAgent implements AcpAgent {
       throw Error("ACP native session binding mismatch");
 
     this.busy = true;
+    this.interrupted = false;
     try {
       if (!this.client) {
         const client = await AcpHarnessClient.start(
@@ -134,6 +136,11 @@ export class HarnessAgent implements AcpAgent {
       });
       await publishControls();
       let finalResponse = "";
+      if (this.interrupted)
+        throw new HarnessError(
+          "rejected",
+          "ACP prompt interrupted before submission",
+        );
       const result = await client.prompt(
         harnessPrompt(request),
         async (event) => {
@@ -185,6 +192,11 @@ export class HarnessAgent implements AcpAgent {
       }
       // Finalize pending attention before publishing a successful completion.
       await this.attention?.runtimeClosed?.(this.attentionContext);
+      if (this.interrupted)
+        throw new HarnessError(
+          "outcome_unknown",
+          "ACP prompt completed after interruption was requested; cancellation was not confirmed",
+        );
       await request.stream({
         type: "summary",
         finalResponse,
@@ -205,6 +217,7 @@ export class HarnessAgent implements AcpAgent {
 
   async interruptOutstanding(threadId: string): Promise<boolean> {
     if (!this.hasRunningTurn(threadId)) return false;
+    this.interrupted = true;
     await this.client!.cancel();
     return true;
   }
