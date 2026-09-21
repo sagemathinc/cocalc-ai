@@ -3,6 +3,29 @@
 Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 `feature/my-agents-workspace` (#640).
 
+## Broad Regression Checkpoint
+
+At source commit `4f0f063038405cf6a2161156c1dfb9a7d3230de7`, the following
+checks completed successfully (2026-09-21):
+
+- `pnpm test --runInBand` in `src/packages/ai`: 12 suites, 140 tests. Includes
+  native app-server, session/store, goals, attention and agent SDK tests.
+- `pnpm exec jest --runInBand` in `src/packages/lite`: all 48 configured ACP
+  suites, 441 tests. Includes credential admission, automation, queueing,
+  attention, steering, detached workers and generic discovery/runtime tests.
+- `node --test acp/__tests__/harness-client.test.cjs` in `src/packages/ai`:
+  37 subprocess protocol/lifecycle tests. This suite is separate from Jest.
+- `pnpm exec jest --runInBand --testPathPatterns='(codex|acp).*test'` in
+  `src/packages/project-host`: 14 suites, 98 tests covering native credentials,
+  launch/funding helpers, ACP workers and generic launch/reaping.
+- `pnpm -C src version-check`: workspace dependency consistency passed.
+
+These 716 tests strengthen the native/generic regression baseline, but do not
+prove all live release gates below. No paid inference or real credentials were
+used. The final frontend bundle was separately rechecked at 320/768/1366 CSS
+pixels in light and dark themes, including keyboard dialog opening, Escape and
+focus restoration, without the development stale-build overlay.
+
 ## Implemented
 
 - Compact chat toolbars now open harness controls in an **ACP harness settings**
