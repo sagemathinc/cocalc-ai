@@ -1,6 +1,7 @@
 import type { AgentRpcControlApi } from "@cocalc/conat/inter-bay/agent-rpc";
 import { createAgentRpcControlClient } from "@cocalc/conat/inter-bay/agent-rpc";
 import { requireUuid } from "@cocalc/conat/agents/protocol";
+import type { ExternalAgentEnqueueOptions } from "@cocalc/conat/agents/external";
 import { resolveAccountHomeBay } from "@cocalc/server/bay-directory";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOrigin } from "@cocalc/server/bay-public-origin";
@@ -36,6 +37,11 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
   const home_bay_id = await home(opts.account_id);
   if (home_bay_id !== opts.home_bay_id)
     throw new Error("stale external account home");
+  if (opts.action === "enqueue") {
+    if (home_bay_id !== getConfiguredBayId())
+      throw new Error("external inbox requires account home");
+    return { message: await externalStore().enqueue(opts) };
+  }
   if (opts.action === "claim-enrollment") {
     if (
       !Number.isFinite(opts.fresh_auth_at) ||
@@ -63,6 +69,20 @@ export const externalControl: AgentRpcControlApi["external"] = async (opts) => {
   }
   throw new Error("unsupported external agent control operation");
 };
+
+export async function enqueueExternalAgentMessage(
+  opts: ExternalAgentEnqueueOptions,
+) {
+  const home_bay_id = await home(opts.account_id);
+  const result = await control(home_bay_id).external({
+    ...opts,
+    action: "enqueue",
+    home_bay_id,
+  });
+  if (!("message" in result))
+    throw new Error("invalid external inbox response");
+  return result.message;
+}
 
 export async function approveExternalAgentLogin(opts: {
   account_id: string;

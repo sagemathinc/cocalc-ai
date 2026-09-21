@@ -56,6 +56,7 @@ import { agentStore } from "./store";
 import {
   assertExternalAgentLoginEnabled,
   externalControl,
+  enqueueExternalAgentMessage,
   externalStore,
 } from "./external";
 import { personalControl, withPersonalHome } from "./personal";
@@ -145,9 +146,8 @@ async function submitBroadcast(
       );
     } catch {
       children.push(
-        rpcOutcome(child, "rejected", {
-          chat_effect: "none",
-          reason: "Broadcast child was rejected before admission",
+        rpcOutcome(child, "unknown", {
+          reason: "Broadcast child admission could not be confirmed",
         }),
       );
     }
@@ -718,7 +718,7 @@ async function submitExternalInbox(
       reason: "External target principal mismatch",
     });
   try {
-    await externalStore().enqueue({
+    await enqueueExternalAgentMessage({
       account_id: checked.account_id,
       installation_id: request.target.installation_id,
       attempt_id: request.attempt_id,
@@ -739,9 +739,8 @@ async function submitExternalInbox(
     );
     return outcome;
   } catch (error) {
-    return rpcOutcome(request, "rejected", {
-      chat_effect: "none",
-      reason: `External inbox unavailable: ${error}`,
+    return rpcOutcome(request, "unknown", {
+      reason: `External inbox admission could not be confirmed: ${error}`,
     });
   }
 }
