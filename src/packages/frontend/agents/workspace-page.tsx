@@ -33,6 +33,8 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
+import { agentSearchStore } from "./search-state";
+import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
@@ -1385,13 +1387,24 @@ function AgentProjectContext({
       agent.endpoint.project_id,
       agent.path,
     );
-    if (typeof editorActions?.gotoFragment === "function") {
-      void editorActions.gotoFragment({ thread: agent.thread_id });
-    } else {
-      redux
-        .getProjectActions(agent.endpoint.project_id)
-        ?.gotoFragment(agent.path, { thread: agent.thread_id });
-    }
+    const openFragment = () => {
+      const fragment = Fragment.get();
+      const chat = agentMessageFragment(fragment, agent.thread_id);
+      if (typeof editorActions?.gotoFragment === "function") {
+        void editorActions.gotoFragment({ thread: agent.thread_id, chat });
+      } else {
+        redux
+          .getProjectActions(agent.endpoint.project_id)
+          ?.gotoFragment(agent.path, { thread: agent.thread_id });
+      }
+    };
+    openFragment();
+    window.addEventListener("hashchange", openFragment);
+    window.addEventListener("popstate", openFragment);
+    return () => {
+      window.removeEventListener("hashchange", openFragment);
+      window.removeEventListener("popstate", openFragment);
+    };
   }, [active, agent.endpoint.project_id, agent.path, agent.thread_id, ready]);
 
   useEffect(() => {
@@ -1464,6 +1477,9 @@ function AgentProjectContext({
       <ChatEmbeddingOptionsProvider
         value={{
           agentWorkspace: true,
+          onSearchAll: () => {
+            if (accountId) agentSearchStore(accountId).set({ open: true });
+          },
           selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
@@ -2164,6 +2180,7 @@ function AgentWorkspace({
 }
 
 export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
+  const searchNavigation = useRef(0);
   const searchProjectMap = useTypedRedux("projects", "project_map");
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
@@ -2436,6 +2453,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         page: "agents",
         agent_id: routeName ?? agentId,
       }),
+      "",
     );
   }
 
@@ -2472,11 +2490,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
   }
 
   async function openSearchHit(result: AgentSearchHit) {
+    const navigation = ++searchNavigation.current;
+    const superseded = () => navigation !== searchNavigation.current;
     const { agent, threadId, hit, historical } = result;
     const identity = await personalAgentApi().getIdentity({
       project_id: agent.endpoint.project_id,
       agent_id: agent.endpoint.agent_id,
     });
+    if (superseded()) return;
     if (!historical && identity.thread_id !== threadId)
       throw new Error(
         "This agent started a fresh conversation. Search again to open its current results.",
@@ -2503,12 +2524,14 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         chat: hit.date_ms == null ? undefined : `${hit.date_ms}`,
       },
     });
+    if (superseded()) return;
     const editor: any = redux.getEditorActions(
       agent.endpoint.project_id,
       agent.path,
     );
     if (!editor) throw new Error("Unable to open the conversation editor");
     await editor.gotoFragment({ thread: threadId });
+    if (superseded()) return;
     const chat = editor.getChatActions();
     if (!chat) throw new Error("Conversation is not ready; try again shortly");
     if (hit.segment_id !== "head") {
@@ -2520,11 +2543,20 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           thread_id: threadId,
           row_id: hit.row_id,
         });
+      if (superseded()) return;
       if (!archived.row?.row)
         throw new Error("Archived message is no longer available");
       chat.hydrateArchivedRows([archived.row.row]);
     }
     await editor.gotoFragment({ thread: threadId, chat: hit.date_ms });
+    if (
+      !superseded() &&
+      !historical &&
+      hit.date_ms != null &&
+      redux.getStore("page").get("active_agent_id") === agent.endpoint.agent_id
+    ) {
+      Fragment.set({ thread: threadId, chat: `${hit.date_ms}` });
+    }
   }
 
   async function copyAgent(copyName: string) {
@@ -2955,10 +2987,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             }
           />
         )}
-        <Input.Search
+        <Input
           allowClear
-          aria-label="Search agents"
-          placeholder="Search agents"
+          aria-label="Filter agents by name"
+          placeholder="Filter agents by name"
           value={search}
           onChange={(event) => setSearch(event.target.value)}
         />

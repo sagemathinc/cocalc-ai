@@ -27,7 +27,7 @@ jest.mock("@cocalc/frontend/components", () => ({
   TimeAgo: ({ date }) => <span>{date.toISOString()}</span>,
 }));
 
-test("drawer preserves query, filters and results through unmount; keyboard opens a result and closes the drawer", async () => {
+test("drawer preserves query, filters and results through unmount; inspecting a result keeps it open until Escape", async () => {
   const user = userEvent.setup();
   search.mockResolvedValue({
     includes_head: true,
@@ -57,7 +57,7 @@ test("drawer preserves query, filters and results through unmount; keyboard open
     onSelect: jest.fn(async () => undefined),
   };
   const first = render(<AgentSearch {...props} />);
-  const trigger = screen.getByRole("button", { name: "Search all agents" });
+  const trigger = screen.getByRole("button", { name: "Search conversations" });
   trigger.focus();
   await user.keyboard("{Enter}");
   await user.click(
@@ -93,6 +93,8 @@ test("drawer preserves query, filters and results through unmount; keyboard open
   hit.focus();
   await user.keyboard("{Enter}");
   await waitFor(() => expect(props.onSelect).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("dialog")).not.toBeNull();
+  await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(search).toHaveBeenCalledTimes(1);
 });

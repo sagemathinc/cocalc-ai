@@ -140,7 +140,7 @@ export function AgentSearch({
         icon={<Icon name="search" />}
         onClick={() => store.set({ open: true })}
       >
-        Search all agents
+        Search conversations
       </Button>
       <Drawer
         title="Search all agents"
@@ -236,7 +236,6 @@ export function AgentSearch({
                   borderBottom: `1px solid ${UI_COLORS.border}`,
                 }}
                 onClick={() => {
-                  store.set({ open: false });
                   void onSelect(result).catch((err) =>
                     store.set({ open: true, error: `${err}` }),
                   );

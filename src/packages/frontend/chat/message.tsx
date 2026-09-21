@@ -1329,7 +1329,14 @@ export default function Message({
     actions?.setFragment(d);
     if (typeof window === "undefined") return;
     const url = new URL(window.location.href);
-    url.hash = Fragment.encode({ chat: toMsString(d) });
+    const fragment = {
+      chat: toMsString(d),
+      ...(embeddingOptions.agentWorkspace && messageThreadId
+        ? { thread: messageThreadId }
+        : {}),
+    };
+    url.hash = Fragment.encode(fragment);
+    Fragment.set(fragment);
     window.history.replaceState({}, "", url.href);
     const ok = await copyTextToClipboard({ text: url.href });
     if (ok) {

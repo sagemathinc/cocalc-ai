@@ -19,6 +19,7 @@ export function chatIsForeground(
 
 export interface ChatEmbeddingOptions {
   agentWorkspace?: boolean;
+  onSearchAll?: () => void;
   selectedNetworkId?: string;
   disableConversationFocus?: boolean;
   hideSingleFrameToolbar?: boolean;

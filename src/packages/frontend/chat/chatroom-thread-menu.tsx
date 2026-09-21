@@ -41,6 +41,8 @@ export interface ChatRoomThreadMenuProps {
   confirmDeleteThread: (threadKey: string, label: string) => void;
   openChatFile?: () => void;
   openAutomationModal?: (threadKey: string) => void;
+  openHistory?: () => void;
+  openMaintenance?: () => void;
   archiveLabel?: string;
   onArchive?: () => void | Promise<void>;
   onPinChange?: (pinned: boolean) => void | Promise<void>;
@@ -82,6 +84,8 @@ export function ChatRoomThreadMenu({
   confirmDeleteThread,
   openChatFile,
   openAutomationModal,
+  openHistory,
+  openMaintenance,
   archiveLabel = "Archive chat",
   onArchive,
   onPinChange,
@@ -172,8 +176,30 @@ export function ChatRoomThreadMenu({
         key: "delete",
         label: <span style={{ color: COLORS.ANTD_RED }}>Delete chat</span>,
       },
+      ...(openHistory || openMaintenance
+        ? [
+            {
+              key: "advanced",
+              label: "Advanced / technical",
+              children: [
+                ...(openHistory ? [{ key: "history", label: "History" }] : []),
+                ...(openMaintenance
+                  ? [{ key: "maintenance", label: "Maintenance" }]
+                  : []),
+              ],
+            },
+          ]
+        : []),
     ],
     onClick: ({ key }) => {
+      if (key === "history") {
+        openHistory?.();
+        return;
+      }
+      if (key === "maintenance") {
+        openMaintenance?.();
+        return;
+      }
       if (key === "artifacts") {
         setArtifactsOpen(true);
         return;

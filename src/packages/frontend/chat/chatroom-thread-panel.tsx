@@ -54,6 +54,7 @@ import type {
 import { ChatLog } from "./chat-log";
 import { SearchHitTime } from "./search-hit-time";
 import { THREAD_SEARCH_EVENT } from "./thread-search-request";
+import { useChatEmbeddingOptions } from "./embedding-options";
 import { AgentMessageStatus } from "./agent-message-status";
 import CodexConfigButton, { codexModelOptionsForCatalog } from "./codex";
 import { ThreadAnchorButton } from "./thread-anchor-button";
@@ -617,6 +618,7 @@ export function ChatRoomThreadPanel({
     () => getDefaultCodexNewChatDefaults(),
     [codexNewChatDefaultsSetting],
   );
+  const embeddingOptions = useChatEmbeddingOptions();
   const [threadSearchOpen, setThreadSearchOpen] = useState(false);
   const [newThreadCodexModelCatalog, setNewThreadCodexModelCatalog] = useState<
     CodexModelCapabilityInfo[] | undefined
@@ -771,21 +773,6 @@ export function ChatRoomThreadPanel({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
-  useEffect(() => {
-    const open = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
-      if (
-        detail?.projectId !== project_id ||
-        detail?.path !== path ||
-        detail?.threadId !== selectedThreadId
-      )
-        return;
-      setThreadSearchOpen(true);
-      setTimeout(() => searchInputRef.current?.focus?.(), 0);
-    };
-    window.addEventListener(THREAD_SEARCH_EVENT, open);
-    return () => window.removeEventListener(THREAD_SEARCH_EVENT, open);
-  }, [project_id, path, selectedThreadId]);
   const selectedThreadMeta =
     selectedThreadId != null
       ? actions.getThreadMetadata(selectedThreadId, {
@@ -1214,6 +1201,42 @@ export function ChatRoomThreadPanel({
       setMaintenanceLoading(false);
     }
   }, [path, project_id]);
+
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (
+        !isVisible ||
+        detail?.projectId !== project_id ||
+        detail?.path !== path ||
+        detail?.threadId !== selectedThreadId
+      )
+        return;
+      if (detail.mode === "history" && !embeddingOptions.agentWorkspace) {
+        setArchivedHistoryOpen(true);
+        void loadArchivedHistory(0, false);
+      } else if (
+        detail.mode === "maintenance" &&
+        !embeddingOptions.agentWorkspace
+      ) {
+        setMaintenanceOpen(true);
+        void loadMaintenanceStats();
+      } else if (!detail.mode || detail.mode === "search") {
+        setThreadSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus?.(), 0);
+      }
+    };
+    window.addEventListener(THREAD_SEARCH_EVENT, open);
+    return () => window.removeEventListener(THREAD_SEARCH_EVENT, open);
+  }, [
+    project_id,
+    path,
+    selectedThreadId,
+    isVisible,
+    embeddingOptions.agentWorkspace,
+    loadArchivedHistory,
+    loadMaintenanceStats,
+  ]);
 
   const runMaintenanceAction = useCallback(
     async (label: string, action: () => Promise<any>) => {
@@ -2143,10 +2166,11 @@ export function ChatRoomThreadPanel({
   const threadImagePreview = showThreadImagePreview
     ? compactThreadImage?.trim()
     : undefined;
-  const runningStatusTop = !mobile && showTopControls ? 52 : 8;
+  const reserveToolbarSpace =
+    !embeddingOptions.agentWorkspace && !mobile && showTopControls;
+  const runningStatusTop = reserveToolbarSpace ? 52 : 8;
   const contentTopInset =
-    (!mobile && showTopControls ? 44 : 0) +
-    (selectedRunningCodexMessage ? 56 : 0);
+    (reserveToolbarSpace ? 44 : 0) + (selectedRunningCodexMessage ? 56 : 0);
   const compactTopRightButtonStyle = compactTopRightControls
     ? { minWidth: 24, height: 22, padding: "0 4px" }
     : undefined;
@@ -2523,21 +2547,15 @@ export function ChatRoomThreadPanel({
               size="small"
               disabled={!selectedThreadId || !project_id || !path}
               onClick={() => {
-                setArchivedHistoryOpen(true);
-                void loadArchivedHistory(0, false);
+                setThreadSearchOpen(false);
+                if (embeddingOptions.agentWorkspace)
+                  embeddingOptions.onSearchAll?.();
+                else actions.frameTreeActions?.show_search();
               }}
             >
-              History
-            </Button>
-            <Button
-              size="small"
-              disabled={!project_id || !path}
-              onClick={() => {
-                setMaintenanceOpen(true);
-                void loadMaintenanceStats();
-              }}
-            >
-              Maintenance
+              {embeddingOptions.agentWorkspace
+                ? "Search all agents"
+                : "Search all threads"}
             </Button>
           </div>
           <div
@@ -2590,6 +2608,7 @@ export function ChatRoomThreadPanel({
                   onClick={() => {
                     setThreadSearchCursor(index);
                     setThreadSearchJumpToken((n) => n + 1);
+                    actions.setFragment(result.date);
                   }}
                   style={{
                     display: "block",

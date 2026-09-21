@@ -68,6 +68,7 @@ import { ChatRoomModals } from "./chatroom-modals";
 import type { ChatRoomThreadActionHandlers } from "./chatroom-thread-actions";
 import { ChatRoomThreadActions } from "./chatroom-thread-actions";
 import { ChatRoomThreadMenu, stripThreadHtml } from "./chatroom-thread-menu";
+import { requestThreadSearch } from "./thread-search-request";
 import { ChatRoomThreadPanel } from "./chatroom-thread-panel";
 import { ChatFontSizeControls } from "./chat-font-size-controls";
 import {
@@ -2663,7 +2664,10 @@ function ChatPanelContent({
   ]);
 
   const selectedThreadMenuControl =
-    !readOnly && selectedThreadKey && selectedThread ? (
+    !embeddingOptions.agentWorkspace &&
+    !readOnly &&
+    selectedThreadKey &&
+    selectedThread ? (
       <ChatRoomThreadMenu
         actions={actions}
         threadKey={selectedThreadKey}
@@ -2704,6 +2708,17 @@ function ChatPanelContent({
         }
         openAutomationModal={openAutomationModalForThread}
         buttonAriaLabel="Selected thread actions"
+        openHistory={() =>
+          requestThreadSearch(project_id, path, selectedThreadId!, "history")
+        }
+        openMaintenance={() =>
+          requestThreadSearch(
+            project_id,
+            path,
+            selectedThreadId!,
+            "maintenance",
+          )
+        }
         buttonLabel={narrow ? "Thread actions" : undefined}
       />
     ) : null;
@@ -3031,7 +3046,12 @@ function ChatPanelContent({
         }
         mobile={narrow}
         onMobileToolsAction={() => setMobileToolsOpen(false)}
-        allowSidebarToggle={!hideSidebar && !isCompact && !isExternalSideChat}
+        allowSidebarToggle={
+          !embeddingOptions.agentWorkspace &&
+          !hideSidebar &&
+          !isCompact &&
+          !isExternalSideChat
+        }
         sidebarHidden={sidebarHidden}
         onToggleSidebar={() => setSidebarHidden((hidden) => !hidden)}
         topRightControlsPrefix={
@@ -3180,7 +3200,7 @@ function ChatPanelContent({
       )}
       {narrow && (
         <div className="cocalc-chat-mobile-header">
-          {!hideSidebar && (
+          {!hideSidebar && !embeddingOptions.agentWorkspace && (
             <Badge dot={totalUnread > 0}>
               <Button
                 type="text"
@@ -3250,15 +3270,17 @@ function ChatPanelContent({
         onClose={() => setMobileToolsOpen(false)}
       >
         <KeyboardBoundary boundary="chat-tools">
-          <Button
-            icon={<Icon name="plus" />}
-            onClick={() => {
-              onNewChat();
-              setMobileToolsOpen(false);
-            }}
-          >
-            New Chat
-          </Button>
+          {!embeddingOptions.agentWorkspace && (
+            <Button
+              icon={<Icon name="plus" />}
+              onClick={() => {
+                onNewChat();
+                setMobileToolsOpen(false);
+              }}
+            >
+              New Chat
+            </Button>
+          )}
           <div ref={setMobileToolsPortal} />
         </KeyboardBoundary>
       </Drawer>
@@ -3269,7 +3291,11 @@ function ChatPanelContent({
         sidebarVisible={sidebarVisible}
         setSidebarVisible={setSidebarVisible}
         totalUnread={totalUnread}
-        hideSidebar={hideSidebar || (!narrow && sidebarHidden)}
+        hideSidebar={
+          embeddingOptions.agentWorkspace ||
+          hideSidebar ||
+          (!narrow && sidebarHidden)
+        }
         hideCompactNavigation={narrow}
         onSidebarClosed={() => {
           if (narrow)
