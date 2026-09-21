@@ -23,7 +23,8 @@ conversation, and persistent agent instructions are not part of this change.
 3. SQLite triggers fence further admission and retries against the old thread
    across ACP workers. A durable single-writer preparation claim prevents
    concurrent retries from overwriting the successor's configuration. The host
-   persists the fresh thread before marking preparation complete and returning.
+   persists both collaborative history and the `.chat` file before marking
+   preparation complete and returning. Disk-write failures remain retryable.
 4. The project-owning bay rechecks access and locks the identity, records history,
    ends old runtime credentials, and switches the thread pointer. Credential
    issuance takes a matching identity-row lock and checks the current thread.

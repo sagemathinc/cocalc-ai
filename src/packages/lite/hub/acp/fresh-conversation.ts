@@ -71,6 +71,11 @@ export async function prepareFreshConversation(
           db.commit({ emitChangeImmediately: true });
         }
         await db.save();
+        // save() commits collaborative history; also persist the .chat file
+        // before allowing the identity pointer to leave the old conversation.
+        if (!db.isReady()) throw new Error("Chat closed during preparation");
+        await db.save_to_disk();
+        if (!db.isReady()) throw new Error("Chat closed during preparation");
         finishThreadPreparation(key, token, true);
       } catch (error) {
         finishThreadPreparation(key, token, false);
