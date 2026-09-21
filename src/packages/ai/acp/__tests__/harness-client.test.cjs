@@ -844,6 +844,38 @@ test("legacy modes are session-scoped and cannot change during a prompt", async 
   assert.equal(client.controls.mode.currentValue, "plan");
 });
 
+test("unconfirmed model selection prevents inference and closes the adapter", async (t) => {
+  const { agent, request, events, launches, stops } = adapter(t, [
+    "--config-options",
+    "--ignore-config",
+  ]);
+  await assert.rejects(
+    agent.evaluate({
+      ...request,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile,
+        settings: { configOptions: [{ id: "model", value: "deep" }] },
+      },
+    }),
+    (error) => {
+      assert.equal(error.code, "rejected");
+      assert.match(error.message, /did not apply/);
+      return true;
+    },
+  );
+  assert.equal(launches(), 1);
+  assert.equal(stops(), 1);
+  assert.ok(
+    !events.some(
+      (event) => event.type === "summary" || event.event?.type === "message",
+    ),
+  );
+  await assert.rejects(agent.evaluate(request), /not idle/);
+  assert.equal(launches(), 1);
+});
+
 test("unsupported controls are not silently accepted", async (t) => {
   const client = await start(t);
   await client.open();

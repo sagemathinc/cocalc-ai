@@ -94,6 +94,8 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         });
       return result(message.id, controls());
     case "session/set_config_option":
+      if (process.argv.includes("--ignore-config"))
+        return result(message.id, controls());
       if (
         message.params.configId !== "model" ||
         !["fast", "deep"].includes(message.params.value)
