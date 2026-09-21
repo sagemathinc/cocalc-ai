@@ -29,6 +29,28 @@ The launcher retains the project's existing network boundary.
 
 ## Operator Setup
 
+### Turn Context And Artifacts
+
+Normal prompts include non-secret project, chat, thread and producing-message
+metadata for the current turn. This context is refreshed even when the harness
+process is retained; it is not an authorization grant. Native slash commands are
+passed through unchanged. The harness must use its existing scoped runtime
+identity rather than fall back to account credentials.
+
+Ordinary text and file links remain the default. Explicit artifact publication
+can use the installed CLI's `project chat artifact publish` command with
+`--experimental` and the exact current-turn context. Update the host's tools
+artifact as well as its project-host artifact: older tools may not include this
+command. If publication is unavailable or fails, report that and offer a normal
+file link, not a direct `.chat` edit. Creating a file alone does not publish an
+artifact, and publishing proposed actions does not authorize their execution.
+
+This path has live fixture coverage for publication, scoped readback and opening
+the saved file after a browser reload. It is not a claim of automatic artifact
+generation or full native Codex workbench parity.
+
+### Setup Steps
+
 1. Deploy a compatible frontend and project host. Set
    `COCALC_ACP_HARNESSES=1` in the project-host environment and restart that host
    using its normal deployment procedure. Only enable test hosts initially.

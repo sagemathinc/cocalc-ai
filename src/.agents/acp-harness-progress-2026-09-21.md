@@ -5,6 +5,45 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+### Current-Turn Context And Live Artifact Publication
+
+Commit `1e00bfe70d` adds current-turn project/chat/thread/message metadata to
+ordinary generic harness prompts without modifying the stored user prompt or
+native Codex path. Retained-process tests verify different producing timestamps
+on successive turns, and slash commands/missing context remain unchanged.
+The subprocess suite passes 59 tests, native AI suites pass 140 tests, and the
+project-host TypeScript build passes. This extends the earlier 818-test broad
+baseline below; that entire baseline was not rerun for this small addition.
+
+Deployment: project-host `20260921T141424Z-1e00bfe70d23`, SHA-256
+`0e61d1946998baf5ef4377ce2b0f06d6570a608ba9786a84dab0f3b2eff791f2`, upgrade
+`04bae6b2-dfd6-4445-b0c7-9cefe93172bc`. Tools `1789999853395`, SHA-256
+`87217a5411b4f144d55430c8f14ec151b1440b0a08ebaf9a07ef0caa9854920b`,
+upgrade `a341489c-ac6d-473a-8fb7-0e4edd39af97`. The tools bundle was upgraded
+separately because the old installed CLI lacked artifact publication.
+
+On disposable agent-3, a temporary ACP wrapper used only its inherited scoped
+identity and explicit current-turn context to publish
+`/home/user/acp-artifact-qualification.md`. Publication returned `ok: true`,
+artifact `artifact-6f17392198c47f1b389f787d`, attached to producing message
+`79fae9af-502f-4e62-8596-09246b8b3faa`. No account credentials, raw chat edits or
+paid inference were used.
+
+The first wrapper incorrectly asserted a top-level response field instead of
+`data.artifact_id`, so the producing turn reports an error despite successful
+publication. A read-only follow-up also initially asserted the wrong nested
+shape. Neither error was an application publication failure, and publication
+was not repeated. After correcting the test assertion to
+`data.artifact.artifact_id`, scoped readback turn
+`26151d98-9ecd-41c1-81df-0b6b79778383` completed successfully. A full browser
+reload retained the card; keyboard activation opened the artifact workbench
+and rendered the saved file's exact marker `artifact-20260921`.
+
+The temporary wrapper was replaced with the ordinary fixture afterward; the
+single-attempt receipt and published file remain for inspection. This qualifies
+explicit fixture-driven artifact publication/readback/reopen, not automatic
+artifact generation, broad real-model behavior or full workbench parity.
+
 Adapter persistence-failure coverage now injects storage errors at initial status,
 initial controls, streamed text, final controls, stop metadata and final summary.
 Each boundary runs against both a new subprocess and a retained subprocess after
@@ -136,7 +175,7 @@ regression pass completed successfully:
 - AI `pnpm test --runInBand`: 12 suites, 140 tests.
 - Lite `pnpm exec jest --runInBand`: all 48 configured ACP suites, 446 tests.
 - Project-host `pnpm exec jest --runInBand
-  --testPathPatterns='(codex|acp|snapshot-(rootfs-restore|home-swap|home-rootfs)).*test'`:
+--testPathPatterns='(codex|acp|snapshot-(rootfs-restore|home-swap|home-rootfs)).*test'`:
   17 suites, 119 tests.
 - AI `node --test acp/__tests__/harness-client.test.cjs`: 57 real subprocess tests.
 - Frontend focused Jest: harness-profile, harness-tool, acp-api,
