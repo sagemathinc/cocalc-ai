@@ -87,5 +87,52 @@ test("malformed inventory and removal failure are surfaced for later reconciliat
   mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
     cb(Error("failure")),
   );
-  await expect(reapAbandonedHarnesses()).rejects.toThrow("failure");
+  await expect(reapAbandonedHarnesses()).rejects.toThrow(
+    "1 abandoned ACP sidecar",
+  );
+});
+
+test("a failed removal does not starve other abandoned sidecars in the sweep", async () => {
+  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+    cb(
+      null,
+      JSON.stringify([
+        container("a", `10:${boot}:998`),
+        container("b", `10:${boot}:998`),
+        container("c", `10:${boot}:999`),
+      ]),
+    ),
+  );
+  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+    cb(Error("stuck container")),
+  );
+  await expect(reapAbandonedHarnesses()).rejects.toThrow();
+  expect(mockExec.mock.calls.slice(1).map((call) => call[1].at(-1))).toEqual([
+    "a".repeat(64),
+    "b".repeat(64),
+  ]);
+});
+
+test("failed removals are retried on a later sweep with fresh owner checks", async () => {
+  const inventory = JSON.stringify([
+    container("a", `10:${boot}:998`),
+    container("b", `10:${boot}:998`),
+  ]);
+  mockExec.mockImplementation((_cmd, args, _options, cb) =>
+    args[0] === "ps" ? cb(null, inventory) : cb(Error("unavailable")),
+  );
+  await expect(reapAbandonedHarnesses()).rejects.toThrow(
+    "2 abandoned ACP sidecar",
+  );
+  mockExec.mockClear();
+  mockRead.mockClear();
+  mockExec.mockImplementation((_cmd, args, _options, cb) =>
+    cb(null, args[0] === "ps" ? inventory : ""),
+  );
+  await expect(reapAbandonedHarnesses()).resolves.toBeUndefined();
+  expect(mockRead).toHaveBeenCalledTimes(4);
+  expect(mockExec.mock.calls.slice(1).map((call) => call[1].at(-1))).toEqual([
+    "a".repeat(64),
+    "b".repeat(64),
+  ]);
 });

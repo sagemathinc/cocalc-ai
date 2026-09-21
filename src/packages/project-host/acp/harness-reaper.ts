@@ -51,6 +51,7 @@ export async function reapAbandonedHarnesses(): Promise<void> {
     ]),
   );
   if (!Array.isArray(rows)) throw Error("Invalid ACP container inventory");
+  let failedRemovals = 0;
   for (const row of rows) {
     const id = row?.Id;
     const owner = row?.Labels?.[HARNESS_OWNER_LABEL];
@@ -71,11 +72,20 @@ export async function reapAbandonedHarnesses(): Promise<void> {
       alive = false;
     }
     if (alive) continue;
-    await podman(["rm", "--ignore", "--force", "--time", "0", id]);
+    try {
+      await podman(["rm", "--ignore", "--force", "--time", "0", id]);
+    } catch {
+      // A stuck sidecar must not prevent cleanup of unrelated abandoned workers.
+      // Keep the failure visible so subsequent sweeps retry the remaining work.
+      failedRemovals++;
+      continue;
+    }
     // Rootfs leases belong to the old process; don't decrement this process's
     // references or unmount a rootfs still used by the primary project.
     logger.info("Removed abandoned ACP sidecar", { id });
   }
+  if (failedRemovals)
+    throw Error(`Unable to remove ${failedRemovals} abandoned ACP sidecar(s)`);
 }
 
 export function startHarnessReaper(): () => void {

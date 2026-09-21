@@ -1790,6 +1790,22 @@ was submitted, and the modal was closed afterward. This checks live discovery
 through the upgraded runtime, not another provider-inference or recovery test.
 The broader release gates and unmodified Pi provider-error limitation still apply.
 
+## Abandoned Sidecar Cleanup Failure Isolation
+
+A focused regression reproduced starvation in the abandoned-sidecar reaper:
+when removal of the first eligible container failed, later abandoned containers
+in the inventory were never attempted. Sweeps now attempt each eligible removal
+independently and report a sanitized failure count after the sweep. Subsequent
+sweeps retry failures with fresh process-owner checks; live-owner containers
+remain untouched. Immutable container-ID targeting and rootfs handling are
+unchanged.
+
+Both launcher/reaper suites pass (16 tests), including failed-first-removal and
+multi-failure/retry cases. Project-host TypeScript and `git diff --check` pass.
+This is deterministic regression coverage, not live qualification of the rare
+Podman removal-timeout fallback. This follow-up is not in the deployment recorded
+above.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
