@@ -43,6 +43,7 @@ import {
 } from "../../sqlite/acp-interrupts";
 import {
   getAcpAttention,
+  submitAcpAttentionResponse,
   upsertAcpAttention,
 } from "../../sqlite/acp-attention";
 
@@ -372,6 +373,21 @@ it.each(["lost", "terminal", "live"])(
         expect(
           getAcpAttention(record.attention_id)?.resolution_reason,
         ).toContain("responder was lost");
+        expect(
+          submitAcpAttentionResponse({
+            attention_id: record.attention_id,
+            project_id: request.project_id,
+            account_id: request.account_id,
+            response_id: "late-answer",
+            answers: { target: ["local"] },
+          }),
+        ).toMatchObject({
+          state: "already_submitted",
+          record: { state: "stale" },
+        });
+        expect(
+          getAcpAttention(record.attention_id)?.response_id,
+        ).toBeUndefined();
       }
     } finally {
       getAcpDatabase()
