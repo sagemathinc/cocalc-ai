@@ -1,5 +1,6 @@
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { AcpAgent } from "@cocalc/ai/acp";
+import type { CodexAttentionHandler } from "@cocalc/ai/acp";
 import type { HarnessBinding, HarnessLauncher } from "@cocalc/ai/acp/harness";
 import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { createHash } from "node:crypto";
@@ -100,6 +101,7 @@ export function harnessRuntimeKey(request: AcpRequest): string {
 
 export async function createHarnessAgent(
   request: AcpRequest,
+  attention?: CodexAttentionHandler,
 ): Promise<AcpAgent> {
   const prepared = prepareHarnessRequest(request);
   const { HarnessAgent } = await import("@cocalc/ai/acp/harness");
@@ -116,5 +118,6 @@ export async function createHarnessAgent(
     },
     conversation,
     (binding) => factory(binding, conversation),
+    attention,
   );
 }

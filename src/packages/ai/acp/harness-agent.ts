@@ -2,6 +2,11 @@ import { AcpHarnessClient, HarnessError } from "./harness-client";
 import type { HarnessBinding, HarnessLauncher } from "./harness-client";
 import type { AcpAgent, AcpEvaluateRequest } from "./types";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
+import { randomUUID } from "node:crypto";
+import type {
+  CodexAttentionContext,
+  CodexAttentionHandler,
+} from "./codex-project";
 
 /** One admitted conversation binding. The service must authorize each evaluation. */
 export class HarnessAgent implements AcpAgent {
@@ -10,11 +15,13 @@ export class HarnessAgent implements AcpAgent {
   private closed = false;
   private binding: HarnessBinding;
   private conversation: { path: string; threadId: string };
+  private attentionContext?: CodexAttentionContext;
 
   constructor(
     binding: HarnessBinding,
     conversation: { path: string; threadId: string },
     private readonly launch: HarnessLauncher,
+    private readonly attention?: CodexAttentionHandler,
   ) {
     this.binding = {
       ...binding,
@@ -56,7 +63,34 @@ export class HarnessAgent implements AcpAgent {
     this.busy = true;
     try {
       if (!this.client) {
-        const client = await AcpHarnessClient.start(this.binding, this.launch);
+        const client = await AcpHarnessClient.start(
+          this.binding,
+          this.launch,
+          30_000,
+          this.attention
+            ? async (questions, signal, validate) => {
+                const context = this.attentionContext;
+                if (!context || signal.aborted)
+                  throw Error("ACP attention is unavailable");
+                const requestId = randomUUID();
+                const answers = await this.attention!.requestSyncQuestion({
+                  requestId,
+                  itemId: requestId,
+                  isBlocking: true,
+                  questions,
+                  context,
+                  signal,
+                });
+                if (signal.aborted) throw Error("ACP question was canceled");
+                validate(answers);
+                await this.attention!.serverRequestResolved?.({
+                  requestId,
+                  context,
+                });
+                return answers;
+              }
+            : undefined,
+        );
         this.client = client;
         // Disposal may race with launch/initialization.
         if (this.closed) {
@@ -66,6 +100,14 @@ export class HarnessAgent implements AcpAgent {
         await client.open(request.session_id);
       }
       const client = this.client;
+      this.attentionContext = {
+        projectId: request.project_id,
+        accountId: request.account_id,
+        chat: request.chat,
+        threadId: client.sessionId!,
+        turnId: `acp-${randomUUID()}`,
+        stream: request.stream,
+      };
       await client.configure(request.runtime?.settings ?? {});
       const publishControls = () =>
         request.stream({
@@ -143,7 +185,12 @@ export class HarnessAgent implements AcpAgent {
       await this.dispose();
       throw error;
     } finally {
-      this.busy = false;
+      try {
+        await this.attention?.runtimeClosed?.(this.attentionContext);
+      } finally {
+        this.attentionContext = undefined;
+        this.busy = false;
+      }
     }
   }
 
@@ -160,5 +207,6 @@ export class HarnessAgent implements AcpAgent {
   async dispose(): Promise<void> {
     this.closed = true;
     await this.client?.dispose();
+    await this.attention?.runtimeClosed?.(this.attentionContext);
   }
 }

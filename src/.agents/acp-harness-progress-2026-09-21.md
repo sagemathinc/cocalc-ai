@@ -362,12 +362,19 @@ failures. The subprocess fixture exercises successful response translation,
 wrong-session requests, unavailable handlers and cancellation with a late reply.
 The AI package build and 34 subprocess tests pass.
 
-This checkpoint is not user-facing QA support yet. The production HarnessAgent
-does not supply that handler, so it still advertises no elicitation capability.
-Next: bind the handler to the existing durable attention records and current
-execution context, resolve/expire records correctly, and qualify browser replies
-and cancellation across reload. Do not claim the interactive-question release
-gate from client-only tests.
+The initial client-only checkpoint did not supply that handler in production.
+The subsequent durable wiring now supplies the existing attention handler from
+the execution service. Each evaluation uses a new execution ID bound to its
+account, chat and native session; answers are validated before resolving the
+stored request. Cancellation and runtime/turn shutdown close unanswered records.
+The existing internal `codex_sync_question` storage discriminator is reused for
+compatibility, with ACP-specific summary/resolution text; no separate question
+queue, grant system or authentication flow is introduced.
+
+Validation includes 37 subprocess tests and 29 focused attention-storage,
+delivery and harness-admission tests, plus the project-host TypeScript build.
+Live deployment and browser reply/reload/cancellation qualification are still
+pending. Do not claim the interactive-question release gate from these tests.
 
 ## Reproduce
 

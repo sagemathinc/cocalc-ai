@@ -46,6 +46,7 @@ export type HarnessLauncher = (
 export type HarnessQuestionHandler = (
   questions: AcpAttentionQuestion[],
   signal: AbortSignal,
+  validate: (answers: Record<string, { answers: string[] }>) => void,
 ) => Promise<Record<string, { answers: string[] }>>;
 export type HarnessEvent =
   | { type: "message" | "thinking"; text: string; messageId?: string }
@@ -460,7 +461,7 @@ export class AcpHarnessClient {
         controller.signal.addEventListener("abort", onAbort, { once: true });
       });
       const answers = await Promise.race([
-        this.questionHandler(form.questions, controller.signal),
+        this.questionHandler(form.questions, controller.signal, form.response),
         cancelled,
       ]);
       if (

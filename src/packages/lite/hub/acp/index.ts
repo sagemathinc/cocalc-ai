@@ -7819,7 +7819,10 @@ async function executeAcpRequest({
   }
   let currentAgent = harnessKey ? agents.get(harnessKey) : undefined;
   if (harnessKey && !currentAgent) {
-    currentAgent = await createHarnessAgent(request);
+    currentAgent = await createHarnessAgent(
+      request,
+      createCodexAttentionHandler(conatClient!, "ACP"),
+    );
     agents.set(harnessKey, currentAgent);
     agentProjectIds.set(currentAgent, projectId);
   }

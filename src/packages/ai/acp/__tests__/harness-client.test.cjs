@@ -109,7 +109,7 @@ const profile = {
   executionPolicy: "full-access",
 };
 
-function adapter(t, flags = []) {
+function adapter(t, flags = [], attention) {
   let launches = 0;
   const agent = new HarnessAgent(
     {
@@ -139,6 +139,7 @@ function adapter(t, flags = []) {
         },
       };
     },
+    attention,
   );
   t.after(() => agent.dispose());
   const events = [];
@@ -157,6 +158,75 @@ function adapter(t, flags = []) {
   };
   return { agent, request, events, launches: () => launches };
 }
+
+test("harness adapter binds durable questions to the current account, chat and execution", async (t) => {
+  const asked = [],
+    resolved = [],
+    closed = [];
+  const attention = {
+    requestSyncQuestion: async (q) => {
+      asked.push(q);
+      return { target: { answers: ["local"] } };
+    },
+    serverRequestResolved: async (q) => resolved.push(q),
+    runtimeClosed: async (context) => closed.push(context),
+  };
+  const { agent, request } = adapter(t, [], attention);
+  await agent.evaluate({ ...request, prompt: "question" });
+  await agent.evaluate({
+    ...request,
+    prompt: "question",
+    session_id: "fixture-session",
+  });
+  assert.equal(asked.length, 2);
+  assert.equal(resolved.length, 2);
+  assert.equal(asked[0].context.accountId, "account-a");
+  assert.equal(asked[0].context.chat.thread_id, "conversation-a");
+  assert.equal(asked[0].context.threadId, "fixture-session");
+  assert.notEqual(asked[0].context.turnId, asked[1].context.turnId);
+  assert.equal(resolved[0].requestId, asked[0].requestId);
+  assert.equal(closed[0].turnId, asked[0].context.turnId);
+});
+
+test("invalid question answers never resolve a durable attention request", async (t) => {
+  let resolved = 0;
+  const { agent, request } = adapter(t, [], {
+    requestSyncQuestion: async () => ({
+      target: { answers: ["not-an-option"] },
+    }),
+    serverRequestResolved: async () => resolved++,
+    runtimeClosed: async () => {},
+  });
+  await agent.evaluate({ ...request, prompt: "question" });
+  assert.equal(resolved, 0);
+});
+
+test("interrupting a durable harness question aborts its waiter and closes the execution context", async (t) => {
+  let ready, signal, closed;
+  const entered = new Promise((resolve) => (ready = resolve));
+  const { agent, request } = adapter(t, [], {
+    requestSyncQuestion: async (q) => {
+      signal = q.signal;
+      ready();
+      return new Promise((_resolve, reject) =>
+        q.signal.addEventListener("abort", () => reject(Error("aborted")), {
+          once: true,
+        }),
+      );
+    },
+    runtimeClosed: async (context) => {
+      closed = context;
+    },
+  });
+  const pending = agent
+    .evaluate({ ...request, prompt: "question" })
+    .catch(() => {});
+  await entered;
+  assert.equal(await agent.interruptOutstanding("fixture-session"), true);
+  await pending;
+  assert.equal(signal.aborted, true);
+  assert.equal(closed.chat.thread_id, "conversation-a");
+});
 
 test("agent adapter persists streaming and stop before summary and reuses its session", async (t) => {
   const { agent, request, events, launches } = adapter(t);

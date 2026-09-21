@@ -289,6 +289,7 @@ function titleForQuestions(questions: AcpAttentionQuestion[]): string {
 
 export function createCodexAttentionHandler(
   client: ConatClient,
+  runtimeLabel: "Codex" | "ACP" = "Codex",
 ): CodexAttentionHandler {
   return {
     async requestSyncQuestion({
@@ -322,8 +323,8 @@ export function createCodexAttentionHandler(
         is_blocking: isBlocking,
         title: titleForQuestions(questions),
         summary: isBlocking
-          ? "The current Codex turn is paused."
-          : "Codex may continue while it waits.",
+          ? `The current ${runtimeLabel} turn is paused.`
+          : `${runtimeLabel} may continue while it waits.`,
         questions,
         chat: context.chat,
         expires_at: Number.isFinite(expiresAt) ? expiresAt : undefined,
@@ -444,8 +445,8 @@ export function createCodexAttentionHandler(
         reason: current?.response_id
           ? current.response_declined
             ? "The user declined to answer"
-            : "Codex accepted the response"
-          : "Codex cleared the request before receiving an answer",
+            : `${runtimeLabel} accepted the response`
+          : `${runtimeLabel} cleared the request before receiving an answer`,
       });
       if (resolved) {
         void publishStoredAttentionNoticeBestEffort({
@@ -461,7 +462,7 @@ export function createCodexAttentionHandler(
         project_id: context.projectId,
         thread_id: context.chat?.thread_id,
         turn_id: context.turnId,
-        reason: "Codex runtime closed before the request was resolved",
+        reason: `${runtimeLabel} runtime closed before the request was resolved`,
       });
       for (const stale of staleRecords) {
         void publishStoredAttentionNoticeBestEffort({ client, record: stale });
