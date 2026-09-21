@@ -41,6 +41,31 @@ Independent inspection then found no queued/running jobs or ACP sidecars for
 the disposable project. No other project's configuration or real credentials
 were changed. Live cross-project routing remains a separate qualification gate.
 
+### Cross-Project Qualification Setup
+
+A second disposable project, `e9534540-b7f5-4dbf-a20c-f2df3cb53012`
+("ACP cross-project recipient qualification"), was created on the existing
+qualification host; no new host was allocated. Its agent-10 uses the same
+installed deterministic ACP controls fixture through the normal custom-profile
+UI. Baseline operation `515daa0e-2ceb-4cac-8776-e5b1377493ee` completed and
+rendered `fast/code`, establishing that the recipient's own container/runtime
+works independently of the source project.
+
+Creating a queued network between agent-4 and agent-10 reached the normal
+cross-project fresh-authentication requirement. The browser session needed
+renewal. The supported `auth elevate --dev` CLI attempt also failed because the
+current shell has neither an existing cookie nor local hub-password access.
+No credentials/cookies were synthesized and no alternative authorization route
+was used. The pending UI setup was canceled; the directory remained at zero
+active networks. No peer send was attempted (the exclusive send marker was
+absent), so there is no ambiguous delivery to retry.
+
+The source fixture was restored and the second project was stopped normally
+(`opened`). Both disposable projects had no queued/running jobs afterward.
+Agent-10 remains available for resuming this test once fresh authentication is
+available. This is setup and recipient-baseline evidence, not a passed
+cross-project delivery test or a blocker for unrelated qualification work.
+
 At source commit `4f0f063038405cf6a2161156c1dfb9a7d3230de7`, the following
 checks completed successfully (2026-09-21):
 
@@ -963,7 +988,7 @@ use yet; the current UI is an experimental operator-testing surface.
    handling and recovery protection. Home-only success is qualified above.
    Extend the project-egress-blocked inference check to broader on-prem control-
    plane deployment qualification. Extend same-project messaging to cross-project
-   and queued-revocation cases. These remain release gates, not implied by the
-   standalone smoke tests.
+   delivery once fresh authentication is available; queued revocation now has
+   live evidence above. Remaining gates are not implied by standalone smoke tests.
 
 Do not advertise this checkpoint as a usable generic-harness chat release yet.
