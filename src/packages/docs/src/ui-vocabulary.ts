@@ -692,7 +692,14 @@ export const UI_VOCABULARY: readonly UiVocabularyEntry[] = [
     ([key, label, text]): UiVocabularyEntry => ({
       id: `vms.${key}`,
       label,
-      anchors: [def(VMS, text)],
+      anchors: [
+        def(
+          key === "stop" || key === "start"
+            ? "frontend/project/compute-vm-power-controls.tsx"
+            : VMS,
+          text,
+        ),
+      ],
       // The docs name the Manage menu only through its items, as "Manage > …".
       usedIn: [
         key === "manage"

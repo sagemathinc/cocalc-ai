@@ -341,6 +341,10 @@ export const TABLE_OWNERSHIP = {
     ownership: "account-home",
     authority: "mixed",
     portability: "unsupported",
+    secondary_reference_fields: {
+      project_id:
+        "Member endpoint locator within the account-home network, not project placement authority.",
+    },
     notes:
       "Membership is subordinate to the account-home Agent Network row and must never be routed independently.",
   }),

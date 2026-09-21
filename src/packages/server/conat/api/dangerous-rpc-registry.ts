@@ -50,6 +50,11 @@ export const DANGEROUS_RPC_DECISIONS: Record<string, DangerousRpcDecision> = {
     reason:
       "registers an existing Codex thread after ordinary project authorization",
   },
+  "agent.startFreshConversation": {
+    decision: "fresh-auth-not-required",
+    reason:
+      "starts a new context for the active agent's registrant after project authorization, retaining prior conversations without expanding network authority",
+  },
   "agent.disableIdentity": {
     decision: "fresh-auth-required",
     reason: "disables a registered identity and all its credentials",

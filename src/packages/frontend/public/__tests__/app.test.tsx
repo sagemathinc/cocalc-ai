@@ -327,7 +327,7 @@ describe("PublicApp", () => {
     );
   });
 
-  it("shows Projects and Settings in the shared nav when authenticated", async () => {
+  it("shows Projects and Agents in the shared nav when authenticated", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -336,7 +336,7 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
   });
 
   it("renders the guides bridge page", async () => {
