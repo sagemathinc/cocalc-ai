@@ -12,7 +12,6 @@ import { personalAgentApi, sameEndpoint, useNamedAgents } from "./api";
 import { NetworkApproval } from "./network-approval";
 import type { NetworkApprovalTarget } from "./network-approval";
 import { hasUnboundAgentName } from "./unbound-mentions";
-import { useAgentMessagingUI } from "./use-ui-preference";
 
 export function useAgentMentions({
   projectId,
@@ -30,8 +29,7 @@ export function useAgentMentions({
   restoreFocus: () => void;
 }) {
   const accountId = useTypedRedux("account", "account_id");
-  const enabled = useAgentMessagingUI();
-  const { directory } = useNamedAgents(enabled && runnable);
+  const { directory } = useNamedAgents(runnable);
   const [approval, setApproval] = useState<NetworkApprovalTarget>();
   const [error, setError] = useState("");
   const [states, setStates] = useState<Record<string, string>>({});
@@ -49,7 +47,7 @@ export function useAgentMentions({
       pending.current?.(false);
       pending.current = undefined;
     };
-  }, [accountId, projectId, path, threadId, enabled]);
+  }, [accountId, projectId, path, threadId]);
 
   function closeApproval(approved: boolean) {
     setApproval(undefined);
@@ -198,8 +196,7 @@ export function useAgentMentions({
   }
 
   async function onSelect(reference: AgentMentionReference) {
-    if (!enabled || !runnable || selectionLock.current || sendLock.current)
-      return;
+    if (!runnable || selectionLock.current || sendLock.current) return;
     selectionLock.current = true;
     setError("");
     try {
@@ -215,7 +212,6 @@ export function useAgentMentions({
     // Do not change the synchronous normal-chat send path when no agent
     // reference needs preflight. The lock belongs to the approval flow only.
     if (
-      !enabled ||
       !runnable ||
       (!extractAgentMentions(value).length &&
         !directory?.agents.some((agent) =>
@@ -254,9 +250,9 @@ export function useAgentMentions({
 
   return {
     accountId,
-    agents: enabled && runnable ? (directory?.agents ?? []) : [],
+    agents: runnable ? (directory?.agents ?? []) : [],
     context: {
-      allowAgentMentions: enabled && runnable,
+      allowAgentMentions: runnable,
       onSelect: (reference: AgentMentionReference) => {
         void onSelect(reference);
       },
@@ -269,7 +265,7 @@ export function useAgentMentions({
         agent.path === path &&
         agent.thread_id === threadId,
     ),
-    ui: enabled && (
+    ui: (
       <>
         {error && (
           <div role="alert">

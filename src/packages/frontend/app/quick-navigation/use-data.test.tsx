@@ -308,6 +308,7 @@ it("offers the top navigation pages, with Admin only for admins", async () => {
     items.filter((x) => x.destination.kind === "app-page").map((x) => x.id);
   const { result } = renderHook(() => useNavigationData());
   expect(appPages(result.current.items)).toEqual([
+    "app:agents",
     "app:projects",
     "app:hosts",
     "app:notifications",
@@ -316,7 +317,7 @@ it("offers the top navigation pages, with Admin only for admins", async () => {
   expect(hosts.item.id).toBe("app:hosts");
   account = account.setIn(
     ["other_settings", "experimental_my_agents_page"],
-    true,
+    false,
   );
   const { result: agentsEnabled } = renderHook(() => useNavigationData());
   expect(appPages(agentsEnabled.current.items)).toContain("app:agents");

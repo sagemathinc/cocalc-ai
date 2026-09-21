@@ -50,7 +50,6 @@ const api = {
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useTypedRedux: () => account,
 }));
-jest.mock("./use-ui-preference", () => ({ useAgentMessagingUI: () => true }));
 jest.mock("./api", () => ({
   personalAgentApi: () => api,
   sameEndpoint: (a, b) =>

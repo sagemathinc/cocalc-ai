@@ -29,7 +29,6 @@ import {
 } from "@cocalc/frontend/agents/api";
 import { useAgentMentionContext } from "@cocalc/frontend/agents/mention-context";
 import { serializeAgentMention } from "@cocalc/util/agent-mentions";
-import { useAgentMessagingUI } from "@cocalc/frontend/agents/use-ui-preference";
 
 interface Opts {
   avatarUserSize?: number;
@@ -42,13 +41,12 @@ export function useMentionableUsers(): (
 ) => Item[] {
   const { project_id } = useProjectContext();
   const user_map = useTypedRedux("users", "user_map");
-  const messagingEnabled = useAgentMessagingUI();
   const { allowAgentMentions, states, source, postOnly } =
     useAgentMentionContext();
   const { selectedNetworkId } = useChatEmbeddingOptions();
   const settings = useTypedRedux("account", "other_settings");
   const [expanded, setExpanded] = useState(false);
-  const enabled = messagingEnabled && allowAgentMentions === true;
+  const enabled = allowAgentMentions === true;
   const { directory } = useNamedAgents(enabled);
   const { directory: networkDirectory } = useAgentNetworks(enabled);
 

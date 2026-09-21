@@ -65,7 +65,6 @@ import { lazyWithRetry } from "./lazy-with-retry";
 import usePostSurfaceWork from "./use-post-surface-work";
 import useSignedInSurfaceReady from "./use-signed-in-surface-ready";
 import useStartupPerformancePolicy from "./use-startup-performance-policy";
-import { useMyAgentsUI } from "@cocalc/frontend/agents/use-workspace-ui-preference";
 
 const PostSurfaceRightNav = lazyWithRetry(async () => {
   const [{ ensureNotificationsInitialized }, postSurface] = await Promise.all([
@@ -220,8 +219,7 @@ export const Page: React.FC = () => {
   }, []);
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
-  const showMyAgents = useMyAgentsUI();
-  const compactAgentsNavigation = showMyAgents && active_top_tab === "agents";
+  const compactAgentsNavigation = active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
   const show_connection = useTypedRedux("page", "show_connection");
@@ -475,7 +473,6 @@ export const Page: React.FC = () => {
   }
 
   function render_agents_nav_button(): React.JSX.Element | null {
-    if (!showMyAgents) return null;
     return (
       <NavTab
         style={{

@@ -47,10 +47,6 @@ jest.mock("@cocalc/frontend/agents/mention-context", () => ({
   }),
 }));
 
-jest.mock("@cocalc/frontend/agents/use-ui-preference", () => ({
-  useAgentMessagingUI: () => true,
-}));
-
 import {
   ALL_PROJECT_COLLABORATORS_MENTION_ID,
   getMentionAllAccountIds,

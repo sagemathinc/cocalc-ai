@@ -32,7 +32,6 @@ import { recentActivity } from "./recent-activity";
 import type { AppPage, Candidate, Editor } from "./model";
 import { settingsKeywords } from "./settings-keywords";
 import { frameLayout } from "./frames";
-import { myAgentsUIEnabled } from "@cocalc/frontend/agents/workspace-ui-preference";
 import { useNamedAgents } from "@cocalc/frontend/agents/api";
 import {
   MY_AGENTS_ORGANIZATION_SETTING,
@@ -88,8 +87,6 @@ export function useNavigationData() {
   const runtime = useProjectRuntimeCapabilities();
   const accountId = useTypedRedux("account", "account_id");
   const accountOtherSettings = useTypedRedux("account", "other_settings");
-  const showMyAgents = myAgentsUIEnabled(accountOtherSettings);
-  const { directory: namedAgentDirectory } = useNamedAgents(showMyAgents);
   const agentOrganization = normalizeAgentWorkspaceOrganization(
     accountOtherSettings?.get?.(MY_AGENTS_ORGANIZATION_SETTING),
   );
@@ -97,6 +94,7 @@ export function useNavigationData() {
   // state. Treat the legacy noAnonymous metadata as requiring sign-in here.
   const signedIn =
     useTypedRedux("account", "user_type") === "signed_in" || lite;
+  const { directory: namedAgentDirectory } = useNamedAgents(signedIn);
   const isAdmin = asArray(useTypedRedux("account", "groups")).includes("admin");
   const settingsContext = useSettingsNavigationContext();
   const { bookmarkedProjects } = useBookmarkedProjects();
@@ -185,7 +183,7 @@ export function useNavigationData() {
   // when no project is open yet.
   const closedSession: { [projectId: string]: string[] } =
     redux.getActions("page")?.closed_session_files?.() ?? {};
-  if (showMyAgents && namedAgentDirectory) {
+  if (namedAgentDirectory) {
     const namedAgents = organizeAgents(
       namedAgentDirectory.agents,
       agentOrganization,
@@ -363,7 +361,7 @@ export function useNavigationData() {
       page: "agents",
       title: "Agents",
       keywords: "named registered agents chats artifacts terminals",
-      show: signedIn && !lite && showMyAgents,
+      show: signedIn && !lite,
     },
     {
       page: "projects",

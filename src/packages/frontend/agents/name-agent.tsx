@@ -8,7 +8,6 @@ import { personalAgentApi, refreshNamedAgents, useNamedAgents } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { AgentNameInput, agentNameProblem } from "./agent-name-input";
 import { cachedAgentNameContext } from "./name-context";
-import { useAgentMessagingUI } from "./use-ui-preference";
 import {
   isNamedAgentLimitError,
   namedAgentLimitReached,
@@ -16,11 +15,7 @@ import {
   NamedAgentUsage,
 } from "./agent-limit";
 
-export function NameAgent(props: Parameters<typeof EnabledNameAgent>[0]) {
-  return useAgentMessagingUI() ? <EnabledNameAgent {...props} /> : null;
-}
-
-function EnabledNameAgent({
+export function NameAgent({
   agent,
   projectId,
   path,

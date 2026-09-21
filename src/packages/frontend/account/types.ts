@@ -86,7 +86,6 @@ export interface AccountState {
       sessionMode: CodexSessionMode;
     };
     codex_max_concurrent_subagents?: number;
-    experimental_my_agents_page?: boolean;
     experimental_my_agents_organization_v1?: {
       version: 1;
       mode: "recent" | "custom";

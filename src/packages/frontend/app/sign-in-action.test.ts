@@ -44,27 +44,25 @@ beforeEach(() => {
   });
 });
 
-it("opens My Agents after sign-in when the account opted in", async () => {
-  mockAccount = mockAccount.set(
-    "other_settings",
-    Map({ experimental_my_agents_page: true }),
-  );
+it.each([true, false, undefined])(
+  "opens Agents regardless of the retired preference (%s)",
+  async (value) => {
+    mockAccount = mockAccount.set(
+      "other_settings",
+      Map({ experimental_my_agents_page: value }),
+    );
+    await signInAction();
+    expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
+    expect(mockOpenProject).not.toHaveBeenCalled();
+    expect(mockStartProject).not.toHaveBeenCalled();
+  },
+);
+
+it("opens Agents for accounts without saved preferences", async () => {
   await signInAction();
   expect(mockSetActiveTab).toHaveBeenCalledWith("agents");
   expect(mockOpenProject).not.toHaveBeenCalled();
   expect(mockStartProject).not.toHaveBeenCalled();
-});
-
-it("preserves the existing recent-project landing when not opted in", async () => {
-  await signInAction();
-  expect(mockOpenProject).toHaveBeenCalledWith({
-    project_id: "project",
-    switch_to: true,
-    target: "new",
-  });
-  expect(mockStartProject).toHaveBeenCalledWith("project", {
-    autostart: true,
-  });
 });
 
 it("does nothing without the post-sign-in query marker", async () => {

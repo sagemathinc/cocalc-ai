@@ -7,7 +7,6 @@ import { NetworkApproval } from "./network-approval";
 import { cachedAgentNameContext } from "./name-context";
 
 jest.mock("./name-context", () => ({ cachedAgentNameContext: jest.fn() }));
-jest.mock("./use-ui-preference", () => ({ useAgentMessagingUI: () => true }));
 
 const account = "11111111-1111-4111-8111-111111111111";
 const source = {
