@@ -68,28 +68,18 @@ function SearchHelp() {
               relevance.
             </p>
             <p>
-              Recent saved messages use case-insensitive substring matching:
+              All conversation messages use case-insensitive substring matching,
+              including older SQLite history:
               <code> build error</code> finds that text together, and
               <code> build</code> also finds <code>building</code>. Quotes are
-              literal characters here, not special phrase syntax.
+              literal characters, not special phrase syntax.
             </p>
             <p>
-              Older messages in SQLite history use case-insensitive word-based
-              search: <code>build error</code> requires both words, in any
-              order;
-              <code> "build error"</code> matches a phrase;
-              <code> build OR error</code> matches either word; and
-              <code> build*</code> matches word prefixes. If this finds no hits
-              or the syntax is invalid, search falls back to substring-like
-              matching of stored text, where <code>%</code> and <code>_</code>
-              act as wildcards.
-            </p>
-            <p>
-              These two matching methods are currently different, including in
-              single-conversation search. Their results are combined, not two
-              interpretations applied to every message. Plain words are the
-              simplest starting point; quotes and operators are not supported
-              consistently across all messages.
+              Spaces and punctuation are literal too: no OR/AND operators or
+              wildcards. Search for a phrase without adding quotes. Leading and
+              trailing spaces are ignored. Search matches message text, not
+              internal metadata or previous edits. HTML tags are ignored;
+              accents are not removed.
             </p>
             <strong>Availability and scope</strong>
             <p>
@@ -110,7 +100,9 @@ function SearchHelp() {
               Most recently active agents are searched first. Use the project
               filter to narrow the search. Each pass searches up to 100 agents,
               150 threads and 20 seconds, with at most 3 projects at once.
-              Search more agents continues with agents not yet searched.
+              Search more agents continues with agents not yet searched. Very
+              large histories that exceed scan limits are reported as
+              unavailable, not as no matches.
             </p>
             <p style={{ marginBottom: 0 }}>
               Searches saved messages, not artifacts or unsaved changes. Access

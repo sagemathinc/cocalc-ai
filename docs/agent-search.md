@@ -9,24 +9,23 @@ the existing project-routed chat-store API rather than a central content index.
 
 ### Matching semantics
 
-Search currently merges two different matchers; there is no fuzzy, semantic,
-or typo-tolerant search. Results are sorted newest first rather than by relevance.
+Agent search and single-thread search use the shared `@cocalc/util/chat-search`
+matcher for live messages, saved heads, and SQLite history: JavaScript lowercase
+substring matching after stripping HTML tags. The trimmed query is literal,
+including quotes, spaces, punctuation, `%`, `_`, and `*`. There are no boolean
+operators, accent folding, fuzzy matching, or semantic search. Phrase searches
+need no quotes. Results are newest first, not ranked by relevance.
 
-- Saved chat-head messages (and live single-thread messages) use JavaScript
-  lowercase substring matching after stripping HTML tags. The trimmed query is
-  literal, including quotes and operators; multiple words must occur together.
-- SQLite history uses FTS5 with the `unicode61` tokenizer. Bare terms are ANDed,
-  quoted phrases match token sequences, uppercase `OR` provides alternatives,
-  and a trailing `*` supports token prefixes. Matching is case-insensitive under
-  the tokenizer's Unicode rules, which are not identical to JavaScript lowercase.
-- When FTS yields no rows or errors, SQLite falls back to `LOWER(...) LIKE`
-  against the excerpt and serialized row JSON. `%` and `_` are unescaped SQL
-  wildcards, and SQLite's default lowercase behavior is primarily ASCII.
-  This fallback is not unioned with successful FTS results.
+Only the latest message body is searched, not metadata or previous edits.
+Thread-scoped archive searches run in timed workers and scan at most 50,000
+rows / 32 MiB of serialized history (8 MiB per row). Exceeding a limit produces
+an explicit error rather than silently reporting incomplete results. SQLite
+thread scoping and newest-first ordering remain in SQL; matching uses the same
+JavaScript code as live search. No index migration is required.
 
-Thus moving a message into SQLite history can change which queries match it.
-Quotes/operators are not a consistent syntax across all messages. The help
-popover documents this limitation; this is not a unified search language.
+The separate legacy whole-room `.chat` search (without a thread scope) retains
+its FTS5/LIKE syntax; this change unifies conversation search, not that advanced
+file-wide tool.
 
 ### Limits
 

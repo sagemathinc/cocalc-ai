@@ -32,6 +32,7 @@ import { createPortal } from "react-dom";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
+import { chatSearchIndex } from "@cocalc/util/chat-search";
 import { COLORS } from "@cocalc/util/theme";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import {
@@ -914,13 +915,7 @@ export function ChatRoomThreadPanel({
     const matches: Array<{ date: string; excerpt: string }> = [];
     for (const message of selectedThreadMessages) {
       const content = newest_content(message);
-      if (
-        !content
-          .replace(/<[^>]*>/g, " ")
-          .toLowerCase()
-          .includes(needle)
-      )
-        continue;
+      if (chatSearchIndex(content, needle) < 0) continue;
       const d = dateValue(message);
       if (!d) continue;
       matches.push({

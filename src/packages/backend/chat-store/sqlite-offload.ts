@@ -38,6 +38,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
 import getLogger from "@cocalc/backend/logger";
+import { chatSearchIndex, searchableChatText } from "@cocalc/util/chat-search";
 
 const logger = getLogger("lite:hub:sqlite:chat-offload");
 
@@ -1412,7 +1413,8 @@ let activeSearchWorkers = 0;
 export async function searchChatStore(
   opts: SearchArchivedOptions,
 ): Promise<SearchArchivedResult> {
-  if (!opts.include_head) return searchChatStoreArchived(opts);
+  if (!opts.include_head && !opts.thread_id)
+    return searchChatStoreArchived(opts);
   if (
     !opts.thread_id ||
     opts.thread_id.length > 200 ||
@@ -1508,8 +1510,8 @@ export async function searchChatStoreCombined(
   let headMatches = 0;
   for (const [index, row] of parseChatFile(raw).entries()) {
     if (!row.is_chat || row.thread_id !== opts.thread_id || !row.obj) continue;
-    const body = extractBody(row.obj).replace(/<[^>]*>/g, " ");
-    const at = body.toLowerCase().indexOf(query.toLowerCase());
+    const body = searchableChatText(extractBody(row.obj));
+    const at = chatSearchIndex(extractBody(row.obj), query);
     if (at < 0) continue;
     const hit: SearchArchivedHit = {
       row_id: -(index + 1),
@@ -1577,6 +1579,60 @@ export function searchChatStoreArchived({
   }
   const normalizedLimit = Math.max(1, limit);
   const normalizedOffset = Math.max(0, offset);
+  if (thread_id) {
+    if (q.length > 256)
+      throw new Error("Search requires 1-256 query characters");
+    // Scan only this thread, with explicit bounds, inside the search worker.
+    // Match message bodies, never metadata or earlier edits in serialized JSON.
+    const rows = db
+      .prepare(
+        `SELECT ar.row_id, ar.segment_id, ar.message_id, ar.thread_id, ar.date_ms,
+              length(CAST(ar.row_json AS BLOB)) AS bytes,
+              CASE WHEN length(CAST(ar.row_json AS BLOB)) <= 8388608
+                   THEN ar.row_json ELSE NULL END AS row_json
+         FROM archived_rows ar WHERE ${where.join(" AND ")}
+         ORDER BY ar.date_ms DESC, ar.row_id DESC LIMIT 50001`,
+      )
+      .iterate(...params);
+    const hits: SearchArchivedHit[] = [];
+    let scanned = 0,
+      bytes = 0,
+      total_hits = 0;
+    for (const row of rows) {
+      bytes += Number(row.bytes);
+      if (++scanned > 50000 || bytes > 32 * 1024 * 1024 || row.row_json == null)
+        throw new Error("Conversation history exceeds search size limit");
+      const body = extractBody(JSON.parse(String(row.row_json)));
+      const at = chatSearchIndex(body, q);
+      if (at < 0) continue;
+      if (
+        total_hits++ < normalizedOffset ||
+        hits.length >= Math.min(100, normalizedLimit)
+      )
+        continue;
+      hits.push({
+        row_id: Number(row.row_id),
+        segment_id: String(row.segment_id),
+        message_id: row.message_id == null ? undefined : String(row.message_id),
+        thread_id: String(row.thread_id),
+        date_ms: row.date_ms == null ? undefined : Number(row.date_ms),
+        excerpt: searchableChatText(body).slice(
+          Math.max(0, at - 90),
+          at + q.length + 180,
+        ),
+      });
+    }
+    return {
+      chat_id,
+      hits,
+      total_hits,
+      offset: normalizedOffset,
+      next_offset:
+        normalizedOffset + hits.length < total_hits
+          ? normalizedOffset + hits.length
+          : undefined,
+    };
+  }
   const ftsParams = [...params, q, normalizedLimit, normalizedOffset];
   let rows: SearchArchivedHit[] = [];
   let totalHits = 0;
