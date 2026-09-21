@@ -515,6 +515,7 @@ export function CodexConfigButton(
   const runtime = metadata?.agent_runtime;
   return runtime != null ? (
     <HarnessRuntimeSummary
+      key={JSON.stringify([props.projectId, props.chatPath, props.threadKey])}
       runtime={runtime}
       reported={metadata?.agent_runtime_controls}
       onDiscover={

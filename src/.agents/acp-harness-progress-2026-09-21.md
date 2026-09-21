@@ -640,6 +640,42 @@ zero recovery children. The warning survived browser reload. The old process
 and its sidecar disappeared. These results do not qualify all async QA,
 abrupt-project-loss or persistence-failure behavior.
 
+## Options Before The First Turn
+
+Commit `e83386f69e` adds explicit discovery through the existing principal-bound
+project control channel. The server reads the thread's configured profile rather
+than accepting executable details from the discovery request. A temporary ACP
+session initializes, opens, applies selected settings and returns bounded
+advertised controls, then cleans up. It never prompts or loads/replaces the
+conversation's native session. Duplicate discovery is rejected, total concurrent
+discovery is capped, and project stop waits for local discovery cleanup before
+fencing turn workers. Old hosts reject the new action rather than silently
+running a prompt. Discovery still launches project code with full project access;
+it is explicit, not automatic metadata fetching.
+
+The ACP new-agent form now offers **Create and configure first**, registering the
+agent without sending a turn and preserving any typed prompt as a draft. The
+conversation exposes **Load model and mode options**, keyboard-operable with
+loading/error announcements. Controls remain advisory and are validated again at
+execution. Discovery UI state is keyed to project/chat/thread, and subsequent
+turn-reported controls supersede stale discovery results.
+
+Validation: 12 discovery/admission tests, 12 frontend tests, 21 Conat tests,
+60 project API tests and 48 worker-manager tests passed. Frontend lint and both
+frontend and project-host TypeScript builds passed. Project API Jest retains its
+existing open-handle warning.
+
+Deployed backend `20260921T114045Z-e83386f69e4a`, SHA-256
+`7994ac05ec7409c2158100004a755de418c76cdea4b6bd7ffd7c62b7192bad96`, upgrade
+`c860cbfe-104b-47e6-9f72-67642554d347`. Live keyboard testing created `agent-8`
+without running a turn, preserving draft `settings`. Discovery exposed Fast/Deep
+options; the job table was unchanged and the temporary sidecar was gone before
+submission. Selecting Deep and explicitly submitting the draft produced
+`deep/code`. Operation `c2880b14-8ddf-430d-b807-37e515af3e23` completed with
+admitted model `deep`; thread `c4a520da-1c2a-4c82-8174-c0b3b2952bed` had exactly
+one job. This proves the deterministic first-turn path, not every real harness's
+catalog behavior or all concurrent restart/discovery cases.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
@@ -701,7 +737,8 @@ use yet; the current UI is an experimental operator-testing surface.
 1. Broaden live qualification to persistence failures and abrupt project loss
    during a delivered prompt. Normal project restart with retained Pi and
    OpenCode native resume after worker restart passed, as recorded above.
-   Add pre-first-turn model/config capability discovery.
+   Broaden the passing pre-first-turn discovery check to real-harness catalogs
+   and concurrent restart/discovery cases.
 2. Extend the supervised launcher's live tests to resource exhaustion and forced
    descendant termination beyond the passing forced-cancellation fixture above.
    The smoke launcher is not reusable as a privileged

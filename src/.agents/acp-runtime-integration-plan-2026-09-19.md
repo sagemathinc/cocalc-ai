@@ -24,6 +24,10 @@ Orderly restart during a delivered prompt preserves an uncertain error outcome.
 Hard worker loss now invalidates its pending QA responder in the open browser
 and records an explicit unknown-outcome error that survives reload. No automatic
 resend was observed. Broader failure qualification remains below.
+Explicit pre-first-turn discovery now has a deterministic live check: create an
+ACP agent without starting a turn, load its advertised options, and select a
+model before submitting the preserved draft. Real-harness catalog and concurrent
+discovery/restart qualification remain.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.
