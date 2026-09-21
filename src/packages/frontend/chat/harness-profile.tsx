@@ -82,12 +82,35 @@ export interface HarnessProfileDraft {
   args: string;
 }
 
-export function HarnessRuntimeSummary({
+export function HarnessRuntimeSummary(props: HarnessRuntimeSummaryProps) {
+  let runtime: AcpHarnessRuntime;
+  try {
+    runtime = parseAcpHarnessRuntime(props.runtime);
+  } catch {
+    return (
+      <div role="alert">
+        Invalid ACP runtime configuration. This thread cannot run.
+      </div>
+    );
+  }
+  // Discovery belongs to this executable/profile, not to a later replacement.
+  return (
+    <HarnessRuntimeSummaryContent
+      key={JSON.stringify(runtime.profile)}
+      {...props}
+      runtime={runtime}
+    />
+  );
+}
+
+function HarnessRuntimeSummaryContent({
   runtime,
   reported,
   onSettings,
   onDiscover,
-}: HarnessRuntimeSummaryProps) {
+}: Omit<HarnessRuntimeSummaryProps, "runtime"> & {
+  runtime: AcpHarnessRuntime;
+}) {
   const id = useId();
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -96,17 +119,7 @@ export function HarnessRuntimeSummary({
     controls: unknown;
     reportedAtLoad: string | undefined;
   }>();
-  let parsed;
-  try {
-    parsed = parseAcpHarnessRuntime(runtime);
-  } catch {
-    return (
-      <div role="alert">
-        Invalid ACP runtime configuration. This thread cannot run.
-      </div>
-    );
-  }
-  const { profile, settings = {} } = parsed;
+  const { profile, settings = {} } = runtime;
   let controls: HarnessSessionControls | undefined;
   for (const candidate of [
     discovered?.reportedAtLoad === JSON.stringify(reported)
