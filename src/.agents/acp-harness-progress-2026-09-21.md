@@ -5,6 +5,16 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+Adapter persistence-failure coverage now injects storage errors at initial status,
+initial controls, streamed text, final controls, stop metadata and final summary.
+Each boundary runs against both a new subprocess and a retained subprocess after
+a successful turn. All 12 cases reject, stop the subprocess before returning,
+persist no successful summary, make no further stream calls after failure, and
+refuse subsequent reuse without launching another process. Repeated disposal is
+idempotent. The real-subprocess harness suite now passes 49 tests and the AI
+TypeScript build passes. These are controlled adapter/sink failures, not proof of
+live database outages, disk exhaustion or project loss.
+
 Additional peer-execution regression coverage persists a generic RPC request
 through SQLite, decodes the admitted request, and invokes the actual execution
 entry point with a revoked membership or unavailable authorization service.

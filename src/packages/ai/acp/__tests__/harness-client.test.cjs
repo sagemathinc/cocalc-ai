@@ -111,6 +111,7 @@ const profile = {
 
 function adapter(t, flags = [], attention) {
   let launches = 0;
+  let stops = 0;
   const agent = new HarnessAgent(
     {
       projectId: "project-a",
@@ -134,6 +135,7 @@ function adapter(t, flags = [], attention) {
         stderr: child.stderr,
         closed,
         stop: async () => {
+          stops++;
           child.kill("SIGKILL");
           await closed;
         },
@@ -156,7 +158,13 @@ function adapter(t, flags = [], attention) {
       events.push(event);
     },
   };
-  return { agent, request, events, launches: () => launches };
+  return {
+    agent,
+    request,
+    events,
+    launches: () => launches,
+    stops: () => stops,
+  };
 }
 
 test("harness adapter binds durable questions to the current account, chat and execution", async (t) => {
@@ -308,6 +316,76 @@ test("agent adapter never summarizes or relaunches an uncertain prompt", async (
   await assert.rejects(agent.evaluate(request));
   assert.equal(launches(), 1);
 });
+
+for (const phase of [
+  "status",
+  "initial controls",
+  "message",
+  "final controls",
+  "stop",
+  "summary",
+]) {
+  for (const retained of [false, true]) {
+    test(`${retained ? "retained" : "new"} adapter stops without relaunch after persistence failure at ${phase}`, async (t) => {
+      const { agent, request, events, launches, stops } = adapter(t);
+      if (retained) {
+        await agent.evaluate(request);
+        assert.equal(events.at(-1).finalResponse, "Hello world 1");
+        events.length = 0;
+      }
+      let controls = 0;
+      let failed = false;
+      let callsAfterFailure = 0;
+      const error = new Error(`storage unavailable at ${phase}`);
+      await assert.rejects(
+        agent.evaluate({
+          ...request,
+          stream: async (event) => {
+            if (failed) callsAfterFailure++;
+            if (event.event?.kind === "controls") controls++;
+            const current =
+              event.type === "status" || event.type === "summary"
+                ? event.type
+                : event.event?.kind === "controls"
+                  ? controls === 1
+                    ? "initial controls"
+                    : "final controls"
+                  : event.event?.kind === "stop"
+                    ? "stop"
+                    : event.event?.type;
+            if (current === phase) {
+              failed = true;
+              throw error;
+            }
+            events.push(event);
+          },
+        }),
+        phase === "message" ? { code: "outcome_unknown" } : error,
+      );
+      assert.equal(
+        failed,
+        true,
+        "the selected persistence boundary was reached",
+      );
+      assert.equal(callsAfterFailure, 0);
+      assert.ok(!events.some((event) => event.type === "summary"));
+      assert.equal(
+        stops(),
+        1,
+        "the failed process was stopped before returning",
+      );
+      assert.equal(agent.hasRunningTurn("fixture-session"), false);
+      await assert.rejects(agent.evaluate(request), /not idle/);
+      assert.equal(
+        launches(),
+        1,
+        "a failed turn cannot silently create a new process",
+      );
+      await agent.dispose();
+      assert.equal(stops(), 1, "cleanup remains idempotent");
+    });
+  }
+}
 
 test("agent adapter preserves permission policy events and cancellation stop reason", async (t) => {
   const { agent, request, events } = adapter(t);
