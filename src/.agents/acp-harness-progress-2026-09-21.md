@@ -220,9 +220,28 @@ completed a second prompt in the same session:
 | OpenCode | `opencode-ai@1.18.31`                    | Native `opencode acp` | Loopback fake provider |
 | Pi       | `@earendil-works/pi-coding-agent@0.86.1` | `pi-acp@0.0.33`       | Loopback fake provider |
 
+### OpenCode Durable Browser Qualification
+
+On the existing deployed backend, browser-created `agent-5` in the disposable
+project ran OpenCode 1.18.31 through a project-local wrapper and a bounded
+loopback fake provider (20-call cap, 15-minute lifetime, isolated durable HOME).
+Initial and follow-up turns completed. After confirming no active jobs, killed
+the idle worker and observed all its ACP sidecars disappear. A browser reload
+and explicit follow-up then completed on a new worker using the same native
+session `ses_f3cc9d93fffesPDL6P4juO3rZg`.
+
+The thread is `a13c45c8-20cb-4027-9420-0655869c245b`, stored at
+`/home/user/.local/share/cocalc/agents/e7d28687-b9f3-4bc1-9d72-8713ab4384e1.chat`.
+Completed operations were `ea80148c-2e6d-408a-9fed-138f2bc83a75`,
+`6ee52997-daef-4448-a0a3-28baaafe639b`, and
+`8bfc5287-0ae7-4e11-a313-2821aae17509`. The latter moved from worker
+`b6aaca9c-3bda-43dd-ac63-766bdbe323fa` to
+`9fcb6ad7-059e-4ab8-8664-1afff17f7743`; no recovery count was introduced.
+This qualifies explicit native resume, not automatic retry or offline operation.
+
 Discovery/session creation made zero inference calls in these probes. Both
-advertise session loading; Pi additionally passed live durable restart/resume
-as recorded above, while OpenCode restart/resume remains unqualified. The
+advertise session loading and have passed live durable worker-restart/resume
+as recorded above. The
 fixture covers resume replay suppression and unsupported resume behavior.
 The final two-turn probes made four fake-provider calls for OpenCode and three
 for Pi, including their file-write tool loop.
