@@ -27,6 +27,13 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 - A disposable-project smoke tool with a loopback fake OpenAI-compatible provider.
   It scripts a real harness file-write tool call and streamed response. This is
   development tooling, not the production launcher or an inference service.
+- A project-host sidecar launcher using structured Podman arguments, the existing
+  project resource pool, rootfs lease, home/scratch and read-only CoCalc mounts.
+  It joins the main project's network namespace rather than creating unrestricted
+  networking. Removal terminates the sidecar's PID namespace without stopping the
+  main project. Five mocked lifecycle tests pass; live host qualification remains.
+  It is internal and not wired into admission; scoped run identity, project-secret
+  mounting, abrupt-worker orphan reconciliation and live validation are still needed.
 
 ## Validation And Real Harnesses
 
