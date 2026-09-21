@@ -1821,6 +1821,21 @@ base filter targets `main`, not `feature/my-agents-workspace`. The branch filter
 is unchanged; these are local package-command results, not a claim of green
 remote CI.
 
+## Retry After Failed Client Cleanup
+
+A real-stdio regression exposed a cleanup retry mismatch: the project-host
+launcher allows a failed container removal to be retried, but the ACP client
+cached its rejected disposal promise permanently. The client now clears only
+that failed cleanup promise. It remains disposed and rejects inference; a later
+cleanup call can retry removal, concurrent calls share the attempt, and successful
+cleanup remains idempotent. Synchronous launcher failures also become rejected
+cleanup promises rather than escaping the promise contract.
+
+The new regression failed before the fix. AI TypeScript and all 13 normal Jest
+suites pass, including the subprocess suite now containing 95 cases. This does
+not automatically schedule cleanup retries or qualify Podman's rare removal
+timeout on a live host. This follow-up is not yet deployed.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile

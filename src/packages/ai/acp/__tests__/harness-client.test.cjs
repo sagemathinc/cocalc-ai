@@ -692,7 +692,14 @@ test("interruption during attention finalization cannot publish success", async 
   assert.equal(stops(), 1);
 });
 
-async function start(t, args = [], questionHandler, nodeArgs = [], onExit) {
+async function start(
+  t,
+  args = [],
+  questionHandler,
+  nodeArgs = [],
+  onExit,
+  beforeStop,
+) {
   let child;
   const client = await AcpHarnessClient.start(
     {
@@ -722,6 +729,7 @@ async function start(t, args = [], questionHandler, nodeArgs = [], onExit) {
         stderr: child.stderr,
         closed,
         stop: async () => {
+          await beforeStop?.();
           child.kill("SIGKILL");
           await closed;
         },
@@ -733,6 +741,28 @@ async function start(t, args = [], questionHandler, nodeArgs = [], onExit) {
   t.after(() => client.dispose());
   return client;
 }
+test("failed process cleanup can be retried without reusing the disposed client", async (t) => {
+  let attempts = 0;
+  const client = await start(t, [], undefined, [], undefined, async () => {
+    if (++attempts === 1) throw Error("Temporary removal failure");
+  });
+  await client.open();
+  await assert.rejects(client.dispose(), /Temporary removal failure/);
+  await assert.rejects(
+    client.prompt("hello", async () => {}),
+    { code: "unavailable" },
+  );
+  const retry = client.dispose();
+  assert.equal(
+    client.dispose(),
+    retry,
+    "concurrent cleanup shares one attempt",
+  );
+  await retry;
+  assert.equal(attempts, 2);
+  await client.dispose();
+  assert.equal(attempts, 2, "successful cleanup remains idempotent");
+});
 test("ACP task questions use the registered handler and exact schema response", async (t) => {
   let called = 0;
   const client = await start(t, [], async (questions, signal) => {

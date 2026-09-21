@@ -555,7 +555,14 @@ export class AcpHarnessClient {
     this.process.stdin.destroy();
     this.process.stdout.destroy();
     this.process.stderr.destroy();
-    this.shutdown = this.process.stop();
+    this.shutdown = Promise.resolve()
+      .then(() => this.process.stop())
+      .catch((error) => {
+        // Keep inference disabled, but allow a later cleanup attempt to retry
+        // transient container-removal failures instead of caching rejection.
+        this.shutdown = undefined;
+        throw error;
+      });
     return this.shutdown;
   }
 }
