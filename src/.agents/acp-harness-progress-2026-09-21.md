@@ -142,8 +142,9 @@ the exact original marker content. Harness files remained present. This qualifie
 that manual full-project restore scenario, not guaranteed 15-minute scheduling,
 home-only restore, editor convergence, or every interruption case.
 
-The UI remains experimental: rich generic tool rendering, incoming network
-requests, task QA and images are not qualified.
+At that checkpoint, rich generic tool rendering and incoming network requests
+were not qualified; subsequent checks below cover those paths. Task QA and images
+remain unqualified, and the UI is still experimental.
 Some shared completion notifications still use Codex wording. A feature flag on
 the host remains required; discovery/old-host UX needs further work.
 
@@ -318,6 +319,31 @@ fixture executable. The temporary source wrapper only allowed a single explicit
 probe prompt, and never retried a send. This proves one same-project queued
 network delivery, not cross-project delivery, queued revocation races or live
 guidance. Those broader behaviors must not be inferred from this check.
+
+### Live Text Editor Convergence
+
+Opened `/home/user/acp-editor-probe.txt` in the disposable project's CoCalc text
+editor with a known baseline, then submitted an explicit write prompt in a
+separate browser tab to fixture `agent-2`. A temporary project-local wrapper
+wrote the file directly through Node's filesystem API, without any CoCalc text
+callback or fabricated file-change notification. The editor showed the baseline
+with Saved status while admission was pending, then received the changed text
+without a reload. The backend live text API returned the same changed content.
+The transient save indicator settled to Saved. A subsequent full page reload
+retained the changed content and Saved status.
+
+Durable operation `fc548980-d82b-4ea6-b830-a08e58c82ef9` completed on thread
+`19f0de39-d3be-4bce-8f74-67ec5bdffa37`, native session `fixture-session`.
+Restored the plain fixture file after the test. This verifies normal external
+text writes through the actual ACP container and existing project watchers,
+not simultaneous unsaved human edits, binary artifacts or live notebooks.
+
+Automatic snapshot observation remains incomplete: listings through 09:34 UTC
+showed automatic snapshots at 08:45:39 and 09:06:52, alongside the earlier safety
+snapshot. Repeated host upgrades during qualification reset the scheduler's
+15-minute initial delay. Do not advertise a hard 15-minute recovery bound from
+these observations or replace the existing memory-pressure safeguards just to
+make the test pass.
 
 ## Reproduce
 
