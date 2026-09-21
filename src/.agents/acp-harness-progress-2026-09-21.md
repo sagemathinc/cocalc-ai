@@ -125,7 +125,11 @@ turn remained visibly running after another reload and was stopped through the
 visible Interrupt button. Cancellation initially rendered as an error; commit
 `2704643143` maps a provider-confirmed cancelled stop to interrupted while
 preserving partial output (97 chat-writer tests and host typecheck passed).
-Live qualification of that presentation fix is still pending at this checkpoint.
+Live qualification then passed on host bundle
+`20260921T082841Z-27046431436e` (upgrade operation
+`5f29c4eb-dee4-4185-a361-2f6cf13a8f94`): a fresh hanging turn survived browser
+reload, and Interrupt preserved `working` followed by `Conversation interrupted.`
+without a new error or resubmit prompt. No fixture turn remained running.
 
 Snapshot `acp-qualification-20260921-0823` captured a marker file which was then
 deleted. Home-only restore failed before replacement: the protected storage
