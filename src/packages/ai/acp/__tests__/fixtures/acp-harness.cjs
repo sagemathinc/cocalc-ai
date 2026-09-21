@@ -1,0 +1,107 @@
+// Deterministic stdio harness: no model, credentials or network calls.
+const readline = require("node:readline");
+const send = (message) =>
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", ...message }) + "\n");
+const result = (id, value) => send({ id, result: value });
+let pendingPrompt;
+let permissionPrompt;
+let counter = 0;
+const update = (text, sessionId = "fixture-session") =>
+  send({
+    method: "session/update",
+    params: {
+      sessionId,
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text },
+      },
+    },
+  });
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.id === "permission") {
+    update(JSON.stringify(message.result));
+    result(permissionPrompt, { stopReason: "end_turn" });
+    return;
+  }
+  switch (message.method) {
+    case "initialize":
+      if (process.argv.includes("--hang")) return;
+      return result(message.id, {
+        protocolVersion: process.argv.includes("--wrong-version") ? 999 : 1,
+        agentInfo: { name: "cocalc-fixture", version: "1" },
+        agentCapabilities: {
+          loadSession: !process.argv.includes("--no-resume"),
+        },
+        authMethods: [],
+      });
+    case "session/new":
+      return result(message.id, { sessionId: "fixture-session" });
+    case "session/load":
+      update("old replayed answer");
+      return result(message.id, {});
+    case "session/prompt": {
+      const text = message.params.prompt[0].text;
+      if (text === "flood") {
+        for (let i = 0; i < 100; i++) update("x".repeat(65536));
+        return;
+      }
+      if (text === "crash") return process.exit(2);
+      if (text === "malformed")
+        return process.stdout.write("secret-not-json\n");
+      if (text === "oversized")
+        return process.stdout.write("x".repeat(1024 * 1024 + 10));
+      if (text === "truncated") {
+        process.stdout.write('{"jsonrpc":');
+        return process.exit(0);
+      }
+      if (text === "reject")
+        return send({
+          id: message.id,
+          error: { code: -32000, message: "secret rejection details" },
+        });
+      if (text === "wrong-session") {
+        update("wrong", "another-session");
+        return;
+      }
+      if (text === "hang") {
+        pendingPrompt = message.id;
+        update("working");
+        return;
+      }
+      if (text === "permission") {
+        permissionPrompt = message.id;
+        return send({
+          id: "permission",
+          method: "session/request_permission",
+          params: {
+            sessionId: "fixture-session",
+            toolCall: {
+              toolCallId: "write-1",
+              title: "Edit project file",
+              status: "pending",
+            },
+            options: [{ optionId: "allow", kind: "allow_once", name: "Allow" }],
+          },
+        });
+      }
+      process.stderr.write("diagnostic secret must never become an event\n");
+      update("Hello ");
+      update(`world ${++counter}`);
+      return result(message.id, { stopReason: "end_turn" });
+    }
+    case "session/cancel":
+      if (process.argv.includes("--ignore-cancel")) return;
+      if (pendingPrompt != null) {
+        result(pendingPrompt, { stopReason: "cancelled" });
+        pendingPrompt = undefined;
+      }
+      return;
+    default:
+      if (message.id != null)
+        send({
+          id: message.id,
+          error: { code: -32601, message: "Unsupported method" },
+        });
+  }
+});

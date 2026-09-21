@@ -2,7 +2,11 @@
 
 Created: 2026-09-19. Revised: 2026-09-21 after scope discussion.
 
-Status: proposed; documentation only. No harness is qualified by this document.
+Status: implementation in progress. The isolated ACP client and deterministic
+qualification tools are implemented; production admission, container launching,
+durable chat and UI wiring are not yet implemented. OpenCode and Pi have passed
+real-process, local-fake-provider smoke tests, not the full release gates below.
+See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.
 

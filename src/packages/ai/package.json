@@ -5,6 +5,11 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
+    "./acp/harness": {
+      "types": "./dist/acp/harness.d.ts",
+      "import": "./dist/acp/harness.js",
+      "require": "./dist/acp/harness.js"
+    },
     ".": {
       "import": "./dist/index.js",
       "require": "./dist/index.js",
@@ -28,6 +33,7 @@
     "./package.json": "./package.json"
   },
   "scripts": {
+    "test:harness": "pnpm build && node --test acp/__tests__/harness-client.test.cjs",
     "build": "pnpm exec tsc --build",
     "clean": "rm -rf dist node_modules tsconfig.tsbuildinfo",
     "test": "pnpm exec jest",
@@ -35,6 +41,7 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^0.5.1",
+    "@agentclientprotocol/sdk-v1": "npm:@agentclientprotocol/sdk@1.4.0",
     "@cocalc/backend": "workspace:*",
     "@cocalc/conat": "workspace:*",
     "@cocalc/sync": "workspace:*",
