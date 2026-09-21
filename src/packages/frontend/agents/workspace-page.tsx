@@ -59,6 +59,12 @@ import type { ForeignArtifactTarget } from "@cocalc/frontend/frame-editors/chat-
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
+import {
+  HarnessProfileFields,
+  harnessRuntimeFromDraft,
+} from "@cocalc/frontend/chat/harness-profile";
+import type { HarnessProfileDraft } from "@cocalc/frontend/chat/harness-profile";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -507,6 +513,30 @@ function NewAgentPanel({
     [],
   );
   const modelCustomized = useRef(false);
+  const [sourceRuntime] = useState(() => {
+    if (!sourceAgent) return;
+    const raw = redux
+      .getEditorActions(sourceAgent.endpoint.project_id, sourceAgent.path)
+      ?.getChatActions?.()
+      ?.getThreadMetadata?.(sourceAgent.thread_id)?.agent_runtime;
+    return raw == null ? undefined : raw;
+  });
+  const [runtimeKind, setRuntimeKind] = useState<"codex-native" | "acp">(
+    sourceRuntime == null ? "codex-native" : "acp",
+  );
+  const [harnessDraft, setHarnessDraft] = useState<HarnessProfileDraft>(() => {
+    try {
+      const profile = parseAcpHarnessRuntime(sourceRuntime).profile;
+      return {
+        id: profile.id,
+        revision: profile.revision,
+        executable: profile.executable,
+        args: profile.args.join("\n"),
+      };
+    } catch {
+      return { id: "", revision: "", executable: "", args: "" };
+    }
+  });
   const [projectId, setProjectId] = useState<string | undefined>(
     () =>
       sourceAgent?.endpoint.project_id ||
@@ -515,6 +545,7 @@ function NewAgentPanel({
   );
   const [directory, setDirectory] = useState(
     () =>
+      sourceRuntime?.profile?.cwd ||
       sourceConfig?.workingDirectory?.trim() ||
       (sourceAgent
         ? getProjectHomeDirectory(sourceAgent.endpoint.project_id)
@@ -633,6 +664,7 @@ function NewAgentPanel({
   } = useCodexPaymentSource({
     projectId,
     preference: paymentPreference,
+    enabled: !!projectId && runtimeKind === "codex-native",
     credentialId:
       paymentPreference === "subscription" ? config.credentialId : undefined,
   } as Parameters<typeof useCodexPaymentSource>[0] & {
@@ -707,7 +739,12 @@ function NewAgentPanel({
   useEffect(() => {
     let disposed = false;
     setModelCatalog(undefined);
-    if (!projectId || paymentSource?.source !== "subscription") return;
+    if (
+      runtimeKind !== "codex-native" ||
+      !projectId ||
+      paymentSource?.source !== "subscription"
+    )
+      return;
     const cached = cachedAccountCodexModels(projectId, paymentSource);
     if (cached?.length) setModelCatalog(cached);
     void discoverAccountCodexModels(projectId, paymentSource)
@@ -718,7 +755,12 @@ function NewAgentPanel({
     return () => {
       disposed = true;
     };
-  }, [paymentSource?.source, paymentSource?.subscriptionRevision, projectId]);
+  }, [
+    paymentSource?.source,
+    paymentSource?.subscriptionRevision,
+    projectId,
+    runtimeKind,
+  ]);
 
   useEffect(() => {
     setConfig((current) => {
@@ -790,7 +832,10 @@ function NewAgentPanel({
         boundAccount.assertCurrent();
         const threadId = chatActions.createEmptyThread({
           name: agentName.trim(),
-          threadAgent: {
+          threadAgent: runtimeKind === "acp" ? {
+            mode: "acp",
+            runtime: harnessRuntimeFromDraft(harnessDraft, workingDirectory),
+          } : {
             mode: "codex",
             model: executionConfig.model,
             codexConfig: { ...executionConfig, workingDirectory },
@@ -1130,7 +1175,7 @@ function NewAgentPanel({
         workbenchEnabled: true,
       });
       await waitForChatReady(actions);
-      actions.setCodexConfig(created.threadId, executionConfig);
+      if (runtimeKind === "codex-native") actions.setCodexConfig(created.threadId, executionConfig);
       writeAgentSubscriptionSelection({
         accountId: boundAccount.accountId,
         projectId: created.projectId,
@@ -1148,7 +1193,7 @@ function NewAgentPanel({
       const sent = actions.sendChat({
         input: request,
         reply_thread_id: created.threadId,
-        acpConfigOverride: executionConfig,
+        acpConfigOverride: runtimeKind === "codex-native" ? executionConfig : undefined,
         chatIdentity,
       });
       if (sent) {
@@ -1532,7 +1577,17 @@ function NewAgentPanel({
                     disabled={busy || !!pending}
                   />
                 </Popover>
-                <span
+                <Select
+                  aria-label="Agent runtime"
+                  value={runtimeKind}
+                  disabled={busy || !!pending}
+                  options={[
+                    { value: "codex-native", label: "Codex" },
+                    { value: "acp", label: "Custom ACP harness (experimental)" },
+                  ]}
+                  onChange={setRuntimeKind}
+                />
+                {runtimeKind === "codex-native" && <span
                   style={{
                     alignItems: "center",
                     display: "inline-flex",
@@ -1645,6 +1700,7 @@ function NewAgentPanel({
                     </ComposerPillButton>
                   </Dropdown>
                 </span>
+                }
                 <Popover
                   content={advancedSettings}
                   open={moreSettingsOpen}
@@ -1686,6 +1742,9 @@ function NewAgentPanel({
             />
           </div>
         </div>
+        {runtimeKind === "acp" && (
+          <HarnessProfileFields value={harnessDraft} onChange={setHarnessDraft} disabled={busy || !!pending} />
+        )}
         {(isFirstRun || busy) && (
           <PreparationStatus active={busy} phase={preparationPhase} />
         )}
@@ -1719,7 +1778,7 @@ function NewAgentPanel({
             </Space>
           </div>
         )}
-        {paymentSourceError && (
+        {runtimeKind === "codex-native" && paymentSourceError && (
           <Alert
             role="alert"
             type="error"

@@ -7,6 +7,7 @@ import type {
   CodexGoalCommand,
   CodexGoalAck,
 } from "@cocalc/util/ai/codex-goal";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 
 export const CHAT_SCHEMA_V2 = 2;
 export const CHAT_THREAD_META_ROW_DATE = "1970-01-01T00:00:00.000Z";
@@ -305,6 +306,8 @@ export interface ChatThreadResolvedMeta {
 }
 
 export interface ChatThreadConfigRecord {
+  agent_runtime?: AcpHarnessRuntime;
+  agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -338,6 +341,8 @@ export interface ChatThreadConfigRecord {
 }
 
 export interface BuildThreadConfigRecordOptions {
+  agent_runtime?: AcpHarnessRuntime;
+  agent_session_id?: string;
   acp_goal?: CodexGoalSnapshot;
   acp_goal_request?: CodexGoalCommand;
   acp_goal_ack?: CodexGoalAck;
@@ -394,6 +399,8 @@ export function buildThreadConfigRecord(
     agent_kind: options.agent_kind,
     agent_model: options.agent_model,
     agent_mode: options.agent_mode,
+    agent_runtime: options.agent_runtime,
+    agent_session_id: options.agent_session_id,
     acp_config: options.acp_config,
     acp_goal: options.acp_goal,
     acp_goal_request: options.acp_goal_request,

@@ -54,6 +54,82 @@ class FakeAcpState {
 }
 
 describe("processAcpLLM", () => {
+  it.each([false, true])(
+    "submits generic runtime without native config or unsafe ack retry (failure=%s)",
+    async (failure) => {
+      const runtime = {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 1,
+          kind: "acp",
+          id: "fixture",
+          revision: "1",
+          executable: "/home/user/fixture",
+          args: [],
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      };
+      if (failure)
+        mockStreamAcp.mockRejectedValue(
+          Error("ACP queue submission ended without acknowledgement"),
+        );
+      else mockStreamAcp.mockResolvedValue(queuedAckStream());
+      const state = new FakeAcpState();
+      const actions: any = {
+        syncdb: { commit: jest.fn(), save: jest.fn(async () => {}) },
+        store: {
+          get: (key) =>
+            ({ project_id: "proj", path: "x.chat", acpState: state })[key],
+          setState: jest.fn(),
+        },
+        chatStreams: new Set(),
+        getAllMessages: () => new Map(),
+        getThreadMetadata: () => ({
+          agent_runtime: runtime,
+          agent_session_id: "harness-session",
+        }),
+        getMessagesInThread: () => [],
+        getCodexConfig: jest.fn(() => ({
+          sessionId: "wrong-session",
+          model: "codex",
+          credentialId: "wrong-credential",
+        })),
+        sendReply: jest.fn(),
+      };
+      await processAcpLLM({
+        actions,
+        model: "codex-agent",
+        input: "hello",
+        message: {
+          event: "chat",
+          sender_id: "user-1",
+          date: new Date(12345),
+          message_id: "user-msg",
+          thread_id: "thread-harness",
+          history: [
+            {
+              author_id: "user-1",
+              content: "hello",
+              date: new Date(12345).toISOString(),
+            },
+          ],
+        } as any,
+      });
+      expect(mockStreamAcp).toHaveBeenCalledTimes(1);
+      expect(mockStreamAcp.mock.calls[0][0]).toMatchObject({
+        runtime,
+        session_id: "harness-session",
+        config: undefined,
+        chat: { sender_id: "acp-harness" },
+      });
+      expect(actions.getCodexConfig).not.toHaveBeenCalled();
+      expect(mockInterruptAcp).not.toHaveBeenCalled();
+    },
+  );
+
   afterEach(() => {
     jest.restoreAllMocks();
     jest.clearAllMocks();

@@ -1,7 +1,7 @@
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import type { AcpAgent } from "@cocalc/ai/acp";
 import type { HarnessBinding, HarnessLauncher } from "@cocalc/ai/acp/harness";
-import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import { createHash } from "node:crypto";
 
 type Conversation = { path: string; threadId: string };
@@ -17,17 +17,7 @@ export function setHarnessLauncher(next?: Factory): void {
 
 export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
   if (request.runtime === undefined) return request;
-  const runtime = request.runtime;
-  if (
-    !runtime ||
-    runtime.version !== 1 ||
-    runtime.kind !== "acp" ||
-    Object.keys(runtime).some(
-      (key) => !["version", "kind", "profile"].includes(key),
-    )
-  )
-    throw Error("Unsupported agent runtime");
-  const profile = parseAcpHarnessProfile(runtime.profile);
+  const runtime = parseAcpHarnessRuntime(request.runtime);
   if (!launcher || process.env.COCALC_ACP_HARNESSES !== "1")
     throw Error("ACP harness execution is not enabled on this host");
   if (
@@ -49,8 +39,26 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
   return {
     ...request,
     chat: { ...request.chat },
-    runtime: { version: 1, kind: "acp", profile },
+    runtime,
   };
+}
+
+// Validate shared configuration, but never let it replace an explicitly
+// submitted selection. Queued execution uses the admitted snapshot instead.
+export function assertConfiguredHarnessRuntime(
+  request: Pick<AcpRequest, "runtime">,
+  configured: unknown,
+): void {
+  if (configured == null) return;
+  const expected = parseAcpHarnessRuntime(configured);
+  if (
+    !request.runtime ||
+    JSON.stringify(parseAcpHarnessRuntime(request.runtime)) !==
+      JSON.stringify(expected)
+  )
+    throw Error(
+      "This thread uses an ACP harness; reload its runtime settings before sending",
+    );
 }
 
 export function harnessRuntimeKey(request: AcpRequest): string {

@@ -1,4 +1,6 @@
 import { webapp_client } from "@cocalc/frontend/webapp-client";
+import { parseAcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
 import type {
   AcpAutomationConfig,
   AcpAutomationResponse,
@@ -314,8 +316,6 @@ export async function processAcpLLM({
     return;
   }
 
-  const sender_id = model || "openai-codex-agent";
-
   const messageDate = dateValue(message);
   if (!messageDate) {
     throw Error("invalid message");
@@ -350,16 +350,42 @@ export async function processAcpLLM({
     project_id,
     send_mode: sendMode,
   });
-  const config = sanitizeSharedCodexConfig({
-    ...(actions.getCodexConfig?.(thread_id) ?? {}),
-    ...(acpConfigOverride ?? {}),
+  const threadMetadata = actions.getThreadMetadata?.(thread_id, {
+    threadId: thread_id,
   });
+  const isHarnessThread = threadMetadata?.agent_runtime != null;
+  let runtime: AcpHarnessRuntime | undefined;
+  let runtimeError: unknown;
+  try {
+    if (isHarnessThread)
+      runtime = parseAcpHarnessRuntime(threadMetadata!.agent_runtime);
+    if (runtime && sendMode === "immediate")
+      throw Error(
+        "This ACP harness does not support live guidance; queue a new turn instead",
+      );
+  } catch (error) {
+    runtimeError = error;
+  }
+  const sender_id = isHarnessThread
+    ? "acp-harness"
+    : model || "openai-codex-agent";
+  const config: Partial<CodexThreadConfig> & { credentialId?: string } =
+    isHarnessThread
+      ? {}
+      : sanitizeSharedCodexConfig({
+          ...(actions.getCodexConfig?.(thread_id) ?? {}),
+          ...(acpConfigOverride ?? {}),
+        });
   const selectedCredentialId = readCodexSubscriptionSelection({
     accountId: redux.getStore("account")?.get("account_id"),
     projectId: project_id,
     threadKey: thread_id,
   });
-  if (selectedCredentialId && config.paymentSource === "subscription") {
+  if (
+    !isHarnessThread &&
+    selectedCredentialId &&
+    config.paymentSource === "subscription"
+  ) {
     let capability: { version?: number } | undefined;
     try {
       capability =
@@ -402,8 +428,10 @@ export async function processAcpLLM({
     }
     return undefined;
   })();
-  const effectiveSessionId =
-    normalizeCodexSessionId(config.sessionId) ?? inferredSessionId;
+  const effectiveSessionId = runtime
+    ? (normalizeCodexSessionId(threadMetadata?.agent_session_id) ??
+      inferredSessionId)
+    : (normalizeCodexSessionId(config.sessionId) ?? inferredSessionId);
   // Backend chat writer must own a distinct assistant row for this turn.
   // Reusing the user's message_id can cause backend updates to overwrite the
   // input message history instead of writing assistant output.
@@ -447,7 +475,9 @@ export async function processAcpLLM({
     }
   };
 
-  const sessionKey = effectiveSessionId ?? thread_id;
+  const sessionKey = runtime
+    ? effectiveSessionId
+    : (effectiveSessionId ?? thread_id);
   const ensureChatStatePersisted = async (): Promise<void> => {
     if (typeof syncdb?.save !== "function") return;
     await syncdb.save();
@@ -491,21 +521,25 @@ export async function processAcpLLM({
   // created Agent switches from its bootstrap actions to the mounted editor.
   setState("sending");
   try {
+    if (runtimeError) throw runtimeError;
     await ensureChatStatePersisted();
     markCodexResponseTrace(user_message_id, "chat_state_persisted");
     const acpRequest = {
       project_id,
       prompt: workingInput,
       session_id: sessionKey,
-      config: buildCodexAcpConfig({
-        path,
-        config:
-          effectiveSessionId != null
-            ? { ...config, sessionId: effectiveSessionId }
-            : config,
-        model: normalizedModel,
-        maxConcurrentSubagents,
-      }),
+      runtime,
+      config: runtime
+        ? undefined
+        : buildCodexAcpConfig({
+            path,
+            config:
+              effectiveSessionId != null
+                ? { ...config, sessionId: effectiveSessionId }
+                : config,
+            model: normalizedModel,
+            maxConcurrentSubagents,
+          }),
       chat: chatMetadata,
     };
     if (sendMode === "immediate") {
@@ -563,7 +597,11 @@ export async function processAcpLLM({
           break;
         } catch (err) {
           lastError = err;
-          if (attempt >= ACP_ACK_MAX_ATTEMPTS || !isRetryableAcpAckError(err)) {
+          if (
+            runtime ||
+            attempt >= ACP_ACK_MAX_ATTEMPTS ||
+            !isRetryableAcpAckError(err)
+          ) {
             throw err;
           }
           try {

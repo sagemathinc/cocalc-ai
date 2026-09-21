@@ -17,6 +17,27 @@ export type AgentRuntimeConfig =
   | { version: 1; kind: "codex-native"; codex: CodexSessionConfig }
   | { version: 1; kind: "acp"; profile: AcpHarnessProfile };
 
+export type AcpHarnessRuntime = Extract<AgentRuntimeConfig, { kind: "acp" }>;
+
+export function parseAcpHarnessRuntime(value: unknown): AcpHarnessRuntime {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw Error("Unsupported agent runtime");
+  const obj = value as Record<string, unknown>;
+  if (
+    obj.version !== 1 ||
+    obj.kind !== "acp" ||
+    Object.keys(obj).some(
+      (key) => !["version", "kind", "profile"].includes(key),
+    )
+  )
+    throw Error("Unsupported agent runtime");
+  return {
+    version: 1,
+    kind: "acp",
+    profile: parseAcpHarnessProfile(obj.profile),
+  };
+}
+
 /** Fail closed instead of interpreting an unknown runtime as native Codex. */
 export function parseAcpHarnessProfile(value: unknown): AcpHarnessProfile {
   if (!value || typeof value !== "object" || Array.isArray(value)) {

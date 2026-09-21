@@ -4,6 +4,7 @@ import {
   prepareHarnessRequest,
   setHarnessLauncher,
   harnessRuntimeKey,
+  assertConfiguredHarnessRuntime,
 } from "../harness-runtime";
 import {
   pinCodexCredentialAtAdmission,
@@ -45,6 +46,25 @@ function request(): AcpRequest {
   };
 }
 const original = process.env.COCALC_ACP_HARNESSES;
+test("configured harness rejects native/unknown/stale clients, without changing submitted runtime", () => {
+  const source = request();
+  expect(() =>
+    assertConfiguredHarnessRuntime(source, source.runtime),
+  ).not.toThrow();
+  expect(() => assertConfiguredHarnessRuntime({}, source.runtime)).toThrow(
+    /reload/,
+  );
+  expect(() =>
+    assertConfiguredHarnessRuntime(source, { kind: "future" }),
+  ).toThrow(/runtime/);
+  const newer = {
+    ...source.runtime!,
+    profile: { ...source.runtime!.profile, revision: "new" },
+  };
+  expect(() => assertConfiguredHarnessRuntime(source, newer)).toThrow(/reload/);
+  expect(source.runtime!.profile.revision).toBe("1");
+  expect(() => assertConfiguredHarnessRuntime({}, undefined)).not.toThrow();
+});
 beforeEach(() => {
   process.env.COCALC_ACP_HARNESSES = "1";
   setHarnessLauncher(async () => {

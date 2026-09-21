@@ -321,6 +321,7 @@ import {
   prepareHarnessRequest,
   harnessRuntimeKey,
   createHarnessAgent,
+  assertConfiguredHarnessRuntime,
 } from "./harness-runtime";
 export { setHarnessLauncher } from "./harness-runtime";
 
@@ -4576,6 +4577,11 @@ export class ChatStreamWriter {
     const threadId = this.resolvedThreadId();
     if (!threadId) return;
     const currentRow = preferredThreadConfigRow(this.syncdb, threadId);
+    if (this.runtimeKind === "acp") {
+      if (this.recordField(currentRow, "agent_session_id") !== sessionId)
+        await this.patchThreadConfig({ agent_session_id: sessionId });
+      return;
+    }
     const currentConfig = this.recordField<any>(currentRow, "acp_config");
     const currentConfigObj =
       currentConfig && typeof currentConfig.toJS === "function"
@@ -8374,6 +8380,7 @@ async function enqueueAutomationRun(
           chat,
         };
 
+  await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
 
   throwIfAcpAdmissionDenied(
@@ -11016,6 +11023,26 @@ function startAcpSteerPoller(): void {
   });
 }
 
+async function assertThreadRuntimeAtAdmission(
+  request: AcpJobRequest,
+): Promise<void> {
+  if (!request.chat?.path || !request.chat.thread_id) return;
+  if (!conatClient) throw Error("conat client must be initialized");
+  await withChatSyncDB({
+    client: conatClient,
+    project_id: request.project_id,
+    path: request.chat.path,
+    fn: async (syncdb) => {
+      const row = preferredThreadConfigRow(syncdb, request.chat!.thread_id!);
+      const value: any = syncdbField(row, "agent_runtime");
+      assertConfiguredHarnessRuntime(
+        request.request_kind === "command" ? {} : request,
+        value?.toJS?.() ?? value,
+      );
+    },
+  });
+}
+
 async function enqueueChatAcpTurn({
   request,
   stream,
@@ -11026,6 +11053,7 @@ async function enqueueChatAcpTurn({
   if (!conatClient) {
     throw new Error("conat client must be initialized");
   }
+  await assertThreadRuntimeAtAdmission(request);
   request = await pinCodexCredentialAtAdmission(request);
   if (!request.chat) {
     throw new Error("chat metadata is required to enqueue an ACP turn");

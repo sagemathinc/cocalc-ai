@@ -3386,98 +3386,106 @@ describe("ChatStreamWriter", () => {
     writer.dispose(true);
   });
 
-  it("persists session id into thread-config without mutating root rows", async () => {
-    const rootIso = new Date(100).toISOString();
-    const turnIso = new Date(200).toISOString();
-    const metadata = {
-      ...baseMetadata,
-      message_date: turnIso,
-      sender_id: "codex-agent",
-      reply_to: rootIso,
-      thread_id: "legacy-thread-100",
-    } as AcpChatContext;
-    const rows: any[] = [
-      {
-        event: "chat",
-        date: rootIso,
-        sender_id: "user-1",
-        history: [],
-        acp_config: { model: "gpt-5.3-codex" },
-      },
-      {
-        event: "chat",
-        date: rootIso,
+  it.each(["codex", "acp"] as const)(
+    "persists %s session id without mutating root rows or another runtime",
+    async (runtimeKind) => {
+      const rootIso = new Date(100).toISOString();
+      const turnIso = new Date(200).toISOString();
+      const metadata = {
+        ...baseMetadata,
+        message_date: turnIso,
         sender_id: "codex-agent",
-        history: [],
         reply_to: rootIso,
-      },
-      {
-        event: "chat-thread-config",
-        sender_id: threadConfigSenderId("legacy-thread-100"),
-        date: CHAT_THREAD_META_ROW_DATE,
         thread_id: "legacy-thread-100",
-        acp_config: { model: "gpt-5.3-codex" },
-      },
-    ];
-    const sets: any[] = [];
-    const syncdb: any = {
-      metadata,
-      isReady: () => true,
-      get: () => rows,
-      get_one: (where: any) =>
-        rows.find((row) =>
-          Object.entries(where).every(([k, v]) => row[k] === v),
+      } as AcpChatContext;
+      const rows: any[] = [
+        {
+          event: "chat",
+          date: rootIso,
+          sender_id: "user-1",
+          history: [],
+          acp_config: { model: "gpt-5.3-codex" },
+        },
+        {
+          event: "chat",
+          date: rootIso,
+          sender_id: "codex-agent",
+          history: [],
+          reply_to: rootIso,
+        },
+        {
+          event: "chat-thread-config",
+          sender_id: threadConfigSenderId("legacy-thread-100"),
+          date: CHAT_THREAD_META_ROW_DATE,
+          thread_id: "legacy-thread-100",
+          acp_config: { model: "gpt-5.3-codex" },
+        },
+      ];
+      const sets: any[] = [];
+      const syncdb: any = {
+        metadata,
+        isReady: () => true,
+        get: () => rows,
+        get_one: (where: any) =>
+          rows.find((row) =>
+            Object.entries(where).every(([k, v]) => row[k] === v),
+          ),
+        set: (val: any) => {
+          sets.push(val);
+          const idx = rows.findIndex(
+            (row) =>
+              row.event === val.event &&
+              row.date === val.date &&
+              row.sender_id === val.sender_id,
+          );
+          if (idx >= 0) {
+            rows[idx] = { ...rows[idx], ...val };
+          } else {
+            rows.push({ ...val });
+          }
+        },
+        commit: jest.fn(),
+        save: jest.fn(async () => {}),
+        close: async () => {},
+      };
+
+      const writer: any = new ChatStreamWriter({
+        metadata,
+        client: makeFakeClient(),
+        approverAccountId: "u",
+        syncdbOverride: syncdb,
+        runtimeKind,
+        logStoreFactory: () =>
+          ({
+            set: async () => {},
+          }) as any,
+      });
+      await writer.waitUntilReady();
+      await writer.persistSessionId("session-123");
+      await delay(0);
+
+      const threadCfgUpdate = sets.find(
+        (x) =>
+          x.event === "chat-thread-config" &&
+          x.sender_id === threadConfigSenderId("legacy-thread-100") &&
+          x.date === CHAT_THREAD_META_ROW_DATE,
+      );
+      expect(
+        sets.find(
+          (x) => x.event === "chat" && x.date === rootIso && x.acp_config,
         ),
-      set: (val: any) => {
-        sets.push(val);
-        const idx = rows.findIndex(
-          (row) =>
-            row.event === val.event &&
-            row.date === val.date &&
-            row.sender_id === val.sender_id,
-        );
-        if (idx >= 0) {
-          rows[idx] = { ...rows[idx], ...val };
-        } else {
-          rows.push({ ...val });
-        }
-      },
-      commit: jest.fn(),
-      save: jest.fn(async () => {}),
-      close: async () => {},
-    };
-
-    const writer: any = new ChatStreamWriter({
-      metadata,
-      client: makeFakeClient(),
-      approverAccountId: "u",
-      syncdbOverride: syncdb,
-      logStoreFactory: () =>
-        ({
-          set: async () => {},
-        }) as any,
-    });
-    await writer.waitUntilReady();
-    await writer.persistSessionId("session-123");
-    await delay(0);
-
-    const threadCfgUpdate = sets.find(
-      (x) =>
-        x.event === "chat-thread-config" &&
-        x.sender_id === threadConfigSenderId("legacy-thread-100") &&
-        x.date === CHAT_THREAD_META_ROW_DATE,
-    );
-    expect(
-      sets.find(
-        (x) => x.event === "chat" && x.date === rootIso && x.acp_config,
-      ),
-    ).toBeUndefined();
-    expect(threadCfgUpdate?.acp_config).toEqual({
-      model: "gpt-5.3-codex",
-      sessionId: "session-123",
-    });
-    writer.dispose?.(true);
-  });
+      ).toBeUndefined();
+      if (runtimeKind === "acp") {
+        expect(threadCfgUpdate?.agent_session_id).toBe("session-123");
+        expect(threadCfgUpdate?.acp_config).toEqual({ model: "gpt-5.3-codex" });
+      } else
+        expect(threadCfgUpdate?.acp_config).toEqual({
+          model: "gpt-5.3-codex",
+          sessionId: "session-123",
+        });
+      writer.dispose?.(true);
+    },
+  );
 });
 
 describe("async attention answers", () => {
