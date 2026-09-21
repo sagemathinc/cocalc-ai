@@ -51,11 +51,17 @@ async function main() {
     throw Error("Pass an absolute path to pinned OpenCode or pi-acp");
   const offline = process.argv.includes("--require-loopback-only");
   const rejectProvider = process.argv.includes("--provider-reject");
+  const retryProvider = process.argv.includes("--provider-retry");
+  assert.ok(
+    !(rejectProvider && retryProvider),
+    "Choose one provider fault mode",
+  );
   if (offline) await verifyLoopbackOnly();
   const home = await mkdtemp(join(tmpdir(), "cocalc-acp-smoke-"));
   const cwd = join(home, "workspace");
   await mkdir(cwd);
   let calls = 0;
+  let transientFailures = 0;
   let writes = 0;
   const target = join(cwd, "acp-fixture.txt");
   const server = createServer(async (req, res) => {
@@ -75,6 +81,25 @@ async function main() {
     }
     const request = JSON.parse(Buffer.concat(chunks).toString());
     calls++;
+    // Fail task inference, not an auxiliary title-generation request.
+    if (
+      retryProvider &&
+      transientFailures === 0 &&
+      request.stream &&
+      request.tools?.length
+    ) {
+      transientFailures++;
+      res.writeHead(503, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            message: "Local fixture temporarily unavailable",
+            type: "server_error",
+          },
+        }),
+      );
+      return;
+    }
     if (rejectProvider) {
       res.writeHead(401, { "Content-Type": "application/json" });
       res.end(
@@ -355,6 +380,13 @@ async function main() {
     assert.ok(calls > 0);
     assert.match(messages.join(""), /ACP local fixture verified/);
     assert.equal(await readFile(target, "utf8"), "ACP fixture file\n");
+    if (retryProvider) {
+      assert.equal(transientFailures, 1);
+      assert.ok(
+        calls > 1,
+        "The rejected request must be followed by successful inference",
+      );
+    }
     const sessionId = client.sessionId;
     const followup: string[] = [];
     const second = await client.prompt("Greet me again.", async (event) => {
@@ -377,6 +409,8 @@ async function main() {
           modes: controls.mode?.options.length ?? 0,
         },
         providerCalls: calls,
+        transientFailures,
+        providerRetryVerified: retryProvider,
         fileWriteVerified: true,
         followupVerified: true,
         stopReason: result.stopReason,

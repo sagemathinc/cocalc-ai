@@ -7,6 +7,17 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ### Real Harness Provider Rejection
 
+The smoke tool also supports `--provider-retry`: return one HTTP 503 on the
+first streaming tool-bearing request, then serve the normal file-write and
+follow-up responses. Targeting task inference matters: rejecting an auxiliary
+title request alone is not retry qualification. The final probe passes patched
+Pi `0.0.33-cocalc-provider-error-probe.1` (four local calls, visible retry/resume
+messages) and OpenCode `1.18.31` (five calls). Both report `end_turn`, verify the
+written file and complete a same-session follow-up after exactly one injected
+failure. Discovery still performs no inference. AI TypeScript passes. These
+are standalone client/harness checks, not durable-worker retry or failover tests;
+CoCalc still never automatically resubmits an uncertain ACP turn.
+
 A separately packaged experimental fix for the pinned bridge now passes the
 HTTP 401 probe while preserving the normal file-write/follow-up smoke. The
 [patch record](acp-harness-patches/README.md) includes source revision, license,
@@ -1236,6 +1247,8 @@ node smoke.cjs /absolute/path/to/node_modules/.bin/pi-acp pi
 Append `--provider-reject` to test local HTTP 401 propagation without real
 credentials. This currently passes OpenCode and fails the pinned Pi bridge as
 recorded above; do not suppress that failure when qualifying another release.
+Use `--provider-retry` instead to qualify one transient HTTP 503 followed by
+successful task inference. The two provider-fault flags are mutually exclusive.
 
 For the offline check, run the same bundled tool inside a separately provisioned
 Linux container with `--network=none`, the pinned packages available read-only,

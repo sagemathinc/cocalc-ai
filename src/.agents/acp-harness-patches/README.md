@@ -44,6 +44,12 @@ and normal file-write/follow-up smoke (three local requests) with Pi `0.86.1`.
 No paid inference was used. These are standalone real-harness/client probes,
 not durable/browser or offline qualification of this modified bridge.
 
+The subsequent `--provider-retry` probe also passes: one HTTP 503 on task
+inference triggers visible Pi retry/resume progress, followed by verified file
+creation and a successful same-session follow-up (four total local requests).
+This verifies recovery from one transient provider failure, not all retry or
+compaction cases, and does not enable CoCalc-side uncertain-turn resubmission.
+
 Bundle SHA-256:
 `747673313e7db7057105e26012c86dc0809960c234e556a34e395cf721d98789`.
 Patch SHA-256:
