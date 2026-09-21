@@ -26,6 +26,34 @@ used. The final frontend bundle was separately rechecked at 320/768/1366 CSS
 pixels in light and dark themes, including keyboard dialog opening, Escape and
 focus restoration, without the development stale-build overlay.
 
+## Durable Local Inference With Project Public Egress Blocked
+
+On deployed `ba08aa4eb7`, operation
+`c5cb204e-6ecf-4212-a9ed-037e35e1716e` completed in the existing Pi/local-Qwen
+conversation and rendered "Nine plus nine is eighteen." Browser reload retained
+the completed answer. This was a new runtime process using the provisioned local
+model and existing durable native session, not a replayed fixture answer.
+
+For the duration of the test, an operator-created `inet acp_qualification` nft
+output chain in project namespace `net:[4026532463]` default-dropped egress except
+loopback and `10.206.0.1:9102` (the existing CoCalc host transport). The namespace
+was verified distinct from the host before mutation. Public IPv4 curl timed out;
+public IPv6 curl failed. The IPv6 failure alone does not establish filtering
+because that network lacks a public IPv6 route; the inet output policy covers
+both families. The drop counter recorded 87 packets / 5120 bytes during testing.
+Those packets were not attributed to particular processes or telemetry.
+
+Sidecar `acp-1892b11a-6c63-4a92-988d-01dcddc0bc79-381822b6-cfd8-4b44-a78f-dc69a70bda19`
+shared the exact filtered project namespace. No cloud inference, provider login,
+catalog download or real subscription was needed for this turn. The test helper
+had a bounded cleanup timer; it was deliberately signaled after qualification,
+exited successfully, and an independent nft listing confirmed the temporary
+table was gone. No host firewall or other project namespace was modified.
+
+This closes the project-egress-blocked browser/local-inference demonstration,
+not the broader audit of an entirely air-gapped CoCalc host/control plane.
+Network-policy product support remains a follow-up, not a new implicit feature.
+
 ## Implemented
 
 - Project stop now pauses new discovery before draining existing probes and
@@ -828,8 +856,9 @@ use yet; the current UI is an experimental operator-testing surface.
    only supported input; attachment types and unsupported forms fail explicitly.
 5. Broaden the passing external text-write convergence check to simultaneous
    edits; verify snapshot scheduling, home-only restore and recovery protection.
-   Complete browser-to-worker local inference qualification with public egress
-   blocked. Extend same-project messaging to cross-project and queued-revocation
-   cases. These remain release gates, not implied by the standalone smoke tests.
+   Extend the project-egress-blocked inference check to broader on-prem control-
+   plane deployment qualification. Extend same-project messaging to cross-project
+   and queued-revocation cases. These remain release gates, not implied by the
+   standalone smoke tests.
 
 Do not advertise this checkpoint as a usable generic-harness chat release yet.

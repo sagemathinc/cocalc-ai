@@ -14,8 +14,9 @@ Pi also passed actual local Qwen inference in a separate network-disabled
 container. Durable OpenCode resume, same-project queued agent messaging, external
 text-editor convergence, and supported ACP form questions through the persistent
 QA UI have live evidence. This is not the full release qualification below;
-the real local model also works through the durable browser path, but that path
-has not yet been qualified with public egress blocked.
+the real local model now also works through the durable browser path with public
+egress blocked in the project/harness namespace. Only loopback and the existing
+CoCalc host transport were allowed. The host/control plane were not air-gapped.
 Normal project restart with a retained Pi/local-model session now passes. Live
 forced-cancellation testing also verifies detached-child cleanup and explicit
 uncertainty when a harness never acknowledges cancel; this is not qualification

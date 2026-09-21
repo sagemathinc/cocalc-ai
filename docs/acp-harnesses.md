@@ -113,6 +113,14 @@ writable scratch space. The qualification record contains the exact tested
 versions/checksums and limits. Passing standalone offline probes is not proof
 that the complete CoCalc deployment is air-gapped.
 
+A live browser-to-worker check also completed Pi/local-Qwen inference with
+public egress blocked in the disposable project's network namespace. The harness
+sidecar shared that namespace; only loopback and the existing CoCalc host
+transport were allowed. The completed answer survived browser reload. This was
+temporary operator-applied test containment, not a shipped network-policy UI or
+proof that the host/control plane can run fully air-gapped. No paid inference or
+real account credentials were used.
+
 ## Disable Or Roll Back
 
 Disable the host opt-in to reject new ACP work. Keep compatible host software
