@@ -94,6 +94,14 @@ test("drawer preserves query, filters and results through unmount; inspecting a 
   await user.keyboard("{Enter}");
   await waitFor(() => expect(props.onSelect).toHaveBeenCalledTimes(1));
   expect(screen.getByRole("dialog")).not.toBeNull();
+  await user.click(screen.getByRole("button", { name: "close-circle" }));
+  expect(
+    (
+      screen.getByRole("searchbox", {
+        name: "Search agent conversations",
+      }) as HTMLInputElement
+    ).value,
+  ).toBe("");
   await user.keyboard("{Escape}");
   await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   expect(search).toHaveBeenCalledTimes(1);

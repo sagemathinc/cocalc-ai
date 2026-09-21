@@ -159,12 +159,15 @@ export function AgentSearch({
           }}
         >
           <Input.Search
+            allowClear
             aria-label="Search agent conversations"
             placeholder="Search conversation text"
             maxLength={256}
             value={state.query}
             onChange={(e) => store.set({ query: e.target.value })}
-            onSearch={() => void search()}
+            onSearch={(_value, _event, info) => {
+              if (info?.source !== "clear") void search();
+            }}
             loading={state.busy}
             enterButton="Search"
           />
