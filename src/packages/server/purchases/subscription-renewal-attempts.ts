@@ -217,6 +217,10 @@ export async function claimDueSubscriptionRenewalAttempts({
             AND COALESCE(NULLIF(BTRIM(owner.home_bay_id),''),$3)=$3)
           AND NOT EXISTS (SELECT 1 FROM account_funding_authorities f
             WHERE f.payer_account_id=a.account_id AND (f.state <> 'active' OR f.home_bay_id <> $3))`;
+  const queryParams: (number | string)[] = [limit, RENEWAL_ATTEMPT_LEASE_MS];
+  if (legacyHomePredicate) {
+    queryParams.push(getConfiguredBayId());
+  }
   const { rows } = await getPool().query<SubscriptionRenewalAttempt>(
     `WITH candidates AS (
        SELECT a.id
@@ -254,7 +258,7 @@ export async function claimDueSubscriptionRenewalAttempts({
        FROM candidates
       WHERE a.id=candidates.id
       RETURNING a.*`,
-    [limit, RENEWAL_ATTEMPT_LEASE_MS, getConfiguredBayId()],
+    queryParams,
   );
   return rows;
 }

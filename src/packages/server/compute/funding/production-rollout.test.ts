@@ -477,6 +477,7 @@ it("does not require operator manifest files in explicit one-bay advisory mode",
     evidence_id: "co-resident-advisory:home:sponsored-resources",
   });
   expect(mockOpen).not.toHaveBeenCalled();
+  expect(mockAdminAlert).not.toHaveBeenCalled();
 });
 it("still requires operator manifest files when advisory mode is not explicit", async () => {
   delete process.env.COCALC_FUNDING_ROLLOUT_MANIFEST;

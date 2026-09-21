@@ -90,11 +90,22 @@ async function verifyStrictProductionFundingRollout(
   };
 }
 
+function hasConfiguredFundingRolloutAttestation(): boolean {
+  return [
+    process.env.COCALC_FUNDING_ROLLOUT_MANIFEST,
+    process.env.COCALC_FUNDING_ROLLOUT_PUBLIC_KEY,
+    process.env.COCALC_FUNDING_ROLLOUT_ID,
+  ].some((value) => value?.trim());
+}
+
 export async function verifyProductionFundingRollout(
   check: FundingRolloutCheck,
 ): Promise<FundingRolloutEvidence> {
   if (!isCoResidentFundingAdvisoryMode()) {
     return await verifyStrictProductionFundingRollout(check);
+  }
+  if (!hasConfiguredFundingRolloutAttestation()) {
+    return await advisoryEvidence(check);
   }
   try {
     return await verifyStrictProductionFundingRollout(check);
