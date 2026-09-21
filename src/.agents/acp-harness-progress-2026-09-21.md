@@ -900,7 +900,8 @@ use yet; the current UI is an experimental operator-testing surface.
    coverage above; async and cross-project cases remain. Text prompts remain the
    only supported input; attachment types and unsupported forms fail explicitly.
 5. Broaden the passing external text-write convergence check to simultaneous
-   edits; verify snapshot scheduling, home-only restore and recovery protection.
+   edits; verify snapshot scheduling, rootfs-only restore, broader restore failure
+   handling and recovery protection. Home-only success is qualified above.
    Extend the project-egress-blocked inference check to broader on-prem control-
    plane deployment qualification. Extend same-project messaging to cross-project
    and queued-revocation cases. These remain release gates, not implied by the
