@@ -680,6 +680,73 @@ function makeSyncdb(rows: any[] = []) {
 }
 
 describe("terminal failure recovery", () => {
+  it("recovers a real SQLite-full terminal write without replaying the harness", async () => {
+    const queued = enqueueAcpJob({
+      ...makeRequest(),
+      runtime: { version: 1, kind: "acp", profile: {} },
+    } as any);
+    claimNextQueuedAcpJobForThread({
+      project_id: queued.project_id,
+      path: queued.path,
+      thread_id: queued.thread_id,
+      worker_id: "gone",
+      worker_bundle_version: "old",
+    });
+    const db = getAcpDatabase();
+    db.prepare(
+      "UPDATE acp_jobs SET started_at = ?, updated_at = ? WHERE op_id = ?",
+    ).run(Date.now() - 60_000, Date.now() - 60_000, queued.op_id);
+    const limit = db.prepare("PRAGMA max_page_count").get().max_page_count;
+    const pages = db.prepare("PRAGMA page_count").get().page_count;
+    let storageError: unknown;
+    try {
+      // Restrict only this test database, without filling the host filesystem.
+      db.exec(`PRAGMA max_page_count = ${pages}`);
+      try {
+        setAcpJobState({
+          op_id: queued.op_id,
+          state: "error",
+          error: "x".repeat(1024 * 1024),
+        });
+      } catch (error) {
+        storageError = error;
+      }
+      expect(storageError).toBeDefined();
+      expect(`${storageError}`).toContain("database or disk is full");
+      expect(isFatalAcpWorkerStorageError(storageError)).toBe(true);
+      expect(
+        shouldCompleteAcpTurnAfterTerminalStorageFailure({
+          err: storageError,
+          phase: "terminal-summary",
+          finishedBy: "summary",
+          terminalRowAlreadyPersisted: true,
+        }),
+      ).toBe(false);
+      expect(
+        getAcpJob({
+          project_id: queued.project_id,
+          path: queued.path,
+          user_message_id: queued.user_message_id,
+        })?.state,
+      ).toBe("running");
+    } finally {
+      db.exec(`PRAGMA max_page_count = ${limit}`);
+    }
+
+    await recoverOrphanedRunningAcpJobsWithoutLease({ graceMs: 0 });
+    const recovered = getAcpJob({
+      project_id: queued.project_id,
+      path: queued.path,
+      user_message_id: queued.user_message_id,
+    });
+    expect(recovered?.state).toBe("error");
+    expect(recovered?.error).toContain("completion is unknown");
+    expect(listQueuedAcpJobs()).toHaveLength(0);
+    expect(
+      listAcpJobsByRecoveryParent({ recovery_parent_op_id: queued.op_id }),
+    ).toHaveLength(0);
+  });
+
   it("never creates a Codex recovery continuation for a generic harness", async () => {
     const queued = enqueueAcpJob({
       ...makeRequest(),

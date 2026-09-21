@@ -1678,6 +1678,22 @@ simulate SQLite commit failure, fill the live project-host filesystem, or prove
 recovery after durable database exhaustion. Those remain separate integration
 checks; no live data or storage limits were changed for this test.
 
+### SQLite Terminal-Write Exhaustion
+
+A detached-worker regression now limits the test database's `max_page_count`
+to its current size and attempts an oversized terminal job update through the
+production `setAcpJobState` function. SQLite returns a real database-full error;
+the worker classifier treats it as fatal and refuses successful completion even
+if a terminal chat row was already persisted. The failed statement leaves the
+job running. After restoring capacity, production orphan recovery marks the ACP
+job as an unknown completion, without queueing another turn or creating a recovery
+child. All 61 detached-worker tests and the Lite TypeScript build pass.
+
+This uses the suite's isolated in-memory SQLite database, not a synthetic thrown
+error, but it does not kill/restart an actual worker process or exhaust a live
+database file. It narrows the remaining qualification gap to those integrated
+process/storage behaviors rather than proving them indirectly.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
