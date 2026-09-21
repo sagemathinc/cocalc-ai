@@ -1744,6 +1744,28 @@ and unchanged-data safeguards are unchanged. This narrow boundary fix does not
 explain all observed live gaps or eliminate scheduler drift/restart delays.
 No live snapshot was created, restored or deleted for this investigation.
 
+## Pinned Harness Recheck After Catalog Validation
+
+Bundled the provider smoke probe from `78d797c261` after its full development
+build and uploaded it with the typed project file API to the existing disposable
+project as `acp-qualification/provider-smoke-78d797.cjs`. Bundle SHA256:
+`a4a934d415bc360893356cd9af9f7064c076d9c91f8a85533f1bdcb79edca72a`.
+Typed project execution completed all three commands with exit zero:
+
+- OpenCode 1.18.31: one model choice, two mode choices, four local provider calls;
+  file write and same-session follow-up verified.
+- Pi 0.86.1 / unmodified pi-acp 0.0.33: one model choice, six thinking choices,
+  three local provider calls; file write and follow-up verified.
+- Optional patched pi-acp 0.0.33-cocalc-provider-error-probe.1 with
+  `--provider-reject`: one local HTTP 401 call, classified rejection verified.
+
+Each used a fresh temporary HOME and fake loopback credentials. This confirms
+the stricter duplicate-control/value validation accepts these real harness
+catalogs. It does not qualify arbitrary providers or change the unmodified Pi
+rejection limitation. Network isolation was not requested or checked in these
+runs; Pi printed an available-version notice, and no update was installed.
+No real subscriptions, chat submissions or running harness profiles were changed.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
