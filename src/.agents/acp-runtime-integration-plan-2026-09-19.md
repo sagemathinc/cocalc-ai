@@ -1,5 +1,9 @@
 # ACP Harness Integration Plan
 
+Provider-specific product follow-up:
+
+- `src/.agents/claude-code-acp-integration-plan-2026-09-21.md`
+
 Created: 2026-09-19. Revised: 2026-09-21 after scope discussion.
 
 Status: implementation in progress. The isolated ACP client and deterministic
