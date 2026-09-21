@@ -86,6 +86,12 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       });
     case "session/load":
       update("old replayed answer");
+      if (process.argv.includes("--crash-resume")) return process.exit(2);
+      if (process.argv.includes("--reject-resume"))
+        return send({
+          id: message.id,
+          error: { code: -32603, message: "private fixture resume detail" },
+        });
       return result(message.id, controls());
     case "session/set_config_option":
       if (

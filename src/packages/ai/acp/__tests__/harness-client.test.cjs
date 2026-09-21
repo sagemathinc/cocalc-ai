@@ -935,6 +935,28 @@ test("unsupported resume never silently creates a new session", async (t) => {
   await assert.rejects(client.open("old"), (e) => e.code === "unsupported");
   assert.equal(client.sessionId, undefined);
 });
+for (const [flag, code] of [
+  ["--reject-resume", "rejected"],
+  ["--crash-resume", "unavailable"],
+]) {
+  test(`${flag} discards replay and closes the adapter without fallback`, async (t) => {
+    const { agent, request, events, launches, stops } = adapter(t, [flag]);
+    await assert.rejects(
+      agent.evaluate({ ...request, session_id: "fixture-session" }),
+      (error) => {
+        assert.equal(error.code, code);
+        assert.ok(!error.message.includes("private fixture resume detail"));
+        return true;
+      },
+    );
+    assert.equal(launches(), 1);
+    assert.equal(stops(), 1);
+    assert.ok(!events.some((event) => event.type === "summary"));
+    assert.ok(!events.some((event) => event.event?.type === "message"));
+    await assert.rejects(agent.evaluate(request), /not idle/);
+    assert.equal(launches(), 1);
+  });
+}
 for (const prompt of [
   "crash",
   "malformed",
