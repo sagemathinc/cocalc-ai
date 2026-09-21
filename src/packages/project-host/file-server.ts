@@ -167,6 +167,7 @@ import { ensureSshpiperdKey } from "./ssh/sshpiperd-key";
 import { requireManagedSshKeyAccount } from "./ssh/managed-key-account";
 import { managedProjectEgressResidualTracker } from "./managed-egress-residual";
 import { planBackupRetention } from "./backup-retention";
+import { prepareHomeSnapshotRootfs } from "./snapshot-home-rootfs";
 import {
   assertFrozenVolumeMatchesBackup,
   deleteOrphanedStagedArchiveSnapshots,
@@ -3292,6 +3293,13 @@ async function restoreSnapshot({
       return;
     }
 
+    if (mode === "home") {
+      await prepareHomeSnapshotRootfs({
+        current: rootfsPath,
+        staged: stagedRootfsPath,
+      });
+    }
+
     ({ oldHomePath } = await swapProjectHome({
       project_id,
       replacementPath: staged.path,
@@ -3299,12 +3307,6 @@ async function restoreSnapshot({
     cleanupStagedClone = false;
 
     try {
-      if (mode === "home") {
-        await replaceTreeByCopy({
-          src: join(oldHomePath, PROJECT_IMAGE_PATH),
-          dest: join(projectMountpoint(project_id), PROJECT_IMAGE_PATH),
-        });
-      }
       if (oldHomePath && safety_snapshot_name) {
         await createSafetySnapshotFromPath({
           project_id,
