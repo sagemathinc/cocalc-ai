@@ -49,6 +49,8 @@ inference triggers visible Pi retry/resume progress, followed by verified file
 creation and a successful same-session follow-up (four total local requests).
 This verifies recovery from one transient provider failure, not all retry or
 compaction cases, and does not enable CoCalc-side uncertain-turn resubmission.
+The `--provider-exhaust` case also passes: four task-inference HTTP 503 responses
+end in a classified rejection without file creation or a successful answer.
 
 Bundle SHA-256:
 `747673313e7db7057105e26012c86dc0809960c234e556a34e395cf721d98789`.

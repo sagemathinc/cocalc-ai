@@ -7,6 +7,16 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ### Real Harness Provider Rejection
 
+Added `--provider-exhaust` for sustained HTTP 503 on task-inference requests.
+Patched Pi rejects after four failed local requests; OpenCode `1.18.31` rejects
+after six failed task requests (seven total provider calls, including auxiliary
+traffic). Both return a classified ACP rejection within the existing 90-second
+probe budget, issue no file write, and do not produce the successful fixture
+answer. OpenCode took longer; the same process was observed until completion,
+not relaunched when intermediate polls had no output. AI TypeScript passes.
+This is one pinned-version retry-exhaustion case, not a general deadline promise
+or automatic CoCalc retry policy.
+
 The smoke tool also supports `--provider-retry`: return one HTTP 503 on the
 first streaming tool-bearing request, then serve the normal file-write and
 follow-up responses. Targeting task inference matters: rejecting an auxiliary
@@ -1248,7 +1258,9 @@ Append `--provider-reject` to test local HTTP 401 propagation without real
 credentials. This currently passes OpenCode and fails the pinned Pi bridge as
 recorded above; do not suppress that failure when qualifying another release.
 Use `--provider-retry` instead to qualify one transient HTTP 503 followed by
-successful task inference. The two provider-fault flags are mutually exclusive.
+successful task inference, or `--provider-exhaust` for repeated task-inference
+HTTP 503 responses ending in a classified rejection. The provider-fault flags
+are mutually exclusive.
 
 For the offline check, run the same bundled tool inside a separately provisioned
 Linux container with `--network=none`, the pinned packages available read-only,

@@ -52,8 +52,10 @@ async function main() {
   const offline = process.argv.includes("--require-loopback-only");
   const rejectProvider = process.argv.includes("--provider-reject");
   const retryProvider = process.argv.includes("--provider-retry");
+  const exhaustProvider = process.argv.includes("--provider-exhaust");
   assert.ok(
-    !(rejectProvider && retryProvider),
+    [rejectProvider, retryProvider, exhaustProvider].filter(Boolean).length <=
+      1,
     "Choose one provider fault mode",
   );
   if (offline) await verifyLoopbackOnly();
@@ -83,8 +85,7 @@ async function main() {
     calls++;
     // Fail task inference, not an auxiliary title-generation request.
     if (
-      retryProvider &&
-      transientFailures === 0 &&
+      (exhaustProvider || (retryProvider && transientFailures === 0)) &&
       request.stream &&
       request.tools?.length
     ) {
@@ -327,7 +328,7 @@ async function main() {
       0,
       "Discovery and session creation must not perform inference",
     );
-    if (rejectProvider) {
+    if (rejectProvider || exhaustProvider) {
       const messages: string[] = [];
       const updates: string[] = [];
       await assert.rejects(
@@ -358,12 +359,19 @@ async function main() {
       );
       assert.ok(calls > 0 && calls <= 12);
       assert.equal(writes, 0);
+      if (exhaustProvider)
+        assert.ok(
+          transientFailures > 1,
+          "Expected repeated task-inference failures",
+        );
       assert.ok(!messages.join("").includes("ACP local fixture verified"));
       process.stdout.write(
         JSON.stringify({
           ok: true,
           agent: capabilities.agentInfo,
           providerRejectionVerified: true,
+          providerFault: exhaustProvider ? "repeated-503" : "401",
+          transientFailures,
           providerCalls: calls,
         }) + "\n",
       );
