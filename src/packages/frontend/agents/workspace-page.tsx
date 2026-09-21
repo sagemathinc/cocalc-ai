@@ -2692,6 +2692,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
           <div style={{ marginInlineStart: 38 }}>
             <AgentNetworkPills
               networks={networksForAgent(networks, agent)}
+              maxVisible={3}
               selectedNetworkId={networkFilterId}
               onSelect={selectNetwork}
               onOpen={(network) =>
