@@ -767,6 +767,36 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onSend).toHaveBeenCalledWith("guidance");
   });
 
+  it("queues generic ACP follow-ups from the keyboard and primary button", () => {
+    const onSend = jest.fn();
+    const onSendImmediately = jest.fn();
+    renderComposer({
+      selectedThread: { key: "generic-thread" } as any,
+      actions: {
+        syncdb: {},
+        getThreadMetadata: () => ({
+          agent_kind: "acp",
+          agent_runtime: { kind: "acp" },
+        }),
+        isCodexThread: () => true,
+      } as any,
+      hasActiveAcpTurn: true,
+      hasInput: true,
+      input: "follow-up",
+      isSelectedThreadAI: true,
+      on_send: onSend,
+      on_send_immediately: onSendImmediately,
+    });
+    expect(screen.queryByRole("button", { name: "Steer" })).toBeNull();
+    const queue = screen.getByRole("button", { name: "Queue" });
+    expect(queue.className).toContain("ant-btn-primary");
+    act(() => lastChatInputProps.on_send("keyboard follow-up"));
+    expect(onSend).toHaveBeenCalledWith("keyboard follow-up");
+    fireEvent.click(queue);
+    expect(onSend).toHaveBeenCalledWith("follow-up");
+    expect(onSendImmediately).not.toHaveBeenCalled();
+  });
+
   it("keeps phone input readable and expands without browser fullscreen", async () => {
     const requestFullscreen = jest.fn();
     const original = HTMLElement.prototype.requestFullscreen;

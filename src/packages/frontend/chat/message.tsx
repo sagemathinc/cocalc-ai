@@ -130,6 +130,7 @@ import {
   canUseCompletedCachedCodexActivity,
   codexActivityBlocksToSelectableMarkdown,
   computeAcpStateToRender,
+  acpMessageStatePresentation,
   DEFAULT_CODEX_ACTIVITY_BLOCK_LIMIT,
   getQueuedMessageEditHelpText,
   limitCodexActivityBlocks,
@@ -1287,14 +1288,18 @@ export default function Message({
     [messageThreadId, threadRootMs],
   );
 
-  const threadCodexConfig = useMemo(() => {
+  const threadMetadata = useMemo(() => {
     if (threadLookup.threadLookupKey == null) return undefined;
-    return (
-      actions?.getThreadMetadata(threadLookup.threadLookupKey, {
-        threadId: threadLookup.threadId,
-      })?.acp_config ?? undefined
-    );
+    return actions?.getThreadMetadata(threadLookup.threadLookupKey, {
+      threadId: threadLookup.threadId,
+    });
   }, [actions, threadLookup]);
+  const threadCodexConfig = threadMetadata?.acp_config;
+  const messageRuntimeKind =
+    (field(message, "acp_runtime_kind") ??
+      threadMetadata?.agent_runtime?.kind) === "acp"
+      ? "acp"
+      : "codex";
 
   const activityBasePath = useMemo(
     () =>
@@ -3098,7 +3103,7 @@ export default function Message({
     void cancelQueuedAcpTurn({ actions, message });
   };
   const handleSendQueuedImmediately = () => {
-    if (!actions) return;
+    if (!actions || messageRuntimeKind === "acp") return;
     void sendQueuedAcpTurnImmediately({ actions, message });
   };
   const handleResendNotSent = () => {
@@ -3143,6 +3148,11 @@ export default function Message({
     if (field<boolean>(message, "post_only"))
       return <Tag>Posted · Not sent to agent</Tag>;
     if (!acpStateToRender) return null;
+    const presentation = acpMessageStatePresentation({
+      state: acpStateToRender,
+      runtimeKind: messageRuntimeKind,
+      isViewersMessage: is_viewers_message,
+    });
     if (acpStateToRender === "queue") {
       return (
         <span style={{ display: "inline-flex", gap: 8, alignItems: "center" }}>
@@ -3155,15 +3165,17 @@ export default function Message({
               Edit
             </Button>
           ) : null}
-          <Tooltip title="Steer running turn (Ctrl+Enter)">
-            <Button
-              size="small"
-              type="text"
-              onClick={handleSendQueuedImmediately}
-            >
-              Steer
-            </Button>
-          </Tooltip>
+          {presentation.canSteer && (
+            <Tooltip title="Steer running turn (Ctrl+Enter)">
+              <Button
+                size="small"
+                type="text"
+                onClick={handleSendQueuedImmediately}
+              >
+                Steer
+              </Button>
+            </Tooltip>
+          )}
           <Button size="small" type="text" onClick={handleCancelQueued}>
             Cancel
           </Button>
@@ -3187,13 +3199,7 @@ export default function Message({
         acpStateToRender === "running" ? (
           <SyncOutlined spin />
         ) : null}{" "}
-        {acpStateToRender === "sending"
-          ? "submitting to Codex"
-          : acpStateToRender === "sent"
-            ? "waiting for Codex"
-            : acpStateToRender === "running" && is_viewers_message
-              ? "Codex is working"
-              : acpStateToRender}
+        {presentation.label}
       </Tag>
     );
   };

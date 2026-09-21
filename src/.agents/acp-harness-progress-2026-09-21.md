@@ -127,6 +127,23 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- ACP composer follow-ups now queue rather than attempt unsupported live
+  guidance. Live reproduction found that Shift+Enter during a running generic
+  turn produced "Guidance not sent" even though the composer also offered Queue.
+  The primary action and keyboard submission now use the normal queue path for
+  generic runtimes; native Codex keeps its steering behavior. Queued ACP rows no
+  longer expose Steer, and submission/waiting labels identify an ACP agent rather
+  than Codex. Runtime identity comes from the persisted message when available,
+  falling back to thread metadata for pending human messages.
+
+  Both composer/status suites pass 41 tests, including native steering and
+  generic keyboard/button queue dispatch; frontend TypeScript and lint pass.
+  On lite4b, a follow-up behind hanging operation
+  `38d0d293-a98c-4ed2-acfa-4c3e137c0ccc` rendered queued with Edit/Cancel and no
+  Steer action. Keyboard Enter on Cancel changed it to not-sent before execution.
+  The running fixture was then explicitly interrupted. An earlier fixture turn
+  completed normally and was not counted as a running-turn qualification.
+
 - Project stop now pauses new discovery before draining existing probes and
   holds that pause through both worker fences and primary container removal.
   Previously the drain took a snapshot while the discovery entry point remained

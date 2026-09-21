@@ -4,12 +4,59 @@ import { getLiveResponseBlocks } from "@cocalc/chat";
 import {
   codexActivityBlocksToSelectableMarkdown,
   computeAcpStateToRender,
+  acpMessageStatePresentation,
   limitCodexActivityBlocks,
   shouldShowAcpResubmitToAgentButton,
 } from "../message-state";
 import "../../editors/slate/elements/types";
 import { markdown_to_slate } from "../../editors/slate/markdown-to-slate";
 import { slate_to_markdown } from "../../editors/slate/slate-to-markdown";
+
+describe("runtime-aware message state", () => {
+  test.each(["acp", "codex"] as const)(
+    "labels %s submissions and retains non-running states",
+    (runtimeKind) => {
+      const name = runtimeKind === "acp" ? "ACP agent" : "Codex";
+      for (const [state, label] of [
+        ["sending", `submitting to ${name}`],
+        ["sent", `waiting for ${name}`],
+        ["running", `${name} is working`],
+        ["error", "error"],
+      ]) {
+        expect(
+          acpMessageStatePresentation({
+            state,
+            runtimeKind,
+            isViewersMessage: true,
+          }),
+        ).toEqual({ label, canSteer: false });
+      }
+      expect(
+        acpMessageStatePresentation({
+          state: "running",
+          runtimeKind,
+          isViewersMessage: false,
+        }).label,
+      ).toBe("running");
+    },
+  );
+  it("offers queued steering only for the native runtime", () => {
+    expect(
+      acpMessageStatePresentation({
+        state: "queue",
+        runtimeKind: "acp",
+        isViewersMessage: true,
+      }),
+    ).toEqual({ label: "queue", canSteer: false });
+    expect(
+      acpMessageStatePresentation({
+        state: "queue",
+        runtimeKind: "codex",
+        isViewersMessage: true,
+      }),
+    ).toEqual({ label: "queue", canSteer: true });
+  });
+});
 
 describe("codexActivityBlocksToSelectableMarkdown", () => {
   it("keeps the latest suffix from cumulative live projection events", () => {

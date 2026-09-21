@@ -12,6 +12,29 @@ const VIEWER_ONLY_STATES = new Set(["queue", "sending", "sent", "not-sent"]);
 
 export const ACP_THINKING_PLACEHOLDER = ":robot: Thinking...";
 
+export function acpMessageStatePresentation({
+  state,
+  runtimeKind,
+  isViewersMessage,
+}: {
+  state: string;
+  runtimeKind: "acp" | "codex";
+  isViewersMessage: boolean;
+}): { label: string; canSteer: boolean } {
+  const name = runtimeKind === "acp" ? "ACP agent" : "Codex";
+  return {
+    label:
+      state === "sending"
+        ? `submitting to ${name}`
+        : state === "sent"
+          ? `waiting for ${name}`
+          : state === "running" && isViewersMessage
+            ? `${name} is working`
+            : state,
+    canSteer: state === "queue" && runtimeKind === "codex",
+  };
+}
+
 export type InlineCodexActivityBlock = {
   kind: "agent" | "guidance";
   text: string;

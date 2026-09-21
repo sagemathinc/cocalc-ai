@@ -184,6 +184,7 @@ export function ChatRoomComposer({
   const threadMetadata = selectedThread
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
+  const supportsLiveGuidance = threadMetadata?.agent_runtime?.kind !== "acp";
   const showGoal =
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
@@ -551,6 +552,7 @@ export function ChatRoomComposer({
 
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
+      if (!supportsLiveGuidance) return handleSend(value);
       const effective = typeof value === "string" ? value : input;
       if (!effective || !effective.trim()) return;
       if (
@@ -588,6 +590,8 @@ export function ChatRoomComposer({
       isZenMode,
       on_send,
       on_send_immediately,
+      supportsLiveGuidance,
+      handleSend,
       refocusComposerInput,
       toggleZenMode,
       agentMentions.preflight,
@@ -613,7 +617,8 @@ export function ChatRoomComposer({
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
     isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
-  const handlePrimarySend = hasRunningCodexTurn
+  const canSteerRunningTurn = hasRunningCodexTurn && supportsLiveGuidance;
+  const handlePrimarySend = canSteerRunningTurn
     ? handleSendImmediately
     : handleSend;
   const handlePost = (value?: string | { preventDefault?: () => void }) => {
@@ -1027,11 +1032,13 @@ export function ChatRoomComposer({
                 "Post without sending to the agent (Ctrl+Enter)"
               ) : queueOnly ? (
                 "Queue after the running turn (Alt+Enter)"
-              ) : hasRunningCodexTurn ? (
+              ) : canSteerRunningTurn ? (
                 <FormattedMessage
                   id="chatroom.chat_input.steer_button.tooltip"
                   defaultMessage={"Steer running turn (Shift+Enter)"}
                 />
+              ) : hasRunningCodexTurn ? (
+                "Queue after the running turn (Shift+Enter)"
               ) : (
                 <FormattedMessage
                   id="chatroom.chat_input.send_button.tooltip"
@@ -1056,8 +1063,10 @@ export function ChatRoomComposer({
                   ? "Post message"
                   : queueOnly
                     ? "Queue message"
-                    : hasRunningCodexTurn
+                    : canSteerRunningTurn
                       ? "Steer"
+                      : hasRunningCodexTurn
+                        ? "Queue"
                       : "Send"
               }
               data-testid="chat-composer-send"
