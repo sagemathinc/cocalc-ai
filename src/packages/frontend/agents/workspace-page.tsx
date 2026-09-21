@@ -2498,7 +2498,10 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       foreground_project: historical,
       wait_for_ready: true,
       change_history: historical,
-      fragmentId: { thread: threadId, chat: hit.date_ms },
+      fragmentId: {
+        thread: threadId,
+        chat: hit.date_ms == null ? undefined : `${hit.date_ms}`,
+      },
     });
     const editor: any = redux.getEditorActions(
       agent.endpoint.project_id,
