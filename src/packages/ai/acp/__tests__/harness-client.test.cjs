@@ -110,7 +110,7 @@ const profile = {
   executionPolicy: "full-access",
 };
 
-function adapter(t, flags = [], attention) {
+function adapter(t, flags = [], attention, cleanupFails = false) {
   let launches = 0;
   let stops = 0;
   const agent = new HarnessAgent(
@@ -139,12 +139,17 @@ function adapter(t, flags = [], attention) {
           stops++;
           child.kill("SIGKILL");
           await closed;
+          if (cleanupFails) throw Error("test launcher stop failed");
         },
       };
     },
     attention,
   );
-  t.after(() => agent.dispose());
+  t.after(() =>
+    agent.dispose().catch((error) => {
+      if (!cleanupFails) throw error;
+    }),
+  );
   const events = [];
   const request = {
     project_id: "project-a",
@@ -317,6 +322,60 @@ test("agent adapter never summarizes or relaunches an uncertain prompt", async (
   await assert.rejects(agent.evaluate(request));
   assert.equal(launches(), 1);
 });
+
+test("cleanup failure preserves uncertain delivery and warns that termination is unconfirmed", async (t) => {
+  const { agent, request, events, launches, stops } = adapter(
+    t,
+    [],
+    undefined,
+    true,
+  );
+  await assert.rejects(
+    agent.evaluate({ ...request, prompt: "crash" }),
+    (error) => {
+      assert.equal(error.code, "outcome_unknown");
+      assert.match(error.message, /do not automatically resend/);
+      assert.match(error.message, /cleanup could not be confirmed/);
+      assert.ok(!error.message.includes("test launcher"));
+      return true;
+    },
+  );
+  assert.ok(!events.some((event) => event.type === "summary"));
+  await assert.rejects(agent.evaluate(request), /not idle/);
+  assert.equal(launches(), 1);
+  assert.equal(stops(), 1);
+});
+
+for (const phase of ["startup", "retained rejection"]) {
+  test(`cleanup failure preserves ${phase} classification`, async (t) => {
+    const { agent, request, events, launches, stops } = adapter(
+      t,
+      phase === "startup" ? ["--wrong-version"] : [],
+      undefined,
+      true,
+    );
+    if (phase !== "startup") {
+      await agent.evaluate(request);
+      events.length = 0;
+    }
+    await assert.rejects(
+      agent.evaluate({ ...request, prompt: "reject" }),
+      (error) => {
+        assert.equal(
+          error.code,
+          phase === "startup" ? "unsupported" : "rejected",
+        );
+        assert.match(error.message, /cleanup could not be confirmed/);
+        assert.ok(!error.message.includes("test launcher"));
+        return true;
+      },
+    );
+    assert.ok(!events.some((event) => event.type === "summary"));
+    await assert.rejects(agent.evaluate(request), /not idle/);
+    assert.equal(launches(), 1);
+    assert.equal(stops(), 1);
+  });
+}
 
 for (const phase of [
   "status",

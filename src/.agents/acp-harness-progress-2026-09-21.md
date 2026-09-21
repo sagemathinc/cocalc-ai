@@ -5,6 +5,24 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+### Cleanup Failure Classification
+
+A failing real-subprocess regression demonstrated that a launcher `stop()`
+rejection replaced the primary `outcome_unknown` error with an unclassified
+cleanup error. The startup and evaluation failure paths now retain the original
+HarnessError classification and safe message while explicitly warning that
+runtime cleanup could not be confirmed and the harness may still be running.
+Cleanup implementation details are not forwarded to the user. A failed adapter
+remains closed and cannot silently relaunch the turn.
+
+Three regressions inject cleanup rejection after actual fixture shutdown:
+uncertain prompt delivery, startup protocol mismatch, and rejection from a
+retained session. All preserve their original classification, emit no successful
+summary for the failed turn, and launch/stop only once. All 62 subprocess tests,
+140 native AI Jest tests and the project-host TypeScript build pass. This tests
+the error-reporting contract; it does not qualify the rare live Podman removal
+fallback or prove that a genuinely failed container stop terminated descendants.
+
 ### Narrow Settings Qualification
 
 At deployed source `efe501070d`, exercised agent-3 at a 320 by 800 CSS-pixel

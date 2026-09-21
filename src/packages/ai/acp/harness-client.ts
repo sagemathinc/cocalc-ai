@@ -70,6 +70,22 @@ export class HarnessError extends Error {
   }
 }
 
+/** Preserve the primary failure without claiming unsuccessful cleanup stopped work. */
+export async function disposeFailedHarness(
+  error: unknown,
+  dispose: () => Promise<void>,
+): Promise<never> {
+  try {
+    await dispose();
+  } catch {
+    throw new HarnessError(
+      error instanceof HarnessError ? error.code : "outcome_unknown",
+      `${error instanceof HarnessError ? error.message : "ACP operation failed"}; runtime cleanup could not be confirmed. The harness may still be running.`,
+    );
+  }
+  throw error;
+}
+
 /** One principal/profile-bound native session, independent of Codex auth/recovery. */
 export class AcpHarnessClient {
   private connection: ClientSideConnection;
@@ -154,8 +170,7 @@ export class AcpHarnessClient {
         );
       return client;
     } catch (error) {
-      await client.dispose();
-      throw error;
+      return await disposeFailedHarness(error, () => client.dispose());
     }
   }
 

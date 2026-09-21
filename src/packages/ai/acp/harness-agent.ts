@@ -1,4 +1,8 @@
-import { AcpHarnessClient, HarnessError } from "./harness-client";
+import {
+  AcpHarnessClient,
+  HarnessError,
+  disposeFailedHarness,
+} from "./harness-client";
 import type { HarnessBinding, HarnessLauncher } from "./harness-client";
 import type { AcpAgent, AcpEvaluateRequest } from "./types";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
@@ -186,8 +190,7 @@ export class HarnessAgent implements AcpAgent {
       });
     } catch (error) {
       // Never silently start a fresh native session after an ambiguous failure.
-      await this.dispose();
-      throw error;
+      return await disposeFailedHarness(error, () => this.dispose());
     } finally {
       try {
         await this.attention?.runtimeClosed?.(this.attentionContext);
