@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { Alert, Modal } from "antd";
+import { useEffect, useId, useState } from "react";
+import { Alert, Button, Modal } from "antd";
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { agentThreadUrl } from "@cocalc/frontend/chat/agent-thread-url";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
@@ -22,6 +22,8 @@ export function FreshConversationModal({
   const [history, setHistory] =
     useState<AgentIdentity["conversation_history"]>();
   const [historyError, setHistoryError] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const historyId = useId();
   const projectId = agent?.endpoint.project_id;
   const agentId = agent?.endpoint.agent_id;
   useEffect(() => {
@@ -79,47 +81,64 @@ export function FreshConversationModal({
         before continuing.
       </p>
       {agent && (
-        <section aria-label="Past conversations">
-          <p>
-            Return to this modal to open past threads. Links open the
-            conversation in the project chat file; they do not change this
-            agent's current context.
-          </p>
-          <p>
-            To make an agent from a past conversation, use its thread menu's
-            <strong> Fork chat...</strong> action, then click{" "}
-            <strong>Name agent</strong> and set the name. This keeps the
-            original conversation intact.
-          </p>
-          {historyError ? (
-            <Alert role="alert" type="error" title={historyError} />
-          ) : history === undefined ? (
-            <p role="status">Loading past conversations...</p>
-          ) : history.length === 0 ? (
-            <p>No past conversations yet.</p>
-          ) : (
-            <ul style={{ maxHeight: 240, overflowY: "auto", paddingLeft: 24 }}>
-              {[...history].reverse().map(({ thread_id, ended_at }) => (
-                <li key={thread_id}>
-                  <a
-                    href={
-                      busy
-                        ? undefined
-                        : agentThreadUrl(
-                            agent.endpoint.project_id,
-                            agent.path,
-                            thread_id,
-                          )
-                    }
-                    aria-disabled={busy || undefined}
-                  >
-                    {name} · ended {new Date(ended_at).toLocaleString()}
-                  </a>
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
+        <>
+          <Button
+            aria-expanded={showHistory}
+            aria-controls={historyId}
+            disabled={busy}
+            onClick={() => setShowHistory((show) => !show)}
+          >
+            Past Threads
+          </Button>
+          <section
+            id={historyId}
+            hidden={!showHistory}
+            aria-label="Past conversations"
+            style={{ marginTop: 16 }}
+          >
+            <p>
+              Return to this modal to open past threads. Links open the
+              conversation in the project chat file; they do not change this
+              agent's current context.
+            </p>
+            <p>
+              To make an agent from a past conversation, use its thread menu's
+              <strong> Fork chat...</strong> action, then click{" "}
+              <strong>Name agent</strong> and set the name. This keeps the
+              original conversation intact.
+            </p>
+            {historyError ? (
+              <Alert role="alert" type="error" title={historyError} />
+            ) : history === undefined ? (
+              <p role="status">Loading past conversations...</p>
+            ) : history.length === 0 ? (
+              <p>No past conversations yet.</p>
+            ) : (
+              <ul
+                style={{ maxHeight: 240, overflowY: "auto", paddingLeft: 24 }}
+              >
+                {[...history].reverse().map(({ thread_id, ended_at }) => (
+                  <li key={thread_id}>
+                    <a
+                      href={
+                        busy
+                          ? undefined
+                          : agentThreadUrl(
+                              agent.endpoint.project_id,
+                              agent.path,
+                              thread_id,
+                            )
+                      }
+                      aria-disabled={busy || undefined}
+                    >
+                      {name} · ended {new Date(ended_at).toLocaleString()}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </>
       )}
       {error && (
         <Alert

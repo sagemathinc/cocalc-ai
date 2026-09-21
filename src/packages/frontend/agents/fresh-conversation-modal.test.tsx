@@ -89,6 +89,16 @@ test("past conversations expose keyboard-focusable project thread links without 
       onClose={jest.fn()}
     />,
   );
+  const toggle = screen.getByRole("button", { name: "Past Threads" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(
+    screen.queryByRole("region", { name: "Past conversations" }),
+  ).toBeNull();
+  expect(screen.queryByRole("link")).toBeNull();
+  toggle.focus();
+  await user.keyboard("{Enter}");
+  expect(toggle.getAttribute("aria-expanded")).toBe("true");
+  expect(document.activeElement).toBe(toggle);
   const links = await screen.findAllByRole("link", { name: /helper · ended/ });
   expect(links[0].getAttribute("href")).toContain(
     "/projects/project/files/a%20space.chat#thread=old-two",
@@ -100,4 +110,9 @@ test("past conversations expose keyboard-focusable project thread links without 
   expect(onConfirm).not.toHaveBeenCalled();
   expect(screen.getByText(/Return to this modal/)).toBeTruthy();
   expect(screen.getByText("Name agent")).toBeTruthy();
+  toggle.focus();
+  await user.keyboard(" ");
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByRole("link")).toBeNull();
+  expect(document.activeElement).toBe(toggle);
 });
