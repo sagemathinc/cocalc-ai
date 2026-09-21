@@ -41,8 +41,8 @@ export default function TransportScreen() {
     return () => abortRef.current?.abort();
   }, []);
 
-  const openProjects = (profileId: string) => {
-    router.replace({ pathname: "/projects", params: { profile: profileId } });
+  const openAgents = (profileId: string) => {
+    router.replace({ pathname: "/agents", params: { profile: profileId } });
   };
 
   const signIn = async () => {
@@ -56,7 +56,7 @@ export default function TransportScreen() {
         signal: controller.signal,
         onState: setStatus,
       });
-      openProjects(profile.profile_id);
+      openAgents(profile.profile_id);
     } catch (err) {
       if (!controller.signal.aborted) {
         setError(err instanceof Error ? err.message : `${err}`);
@@ -111,7 +111,7 @@ export default function TransportScreen() {
                         setSiteUrl(profile.entered_app_url);
                         setEmail(profile.email_address ?? "");
                       } else {
-                        openProjects(profile.profile_id);
+                        openAgents(profile.profile_id);
                       }
                     }}
                     style={({ pressed }) => [

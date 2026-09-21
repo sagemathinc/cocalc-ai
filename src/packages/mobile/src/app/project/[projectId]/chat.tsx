@@ -4,12 +4,14 @@
  */
 
 import {
-  createHeadlessChatClient,
+  createRemoteHeadlessChatClient,
   type ChatSnapshot,
   type HeadlessChatClient,
   type ProjectedChatMessage,
 } from "@cocalc/chat-client";
-import { COLORS } from "@cocalc/util/theme";
+import { resolveNamedAgentHost } from "@cocalc/chat-client/named-agents";
+import type { AppearancePalette } from "@cocalc/util/appearance-palette";
+import { usePalette } from "../../../ui/palette";
 import NetInfo from "@react-native-community/netinfo";
 import * as Clipboard from "expo-clipboard";
 import { Stack, useLocalSearchParams } from "expo-router";
@@ -30,7 +32,6 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
   Platform,
-  PlatformColor,
   Pressable,
   StyleSheet,
   Text,
@@ -40,7 +41,11 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { Markdown } from "../../../chat/markdown";
-import { loadChatDraft, saveChatDraft } from "../../../chat/drafts";
+import {
+  clearChatDraftIfUnchanged,
+  loadChatDraft,
+  saveChatDraft,
+} from "../../../chat/drafts";
 import { ensureProjectRunning } from "../../../cocalc/project-runtime";
 import {
   getActiveSiteSession,
@@ -79,6 +84,8 @@ function useChatSnapshot(
 }
 
 function Message({ item }: { item: ProjectedChatMessage }) {
+  const colors = usePalette();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const human = item.role === "human";
   return (
     <View
@@ -123,6 +130,8 @@ function Message({ item }: { item: ProjectedChatMessage }) {
 }
 
 export default function ChatScreen() {
+  const colors = usePalette();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
   const params = useLocalSearchParams<{
     projectId?: string;
     profile?: string;
@@ -133,7 +142,6 @@ export default function ChatScreen() {
   }>();
   const projectId = `${params.projectId ?? ""}`;
   const profileId = `${params.profile ?? ""}`;
-  const hostId = `${params.host ?? ""}`;
   const chatPath = `${params.chatPath ?? ""}`;
   const threadId = `${params.thread ?? ""}`;
   const [client, setClient] = useState<HeadlessChatClient>();
@@ -143,6 +151,9 @@ export default function ChatScreen() {
   const shouldFollowNewest = useRef(true);
   const userControlsScroll = useRef(false);
   const [draft, setDraft] = useState("");
+  const [draftLoaded, setDraftLoaded] = useState(false);
+  const [draftRevision, setDraftRevision] = useState(0);
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [interrupting, setInterrupting] = useState(false);
   const [status, setStatus] = useState("Connecting…");
@@ -165,20 +176,24 @@ export default function ChatScreen() {
     await disconnect();
     setError(undefined);
     setStatus("Connecting…");
-    if (!projectId || !profileId || !hostId || !chatPath || !threadId) {
+    if (!projectId || !profileId || !chatPath || !threadId) {
       setError("The chat route is incomplete.");
       return;
     }
     try {
       const session = await getActiveSiteSession(profileId);
-      await ensureProjectRunning(session, projectId, setStatus);
+      const resolvedHost = await resolveNamedAgentHost(
+        session.hubApi,
+        session.profile.account_id,
+        projectId,
+      );
       if (current !== generation.current) return;
       const lease = await openProjectHost(session, {
         project_id: projectId,
-        host_id: hostId,
+        host_id: resolvedHost,
       });
       if (current !== generation.current) return;
-      const next = createHeadlessChatClient({
+      const next = createRemoteHeadlessChatClient({
         account_id: session.profile.account_id,
         project_id: projectId,
         path: chatPath,
@@ -199,11 +214,26 @@ export default function ChatScreen() {
         setStatus("Disconnected");
       }
     }
-  }, [chatPath, disconnect, hostId, profileId, projectId, threadId]);
+  }, [chatPath, disconnect, profileId, projectId, threadId]);
 
   useEffect(() => {
-    void loadChatDraft(draftKey).then(setDraft);
-  }, [draftKey]);
+    let active = true;
+    setDraftLoaded(false);
+    setDraft("");
+    void loadChatDraft(draftKey)
+      .then((value) => {
+        if (active) {
+          setDraft(value);
+          setDraftLoaded(true);
+        }
+      })
+      .catch((err) => {
+        if (active) setError(`Could not restore your draft: ${err}`);
+      });
+    return () => {
+      active = false;
+    };
+  }, [draftKey, draftRevision]);
 
   const scrollToNewest = useCallback(() => {
     listRef.current?.scrollToEnd({ animated: false });
@@ -235,10 +265,12 @@ export default function ChatScreen() {
     };
   }, [hasMessages, scrollToNewest, snapshot.ready, threadId]);
 
-  useEffect(() => {
-    const timer = setTimeout(() => void saveChatDraft(draftKey, draft), 250);
-    return () => clearTimeout(timer);
-  }, [draft, draftKey]);
+  const changeDraft = (value: string) => {
+    setDraft(value);
+    void saveChatDraft(draftKey, value).catch((err) =>
+      setError(`Could not save your draft: ${err}`),
+    );
+  };
 
   useEffect(() => {
     void connect();
@@ -279,12 +311,13 @@ export default function ChatScreen() {
   );
   const canSend =
     snapshot.ready &&
+    draftLoaded &&
     !submitting &&
     !!draft.trim() &&
     (selectedThread?.agent_kind === "acp" ||
       selectedThread?.acp_config != null);
 
-  const send = async () => {
+  const send = async (guidance = false) => {
     const activeClient = clientRef.current;
     const text = draft.trim();
     if (!activeClient || !canSend || !text) return;
@@ -294,16 +327,32 @@ export default function ChatScreen() {
     try {
       const session = await getActiveSiteSession(profileId);
       await ensureProjectRunning(session, projectId, setStatus);
-      await activeClient.sendToExistingCodexThread({
+      await (
+        guidance
+          ? activeClient.sendGuidanceToCodexThread.bind(activeClient)
+          : activeClient.sendToExistingCodexThread.bind(activeClient)
+      )({
         thread_id: threadId,
         text,
       });
+      // Clear the submitted draft even if its screen closed during admission,
+      // but never remove a newer draft created in a reopened conversation.
+      await clearChatDraftIfUnchanged(draftKey, draft).catch((err) => {
+        if (clientRef.current === activeClient)
+          setError(
+            `Message accepted, but the saved draft could not be cleared. Do not resend it. ${err}`,
+          );
+      });
+      if (clientRef.current !== activeClient) return;
       setDraft("");
-      await saveChatDraft(draftKey, "");
-      setStatus("Prompt accepted by Codex");
+      setStatus(
+        guidance ? "Guidance accepted by Codex" : "Prompt accepted by Codex",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
-      setStatus("Prompt was not accepted");
+      setStatus(
+        "Could not confirm submission. Check the conversation before sending again.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -328,7 +377,7 @@ export default function ChatScreen() {
     try {
       const session = await getActiveSiteSession(profileId);
       await Linking.openURL(
-        projectWebUrl(session.profile, projectId, chatPath),
+        `${projectWebUrl(session.profile, projectId, chatPath)}#thread=${encodeURIComponent(threadId)}`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : `${err}`);
@@ -336,6 +385,21 @@ export default function ChatScreen() {
   };
 
   const running = selectedThread?.state === "running";
+  const loadOlder = async () => {
+    const activeClient = clientRef.current;
+    if (!activeClient?.loadOlderMessages || loadingOlder) return;
+    setLoadingOlder(true);
+    shouldFollowNewest.current = false;
+    try {
+      await activeClient.loadOlderMessages(
+        (snapshot.message_window?.limit ?? 30) + 30,
+      );
+    } catch (err) {
+      setError(`Could not load earlier messages: ${err}`);
+    } finally {
+      setLoadingOlder(false);
+    }
+  };
 
   return (
     <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
@@ -372,7 +436,10 @@ export default function ChatScreen() {
             <Pressable
               accessibilityLabel="Retry chat connection"
               accessibilityRole="button"
-              onPress={() => void connect()}
+              onPress={() => {
+                if (!draftLoaded) setDraftRevision((n) => n + 1);
+                void connect();
+              }}
             >
               <Text style={styles.link}>Retry connection</Text>
             </Pressable>
@@ -389,6 +456,22 @@ export default function ChatScreen() {
           contentContainerStyle={styles.messages}
           data={snapshot.messages}
           keyExtractor={(item) => item.message_id}
+          ListHeaderComponent={
+            snapshot.message_window?.has_older ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Load earlier messages"
+                accessibilityState={{ disabled: loadingOlder }}
+                disabled={loadingOlder}
+                onPress={() => void loadOlder()}
+                style={{ padding: 16 }}
+              >
+                <Text style={styles.link}>
+                  {loadingOlder ? "Loading…" : "Load earlier messages"}
+                </Text>
+              </Pressable>
+            ) : null
+          }
           ListEmptyComponent={
             snapshot.ready ? (
               <Text style={styles.emptyText}>No messages in this thread.</Text>
@@ -423,15 +506,27 @@ export default function ChatScreen() {
         <View style={styles.composer}>
           <TextInput
             accessibilityLabel="Message Codex"
-            editable={snapshot.ready && !submitting}
+            editable={draftLoaded && !submitting}
             multiline
-            onChangeText={setDraft}
+            onChangeText={changeDraft}
             placeholder="Message Codex"
-            placeholderTextColor={PlatformColor("placeholderText")}
+            placeholderTextColor={colors.muted}
             style={styles.input}
             value={draft}
           />
           <View style={styles.actions}>
+            {running ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send guidance to running agent"
+                accessibilityState={{ disabled: !canSend }}
+                disabled={!canSend}
+                onPress={() => void send(true)}
+                style={{ padding: 12 }}
+              >
+                <Text style={styles.link}>Guide</Text>
+              </Pressable>
+            ) : null}
             {running ? (
               <Pressable
                 accessibilityLabel="Interrupt Codex turn"
@@ -470,96 +565,97 @@ export default function ChatScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  safeArea: { flex: 1, backgroundColor: PlatformColor("systemBackground") },
-  flex: { flex: 1 },
-  statusBar: {
-    alignItems: "center",
-    borderBottomColor: PlatformColor("separator"),
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    flexDirection: "row",
-    gap: 10,
-    justifyContent: "space-between",
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  statusText: { color: PlatformColor("secondaryLabel"), flex: 1, fontSize: 13 },
-  loader: { flex: 1 },
-  messages: { gap: 10, padding: 12 },
-  message: { borderRadius: 12, gap: 8, maxWidth: "94%", padding: 12 },
-  humanMessage: {
-    alignSelf: "flex-end",
-    backgroundColor: PlatformColor("secondarySystemBackground"),
-  },
-  agentMessage: {
-    alignSelf: "flex-start",
-    backgroundColor: PlatformColor("tertiarySystemBackground"),
-  },
-  messageHeader: { flexDirection: "row", gap: 8 },
-  activity: {
-    borderLeftColor: PlatformColor("separator"),
-    borderLeftWidth: 3,
-    paddingLeft: 10,
-  },
-  activityStatus: {
-    color: PlatformColor("secondaryLabel"),
-    fontSize: 13,
-  },
-  activityError: { color: COLORS.BS_RED, fontSize: 13 },
-  messageRole: {
-    color: PlatformColor("label"),
-    fontSize: 13,
-    fontWeight: "700",
-  },
-  messageState: { color: PlatformColor("secondaryLabel"), fontSize: 13 },
-  smallLink: { color: COLORS.ANTD_LINK_BLUE, fontSize: 13, fontWeight: "600" },
-  link: { color: COLORS.ANTD_LINK_BLUE, fontSize: 15, fontWeight: "600" },
-  emptyText: {
-    color: PlatformColor("secondaryLabel"),
-    fontSize: 16,
-    padding: 24,
-    textAlign: "center",
-  },
-  errorBox: { gap: 6, padding: 12 },
-  errorText: { color: COLORS.BS_RED, fontSize: 14 },
-  composer: {
-    borderTopColor: PlatformColor("separator"),
-    borderTopWidth: StyleSheet.hairlineWidth,
-    gap: 8,
-    padding: 10,
-  },
-  input: {
-    backgroundColor: PlatformColor("secondarySystemBackground"),
-    borderRadius: 12,
-    color: PlatformColor("label"),
-    fontSize: 16,
-    maxHeight: 150,
-    minHeight: 46,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
-  },
-  actions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
-  sendButton: {
-    backgroundColor: COLORS.COCALC_BLUE,
-    borderRadius: 9,
-    minHeight: 40,
-    paddingHorizontal: 18,
-    paddingVertical: 10,
-  },
-  sendText: {
-    color: COLORS.TOP_BAR.ACTIVE,
-    fontSize: 15,
-    fontWeight: "700",
-  },
-  interruptButton: {
-    borderColor: COLORS.BS_RED,
-    borderRadius: 9,
-    borderWidth: 1,
-    minHeight: 40,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
-  },
-  interruptText: { color: COLORS.BS_RED, fontSize: 15, fontWeight: "600" },
-  disabled: { opacity: 0.45 },
-  pressed: { opacity: 0.72 },
-});
+const makeStyles = (colors: AppearancePalette) =>
+  StyleSheet.create({
+    safeArea: { flex: 1, backgroundColor: colors.page },
+    flex: { flex: 1 },
+    statusBar: {
+      alignItems: "center",
+      borderBottomColor: colors.border,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      flexDirection: "row",
+      gap: 10,
+      justifyContent: "space-between",
+      paddingHorizontal: 14,
+      paddingVertical: 8,
+    },
+    statusText: { color: colors.secondary, flex: 1, fontSize: 13 },
+    loader: { flex: 1 },
+    messages: { gap: 10, padding: 12 },
+    message: { borderRadius: 12, gap: 8, maxWidth: "94%", padding: 12 },
+    humanMessage: {
+      alignSelf: "flex-end",
+      backgroundColor: colors.inset,
+    },
+    agentMessage: {
+      alignSelf: "flex-start",
+      backgroundColor: colors.inset,
+    },
+    messageHeader: { flexDirection: "row", gap: 8 },
+    activity: {
+      borderLeftColor: colors.border,
+      borderLeftWidth: 3,
+      paddingLeft: 10,
+    },
+    activityStatus: {
+      color: colors.secondary,
+      fontSize: 13,
+    },
+    activityError: { color: colors.danger, fontSize: 13 },
+    messageRole: {
+      color: colors.text,
+      fontSize: 13,
+      fontWeight: "700",
+    },
+    messageState: { color: colors.secondary, fontSize: 13 },
+    smallLink: { color: colors.link, fontSize: 13, fontWeight: "600" },
+    link: { color: colors.link, fontSize: 15, fontWeight: "600" },
+    emptyText: {
+      color: colors.secondary,
+      fontSize: 16,
+      padding: 24,
+      textAlign: "center",
+    },
+    errorBox: { gap: 6, padding: 12 },
+    errorText: { color: colors.danger, fontSize: 14 },
+    composer: {
+      borderTopColor: colors.border,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      gap: 8,
+      padding: 10,
+    },
+    input: {
+      backgroundColor: colors.inset,
+      borderRadius: 12,
+      color: colors.text,
+      fontSize: 16,
+      maxHeight: 150,
+      minHeight: 46,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    actions: { flexDirection: "row", gap: 8, justifyContent: "flex-end" },
+    sendButton: {
+      backgroundColor: colors.primary,
+      borderRadius: 9,
+      minHeight: 48,
+      paddingHorizontal: 18,
+      paddingVertical: 10,
+    },
+    sendText: {
+      color: colors.onPrimary,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    interruptButton: {
+      borderColor: colors.danger,
+      borderRadius: 9,
+      borderWidth: 1,
+      minHeight: 48,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    interruptText: { color: colors.danger, fontSize: 15, fontWeight: "600" },
+    disabled: { opacity: 0.45 },
+    pressed: { opacity: 0.72 },
+  });

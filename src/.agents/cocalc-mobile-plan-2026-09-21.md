@@ -1,7 +1,8 @@
 # CoCalc mobile: native agent-first application
 
 Date: 2026-09-21
-Status: planning only; no implementation authorized by this change.
+Status: implementation in progress following user authorization on 2026-09-21.
+See [implementation progress](cocalc-mobile-progress-2026-09-21.md) for tested scope and remaining work.
 Branch: `feature/cocalc-mobile`
 Base: `feature/my-agents-workspace` / [PR #640](https://github.com/sagemathinc/cocalc-ai/pull/640).
 
@@ -87,8 +88,10 @@ acceptance scenario, and status. An incremental milestone is not full parity.
 
 Actions inside the web Agents experience must have an explicit mobile mapping.
 In particular, the web embeds terminal and editor frames: document whether each
-gets a contained web surface or a native equivalent. Do not quietly classify all
-hard features as project escape hatches. Specialized artifact rendering may use
+gets a contained web surface or a native equivalent. General file editing is not required for the initial app. File viewing and
+selection-based comments are required. Terminals must work through a contained
+WebView using CoCalc's existing implementation and patched xterm.js. Do not quietly
+classify all hard features as project escape hatches. Specialized artifact rendering may use
 a contained web renderer with native surrounding navigation and actions.
 
 ## Architecture and ownership
@@ -210,8 +213,9 @@ suspending a call must be clear to the user and bounded on the server.
 ### Paid access and cost control
 
 Live voice is restricted to eligible paying customers and always opt-in per
-session. Eligibility does not imply an included or unlimited allowance. The
-precise qualifying plan/credit rule and retail price remain product decisions.
+session. Eligibility does not imply an included or unlimited allowance. Use existing membership-tier entitlements and site-admin-editable parameters for
+qualification, allowances, retail pricing, and session limits. Avoid hardcoded
+product decisions; initial defaults still need cost measurements.
 Enforce entitlement and available budget server-side before provisioning and
 throughout the session; a hidden client button is insufficient.
 
@@ -318,17 +322,34 @@ Record exact build/server revisions and devices. Logs/telemetry should capture
 latency, reconnects, uncertain submissions, crashes, and usage reconciliation
 without recording credentials or private conversation/audio by default.
 
-## Decisions to resolve before the corresponding implementation
+## Product decisions recorded after review
 
-- Exact paid eligibility, allowances, retail pricing, and session budget defaults.
-- Native live transport/audio package, session owner, and provider connection
-  lifecycle; physical-device proof precedes committing to the integration.
-- Transcript persistence and agent-context policy for continuous conversation.
-- Embedded artifact/editor/terminal mappings and initial supported renderers.
-- Push infrastructure and notification privacy/defaults.
+- Use existing admin-editable membership entitlements and configurable pricing,
+  allowances, and live-session limits. Keep both speech modes permanently.
+- Finalized voice conversation belongs in the same agent chat by default. The
+  treatment of partial transcripts and duplicate task/result context remains an
+  implementation design task.
+- General file editing is outside the initial scope. Viewing and selection-based
+  commenting matter; working terminals through the existing patched xterm.js in
+  a WebView are required.
+- The maintainer can test an iPhone 17 Pro and has an Apple developer account.
+  Ask for device/signing actions when a concrete build is ready to test.
+- No Android phone is available presently. An emulator is possible; an older
+  Chromebook may help later. Do not claim Android device qualification.
+- Push infrastructure, audio transport, web session handoff, shared package
+  boundaries, and performance budgets are engineering choices to investigate.
+  They do not block beginning substantial implementation.
+
+## Remaining engineering decisions
+
+- Native live transport/audio package, session owner, and provider lifecycle;
+  physical-device proof precedes committing to the integration.
+- Transcript reconciliation and agent-context policy for continuous conversation.
+- Initial artifact renderers and selection/comment anchor representation.
+- Push infrastructure, privacy defaults, and native permission timing.
 - WebView session handoff, incoming app links, and return navigation contract.
-- Shared package boundary and the first web operations to migrate.
-- Performance budgets, Android qualification timing, and store/update rollout.
+- Further shared operations to extract beyond agent organization and discovery.
+- Measured performance budgets and store/update rollout qualification.
 
 These are bounded design tasks in the milestones, not reasons to recreate the
 prototype's narrower product or drop the less expensive speech modes.

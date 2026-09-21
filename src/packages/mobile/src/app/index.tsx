@@ -17,8 +17,7 @@ export default function WelcomeScreen() {
           CoCalc on mobile
         </Text>
         <Text style={styles.body}>
-          Connect to a CoCalc site, choose a project, and continue an existing
-          Codex thread.
+          Connect to your CoCalc site and work with your agents.
         </Text>
         <Link
           accessibilityRole="button"
