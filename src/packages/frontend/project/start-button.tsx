@@ -12,7 +12,7 @@ It's really more than just that button, since it gives info as starting/stopping
 happens, and also when the system is heavily loaded.
 */
 
-import { Alert, Button, Modal, Progress, Space, Spin } from "antd";
+import { Alert, Button, Modal, Popconfirm, Progress, Space, Spin } from "antd";
 import type { ButtonProps } from "antd";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useIntl } from "react-intl";
@@ -1023,15 +1023,26 @@ function RuntimeSponsorDenialDescription({
             >
               <Space size="small" align="center" wrap>
                 {project.can_stop !== false && (
-                  <Button
-                    size="small"
-                    loading={!!stoppingProjectIds[project.project_id]}
-                    onClick={() => stopProjectAndRetry(project.project_id)}
+                  <Popconfirm
+                    title="Stop this project to free a running slot?"
+                    description="This interrupts all agents and other processes in that project, including collaborators' work. This project will then start; no message is resent."
+                    onConfirm={() => stopProjectAndRetry(project.project_id)}
+                    okText="Stop project and continue"
+                    cancelText="Cancel"
                   >
-                    Stop
-                  </Button>
+                    <Button
+                      size="small"
+                      loading={!!stoppingProjectIds[project.project_id]}
+                    >
+                      Stop
+                    </Button>
+                  </Popconfirm>
                 )}
-                <ProjectTitle project_id={project.project_id} trunc={60} />
+                <ProjectTitle
+                  project_id={project.project_id}
+                  trunc={60}
+                  noClick
+                />
                 {project.state && <span>({project.state})</span>}
               </Space>
             </div>

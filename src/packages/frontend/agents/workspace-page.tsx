@@ -116,6 +116,7 @@ import { AgentLoadingPreview } from "./loading-preview";
 import { NameAgent } from "./name-agent";
 import { AgentsAccountMenu } from "./account-menu";
 import { AgentRunningIndicator } from "./agent-running-indicator";
+import { AgentProjectStatus } from "./project-status";
 import {
   AGENT_SIDEBAR_ID,
   AgentsSidebarToggle,
@@ -1903,6 +1904,7 @@ function AgentWorkspace({
               />
             )}
             <span aria-hidden="true">·</span>
+            <AgentProjectStatus agent={agent} active={active} />
             <Dropdown
               trigger={["click"]}
               menu={{
