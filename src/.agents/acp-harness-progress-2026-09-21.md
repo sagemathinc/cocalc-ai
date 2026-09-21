@@ -18,8 +18,21 @@ before summary publication. Three subprocess regressions cover these cases,
 including preserving the harness's raw `end_turn` event for diagnostics.
 
 Validation: 68 subprocess tests, 140 native AI tests and project-host TypeScript
-pass. This source fix still needs a backend deployment and live durable-path
-qualification; the earlier real-harness smoke observations remain unchanged.
+pass. Deployed backend `20260921T153149Z-46d999d257cc-dirty-e3b0c442`, SHA256
+`7d83423d76e46792acbd2946d98d3c9d25a0fdf08557662a2d2d38131bc1e241`, through
+successful host upgrade `7b0d05f5-a754-47aa-821a-51227603f37b`. The dirty suffix
+reflects an unrelated untracked PNG; tracked sources were clean. The final
+manifest was read only after the bundle process exited successfully.
+
+Ordinary live fixture cancellation passed on agent-3: exactly one `hang` prompt
+and one Interrupt action produced durable job
+`4d77122f-bf8d-4717-a9c5-94852dc0d1e7`, state `interrupted`, with the new worker
+bundle version. After reload and chat hydration, the partial `working` response
+and `Conversation interrupted.` were visible. No inference provider was used.
+This verifies ordinary durable cancellation, not the malformed `end_turn`
+case through the live worker; that case still has subprocess evidence only.
+An old opt-out error remains visible above unrelated history, despite successful
+new admission. Do not mistake that stale error for the current job outcome.
 
 ### Real Harness Provider Rejection
 
