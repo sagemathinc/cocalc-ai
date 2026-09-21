@@ -1,6 +1,13 @@
 import { nativeSpeechAdapter } from "./native";
 import { previewSpeechAdapter } from "./preview";
 
+// Use the implementation installed by React Native, not Node's richer signal.
+const { AbortController } = require(
+  require.resolve("abort-controller", {
+    paths: [require.resolve("react-native/package.json")],
+  }),
+) as { AbortController: typeof globalThis.AbortController };
+
 const mockSystem = {
   getChatSpeechCapabilities: jest.fn(),
   transcribeChatAudio: jest.fn(),
@@ -151,4 +158,69 @@ it("finishes playback when the native player reports completion", async () => {
   mockStatus({ didJustFinish: true });
   await pending;
   expect(mockPlayer.remove).toHaveBeenCalledTimes(1);
+});
+
+it("rejects already cancelled recording and speech before starting work", async () => {
+  const abort = new AbortController();
+  abort.abort();
+  await expect(adapter().record(abort.signal, 1000)).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  await expect(
+    adapter().transcribe(mockBytes, 1000, abort.signal),
+  ).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  await expect(
+    adapter().speak(
+      "Done",
+      "message",
+      await previewSpeechAdapter().capabilities(),
+      abort.signal,
+    ),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  expect(mockRecorder.prepareToRecordAsync).not.toHaveBeenCalled();
+  expect(mockSystem.transcribeChatAudio).not.toHaveBeenCalled();
+  expect(mockSystem.synthesizeChatSpeech).not.toHaveBeenCalled();
+  expect(mockPlayer.play).not.toHaveBeenCalled();
+});
+
+it("releases a recorder when cancelled during preparation", async () => {
+  const abort = new AbortController();
+  mockRecorder.prepareToRecordAsync.mockImplementationOnce(async () => {
+    abort.abort();
+  });
+  await expect(adapter().record(abort.signal, 1000)).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  expect(mockRecorder.record).not.toHaveBeenCalled();
+  expect(mockRecorder.release).toHaveBeenCalledTimes(1);
+});
+
+it("does not play a synthesis result that arrives after cancellation", async () => {
+  let resolve!: (value: any) => void;
+  mockSystem.synthesizeChatSpeech.mockImplementationOnce(
+    () =>
+      new Promise((r) => {
+        resolve = r;
+      }),
+  );
+  const abort = new AbortController();
+  const pending = adapter().speak(
+    "Done",
+    "message",
+    await previewSpeechAdapter().capabilities(),
+    abort.signal,
+  );
+  const cancelled = expect(pending).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  await tick();
+  abort.abort();
+  resolve({ audio: mockBytes });
+  await cancelled;
+  expect(mockSystem.cancelChatSpeech).toHaveBeenCalledWith({
+    request_id: "request-id",
+  });
+  expect(mockPlayer.play).not.toHaveBeenCalled();
 });

@@ -7,6 +7,14 @@ import { getActiveSiteSession } from "../cocalc/session-registry";
 import type { SpeechAdapter, Recording } from "./controller";
 import { markdownToSpeechText, splitSpeechText } from "./text";
 
+// React Native's AbortSignal supports aborted, but not throwIfAborted/reason.
+function throwIfAborted(signal: AbortSignal): void {
+  if (!signal.aborted) return;
+  const error = new Error("Speech operation cancelled.");
+  error.name = "AbortError";
+  throw error;
+}
+
 export function nativeSpeechAdapter(
   profile: string,
   project_id: string,
@@ -24,7 +32,7 @@ export function nativeSpeechAdapter(
     ) => Promise<T>,
   ) {
     const api = await system();
-    signal.throwIfAborted();
+    throwIfAborted(signal);
     const request_id = randomUUID();
     const cancel = () => {
       void api.cancelChatSpeech({ request_id }).catch(() => {});
@@ -44,7 +52,7 @@ export function nativeSpeechAdapter(
         await import("expo-audio");
       const { File } = await import("expo-file-system");
       const permission = await AudioModule.requestRecordingPermissionsAsync();
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       if (!permission.granted)
         throw new Error(
           "Microphone access is disabled. Enable it for CoCalc in iPhone Settings.",
@@ -54,7 +62,7 @@ export function nativeSpeechAdapter(
         playsInSilentMode: true,
         shouldPlayInBackground: false,
       });
-      signal.throwIfAborted();
+      throwIfAborted(signal);
       const recorder = new AudioModule.AudioRecorder({
         ...RecordingPresets.HIGH_QUALITY,
         numberOfChannels: 1,
@@ -80,7 +88,7 @@ export function nativeSpeechAdapter(
       };
       try {
         await recorder.prepareToRecordAsync();
-        signal.throwIfAborted();
+        throwIfAborted(signal);
         recorder.record({ forDuration: limitMs / 1000 });
         const started = Date.now();
         return {
@@ -90,7 +98,7 @@ export function nativeSpeechAdapter(
               Math.max(1, Date.now() - started),
             );
             await stopOnce();
-            signal.throwIfAborted();
+            throwIfAborted(signal);
             if (!recorder.uri)
               throw new Error(
                 "The recording was interrupted. Please dictate again.",
@@ -136,7 +144,7 @@ export function nativeSpeechAdapter(
         shouldPlayInBackground: false,
       });
       for (const text of chunks) {
-        signal.throwIfAborted();
+        throwIfAborted(signal);
         const result = await request(signal, (api, request_id) =>
           api.synthesizeChatSpeech({
             ...context,
@@ -148,7 +156,7 @@ export function nativeSpeechAdapter(
             timeout: 130_000,
           }),
         );
-        signal.throwIfAborted();
+        throwIfAborted(signal);
         const file = new File(Paths.cache, `speech-${randomUUID()}.mp3`);
         let player: ReturnType<typeof createAudioPlayer> | undefined;
         try {
