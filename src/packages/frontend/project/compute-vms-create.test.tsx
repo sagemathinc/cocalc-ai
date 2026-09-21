@@ -161,6 +161,9 @@ it("waits for course projects before applying the course-funded default", async 
     <VmCreateModal {...props} connectedProjects={[]} />,
   );
   const dialog = screen.getByRole("dialog", { name: "Create Course VM" });
+  expect(
+    within(dialog).queryByText("GCP network charges can exceed course credit"),
+  ).not.toBeInTheDocument();
   await waitFor(() =>
     expect(within(dialog).getByText("0 Connected Projects...")).toBeVisible(),
   );

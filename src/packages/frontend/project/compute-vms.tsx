@@ -996,17 +996,6 @@ export function VmCreateModal({
             />
           </Form.Item>
         )}
-        {!recommendationMode &&
-          draft.funding_source &&
-          draft.provider === "gcp" && (
-            <Alert
-              type="warning"
-              showIcon
-              style={{ marginBottom: 16 }}
-              title="GCP network charges can exceed course credit"
-              description="GCP samples outgoing traffic every 60 seconds, and a sample can take up to another 150 seconds to appear. CoCalc checks about every 60 seconds and requests a stop after the spending threshold is observed. The course payer remains responsible for all finalized $0.10/GB charges, including potentially material usage reported after the student's allocation is exhausted."
-            />
-          )}
         {!recommendationMode && (
           <Form.Item name="connected_project_ids" label="Project SSH access">
             <ConnectedProjectsSelect
