@@ -18,7 +18,13 @@ preflight, then retain the existing exact comparison against that snapshot after
 preflight. No whitespace normalization or relaxation of the changed-draft guard
 is introduced. Button-keyboard and editor-callback regressions cover the observed
 newline mismatch. Twenty-nine focused composer/mention/delivery tests, frontend
-lint and frontend TypeScript passed. Browser requalification is pending.
+lint and frontend TypeScript passed. Fix `894094352c` is rebuilt and live on
+lite4b. After reload, one Send activation cleared the existing draft and admitted
+job `d6220cbc-6c5d-4fd8-bce4-45ad0693fb00`, which completed. Its chat response
+contains JSON-RPC `-32601` and `fs/write_text_file`, also qualifying the deployed
+unsupported-callback rejection through durable chat. Prior attempts had created
+no host job; no duplicate send was observed. The browser-level Playwright
+connection remained unreliable, so this check used exact-page CDP UI actions.
 
 ## Unadvertised Callback Rejection
 
@@ -42,14 +48,16 @@ The callback fix is deployed as
 `c0c9128c9c3ca05a0027106d987744971012f8ff2bcfcbc9c7d6c96884cf03ce`.
 Upgrade `9118529a-61bb-4c94-b971-54838b950c4a` succeeded with managed-component
 alignment; no ACP jobs were active before upgrade. The disposable fixture was
-updated to the matching source. Browser validation remains incomplete:
+updated to the matching source. Browser validation initially failed:
 Playwright's browser-level CDP connection timed out before submitting, and the
 CoCalc browser-session command found no subscriber. Exact-page CDP inspection
-works, but agent-3 remains at Connecting/Loading workspace after reload. A single
+worked, but hidden Connecting/Loading workspace text was initially misread as
+visible connection failure (corrected in the composer checkpoint above). A single
 UI submit gesture left `unsupported-file-write` in the composer rather than
 creating a host job; the latest observed job remained the earlier completed
 `5bf2cf1b-69a3-4e18-ab4e-63c1685ed0dc`. Do not mistake this gesture for an
-admitted test or blindly resend it. Other browser tabs were not modified.
+admitted test or blindly resend it. The completed live check and exact job are
+recorded above. Other browser tabs were not modified.
 
 ## Abrupt Primary-Container Loss: Failure And Requalification
 
