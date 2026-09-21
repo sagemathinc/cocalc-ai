@@ -212,6 +212,32 @@ Live qualification then passed on host bundle
 reload, and Interrupt preserved `working` followed by `Conversation interrupted.`
 without a new error or resubmit prompt. No fixture turn remained running.
 
+### Partial Restore Diagnosis
+
+The later live probe reproduced the home-only restore failure without touching
+the working project: create a disposable Btrfs subvolume under
+`.snapshot-restore-staging`, create an ordinary `rootfs/sentinel` directory in
+it, and invoke the protected storage wrapper's `mv` to its parent staging tree.
+The helper returned exit 2 with `[Errno 18] Invalid cross-device link`. The
+existing protected `copy-tree-reflink` operation succeeded on the same source and
+destination. The disposable subvolume and both directories were then removed.
+
+This identifies a cross-subvolume directory rename, not a need to weaken the
+helper's anchored path restrictions. `file-server.ts:replaceTreeByMove` is used
+by both partial restore modes; simply replacing its rename with copy/delete is
+not sufficient transactional recovery. A follow-up fix should prepare a complete
+replacement with the existing anchored copy primitive before changing the live
+rootfs, preserve the old tree through installation, and test failure at every
+copy/swap/rollback step. In particular, the existing outer cleanup must not remove
+the only preserved rootfs after an intermediate failure. No helper bypass or
+production partial-restore mutation was attempted during this diagnosis.
+
+The typed snapshot listing after these checks contained automatic snapshots at
+08:45:39 and 11:57:15 UTC plus the manual safety snapshot. Retention prunes the
+listing, so it is not a complete execution timeline. The scheduler defaults to
+a 15-minute initial delay and 15-minute sweep; repeated host upgrades restart
+that delay. A strict 15-minute recovery-point guarantee remains unverified.
+
 Snapshot `acp-qualification-20260921-0823` captured a marker file which was then
 deleted. Home-only restore failed before replacement: the protected storage
 helper reported EXDEV while moving the preserved rootfs into the staging root.
