@@ -7,6 +7,7 @@ import type {
   AcpAttentionOption,
   AcpAttentionQuestion,
 } from "@cocalc/conat/ai/acp/types";
+import { CODEX_ATTENTION_ANSWER_MAX_LENGTH } from "@cocalc/util/ai/codex-attention";
 
 const MAX_QUESTIONS = 10;
 const MAX_OPTIONS = 20;
@@ -39,7 +40,11 @@ function requiredText(value: unknown, name: string, max: number): string {
   }
   const text = value.trim();
   if (!text) throw new Error(`${name} must not be empty`);
-  if (text.length > max) throw new Error(`${name} is too long`);
+  if (text.length > max) {
+    throw new Error(
+      `${name} has ${text.length} characters; the limit is ${max} (${text.length - max} over).`,
+    );
+  }
   return text;
 }
 
@@ -228,7 +233,7 @@ export function validateAttentionAnswers(opts: {
       requiredText(
         value,
         `answers['${question.id}'][${index}]`,
-        MAX_QUESTION_LENGTH,
+        CODEX_ATTENTION_ANSWER_MAX_LENGTH,
       ),
     );
     if (question.options?.length && !question.isOther) {
