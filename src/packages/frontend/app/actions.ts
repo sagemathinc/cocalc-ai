@@ -179,6 +179,14 @@ export class PageActions extends Actions<PageState> {
   }
 
   set_active_tab = async (key, change_history = true): Promise<void> => {
+    if (
+      key === "agents" &&
+      redux.getStore("account")?.getIn(["other_settings", "openai_disabled"])
+    ) {
+      key = "projects";
+      // Direct URLs must be corrected even when routing suppresses history updates.
+      change_history = true;
+    }
     const customize = redux.getStore("customize");
     if (customize?.get("exam_mode")) {
       const examProjectId = customize.get("project_id");

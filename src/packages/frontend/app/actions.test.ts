@@ -137,6 +137,17 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
+  it.each([true, false])(
+    "redirects disabled AI away from Agents (change_history=%s)",
+    async (changeHistory) => {
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: true },
+      });
+      await actions.set_active_tab("agents", changeHistory);
+      expect(page().get("active_top_tab")).toBe("projects");
+      expect(set_url).toHaveBeenLastCalledWith("/projects");
+    },
+  );
   it.each(["account", "admin", "docs", "agents", "projects"])(
     "remembers the selected project while opening %s",
     async (route) => {

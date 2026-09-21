@@ -220,6 +220,8 @@ export const Page: React.FC = () => {
   }, []);
 
   const active_top_tab = useTypedRedux("page", "active_top_tab");
+  const otherSettings = useTypedRedux("account", "other_settings");
+  const aiDisabled = !!otherSettings?.get("openai_disabled");
   const compactAgentsNavigation = active_top_tab === "agents";
   const isAuthView = active_top_tab === "auth";
   const show_mentions = active_top_tab === "notifications";
@@ -474,6 +476,7 @@ export const Page: React.FC = () => {
   }
 
   function render_agents_nav_button(): React.JSX.Element | null {
+    if (aiDisabled) return null;
     return (
       <NavTab
         style={{
