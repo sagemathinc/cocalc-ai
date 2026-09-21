@@ -33,6 +33,7 @@ import {
 import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constants";
 import { getProject } from "../sqlite/projects";
 import getLogger from "@cocalc/backend/logger";
+import { harnessOwner, HARNESS_OWNER_LABEL } from "./harness-reaper";
 
 const logger = getLogger("project-host:acp:harness-launcher");
 
@@ -59,6 +60,7 @@ export async function launchHarnessInProject(
   )
     throw Error("ACP launch requires an admitted conversation");
   await ensureProjectContainerRunning({ projectId, accountId });
+  const owner = await harnessOwner();
   const launcher = projectPoolPodmanLauncher(projectId);
   // Never log arguments: image/project-managed configuration may contain secrets.
   const command = (args: string[]) =>
@@ -153,6 +155,8 @@ export async function launchHarnessInProject(
       name,
       "--label",
       "cocalc.runtime=acp",
+      "--label",
+      `${HARNESS_OWNER_LABEL}=${owner}`,
       "--label",
       `cocalc.project=${projectId}`,
       `--userns=keep-id:uid=${DEFAULT_PROJECT_RUNTIME_UID},gid=${DEFAULT_PROJECT_RUNTIME_GID}`,

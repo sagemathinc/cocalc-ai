@@ -17,6 +17,10 @@ jest.mock("node:child_process", () => ({
   spawn: (...args) => mockSpawn(...args),
 }));
 jest.mock("node:fs/promises", () => ({ readFile: async () => "image" }));
+jest.mock("./harness-reaper", () => ({
+  harnessOwner: async () => "123:00000000-0000-0000-0000-000000000000:100",
+  HARNESS_OWNER_LABEL: "cocalc.acp.owner",
+}));
 jest.mock("@cocalc/backend/logger", () => () => ({ warn: jest.fn() }));
 jest.mock("@cocalc/backend/podman/env", () => ({
   podmanEnv: () => ({ ONLY_PODMAN: "yes" }),

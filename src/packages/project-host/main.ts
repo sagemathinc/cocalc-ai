@@ -94,6 +94,7 @@ import { setHarnessLauncher } from "@cocalc/lite/hub/acp/harness-runtime";
 import { launchHarnessInProject } from "./acp/harness-launcher";
 import { initCodexSiteKeyGovernor } from "./codex/codex-site-metering";
 import { startCodexSubscriptionCacheGc } from "./codex/codex-subscription-cache-gc";
+import { startHarnessReaper } from "./acp/harness-reaper";
 import { setPreferContainerExecutor } from "@cocalc/lite/hub/acp/workspace-root";
 import { sandboxExec } from "@cocalc/project-runner/run/sandbox-exec";
 import {
@@ -550,6 +551,7 @@ export async function main(
   }));
   configureProjectHostAcpAdmissionDenialRecorder();
   const stopCodexSubscriptionCacheGc = startCodexSubscriptionCacheGc();
+  const stopHarnessReaper = startHarnessReaper();
   // Local persist must exist before ACP startup so automation indexes can
   // republish into the project-scoped DKV stores on restart.
   const externalPersist = isProjectHostExternalConatPersistEnabled();
@@ -1579,6 +1581,7 @@ export async function main(
     stopGcpPreemptionWatcher();
     stopConatRevocationKickLoop?.();
     stopCodexSubscriptionCacheGc?.();
+    stopHarnessReaper();
     stopCopyWorker?.();
     stopOnPremTunnel?.();
     stopHttpProxyRevocationKickLoop?.();

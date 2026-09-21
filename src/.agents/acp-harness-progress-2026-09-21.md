@@ -39,7 +39,32 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   when container removal fails. Failed removal can be retried without unmounting
   beneath surviving processes. Six mocked lifecycle tests pass; live host
   qualification remains. It is registered in the host and detached worker;
-  abrupt-worker orphan reconciliation and live validation are still needed.
+  a host-side reconciler now removes sidecars whose owning worker has died,
+  using PID, boot ID and process start time (not PID alone). Unknown inspection
+  failures preserve the container. Five focused reaper tests pass; the new
+  reconciler still needs deployment and a live worker-kill test.
+
+## Live Durable Checkpoint
+
+The full development build and project-host bundle succeeded. The test host
+was upgraded to `20260921T072535Z-58ebe40c0a5a` using the ordinary host-upgrade
+operation, which reported success. Its local opt-in is enabled. No paid inference
+or real subscription changes were involved.
+
+A deterministic fixture in the disposable project completed two turns through
+the versioned RPC, durable queue, detached worker, production sidecar launcher
+and chat writer. Persisted responses were `Hello world 1` and `Hello world 2`,
+confirming native process reuse. A third, deliberately hanging turn continued
+after the requesting client disconnected; an explicit interrupt subsequently
+produced a persisted `cancelled` ACP stop reason and removed the sidecar.
+Cancellation currently also produces an error event; its UI presentation needs
+improvement before release. The durable RPC returns admission status, not the
+entire execution stream; completion was verified through persisted chat activity.
+
+This validates fixture-to-durable-chat integration, not real-harness integration
+through this path, browser controls, or snapshot recovery. The chat is
+`/home/user/acp-qualification/durable.chat`, thread
+`7bdc439d-4c62-49b6-8974-2af70e5f64f2`.
 
 ## Validation And Real Harnesses
 
@@ -94,7 +119,8 @@ provider tool to capture bounded child output while diagnosing setup.
 The disposable project on the existing lite4b-backed host is
 `1892b11a-6c63-4a92-988d-01dcddc0bc79` (ACP harness disposable qualification).
 Pinned packages are in `/home/user/acp-qualification`. No new host was allocated.
-No application restart or deployment was needed for this standalone checkpoint.
+No application restart or deployment was needed for the standalone checkpoint;
+the subsequent durable checkpoint above upgraded and restarted the test host.
 
 ## Next Integration Slice
 

@@ -4,8 +4,8 @@ Created: 2026-09-19. Revised: 2026-09-21 after scope discussion.
 
 Status: implementation in progress. The isolated ACP client and deterministic
 qualification tools are implemented. Opt-in admission, sidecar launching and
-durable chat wiring are implemented but not yet qualified together live; UI
-wiring remains outstanding. OpenCode and Pi have passed
+durable chat wiring have passed a live deterministic-fixture check, including
+two-turn reuse and cancellation; UI wiring remains outstanding. OpenCode and Pi have passed
 real-process, local-fake-provider smoke tests, not the full release gates below.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
