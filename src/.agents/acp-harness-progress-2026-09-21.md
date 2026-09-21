@@ -127,6 +127,27 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- Opt-out/re-enable now has live evidence on the existing qualification host.
+  With no queued/running jobs anywhere on that host, the operator set
+  `COCALC_ACP_HARNESSES=0` and restarted the host service. The running process's
+  selected environment field confirmed the disabled value. Browser model
+  discovery rejected with `ACP harness execution is not enabled on this host`
+  and created no sidecar. A separately submitted test turn received the same
+  error before admission: SQLite's latest two jobs remained the earlier quiet
+  and stderr operations, with no new generic or native fallback job. Existing
+  replies were still readable after reload.
+
+  The original opt-in was restored and the host service restarted; the new
+  process confirmed `COCALC_ACP_HARNESSES=1`. A deliberately submitted fixture
+  turn completed as `d1166bc9-ba83-4599-ac42-2efc7a4f920f`, survived reload, and
+  had no recovery parent. The rejected request was not automatically executed.
+  All 15 admission/discovery tests and Lite TypeScript pass, including a new
+  SQLite regression that preserves readable/cancellable queued records while
+  generic preparation rejects and native preparation remains unchanged.
+  This is idle-host disable/re-enable qualification, not evidence for cancelling
+  an active old runtime across mixed-version deployment. No paid inference or
+  real credential changes were involved; ACP remains enabled for operator tests.
+
 - Quiet execution and high-volume stderr now have subprocess and live evidence.
   The real-SDK suite passes 51 tests, including a quiet prompt longer than its
   configured 1500ms setup deadline, idle-session reuse after that deadline, and

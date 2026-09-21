@@ -12,7 +12,12 @@ import {
   setCodexCredentialAdmissionResolver,
 } from "../codex-credential-admission";
 import { closeAcpDatabase, initAcpDatabase } from "../../sqlite/acp-database";
-import { decodeAcpJobRequest, enqueueAcpJob } from "../../sqlite/acp-jobs";
+import {
+  cancelQueuedAcpJob,
+  decodeAcpJobRequest,
+  enqueueAcpJob,
+  getAcpJobByOpId,
+} from "../../sqlite/acp-jobs";
 
 const project_id = randomUUID();
 function request(): AcpRequest {
@@ -47,6 +52,9 @@ function request(): AcpRequest {
   };
 }
 const original = process.env.COCALC_ACP_HARNESSES;
+// SQLite table modules initialize once per process; share one isolated database.
+beforeAll(() => initAcpDatabase({ filename: ":memory:" }));
+afterAll(() => closeAcpDatabase());
 test("configured harness rejects native/unknown/stale clients, without changing submitted runtime", () => {
   const source = request();
   expect(() =>
@@ -77,11 +85,9 @@ afterEach(() => {
   else process.env.COCALC_ACP_HARNESSES = original;
   setHarnessLauncher();
   setCodexCredentialAdmissionResolver();
-  closeAcpDatabase();
 });
 
 test("generic admission snapshots profile and bypasses Codex credentials through SQLite", async () => {
-  initAcpDatabase({ filename: ":memory:" });
   const resolver = jest.fn();
   setCodexCredentialAdmissionResolver(resolver);
   const source = request();
@@ -108,6 +114,33 @@ test("unconfigured or disabled hosts reject instead of choosing native Codex", (
   process.env.COCALC_ACP_HARNESSES = "1";
   setHarnessLauncher();
   expect(() => prepareHarnessRequest(request())).toThrow(/not enabled/);
+});
+
+test("disabling ACP leaves native admission and stored queued-job cancellation available", async () => {
+  const source = request();
+  const job = enqueueAcpJob(await pinCodexCredentialAtAdmission(source));
+  const snapshot = job.request_json;
+  process.env.COCALC_ACP_HARNESSES = "0";
+
+  const native = { ...source, runtime: undefined };
+  expect(prepareHarnessRequest(native)).toBe(native);
+  expect(() => prepareHarnessRequest(decodeAcpJobRequest(job))).toThrow(
+    "not enabled",
+  );
+  expect(getAcpJobByOpId(job.op_id)).toMatchObject({
+    state: "queued",
+    request_json: snapshot,
+  });
+  expect(
+    cancelQueuedAcpJob({
+      project_id,
+      path: job.path,
+      user_message_id: job.user_message_id,
+    }),
+  ).toMatchObject({ state: "canceled", request_json: snapshot });
+  expect(decodeAcpJobRequest(getAcpJobByOpId(job.op_id)!)).toMatchObject({
+    runtime: source.runtime,
+  });
 });
 
 test("queued ACP delivery preserves admitted settings and exact existing session", () => {
