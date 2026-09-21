@@ -7,6 +7,15 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ### Real Harness Provider Rejection
 
+A separately packaged experimental fix for the pinned bridge now passes the
+HTTP 401 probe while preserving the normal file-write/follow-up smoke. The
+[patch record](acp-harness-patches/README.md) includes source revision, license,
+hashes, three state-transition regressions and 98 passing upstream tests. It is
+not installed over the released package, does not change existing agent profiles,
+and has not been submitted or released upstream. Durable/browser qualification
+of that modified bridge remains separate. The limitation below still applies
+to the unmodified pinned package.
+
 Added `--provider-reject` to the disposable fake-provider smoke tool. It returns
 HTTP 401 with an explicit fake authentication error after session discovery and
 requires a classified ACP rejection instead of a successful prompt result.

@@ -12,6 +12,9 @@ with HTTP 401. Successful Pi inference is qualified, but this provider-error pat
 is not. Do not interpret an empty completed turn as proof that inference succeeded.
 OpenCode `1.18.31` surfaced the same rejection correctly. Require a bridge fix or
 requalification before relying on Pi for unattended error reporting.
+An [experimental operator patch](../src/.agents/acp-harness-patches/README.md)
+passes standalone rejection and normal-inference probes, but is not an upstream
+release or automatically installed replacement.
 
 ## Execution And Trust
 
