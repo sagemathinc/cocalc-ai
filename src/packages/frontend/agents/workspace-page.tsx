@@ -45,6 +45,7 @@ import { writeChatComposerDraft } from "@cocalc/frontend/chat/use-chat-composer-
 import { stableDraftKeyFromThreadKey } from "@cocalc/frontend/chat/utils";
 import { set_url } from "@cocalc/frontend/history";
 import { getPageUrlPath } from "@cocalc/frontend/page-routing";
+import { useWorkspaceRoute } from "./use-workspace-route";
 import { openAccountSettings } from "@cocalc/frontend/account/settings-routing";
 import {
   ProjectContext,
@@ -2270,43 +2271,21 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     setNetworkFilterId(undefined);
   }, [networkDirectory, networkFilterId, selectedNetwork]);
 
-  useEffect(() => {
-    if (!activeAgentId || activeAgentId === "new" || !selected) return;
-    if (activeAgentId !== selected.endpoint.agent_id) {
-      redux.getActions("page").setState({
-        active_agent_id: selected.endpoint.agent_id,
-        active_agent_name: selected.name,
-      });
-    } else if (
-      redux.getStore("page")?.get("active_agent_name") !== selected.name
-    ) {
-      redux.getActions("page").setState({ active_agent_name: selected.name });
-    }
-    if (activeAgentId !== selected.name) {
-      set_url(getPageUrlPath({ page: "agents", agent_id: selected.name }));
-    }
-  }, [activeAgentId, selected?.endpoint.agent_id, selected?.name]);
-
-  useEffect(() => {
-    if (!selectedNetwork || creating) return;
-    if (selected && networksForAgent([selectedNetwork], selected).length)
-      return;
-    const first = agents.find(
-      (agent) => networksForAgent([selectedNetwork], agent).length > 0,
-    );
-    if (!first) return;
-    mountAgent(first);
-    redux.getActions("page").setState({
-      active_agent_id: first.endpoint.agent_id,
-      active_agent_name: first.name,
-    });
-    set_url(
-      getPageUrlPath({
-        page: "agents",
-        agent_id: first.name,
-      }),
-    );
-  }, [agents, creating, selected, selectedNetwork]);
+  const networkFallback =
+    selectedNetwork &&
+    !creating &&
+    (!selected || !networksForAgent([selectedNetwork], selected).length)
+      ? agents.find(
+          (agent) => networksForAgent([selectedNetwork], agent).length > 0,
+        )
+      : undefined;
+  useWorkspaceRoute({
+    active,
+    activeAgentId,
+    selected,
+    networkFallback,
+    mountAgent,
+  });
 
   useEffect(() => {
     setCreating(activeAgentId === "new");
@@ -2395,6 +2374,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
 
   const handleRegisteredThreadSelected = useCallback(
     (workspace: string, nextAgent: NamedAgent) => {
+      if (!active) return;
       setWorkspaceAgentIds((old) => {
         if (old.get(workspace) === nextAgent.endpoint.agent_id) return old;
         const next = new Map(old);
@@ -2414,7 +2394,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
         }),
       );
     },
-    [],
+    [active],
   );
 
   function selectAgent(agent: NamedAgent) {
