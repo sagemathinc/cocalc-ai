@@ -16,6 +16,12 @@ An [experimental operator patch](../src/.agents/acp-harness-patches/README.md)
 passes standalone rejection and normal-inference probes, but is not an upstream
 release or automatically installed replacement.
 
+OpenCode `1.18.31` returned `end_turn` when canceled during simulated provider
+retry backoff, rather than confirming `cancelled`. CoCalc tracks interruption
+independently and reports uncertain completion instead of success in this case.
+Inspect the workspace before explicitly continuing; do not assume that a cancel
+request proves all background work or external actions stopped.
+
 ## Execution And Trust
 
 The harness runs with full project access. It can use its own filesystem, shell
@@ -73,8 +79,7 @@ generation or full native Codex workbench parity.
    Enter a descriptive harness name, installed revision, absolute executable
    path, and one argument per line. Arguments are passed directly, not interpreted
    as a shell command. The working directory comes from the chosen project path.
-4. Submit a short text prompt. The runtime summary identifies full project access
-   and project-managed credentials. Choose **Create and configure first** to
+4. Prefer **Create and configure first** to
    register the agent without sending the initial prompt (typed text is kept as
    a draft). Open **ACP: [harness name] settings** in the chat toolbar, then
    use **Load model and mode options** before
@@ -82,7 +87,8 @@ generation or full native Codex workbench parity.
    cleans up a temporary harness session with project access; it sends no prompt
    and does not load or replace the conversation's native session. Without
    discovery or advertised controls, project configuration determines the model.
-5. Check output, interrupt behavior and browser reload before using longer tasks.
+5. Select the intended model, then submit a short text prompt. Check output,
+   interrupt behavior and browser reload before using longer tasks.
    Selectors affect newly submitted turns, not running or already queued turns.
    Use a fresh conversation when changing the installed runtime profile/version;
    do not assume native sessions can migrate across harnesses or versions.
@@ -144,6 +150,30 @@ provisioned disposable `--network=none` container with compatible runtimes and
 writable scratch space. The qualification record contains the exact tested
 versions/checksums and limits. Passing standalone offline probes is not proof
 that the complete CoCalc deployment is air-gapped.
+
+### Simulated Provider Failures
+
+The provider smoke tool also accepts one optional fault mode per invocation:
+
+| Flag                 | Check                                                                                                            |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `--provider-reject`  | HTTP 401 must produce a classified rejection, not an empty successful answer.                                    |
+| `--provider-retry`   | One task-inference HTTP 503, followed by successful file-write and same-session follow-up.                       |
+| `--provider-exhaust` | Repeated task-inference HTTP 503 must eventually reject within the probe's budget.                               |
+| `--provider-cancel`  | Cancel during task-inference retry, require `cancelled`, and observe three seconds without another task request. |
+
+These use fresh temporary harness homes, fake credentials and a loopback provider;
+they do not validate a real API key or pay for inference. Discovery is checked to
+make no inference request. The 90-second overall budget belongs to this probe,
+not to normal long-running CoCalc turns.
+
+The unmodified pinned Pi bridge intentionally fails `--provider-reject`; the
+experimental patch passes rejection, retry, exhaustion and cancellation checks.
+Pinned OpenCode passes rejection, retry and exhaustion but intentionally fails
+the strict cancellation result check described above. Do not weaken the checks
+or mistake those expected failures for qualification passes. These standalone
+probes are distinct from durable worker/browser tests and do not establish
+indefinite cessation of background activity.
 
 A live browser-to-worker check also completed Pi/local-Qwen inference with
 public egress blocked in the disposable project's network namespace. The harness
