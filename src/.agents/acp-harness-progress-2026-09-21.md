@@ -1502,6 +1502,24 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Patched Pi Durable Provider Rejection
+
+A new disposable `agent-11` uses the separately packaged Pi provider-error probe,
+not the upstream installation or an existing profile. Its wrapper creates a
+temporary HOME and ephemeral loopback HTTP provider returning only 401 responses.
+One explicit browser submission made one provider call and ended as durable job
+`6d0b195a-43fa-4fc6-834b-b5ada60ce213` in `error`, not empty success. The typed chat
+activity API independently returned persisted controls and a terminal sanitized
+error with no successful message event. The thread contained exactly that job;
+no automatic retry was observed. No paid inference or real credentials were used.
+
+The post-reload viewport initially stayed blank; the error and Resubmit action
+later appeared in the DOM, but a subsequent screenshot timed out. Treat reliable
+browser presentation as unqualified rather than inferring it from durable state.
+The temporary wrapper is `acp-qualification/live-pi-rejection.cjs` in the project;
+it bounds provider lifetime and does not replace `live-pi.cjs`. Details are in the
+[patch record](acp-harness-patches/README.md). This does not qualify unpatched Pi.
+
 ## Full Build And Regression Baseline At 4e34636951
 
 `pnpm -C src build:dev` completed successfully at `4e34636951`, including workspace

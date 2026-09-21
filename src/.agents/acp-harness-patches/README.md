@@ -42,7 +42,8 @@ Do not overwrite real provider configuration or an existing installation.
 patched bundle passed local HTTP 401 propagation (one fake-provider request)
 and normal file-write/follow-up smoke (three local requests) with Pi `0.86.1`.
 No paid inference was used. These are standalone real-harness/client probes,
-not durable/browser or offline qualification of this modified bridge.
+not offline qualification of this modified bridge. See the subsequent durable
+check below; complete browser rendering qualification remains outstanding.
 
 The subsequent `--provider-retry` probe also passes: one HTTP 503 on task
 inference triggers visible Pi retry/resume progress, followed by verified file
@@ -68,3 +69,19 @@ Broader provider errors, retry/compaction behavior, dependency audit and release
 review remain outside this qualification. Prefer a reviewed upstream release
 when one is available, then rerun both probes rather than silently retaining
 this patch.
+
+## Durable Rejection Check
+
+The separately named `agent-11` profile in the disposable project used the
+patched executable with a new temporary HOME and an ephemeral loopback provider
+returning HTTP 401. One deliberately submitted prompt produced exactly one local
+provider request and durable job `6d0b195a-43fa-4fc6-834b-b5ada60ce213` in `error`.
+The typed chat activity API confirmed a persisted terminal error:
+`ACP harness failed: Harness rejected the ACP request; check its project configuration`.
+There was no successful message event or replacement job in that thread.
+
+After reload, the error eventually appeared in the browser DOM, but the viewport
+initially remained blank and a later screenshot timed out. This qualifies the
+durable rejection path, not reliable browser presentation or broad Pi behavior.
+No real subscriptions or existing agent profiles were changed. The unmodified
+upstream bridge still has the previously documented limitation.
