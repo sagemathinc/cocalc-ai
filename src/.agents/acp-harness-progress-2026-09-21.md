@@ -256,6 +256,26 @@ quality or offline operation under blocked public egress. Later snapshot and
 browser-to-worker checks are recorded separately above. Public egress was not
 blocked during qualification.
 
+### Queued Agent-Network Integration
+
+Generic harness recipients now use the existing queued RPC delivery path. The
+service snapshots the recipient profile and settings, preserves peer attribution,
+and bypasses Codex payment configuration. Duplicate delivery of the same attempt
+does not admit another turn. Execution still calls the existing network authority
+checker before launching the harness; revoked membership rejects queued work.
+
+After a queue wait, a request without a native session can acquire the session
+created by an earlier turn, but retains its admitted settings. An already-bound
+native session remains pinned. A changed runtime profile rejects execution rather
+than using a session from another harness. Immediate guidance, legacy deliveries,
+automations and automatic uncertain-turn recovery remain unsupported.
+
+Validation: 104 focused tests across harness admission, RPC delivery, execution
+authorization, queued messages and detached workers passed, plus the project-host
+TypeScript build. These are backend tests, not proof of live agent-network delivery;
+qualification with two disposable named agents and their own scoped identities is
+still required before advertising this capability.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
@@ -289,9 +309,10 @@ The admission checkpoint adds four tests (including a real SQLite profile
 round-trip and proof that Codex payment resolution is bypassed), two explicit
 worker-recovery regressions and host registration. The chat writer records
 `agent_kind=acp`. Profile changes currently require a fresh conversation while
-the previous profile is retained. Codex funding/options, automation and inbound
-agent-network delivery are rejected for this experimental path, not silently
-ignored. Recovery never automatically resubmits an uncertain generic turn.
+the previous profile is retained. Codex funding/options, automation and immediate
+agent-network guidance are rejected for this experimental path, not silently
+ignored. Queued network delivery is implemented as recorded above but still needs
+live qualification. Recovery never automatically resubmits an uncertain generic turn.
 
 Validation: 106 chat-writer/admission/queued-message tests, 47 detached-worker
 tests and 11 project-host worker/launcher tests passed, plus the project-host

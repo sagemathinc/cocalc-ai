@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AcpRequest } from "@cocalc/conat/ai/acp/types";
 import {
+  queuedAgentSession,
   prepareHarnessRequest,
   setHarnessLauncher,
   harnessRuntimeKey,
@@ -107,6 +108,45 @@ test("unconfigured or disabled hosts reject instead of choosing native Codex", (
   process.env.COCALC_ACP_HARNESSES = "1";
   setHarnessLauncher();
   expect(() => prepareHarnessRequest(request())).toThrow(/not enabled/);
+});
+
+test("queued ACP delivery preserves admitted settings and exact existing session", () => {
+  const admitted = request();
+  admitted.runtime!.settings = { configOptions: [{ id: "model", value: "a" }] };
+  const current = request();
+  current.runtime!.settings = { configOptions: [{ id: "model", value: "b" }] };
+  current.session_id = "created-by-previous-turn";
+  expect(queuedAgentSession(admitted, current)).toEqual({
+    config: undefined,
+    session_id: "created-by-previous-turn",
+  });
+  admitted.session_id = "admitted-session";
+  expect(queuedAgentSession(admitted, current).session_id).toBe(
+    "admitted-session",
+  );
+  expect(admitted.runtime!.settings.configOptions![0].value).toBe("a");
+  current.runtime!.profile.revision = "changed";
+  expect(() => queuedAgentSession(admitted, current)).toThrow(
+    "runtime changed",
+  );
+  expect(() =>
+    queuedAgentSession({ ...admitted, runtime: undefined }, current),
+  ).toThrow();
+});
+
+test("generic RPC delivery permits queued envelopes but never live guidance", () => {
+  const value = request();
+  value.chat!.agent_message = true;
+  expect(() => prepareHarnessRequest(value)).toThrow();
+  value.chat!.agent_rpc_execution = { guidance: false } as any;
+  expect(prepareHarnessRequest(value).chat!.agent_rpc_execution).toEqual({
+    guidance: false,
+  });
+  value.chat!.agent_rpc_execution!.guidance = true;
+  expect(() => prepareHarnessRequest(value)).toThrow();
+  value.chat!.agent_rpc_execution!.guidance = false;
+  value.chat!.send_mode = "immediate";
+  expect(() => prepareHarnessRequest(value)).toThrow();
 });
 
 test("unsupported runtime versions, funding and recovery fail closed", () => {

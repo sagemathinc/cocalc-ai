@@ -32,8 +32,9 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     request.recovery_parent_op_id ||
     request.chat.recovery_parent_op_id ||
     request.chat.automation_id ||
-    request.chat.agent_rpc_execution ||
-    request.chat.agent_message
+    request.chat.send_mode === "immediate" ||
+    request.chat.agent_rpc_execution?.guidance ||
+    (request.chat.agent_message && !request.chat.agent_rpc_execution)
   )
     throw Error("Unsupported ACP harness request options");
   return {
@@ -41,6 +42,27 @@ export function prepareHarnessRequest(request: AcpRequest): AcpRequest {
     chat: { ...request.chat },
     runtime,
   };
+}
+
+/** Refresh native context after a queue wait without replacing admitted choices. */
+export function queuedAgentSession(
+  admitted: AcpRequest,
+  current: AcpRequest,
+): Pick<AcpRequest, "config" | "session_id"> {
+  if (admitted.runtime || current.runtime) {
+    if (
+      !admitted.runtime ||
+      !current.runtime ||
+      JSON.stringify(parseAcpHarnessRuntime(admitted.runtime).profile) !==
+        JSON.stringify(parseAcpHarnessRuntime(current.runtime).profile)
+    )
+      throw Error("Recipient ACP runtime changed while the message was queued");
+    return {
+      config: undefined,
+      session_id: admitted.session_id ?? current.session_id,
+    };
+  }
+  return { config: current.config, session_id: current.session_id };
 }
 
 // Validate shared configuration, but never let it replace an explicitly

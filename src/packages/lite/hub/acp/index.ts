@@ -322,6 +322,7 @@ import {
   harnessRuntimeKey,
   createHarnessAgent,
   assertConfiguredHarnessRuntime,
+  queuedAgentSession,
 } from "./harness-runtime";
 export { setHarnessLauncher } from "./harness-runtime";
 
@@ -9544,8 +9545,9 @@ async function prepareQueuedUserMessageForExecution({
           prompt: request.prompt,
           guidance: request.chat.send_mode === "immediate",
         }).request;
-        currentAgentConfig = current.config;
-        currentAgentSessionId = current.session_id;
+        const queued = queuedAgentSession(request, current);
+        currentAgentConfig = queued.config;
+        currentAgentSessionId = queued.session_id;
       }
       if (current != null) {
         latestContent = getLatestQueuedUserMessageContent(
