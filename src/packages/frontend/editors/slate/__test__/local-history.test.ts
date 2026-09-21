@@ -33,3 +33,29 @@ test("local history does not claim unrelated shortcuts", () => {
   );
   expect(handleLocalHistoryHotkey(event(), editor, false)).toBe(false);
 });
+
+test.each([
+  [false, "undos"],
+  [true, "redos"],
+] as const)(
+  "discards stale local history instead of crashing on %s",
+  (shiftKey, stack) => {
+    const editor = withHistory(createEditor());
+    editor.children = [{ type: "paragraph", children: [{ text: "hello" }] }];
+    editor.history[stack].push({
+      operations: [
+        {
+          type: shiftKey ? "remove_text" : "insert_text",
+          path: [2, 0],
+          offset: 0,
+          text: "x",
+        },
+      ],
+      selectionBefore: null,
+    });
+
+    expect(handleLocalHistoryHotkey(event(shiftKey), editor, true)).toBe(true);
+    expect(Editor.string(editor, [])).toBe("hello");
+    expect(editor.history).toEqual({ undos: [], redos: [] });
+  },
+);

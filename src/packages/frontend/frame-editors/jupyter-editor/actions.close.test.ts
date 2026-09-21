@@ -146,6 +146,19 @@ describe("JupyterEditorActions.close", () => {
       JupyterEditorActions.prototype.codexCodeDescription.call(target),
     ).toBe("Jupyter notebook using the  kernel");
   });
+
+  it("ignores a save requested after Jupyter actions are removed", async () => {
+    const target = {
+      _state: "ready",
+      _active_id: jest.fn(),
+      jupyter_actions: undefined,
+    } as any;
+
+    await expect(
+      JupyterEditorActions.prototype.save.call(target),
+    ).resolves.toBeUndefined();
+    expect(target._active_id).not.toHaveBeenCalled();
+  });
 });
 
 describe("JupyterEditorActions close-frame cleanup", () => {
