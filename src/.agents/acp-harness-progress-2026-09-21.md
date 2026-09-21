@@ -127,6 +127,15 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- Generic ACP composers no longer display native Codex goals or ChatGPT payment
+  setup banners. The previous shared goal/agent flag also controlled naming and
+  mention UI, so those conditions are now separate: agent naming, mentions and
+  delivery selection remain available. Regression tests retain native goal and
+  payment controls while hiding them for a generic runtime, even if stale native
+  goal metadata is present. All 34 composer/delivery/native-goal tests, frontend
+  TypeScript and lint pass. This is UI capability separation, not new support for
+  generic goals or managed credentials.
+
 - ACP composer follow-ups now queue rather than attempt unsupported live
   guidance. Live reproduction found that Shift+Enter during a running generic
   turn produced "Guidance not sent" even though the composer also offered Queue.

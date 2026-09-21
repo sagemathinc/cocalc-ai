@@ -184,11 +184,13 @@ export function ChatRoomComposer({
   const threadMetadata = selectedThread
     ? actions?.getThreadMetadata?.(selectedThread.key)
     : undefined;
-  const supportsLiveGuidance = threadMetadata?.agent_runtime?.kind !== "acp";
-  const showGoal =
+  const isGenericHarness = threadMetadata?.agent_runtime?.kind === "acp";
+  const supportsLiveGuidance = !isGenericHarness;
+  const hasAgentControls =
     threadMetadata?.agent_kind === "acp" ||
     threadMetadata?.acp_config != null ||
     isCodexModelName(`${threadMetadata?.agent_model ?? ""}`.trim());
+  const showGoal = hasAgentControls && !isGenericHarness;
   const hasRunningCodexTurn = hasActiveAcpTurn && isSelectedThreadAI;
   const canPost =
     on_post != null &&
@@ -207,7 +209,7 @@ export function ChatRoomComposer({
   }, [hasRunningCodexTurn]);
   const showComposerCodexConfig =
     isSelectedThreadAI ||
-    showGoal ||
+    hasAgentControls ||
     (selectedThread != null &&
       actions.getCodexConfig?.(selectedThread.key) != null);
   const contextThread = useMemo(
@@ -614,6 +616,7 @@ export function ChatRoomComposer({
   }, [onDecreaseFontSize, onIncreaseFontSize]);
 
   const showCodexPaymentSourceBanner =
+    !isGenericHarness &&
     (isSelectedThreadAI || isNewThreadCodex) &&
     !codexPaymentSourceLoading &&
     isCodexPaymentSourceNeedsUserConfiguration(codexPaymentSource);
@@ -722,7 +725,7 @@ export function ChatRoomComposer({
                 flexWrap: "wrap",
               }}
             >
-              {showGoal && selectedThread && (
+              {hasAgentControls && selectedThread && (
                 <NameAgent
                   key={agentMentions.accountId}
                   agent={agentMentions.namedAgent}
@@ -817,7 +820,7 @@ export function ChatRoomComposer({
             </div>
           )}
           {agentMentions.ui}
-          {(showGoal || isNewThreadCodex) &&
+          {(hasAgentControls || isNewThreadCodex) &&
             agentMentions.agents
               .filter((agent) => hasUnboundAgentName(input, agent.name))
               .map((agent) => (

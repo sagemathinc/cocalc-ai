@@ -657,6 +657,46 @@ describe("ChatRoomComposer resize handle", () => {
     expect(onOpenCodexPaymentConfig).toHaveBeenCalled();
   });
 
+  it.each([false, true])(
+    "separates native goals and payment setup from generic runtime=%s",
+    (generic) => {
+      renderComposer({
+        selectedThread: { key: "thread", label: "Agent" } as any,
+        actions: {
+          syncdb: {},
+          isCodexThread: () => true,
+          getThreadMetadata: () => ({
+            agent_kind: "acp",
+            ...(generic ? { agent_runtime: { kind: "acp" } } : {}),
+            acp_goal: {
+              goal: {
+                objective: "Legacy goal",
+                status: "active",
+                tokensUsed: 0,
+                timeUsedSeconds: 0,
+              },
+            },
+          }),
+        } as any,
+        isSelectedThreadAI: true,
+        codexPaymentSource: { source: "none" } as any,
+        onOpenCodexPaymentConfig: jest.fn(),
+      });
+      const goal = screen.queryByRole("button", {
+        name: "Goal: Legacy goal (active)",
+      });
+      const payment = screen.queryByRole("button", { name: "Connect AI" });
+      expect(screen.getByRole("button", { name: "Name agent" })).not.toBeNull();
+      if (generic) {
+        expect(goal).toBeNull();
+        expect(payment).toBeNull();
+      } else {
+        expect(goal).not.toBeNull();
+        expect(payment).not.toBeNull();
+      }
+    },
+  );
+
   it("does not show the Codex setup banner while payment source is loading", () => {
     renderComposer({
       codexPaymentSource: { source: "none" } as any,
