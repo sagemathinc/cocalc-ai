@@ -18,7 +18,21 @@ Regression coverage sends each callback over actual stdio, verifies JSON-RPC
 tests verify denial-only, persistent-permission-only and wrong-session permission
 requests are cancelled without breaking follow-up. All 85 subprocess tests and
 140 native AI tests passed, as did the AI package build and project-host
-TypeScript. This callback fix is locally validated; deployment remains pending.
+TypeScript.
+
+The callback fix is deployed as
+`20260921T163740Z-076b21b2baad-dirty-e3b0c442`, SHA256
+`c0c9128c9c3ca05a0027106d987744971012f8ff2bcfcbc9c7d6c96884cf03ce`.
+Upgrade `9118529a-61bb-4c94-b971-54838b950c4a` succeeded with managed-component
+alignment; no ACP jobs were active before upgrade. The disposable fixture was
+updated to the matching source. Browser validation remains incomplete:
+Playwright's browser-level CDP connection timed out before submitting, and the
+CoCalc browser-session command found no subscriber. Exact-page CDP inspection
+works, but agent-3 remains at Connecting/Loading workspace after reload. A single
+UI submit gesture left `unsupported-file-write` in the composer rather than
+creating a host job; the latest observed job remained the earlier completed
+`5bf2cf1b-69a3-4e18-ab4e-63c1685ed0dc`. Do not mistake this gesture for an
+admitted test or blindly resend it. Other browser tabs were not modified.
 
 ## Abrupt Primary-Container Loss: Failure And Requalification
 
