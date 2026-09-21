@@ -19,6 +19,8 @@ const startRestrictedCodexEgressProxySessionMock = jest.fn(async () => ({
     "http://cocalc-codex:restricted-token@host.containers.internal:43128",
   close: restrictedEgressCloseMock,
 }));
+const closeSiteFundedTurnMock = jest.fn();
+const beginSiteFundedCodexTurnMock = jest.fn();
 const resolveHostContainersInternalAddressMock = jest.fn(
   async () => "10.206.0.1",
 );
@@ -111,6 +113,11 @@ jest.mock("./codex/codex-auth-registry", () => ({
 jest.mock("./codex/restricted-egress-proxy", () => ({
   startRestrictedCodexEgressProxySession: () =>
     startRestrictedCodexEgressProxySessionMock(),
+}));
+
+jest.mock("./codex/codex-site-metering", () => ({
+  beginSiteFundedCodexTurn: (...args: any[]) =>
+    beginSiteFundedCodexTurnMock(...args),
 }));
 
 jest.mock("./last-edited", () => ({
@@ -217,6 +224,19 @@ describe("initCodexProjectRunner", () => {
     });
     restrictedEgressCloseMock.mockReset();
     startRestrictedCodexEgressProxySessionMock.mockClear();
+    closeSiteFundedTurnMock.mockReset().mockResolvedValue(undefined);
+    beginSiteFundedCodexTurnMock.mockReset().mockResolvedValue({
+      reservation: { reservationId: "reservation-id" },
+      policy: {
+        contextWindowTokens: 128_000,
+        autoCompactTokenLimit: 96_000,
+      },
+      providerBaseUrl: "http://127.0.0.1:1234/v1",
+      providerToken: "site-funded-proxy-token",
+      finish: jest.fn(),
+      beginTurn: jest.fn(),
+      close: closeSiteFundedTurnMock,
+    });
     resolveHostContainersInternalAddressMock.mockClear();
     hubApi.hosts.issueProjectHostAgentAuthToken.mockReset();
     hubApi.hosts.issueProjectHostAgentAuthToken.mockResolvedValue({
@@ -305,6 +325,47 @@ describe("initCodexProjectRunner", () => {
       for (const listener of proc.listeners("exit")) await listener(0);
     }
     expect(hubApi.agent.endIdentityRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a site-funded reservation when agent identity setup fails", async () => {
+    process.env.COCALC_AGENT_MESSAGING_ENABLED = "1";
+    execFileMock.mockImplementation((_cmd, _args, _opts, cb) =>
+      cb(null, "true\n", ""),
+    );
+    const home = await mkTempDir("codex-project-site-funded-identity-fail-");
+    filesystem.localPath.mockResolvedValue({ home });
+    auth.resolveCodexAuthRuntime.mockResolvedValue({
+      source: "site-api-key",
+      contextId: "site-funded-identity-fail",
+      env: { OPENAI_API_KEY: "site-api-key" },
+    });
+    hubApi.agent.issueIdentity.mockRejectedValueOnce(
+      new Error("identity setup failed"),
+    );
+    const { initCodexProjectRunner } = await import("./codex/codex-project");
+    initCodexProjectRunner();
+
+    await expect(
+      getCodexProjectSpawner()!.spawnCodexAppServer!({
+        projectId: "6bc2c387-4c80-4a79-aa68-65d8e68a6a52",
+        accountId: "00000000-0000-4000-8000-000000000001",
+        agentSessionKey: "thread-1\0turn-1",
+        cwd: "/home/user",
+        env: {
+          COCALC_CODEX_CHAT_PATH: "/home/user/send.chat",
+          COCALC_CODEX_THREAD_ID: "thread-1",
+        },
+        siteFundedTurn: {
+          fundedTurnId: "00000000-0000-4000-8000-000000000002",
+          idempotencyKey: "site-funded-identity-fail",
+          path: "/home/user/send.chat",
+        },
+      }),
+    ).rejects.toThrow("identity setup failed");
+
+    expect(beginSiteFundedCodexTurnMock).toHaveBeenCalledTimes(1);
+    expect(closeSiteFundedTurnMock).toHaveBeenCalledTimes(1);
+    expect(spawnMock).not.toHaveBeenCalled();
   });
 
   it("exports each scoped run's reference sidecar in the actual process environment", async () => {
