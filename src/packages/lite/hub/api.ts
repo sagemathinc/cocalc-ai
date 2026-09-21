@@ -590,6 +590,15 @@ async function codexDeviceAuthStartV2Lite(opts: {
   return await codexDeviceAuthStartLite(opts);
 }
 
+async function getCodexCredentialSelectionCapabilityLite(opts: {
+  account_id?: string;
+  project_id?: string;
+}): Promise<{ version: 2; credentialLifecycle: true }> {
+  requireLiteAccountId(opts.account_id);
+  requireLiteProjectId(opts.project_id);
+  return { version: 2, credentialLifecycle: true };
+}
+
 async function codexDeviceAuthStatusLite(opts: {
   account_id?: string;
   project_id?: string;
@@ -1479,6 +1488,8 @@ export const hubApi: HubApi = {
     getProjectActiveOperation: getProjectActiveOperationLite,
     codexDeviceAuthStart: codexDeviceAuthStartLite,
     codexDeviceAuthStartV2: codexDeviceAuthStartV2Lite,
+    getCodexCredentialSelectionCapability:
+      getCodexCredentialSelectionCapabilityLite,
     codexDeviceAuthStatus: codexDeviceAuthStatusLite,
     codexDeviceAuthCancel: codexDeviceAuthCancelLite,
     codexUploadAuthFile: codexUploadAuthFileLite,
