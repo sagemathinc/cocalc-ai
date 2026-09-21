@@ -18,6 +18,7 @@ import {
   MessageList,
 } from "../chat-log";
 import type { AcpAttentionRecord } from "@cocalc/conat/ai/acp/types";
+import { ChatEmbeddingOptionsProvider } from "../embedding-options";
 
 const mockScrollToIndex = jest.fn();
 let activeTopTab = "project-2";
@@ -567,47 +568,54 @@ describe("ChatLog sidechat search jumps", () => {
     );
   });
 
-  it("scrolls to a search match in sidechat even when it is not the active editor tab", async () => {
-    render(
-      <ChatLog
-        project_id="project-1"
-        path=".local/share/cocalc/navigator.chat"
-        messages={
-          new Map([
-            [
-              "1000",
-              {
-                date: 1000,
-                sender_id: "acct-1",
-                history: [{ content: "first 123 message" }],
-              },
-            ],
-            [
-              "2000",
-              {
-                date: 2000,
-                sender_id: "acct-1",
-                history: [{ content: "second message" }],
-              },
-            ],
-          ]) as any
-        }
-        mode="sidechat"
-        actions={{} as any}
-        selectedThread="thread-1"
-        searchJumpDate="1000"
-        searchJumpToken={1}
-      />,
-    );
+  it.each(["sidechat", "agent"])(
+    "scrolls to a search match in %s even when it is not the active editor tab",
+    async (surface) => {
+      render(
+        <ChatEmbeddingOptionsProvider
+          value={{ agentWorkspace: surface === "agent" }}
+        >
+          <ChatLog
+            project_id="project-1"
+            path=".local/share/cocalc/navigator.chat"
+            messages={
+              new Map([
+                [
+                  "1000",
+                  {
+                    date: 1000,
+                    sender_id: "acct-1",
+                    history: [{ content: "first 123 message" }],
+                  },
+                ],
+                [
+                  "2000",
+                  {
+                    date: 2000,
+                    sender_id: "acct-1",
+                    history: [{ content: "second message" }],
+                  },
+                ],
+              ]) as any
+            }
+            mode={surface === "sidechat" ? "sidechat" : "standalone"}
+            actions={{} as any}
+            selectedThread="thread-1"
+            searchJumpDate="1000"
+            searchJumpToken={1}
+          />
+        </ChatEmbeddingOptionsProvider>,
+      );
 
-    await waitFor(() =>
-      expect(mockScrollToIndex).toHaveBeenCalledWith({
-        index: 0,
-        align: "center",
-        behavior: "auto",
-      }),
-    );
-  });
+      await waitFor(() =>
+        expect(mockScrollToIndex).toHaveBeenCalledWith({
+          index: 0,
+          align: "center",
+          behavior: "auto",
+        }),
+      );
+    },
+  );
 
   it("does not force-scroll to the bottom when a generating chat tab returns to the foreground", async () => {
     const scrollToBottomRef = { current: undefined as any };

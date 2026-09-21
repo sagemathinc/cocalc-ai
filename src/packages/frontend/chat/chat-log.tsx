@@ -43,6 +43,7 @@ import type {
   NumChildren,
 } from "./types";
 import { useAnyChatOverlayOpen } from "./drawer-overlay-state";
+import { useChatEmbeddingOptions } from "./embedding-options";
 import type { ThreadIndexEntry } from "./message-cache";
 import { getMessageAtDate, newest_content } from "./utils";
 import {
@@ -545,6 +546,7 @@ export function ChatLog({
     [messages, visibleKeys, acpState, docVersion],
   );
   const anyOverlayOpen = useAnyChatOverlayOpen();
+  const { agentWorkspace } = useChatEmbeddingOptions();
   const activeTopTab = useTypedRedux("page", "active_top_tab");
   const activeProjectTab = useTypedRedux({ project_id }, "active_project_tab");
   const isForegroundChatTab =
@@ -552,7 +554,7 @@ export function ChatLog({
   const canAutoScroll =
     isVisible &&
     !anyOverlayOpen &&
-    (mode === "sidechat" || isForegroundChatTab);
+    (agentWorkspace || mode === "sidechat" || isForegroundChatTab);
   const canAutoScrollRef = useRef(canAutoScroll);
   canAutoScrollRef.current = canAutoScroll;
   const keepBottomAnchoredRef = useRef(false);

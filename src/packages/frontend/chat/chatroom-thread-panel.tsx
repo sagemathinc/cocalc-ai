@@ -2587,7 +2587,10 @@ export function ChatRoomThreadPanel({
                   key={result.date}
                   type="text"
                   aria-label={`Open matching message ${index + 1}`}
-                  onClick={() => setThreadSearchCursor(index)}
+                  onClick={() => {
+                    setThreadSearchCursor(index);
+                    setThreadSearchJumpToken((n) => n + 1);
+                  }}
                   style={{
                     display: "block",
                     height: "auto",
