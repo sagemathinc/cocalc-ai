@@ -1166,6 +1166,58 @@ test("failed output persistence does not report success", async (t) => {
     (e) => e.code === "outcome_unknown",
   );
 });
+test(
+  "disk-full persistence preserves saved output and prevents session reuse",
+  { skip: process.platform !== "linux", timeout: 10000 },
+  async (t) => {
+    const {
+      mkdtemp,
+      open,
+      readFile,
+      rm,
+      writeFile,
+    } = require("node:fs/promises");
+    const { tmpdir } = require("node:os");
+    const root = await mkdtemp(path.join(tmpdir(), "acp-persistence-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    // Linux's full device produces a real ENOSPC without filling any disk.
+    const full = await open("/dev/full", "w");
+    t.after(() => full.close());
+    const saved = path.join(root, "output");
+    const client = await start(t);
+    await client.open();
+    let chunks = 0;
+    let storageError;
+    await assert.rejects(
+      client.prompt("hi", async (event) => {
+        if (event.type !== "message") return;
+        if (++chunks === 1) {
+          await writeFile(saved, event.text);
+          return;
+        }
+        try {
+          await full.write(event.text);
+        } catch (error) {
+          storageError = error;
+          throw error;
+        }
+      }),
+      (error) =>
+        error.code === "outcome_unknown" &&
+        !error.message.includes(root) &&
+        !error.message.includes("/dev/full"),
+    );
+    assert.equal(storageError?.code, "ENOSPC");
+    assert.equal(chunks, 2);
+    assert.equal(await readFile(saved, "utf8"), "Hello ");
+    await assert.rejects(
+      client.prompt("hi", async () =>
+        assert.fail("dead session emitted output"),
+      ),
+      { code: "unavailable" },
+    );
+  },
+);
 test("protocol mismatch fails closed", async (t) => {
   await assert.rejects(
     start(t, ["--wrong-version"]),

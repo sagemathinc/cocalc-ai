@@ -1664,6 +1664,20 @@ and `pids.max=4096`. This confirms placement and configured limits, not enforcem
 under exhaustion. No host-wide or project-wide OOM was induced. Live cgroup
 exhaustion and the rare Podman removal-timeout fallback remain unqualified.
 
+## Real Output-Consumer Disk Failure
+
+A Linux-only real-stdio test saves the first streamed message chunk to a
+temporary file, then directs the second write to `/dev/full`. The operating
+system returns `ENOSPC` without filling a filesystem. The client preserves the
+first saved chunk, reports `outcome_unknown` without leaking storage paths, and
+rejects another prompt on that session. All 90 subprocess tests pass with
+`node --test acp/__tests__/harness-client.test.cjs` from `src/packages/ai`.
+
+This qualifies a real I/O rejection at the output-consumer boundary. It does not
+simulate SQLite commit failure, fill the live project-host filesystem, or prove
+recovery after durable database exhaustion. Those remain separate integration
+checks; no live data or storage limits were changed for this test.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
