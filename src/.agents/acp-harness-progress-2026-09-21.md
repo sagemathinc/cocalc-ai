@@ -83,6 +83,12 @@ The project itself was started again by observed operation
 This qualifies the delivered-fixture/primary-init-loss path, not all persistence,
 resource-exhaustion or forced Podman-removal failures.
 
+Later diagnostics found that ad hoc Podman commands had used the wrong runtime
+directory (see the concurrent-writer check below). Do not treat the failed
+Podman kill invocation as evidence of a runtime defect. The separately verified
+PID-descriptor crash injection and observed reconciliation results above remain
+the evidence for this check.
+
 Control-plane recovery: the supported local three-bay hub restart completed and
 restored typed project status responses. The previously timed-out restart had
 no corresponding new operation in the inspected project operation list. After
@@ -1520,6 +1526,32 @@ live sync/filesystem merge and persistence path only, not the full simultaneous
 browser/harness scenario, conflicting same-line edits, or retained-container
 runtime health. The first timed observation preceded watcher convergence; the
 later live read and saved disk content establish the result.
+
+### Sidecar Repeat And Diagnostic Environment Correction
+
+The missing crun status was a diagnostic-environment error, not missing runtime
+state. The running conmon process had `XDG_RUNTIME_DIR` and
+`COCALC_PODMAN_RUNTIME_DIR` set to
+`/mnt/cocalc/data/tmp/cocalc-podman-runtime-2000`; the ad hoc command had instead
+used `/run/user/2000`. The real status file existed in the configured directory.
+Using the configured directory, the bundled Podman binary, and
+`CONTAINERS_CONF_OVERRIDE=/opt/cocalc/container-runtime/current/etc/containers/containers.conf`
+made exec work. The override is necessary to locate bundled network helpers.
+Inspect the host's actual configuration rather than assuming these paths apply
+to every deployment; production launch code already uses `podmanEnv()`.
+
+Repeated with a new disposable file,
+`/home/user/acp-sidecar-concurrent-editor-qualification.txt`: the live text API
+kept a first-line edit unsaved, an in-sidecar disk read confirmed the baseline,
+and a Node filesystem writer executed inside the existing ACP sidecar changed
+only the second line. After watcher convergence, the live API returned both
+edits. The rebuilt text API saved the unchanged merged text using the existing
+authenticated session. An independent in-sidecar read confirmed both lines on
+disk. No container restart or runtime-state repair was required.
+
+This extends the evidence to the actual sidecar mount and filesystem-watch path.
+It does not yet cover a model-issued tool call or browser-generated concurrent
+keystrokes, nor conflicting edits to the same line.
 
 ## Bounded Heap Exhaustion Check
 
