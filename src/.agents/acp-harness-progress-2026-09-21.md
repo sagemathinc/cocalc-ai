@@ -127,6 +127,27 @@ Network-policy product support remains a follow-up, not a new implicit feature.
 
 ## Implemented
 
+- Quiet execution and high-volume stderr now have subprocess and live evidence.
+  The real-SDK suite passes 51 tests, including a quiet prompt longer than its
+  configured 1500ms setup deadline, idle-session reuse after that deadline, and
+  8 MiB of stderr drained without entering events or poisoning a follow-up.
+  AI TypeScript passes. These are bounded test durations, not hours-long soak or
+  memory-exhaustion qualification.
+
+  The updated no-model fixture also passed through the browser in disposable
+  agent-3. Stderr operation `9db6c607-37cb-41ad-821c-97b12cfde357` completed with
+  only `Diagnostics drained.` in its reply. Quiet operation
+  `8f137dcd-1475-4b3f-87c8-d0585a4e07cc` waited 35 seconds before emitting output,
+  exceeding the normal 30-second setup deadline, and completed in 37012ms of
+  worker execution. Both replies survived reload; both jobs are completed with
+  no recovery parent, and the project has no queued/running jobs afterward.
+  Sidecar `acp-1892b11a-6c63-4a92-988d-01dcddc0bc79-82a17ad4-3e2a-4df2-a1dc-8db6e52eb414`
+  was created at 13:48:03 UTC for the stderr turn and retained for the quiet turn
+  admitted at 13:48:37 UTC. No provider calls or real credentials were involved.
+  An earlier fresh-tab agent lookup timed out before submission; the successful
+  run used the existing fixture tab after rebuilding/reloading. The empty Slate
+  editor's placeholder was excluded from the test helper's draft check.
+
 - ACP settings passed an actual Chrome 200% browser-zoom check, not just a
   smaller viewport or CSS transform. Chrome's appearance setting changed from
   100% to 200%; CDP reported `zoom: 2`, layout/visual width changed from 1120 to
