@@ -41,8 +41,9 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   qualification remains. It is registered in the host and detached worker;
   a host-side reconciler now removes sidecars whose owning worker has died,
   using PID, boot ID and process start time (not PID alone). Unknown inspection
-  failures preserve the container. Five focused reaper tests pass; the new
-  reconciler still needs deployment and a live worker-kill test.
+  failures preserve the container. Six focused reaper tests pass. Live worker-kill
+  testing confirmed the host removes abandoned sidecars, including a real Pi
+  sidecar, without stopping the primary project container.
 
 ## Live Durable Checkpoint
 
@@ -61,10 +62,28 @@ Cancellation currently also produces an error event; its UI presentation needs
 improvement before release. The durable RPC returns admission status, not the
 entire execution stream; completion was verified through persisted chat activity.
 
-This validates fixture-to-durable-chat integration, not real-harness integration
-through this path, browser controls, or snapshot recovery. The chat is
+The fixture chat is
 `/home/user/acp-qualification/durable.chat`, thread
 `7bdc439d-4c62-49b6-8974-2af70e5f64f2`.
+
+The subsequent bundle `20260921T073804Z-039792cfaeb2` also passed a worker-kill
+test: the hanging job became `interrupted`, with no recovery count or automatic
+resubmission, and the host logged removal of its abandoned sidecar.
+
+Pi then completed an initial turn, a retained-runtime follow-up, and an explicit
+native-session resume after killing its worker and waiting for sidecar cleanup.
+All three summaries were persisted with the same native session ID. These ran
+through the production durable queue and container launcher, not the standalone
+smoke launcher. A loopback fake provider in the project made this possible
+without any external model key. Its process had a 15-minute lifetime and a
+12-call cap; the wrapper used an isolated test HOME and explicit PATH containing
+both Node and the installed Pi binaries. The initial PATH omission failed
+clearly during session setup and did not fall back to another harness.
+
+The Pi chat is `/home/user/acp-qualification/pi.chat`, thread
+`9ef46e73-826c-4902-b888-3f24c1d13b7a`. This still does not qualify browser controls,
+snapshot recovery or blocked-egress operation. The UI is not yet runtime-aware;
+use these chats as read-only test evidence, not as a generic-harness composer.
 
 ## Validation And Real Harnesses
 
@@ -81,7 +100,8 @@ completed a second prompt in the same session:
 | Pi       | `@earendil-works/pi-coding-agent@0.86.1` | `pi-acp@0.0.33`       | Loopback fake provider |
 
 Discovery/session creation made zero inference calls in these probes. Both
-advertise session loading; real restart/resume still needs qualification. The
+advertise session loading; Pi additionally passed live durable restart/resume
+as recorded above, while OpenCode restart/resume remains unqualified. The
 fixture covers resume replay suppression and unsupported resume behavior.
 The final two-turn probes made four fake-provider calls for OpenCode and three
 for Pi, including their file-write tool loop.

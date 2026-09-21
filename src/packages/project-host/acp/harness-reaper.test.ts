@@ -51,7 +51,10 @@ test("live owner is retained; reused PID is reaped by immutable container ID", a
   ]);
 });
 test("dead worker sidecar is removed even when stopped, without touching unlabeled containers", async () => {
-  mockRead.mockRejectedValue(Object.assign(Error("gone"), { code: "ENOENT" }));
+  mockRead.mockImplementation(async (path) => {
+    if (path.endsWith("boot_id")) return boot;
+    throw Object.assign(Error("gone"), { code: "ENOENT" });
+  });
   mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
     cb(
       null,
@@ -62,16 +65,17 @@ test("dead worker sidecar is removed even when stopped, without touching unlabel
   expect(mockExec).toHaveBeenCalledTimes(2);
   expect(mockExec.mock.calls[0][1]).toContain("--all");
 });
-test("inspection failures preserve containers instead of assuming their owner died", async () => {
-  mockRead.mockRejectedValue(
-    Object.assign(Error("denied"), { code: "EACCES" }),
-  );
-  mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
-    cb(null, JSON.stringify([container("a", `10:${boot}:999`)])),
-  );
-  await reapAbandonedHarnesses();
-  expect(mockExec).toHaveBeenCalledTimes(1);
-});
+test.each(["EACCES", "ENOENT"])(
+  "boot inspection failure %s preserves containers",
+  async (code) => {
+    mockRead.mockRejectedValue(Object.assign(Error("unavailable"), { code }));
+    mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
+      cb(null, JSON.stringify([container("a", `10:${boot}:999`)])),
+    );
+    await reapAbandonedHarnesses();
+    expect(mockExec).toHaveBeenCalledTimes(1);
+  },
+);
 test("malformed inventory and removal failure are surfaced for later reconciliation", async () => {
   mockExec.mockImplementationOnce((_cmd, _args, _options, cb) =>
     cb(null, "{}"),

@@ -12,7 +12,16 @@ export async function harnessOwner(pid = process.pid): Promise<string> {
   const boot = (
     await readFile("/proc/sys/kernel/random/boot_id", "utf8")
   ).trim();
-  const stat = await readFile(`/proc/${pid}/stat`, "utf8");
+  let stat: string;
+  try {
+    stat = await readFile(`/proc/${pid}/stat`, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT")
+      throw Object.assign(Error("ACP worker process is gone"), {
+        code: "ACP_WORKER_NOT_FOUND",
+      });
+    throw error;
+  }
   const start = stat.slice(stat.lastIndexOf(")") + 2).split(/\s+/)[19];
   if (!/^[0-9a-f-]{36}$/.test(boot) || !/^\d+$/.test(start ?? ""))
     throw Error("Unable to identify ACP worker process");
@@ -57,7 +66,8 @@ export async function reapAbandonedHarnesses(): Promise<void> {
     try {
       alive = (await harnessOwner(Number(owner.split(":")[0]))) === owner;
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") continue;
+      if ((error as NodeJS.ErrnoException).code !== "ACP_WORKER_NOT_FOUND")
+        continue;
       alive = false;
     }
     if (alive) continue;
