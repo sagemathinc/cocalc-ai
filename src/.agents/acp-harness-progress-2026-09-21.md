@@ -38,6 +38,19 @@ focus restoration, without the development stale-build overlay.
   still reports its existing open-handle warning. This closes the local discovery
   admission window; it is not evidence for all cross-process execution/stop races.
 
+  Live qualification deployed `ba08aa4eb7` as
+  `20260921T121004Z-ba08aa4eb7a6` (SHA-256
+  `f5845c4e1b0eeb99eb804c8be4b4d1af65ec096b135f59b29311e16cdbdafd81`),
+  upgrade `93b62d09-44c9-4165-a629-eeb83d425283`. In the disposable project,
+  agent-9's initialization-stalling fixture held discovery open. Restart
+  `0cb0199b-6a83-481f-a274-4c71ef1ca702` rejected a second browser discovery
+  from agent-6 with the explicit project-stopping error, then completed with no
+  remaining ACP sidecars. A deliberate Pi catalog discovery after restart
+  succeeded. No chat turn was created: the newest durable job remained completed
+  operation `c2880b14-8ddf-430d-b807-37e515af3e23`. The first browser attempt was
+  blocked before discovery by the stale-build overlay; rebuilding the frontend
+  removed that testing obstruction.
+
 - Compact chat toolbars now open harness controls in an **ACP harness settings**
   dialog. The previous inline panel was clipped by adjacent composer controls
   on narrow screens. Keyboard opening, Escape dismissal and focus restoration

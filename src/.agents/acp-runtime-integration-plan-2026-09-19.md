@@ -28,8 +28,10 @@ Explicit pre-first-turn discovery now has a deterministic live check: create an
 ACP agent without starting a turn, load its advertised options, and select a
 model before submitting the preserved draft. Real Pi/OpenCode catalogs and
 restart while an already-started discovery waits for initialization also pass.
-Other provider catalogs, admission/stop races and cleanup failures remain separate
-qualification cases.
+Discovery now pauses throughout project stop: a live late probe was rejected
+while an existing probe drained, and discovery succeeded again after restart.
+Other provider catalogs, broader execution/stop races and cleanup failures remain
+separate qualification cases.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.
