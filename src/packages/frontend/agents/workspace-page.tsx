@@ -1743,7 +1743,23 @@ function NewAgentPanel({
           </div>
         </div>
         {runtimeKind === "acp" && (
-          <HarnessProfileFields value={harnessDraft} onChange={setHarnessDraft} disabled={busy || !!pending} />
+          <Space orientation="vertical">
+            <HarnessProfileFields
+              value={harnessDraft}
+              onChange={setHarnessDraft}
+              disabled={busy || !!pending}
+            />
+            <Button
+              disabled={busy || uploading || !!problem || atLimit}
+              onClick={() => void create(undefined, true)}
+            >
+              Create and configure first
+            </Button>
+            <Text type="secondary">
+              Create without starting a turn, then load model and mode options.
+              Any prompt above is kept as a draft.
+            </Text>
+          </Space>
         )}
         {(isFirstRun || busy) && (
           <PreparationStatus active={busy} phase={preparationPhase} />

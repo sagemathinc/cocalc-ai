@@ -648,6 +648,9 @@ export async function fenceProjectHostAcpWork({
   project_id: string;
   reason?: string;
 }): Promise<void> {
+  const { drainHarnessDiscovery } =
+    await import("@cocalc/lite/hub/acp/harness-runtime");
+  await drainHarnessDiscovery(project_id);
   // Persist the terminal fence before asking workers to release live runtimes.
   // This also covers a host with no currently running ACP worker.
   fenceAcpJobsForProject({ project_id, reason });

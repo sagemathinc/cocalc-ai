@@ -101,6 +101,62 @@ test("profile fields have visible labels and support keyboard editing", async ()
   ).toBeTruthy();
 });
 
+test("discovery is explicit, keyboard accessible and does not select a model", async () => {
+  const runtime = harnessRuntimeFromDraft(draft, "/home/user");
+  const onSettings = jest.fn();
+  const onDiscover = jest.fn(async () => ({
+    profile: runtime.profile,
+    controls: {
+      configOptions: [
+        {
+          id: "model",
+          name: "Model",
+          currentValue: "local",
+          options: [{ value: "local", name: "Local" }],
+        },
+      ],
+    },
+  }));
+  render(
+    <HarnessRuntimeSummary
+      runtime={runtime}
+      onSettings={onSettings}
+      onDiscover={onDiscover}
+    />,
+  );
+  expect(onDiscover).not.toHaveBeenCalled();
+  const user = userEvent.setup();
+  await user.tab();
+  await user.tab();
+  const button = screen.getByRole("button", {
+    name: "Load model and mode options",
+  });
+  expect(document.activeElement).toBe(button);
+  await user.keyboard("{Enter}");
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeTruthy();
+  expect(screen.getByRole("status").textContent).toBe("Harness options loaded");
+  expect(onSettings).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(button);
+});
+
+test("discovery errors are announced instead of supplying invented controls", async () => {
+  render(
+    <HarnessRuntimeSummary
+      runtime={harnessRuntimeFromDraft(draft, "/home/user")}
+      onDiscover={async () => {
+        throw Error("host unavailable");
+      }}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Load model and mode options" }));
+  expect((await screen.findByRole("alert")).textContent).toContain(
+    "host unavailable",
+  );
+  expect(screen.queryByRole("combobox")).toBeNull();
+});
+
 test("arguments remain structured and unknown runtimes do not display Codex controls", () => {
   const runtime = harnessRuntimeFromDraft(draft, "/home/user");
   expect(runtime.profile.args).toEqual(["--flag", "value with spaces"]);

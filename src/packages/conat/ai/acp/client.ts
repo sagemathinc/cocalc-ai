@@ -238,7 +238,9 @@ export async function controlAcp(
     project_id: request.project_id,
   });
   const cn = requireExplicitConatClient(client);
-  const resp = await cn.request(subject, request, { timeout: 30 * 1000 });
+  const resp = await cn.request(subject, request, {
+    timeout: request.action === "discover_harness_v1" ? 120_000 : 30_000,
+  });
   const error = resp?.data?.error;
   if (error) {
     throw Error(error);

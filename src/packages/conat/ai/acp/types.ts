@@ -3,6 +3,7 @@ import type {
   CodexSessionConfig,
 } from "@cocalc/util/ai/codex";
 import type { AcpHarnessRuntime } from "@cocalc/util/ai/runtime";
+import type { HarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type { LineDiffResult } from "@cocalc/util/line-diff";
 import type { CodexGoalEvent } from "@cocalc/util/ai/codex-goal";
 import type { AgentEndpoint, AgentRpcSource } from "@cocalc/conat/agents/rpc";
@@ -240,7 +241,8 @@ export type AcpControlRequest =
         | "resend"
         | "resend_with_payment"
         | "resend_with_model"
-        | "prepare_fresh_conversation";
+        | "prepare_fresh_conversation"
+        | "discover_harness_v1";
       // Only for retrying a confirmed ChatGPT model-unavailable rejection.
       model_recovery?: { model: string; expected_model: string };
       // Retry a terminal failed job using only a newly selected funding source.
@@ -252,6 +254,10 @@ export type AcpControlRequest =
 
 export type AcpControlResponse = {
   ok: boolean;
+  harness?: {
+    profile: AcpHarnessRuntime["profile"];
+    controls: HarnessSessionControls;
+  };
   active_threads?: Array<{
     path: string;
     thread_id: string;

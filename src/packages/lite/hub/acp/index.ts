@@ -321,6 +321,7 @@ import {
   prepareHarnessRequest,
   harnessRuntimeKey,
   createHarnessAgent,
+  discoverHarnessControls,
   assertConfiguredHarnessRuntime,
   queuedAgentSession,
 } from "./harness-runtime";
@@ -12050,6 +12051,29 @@ async function handleAcpControlRequest(
     throw new Error("conat client must be initialized");
   }
   const client = conatClient;
+  if (request.action === "discover_harness_v1") {
+    const runtime = await withChatSyncDB({
+      client,
+      project_id,
+      path,
+      fn: async (syncdb) => {
+        const row = preferredThreadConfigRow(syncdb, thread_id);
+        const value: any = syncdbField(row, "agent_runtime");
+        if (value == null) throw Error("This thread has no ACP harness");
+        return value?.toJS?.() ?? value;
+      },
+    });
+    return {
+      ok: true,
+      harness: await discoverHarnessControls({
+        project_id,
+        account_id: request.account_id,
+        runtime,
+        prompt: "",
+        chat: { project_id, path, thread_id },
+      } as AcpRequest),
+    };
+  }
   if (request.action === "prepare_fresh_conversation") {
     return {
       ok: true,

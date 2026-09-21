@@ -11,9 +11,64 @@ type Factory = (
   conversation: Conversation,
 ) => ReturnType<HarnessLauncher>;
 let launcher: Factory | undefined;
+const discovering = new Map<
+  string,
+  { projectId: string; finished: Promise<void> }
+>();
+
+/** Project stop must not remove a network namespace beneath a discovery sidecar. */
+export async function drainHarnessDiscovery(projectId: string): Promise<void> {
+  await Promise.all(
+    [...discovering.values()]
+      .filter((entry) => entry.projectId === projectId)
+      .map((entry) => entry.finished),
+  );
+}
 
 export function setHarnessLauncher(next?: Factory): void {
   launcher = next;
+}
+
+/** A temporary session for controls only; never load or mutate a chat session. */
+export async function discoverHarnessControls(request: AcpRequest) {
+  const prepared = prepareHarnessRequest(request);
+  if (!prepared.runtime) throw Error("This thread has no ACP harness");
+  const key = harnessRuntimeKey(prepared);
+  if (discovering.has(key) || discovering.size >= 4)
+    throw Error("ACP discovery is busy; try again after it finishes");
+  let finished!: () => void;
+  discovering.set(key, {
+    projectId: prepared.project_id,
+    finished: new Promise<void>((resolve) => {
+      finished = resolve;
+    }),
+  });
+  try {
+    const { AcpHarnessClient } = await import("@cocalc/ai/acp/harness");
+    const factory = launcher!;
+    const conversation = {
+      path: prepared.chat!.path,
+      threadId: prepared.chat!.thread_id!,
+    };
+    const client = await AcpHarnessClient.start(
+      {
+        projectId: prepared.project_id,
+        accountId: prepared.account_id,
+        profile: prepared.runtime.profile,
+      },
+      (binding) => factory(binding, conversation),
+    );
+    try {
+      await client.open();
+      await client.configure(prepared.runtime.settings ?? {});
+      return { profile: prepared.runtime.profile, controls: client.controls };
+    } finally {
+      await client.dispose();
+    }
+  } finally {
+    discovering.delete(key);
+    finished();
+  }
 }
 
 export function prepareHarnessRequest(request: AcpRequest): AcpRequest {

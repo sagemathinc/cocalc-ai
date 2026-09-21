@@ -1,4 +1,4 @@
-import { Input, Select, Space, Typography } from "antd";
+import { Button, Input, Select, Space, Typography } from "antd";
 import { useId, useState } from "react";
 import { parseHarnessSessionControls } from "@cocalc/util/ai/harness-controls";
 import type {
@@ -22,13 +22,21 @@ export function HarnessRuntimeSummary({
   runtime,
   reported,
   onSettings,
+  onDiscover,
 }: {
   runtime: unknown;
   reported?: unknown;
   onSettings?: (settings: HarnessSessionSettings) => void;
+  onDiscover?: () => Promise<{ profile: unknown; controls: unknown }>;
 }) {
   const id = useId();
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [discovered, setDiscovered] = useState<{
+    profile: unknown;
+    controls: unknown;
+    reportedAtLoad: string | undefined;
+  }>();
   let parsed;
   try {
     parsed = parseAcpHarnessRuntime(runtime);
@@ -41,15 +49,27 @@ export function HarnessRuntimeSummary({
   }
   const { profile, settings = {} } = parsed;
   let controls: HarnessSessionControls | undefined;
-  try {
-    const snapshot = reported as { profile: unknown; controls: unknown };
-    if (
-      JSON.stringify(parseAcpHarnessProfile(snapshot.profile)) ===
-      JSON.stringify(profile)
-    )
-      controls = parseHarnessSessionControls(snapshot.controls);
-  } catch {
-    /* Missing, stale or invalid metadata is not a usable catalog. */
+  for (const candidate of [
+    discovered?.reportedAtLoad === JSON.stringify(reported)
+      ? discovered
+      : undefined,
+    reported,
+  ]) {
+    try {
+      const snapshot = candidate as {
+        profile: unknown;
+        controls: unknown;
+      };
+      if (
+        JSON.stringify(parseAcpHarnessProfile(snapshot.profile)) ===
+        JSON.stringify(profile)
+      ) {
+        controls = parseHarnessSessionControls(snapshot.controls);
+        break;
+      }
+    } catch {
+      /* Missing, stale or invalid metadata is not a usable catalog. */
+    }
   }
   const change = (next: HarnessSessionSettings) => {
     try {
@@ -76,6 +96,49 @@ export function HarnessRuntimeSummary({
           <dd>{profile.cwd}</dd>
         </dl>
       </details>
+      {onDiscover && (
+        <Button
+          loading={loading}
+          onClick={async () => {
+            setLoading(true);
+            setError("");
+            try {
+              const result = await onDiscover();
+              parseHarnessSessionControls(result.controls);
+              if (
+                JSON.stringify(parseAcpHarnessProfile(result.profile)) !==
+                JSON.stringify(profile)
+              )
+                throw Error(
+                  "Harness profile changed; reload its settings before discovery",
+                );
+              setDiscovered({
+                ...result,
+                reportedAtLoad: JSON.stringify(reported),
+              });
+            } catch (err) {
+              setError(`${err}`);
+            } finally {
+              setLoading(false);
+            }
+          }}
+        >
+          Load model and mode options
+        </Button>
+      )}
+      {onDiscover && (
+        <Typography.Text type="secondary">
+          Starts a temporary harness session with project access, without
+          sending a prompt.
+        </Typography.Text>
+      )}
+      <span role="status">
+        {loading
+          ? "Loading harness options"
+          : discovered
+            ? "Harness options loaded"
+            : ""}
+      </span>
       {onSettings && controls && (
         <Space wrap>
           {[
@@ -169,10 +232,9 @@ export function HarnessProfileFields({
         Experimental: an operator must enable ACP harnesses on the project host.
         Install and configure the harness in this project first. It runs with
         full project access and project-managed credentials. Do not put secrets
-        in these fields. The first turn uses the harness configuration;
-        supported model/mode selectors appear afterward. Agent Networks support
-        queued messages. Images, automations and live guidance are not supported
-        yet.
+        in these fields. Load advertised model/mode options before the first
+        turn, or use the harness configuration. Agent Networks support queued
+        messages. Images, automations and live guidance are not supported yet.
       </Typography.Text>
       {(
         [

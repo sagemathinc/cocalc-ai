@@ -517,6 +517,11 @@ export function CodexConfigButton(
     <HarnessRuntimeSummary
       runtime={runtime}
       reported={metadata?.agent_runtime_controls}
+      onDiscover={
+        props.actions && props.threadKey && !props.turnRunning
+          ? () => props.actions!.discoverHarnessControls(props.threadKey)
+          : undefined
+      }
       onSettings={
         props.actions?.setHarnessSessionSettings && props.threadKey
           ? (settings) =>

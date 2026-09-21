@@ -2937,6 +2937,25 @@ export class ChatActions extends Actions<ChatState> {
     void this.saveSyncdb();
   };
 
+  discoverHarnessControls = async (threadKey: string) => {
+    const thread_id = this.normalizeThreadId(threadKey);
+    const project_id = this.store?.get("project_id");
+    const path = this.store?.get("path");
+    if (!thread_id || !project_id || !path || !this.syncdb)
+      throw Error("ACP conversation is not ready");
+    await this.saveSyncdb();
+    const result = await webapp_client.conat_client.controlAcp({
+      project_id,
+      path,
+      thread_id,
+      user_message_id: thread_id,
+      action: "discover_harness_v1",
+    });
+    if (!result.ok || !result.harness)
+      throw Error("ACP discovery is unavailable on this host");
+    return result.harness;
+  };
+
   setHarnessSessionSettings = (
     threadKey: string,
     settings: HarnessSessionSettings,
