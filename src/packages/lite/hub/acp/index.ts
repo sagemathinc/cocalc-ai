@@ -2484,7 +2484,7 @@ export class ChatStreamWriter {
     this.noteProjectStorageFailure(err, phase);
     this.finished = true;
     this.finishedBy = "error";
-    this.lastErrorText = projectStorageFailureMessage(err);
+    this.lastErrorText = projectStorageFailureMessage(err, this.runtimeKind);
     await this.finalizeFinishedTurn();
   }
 
@@ -6841,8 +6841,22 @@ function acpStorageFailureCode(err: unknown): string | undefined {
   return undefined;
 }
 
-function projectStorageFailureMessage(err: unknown): string {
+function projectStorageFailureMessage(
+  err: unknown,
+  runtimeKind: "codex" | "acp",
+): string {
   const code = acpStorageFailureCode(err);
+  if (runtimeKind === "acp") {
+    const cause =
+      code === "ENOSPC" || code === "SQLITE_FULL"
+        ? "This project ran out of storage"
+        : code === "SQLITE_READONLY"
+          ? "Project storage became read-only"
+          : code === "SQLITE_CORRUPT" || code === "SQLITE_NOTADB"
+            ? "The project's synchronization database is damaged"
+            : "Project storage was temporarily unavailable";
+    return `${cause} while saving this ACP harness turn. Execution may already have changed files or performed external actions. Restore storage availability and inspect the workspace and saved activity before starting another turn. This error does not automatically resubmit the turn.`;
+  }
   if (code === "ENOSPC" || code === "SQLITE_FULL") {
     return "This project ran out of storage while saving the Codex turn. Free project disk space and retry.";
   }

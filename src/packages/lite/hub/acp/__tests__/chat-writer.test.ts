@@ -4713,6 +4713,43 @@ describe("recoverCurrentWorkerStuckAcpTurns", () => {
 });
 
 describe("terminal storage recovery candidates", () => {
+  it.each([
+    ["SQLITE_FULL", "ran out of storage"],
+    ["SQLITE_READONLY", "storage became read-only"],
+    ["SQLITE_CORRUPT", "synchronization database is damaged"],
+    ["EIO", "storage was temporarily unavailable"],
+  ])("explains %s without promising harness replay", async (code, cause) => {
+    const { syncdb } = makeFakeSyncDB();
+    const writer: any = new ChatStreamWriter({
+      metadata: baseMetadata,
+      client: makeFakeClient(),
+      approverAccountId: "u",
+      syncdbOverride: syncdb as any,
+      runtimeKind: "acp",
+      logStoreFactory: () => ({ set: async () => {} }) as any,
+    });
+    try {
+      await writer.waitUntilReady();
+      await writer.markTerminalStorageFailure(
+        Object.assign(new Error("storage fault"), { code }),
+        "terminal-error",
+      );
+      expect(writer.lastErrorText).toContain(cause);
+      expect(writer.lastErrorText).toContain("ACP harness turn");
+      expect(writer.lastErrorText).not.toContain("Codex");
+      expect(writer.lastErrorText).toContain("inspect the workspace");
+      expect(writer.lastErrorText).toContain("does not automatically resubmit");
+      expect(
+        acpTestInternals.terminalTurnNeedsPeriodicRepair({
+          state: "error",
+          reason: writer.lastErrorText,
+        } as any),
+      ).toBe(true);
+    } finally {
+      writer.dispose(true);
+    }
+  });
+
   it("retries explicit storage failures without polling ordinary errors", () => {
     expect(
       acpTestInternals.terminalTurnNeedsPeriodicRepair({
