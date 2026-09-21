@@ -205,7 +205,7 @@ export function HarnessRuntimeSummary({
             : ""}
       </span>
       {onSettings && controls && (
-        <Space wrap>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8, minWidth: 0 }}>
           {[
             ...(controls.mode ? [controls.mode] : []),
             ...controls.configOptions,
@@ -217,12 +217,20 @@ export function HarnessRuntimeSummary({
                 : settings.configOptions?.find(({ id }) => id === control.id)
                     ?.value) ?? control.currentValue;
             return (
-              <div key={control.id}>
-                <label htmlFor={`${id}-${control.id}`}>{control.name}</label>{" "}
+              <div
+                key={control.id}
+                style={{ flex: "1 1 220px", minWidth: 0, maxWidth: "100%" }}
+              >
+                <label
+                  htmlFor={`${id}-${control.id}`}
+                  style={{ display: "block", overflowWrap: "anywhere" }}
+                >
+                  {control.name}
+                </label>
                 <Select
                   id={`${id}-${control.id}`}
                   value={value}
-                  style={{ minWidth: 140, maxWidth: "100%" }}
+                  style={{ width: "100%" }}
                   options={control.options.map((option) => ({
                     value: option.value,
                     label: option.name,
@@ -246,7 +254,7 @@ export function HarnessRuntimeSummary({
               </div>
             );
           })}
-        </Space>
+        </div>
       )}
       {onSettings && (
         <Typography.Text type="secondary">

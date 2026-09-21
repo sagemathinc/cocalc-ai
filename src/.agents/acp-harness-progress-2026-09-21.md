@@ -1694,6 +1694,22 @@ error, but it does not kill/restart an actual worker process or exhaust a live
 database file. It narrows the remaining qualification gap to those integrated
 process/storage behaviors rather than proving them indirectly.
 
+## Long Model Name Reflow
+
+An isolated Chromium render of the actual harness settings summary with a long,
+unbroken provider/model name reproduced a 679-pixel document width in a 320 CSS
+pixel viewport. Flexible control columns with bounded width and full-width
+selectors now keep the document at 320 pixels in both Ant Design light and dark
+themes. The focused model-selector regression retains the complete accessible
+option name and keyboard selection. All seven profile tests, frontend lint and
+the frontend TypeScript build pass.
+
+The browser probe also opens the selector with ArrowDown, closes it with Escape,
+and tabs to the next control. Initial immediate focus assertions were timing
+sensitive; waiting for the dropdown to hide and focus to settle passes. This was
+a summary-only render with the unused modal keyboard-boundary import shimmed,
+not a full Agents workspace or modal reflow audit. No live session was changed.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile

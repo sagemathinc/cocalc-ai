@@ -47,6 +47,8 @@ test("existing harness settings explain limitations before capability discovery"
 
 test("advertised model selector supports keyboard selection for future submissions", async () => {
   const runtime = harnessRuntimeFromDraft(draft, "/home/user");
+  const longModelName =
+    "customer/private-model-with-a-very-long-unbroken-version-and-configuration-name-2026";
   const onSettings = jest.fn();
   const reported = {
     profile: runtime.profile,
@@ -58,7 +60,7 @@ test("advertised model selector supports keyboard selection for future submissio
           type: "select",
           currentValue: "fast",
           options: [
-            { value: "fast", name: "Fast" },
+            { value: "fast", name: longModelName },
             { value: "deep", name: "Deep" },
           ],
         },
@@ -75,6 +77,9 @@ test("advertised model selector supports keyboard selection for future submissio
   const user = userEvent.setup();
   const selector = screen.getByRole("combobox", { name: "Model" });
   await user.click(selector);
+  expect(
+    await screen.findByRole("option", { name: longModelName }),
+  ).toBeTruthy();
   await screen.findByRole("option", { name: "Deep" });
   // rc-select reads legacy keyCode, which user-event/jsdom leaves at zero.
   fireEvent.keyDown(selector, { key: "ArrowDown", keyCode: 40 });
