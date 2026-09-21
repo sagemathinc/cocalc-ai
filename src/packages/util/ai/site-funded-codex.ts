@@ -212,6 +212,11 @@ export type SiteFundedCodexAccountStatus = {
 export type SiteFundedCodexStatus = {
   pools: SiteFundedCodexPoolStatus[];
   account?: SiteFundedCodexAccountStatus;
+  accountReservations?: {
+    accountId: string;
+    activeCount: number;
+    reservedMicrousd: number;
+  };
   reconciliation?: {
     available: boolean;
     checkedAt: string;

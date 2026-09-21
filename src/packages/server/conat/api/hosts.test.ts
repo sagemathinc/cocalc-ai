@@ -614,6 +614,18 @@ describe("site-funded Codex account directory routing", () => {
         { id: "ai-5h", limit: 10, remaining: 5 },
         { id: "ai-7d", limit: 20, remaining: 15 },
       ],
+      site_funded_codex_credits: {
+        windows: [
+          {
+            window: "5h",
+            credits_microusd: { [request.funded_turn_id]: 1_000 },
+          },
+          {
+            window: "7d",
+            credits_microusd: { [request.funded_turn_id]: 2_000 },
+          },
+        ],
+      },
     });
     jest
       .spyOn(
@@ -643,8 +655,18 @@ describe("site-funded Codex account directory routing", () => {
         policy: expect.objectContaining({
           maxConcurrentTurnsPerAccount: 3,
         }),
+        accountCredited5hMicrousdByFundedTurn: {
+          [request.funded_turn_id]: 1_000,
+        },
+        accountCredited7dMicrousdByFundedTurn: {
+          [request.funded_turn_id]: 2_000,
+        },
       }),
     );
+    expect(overview).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      include_site_funded_codex_credits: true,
+    });
   });
 
   it("uses the paid membership ACP concurrency for site-funded turns", async () => {

@@ -3463,22 +3463,35 @@ export async function recordCodexSiteUsage({
 function usageLimitAndRemainingMicrousd(
   status: Awaited<ReturnType<typeof getAIUsageStatus>>,
   window: "5h" | "7d",
-): { limit: number; remaining: number } {
+): {
+  limit: number;
+  remaining: number;
+  creditsByFundedTurn: Record<string, number>;
+} {
   const usage = status.windows.find((entry) => entry.window === window);
   return {
     limit: aiUsageUnitsToMicrousd(usage?.limit),
     remaining: aiUsageUnitsToMicrousd(usage?.remaining),
+    creditsByFundedTurn: usage?.site_funded_credits_microusd ?? {},
   };
 }
 
 function overviewLimitAndRemainingMicrousd(
   overview: AccountUsageOverview,
   window: "5h" | "7d",
-): { limit: number; remaining: number } {
+): {
+  limit: number;
+  remaining: number;
+  creditsByFundedTurn: Record<string, number>;
+} {
   const meter = overview.meters.find(({ id }) => id === `ai-${window}`);
+  const credits = overview.site_funded_codex_credits?.windows.find(
+    (entry) => entry.window === window,
+  );
   return {
     limit: aiUsageUnitsToMicrousd(meter?.limit),
     remaining: aiUsageUnitsToMicrousd(meter?.remaining),
+    creditsByFundedTurn: credits?.credits_microusd ?? {},
   };
 }
 
@@ -3560,7 +3573,10 @@ export async function reserveSiteFundedCodexTurn({
       ? await (async () => {
           const [membership, usageStatus] = await Promise.all([
             resolveMembershipForAccount(account_id),
-            getAIUsageStatus({ account_id }),
+            getAIUsageStatus({
+              account_id,
+              include_site_funded_credits: true,
+            }),
           ]);
           return [
             membership,
@@ -3575,7 +3591,10 @@ export async function reserveSiteFundedCodexTurn({
           });
           const [membership, overview] = await Promise.all([
             accountHome.getMembership({ account_id }),
-            accountHome.getAccountUsageOverview({ account_id }),
+            accountHome.getAccountUsageOverview({
+              account_id,
+              include_site_funded_codex_credits: true,
+            }),
           ]);
           return [
             membership,
@@ -3617,6 +3636,8 @@ export async function reserveSiteFundedCodexTurn({
     },
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
+    accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
+    accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
     surface: path?.endsWith(".ipynb")
       ? "jupyter"
       : path?.endsWith(".chat")

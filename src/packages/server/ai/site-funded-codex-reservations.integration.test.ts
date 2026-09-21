@@ -16,6 +16,7 @@ import {
   ensureSiteFundedCodexReservationTables,
   expireAbandonedSiteFundedCodexReservations,
   finishSiteFundedCodexTurn,
+  getSiteFundedCodexAccountReservationStatus,
   getSiteFundedCodexPoolStatus,
   recordSiteFundedCodexUsageEvent,
   reconcileTerminalSiteFundedCodexReservations,
@@ -343,11 +344,86 @@ describe("site-funded Codex reservations", () => {
         0,
       ),
     ).toBe(5_000);
+    await expect(
+      getSiteFundedCodexAccountReservationStatus({ accountId }),
+    ).resolves.toEqual({
+      accountId,
+      activeCount: 2,
+      reservedMicrousd: 5_000,
+    });
     expect(
       attempts
         .filter((entry) => !entry.allowed)
         .every((entry) => !entry.allowed && entry.code === "account_limit_5h"),
     ).toBe(true);
+  });
+
+  it("subtracts only active reservation liability absent from the canonical snapshot", async () => {
+    const accountId = uuid();
+    const firstOptions = {
+      ...options({
+        accountId,
+        maxTurnCostMicrousd: 3_000,
+        poolLimitMicrousd: 1_000_000,
+        globalPoolLimitMicrousd: 1_000_000,
+      }),
+      policy: {
+        ...options().policy,
+        maxConcurrentTurnsPerAccount: 20,
+        maxTurnCostMicrousd: 3_000,
+      },
+      accountRemaining5hMicrousd: 5_000,
+      accountRemaining7dMicrousd: 8_000,
+    };
+    const first = await reserveSiteFundedCodexTurn(firstOptions);
+    if (!first.allowed) throw new Error("expected first reservation");
+
+    const second = await reserveSiteFundedCodexTurn({
+      ...firstOptions,
+      fundedTurnId: uuid(),
+      idempotencyKey: uuid(),
+      accountRemaining5hMicrousd: 2_500,
+      accountCredited5hMicrousdByFundedTurn: {
+        [firstOptions.fundedTurnId]: 2_500,
+      },
+    });
+    if (!second.allowed) throw new Error("expected partial reservation");
+    expect(second.reservation.reservedMicrousd).toBe(2_000);
+  });
+
+  it("reserves uncredited committed spend during home-bay propagation lag", async () => {
+    const accountId = uuid();
+    const firstOptions = {
+      ...options({
+        accountId,
+        maxTurnCostMicrousd: 3_000,
+        poolLimitMicrousd: 1_000_000,
+        globalPoolLimitMicrousd: 1_000_000,
+      }),
+      policy: {
+        ...options().policy,
+        maxConcurrentTurnsPerAccount: 20,
+        maxTurnCostMicrousd: 3_000,
+      },
+      accountRemaining5hMicrousd: 5_000,
+      accountRemaining7dMicrousd: 8_000,
+    };
+    const first = await reserveSiteFundedCodexTurn(firstOptions);
+    if (!first.allowed) throw new Error("expected first reservation");
+    await getPool().query(
+      `UPDATE site_ai_turn_reservations SET committed_microusd = 2500
+       WHERE reservation_id = $1`,
+      [first.reservation.reservationId],
+    );
+
+    const second = await reserveSiteFundedCodexTurn({
+      ...firstOptions,
+      fundedTurnId: uuid(),
+      idempotencyKey: uuid(),
+      accountCredited5hMicrousdByFundedTurn: {},
+    });
+    if (!second.allowed) throw new Error("expected partial reservation");
+    expect(second.reservation.reservedMicrousd).toBe(2_000);
   });
 
   it("commits recorded usage when an active reservation expires", async () => {
