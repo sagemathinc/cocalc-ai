@@ -511,7 +511,11 @@ export function ChatRoomComposer({
 
   const handleSend = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
-      const effective = typeof value === "string" ? value : input;
+      // Snapshot the same editor representation that the approval guard reads.
+      // Debounced input and keyboard callbacks can differ in trailing newlines.
+      const effective =
+        chatInputControlRef.current?.getValue?.() ??
+        (typeof value === "string" ? value : input);
       if (!effective || !effective.trim()) return;
       if (
         !selectedThread &&
@@ -555,7 +559,9 @@ export function ChatRoomComposer({
   const handleSendImmediately = useCallback(
     (value?: string | { preventDefault?: () => void }) => {
       if (!supportsLiveGuidance) return handleSend(value);
-      const effective = typeof value === "string" ? value : input;
+      const effective =
+        chatInputControlRef.current?.getValue?.() ??
+        (typeof value === "string" ? value : input);
       if (!effective || !effective.trim()) return;
       if (
         !selectedThread &&

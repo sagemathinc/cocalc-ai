@@ -387,6 +387,33 @@ describe("ChatRoomComposer resize handle", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
+  it.each(["button", "keyboard callback"])(
+    "snapshots the live editor for %s sends despite serialized newline differences",
+    async (method) => {
+      const user = userEvent.setup();
+      const send = jest.fn();
+      renderComposer({
+        input: "unsupported-file-write\n",
+        hasInput: true,
+        on_send: send,
+      });
+      lastChatInputProps.inputControlRef.current = {
+        getValue: () => "unsupported-file-write\n\n",
+        focus: () => true,
+      };
+      if (method === "button") {
+        screen.getByRole("button", { name: "Send" }).focus();
+        await user.keyboard("{Enter}");
+      } else {
+        await act(async () => {
+          lastChatInputProps.on_send("unsupported-file-write\n");
+        });
+      }
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(send).toHaveBeenCalledWith("unsupported-file-write\n\n");
+    },
+  );
+
   it.each([false, true])(
     "shows the selected thread title without a custom appearance (AI: %s)",
     async (isAI) => {

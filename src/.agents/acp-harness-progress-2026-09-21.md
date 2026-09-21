@@ -3,6 +3,23 @@
 Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 `feature/my-agents-workspace` (#640).
 
+## Composer Snapshot Regression
+
+Further investigation corrected the earlier reconnect diagnosis: the test page
+was signed in and connected. The loading strings were hidden UI; screenshot
+inspection showed an enabled Send control. The actual send failure was an
+uncaught draft-approval mismatch: the controlled/keyboard value was
+`unsupported-file-write\n`, while the live editor getter returned
+`unsupported-file-write\n\n`. Both keyboard submission and the Send button
+returned before host admission, leaving the draft intact.
+
+Send and immediate-send now snapshot the live editor representation before
+preflight, then retain the existing exact comparison against that snapshot after
+preflight. No whitespace normalization or relaxation of the changed-draft guard
+is introduced. Button-keyboard and editor-callback regressions cover the observed
+newline mismatch. Twenty-nine focused composer/mention/delivery tests, frontend
+lint and frontend TypeScript passed. Browser requalification is pending.
+
 ## Unadvertised Callback Rejection
 
 A new real-SDK subprocess test exposed empty success from the SDK's legacy
