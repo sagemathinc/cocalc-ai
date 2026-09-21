@@ -220,8 +220,15 @@ replacement back to staging without deleting either tree, restores the original
 home, and refreshes volume metadata even when the first move fails. If rollback
 also fails, a typed error retains both failures and the preserved-home location.
 Thirteen preparation/swap tests pass, including real temporary-directory content
-checks, plus project-host typechecking. This follow-up is not yet live-qualified;
-process crashes between moves remain distinct from these injected exceptions.
+checks, plus project-host typechecking. The compiled module from `7aab8202a2`
+(SHA-256 `a92531cea366652ed5043197d1ae28094356465e9c156dcddc7f051a36d00d5b`)
+also passed a live disposable Btrfs fixture on the project host. Its command
+adapter invoked the real protected storage wrapper as `cocalc-host`; only the
+volume-metadata callback was replaced with a deliberate first-call failure.
+The original home and replacement subvolumes were restored to their expected
+locations, the original metadata callback was retried, and both fixture
+subvolumes were deleted afterward. This is not an injected failure through the
+entire restore API or process-crash qualification between moves.
 
 Home-only restore is now fixed and live-qualified by `48bbf9f4d2`. It prepares
 the disposable snapshot clone with an anchored reflink copy of the current
