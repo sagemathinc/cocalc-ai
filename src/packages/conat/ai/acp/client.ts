@@ -25,6 +25,7 @@ import {
   acpSteerSubject,
   acpTruncateSubject,
   acpSubject,
+  acpHarnessSubject,
 } from "./subjects";
 
 interface StreamOptions {
@@ -56,7 +57,10 @@ export async function* streamAcp(
     throw Error("account_id must be a valid uuid");
   }
 
-  const subject = acpSubject({
+  // No native fallback: old hosts must never interpret a harness as Codex.
+  const subject = (
+    request.runtime !== undefined ? acpHarnessSubject : acpSubject
+  )({
     account_id: request.account_id,
     project_id: request.project_id,
   });

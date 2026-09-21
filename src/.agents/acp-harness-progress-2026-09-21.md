@@ -109,13 +109,18 @@ ignored. Recovery never automatically resubmits an uncertain generic turn.
 Validation: 106 chat-writer/admission/queued-message tests, 47 detached-worker
 tests and 11 project-host worker/launcher tests passed, plus the project-host
 TypeScript build. This is not yet browser-to-container end-to-end validation.
-Before exposing UI, add a versioned RPC method that old hosts cannot silently
-interpret as Codex. Also qualify live sidecars, interrupted-chat projection,
+The client now routes harness requests exclusively to `harness-v1`; old hosts
+have no compatible execution listener. The native endpoint rejects runtime
+selectors, and the harness endpoint requires ACP v1 while retaining the same
+account/project subject binding. There is no native fallback on failure.
+Protocol/client tests cover this behavior, and project-host authorization tests
+cover matching and mismatched identities on the new subject.
+Before exposing UI, qualify live sidecars, interrupted-chat projection,
 native session resume and orphan-container cleanup. Do not enable the host flag
 for general use yet.
 
 1. Qualify the opt-in durable admission/worker path live, including interruption
-   and persistence failures. Add mixed-version-safe RPC and capability discovery.
+   and persistence failures. Add capability discovery for the versioned RPC.
 2. Implement a supervised container launcher through existing project-host
    execution. Preserve scoped run identity/agent-network grants, structured argv,
    cancellation and descendant termination. The smoke launcher is not reusable

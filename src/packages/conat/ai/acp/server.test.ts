@@ -12,6 +12,51 @@ describe("ACP server subject identity binding", () => {
   const other_account_id = "00000000-0000-4000-8000-000000000004";
   const subject = `${ACP_SUBJECT_ROOT}.project-${project_id}.account-${account_id}.api`;
 
+  it("executes harness requests only on their versioned endpoint", async () => {
+    const evaluate = jest.fn().mockResolvedValue(undefined);
+    const respond = jest.fn().mockResolvedValue(undefined);
+    const runtime = { version: 1, kind: "acp", profile: {} };
+    await __test__.handleMessage(
+      { subject, data: { runtime }, respond },
+      evaluate,
+    );
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(respond.mock.calls[0][0].error).toContain("harness-v1");
+    respond.mockClear();
+    await __test__.handleMessage(
+      {
+        subject: subject.replace(/api$/, "harness-v1"),
+        data: { runtime },
+        respond,
+      },
+      evaluate,
+      "harness-v1",
+    );
+    expect(evaluate).toHaveBeenCalledWith(
+      expect.objectContaining({ account_id, project_id, runtime }),
+    );
+  });
+
+  it("rejects missing runtime and mismatched authority on harness-v1", async () => {
+    const evaluate = jest.fn();
+    const respond = jest.fn().mockResolvedValue(undefined);
+    for (const data of [
+      {},
+      { runtime: { kind: "acp", version: 2 } },
+      { account_id: other_account_id, runtime: { kind: "acp", version: 1 } },
+    ]) {
+      await __test__.handleMessage(
+        { subject: subject.replace(/api$/, "harness-v1"), data, respond },
+        evaluate,
+        "harness-v1",
+      );
+    }
+    expect(evaluate).not.toHaveBeenCalled();
+    expect(
+      respond.mock.calls.filter(([value]) => value?.type === "error"),
+    ).toHaveLength(3);
+  });
+
   it("derives both identities from the subject", () => {
     const options: any = { prompt: "hello", chat: {} };
 

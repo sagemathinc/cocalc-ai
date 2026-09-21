@@ -12193,6 +12193,7 @@ export async function init(
   await initConatAcp(
     {
       evaluate,
+      evaluateHarness: evaluate,
       interrupt: handleInterruptRequest,
       steer: handleAcpSteerRequest,
       forkSession: handleForkSessionRequest,
