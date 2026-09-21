@@ -1496,6 +1496,21 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Bounded Heap Exhaustion Check
+
+The real-stdio fixture now has a guarded heap-exhaustion scenario. It refuses to
+allocate unless V8 reports a heap limit below 96 MiB; qualification launches it
+with `--max-old-space-size=32 --max-semi-space-size=1`. With core dumps disabled,
+the fixture streams partial output and then exits with `SIGABRT`. The client
+preserves that output, reports `outcome_unknown` without exposing V8 stderr, and
+rejects another prompt on the dead session. All 86 subprocess tests pass.
+
+Read-only inspection of the disposable project's primary and ACP sidecar also
+confirmed both reside in the same project cgroup, with `memory.max=11393441792`
+and `pids.max=4096`. This confirms placement and configured limits, not enforcement
+under exhaustion. No host-wide or project-wide OOM was induced. Live cgroup
+exhaustion and the rare Podman removal-timeout fallback remain unqualified.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile

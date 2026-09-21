@@ -123,6 +123,26 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
         update(contextLine ?? "No publication context");
         return result(message.id, { stopReason: "end_turn" });
       }
+      if (text === "heap-exhaustion") {
+        const { getHeapStatistics } = require("node:v8");
+        if (getHeapStatistics().heap_size_limit > 96 * 1024 * 1024) {
+          return send({
+            id: message.id,
+            error: {
+              code: -32603,
+              message: "Set a small Node heap limit first",
+            },
+          });
+        }
+        update("working before heap exhaustion");
+        // Yield so the protocol output reaches the client before V8 aborts.
+        return setTimeout(() => {
+          const allocations = [];
+          for (let i = 0; i < 128; i++)
+            allocations.push(new Array(256 * 1024).fill(i));
+          process.exit(3);
+        }, 50);
+      }
       if (
         [
           "question",

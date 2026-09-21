@@ -692,13 +692,13 @@ test("interruption during attention finalization cannot publish success", async 
   assert.equal(stops(), 1);
 });
 
-async function start(t, args = [], questionHandler) {
+async function start(t, args = [], questionHandler, nodeArgs = [], onExit) {
   let child;
   const client = await AcpHarnessClient.start(
     {
       projectId: "project-a",
       accountId: "account-a",
-      profile: { ...profile, args: [...profile.args, ...args] },
+      profile: { ...profile, args: [...nodeArgs, ...profile.args, ...args] },
     },
     async ({ profile }) => {
       child = spawn(profile.executable, profile.args, {
@@ -706,6 +706,8 @@ async function start(t, args = [], questionHandler) {
         env: {},
         stdio: "pipe",
       });
+      if (onExit)
+        child.once("exit", (code, signal) => onExit({ code, signal }));
       const closed = new Promise((resolve) => {
         child.once("close", resolve);
         child.once("error", resolve);
@@ -1055,6 +1057,39 @@ for (const prompt of [
     );
   });
 }
+test("bounded harness heap exhaustion preserves partial output and prevents reuse", async (t) => {
+  let observeExit;
+  const exited = new Promise((resolve) => {
+    observeExit = resolve;
+  });
+  const client = await start(
+    t,
+    [],
+    undefined,
+    ["--max-old-space-size=32", "--max-semi-space-size=1"],
+    observeExit,
+  );
+  await client.open();
+  const events = [];
+  await assert.rejects(
+    client.prompt("heap-exhaustion", async (event) => events.push(event)),
+    (error) => {
+      assert.equal(error.code, "outcome_unknown");
+      assert.ok(!error.message.includes("FATAL ERROR"));
+      return true;
+    },
+  );
+  assert.deepEqual(
+    events.filter((e) => e.type === "message").map((e) => e.text),
+    ["working before heap exhaustion"],
+  );
+  assert.equal((await exited).signal, "SIGABRT");
+  await assert.rejects(
+    client.prompt("hi", async () => {}),
+    { code: "unavailable" },
+  );
+});
+
 test("provider rejection is distinct from ambiguous delivery and is redacted", async (t) => {
   const client = await start(t);
   await client.open();
