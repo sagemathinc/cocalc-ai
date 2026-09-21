@@ -34,6 +34,7 @@ beforeEach(() => {
       thread_id: "old",
       updated_by: key.account_id,
       agent_kind: "acp",
+      name: "Helper",
       acp_config: {
         sessionId: "old-provider-session",
         workingDirectory: "/work",
@@ -44,7 +45,11 @@ beforeEach(() => {
   db = {
     get: jest.fn(() => rows),
     set: jest.fn((row) => {
-      rows.push(row);
+      const index = rows.findIndex(
+        (old) => old.event === row.event && old.thread_id === row.thread_id,
+      );
+      if (index === -1) rows.push(row);
+      else rows[index] = row;
     }),
     commit: jest.fn(),
     save: jest.fn().mockResolvedValue(undefined),
@@ -63,7 +68,7 @@ test("disk-write failure cannot mark the successor ready, and retry completes th
   );
   const successor = rows[2].thread_id;
   await expect(prepareFreshConversation(key, client)).resolves.toBe(successor);
-  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set).toHaveBeenCalledTimes(2);
   expect(db.save_to_disk).toHaveBeenCalledTimes(2);
 });
 
@@ -89,9 +94,14 @@ test("returns only after saving, preserves old rows, and does not rewrite a used
   );
   finishSave();
   const successor = await preparing;
-  expect(rows.slice(0, 2)).toEqual(old);
+  expect(rows[0]).toEqual({
+    ...old[0],
+    name: expect.stringMatching(/^Helper \(ended .* UTC\)$/),
+  });
+  expect(rows[1]).toEqual(old[1]);
   const config = rows.find((row) => row.thread_id === successor);
   expect(config.acp_config).toEqual({ workingDirectory: "/work" });
+  expect(config.name).toBe("Helper");
   config.acp_config.sessionId = "new-provider-session";
   rows.push({
     event: "chat",
@@ -101,7 +111,7 @@ test("returns only after saving, preserves old rows, and does not rewrite a used
   const afterUse = structuredClone(rows);
   await expect(prepareFreshConversation(key, client)).resolves.toBe(successor);
   expect(rows).toEqual(afterUse);
-  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set).toHaveBeenCalledTimes(2);
   expect(db.save).toHaveBeenCalledTimes(1);
   expect(release).toHaveBeenCalledTimes(3);
 });
@@ -113,7 +123,7 @@ test("an explicit retry after save failure saves the same successor without losi
   );
   const successor = rows[2].thread_id;
   await expect(prepareFreshConversation(key, client)).resolves.toBe(successor);
-  expect(db.set).toHaveBeenCalledTimes(1);
+  expect(db.set).toHaveBeenCalledTimes(2);
   expect(db.save).toHaveBeenCalledTimes(2);
   expect(rows.filter((row) => row.event === "chat")).toEqual([
     { event: "chat", thread_id: "old", content: "Keep this old conversation" },

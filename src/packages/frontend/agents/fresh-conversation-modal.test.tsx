@@ -1,6 +1,13 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FreshConversationModal } from "./fresh-conversation-modal";
+import type { NamedAgent } from "@cocalc/conat/agents/personal";
+
+const getIdentity = jest.fn();
+jest.mock("./api", () => ({ personalAgentApi: () => ({ getIdentity }) }));
+jest.mock("@cocalc/frontend/customize/app-base-path", () => ({
+  appBasePath: "/",
+}));
 
 jest.mock("@cocalc/frontend/app-framework", () => ({
   redux: { getActions: () => undefined },
@@ -57,4 +64,40 @@ test("Escape cancels without creating a conversation", async () => {
   await user.keyboard("{Escape}");
   expect(onClose).toHaveBeenCalledTimes(1);
   expect(onConfirm).not.toHaveBeenCalled();
+});
+
+test("past conversations expose keyboard-focusable project thread links without resetting", async () => {
+  const user = userEvent.setup();
+  getIdentity.mockResolvedValue({
+    conversation_history: [
+      { thread_id: "old & one", ended_at: "2026-09-21T05:00:00Z" },
+      { thread_id: "old-two", ended_at: "2026-09-21T06:00:00Z" },
+    ],
+  });
+  const onConfirm = jest.fn();
+  render(
+    <FreshConversationModal
+      name="helper"
+      agent={
+        {
+          name: "helper",
+          endpoint: { project_id: "project", agent_id: "agent" },
+          path: "/a space.chat",
+        } as NamedAgent
+      }
+      onConfirm={onConfirm}
+      onClose={jest.fn()}
+    />,
+  );
+  const links = await screen.findAllByRole("link", { name: /helper · ended/ });
+  expect(links[0].getAttribute("href")).toContain(
+    "/projects/project/files/a%20space.chat#thread=old-two",
+  );
+  expect(links[1].getAttribute("href")).toContain("#thread=old%20%26%20one");
+  links[0].focus();
+  await user.tab();
+  expect(document.activeElement).toBe(links[1]);
+  expect(onConfirm).not.toHaveBeenCalled();
+  expect(screen.getByText(/Return to this modal/)).toBeTruthy();
+  expect(screen.getByText("Name agent")).toBeTruthy();
 });

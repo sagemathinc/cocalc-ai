@@ -68,6 +68,11 @@ export async function prepareFreshConversation(
             )
         ) {
           db.set(freshThreadConfig(source, thread_id, key.account_id));
+          const ended = new Date().toISOString().replace("T", " ").slice(0, 19);
+          db.set({
+            ...source,
+            name: `${source.name || "Conversation"} (ended ${ended} UTC)`,
+          });
           db.commit({ emitChangeImmediately: true });
         }
         await db.save();

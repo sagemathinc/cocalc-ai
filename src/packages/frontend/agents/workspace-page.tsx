@@ -1984,6 +1984,7 @@ function AgentWorkspace({
                     {
                       key: "workspace-fresh",
                       label: "Start fresh conversation…",
+                      icon: <Icon name="plus-circle" />,
                       onClick: () => onFresh(displayedAgent),
                     },
                   ]
@@ -2716,7 +2717,11 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
                 icon: <Icon name="copy" />,
                 label: "Copy agent…",
               },
-              { key: "fresh", label: "Start fresh conversation…" },
+              {
+                key: "fresh",
+                label: "Start fresh conversation…",
+                icon: <Icon name="plus-circle" />,
+              },
               {
                 key: hidden ? "show" : "hide",
                 icon: <Icon name={hidden ? "eye" : "eye-slash"} />,
@@ -3332,6 +3337,7 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       {freshAgent && (
         <FreshConversationModal
           name={freshAgent.name}
+          agent={freshAgent}
           onConfirm={() => performFresh(freshAgent)}
           onClose={() => startFresh(undefined)}
         />

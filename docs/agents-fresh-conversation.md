@@ -8,8 +8,13 @@ identity used by names and networks. Files are unchanged, including any memory
 stored in files.
 
 Previous thread IDs and transition times are recorded in
-`agent_identities.conversation_history`. The existing project chat UI can still
-display those conversations. A dedicated History drawer, resuming a historical
+`agent_identities.conversation_history`. Reopening the Start fresh conversation
+modal lists those conversations, newest first, with links to their threads in
+the project chat UI. At preparation, the old thread's title receives an ended
+timestamp in UTC; the successor retains the original title. Retries do not
+append another suffix. Historical threads remain fenced against execution;
+use **Fork chat...** and then **Name agent** to create an independent agent
+from a previous conversation. A dedicated History drawer, resuming a historical
 conversation, and persistent agent instructions are not part of this change.
 
 ## Transition Protocol
@@ -59,3 +64,10 @@ partial failure, and unchanged network authorization. Also smoke-test a running
 agent rejection, an idle reset, preserved settings/networks, a fresh first turn,
 and incoming agent messaging after reset. Unit and PGlite tests do not replace
 that live multi-service smoke test.
+
+The 2026-09-21 local multi-bay upgrade succeeded on both hosts. Browser smoke
+with a disposable agent confirmed running-work rejection, an idle reset, a
+clean first turn, unchanged name/URL, and retained model, payment source and
+working directory. An initial reset showed an unregistered-thread header until
+refresh; a subsequent reset did not reproduce it. Incoming messaging after reset
+and that intermittent header behavior still need live follow-up.
