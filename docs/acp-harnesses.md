@@ -191,7 +191,10 @@ a substitute for testing the durable chat UI.
 
 ### Simulated Provider Failures
 
-The provider smoke tool also accepts one optional fault mode per invocation:
+The provider smoke tool also accepts one optional fault mode per invocation.
+Unknown or duplicate options and conflicting fault modes fail before starting
+the provider or harness, so a misspelled check cannot silently run the normal
+success probe:
 
 | Flag                 | Check                                                                                                            |
 | -------------------- | ---------------------------------------------------------------------------------------------------------------- |

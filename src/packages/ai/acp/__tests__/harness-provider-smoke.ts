@@ -49,6 +49,20 @@ async function main() {
   const pi = process.argv[3] === "pi";
   if (!executable?.startsWith("/"))
     throw Error("Pass an absolute path to pinned OpenCode or pi-acp");
+  const flags = process.argv.slice(pi ? 4 : 3);
+  const supportedFlags = new Set([
+    "--require-loopback-only",
+    "--provider-reject",
+    "--provider-retry",
+    "--provider-exhaust",
+    "--provider-cancel",
+  ]);
+  for (const flag of flags) {
+    if (!supportedFlags.has(flag))
+      throw Error(`Unknown provider probe argument: ${flag}`);
+  }
+  if (new Set(flags).size !== flags.length)
+    throw Error("Duplicate provider probe option");
   const offline = process.argv.includes("--require-loopback-only");
   const rejectProvider = process.argv.includes("--provider-reject");
   const retryProvider = process.argv.includes("--provider-retry");
