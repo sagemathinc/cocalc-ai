@@ -3,6 +3,34 @@
 Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 `feature/my-agents-workspace` (#640).
 
+## Abrupt Primary-Container Loss: Failed Live Gate
+
+At deployed backend `f023aa2cf2`, fixture job
+`f10f60dd-0840-4933-9648-ee1bb791ac46` reached `running` and streamed `working`.
+Killing the disposable project's verified namespace-init process removed its
+primary container, but the ACP sidecar and running job survived for several
+minutes. The UI reported the project stopped while the turn remained running.
+One manual Interrupt subsequently removed the sidecar, but the durable job
+ended as `completed` rather than interrupted/uncertain. No recovery child was
+observed. This is a failed qualification, not a successful cancellation test.
+
+Reconciliation previously downgraded missing/exited primary containers without
+fencing their ACP work. The follow-up fix uses the existing runtime lifecycle
+lock, rechecks container inventory, pauses discovery, and applies the same
+durable job/lease fence and worker runtime release as orderly project stop.
+It records the stopped state only after successful fencing. Tests cover missing
+and exited containers, a newly restarted container, failed confirming inventory,
+and retry after fencing failure. Eighty focused project-host tests passed;
+project-host TypeScript passed. This fix has not yet been live-qualified.
+
+Test cleanup confirmed no remaining ACP sidecar and the other two primary
+containers unchanged. The disposable project remains stopped. One typed restart
+request timed out without an operation ID; its outcome is unknown and it was
+not blindly repeated. Subsequent read-only status requests, including a
+daemon-free request, also timed out. Restore control-plane responsiveness and
+qualify this fix before clearing the abrupt-loss gate. Do not infer success
+from the existing orderly restart/worker-loss evidence.
+
 ## Broad Regression Checkpoint
 
 Refreshed selected regression baseline at `daea800815`: 838 tests passed:
