@@ -1496,6 +1496,31 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Unsaved Text And External Writer Check
+
+A separate disposable file, `/home/user/acp-concurrent-editor-qualification.txt`,
+started with two baseline lines. The live text API changed the first line with
+`saveToDisk: false`; a disk read confirmed both lines still had their baseline
+values. An external writer then changed only the second line. A subsequent live
+read contained both the unsaved collaborator edit and the external edit.
+
+This exposed a CLI text API persistence bug: `write(current.text)` returned
+without saving because the live text already matched, even though disk still
+lacked the first edit. `write` now saves the session even when no `from_str` is
+needed, retaining expected-hash validation and the explicit live-only option.
+Both new regressions failed before the fix. All four text API tests and the CLI
+TypeScript build pass afterward. Running the rebuilt `createTextApi` against the
+existing CLI-authenticated live session saved both merged lines; a separate disk
+read confirmed them. The installed CLI bundle has not been upgraded by this test.
+
+The intended sidecar writer could not launch: Podman reported a missing crun
+status file despite listing the retained container. The external write therefore
+used a host-side filesystem process, not an ACP prompt. This check qualifies the
+live sync/filesystem merge and persistence path only, not the full simultaneous
+browser/harness scenario, conflicting same-line edits, or retained-container
+runtime health. The first timed observation preceded watcher convergence; the
+later live read and saved disk content establish the result.
+
 ## Bounded Heap Exhaustion Check
 
 The real-stdio fixture now has a guarded heap-exhaustion scenario. It refuses to

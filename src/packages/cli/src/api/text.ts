@@ -273,8 +273,9 @@ export function createTextApi<Ctx, Project extends TextProjectIdentity>({
             assertTextWriteExpectation(before, writeOptions);
             if (session.to_str() !== text) {
               session.from_str(text);
-              await saveTextSession(session, writeOptions);
             }
+            // The live text may already match while disk still has older content.
+            await saveTextSession(session, writeOptions);
             return currentTextInfo(project, path, session, association);
           },
         );
