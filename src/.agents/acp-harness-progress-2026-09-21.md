@@ -676,6 +676,23 @@ admitted model `deep`; thread `c4a520da-1c2a-4c82-8174-c0b3b2952bed` had exactly
 one job. This proves the deterministic first-turn path, not every real harness's
 catalog behavior or all concurrent restart/discovery cases.
 
+Follow-up qualification on the same backend also passed real-harness discovery:
+Pi 0.86.1 / pi-acp 0.0.33 exposed the configured local Qwen Model and Thinking
+controls in `agent-6`; OpenCode 1.18.31 exposed its loopback fixture Model and
+Session Mode controls in `agent-5`. Both used temporary sessions, created no chat
+job, and removed their discovery sidecars. These were the explicitly configured
+local/fake providers, not paid services or a claim about every provider catalog.
+
+Concurrent restart check: `agent-9` was created without a prompt using the
+deterministic fixture's `--hang` initialization mode. While its discovery sidecar
+`acp-1892b11a-6c63-4a92-988d-01dcddc0bc79-1d183e49-b27e-4c04-a35f-b5437c1230b6`
+was running, requested project restart
+`d14d0642-5696-4a5b-9200-a3f21d2e711b`. The UI reported the bounded setup timeout;
+restart then succeeded and container inventory contained no ACP sidecars. The
+latest job remained `c2880b14-8ddf-430d-b807-37e515af3e23`, with zero running
+jobs. This covers draining an already-started discovery through its timeout, not
+all possible admission/stop races or process-removal failures.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
@@ -737,8 +754,8 @@ use yet; the current UI is an experimental operator-testing surface.
 1. Broaden live qualification to persistence failures and abrupt project loss
    during a delivered prompt. Normal project restart with retained Pi and
    OpenCode native resume after worker restart passed, as recorded above.
-   Broaden the passing pre-first-turn discovery check to real-harness catalogs
-   and concurrent restart/discovery cases.
+   Real Pi/OpenCode discovery and restart during stalled discovery also pass;
+   broaden to other provider catalogs and admission/stop races as needed.
 2. Extend the supervised launcher's live tests to resource exhaustion and forced
    descendant termination beyond the passing forced-cancellation fixture above.
    The smoke launcher is not reusable as a privileged
