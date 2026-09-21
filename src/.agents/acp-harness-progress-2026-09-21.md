@@ -620,11 +620,25 @@ credentials or launch a harness; the subsequent deliberate submission succeeded.
 This transient failure was observed, not silently retried or treated as a model
 failure.
 
-Remaining limitation: hard worker loss with an existing turn lease still labels
-the generic job/UI `interrupted` with the worker-loss notice, rather than an
-explicit unknown-outcome classification. No automatic resend occurs, but this
-wording/state distinction still needs work. Passing the stale-question test does
-not qualify all async QA, abrupt-loss or persistence-failure behavior.
+The remaining unknown-outcome classification gap at that checkpoint was fixed in
+`49c4f9323f`: orphaned generic prompts now finalize the job and lease as `error`,
+preserve partial output, and put an explicit unknown-outcome/no-resend warning in
+chat history, including when no output arrived before worker loss. Native Codex
+recovery is unchanged. Shared repair retains this classification when chat
+storage is unavailable and retries projection without duplicating the warning.
+All 155 chat-writer/detached-worker tests and the project-host TypeScript build
+passed, including partial, empty and unavailable chat cases.
+
+Deployed artifact `20260921T112616Z-49c4f9323f48`, SHA-256
+`8a22234f40f1105488cf917d117427ba14e8341d155b582e0ac0e5dc9c38569e`, upgrade
+`cf5092c3-d952-44b5-b120-091df5895e68`. Retest operation
+`5bde7397-8b2b-4b7b-9973-a128132dedd3` waited on question
+`6413b31d-c504-4370-ac49-7cb2f6db0094`. The guarded one-time worker kill was
+followed by automatic worker replacement, an explicit unknown-outcome warning
+in the already-open browser, job `error`, question `stale` with no response, and
+zero recovery children. The warning survived browser reload. The old process
+and its sidecar disappeared. These results do not qualify all async QA,
+abrupt-project-loss or persistence-failure behavior.
 
 ## Reproduce
 
