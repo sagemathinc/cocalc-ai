@@ -31,9 +31,13 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
   project resource pool, rootfs lease, home/scratch and read-only CoCalc mounts.
   It joins the main project's network namespace rather than creating unrestricted
   networking. Removal terminates the sidecar's PID namespace without stopping the
-  main project. Five mocked lifecycle tests pass; live host qualification remains.
-  It is internal and not wired into admission; scoped run identity, project-secret
-  mounting, abrupt-worker orphan reconciliation and live validation are still needed.
+  main project. It now requires an admitted conversation, reuses the existing
+  scoped CLI/agent identity lease and mounts the project's live secrets directory
+  read-only. It strips stale image credential fields and revokes its lease even
+  when container removal fails. Failed removal can be retried without unmounting
+  beneath surviving processes. Six mocked lifecycle tests pass; live host
+  qualification remains. It is internal and not wired into admission;
+  abrupt-worker orphan reconciliation and live validation are still needed.
 
 ## Validation And Real Harnesses
 

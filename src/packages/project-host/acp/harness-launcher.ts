@@ -17,13 +17,20 @@ import { getCoCalcMounts } from "@cocalc/project-runner/run/mounts";
 import {
   podmanRuntimeArgs,
   projectPoolPodmanLauncher,
+  projectSecretsHostPath,
 } from "@cocalc/project-runner/run/podman";
 import {
   DEFAULT_PROJECT_RUNTIME_HOME,
   DEFAULT_PROJECT_RUNTIME_UID,
   DEFAULT_PROJECT_RUNTIME_GID,
 } from "@cocalc/util/project-runtime";
-import { ensureProjectContainerRunning } from "../codex/codex-project";
+import {
+  ensureProjectContainerRunning,
+  createProjectCliTokenLease,
+  applyProjectRuntimeCliEnv,
+  resolveProjectRuntimeApiUrl,
+} from "../codex/codex-project";
+import { PROJECT_SECRETS_MOUNT_PATH } from "@cocalc/util/project-secrets-constants";
 import { getProject } from "../sqlite/projects";
 import getLogger from "@cocalc/backend/logger";
 
@@ -32,8 +39,11 @@ const logger = getLogger("project-host:acp:harness-launcher");
 /** Internal worker launcher. Admission must authorize the principal before calling. */
 export async function launchHarnessInProject(
   binding: HarnessBinding,
+  conversation: { path: string; threadId: string },
 ): Promise<HarnessProcess> {
   const { projectId, accountId } = binding;
+  const path = conversation?.path;
+  const threadId = conversation?.threadId;
   const profile = parseAcpHarnessProfile(binding.profile);
   if (
     !isValidUUID(projectId) ||
@@ -41,6 +51,13 @@ export async function launchHarnessInProject(
     !getProject(projectId)
   )
     throw Error("ACP project is not available on this host");
+  if (
+    typeof path !== "string" ||
+    !path ||
+    typeof threadId !== "string" ||
+    !threadId
+  )
+    throw Error("ACP launch requires an admitted conversation");
   await ensureProjectContainerRunning({ projectId, accountId });
   const launcher = projectPoolPodmanLauncher(projectId);
   // Never log arguments: image/project-managed configuration may contain secrets.
@@ -74,14 +91,59 @@ export async function launchHarnessInProject(
   const name = `acp-${projectId}-${randomUUID()}`;
   let created = false;
   let stopped: Promise<void> | undefined;
+  let cliLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
   const cleanup = () =>
     (stopped ??= (async () => {
       // Keep the rootfs lease if removal fails; never unmount beneath a live child.
-      if (created)
-        await command(["rm", "--ignore", "--force", "--time", "0", name]);
+      try {
+        if (created)
+          await command(["rm", "--ignore", "--force", "--time", "0", name]);
+      } finally {
+        // Revoke scoped authority even if a failed runtime removal needs repair.
+        await cliLease?.close();
+      }
       await unmount(projectId);
-    })());
+    })().catch((error) => {
+      stopped = undefined;
+      throw error;
+    }));
   try {
+    // Only service-created context may select a run identity. Never inherit a
+    // token or identity file from the image environment or launch profile.
+    const identityContext = {
+      COCALC_CODEX_CHAT_PATH: path,
+      COCALC_CODEX_THREAD_ID: threadId,
+    };
+    cliLease = await createProjectCliTokenLease({
+      projectId,
+      accountId,
+      home,
+      scratch,
+      agentSessionKey: JSON.stringify([
+        "acp",
+        projectId,
+        accountId,
+        path,
+        threadId,
+      ]),
+      currentEnv: identityContext,
+    });
+    if (!cliLease) throw Error("Scoped ACP CLI credentials unavailable");
+    for (const key of [
+      "COCALC_BEARER_TOKEN",
+      "COCALC_AGENT_TOKEN",
+      "COCALC_AGENT_IDENTITY_FILE",
+      "COCALC_AGENT_MENTION_REFERENCES_FILE",
+    ])
+      delete env[key];
+    Object.assign(env, identityContext, {
+      COCALC_BEARER_TOKEN_FILE: cliLease.containerPath,
+      COCALC_AGENT_TOKEN_FILE: cliLease.containerPath,
+      COCALC_API_URL: resolveProjectRuntimeApiUrl(),
+    });
+    if (cliLease.identityContainerPath)
+      env.COCALC_AGENT_IDENTITY_FILE = cliLease.identityContainerPath;
+    applyProjectRuntimeCliEnv(env, accountId);
     const args = [
       "create",
       ...(await podmanRuntimeArgs()),
@@ -101,6 +163,11 @@ export async function launchHarnessInProject(
       "--workdir",
       profile.cwd,
       mountArg({ source: home, target: DEFAULT_PROJECT_RUNTIME_HOME }),
+      mountArg({
+        source: projectSecretsHostPath(projectId),
+        target: PROJECT_SECRETS_MOUNT_PATH,
+        readOnly: true,
+      }),
     ];
     if (scratch) args.push(mountArg({ source: scratch, target: "/tmp" }));
     for (const [source, target] of Object.entries(getCoCalcMounts()))

@@ -1,11 +1,17 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { launchHarnessInProject } from "./harness-launcher";
+import { launchHarnessInProject as launch } from "./harness-launcher";
+
+const conversation = { path: "a.chat", threadId: "thread-a" };
+const launchHarnessInProject = (input: typeof binding) =>
+  launch(input, conversation);
 
 const mockExec = jest.fn();
 const mockSpawn = jest.fn();
 const mockUnmount = jest.fn();
 const mockStart = jest.fn();
+const mockLease = jest.fn();
+const mockCloseLease = jest.fn();
 jest.mock("node:child_process", () => ({
   execFile: (...args) => mockExec(...args),
   spawn: (...args) => mockSpawn(...args),
@@ -31,6 +37,8 @@ jest.mock("@cocalc/project-runner/run/env", () => ({
   getEnvironment: async () => ({
     HOME: "/home/user",
     PROVIDER_KEY: "project-only",
+    COCALC_BEARER_TOKEN: "stale-image-token",
+    COCALC_AGENT_IDENTITY_FILE: "/stale/identity",
   }),
 }));
 jest.mock("@cocalc/project-runner/run/mounts", () => ({
@@ -38,6 +46,7 @@ jest.mock("@cocalc/project-runner/run/mounts", () => ({
 }));
 jest.mock("@cocalc/project-runner/run/podman", () => ({
   podmanRuntimeArgs: async () => [],
+  projectSecretsHostPath: () => "/project-secrets",
   projectPoolPodmanLauncher: () => ({
     command: "pool-launcher",
     argsPrefix: ["project-pool", "podman"],
@@ -45,6 +54,9 @@ jest.mock("@cocalc/project-runner/run/podman", () => ({
 }));
 jest.mock("../codex/codex-project", () => ({
   ensureProjectContainerRunning: (...args) => mockStart(...args),
+  createProjectCliTokenLease: (...args) => mockLease(...args),
+  applyProjectRuntimeCliEnv: jest.fn(),
+  resolveProjectRuntimeApiUrl: () => "http://project-hub",
 }));
 jest.mock("../sqlite/projects", () => ({
   getProject: () => ({ state: "running" }),
@@ -80,6 +92,12 @@ beforeEach(() => {
   mockExec.mockImplementation((_cmd, _args, _opts, cb) => cb(null));
   mockUnmount.mockResolvedValue(undefined);
   mockStart.mockResolvedValue(undefined);
+  mockCloseLease.mockResolvedValue(undefined);
+  mockLease.mockResolvedValue({
+    containerPath: "/tmp/scoped/token",
+    identityContainerPath: "/tmp/scoped/identity",
+    close: mockCloseLease,
+  });
 });
 
 test("sidecar preserves structured argv, project networking and pool containment", async () => {
@@ -95,6 +113,17 @@ test("sidecar preserves structured argv, project networking and pool containment
     "literal;not-a-shell",
   ]);
   expect(opts.env).toEqual({ ONLY_PODMAN: "yes" });
+  expect(args.join(" ")).not.toContain("stale-image-token");
+  expect(args.join(" ")).not.toContain("/stale/identity");
+  expect(args).toContain("COCALC_AGENT_IDENTITY_FILE=/tmp/scoped/identity");
+  expect(args).toContain("COCALC_BEARER_TOKEN_FILE=/tmp/scoped/token");
+  expect(args).toContainEqual(
+    expect.stringMatching(/^mount:\/project-secrets:.*:true$/),
+  );
+  expect(mockLease.mock.calls[0][0].currentEnv).toEqual({
+    COCALC_CODEX_CHAT_PATH: "a.chat",
+    COCALC_CODEX_THREAD_ID: "thread-a",
+  });
   expect(mockSpawn.mock.calls[0][1]).toEqual(
     expect.arrayContaining(["start", "--attach", "--interactive"]),
   );
@@ -103,6 +132,7 @@ test("sidecar preserves structured argv, project networking and pool containment
     expect.arrayContaining(["rm", "--ignore", "--force"]),
   );
   expect(mockUnmount).toHaveBeenCalledTimes(1);
+  expect(mockCloseLease).toHaveBeenCalledTimes(1);
   await handle.stop();
   expect(mockUnmount).toHaveBeenCalledTimes(1);
 });
@@ -140,6 +170,18 @@ test("failed removal retains rootfs instead of unmounting under live children", 
   );
   await expect(handle.stop()).rejects.toThrow("ACP container operation failed");
   expect(mockUnmount).not.toHaveBeenCalled();
+  expect(mockCloseLease).toHaveBeenCalledTimes(1);
+  await handle.stop();
+  expect(mockUnmount).toHaveBeenCalledTimes(1);
+});
+
+test("missing scoped credentials fail closed before container creation", async () => {
+  mockLease.mockResolvedValue(undefined);
+  await expect(launchHarnessInProject(binding)).rejects.toThrow(
+    "Scoped ACP CLI credentials unavailable",
+  );
+  expect(mockExec).not.toHaveBeenCalled();
+  expect(mockUnmount).toHaveBeenCalledTimes(1);
 });
 
 test("natural exit removes its sidecar", async () => {

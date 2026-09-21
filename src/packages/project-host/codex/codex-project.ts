@@ -276,7 +276,7 @@ function getManagedOpenAiProviderArgs(
   return;
 }
 
-function applyProjectRuntimeCliEnv(
+export function applyProjectRuntimeCliEnv(
   env: Record<string, string>,
   accountId?: string,
 ): void {
@@ -311,7 +311,7 @@ function shouldProtectResolvedRuntimeEnv({
   return !!env[key]?.trim() && env[key] !== value;
 }
 
-function resolveProjectRuntimeApiUrl(explicit?: string): string {
+export function resolveProjectRuntimeApiUrl(explicit?: string): string {
   const masterConat =
     `${resolveProjectHostPreferredMasterConatServer() ?? ""}`.trim();
   const hostConfigured =
