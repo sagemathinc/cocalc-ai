@@ -947,9 +947,12 @@ describe("cloud host start failures", () => {
     ]);
   });
 
-  it("queues RootFS pre-pull work when a host becomes operational", async () => {
+  it("queues RootFS pre-pull and reclaims a stale route migration", async () => {
     const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
     const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const staleRouteStartedAt = new Date(
+      Date.now() - 2 * 60 * 60_000,
+    ).toISOString();
     await upsertProjectHost({
       id: hostId,
       name: "Prepull ready host",
@@ -965,6 +968,12 @@ describe("cloud host start failures", () => {
           disk_gb: 50,
           disk_type: "balanced",
           storage_mode: "persistent",
+        },
+        public_route: {
+          status: "preparing",
+          started_at: staleRouteStartedAt,
+          active_mode: "cloudflare-tunnel",
+          desired_mode: "cloudflare-proxy",
         },
       },
     });

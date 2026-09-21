@@ -108,6 +108,47 @@ describe("project-host public route policy", () => {
       }),
     ).toBe("cloudflare-tunnel");
   });
+
+  it("reclaims a route migration abandoned by a terminated worker", async () => {
+    const { hostPublicRouteMigrationInProgress } =
+      await import("./public-route");
+    const nowMs = new Date("2026-09-20T20:00:00.000Z").getTime();
+
+    expect(
+      hostPublicRouteMigrationInProgress(
+        {
+          metadata: {
+            public_route: {
+              status: "preparing",
+              started_at: "2026-09-20T19:55:00.000Z",
+            },
+          },
+        },
+        nowMs,
+      ),
+    ).toBe(true);
+    expect(
+      hostPublicRouteMigrationInProgress(
+        {
+          metadata: {
+            public_route: {
+              status: "preparing",
+              started_at: "2026-09-20T17:00:00.000Z",
+            },
+          },
+        },
+        nowMs,
+      ),
+    ).toBe(false);
+    expect(
+      hostPublicRouteMigrationInProgress(
+        {
+          metadata: { public_route: { status: "preparing" } },
+        },
+        nowMs,
+      ),
+    ).toBe(false);
+  });
 });
 
 describe("project-host public route migration", () => {
