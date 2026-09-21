@@ -9,7 +9,12 @@ two-turn reuse and cancellation. Experimental Agents workspace creation has now
 passed browser submission, reload, follow-up and interruption using a fixture.
 Manual full-project snapshot recovery passed; home-only restore exposed an
 existing rootfs staging failure. OpenCode and Pi have passed
-real-process, local-fake-provider smoke tests, not the full release gates below.
+real-process, local-fake-provider smoke tests, including network-disabled tests.
+Pi also passed actual local Qwen inference in a separate network-disabled
+container. Durable OpenCode resume, same-project queued agent messaging, external
+text-editor convergence, and supported ACP form questions through the persistent
+QA UI have live evidence. This is not the full release qualification below;
+in particular, the local-model proof is standalone rather than browser-to-worker.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.

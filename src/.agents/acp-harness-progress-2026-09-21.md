@@ -393,6 +393,65 @@ This qualifies the supported form subset with a deterministic ACP executable,
 not every harness-specific question extension or schema. URL/auth elicitation,
 optional and non-string fields remain explicitly unsupported.
 
+## Actual Local Inference Checkpoint
+
+The new `ai/acp/__tests__/harness-local-model-smoke.ts` runs the real ACP client
+against Pi and a locally provisioned llama.cpp server. Unlike the fake-provider
+probe, this performs actual CPU model inference. It refuses a network namespace
+with any non-loopback interface or IPv4 route, uses a fresh temporary HOME with
+only local provider configuration, and never downloads a model or package.
+
+Tested pins:
+
+- `pi-acp@0.0.33` with `@earendil-works/pi-coding-agent@0.86.1`.
+- llama.cpp `b11068`, official `llama-b11068-bin-ubuntu-x64.tar.gz`, SHA256
+  `626f4a8d217bfec1870708f94bf1e3f9e30fc306ef1ed931acd9726703b6f1e6`.
+- Official `Qwen/Qwen2.5-0.5B-Instruct-GGUF`, revision
+  `9217f5db79a29953eb74d5343926648285ec7e67`, file
+  `qwen2.5-0.5b-instruct-q4_k_m.gguf`, SHA256
+  `74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db`.
+  Model repository declares Apache-2.0. Download size is 491,400,032 bytes.
+- Ubuntu 24.04 container digest
+  `sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3`;
+  server needs `libgomp1` (tested Ubuntu `14.2.0-4ubuntu2~24.04.1`).
+
+Provisioning occurred explicitly while online, with both upstream checksums
+verified before execution. Inference used rootless Podman `--network=none`,
+read-only root/image/packages/model, writable temporary HOME, `--cap-drop=ALL`
+and `no-new-privileges`. A copy of Node without the production executable's file
+capability avoids requiring NET_BIND_SERVICE in this isolated test. The test
+receives no CoCalc identity or provider credentials; its API key is a dummy
+placeholder accepted by the loopback server. No public provider fallback exists.
+
+Result: Pi returned `2 plus 2 equals 4.` with ACP `end_turn`. llama.cpp reported
+1,489 prompt tokens, nine generated tokens, 8.93 seconds total evaluation on
+three CPU threads. The test asserts nonempty generated text, not an intelligence
+or coding benchmark. The container and both processes were removed afterward.
+Running the probe in the ordinary networked dev environment fails before any
+process launch. The AI TypeScript build and all 37 harness subprocess tests pass.
+
+Bundle the new probe with esbuild (`--bundle --platform=node`), then invoke it
+inside the explicitly network-disabled disposable container:
+
+```sh
+node local-model-smoke.cjs /absolute/path/to/pi-acp /absolute/path/to/llama-server /absolute/path/to/model.gguf
+```
+
+Provision compatible Node/server shared libraries and the pinned Pi packages
+first; their directories and the model may be read-only. The probe starts its
+own server on loopback port 18995, bounds the prompt to 128 generated tokens,
+and terminates its child processes after at most 180 seconds. Also impose an
+outer container timeout. This is a qualification tool, not the production
+project-host launcher or a general installation flow.
+
+This closes the standalone real-local-inference evidence gap. It does not yet
+qualify browser-to-worker local inference, arbitrary customer models, tool-use
+quality, or an entire air-gapped CoCalc deployment. The test does not modify real
+subscriptions or spend paid inference tokens.
+
+Sources: [llama.cpp release](https://github.com/ggml-org/llama.cpp/releases/tag/b11068),
+[pinned model repository](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/tree/9217f5db79a29953eb74d5343926648285ec7e67).
+
 ## Reproduce
 
 Local protocol tests (includes package build):
@@ -451,8 +510,9 @@ Continue qualifying interrupted-chat projection and broaden real-harness
 coverage beyond the live checks above. Do not enable the host flag for general
 use yet; the current UI is an experimental operator-testing surface.
 
-1. Broaden live qualification to persistence failures and OpenCode native resume.
-   Add capability discovery for the versioned RPC.
+1. Broaden live qualification to persistence failures and project restart.
+   OpenCode native resume after worker restart passed, as recorded above.
+   Add pre-first-turn model/config capability discovery.
 2. Extend the supervised launcher's live tests to resource exhaustion and forced
    descendant termination. The smoke launcher is not reusable as a privileged
    host execution path. Direct Podman removal of the retained Pi sidecar failed
@@ -462,14 +522,16 @@ use yet; the current UI is an experimental operator-testing surface.
    sidecar. Unit tests pass; live qualification of that fallback remains a release
    gate. Do not mistake fixture cancellation for proof of forced real-harness
    termination.
-3. Extend the implemented profile creation/summary UI with useful generic tool
-   rendering and model/mode controls from advertised capabilities; do not
-   substitute Codex presets. Correct remaining Codex-only notification wording.
-4. Qualify task QA/elicitation separately from tool permissions, attachments,
-   browser reconnection, native session resume and uncertain-delivery UI. The
-   current prompt interface is text-only and does not claim task QA support.
-5. Verify editor convergence, automatic snapshot scheduling, home-only restore and local inference with
-   public egress blocked. Exercise authorized agent-network messaging. These
-   remain required first-release gates, not implied by the passing smoke tests.
+3. Broaden accessibility and layout qualification of implemented generic tool
+   rendering and advertised model/mode controls. Correct remaining Codex-only
+   branding; do not substitute Codex presets.
+4. Extend the qualified required-string form QA subset to failure/recovery
+   cases, including stale replies after worker loss. Text prompts remain the
+   only supported input; attachment types and unsupported forms fail explicitly.
+5. Broaden the passing external text-write convergence check to simultaneous
+   edits; verify snapshot scheduling, home-only restore and recovery protection.
+   Complete browser-to-worker local inference qualification with public egress
+   blocked. Extend same-project messaging to cross-project and queued-revocation
+   cases. These remain release gates, not implied by the standalone smoke tests.
 
 Do not advertise this checkpoint as a usable generic-harness chat release yet.
