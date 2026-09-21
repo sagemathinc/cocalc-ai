@@ -23,11 +23,13 @@ import { getDerivedBayPublicHostname } from "@cocalc/server/bay-public-origin";
 import { getConfiguredClusterRole } from "@cocalc/server/cluster-config";
 import {
   ensureCloudflareTunnelForHub,
+  ensureCloudflareTunnelHostname,
   hasHubCloudflareTunnel,
   type CloudflareTunnel,
 } from "@cocalc/server/cloud/cloudflare-tunnel";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
+import { resolveFundingApprovalConfiguration } from "@cocalc/server/compute/funding/approval-config";
 import { ensureLocalCloudflaredBinary } from "./cloudflared-installer";
 import { getLaunchpadLocalConfig, isLaunchpadProduct } from "./mode";
 
@@ -281,6 +283,7 @@ function resolveCloudflaredOrigin(): { origin: string; noTLSVerify: boolean } {
   const port =
     parsePort(process.env.COCALC_BAY_HUB_BASE_PORT) ??
     parsePort(process.env.COCALC_BAY_WORKER_PORT) ??
+    parsePort(process.env.HUB_PORT) ??
     parsePort(process.env.PORT);
   if (port != null) {
     const host = localOriginHost(process.env.COCALC_BAY_HUB_BIND_HOST);
@@ -325,6 +328,7 @@ async function writeCloudflaredConfig(opts: {
   noTLSVerify: boolean;
   publicViewerHostname?: string;
   additionalHostnames?: string[];
+  additionalIngress?: Array<{ hostname: string; origin: string }>;
 }): Promise<boolean> {
   const yamlString = (value: string): string => JSON.stringify(value);
   const ingress: string[] = [
@@ -358,6 +362,12 @@ async function writeCloudflaredConfig(opts: {
       ingress.push("    originRequest:");
       ingress.push("      noTLSVerify: true");
     }
+  }
+  for (const route of opts.additionalIngress ?? []) {
+    if (!route.hostname || seenHostnames.has(route.hostname)) continue;
+    ingress.push(`  - hostname: ${yamlString(route.hostname)}`);
+    ingress.push(`    service: ${yamlString(route.origin)}`);
+    seenHostnames.add(route.hostname);
   }
   ingress.push("  - service: http_status:404");
   const lines = [
@@ -509,6 +519,29 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
       additionalHostnames.push(bayHostname);
     }
   }
+  const additionalIngress: Array<{ hostname: string; origin: string }> = [];
+  const fundingApproval = await resolveFundingApprovalConfiguration();
+  if (fundingApproval.state === "configured") {
+    const approvalUrl = new URL(fundingApproval.config.origin);
+    const approvalPort = fundingApproval.config.listen_port;
+    {
+      if (approvalUrl.protocol !== "https:") {
+        throw new Error(
+          "Public financial approval ingress requires an HTTPS origin.",
+        );
+      }
+      additionalIngress.push({
+        hostname: approvalUrl.hostname,
+        origin: `http://127.0.0.2:${approvalPort}`,
+      });
+      await ensureCloudflareTunnelHostname({
+        tunnel,
+        hostname: approvalUrl.hostname,
+        allowOutsideConfiguredDns: true,
+        protectExisting: true,
+      });
+    }
+  }
   await writeCloudflaredCredentials(credentialsPath, tunnel);
   await writeCloudflaredConfig({
     path: configPath,
@@ -518,6 +551,7 @@ async function prepareCloudflared(): Promise<PreparedCloudflaredState | null> {
     noTLSVerify,
     publicViewerHostname,
     additionalHostnames,
+    additionalIngress,
   });
 
   return {

@@ -2103,6 +2103,15 @@ importers:
       '@types/passport':
         specifier: ^1.0.9
         version: 1.0.17
+      axe-core:
+        specifier: ^4.12.1
+        version: 4.13.0
+      pg:
+        specifier: ^8.16.3
+        version: 8.16.3
+      playwright-core:
+        specifier: ^1.57.0
+        version: 1.57.0
 
   static:
     devDependencies:
@@ -6256,6 +6265,10 @@ packages:
   awaiting@3.0.0:
     resolution: {integrity: sha512-19i4G7Hjxj9idgMlAM0BTRII8HfvsOdlr4D9cf3Dm1MZhvcKjBpzY8AMNEyIKyi+L9TIK15xZatmdcPG003yww==}
     engines: {node: '>=7.6.x'}
+
+  axe-core@4.13.0:
+    resolution: {integrity: sha512-UzGt8zg7Ny8djbYMhxl2zuEevVa7r2gJjYY5Lwr1xM7+XU2nd6CkIWFTVcCIbAP63vSz71NaVyyuSk9lHKcy0A==}
+    engines: {node: '>=4'}
 
   axios@1.18.0:
     resolution: {integrity: sha512-E32NzpYKp++W7XRe52rHiXV2ehxmh3wbdgO7MHeFM+vqxLBYHzt0ElkiImtOBxtOmyp0yoC8C6uESVV84Y2/hw==}
@@ -16395,6 +16408,8 @@ snapshots:
       possible-typed-array-names: 1.1.0
 
   awaiting@3.0.0: {}
+
+  axe-core@4.13.0: {}
 
   axios@1.18.0(debug@4.4.3):
     dependencies:

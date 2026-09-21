@@ -16,6 +16,15 @@ import { MAX_MEMBERSHIP_TIER_LABEL_LENGTH } from "@cocalc/util/membership-tier-l
 import createCredit from "@cocalc/server/purchases/create-credit";
 import createPurchase from "@cocalc/server/purchases/create-purchase";
 import getBalance from "@cocalc/server/purchases/get-balance";
+import getSpendableBalance, {
+  getAccountFundingHolds,
+} from "../get-spendable-balance";
+import { isPurchaseAllowed } from "../is-purchase-allowed";
+import {
+  withFundingAccountTransaction,
+  reserveAccountFundingBacking,
+} from "@cocalc/server/compute/funding/backing";
+import { releaseSubscriptionRenewalAttempt } from "../subscription-renewal-attempts";
 import { bindSubscriptionRenewalPaymentIntent } from "../subscription-renewal-attempts";
 
 const mockCreatePaymentIntent = jest.fn();
@@ -407,6 +416,27 @@ describe("createSubscriptionPayment", () => {
     );
     mockUseBalanceTowardSubscriptions.mockResolvedValue(true);
 
+    const dispatch = mockCreatePaymentIntent.getMockImplementation()!;
+    mockCreatePaymentIntent.mockImplementationOnce(async (opts) => {
+      expect(Number(await getSpendableBalance({ account_id }))).toBe(0);
+      expect(
+        Number((await getAccountFundingHolds({ account_id })).prepaid_held_usd),
+      ).toBe(68.78);
+      await expect(
+        withFundingAccountTransaction(account_id, (client) =>
+          reserveAccountFundingBacking(client, {
+            payer_account_id: account_id,
+            source_kind: "course-pool",
+            source_id: uuid(),
+            lane: "prepaid",
+            authorized_usd: "1",
+            capacity_usd: "68.78",
+          }),
+        ),
+      ).rejects.toMatchObject({ code: "insufficient_funding" });
+      return dispatch(opts);
+    });
+
     const result = await createSubscriptionPayment({
       account_id,
       subscription_id,
@@ -433,6 +463,12 @@ describe("createSubscriptionPayment", () => {
       [subscription_id, renewalPaymentIntentId],
     );
     expect(Number(attempts[0].balance_applied)).toBe(68.78);
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(0);
+    expect(Number(await getBalance({ account_id }))).toBe(68.78);
+    expect(
+      (await isPurchaseAllowed({ account_id, service: "membership", cost: 1 }))
+        .allowed,
+    ).toBe(false);
 
     const credit_id = await createCredit({
       account_id,
@@ -459,6 +495,9 @@ describe("createSubscriptionPayment", () => {
     });
 
     expect(Number(await getBalance({ account_id }))).toBe(0);
+    expect(
+      Number((await getAccountFundingHolds({ account_id })).prepaid_held_usd),
+    ).toBe(0);
     const { rows: purchases } = await getPool().query(
       `SELECT cost, description
          FROM purchases
@@ -472,7 +511,104 @@ describe("createSubscriptionPayment", () => {
     expect(purchases[0].description).toMatchObject({ credit_id });
   });
 
-  it("rejects an invalid persisted balance allocation", async () => {
+  it("uses only credit not already backed by a course and retains the split across a failed dispatch", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createCredit({ account_id, amount: 100 });
+    await withFundingAccountTransaction(account_id, (client) =>
+      reserveAccountFundingBacking(client, {
+        payer_account_id: account_id,
+        source_kind: "course-pool",
+        source_id: uuid(),
+        lane: "prepaid",
+        authorized_usd: "80",
+        capacity_usd: "100",
+      }),
+    );
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        cost: 72,
+        start: new Date(Date.now() - 30 * 86400000),
+        end: new Date(Date.now() - 60_000),
+      },
+    );
+    mockUseBalanceTowardSubscriptions.mockResolvedValue(true);
+    mockCreatePaymentIntent.mockRejectedValueOnce(
+      new Error("dispatch interrupted"),
+    );
+    await expect(
+      createSubscriptionPayment({ account_id, subscription_id }),
+    ).rejects.toThrow("dispatch interrupted");
+    const {
+      rows: [attempt],
+    } = await getPool().query(
+      "SELECT * FROM subscription_renewal_attempts WHERE subscription_id=$1",
+      [subscription_id],
+    );
+    expect(Number(attempt.balance_applied)).toBe(20);
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(0);
+    await releaseSubscriptionRenewalAttempt({
+      attempt_id: attempt.id,
+      error: "dispatch interrupted",
+    });
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(0);
+    await createCredit({ account_id, amount: 10 });
+    await getPool().query(
+      "UPDATE subscription_renewal_attempts SET next_attempt_at=NOW() WHERE id=$1",
+      [attempt.id],
+    );
+    await createSubscriptionPayment({ account_id, subscription_id });
+    expect(mockCreatePaymentIntent).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ balance_applied_usd: "20.00" }),
+        lineItems: [
+          expect.objectContaining({ amount: 72 }),
+          expect.objectContaining({ amount: -20 }),
+        ],
+      }),
+    );
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(10);
+    const paymentIntent = {
+      id: renewalPaymentIntentId,
+      status: "canceled",
+      metadata: {
+        renewal_attempt_id: attempt.id,
+        subscription_id: String(subscription_id),
+      },
+    };
+    await processSubscriptionRenewalFailure({ account_id, paymentIntent });
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(30);
+    await processSubscriptionRenewalFailure({ account_id, paymentIntent });
+    await processSubscriptionRenewal({ account_id, paymentIntent, amount: 52 });
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(30);
+    expect(Number(await getBalance({ account_id }))).toBe(110);
+  });
+
+  it("uses a full card payment instead of overdrawing a sub-minimum remainder", async () => {
+    const account_id = uuid();
+    await createTestAccount(account_id);
+    await createCredit({ account_id, amount: 71.5 });
+    const { subscription_id } = await createTestMembershipSubscription(
+      account_id,
+      {
+        cost: 72,
+        start: new Date(Date.now() - 30 * 86400000),
+        end: new Date(Date.now() - 60_000),
+      },
+    );
+    mockUseBalanceTowardSubscriptions.mockResolvedValue(true);
+    await createSubscriptionPayment({ account_id, subscription_id });
+    expect(mockCreatePaymentIntent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({ balance_applied_usd: "0.00" }),
+        lineItems: [expect.objectContaining({ amount: 72 })],
+      }),
+    );
+    expect(Number(await getSpendableBalance({ account_id }))).toBe(71.5);
+  });
+
+  it("rejects invalid balance allocations in the database", async () => {
     const account_id = uuid();
     await createTestAccount(account_id);
     const { subscription_id } = await createTestMembershipSubscription(
@@ -483,16 +619,14 @@ describe("createSubscriptionPayment", () => {
         end: new Date(Date.now() - 60_000),
       },
     );
-    await getPool().query(
-      `UPDATE subscription_renewal_attempts
-          SET balance_applied=80
-        WHERE subscription_id=$1`,
-      [subscription_id],
-    );
-
-    await expect(
-      createSubscriptionPayment({ account_id, subscription_id }),
-    ).rejects.toThrow(/invalid account balance allocation/);
+    for (const amount of ["-1", "80", "NaN", "1.001"]) {
+      await expect(
+        getPool().query(
+          `UPDATE subscription_renewal_attempts SET balance_applied=$2 WHERE subscription_id=$1`,
+          [subscription_id, amount],
+        ),
+      ).rejects.toMatchObject({ code: "23514" });
+    }
     expect(mockCreatePaymentIntent).not.toHaveBeenCalled();
   });
 

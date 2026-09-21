@@ -77,6 +77,12 @@ function isLocalAuthorityBay(): boolean {
   );
 }
 
+export function assertBillingAuthorityTopology(): void {
+  // Attached bays use the authenticated inter-bay transport. Configuration
+  // errors are surfaced when that transport constructs its fabric client.
+  if (!isBillingAuthorityEnabled()) return;
+}
+
 function deterministicUuid(value: string): string {
   const bytes = createHash("sha256").update(value).digest().subarray(0, 16);
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
@@ -129,6 +135,26 @@ function intrinsicCommandId(
       break;
     case "account-local":
       key = recordField(command.input, "idempotency_key");
+      if (command.operation.startsWith("compute-funding-")) {
+        key = JSON.stringify([
+          recordField(command.input, "funding_epoch") ??
+            recordField(command.input, "meter_as_of") ??
+            recordField(command.input, "running_until"),
+          recordField(command.input, "resource_id") ??
+            recordField(command.input, "reservation_id") ??
+            recordField(command.input, "account_id"),
+          recordField(command.input, "resource_generation"),
+        ]);
+      }
+      if (command.operation === "apply-funding-approval") {
+        // Bind retries to both the reviewed intent and independent sign-in.
+        // A new sign-in must not reuse a prior session's failed authorization.
+        key = JSON.stringify([
+          command.input.intent_id,
+          command.input.terms_hash,
+          command.input.approved_session_hash,
+        ]);
+      }
       break;
     case "hub-api":
       key = recordField(command.call.args[0], "idempotency_key");
@@ -157,12 +183,8 @@ async function transport(
   request: BillingAuthorityTransportRequest,
 ): Promise<unknown> {
   if (!isLocalAuthorityBay()) {
-    throw Object.assign(
-      new Error(
-        "billing is unavailable on attached bays until the authority has a dedicated authenticated transport",
-      ),
-      { code: 503, status: 503 },
-    );
+    const { callSeedBillingAuthority } = await import("./inter-bay");
+    return unwrapTransport(await callSeedBillingAuthority(request));
   }
   const { handleBillingAuthorityTransportRequest } = await import("./service");
   return unwrapTransport(await handleBillingAuthorityTransportRequest(request));
@@ -335,6 +357,37 @@ export async function setBillingAccountFrozen({
     reason,
     actor_account_id,
   })) as { account_id: string; frozen: boolean; generation: number };
+}
+
+export async function executeStripeWebhookPayload({
+  body,
+  signature,
+}: {
+  body: Buffer;
+  signature: string;
+}): Promise<{ processed: boolean; type: string; action: string }> {
+  if (body.length > 2 * 1024 * 1024) {
+    throw Object.assign(new Error("Stripe webhook payload is too large"), {
+      code: 413,
+      status: 413,
+    });
+  }
+  if (!signature || signature.length > 16_384) {
+    throw Object.assign(new Error("Invalid Stripe webhook signature"), {
+      code: 400,
+      status: 400,
+    });
+  }
+  if (!isBillingAuthorityEnabled()) {
+    const { verifyAndProcessStripeWebhookPayload } =
+      await import("../stripe/webhook");
+    return await verifyAndProcessStripeWebhookPayload({ body, signature });
+  }
+  return (await transport({
+    action: "stripe-webhook-raw",
+    body_base64: body.toString("base64"),
+    signature,
+  })) as { processed: boolean; type: string; action: string };
 }
 
 function inferFenceCause(reason: string): BillingAuthorityFenceCause {

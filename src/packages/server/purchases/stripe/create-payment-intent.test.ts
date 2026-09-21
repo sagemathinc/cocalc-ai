@@ -15,6 +15,7 @@ const mockIsReadyToProcess = jest.fn();
 const mockProcessPaymentIntent = jest.fn();
 const mockAlertUncreditedSucceededPayment = jest.fn();
 const mockBindSubscriptionRenewalPaymentIntent = jest.fn();
+const mockBindAdminMembershipPayment = jest.fn();
 const mockDelay = jest.fn();
 
 jest.mock("@cocalc/server/launch/kill-switches", () => ({
@@ -61,6 +62,10 @@ jest.mock("../subscription-renewal-attempts", () => ({
   bindSubscriptionRenewalPaymentIntent: (...args: any[]) =>
     mockBindSubscriptionRenewalPaymentIntent(...args),
 }));
+jest.mock("../admin-membership-orders", () => ({
+  bindAdminMembershipPayment: (...args) =>
+    mockBindAdminMembershipPayment(...args),
+}));
 
 import createPaymentIntent, {
   cancelPaymentIntent,
@@ -97,6 +102,7 @@ describe("createPaymentIntent", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    mockBindAdminMembershipPayment.mockReset().mockResolvedValue(undefined);
     mockAssertPaymentCheckoutAllowed.mockResolvedValue(undefined);
     mockGetConn.mockResolvedValue(stripe);
     mockDefaultReturnUrl.mockResolvedValue("https://cocalc.example/return");
@@ -485,6 +491,46 @@ describe("createPaymentIntent", () => {
 
     expect(stripe.invoices.update).not.toHaveBeenCalled();
   });
+
+  it.each([false, true])(
+    "binds the approved admin order before attempting collection (rejected=%s)",
+    async (rejected) => {
+      stripe.invoices.finalizeInvoice.mockResolvedValue({
+        id: "in_123",
+        payment_intent: "pi_123",
+        hosted_invoice_url: "https://stripe.example/invoice",
+      });
+      if (rejected)
+        mockBindAdminMembershipPayment.mockRejectedValueOnce(
+          Error("order authority unavailable"),
+        );
+      const run = createPaymentIntent({
+        account_id: "acct-1",
+        purpose: "admin-membership-package-purchase",
+        lineItems,
+        metadata: { admin_membership_order_id: "order-1" },
+        processImmediately: false,
+        idempotencyKeyPrefix: "admin-membership-order:order-1",
+      });
+      if (rejected) {
+        await expect(run).rejects.toThrow("order authority unavailable");
+        expect(stripe.invoices.pay).not.toHaveBeenCalled();
+      } else {
+        await run;
+        expect(
+          mockBindAdminMembershipPayment.mock.invocationCallOrder[0],
+        ).toBeLessThan(stripe.invoices.pay.mock.invocationCallOrder[0]);
+      }
+      const binding = mockBindAdminMembershipPayment.mock.calls[0][0];
+      expect(binding).toMatchObject({
+        account_id: "acct-1",
+        order_id: "order-1",
+        payment_intent_id: "pi_123",
+        stripe_invoice_id: "in_123",
+      });
+      expect(binding.amount.toString()).toBe("72");
+    },
+  );
 
   it("uses stable Stripe keys and only tries allowed instant methods", async () => {
     stripe.invoices.finalizeInvoice.mockResolvedValue({

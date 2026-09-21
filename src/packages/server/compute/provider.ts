@@ -41,10 +41,12 @@ import type { ComputeVmRow, ComputeVolumeRow } from "./types";
 import { assertComputeVmSecurity } from "./security";
 import { regionFromComputeZone } from "./placement";
 import { getComputeVolumeById } from "./volume-db";
+import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import {
   managedComputeVmProviderPrefix,
   managedComputeVmResourceBelongsToEnvironment,
-  managedComputeVolumeResourceBelongsToEnvironment,
+  computeResourceIsOwned,
+  computeDeploymentNamespace,
 } from "./resource-names";
 
 const gcpProvider = new GcpProvider();
@@ -566,6 +568,9 @@ function specFor(
       subnetwork_uri: subnetwork,
       public_ip: vm.public_ip,
       labels: {
+        ...(computeDeploymentNamespace()
+          ? { "cocalc-bay-deployment": computeDeploymentNamespace()! }
+          : {}),
         "managed-by": "cocalc-compute",
         "logical-vm": vm.id.replaceAll("-", "").slice(0, 40),
         owner: vm.owner_account_id.replaceAll("-", "").slice(0, 40),
@@ -1085,6 +1090,7 @@ export async function listProviderComputeInventory(opts: {
   const addresses: Array<{
     provider: "gcp" | "nebius";
     id: string;
+    name?: string;
     ip?: string;
     region?: string;
   }> = [];
@@ -1110,11 +1116,11 @@ export async function listProviderComputeInventory(opts: {
   );
   const includeVmName = (name?: string) =>
     expectedInstanceNames.has(`${name ?? ""}`) ||
-    managedComputeVmResourceBelongsToEnvironment(name, config.environment);
+    computeResourceIsOwned(name, config.environment);
   const includeDiskName = (name?: string) =>
     expectedDiskNames.has(`${name ?? ""}`) ||
-    managedComputeVmResourceBelongsToEnvironment(name, config.environment) ||
-    managedComputeVolumeResourceBelongsToEnvironment(name, config.environment);
+    computeResourceIsOwned(name, config.environment) ||
+    computeResourceIsOwned(name, config.environment, "vol");
   let disks_observed = false;
   let addresses_observed = false;
   if (
@@ -1163,15 +1169,13 @@ export async function listProviderComputeInventory(opts: {
       const region = `${regionPath ?? ""}`.split("/").pop();
       for (const address of scoped.addresses ?? []) {
         if (
-          managedComputeVmResourceBelongsToEnvironment(
-            address.name,
-            config.environment,
-          ) ||
+          computeResourceIsOwned(address.name, config.environment) ||
           expectedAddressIds.has(`${address.name ?? ""}`)
         ) {
           addresses.push({
             provider: "gcp",
             id: `${address.name}`,
+            name: `${address.name}`,
             ip: address.address ?? undefined,
             region,
           });
@@ -1219,10 +1223,7 @@ export async function listProviderComputeInventory(opts: {
       namePrefix: "cocalc-",
     })) {
       if (
-        !managedComputeVmResourceBelongsToEnvironment(
-          address.name,
-          config.environment,
-        ) &&
+        !computeResourceIsOwned(address.name, config.environment) &&
         !expectedAddressIds.has(address.id)
       ) {
         continue;
@@ -1230,6 +1231,7 @@ export async function listProviderComputeInventory(opts: {
       addresses.push({
         provider: "nebius",
         id: address.id,
+        name: address.name,
         ip: address.ip,
         region,
       });
@@ -1254,6 +1256,17 @@ type OrphanProviderResource = {
   zone?: string;
 };
 
+async function assertOrphanOwnership(
+  resource: OrphanProviderResource,
+): Promise<void> {
+  const config = await getComputeVmConfig();
+  if (!computeResourceIsOwned(resource.resource_name, config.environment)) {
+    throw new Error(
+      "refusing orphan mutation outside this compute deployment and bay",
+    );
+  }
+}
+
 function orphanRuntime(resource: OrphanProviderResource): HostRuntime {
   return {
     provider: resource.provider,
@@ -1269,6 +1282,7 @@ function orphanRuntime(resource: OrphanProviderResource): HostRuntime {
 export async function stopOrphanProviderComputeInstance(
   resource: OrphanProviderResource,
 ): Promise<void> {
+  await assertOrphanOwnership(resource);
   const { creds } = await context(resource.provider, resource.region);
   const provider = resource.provider === "gcp" ? gcpProvider : nebiusProvider;
   try {
@@ -1286,6 +1300,7 @@ export async function stopOrphanProviderComputeInstance(
 export async function deleteOrphanProviderComputeInstance(
   resource: OrphanProviderResource,
 ): Promise<void> {
+  await assertOrphanOwnership(resource);
   const { creds } = await context(resource.provider, resource.region);
   const provider = resource.provider === "gcp" ? gcpProvider : nebiusProvider;
   try {
@@ -1300,6 +1315,7 @@ export async function deleteOrphanProviderComputeInstance(
 export async function deleteOrphanProviderComputeAddress(
   resource: OrphanProviderResource,
 ): Promise<void> {
+  await assertOrphanOwnership(resource);
   if (resource.provider === "nebius") {
     const { creds } = await context("nebius", resource.region);
     await nebiusProvider.releasePublicAddress(resource.resource_id, creds);
@@ -1327,6 +1343,7 @@ export async function deleteOrphanProviderComputeAddress(
 export async function deleteOrphanProviderComputeBootDisk(
   resource: OrphanProviderResource,
 ): Promise<void> {
+  await assertOrphanOwnership(resource);
   const name = `${resource.resource_name ?? ""}`;
   const config = await getComputeVmConfig();
   if (!managedComputeVmResourceBelongsToEnvironment(name, config.environment)) {
@@ -1395,6 +1412,9 @@ export async function ensureProviderComputePublicAddress(
         addressType: "EXTERNAL",
         networkTier: "STANDARD",
         labels: {
+          ...(computeDeploymentNamespace()
+            ? { "cocalc-bay-deployment": computeDeploymentNamespace()! }
+            : {}),
           "managed-by": "cocalc-compute",
           "logical-vm": vm.id.replaceAll("-", "").slice(0, 40),
           owner: vm.owner_account_id.replaceAll("-", "").slice(0, 40),
@@ -1902,6 +1922,9 @@ export async function ensureProviderComputeVolume(volume: ComputeVolumeRow) {
     size_gb: volume.desired_size_gb,
     disk_type: volume.disk_type,
     labels: {
+      ...(computeDeploymentNamespace()
+        ? { "cocalc-bay-deployment": computeDeploymentNamespace()! }
+        : {}),
       "managed-by": "cocalc-compute",
       "logical-volume": volume.id.replaceAll("-", "").slice(0, 40),
       owner: volume.owner_account_id.replaceAll("-", "").slice(0, 40),
@@ -1963,4 +1986,81 @@ export async function deleteProviderComputeVolume(volume: ComputeVolumeRow) {
       creds,
     );
   }
+}
+
+/** Funded volume cleanup must preserve the VM boot disk and prove detachment
+ * before deleting storage. Uncertain attachments are retained for reconciliation.
+ */
+export async function detachProviderComputeHomeVolume(
+  vm: ComputeVmRow,
+  volume: ComputeVolumeRow,
+): Promise<void> {
+  if (
+    vm.owning_bay_id !== getConfiguredBayId() ||
+    volume.owning_bay_id !== vm.owning_bay_id ||
+    volume.owner_account_id !== vm.owner_account_id ||
+    volume.attached_vm_id !== vm.id ||
+    vm.home_volume_id !== volume.id ||
+    vm.provider !== volume.provider ||
+    vm.region !== volume.region ||
+    vm.zone !== volume.zone ||
+    vm.desired_state === "running"
+  )
+    throw new Error("Volume detach requires an owned stopped attachment");
+  const config = await getComputeVmConfig();
+  if (
+    !computeResourceIsOwned(
+      volume.provider_disk_id,
+      config.environment,
+      "vol",
+    ) ||
+    !computeResourceIsOwned(
+      vm.metadata?.provider_instance_name ?? vm.provider_instance_id,
+      config.environment,
+    )
+  )
+    throw new Error(
+      "Volume detach requires this deployment's provider namespace",
+    );
+  if (vm.provider === "nebius") {
+    const observed = await inspectProviderComputeVm(vm);
+    if (observed.status === "missing") return;
+    if (observed.status !== "stopped")
+      throw new Error(
+        "Provider has not confirmed VM shutdown for volume detach",
+      );
+    await detachNebiusComputeVmForIntentionalStop(vm);
+    return;
+  }
+  const { options, project } = gcpClientOptions(config);
+  const zone = requireGcpZone(vm);
+  const instances = new InstancesClient(options);
+  let instance;
+  try {
+    [instance] = await instances.get({
+      project,
+      zone,
+      instance: vm.provider_instance_id,
+    });
+  } catch (err) {
+    const code = (err as { code?: number })?.code;
+    if (code === 404 || code === 5 || isProviderNotFound(err)) return;
+    throw err;
+  }
+  if (instance.status !== "TERMINATED")
+    throw new Error("GCP VM is not stopped for volume detach");
+  const suffix = `/projects/${project}/zones/${zone}/disks/${volume.provider_disk_id}`;
+  const disks = (instance.disks ?? []).filter((d) =>
+    d.source?.endsWith(suffix),
+  );
+  if (!disks.length) return;
+  if (disks.length !== 1 || disks[0].boot || !disks[0].deviceName)
+    throw new Error("GCP home disk attachment is ambiguous");
+  const [operation] = await instances.detachDisk({
+    project,
+    zone,
+    instance: vm.provider_instance_id,
+    deviceName: disks[0].deviceName,
+  });
+  await waitForZonalOperation({ response: operation, config, zone });
 }

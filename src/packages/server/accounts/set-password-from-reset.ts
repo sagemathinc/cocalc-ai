@@ -8,19 +8,28 @@ import { withAccountRehomeWriteFence } from "@cocalc/server/accounts/rehome-fenc
 
 export default async function setPasswordFromReset({
   account_id,
+  email_address,
   password,
 }: {
   account_id: string;
+  email_address: string;
   password: string;
 }): Promise<void> {
+  const expectedEmail = `${email_address ?? ""}`.trim().toLowerCase();
+  if (!expectedEmail) {
+    throw Error("Password reset no longer valid.");
+  }
   await withAccountRehomeWriteFence({
     account_id,
     action: "redeem password reset",
     fn: async (db) => {
-      await db.query(
-        "UPDATE accounts SET password_hash=$1 WHERE account_id=$2",
-        [passwordHash(password), account_id],
+      const result = await db.query(
+        "UPDATE accounts SET password_hash=$1 WHERE account_id=$2 AND lower(email_address)=$3",
+        [passwordHash(password), account_id, expectedEmail],
       );
+      if (result.rowCount !== 1) {
+        throw Error("Password reset no longer valid.");
+      }
     },
   });
 }

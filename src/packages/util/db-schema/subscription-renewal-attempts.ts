@@ -50,6 +50,14 @@ Table({
       "updated_at",
     ],
     pg_unique_indexes: ["(subscription_id,period_end)", "payment_intent_id"],
+    pg_constraints: [
+      {
+        name: "subscription_renewal_attempts_balance_allocation",
+        type: "check",
+        expression:
+          "balance_applied IS NULL OR (balance_applied >= 0 AND (balance_applied = 0 OR balance_applied < amount) AND balance_applied = round(balance_applied, 2))",
+      },
+    ],
     pg_custom_indexes: [
       {
         name: "subscription_renewal_attempts_one_open_idx",
@@ -93,7 +101,7 @@ Table({
     balance_applied: {
       type: "number",
       pg_type: "numeric(20,10)",
-      desc: "Account balance committed to this renewal before any Stripe payment is created. Null means the funding decision has not been made.",
+      desc: "Prepaid credit reserved while this attempt is scheduled or processing, before any Stripe payment is created. Null means the funding decision has not been made. Terminal attempts retain the historical split but no longer hold credit.",
     },
     funding_version: {
       type: "integer",

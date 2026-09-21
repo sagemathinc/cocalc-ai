@@ -3,7 +3,10 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { resolveManagedVmCreateSshAuthorization } from "./ssh-authorization";
+import {
+  resolveManagedVmCreateSshAuthorization,
+  resolveVmCreateSshAuthorization,
+} from "./ssh-authorization";
 
 const PROJECT_KEY = "ssh-ed25519 AAAAPROJECT project@example.com";
 const OTHER_KEY = "ssh-ed25519 AAAAOTHER other@example.com";
@@ -61,5 +64,37 @@ describe("managed VM create SSH authorization", () => {
         project_key: PROJECT_KEY,
       }),
     ).toEqual({ ssh_public_key: "", configure_project_ssh: false });
+  });
+});
+
+describe("VM create SSH policy", () => {
+  it("keeps an account key when course funding has no project context", () => {
+    expect(
+      resolveVmCreateSshAuthorization({
+        requested_key: OTHER_KEY,
+        configure_project_ssh: true,
+        project_key: null,
+        course_funded: true,
+        has_project_context: false,
+      }),
+    ).toEqual({
+      ssh_public_key: OTHER_KEY,
+      configure_project_ssh: false,
+    });
+  });
+
+  it("forces the managed project key for course funding with a project", () => {
+    expect(
+      resolveVmCreateSshAuthorization({
+        requested_key: OTHER_KEY,
+        configure_project_ssh: false,
+        project_key: PROJECT_KEY,
+        course_funded: true,
+        has_project_context: true,
+      }),
+    ).toEqual({
+      ssh_public_key: PROJECT_KEY,
+      configure_project_ssh: true,
+    });
   });
 });

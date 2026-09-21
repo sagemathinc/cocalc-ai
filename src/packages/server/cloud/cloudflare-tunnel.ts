@@ -751,6 +751,56 @@ export async function ensureCloudflareTunnelForHub(opts?: {
   });
 }
 
+export async function ensureCloudflareTunnelHostname({
+  tunnel,
+  hostname,
+  allowOutsideConfiguredDns = false,
+  protectExisting = false,
+}: {
+  tunnel: CloudflareTunnel;
+  hostname: string;
+  allowOutsideConfiguredDns?: boolean;
+  protectExisting?: boolean;
+}): Promise<void> {
+  const config = await getHubConfig();
+  const normalizedHostname = normalizeCloudflareHostname(hostname);
+  if (!config || !normalizedHostname) return;
+  if (
+    !allowOutsideConfiguredDns &&
+    normalizedHostname !== config.zone &&
+    !normalizedHostname.endsWith(`.${config.zone}`)
+  ) {
+    throw new Error(
+      `Cloudflare tunnel hostname '${normalizedHostname}' must be within '${config.zone}'.`,
+    );
+  }
+  const zoneId = await getZoneIdForHostname(config.token, normalizedHostname);
+  const target = `${tunnel.id}.cfargotunnel.com`;
+  if (protectExisting) {
+    const existing = await listDnsRecordsByName(
+      config.token,
+      zoneId,
+      normalizedHostname,
+    );
+    const conflict = existing.find(
+      (record) =>
+        `${record.type ?? ""}`.toUpperCase() !== "CNAME" ||
+        `${record.content ?? ""}`.toLowerCase() !== target.toLowerCase(),
+    );
+    if (conflict) {
+      throw new Error(
+        `Cloudflare hostname '${normalizedHostname}' already has an unrelated ${conflict.type ?? "DNS"} record; choose another approval hostname or remove the conflict explicitly.`,
+      );
+    }
+  }
+  await ensureTunnelDns({
+    token: config.token,
+    zoneId,
+    hostname: normalizedHostname,
+    target,
+  });
+}
+
 export async function deleteCloudflareTunnel(opts: {
   host_id?: string;
   tunnel?: CloudflareTunnel;

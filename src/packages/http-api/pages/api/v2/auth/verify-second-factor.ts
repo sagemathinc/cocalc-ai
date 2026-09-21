@@ -8,11 +8,8 @@ import { verifySignInSecondFactorChallenge } from "@cocalc/server/auth/two-facto
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import { getBayPublicOriginForRequest } from "@cocalc/server/bay-public-origin";
 import { completeEmailAuthMfa } from "@cocalc/server/inter-bay/email-auth";
-import { getLogger } from "@cocalc/backend/logger";
 import { signUserIn } from "./sign-in";
 import isPost from "@cocalc/http-api/lib/api/is-post";
-
-const logger = getLogger("http-api:auth:verify-second-factor");
 
 export default async function verifySecondFactor(req, res) {
   if (!isPost(req, res)) {
@@ -27,19 +24,11 @@ export default async function verifySecondFactor(req, res) {
       code,
     });
     if (result.email_auth_challenge_id) {
-      try {
-        await completeEmailAuthMfa({
-          account_id: result.account_id,
-          challenge_id: result.email_auth_challenge_id,
-          home_bay_id: getConfiguredBayId(),
-        });
-      } catch (err) {
-        logger.warn("unable to record completed email-auth MFA", {
-          account_id: result.account_id,
-          challenge_id: result.email_auth_challenge_id,
-          err,
-        });
-      }
+      await completeEmailAuthMfa({
+        account_id: result.account_id,
+        challenge_id: result.email_auth_challenge_id,
+        home_bay_id: getConfiguredBayId(),
+      });
     }
     await signUserIn(req, res, result.account_id, {
       authenticated_at: new Date(),

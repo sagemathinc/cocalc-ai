@@ -27,6 +27,14 @@ beforeAll(async () => {
 }, 15000);
 afterAll(after);
 
+async function account() {
+  const account_id = uuid();
+  await getPool().query("INSERT INTO accounts (account_id) VALUES ($1)", [
+    account_id,
+  ]);
+  return account_id;
+}
+
 function pricingSnapshot(
   hourly_cost_usd: string,
   billing_state: "running" | "stopped" = "running",
@@ -57,7 +65,7 @@ describe("dedicated host spend accounting", () => {
   ])(
     "rounds an independent $minutes-minute host transaction once when finalized",
     async ({ minutes, expected }) => {
-      const account_id = uuid();
+      const account_id = await account();
       const host_id = uuid();
       const ended_at = new Date();
       const started_at = new Date(ended_at.valueOf() - minutes * 60_000);
@@ -215,7 +223,7 @@ describe("dedicated host spend accounting", () => {
   });
 
   it("keeps egress metering precise and rounds only its finalized purchase", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     const resource_id = uuid();
     const interval_start = dayjs().subtract(5, "minute").toDate();
     const interval_end = new Date(interval_start.valueOf() + 5 * 60_000);
@@ -374,7 +382,7 @@ describe("dedicated host spend accounting", () => {
   });
 
   it("computes prepaid and credit spend from shared fixed account windows", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     const windowStart = dayjs().subtract(3, "hour").toDate();
     await ensureAccountUsageWindowsForEvent({
       account_id,
@@ -420,7 +428,7 @@ describe("dedicated host spend accounting", () => {
   });
 
   it("computes fixed-window spend for a specific host", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     const host_id = uuid();
     const other_host_id = uuid();
     const windowStart = dayjs().subtract(3, "hour").toDate();
@@ -468,7 +476,7 @@ describe("dedicated host spend accounting", () => {
   });
 
   it("reconciles one open purchase session per host and closes the old one on rate change", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     const host_id = uuid();
     const started_at = dayjs().subtract(20, "minute").toDate();
 
@@ -582,31 +590,33 @@ describe("dedicated host spend accounting", () => {
     expect(finalRows.every((row) => row.cost != null)).toBe(true);
   });
 
-  it("serializes concurrent purchase reconciliation per account and host", async () => {
-    const account_id = uuid();
-    const host_id = uuid();
-    const started_at = dayjs().subtract(1, "minute").toDate();
-    const reconcile = () =>
-      reconcileDedicatedHostPurchaseSessionLocal({
-        account_id,
-        host_id,
-        host_name: "Concurrent Host",
-        host_bay_id: "bay-0",
-        provider: "gcp",
-        region: "us-central1",
-        billing_state: "running",
-        machine_type: "n2d-standard-4",
-        pricing_model: "on_demand",
-        funding_lane: "prepaid",
-        hourly_cost_usd: "2",
-        pricing_snapshot: pricingSnapshot("2"),
-        started_at,
-      });
+  (process.env.COCALC_TEST_USE_PGLITE === "1" ? it.skip : it)(
+    "serializes concurrent purchase reconciliation per account and host",
+    async () => {
+      const account_id = await account();
+      const host_id = uuid();
+      const started_at = dayjs().subtract(1, "minute").toDate();
+      const reconcile = () =>
+        reconcileDedicatedHostPurchaseSessionLocal({
+          account_id,
+          host_id,
+          host_name: "Concurrent Host",
+          host_bay_id: "bay-0",
+          provider: "gcp",
+          region: "us-central1",
+          billing_state: "running",
+          machine_type: "n2d-standard-4",
+          pricing_model: "on_demand",
+          funding_lane: "prepaid",
+          hourly_cost_usd: "2",
+          pricing_snapshot: pricingSnapshot("2"),
+          started_at,
+        });
 
-    await Promise.all([reconcile(), reconcile(), reconcile()]);
+      await Promise.all([reconcile(), reconcile(), reconcile()]);
 
-    const { rows } = await getPool().query<{ count: number }>(
-      `
+      const { rows } = await getPool().query<{ count: number }>(
+        `
         SELECT COUNT(*)::int AS count
         FROM purchases
         WHERE account_id=$1
@@ -614,13 +624,14 @@ describe("dedicated host spend accounting", () => {
           AND tag=$2
           AND period_end IS NULL
       `,
-      [account_id, `dedicated-host:${host_id}`],
-    );
-    expect(rows[0]?.count).toBe(1);
-  });
+        [account_id, `dedicated-host:${host_id}`],
+      );
+      expect(rows[0]?.count).toBe(1);
+    },
+  );
 
   it("rotates an unchanged running host exactly once when only its price changes", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     const host_id = uuid();
     const initialStart = dayjs().subtract(20, "minute").toDate();
     const priceChange = dayjs().subtract(5, "minute").toDate();
@@ -701,7 +712,7 @@ describe("dedicated host spend accounting", () => {
   });
 
   it("rotates from running to stopped with an auditable pricing snapshot", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     const host_id = uuid();
     await reconcileDedicatedHostPurchaseSessionLocal({
       account_id,
@@ -764,7 +775,7 @@ describe("dedicated host spend accounting", () => {
   });
 
   it("computes postpaid unbilled exposure from credit-funded host segments", async () => {
-    const account_id = uuid();
+    const account_id = await account();
     await createPurchase({
       account_id,
       service: "dedicated-host",

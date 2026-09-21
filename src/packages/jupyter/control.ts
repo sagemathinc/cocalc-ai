@@ -14,7 +14,7 @@ import {
   stat as statAbsolute,
   writeFile as writeFileAbsolute,
 } from "node:fs/promises";
-import { relative, resolve } from "node:path";
+import { posix, relative, resolve } from "node:path";
 import { throttle } from "lodash";
 import { fromJS } from "immutable";
 import { type RunOptions } from "@cocalc/conat/project/jupyter/run-code";
@@ -40,12 +40,20 @@ export function createJupyterSyncFilesystem(fs: Filesystem): Filesystem {
   }
   const sandboxHome =
     typeof (fs as any)?.path === "string" ? resolve((fs as any).path) : null;
+  const homePaths: string[] = [
+    ...(sandboxHome == null ? [] : [sandboxHome]),
+    ...((fs as any).homeAliases ?? []),
+  ];
   const rewriteProjectHomePath = (path: string): string | null => {
-    if (!isAbsolutePath(path) || sandboxHome == null) {
+    if (!isAbsolutePath(path)) {
       return null;
     }
-    if (path === sandboxHome || path.startsWith(`${sandboxHome}/`)) {
-      return relative(sandboxHome, path);
+    const normalized = posix.resolve(path);
+    // A workspace's advertised home is an alias, not a host absolute path.
+    for (const home of homePaths) {
+      if (normalized === home || normalized.startsWith(`${home}/`)) {
+        return relative(home, normalized);
+      }
     }
     return null;
   };

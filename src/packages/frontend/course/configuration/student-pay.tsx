@@ -2,6 +2,7 @@ import {
   Alert,
   Button,
   Card,
+  Checkbox,
   DatePicker,
   Popover,
   Radio,
@@ -55,6 +56,7 @@ export default function StudentPay({
   settings,
   project_id,
   onManageSeats,
+  onOpenComputeBudget,
 }) {
   const intl = useIntl();
   const emailAddress = useTypedRedux("account", "email_address");
@@ -183,6 +185,7 @@ export default function StudentPay({
       : settings?.get("student_pay")
         ? "student"
         : undefined;
+  const computeBudgetEnabled = !!settings?.get("compute_budget_enabled");
 
   useEffect(() => {
     if (
@@ -505,6 +508,27 @@ export default function StudentPay({
           ) : null}
         </Space>
       )}
+      <div style={{ marginTop: 16 }}>
+        <Checkbox
+          checked={computeBudgetEnabled}
+          onChange={(event) =>
+            actions.configuration.set_compute_budget_enabled(
+              event.target.checked,
+            )
+          }
+        >
+          Enable compute budget for this course
+        </Checkbox>
+        {computeBudgetEnabled && (
+          <Button
+            type="link"
+            style={{ paddingInline: 8 }}
+            onClick={onOpenComputeBudget}
+          >
+            Open compute budget
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }

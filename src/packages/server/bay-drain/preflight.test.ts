@@ -14,7 +14,7 @@ describe("bay drain preflight", () => {
 
   it("blocks unsupported owned tables without unsafe rehome", () => {
     const finding = evaluateBayDrainTable({
-      table: "purchases",
+      table: "accounts",
       source_bay_id: "bay-a",
       seed_bay_id: "seed",
     });
@@ -25,7 +25,7 @@ describe("bay drain preflight", () => {
 
   it("downgrades unsupported owned tables to warnings with unsafe rehome", () => {
     const finding = evaluateBayDrainTable({
-      table: "purchases",
+      table: "accounts",
       source_bay_id: "bay-a",
       seed_bay_id: "seed",
       unsafe_rehome: true,
@@ -34,21 +34,21 @@ describe("bay drain preflight", () => {
     expect(finding.severity).toBe("warn");
   });
 
-  it("blocks billing ledger tables during normal drain", () => {
+  it("warns about seed-global billing ledgers found on an attached bay", () => {
     const result = evaluateBayDrainPreflight({
       source_bay_id: "bay-a",
       seed_bay_id: "seed",
       tables: ["purchases", "statements"],
     });
 
-    expect(result.ok).toBe(false);
+    expect(result.ok).toBe(true);
     expect(result.findings.map((item) => item.severity)).toEqual([
-      "block",
-      "block",
+      "warn",
+      "warn",
     ]);
     expect(result.findings.map((item) => item.ownership)).toEqual([
-      "account-home",
-      "account-home",
+      "seed-global",
+      "seed-global",
     ]);
   });
 
@@ -93,7 +93,7 @@ describe("bay drain preflight", () => {
       ],
     });
 
-    expect(result.summary).toEqual({ ok: 1, warn: 0, block: 1, tables: 2 });
+    expect(result.summary).toEqual({ ok: 1, warn: 1, block: 0, tables: 2 });
     expect(result.findings.map((item) => item.estimated_rows)).toEqual([
       1000, 42,
     ]);

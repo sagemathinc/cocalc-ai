@@ -35,7 +35,11 @@ import {
   deleteOtherRememberMe,
   getRememberMeHash,
 } from "@cocalc/server/auth/remember-me";
-import { getWebAuthnRelyingPartyForRequest } from "@cocalc/server/auth/webauthn-origin";
+import {
+  getWebAuthnRelyingPartyForRequest,
+  validateWebAuthnRelyingParty,
+  type WebAuthnRelyingParty,
+} from "@cocalc/server/auth/webauthn-origin";
 import { displayNameFromAccount } from "@cocalc/util/accounts/display-name";
 import {
   generateRecoveryCodes,
@@ -606,9 +610,11 @@ async function getActivePasskeyByCredentialIdWithDb({
 export async function startSignInPasskeyAuthentication({
   req,
   challenge_id,
+  relying_party,
 }: {
-  req: Request;
+  req?: Request;
   challenge_id: string;
+  relying_party?: WebAuthnRelyingParty;
 }): Promise<PasskeyAuthenticationStart> {
   const challengeId = `${challenge_id ?? ""}`.trim();
   const challenge = (
@@ -636,7 +642,9 @@ export async function startSignInPasskeyAuthentication({
   if (passkeys.length === 0) {
     throw new Error("no active passkeys");
   }
-  const rp = await getWebAuthnRelyingPartyForRequest(req);
+  const rp = relying_party
+    ? validateWebAuthnRelyingParty(relying_party)
+    : await getWebAuthnRelyingPartyForRequest(req);
   const options = await generateAuthenticationOptions({
     rpID: rp.rp_id,
     allowCredentials: passkeys.map((row) => {

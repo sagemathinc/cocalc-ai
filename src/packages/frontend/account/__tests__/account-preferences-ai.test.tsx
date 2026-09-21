@@ -62,6 +62,10 @@ jest.mock("../lite-ai-settings", () => ({
   default: () => <div>LiteAISettings</div>,
 }));
 
+jest.mock("../agent-messaging-preference", () => ({
+  AgentMessagingPreference: () => <div>AgentMessagingPreference</div>,
+}));
+
 jest.mock("@cocalc/frontend/misc/ai-usage-status", () => ({
   AIUsageStatus: () => <div>AIUsageStatus</div>,
 }));

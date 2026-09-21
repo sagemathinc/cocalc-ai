@@ -30,7 +30,12 @@ export function isRefundable(
   service: Service,
   cost: number | null | undefined,
 ) {
-  return service !== "refund" && cost != null && Number.isFinite(Number(cost));
+  return (
+    service !== "refund" &&
+    service !== "credit-transfer" &&
+    cost != null &&
+    Number.isFinite(Number(cost))
+  );
 }
 
 const labelStyle = { width: "60px" } as const;

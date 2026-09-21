@@ -6581,11 +6581,6 @@ export async function startHost({
   }
   const row = await loadHostForStartStop(id, actor);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
-  await assertRequestedHostFundingModeAllowed({
-    account_id: billingOwner,
-    machine_cloud: row.metadata?.machine?.cloud,
-    funding_mode: currentHostFundingMode(row.metadata),
-  });
   assertHostBillingEnforcementAllowsStart(row.metadata);
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
@@ -6594,6 +6589,11 @@ export async function startHost({
     required: hostActionRequiresInteractiveFreshAuth(
       row.metadata?.machine?.cloud,
     ),
+  });
+  await assertRequestedHostFundingModeAllowed({
+    account_id: billingOwner,
+    machine_cloud: row.metadata?.machine?.cloud,
+    funding_mode: currentHostFundingMode(row.metadata),
   });
   await assertNoPendingDestructiveHostOp(row.id);
   await assertDedicatedHostAdmissionForAccount({

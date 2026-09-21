@@ -36,15 +36,15 @@ jest.mock("@cocalc/database/pool", () => ({
   })),
 }));
 
-jest.mock("@cocalc/backend/logger", () => ({
-  __esModule: true,
-  default: jest.fn(() => ({
+jest.mock("@cocalc/backend/logger", () => {
+  const logger = jest.fn(() => ({
     debug: jest.fn(),
     info: jest.fn(),
     warn: jest.fn(),
     error: jest.fn(),
-  })),
-}));
+  }));
+  return { __esModule: true, default: logger, getLogger: logger };
+});
 
 jest.mock("@cocalc/server/bay-config", () => ({
   getConfiguredBayId: jest.fn(() => "bay-1"),
@@ -315,6 +315,8 @@ describe("account rehome", () => {
       if (sql.includes("SELECT * FROM account_rehome_operations")) {
         return { rows: [operationRow] };
       }
+      if (sql.includes("to_regclass('public.account_financial_handoffs')"))
+        return { rows: [{ name: null }] };
       throw new Error(`unexpected query: ${sql}`);
     });
     resolveAccountHomeBayMock = jest.fn(
@@ -793,6 +795,8 @@ describe("account rehome", () => {
       if (sql.includes("SELECT * FROM account_rehome_operations")) {
         return { rows: [operationRow] };
       }
+      if (sql.includes("to_regclass('public.account_financial_handoffs')"))
+        return { rows: [{ name: null }] };
       throw new Error(`unexpected query: ${sql}`);
     });
 

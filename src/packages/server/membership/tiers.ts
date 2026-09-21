@@ -132,10 +132,12 @@ export async function getSeedMembershipTiers({
   includeDisabled = true,
   storeVisibleOnly = false,
   courseStoreVisibleOnly = false,
+  client,
 }: {
   includeDisabled?: boolean;
   storeVisibleOnly?: boolean;
   courseStoreVisibleOnly?: boolean;
+  client?: PoolClient;
 } = {}): Promise<MembershipTierRecord[]> {
   const seedBayId = getConfiguredClusterSeedBayId();
   if (getConfiguredBayId() === seedBayId) {
@@ -143,6 +145,7 @@ export async function getSeedMembershipTiers({
       includeDisabled,
       storeVisibleOnly,
       courseStoreVisibleOnly,
+      client,
     });
   }
   return (await getInterBayBridge()
@@ -156,21 +159,25 @@ export async function getSeedMembershipTiers({
 
 export async function getSeedMembershipTierMap({
   includeDisabled = true,
+  client,
 }: {
   includeDisabled?: boolean;
+  client?: PoolClient;
 } = {}): Promise<Record<string, MembershipTierRecord>> {
-  const tiers = await getSeedMembershipTiers({ includeDisabled });
+  const tiers = await getSeedMembershipTiers({ includeDisabled, client });
   return membershipTierMapFromTiers(tiers, { includeDisabled });
 }
 
 export async function getSeedMembershipTierById({
   id,
   includeDisabled = true,
+  client,
 }: {
   id: MembershipClass;
   includeDisabled?: boolean;
+  client?: PoolClient;
 }): Promise<MembershipTierRecord | undefined> {
-  return (await getSeedMembershipTierMap({ includeDisabled }))[id];
+  return (await getSeedMembershipTierMap({ includeDisabled, client }))[id];
 }
 
 export function membershipTierMapFromTiers(

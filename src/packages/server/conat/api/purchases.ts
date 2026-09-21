@@ -1,4 +1,14 @@
 import getBalance0 from "@cocalc/server/purchases/get-balance";
+export {
+  getMonthlyCollection,
+  proposeMonthlyCollection,
+} from "@cocalc/server/purchases/monthly-collection";
+export {
+  previewCreditTransfer,
+  proposeCreditTransfer,
+  getCreditTransferStatus,
+  listCreditTransfers,
+} from "@cocalc/server/purchases/credit-transfers/api";
 import getMinBalance0 from "@cocalc/server/purchases/get-min-balance";
 import { db } from "@cocalc/database";
 import {
@@ -131,7 +141,6 @@ import {
 import { getAIUsageStatus } from "@cocalc/server/ai/usage-status";
 import type { MoneyValue } from "@cocalc/util/money";
 import type { AutoBalanceConfig } from "@cocalc/util/db-schema/accounts";
-import isAdmin from "@cocalc/server/accounts/is-admin";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import purchaseMembershipPackage0, {
   purchaseMembershipPackages as purchaseMembershipPackages0,
@@ -161,6 +170,11 @@ import { requireFreshAuthForSessionHash } from "@cocalc/server/auth/auth-session
 import { getBrowserAuthSessionHash } from "@cocalc/server/conat/socketio/browser-auth-sessions";
 import { assertAccountTrustedForProductAccess } from "@cocalc/server/accounts/trusted-product-access";
 import { setAutoBalance as setAutoBalanceLocal } from "@cocalc/server/accounts/auto-balance";
+import {
+  isBillingAccountAdmin as isAdmin,
+  setBillingAutoBalance,
+} from "@cocalc/server/purchases/billing-account";
+import { isBillingAuthorityEnabled } from "@cocalc/server/purchases/billing-authority/config";
 import { hasCardPaymentMethod } from "@cocalc/server/purchases/stripe/get-payment-methods";
 import {
   backfillMembershipAnalyticsPurchaseEvents,
@@ -244,11 +258,25 @@ export async function setAutoBalance({
   if (auto_balance == null) {
     throw Error("auto_balance is required");
   }
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
   if (auto_balance.enabled) {
-    await assertAccountTrustedForProductAccess(
-      owner,
-      "configure automatic deposits",
-    );
+    if (home_bay_id === getConfiguredBayId()) {
+      await assertAccountTrustedForProductAccess(
+        owner,
+        "configure automatic deposits",
+      );
+    } else {
+      await createInterBayAccountLocalClient({
+        client: getInterBayFabricClient(),
+        dest_bay: home_bay_id,
+      }).assertProductAccessTrust({
+        account_id: owner,
+        action: "configure automatic deposits",
+      });
+    }
   }
   await requireFreshAuthForPurchaseAction({
     account_id: owner,
@@ -263,10 +291,9 @@ export async function setAutoBalance({
       { code: "payment_method_required" },
     );
   }
-  const home_bay_id = await resolveTargetAccountHomeBay({
-    account_id: owner,
-    user_account_id: owner,
-  });
+  if (isBillingAuthorityEnabled()) {
+    await setBillingAutoBalance({ account_id: owner, auto_balance });
+  }
   if (home_bay_id !== getConfiguredBayId()) {
     return await createInterBayAccountLocalClient({
       client: getInterBayFabricClient(),
@@ -926,6 +953,28 @@ async function validatePurchaseFreshAuth({
 }): Promise<void> {
   const owner = requireAccount(account_id);
   const cleanedSessionHash = `${session_hash ?? ""}`.trim();
+  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
+  if (!cleanedSessionHash && !cleanedBrowserId) {
+    throw Object.assign(new Error("fresh auth is required"), {
+      code: "fresh_auth_required",
+    });
+  }
+  const home_bay_id = await resolveTargetAccountHomeBay({
+    account_id: owner,
+    user_account_id: owner,
+  });
+  if (home_bay_id !== getConfiguredBayId()) {
+    await createInterBayAccountLocalClient({
+      client: getInterBayFabricClient(),
+      dest_bay: home_bay_id,
+    }).requireFreshAuth({
+      account_id: owner,
+      browser_id: cleanedBrowserId || undefined,
+      session_hash: cleanedSessionHash || undefined,
+      allow_actor_impersonation,
+    });
+    return;
+  }
   if (cleanedSessionHash) {
     await requireFreshAuthForSessionHash({
       account_id: owner,
@@ -933,12 +982,6 @@ async function validatePurchaseFreshAuth({
       allow_actor_impersonation,
     });
     return;
-  }
-  const cleanedBrowserId = `${browser_id ?? ""}`.trim();
-  if (!cleanedBrowserId) {
-    throw Object.assign(new Error("fresh auth is required"), {
-      code: "fresh_auth_required",
-    });
   }
   const browserSessionHash = getBrowserAuthSessionHash({
     account_id: owner,

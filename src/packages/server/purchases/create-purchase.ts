@@ -1,7 +1,8 @@
 import dayjs from "dayjs";
 
 import getLogger from "@cocalc/backend/logger";
-import getPool, { PoolClient } from "@cocalc/database/pool";
+import { getTransactionClient, type PoolClient } from "@cocalc/database/pool";
+import { lockAccountSpending } from "./lock-account-spending";
 import type { Service } from "@cocalc/util/db-schema/purchase-quotas";
 import type { Description } from "@cocalc/util/db-schema/purchases";
 import {
@@ -38,6 +39,25 @@ interface Options {
 }
 
 export default async function createPurchase(opts: Options): Promise<number> {
+  if (!opts.client) {
+    await (
+      await import("@cocalc/server/compute/funding/authority")
+    ).assertFundingAccountHome(opts.account_id);
+    const client = await getTransactionClient();
+    try {
+      const id = await createPurchase({ ...opts, client });
+      await client.query("COMMIT");
+      return id;
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+  // Serialization/fencing only. Already authorized settlement must not be
+  // subjected to a new balance-admission decision here.
+  await lockAccountSpending(opts.client, opts.account_id);
   let { cost_per_hour } = opts;
   const {
     account_id,
@@ -87,7 +107,7 @@ export default async function createPurchase(opts: Options): Promise<number> {
     // at the time spent generating the output.  But is that really meaningful?
   }
 
-  const { rows } = await (client ?? getPool()).query(
+  const { rows } = await client.query(
     "INSERT INTO purchases (time, account_id, project_id, cost, cost_per_hour, cost_so_far, period_start, period_end, service, description, invoice_id, notes, tag) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id",
     [
       time ?? new Date(),

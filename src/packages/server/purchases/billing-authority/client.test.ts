@@ -4,12 +4,17 @@
  */
 
 const mockHandleTransport = jest.fn();
+const mockCallSeedTransport = jest.fn();
 const mockDispatch = jest.fn();
 const mockClusterRole = jest.fn(() => "standalone");
 
 jest.mock("./service", () => ({
   handleBillingAuthorityTransportRequest: (...args: unknown[]) =>
     mockHandleTransport(...args),
+}));
+jest.mock("./inter-bay", () => ({
+  callSeedBillingAuthority: (...args: unknown[]) =>
+    mockCallSeedTransport(...args),
 }));
 jest.mock("./dispatch", () => ({
   dispatchBillingAuthorityCommand: (...args: unknown[]) =>
@@ -29,6 +34,7 @@ import {
   executeBillingAuthorityCommand,
   executeBillingHttpCommand,
   executeBillingHubApiCall,
+  assertBillingAuthorityTopology,
 } from "./client";
 import { resetBillingAuthorityContextForTests } from "./context";
 import type {
@@ -69,6 +75,19 @@ describe("durable billing authority client", () => {
             ok: true,
             value: record("succeeded", request.request.command_id, {
               result: 7,
+            }),
+          };
+        }
+        return { ok: true, value: null };
+      });
+    mockCallSeedTransport
+      .mockReset()
+      .mockImplementation(async (request: BillingAuthorityTransportRequest) => {
+        if (request.action === "submit") {
+          return {
+            ok: true,
+            value: record("succeeded", request.request.command_id, {
+              result: 9,
             }),
           };
         }
@@ -373,14 +392,34 @@ describe("durable billing authority client", () => {
     });
   });
 
-  it("fails closed on attached bays without a dedicated authenticated transport", async () => {
+  it("routes attached-bay reads and writes through the seed transport", async () => {
     mockClusterRole.mockReturnValue("attached");
+    expect(() => assertBillingAuthorityTopology()).not.toThrow();
     await expect(
       executeBillingAuthorityCommand({
         kind: "commercial-maintenance",
         task: "stripe-events",
       }),
-    ).rejects.toMatchObject({ code: 503, status: 503 });
+    ).resolves.toBe(9);
+    await expect(
+      executeBillingHubApiCall({
+        name: "purchases.getBalance",
+        args: [],
+      }),
+    ).resolves.toBe(9);
+    expect(mockDispatch).not.toHaveBeenCalled();
+    expect(mockHandleTransport).not.toHaveBeenCalled();
+    expect(mockCallSeedTransport).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed when the seed transport is unavailable", async () => {
+    mockClusterRole.mockReturnValue("attached");
+    mockCallSeedTransport.mockRejectedValue(
+      Object.assign(new Error("seed unavailable"), {
+        code: 503,
+        status: 503,
+      }),
+    );
     await expect(
       executeBillingHubApiCall({
         name: "purchases.getBalance",
