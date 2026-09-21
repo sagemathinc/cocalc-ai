@@ -22,6 +22,7 @@ describe("site-funded Codex policy", () => {
     });
     expect(config.enabled).toBe(true);
     expect(config.policy).toMatchObject({
+      version: 7,
       model: "gpt-5.6-luna",
       reasoning: "medium",
       serviceTier: "standard",
