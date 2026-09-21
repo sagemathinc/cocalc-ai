@@ -7,6 +7,7 @@ import {
   acpTestInternals,
   disposeAllChatWritersForTests,
   finalizeInterruptedAcpBackendState,
+  fenceAcpProjectAfterStop,
   isFatalAcpWorkerStorageError,
   isProjectAcpStorageError,
   recoverCurrentWorkerStuckAcpTurns,
@@ -100,6 +101,7 @@ jest.mock("@cocalc/project/logger", () => {
   };
 });
 jest.mock("../../sqlite/acp-turns", () => ({
+  fenceAcpTurnLeasesForProject: jest.fn(() => 0),
   countRunningAcpTurnLeasesForWorker: jest.fn(() => 0),
   startAcpTurnLease: jest.fn(),
   heartbeatAcpTurnLease: jest.fn(),
@@ -411,6 +413,36 @@ it("finalizes only the spoken turn when another turn starts in the same thread",
       }),
     }),
   );
+});
+
+it("project fencing retains a failed harness cleanup for the next attempt", async () => {
+  const request = makeRequest();
+  const dispose = jest
+    .fn()
+    .mockRejectedValueOnce(Error("temporary removal failure"))
+    .mockResolvedValue(undefined);
+  const unregister = acpTestInternals.registerInterruptAgentForTests(
+    "cleanup-retry-harness",
+    request.project_id,
+    { dispose } as any,
+    true,
+  );
+  try {
+    await expect(
+      fenceAcpProjectAfterStop({ project_id: request.project_id }),
+    ).rejects.toThrow("temporary removal failure");
+    expect(dispose).toHaveBeenCalledTimes(1);
+    await expect(
+      fenceAcpProjectAfterStop({ project_id: request.project_id }),
+    ).resolves.toMatchObject({ disposed_agents: 1 });
+    expect(dispose).toHaveBeenCalledTimes(2);
+    await expect(
+      fenceAcpProjectAfterStop({ project_id: request.project_id }),
+    ).resolves.toMatchObject({ disposed_agents: 0 });
+    expect(dispose).toHaveBeenCalledTimes(2);
+  } finally {
+    unregister();
+  }
 });
 
 it.each(["lost", "terminal", "live"])(

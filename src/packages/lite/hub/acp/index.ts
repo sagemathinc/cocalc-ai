@@ -7999,9 +7999,9 @@ async function executeAcpRequest({
     } catch (err) {
       logger.warn("evaluate: agent failed", { reqId, err });
       if (harnessKey) {
-        agents.delete(harnessKey);
-        agentProjectIds.delete(currentAgent);
         await currentAgent.dispose?.();
+        if (agents.get(harnessKey) === currentAgent) agents.delete(harnessKey);
+        agentProjectIds.delete(currentAgent);
       }
       // A persisted, provider-confirmed cancellation is terminal, not a
       // failure. The adapter still throws so its retained process is disposed.
@@ -12911,9 +12911,10 @@ export async function fenceAcpProjectAfterStop({
           },
         );
         throw err;
-      } finally {
-        agents.delete(key);
       }
+      // Retain failed cleanup for a later fence instead of losing its handle.
+      if (agents.get(key) === agent) agents.delete(key);
+      agentProjectIds.delete(agent);
     }),
   );
   // Disposal is asynchronous. Sweep again so a losing completion/recovery race
