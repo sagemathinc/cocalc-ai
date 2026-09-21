@@ -1502,6 +1502,17 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Additional Question Lifecycle Coverage
+
+The real-stdio client suite now has 89 passing tests. New cases verify that a
+rejected question handler and a schema-invalid answer each release the pending
+question slot, allowing a subsequent valid question to return its exact answer.
+Disposing a session while its handler waits aborts the handler signal, reports
+the delivered prompt as `outcome_unknown`, and rejects reuse even after the old
+handler resolves. These are subprocess lifecycle checks, not new claims about
+browser QA recovery, cross-project messaging, or unsupported async elicitation.
+No production behavior was changed for these cases.
+
 ## Tool Output Keyboard Navigation
 
 Generic tool output now exposes its height-limited `pre` as a named, focusable

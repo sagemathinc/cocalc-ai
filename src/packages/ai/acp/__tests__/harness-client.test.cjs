@@ -780,6 +780,64 @@ test("unavailable ACP question callbacks fail explicitly instead of hanging", as
   });
   assert.deepEqual(JSON.parse(chunks.join("")), { rejected: true });
 });
+for (const failure of ["handler rejection", "invalid answer"]) {
+  test(`${failure} releases the question slot for a valid follow-up`, async (t) => {
+    let calls = 0;
+    const client = await start(t, [], async () => {
+      calls++;
+      if (calls === 1) {
+        if (failure === "handler rejection")
+          throw Error("Private handler detail");
+        return { target: { answers: ["not-an-option"] } };
+      }
+      return { target: { answers: ["staging"] } };
+    });
+    await client.open();
+    const rejected = [];
+    await client.prompt("question", async (event) => {
+      if (event.type === "message") rejected.push(event.text);
+    });
+    assert.deepEqual(JSON.parse(rejected.join("")), { rejected: true });
+    const accepted = [];
+    await client.prompt("question", async (event) => {
+      if (event.type === "message") accepted.push(event.text);
+    });
+    assert.equal(calls, 2);
+    assert.deepEqual(JSON.parse(accepted.join("")), {
+      action: "accept",
+      content: { target: "staging" },
+    });
+  });
+}
+
+test("disposing a waiting question aborts its handler and rejects session reuse", async (t) => {
+  let ready, answer, questionSignal;
+  const entered = new Promise((resolve) => (ready = resolve));
+  const client = await start(t, [], async (_questions, signal) => {
+    questionSignal = signal;
+    ready();
+    return new Promise((resolve) => (answer = resolve));
+  });
+  await client.open();
+  const pending = assert.rejects(
+    client.prompt("question", async () => {}),
+    {
+      code: "outcome_unknown",
+    },
+  );
+  await entered;
+  await client.dispose();
+  assert.equal(questionSignal.aborted, true);
+  await pending;
+  answer({ target: { answers: ["local"] } });
+  await assert.rejects(
+    client.prompt("question", async () => {}),
+    {
+      code: "unavailable",
+    },
+  );
+});
+
 for (const variant of ["optional", "pattern", "boolean"]) {
   test(`unsupported ${variant} form never opens QA and leaves valid follow-up usable`, async (t) => {
     let questions = 0;
