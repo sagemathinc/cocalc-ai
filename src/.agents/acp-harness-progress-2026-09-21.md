@@ -252,9 +252,36 @@ provider key. Pi's executable uses `env node`; the launcher must include the
 directory of the installed Node executable in PATH, not just `/usr/bin`.
 
 This proves protocol/tool compatibility without API keys. It does not prove model
-quality or offline operation under blocked public egress. Later snapshot and
-browser-to-worker checks are recorded separately above. Public egress was not
-blocked during qualification.
+quality. Later snapshot and browser-to-worker checks are recorded separately
+above. Public egress was not blocked during those durable browser checks; the
+separate offline probe below has a narrower, explicit network boundary.
+
+### Offline Protocol Qualification
+
+Both pinned harnesses also passed in disposable Podman containers using
+`--network=none`, read-only rootfs and project mounts, fresh writable tmpfs,
+and no CoCalc credentials or project-secret mount. Their provider was the same
+deterministic loopback simulator, not a real inference model. The existing live
+project network was not modified.
+
+The smoke tool's `--require-loopback-only` flag verifies Linux, absence of
+non-loopback interface addresses and IPv4 routes, and an external TCP connect
+failing with `ENETUNREACH` before starting the harness. It does not configure
+isolation itself. Running it in the ordinary networked development environment
+correctly failed before harness launch. Both isolated runs reported
+`networkBoundary: loopback-only-verified`, completed a real file-write tool call
+and same-session follow-up, and used three simulated provider calls for Pi and
+four for OpenCode. Discovery made no inference calls.
+
+The host's installed Node executable has `cap_net_bind_service=ep`; dropping
+every capability prevented exec with EPERM. The successful probe kept only
+NET_BIND_SERVICE, with no-new-privileges, no external network and no privileged
+container mode. Neither probe container remained after completion.
+
+This qualifies offline ACP/provider protocol and tool use for these installed
+versions, not a finished egress-policy feature, absence of attempted telemetry,
+the durable browser path under restricted networking, or actual local-model
+inference. Those distinctions remain important for the on-prem release gate.
 
 ### Queued Agent-Network Integration
 
@@ -308,6 +335,13 @@ project, and run one of:
 node smoke.cjs /absolute/path/to/node_modules/.bin/opencode
 node smoke.cjs /absolute/path/to/node_modules/.bin/pi-acp pi
 ```
+
+For the offline check, run the same bundled tool inside a separately provisioned
+Linux container with `--network=none`, the pinned packages available read-only,
+and writable scratch space. Append `--require-loopback-only` to either command.
+The probe creates its own loopback provider; no network proxy, API key or real
+model service is needed. Merely setting that flag in a networked container must
+fail rather than claim offline qualification.
 
 Install the exact package versions above first. Installation is explicit; the
 client never installs packages. Set `COCALC_ACP_SMOKE_DEBUG=1` only for this fake

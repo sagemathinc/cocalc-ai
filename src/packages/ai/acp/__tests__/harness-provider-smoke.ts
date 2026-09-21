@@ -6,16 +6,51 @@
 import { createServer } from "node:http";
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, writeFile, readFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, networkInterfaces } from "node:os";
+import { connect } from "node:net";
 import { join, dirname } from "node:path";
 import assert from "node:assert/strict";
 import { AcpHarnessClient } from "../harness-client";
+
+async function verifyLoopbackOnly() {
+  assert.equal(process.platform, "linux", "Offline probe requires Linux");
+  assert.ok(
+    Object.values(networkInterfaces())
+      .flat()
+      .every((entry) => entry?.internal),
+    "Offline probe has a non-loopback interface",
+  );
+  assert.equal(
+    (await readFile("/proc/net/route", "utf8")).trim().split("\n").length,
+    1,
+    "Offline probe has an IPv4 route",
+  );
+  // No application data is sent. Require a routing error, not merely a timeout.
+  const outcome = await new Promise<string>((resolve) => {
+    const socket = connect({ host: "1.1.1.1", port: 443 });
+    socket.setTimeout(2000);
+    socket.once("connect", () => {
+      socket.destroy();
+      resolve("connected");
+    });
+    socket.once("error", (error: NodeJS.ErrnoException) =>
+      resolve(error.code ?? "unknown"),
+    );
+    socket.once("timeout", () => {
+      socket.destroy();
+      resolve("timeout");
+    });
+  });
+  assert.equal(outcome, "ENETUNREACH");
+}
 
 async function main() {
   const executable = process.argv[2];
   const pi = process.argv[3] === "pi";
   if (!executable?.startsWith("/"))
     throw Error("Pass an absolute path to pinned OpenCode or pi-acp");
+  const offline = process.argv.includes("--require-loopback-only");
+  if (offline) await verifyLoopbackOnly();
   const home = await mkdtemp(join(tmpdir(), "cocalc-acp-smoke-"));
   const cwd = join(home, "workspace");
   await mkdir(cwd);
@@ -275,6 +310,7 @@ async function main() {
     process.stdout.write(
       JSON.stringify({
         ok: true,
+        networkBoundary: offline ? "loopback-only-verified" : "not-checked",
         agent: capabilities.agentInfo,
         loadSession: capabilities.agentCapabilities?.loadSession,
         controls: {
