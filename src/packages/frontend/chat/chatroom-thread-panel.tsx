@@ -52,6 +52,8 @@ import type {
   AcpAutomationConfig,
 } from "@cocalc/conat/ai/acp/types";
 import { ChatLog } from "./chat-log";
+import { SearchHitTime } from "./search-hit-time";
+import { THREAD_SEARCH_EVENT } from "./thread-search-request";
 import { AgentMessageStatus } from "./agent-message-status";
 import CodexConfigButton, { codexModelOptionsForCatalog } from "./codex";
 import { ThreadAnchorButton } from "./thread-anchor-button";
@@ -769,6 +771,21 @@ export function ChatRoomThreadPanel({
     () => normalizeThreadKey(selectedThreadKey),
     [selectedThreadKey],
   );
+  useEffect(() => {
+    const open = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (
+        detail?.projectId !== project_id ||
+        detail?.path !== path ||
+        detail?.threadId !== selectedThreadId
+      )
+        return;
+      setThreadSearchOpen(true);
+      setTimeout(() => searchInputRef.current?.focus?.(), 0);
+    };
+    window.addEventListener(THREAD_SEARCH_EVENT, open);
+    return () => window.removeEventListener(THREAD_SEARCH_EVENT, open);
+  }, [project_id, path, selectedThreadId]);
   const selectedThreadMeta =
     selectedThreadId != null
       ? actions.getThreadMetadata(selectedThreadId, {
@@ -924,7 +941,7 @@ export function ChatRoomThreadPanel({
         excerpt: threadSearchExcerpt(content, threadSearchQuery),
       });
     }
-    return matches;
+    return matches.sort((a, b) => Number(b.date) - Number(a.date));
   }, [threadSearchQuery, selectedThreadMessages]);
   const threadSearchMatches = useMemo(
     () => threadSearchResults.map(({ date }) => date),
@@ -2587,6 +2604,7 @@ export function ChatRoomThreadPanel({
                   }}
                 >
                   {result.excerpt || "(empty message)"}
+                  <SearchHitTime date={Number(result.date)} />
                 </Button>
               ))}
             </section>
@@ -2613,10 +2631,6 @@ export function ChatRoomThreadPanel({
                 archivedSearchHits
                   .slice(0, ARCHIVED_INLINE_PREVIEW_LIMIT)
                   .map((hit) => {
-                    const when =
-                      typeof hit.date_ms === "number"
-                        ? new Date(hit.date_ms).toLocaleString()
-                        : "";
                     const text = (hit.snippet ?? hit.excerpt ?? "")
                       .replace(/<[^>]*>/g, " ")
                       .replace(/\s+/g, " ")
@@ -2637,7 +2651,7 @@ export function ChatRoomThreadPanel({
                         }}
                       >
                         <div style={{ fontSize: 11, color: "#888" }}>
-                          {when}
+                          <SearchHitTime date={Number(hit.date_ms)} />
                         </div>
                         <div>{text || "(no preview)"}</div>
                       </div>

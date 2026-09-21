@@ -10,7 +10,7 @@ import {
   readChatStoreArchived,
   readChatStoreArchivedHit,
   rotateChatStore,
-  searchChatStoreArchived,
+  searchChatStore,
   vacuumChatStore,
 } from "@cocalc/backend/chat-store/sqlite-offload";
 import { uuid, isValidUUID } from "@cocalc/util/misc";
@@ -3463,6 +3463,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }
 
   async function chatStoreSearch({
+    include_head,
     account_id,
     project_id,
     chat_path,
@@ -3473,6 +3474,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     limit,
     offset,
   }: {
+    include_head?: boolean;
     account_id?: string;
     project_id: string;
     chat_path: string;
@@ -3495,7 +3497,8 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       chat_path,
       db_path,
     });
-    return await searchChatStoreArchived({
+    return await searchChatStore({
+      include_head,
       ...paths,
       query,
       thread_id,

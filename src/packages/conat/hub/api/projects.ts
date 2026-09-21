@@ -2581,6 +2581,7 @@ export interface Projects {
   }) => Promise<{ chat_id: string; row?: ChatStoreArchivedRow }>;
 
   chatStoreSearch: (opts: {
+    include_head?: boolean;
     account_id?: string;
     project_id: string;
     chat_path: string;
@@ -2591,6 +2592,7 @@ export interface Projects {
     limit?: number;
     offset?: number;
   }) => Promise<{
+    includes_head?: boolean;
     chat_id: string;
     hits: ChatStoreSearchHit[];
     offset: number;

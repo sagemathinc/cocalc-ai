@@ -7181,6 +7181,7 @@ export async function chatStoreReadArchivedHit({
 }
 
 export async function chatStoreSearch({
+  include_head,
   account_id,
   project_id,
   chat_path,
@@ -7191,6 +7192,7 @@ export async function chatStoreSearch({
   limit,
   offset,
 }: {
+  include_head?: boolean;
   account_id?: string;
   project_id: string;
   chat_path: string;
@@ -7203,6 +7205,7 @@ export async function chatStoreSearch({
 }) {
   await assertCollab({ account_id, project_id });
   return await workspaceChatStoreSearch({
+    include_head,
     project_id,
     chat_path,
     query,

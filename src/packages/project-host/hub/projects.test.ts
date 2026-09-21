@@ -168,7 +168,7 @@ jest.mock("@cocalc/backend/chat-store/sqlite-offload", () => ({
   readChatStoreArchived: (...args: any[]) => readChatStoreArchived(...args),
   readChatStoreArchivedHit: (...args: any[]) =>
     readChatStoreArchivedHit(...args),
-  searchChatStoreArchived: (...args: any[]) => searchChatStoreArchived(...args),
+  searchChatStore: (...args: any[]) => searchChatStoreArchived(...args),
   deleteChatStoreData: (...args: any[]) => deleteChatStoreData(...args),
   vacuumChatStore: (...args: any[]) => vacuumChatStore(...args),
 }));

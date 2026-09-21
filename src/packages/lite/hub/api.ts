@@ -97,7 +97,7 @@ import {
   readChatStoreArchived,
   readChatStoreArchivedHit,
   rotateChatStore,
-  searchChatStoreArchived,
+  searchChatStore,
   vacuumChatStore,
 } from "./sqlite/chat-offload";
 import {
@@ -1556,6 +1556,7 @@ export const hubApi: HubApi = {
       });
     },
     chatStoreSearch: (opts: {
+      include_head?: boolean;
       chat_path: string;
       query: string;
       db_path?: string;
@@ -1564,7 +1565,8 @@ export const hubApi: HubApi = {
       limit?: number;
       offset?: number;
     }) => {
-      return searchChatStoreArchived({
+      return searchChatStore({
+        include_head: opts.include_head,
         chat_path: opts.chat_path,
         query: opts.query,
         db_path: opts.db_path,

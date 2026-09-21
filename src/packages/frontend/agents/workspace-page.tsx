@@ -31,6 +31,9 @@ import {
 } from "@cocalc/util/ai/codex";
 import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
+import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
+import { AgentSearch } from "./search";
+import type { AgentSearchHit } from "./search-runner";
 import { ChatEmbeddingOptionsProvider } from "@cocalc/frontend/chat/embedding-options";
 import { ThreadBadge } from "@cocalc/frontend/chat/thread-badge";
 import { ThreadImageUpload } from "@cocalc/frontend/chat/thread-image-upload";
@@ -1464,7 +1467,7 @@ function AgentProjectContext({
           selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
-          hideTopControls: true,
+          hideTopControls: false,
           hideCompactThreadHeader: true,
           hideComposerIdentity: true,
           openFilesInWorkbench: true,
@@ -1965,7 +1968,12 @@ function AgentWorkspace({
                 key: "workspace-find",
                 label: "Find in conversation",
                 icon: <Icon name="search" />,
-                onClick: () => runFrameAction("show_search"),
+                onClick: () =>
+                  requestThreadSearch(
+                    agent.endpoint.project_id,
+                    agent.path,
+                    selectedThread || agent.thread_id,
+                  ),
               },
               {
                 key: "workspace-appearance",
@@ -2156,6 +2164,7 @@ function AgentWorkspace({
 }
 
 export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
+  const searchProjectMap = useTypedRedux("projects", "project_map");
   const { pageStyle } = useAppContext();
   const isNarrow = pageStyle.isNarrow;
   const { directory, error, loading } = useNamedAgents();
@@ -2460,6 +2469,58 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     });
     refreshNamedAgents();
     selectAgentId(agent.endpoint.agent_id);
+  }
+
+  async function openSearchHit(result: AgentSearchHit) {
+    const { agent, threadId, hit, historical } = result;
+    const identity = await personalAgentApi().getIdentity({
+      project_id: agent.endpoint.project_id,
+      agent_id: agent.endpoint.agent_id,
+    });
+    if (!historical && identity.thread_id !== threadId)
+      throw new Error(
+        "This agent started a fresh conversation. Search again to open its current results.",
+      );
+    await ensureProjectReduxRuntime();
+    if (historical) {
+      await redux.getActions("projects").open_project({
+        project_id: agent.endpoint.project_id,
+        target: "files/",
+        switch_to: true,
+      });
+    } else {
+      selectAgentId(agent.endpoint.agent_id);
+    }
+    await redux.getProjectActions(agent.endpoint.project_id).open_file({
+      path: agent.path,
+      embedded: !historical,
+      foreground: historical,
+      foreground_project: historical,
+      wait_for_ready: true,
+      change_history: false,
+    });
+    const editor: any = redux.getEditorActions(
+      agent.endpoint.project_id,
+      agent.path,
+    );
+    if (!editor) throw new Error("Unable to open the conversation editor");
+    await editor.gotoFragment({ thread: threadId });
+    const chat = editor.getChatActions();
+    if (!chat) throw new Error("Conversation is not ready; try again shortly");
+    if (hit.segment_id !== "head") {
+      const { webapp_client } = await import("@cocalc/frontend/webapp-client");
+      const archived =
+        await webapp_client.conat_client.hub.projects.chatStoreReadArchivedHit({
+          project_id: agent.endpoint.project_id,
+          chat_path: agent.path,
+          thread_id: threadId,
+          row_id: hit.row_id,
+        });
+      if (!archived.row?.row)
+        throw new Error("Archived message is no longer available");
+      chat.hydrateArchivedRows([archived.row.row]);
+    }
+    await editor.gotoFragment({ thread: threadId, chat: hit.date_ms });
   }
 
   async function copyAgent(copyName: string) {
@@ -2872,6 +2933,24 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             setMobileList(false);
           }}
         />
+        {accountId && (
+          <AgentSearch
+            accountId={accountId}
+            agents={agents}
+            activity={agentOrganization.organization.lastOpened}
+            active={active}
+            onSelect={openSearchHit}
+            available={(agent) =>
+              agent.available &&
+              (lite ||
+                searchProjectMap?.getIn([
+                  agent.endpoint.project_id,
+                  "state",
+                  "state",
+                ]) === "running")
+            }
+          />
+        )}
         <Input.Search
           allowClear
           aria-label="Search agents"
