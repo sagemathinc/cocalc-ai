@@ -1806,6 +1806,21 @@ This is deterministic regression coverage, not live qualification of the rare
 Podman removal-timeout fallback. This follow-up is not in the deployment recorded
 above.
 
+## Normal Package Test Integration
+
+The standard AI Jest command previously skipped the `.test.cjs` real-stdio
+suite; only the explicit `test:harness` command ran it. A Jest entry point now
+runs that suite as a bounded subprocess and surfaces its failure output. This
+keeps the Node test runner and real-process fixtures intact while including them
+in the normal workspace/CI package lane. `pnpm test --runInBand` in the AI package
+passes 13 Jest suites / 141 Jest tests, including the wrapper which ran all 94
+real-stdio cases. Do not count the wrapper as 94 separate Jest tests.
+
+GitHub Actions has no run for the current stacked PR because the workflow's PR
+base filter targets `main`, not `feature/my-agents-workspace`. The branch filter
+is unchanged; these are local package-command results, not a claim of green
+remote CI.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
