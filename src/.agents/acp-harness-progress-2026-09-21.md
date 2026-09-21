@@ -5,6 +5,18 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+Discovery cleanup fix `f023aa2cf2` is deployed as backend
+`20260921T160219Z-f023aa2cf21e-dirty-e3b0c442`, SHA256
+`15557398ed28627e38c4897fedfb09a75a544a97f656ebe1db0a4b5589439b4d`.
+Upgrade `197a2230-cf96-45ca-b377-1cdf42685f45` succeeded with managed-component
+alignment. The suffix again reflects the unrelated untracked PNG. One keyboard
+discovery request on agent-3 loaded the Model control; the disposable project's
+job count stayed 66 and newest creation timestamp stayed `1790005755629`, with
+no active jobs afterward. This verifies ordinary discovery after deployment,
+not live injected cleanup failure. Focused evidence for the latter is 17
+discovery/runtime tests plus the shared classifier's subprocess coverage (74
+subprocess tests passed); project-host TypeScript also passed.
+
 Full `pnpm -C src build:dev` passed at `a7db098b72`, including workspace install,
 generated translations/assets, frontend and backend compilation, and Python API
 documentation. The build was observed to terminal exit zero; no tests were run
