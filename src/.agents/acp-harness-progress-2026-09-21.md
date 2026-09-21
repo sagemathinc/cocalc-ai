@@ -178,6 +178,15 @@ normalized successfully and both harnesses repeated the file-write/follow-up
 check with three/four local fake-provider calls respectively. This is catalog
 discovery evidence, not qualification of every individual control value.
 
+Commit `08081ddb28` passed the full development build, frontend lint, all 140
+existing AI tests, 27 subprocess tests, 62 focused frontend tests, three control
+normalization tests and 149 writer/admission/worker tests. Host upgrade operation
+`847b0a8b-de49-4b37-b139-162f50b42ea6` deployed bundle
+`20260921T085034Z-08081ddb28ad`. Browser-created `agent-3` in the disposable
+project uses the deterministic fixture with `--config-options`: its first turn
+returned `fast/code`, the Model selector changed to Deep using the keyboard,
+the selection survived a full reload, and the next turn returned `deep/code`.
+
 ## Validation And Real Harnesses
 
 The initial backend checkpoint passed the AI package build, all 140 existing AI
