@@ -59,6 +59,7 @@ export default async function getCheckoutSession({
   lineItems,
   return_url,
   metadata,
+  checkout_instance_id,
 }: Options): Promise<CheckoutSessionSecret> {
   logger.debug("getCheckoutSession", {
     account_id,
@@ -70,6 +71,12 @@ export default async function getCheckoutSession({
   });
   assertInteractivePaymentPurpose(purpose);
   assertValidStripePaymentInput({ purpose, description, lineItems, metadata });
+  if (
+    checkout_instance_id != null &&
+    !/^[a-zA-Z0-9-]{1,64}$/.test(checkout_instance_id)
+  ) {
+    throw Error("invalid checkout instance id");
+  }
   await assertPaymentCheckoutAllowed();
 
   let total = toDecimal(0);
@@ -98,6 +105,7 @@ export default async function getCheckoutSession({
   metadata = {
     ...baseMetadata,
     checkout_key,
+    ...(checkout_instance_id ? { checkout_instance_id } : {}),
   };
 
   if (!return_url) {
@@ -121,9 +129,12 @@ export default async function getCheckoutSession({
         logger.debug("getCheckoutSession: expiring checkout session");
         // The line items or description changed or its older than an hour, so don't use it.
         await stripe.checkout.sessions.expire(session.id);
-      } else {
+      } else if (
+        session.metadata?.checkout_instance_id == checkout_instance_id
+      ) {
         logger.debug("getCheckoutSession: using existing checkout session");
-        // we use it -- same line items
+        // Reuse only within one mounted checkout component. Stripe rejects a
+        // second Embedded Checkout object created from the same client secret.
         return { clientSecret: session.client_secret, sessionId: session.id };
       }
     }

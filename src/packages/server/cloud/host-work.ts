@@ -1253,11 +1253,24 @@ async function reconcileRuntimeNetworkAfterStart(
 async function reconcileDesiredPublicRouteAfterReady({
   host,
   providerId,
+  verificationPayload,
 }: {
   host: any;
   providerId?: string;
+  verificationPayload?: Record<string, any>;
 }): Promise<void> {
-  if (providerId !== "gcp" || hostPublicRouteMigrationInProgress(host)) {
+  if (providerId !== "gcp") {
+    return;
+  }
+  if (hostPublicRouteMigrationInProgress(host)) {
+    // A terminated worker's readiness lease expires before the migration
+    // marker does. Keep a durable retry instead of completing the last check.
+    await enqueueCloudVmWork({
+      vm_id: host.id,
+      action: "verify_host_ready",
+      not_before: new Date(Date.now() + 60_000),
+      payload: { ...verificationPayload, provider: providerId },
+    });
     return;
   }
   const desiredMode = desiredHostPublicRouteMode(host);
@@ -3066,7 +3079,11 @@ async function handleVerifyHostReady(row: any) {
         err,
       });
     }
-    await reconcileDesiredPublicRouteAfterReady({ host, providerId });
+    await reconcileDesiredPublicRouteAfterReady({
+      host,
+      providerId,
+      verificationPayload: row.payload,
+    });
     return;
   }
 

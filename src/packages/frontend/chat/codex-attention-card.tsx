@@ -18,6 +18,7 @@ import {
 } from "@cocalc/frontend/app-framework";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { CODEX_ATTENTION_ANSWER_MAX_LENGTH } from "@cocalc/util/ai/codex-attention";
 import { isValidUUID } from "@cocalc/util/misc";
 import { appendUrlPath } from "@cocalc/util/url-path";
 import { appBasePath } from "@cocalc/frontend/customize/app-base-path";
@@ -228,7 +229,11 @@ function RuntimeCodexAttentionCard({
     [draft, record.questions],
   );
   const canSubmit = record.questions.every(
-    ({ id }) => (answers[id]?.length ?? 0) > 0,
+    ({ id }) =>
+      (answers[id]?.length ?? 0) > 0 &&
+      answers[id].every(
+        (answer) => answer.length <= CODEX_ATTENTION_ANSWER_MAX_LENGTH,
+      ),
   );
 
   const respond = async (decline = false) => {
@@ -467,6 +472,23 @@ function RuntimeCodexAttentionCard({
                         }));
                       }}
                     />
+                    <div role="status" aria-live="polite">
+                      <Text
+                        type={
+                          (draft.other[question.id] ?? "").trim().length >
+                          CODEX_ATTENTION_ANSWER_MAX_LENGTH
+                            ? "danger"
+                            : "secondary"
+                        }
+                      >
+                        {(draft.other[question.id] ?? "").trim().length} /{" "}
+                        {CODEX_ATTENTION_ANSWER_MAX_LENGTH} characters
+                        {(draft.other[question.id] ?? "").trim().length >
+                        CODEX_ATTENTION_ANSWER_MAX_LENGTH
+                          ? ` (${(draft.other[question.id] ?? "").trim().length - CODEX_ATTENTION_ANSWER_MAX_LENGTH} over the limit)`
+                          : ""}
+                      </Text>
+                    </div>
                   </div>
                 ) : null}
               </fieldset>

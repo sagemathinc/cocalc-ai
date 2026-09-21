@@ -1956,7 +1956,6 @@ export class JupyterActions extends JupyterActions0 {
   };
 
   show_keyboard_shortcuts = (): void => {
-    this.requireToggleReadonly();
     this.blur_lock();
     this.setState({ keyboard_shortcuts: { show: true } });
   };

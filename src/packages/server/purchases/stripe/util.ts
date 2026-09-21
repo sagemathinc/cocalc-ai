@@ -49,6 +49,7 @@ const RESERVED_USER_METADATA_KEYS = new Set([
   "account_id",
   "cocalc_site",
   "checkout_key",
+  "checkout_instance_id",
   "confirm",
   "lineItems",
   "processed",
