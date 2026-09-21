@@ -14,7 +14,7 @@ import {
 } from "@cocalc/frontend/auth/fresh-auth";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
-import { personalAgentApi, sameEndpoint } from "./api";
+import { personalAgentApi, refreshAgentNetworks, sameEndpoint } from "./api";
 import { useBoundAgentAccount } from "./use-bound-account";
 import { useSourceAgentName } from "./source-agent-name";
 import type { AgentNameContext } from "./name-context";
@@ -196,6 +196,7 @@ export function NetworkApproval({
       boundAccount.assertCurrent();
       if (!alive.current) throw new Error("The network context changed.");
       if (sharedNetwork) {
+        refreshAgentNetworks();
         onClose(true);
         return;
       }
@@ -224,6 +225,7 @@ export function NetworkApproval({
         }
       });
       if (!completed) return;
+      refreshAgentNetworks();
       requestIds.current.clear();
       if (alive.current) onClose(true);
     } catch (err) {

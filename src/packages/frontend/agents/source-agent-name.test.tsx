@@ -59,6 +59,7 @@ jest.mock("@cocalc/frontend/app-framework", () => ({
 jest.mock("./api", () => ({
   personalAgentApi: () => mockApi,
   refreshNamedAgents: jest.fn(),
+  refreshAgentNetworks: jest.fn(),
   sameEndpoint: (a, b) =>
     a.project_id === b.project_id && a.agent_id === b.agent_id,
   useNamedAgents: () => ({

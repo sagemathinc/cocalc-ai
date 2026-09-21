@@ -25,7 +25,7 @@ import {
 import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { uuid } from "@cocalc/util/misc";
-import { personalAgentApi, sameEndpoint } from "./api";
+import { personalAgentApi, refreshAgentNetworks, sameEndpoint } from "./api";
 import { openAgentThread } from "./open-agent";
 import {
   AgentNetworkProposalSummary,
@@ -116,6 +116,7 @@ export function AgentNetworks({ agents }: { agents: NamedAgent[] }) {
           })
         : await action().then(() => true);
       if (completed) {
+        refreshAgentNetworks();
         requestIds.current.delete(key);
         setNotice(success);
         await refresh();
