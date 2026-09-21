@@ -4,8 +4,21 @@
  */
 
 import { createContext, useContext, type ReactNode } from "react";
+import { tab_to_path } from "@cocalc/util/misc";
+
+export function chatIsForeground(
+  path: string,
+  activeProjectTab: string | undefined,
+  agentWorkspace = false,
+  visible = true,
+) {
+  return agentWorkspace
+    ? visible
+    : tab_to_path(activeProjectTab ?? "") === path;
+}
 
 export interface ChatEmbeddingOptions {
+  agentWorkspace?: boolean;
   selectedNetworkId?: string;
   disableConversationFocus?: boolean;
   hideSingleFrameToolbar?: boolean;

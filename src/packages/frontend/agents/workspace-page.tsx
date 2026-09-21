@@ -1458,6 +1458,7 @@ function AgentProjectContext({
     <ProjectContext.Provider value={projectContext}>
       <ChatEmbeddingOptionsProvider
         value={{
+          agentWorkspace: true,
           selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
@@ -1502,8 +1503,6 @@ function AgentsWorkspaceNavigation({
 
 function AgentWorkspace({
   onCopy,
-  projectAgents,
-  onSelectAgent,
   workspaceKey,
   agent,
   workspaceAgents,
@@ -1523,8 +1522,6 @@ function AgentWorkspace({
   onOpenNetwork,
 }: {
   onCopy: (agent: NamedAgent) => void;
-  projectAgents: NamedAgent[];
-  onSelectAgent: (agent: NamedAgent) => void;
   workspaceKey: string;
   agent: NamedAgent;
   workspaceAgents: NamedAgent[];
@@ -1905,46 +1902,6 @@ function AgentWorkspace({
             )}
             <span aria-hidden="true">·</span>
             <AgentProjectStatus agent={agent} active={active} />
-            <Dropdown
-              trigger={["click"]}
-              menu={{
-                selectable: true,
-                selectedKeys: [displayedAgent.endpoint.agent_id],
-                items: projectAgents.map((projectAgent) => ({
-                  key: projectAgent.endpoint.agent_id,
-                  icon: <Icon name="robot" />,
-                  label: projectAgent.thread_title || `@${projectAgent.name}`,
-                  title: `@${projectAgent.name}`,
-                })),
-                onClick: ({ key }) => {
-                  const nextAgent = projectAgents.find(
-                    ({ endpoint }) => endpoint.agent_id === key,
-                  );
-                  if (nextAgent) onSelectAgent(nextAgent);
-                },
-              }}
-            >
-              <Button
-                type="text"
-                aria-label={`Choose agent in project ${displayedAgent.project_title || agent.endpoint.project_id}`}
-                title="Choose another registered agent in this project"
-                style={{
-                  color: "inherit",
-                  flex: "0 1 auto",
-                  maxWidth: "45%",
-                  minWidth: 0,
-                  overflow: "hidden",
-                  padding: 0,
-                  height: "auto",
-                  fontSize: 12,
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {displayedAgent.project_title || agent.endpoint.project_id}
-                <Icon name="caret-down" style={{ marginLeft: 4 }} />
-              </Button>
-            </Dropdown>
             {workingDirectoryLabel && (
               <Button
                 type="text"
@@ -3273,11 +3230,6 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
               return (
                 <AgentWorkspace
                   onCopy={openCopyAgent}
-                  projectAgents={agents.filter(
-                    ({ endpoint }) =>
-                      endpoint.project_id === agent.endpoint.project_id,
-                  )}
-                  onSelectAgent={selectAgent}
                   key={workspace}
                   workspaceKey={workspace}
                   agent={agent}

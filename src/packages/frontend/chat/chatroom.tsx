@@ -50,6 +50,7 @@ import { ChatRoomSidebarContent } from "./chatroom-sidebar";
 import {
   readEmbeddedSidebarHidden,
   useChatEmbeddingOptions,
+  chatIsForeground,
   writeEmbeddedSidebarHidden,
 } from "./embedding-options";
 import { GitCommitDrawer } from "./git-commit-drawer";
@@ -177,7 +178,6 @@ import {
 import { getProjectStartPolicyBlockFromError } from "@cocalc/frontend/projects/runtime-start-policy";
 import { registerDirectlyWatchedCodexThread } from "./codex-watch-presence";
 import { showProjectStartRequiredModal } from "@cocalc/frontend/projects/start-required-modal";
-import { tab_to_path } from "@cocalc/util/misc";
 import { persistExternalSideChatSelectedThreadKey } from "./external-side-chat-selection";
 import { useCodexAttentionSummary } from "./use-codex-attention";
 import type { ChatInputControl } from "./input";
@@ -935,8 +935,21 @@ function ChatPanelContent({
     Map<string, ChatThreadCompletionSnapshot>
   >(new Map());
   const isChatForeground = useMemo(
-    () => tab_to_path(activeProjectTab ?? "") === path,
-    [activeProjectTab, path],
+    () =>
+      chatIsForeground(
+        path,
+        activeProjectTab,
+        embeddingOptions.agentWorkspace,
+        isCurrent && isVisible && tabIsVisible,
+      ),
+    [
+      activeProjectTab,
+      path,
+      embeddingOptions.agentWorkspace,
+      isCurrent,
+      isVisible,
+      tabIsVisible,
+    ],
   );
   const defaultNewThreadSetup = useMemo<NewThreadSetup>(() => {
     const title = asTrimmedString(

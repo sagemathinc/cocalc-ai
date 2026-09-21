@@ -1,7 +1,9 @@
-import { Alert, Collapse, Space, Typography } from "antd";
-import { useState } from "react";
+import { Alert, Button, Collapse, Space, Typography } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { useTypedRedux } from "@cocalc/frontend/app-framework";
+import { browseProjectDirectory } from "@cocalc/frontend/project/browse-directory";
+import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
+import { openAgentNotification } from "./open-notification";
 import {
   ProjectContext,
   useProjectContextProvider,
@@ -16,7 +18,13 @@ import { useNamedAgents } from "./api";
 import { AgentRunningIndicator } from "./agent-running-indicator";
 import { parseManagedEgressBlockedError } from "@cocalc/frontend/purchases/managed-egress-blocked";
 
-export default function ProjectDetails({ agent }: { agent: NamedAgent }) {
+export default function ProjectDetails({
+  agent,
+  onClose,
+}: {
+  agent: NamedAgent;
+  onClose: () => void;
+}) {
   const context = useProjectContextProvider({
     project_id: agent.endpoint.project_id,
     is_active: true,
@@ -25,12 +33,18 @@ export default function ProjectDetails({ agent }: { agent: NamedAgent }) {
   });
   return (
     <ProjectContext.Provider value={context}>
-      <Details agent={agent} />
+      <Details agent={agent} onClose={onClose} />
     </ProjectContext.Provider>
   );
 }
 
-function Details({ agent }: { agent: NamedAgent }) {
+function Details({
+  agent,
+  onClose,
+}: {
+  agent: NamedAgent;
+  onClose: () => void;
+}) {
   const projectId = agent.endpoint.project_id;
   const accountId = useTypedRedux("account", "account_id");
   const egress = parseManagedEgressBlockedError(
@@ -39,7 +53,6 @@ function Details({ agent }: { agent: NamedAgent }) {
   const projects = useTypedRedux("projects", "project_map");
   const project = projects?.get(projectId);
   const { directory } = useNamedAgents();
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const state = project?.getIn(["state", "state"]);
   const peers =
     directory?.agents.filter(
@@ -72,38 +85,51 @@ function Details({ agent }: { agent: NamedAgent }) {
         <Space wrap>
           {peers.map((peer) => (
             <AgentRunningIndicator key={peer.endpoint.agent_id} agent={peer}>
-              <span style={{ paddingRight: 12 }}>@{peer.name}</span>
+              <Button
+                size="small"
+                onClick={async () => {
+                  if (
+                    await openAgentNotification(
+                      peer.endpoint.project_id,
+                      peer.path,
+                      peer.thread_id,
+                    )
+                  )
+                    onClose();
+                }}
+              >
+                @{peer.name}
+              </Button>
             </AgentRunningIndicator>
           ))}
         </Space>
       </section>
-      <Storage projectId={projectId} />
+      <Storage projectId={projectId} onClose={onClose} />
       <section aria-label="Internet usage">
         <Typography.Title level={5}>Internet usage</Typography.Title>
         <ManagedEgress project_id={projectId} embedded />
       </section>
-      <Collapse
-        onChange={(keys) => setSettingsOpen(keys.includes("settings"))}
-        items={[
-          {
-            key: "settings",
-            label: "Project settings",
-            children:
-              settingsOpen && project ? (
-                <Settings
-                  projectId={projectId}
-                  project={project}
-                  accountId={accountId}
-                />
-              ) : null,
-          },
-        ]}
-      />
+      <section aria-label="Project settings">
+        <Typography.Title level={5}>Project settings</Typography.Title>
+        {project && (
+          <Settings
+            projectId={projectId}
+            project={project}
+            accountId={accountId}
+          />
+        )}
+      </section>
     </Space>
   );
 }
 
-function Storage({ projectId }: { projectId: string }) {
+function Storage({
+  projectId,
+  onClose,
+}: {
+  projectId: string;
+  onClose: () => void;
+}) {
   const { quotas, loading, error, collectedAt } = useDiskUsage({
     project_id: projectId,
   });
@@ -137,6 +163,17 @@ function Storage({ projectId }: { projectId: string }) {
         project_id={projectId}
         buttonText="Inspect storage and free space"
       />
+      <Button
+        onClick={async () => {
+          await browseProjectDirectory(
+            projectId,
+            getProjectHomeDirectory(projectId),
+          );
+          onClose();
+        }}
+      >
+        Browse
+      </Button>
     </section>
   );
 }

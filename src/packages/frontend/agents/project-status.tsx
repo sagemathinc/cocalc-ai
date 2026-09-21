@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Button, Drawer, Spin } from "antd";
 import {
   useProjectFromMap,
@@ -50,6 +50,9 @@ export function AgentProjectStatus({
     hostInfo,
   });
   const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (!active) setOpen(false);
+  }, [active]);
   const [width, setWidth] = useState(() => {
     try {
       return Number(localStorage.getItem(WIDTH_KEY)) || 560;
@@ -101,7 +104,11 @@ export function AgentProjectStatus({
         <KeyboardBoundary>
           {open && active && (
             <Suspense fallback={<Spin />}>
-              <ProjectDetails key={projectId} agent={agent} />
+              <ProjectDetails
+                key={projectId}
+                agent={agent}
+                onClose={() => setOpen(false)}
+              />
             </Suspense>
           )}
         </KeyboardBoundary>
