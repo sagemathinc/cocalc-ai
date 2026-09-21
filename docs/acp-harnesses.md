@@ -44,7 +44,8 @@ The launcher retains the project's existing network boundary.
 4. Submit a short text prompt. The runtime summary identifies full project access
    and project-managed credentials. Choose **Create and configure first** to
    register the agent without sending the initial prompt (typed text is kept as
-   a draft). Then use **Load model and mode options** before
+   a draft). Open **ACP: [harness name] settings** in the chat toolbar, then
+   use **Load model and mode options** before
    the first prompt to discover supported selectors. This explicitly starts and
    cleans up a temporary harness session with project access; it sends no prompt
    and does not load or replace the conversation's native session. Without

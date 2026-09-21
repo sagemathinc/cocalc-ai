@@ -5,6 +5,13 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Implemented
 
+- Compact chat toolbars now open harness controls in an **ACP harness settings**
+  dialog. The previous inline panel was clipped by adjacent composer controls
+  on narrow screens. Keyboard opening, Escape dismissal and focus restoration
+  have a focused regression test. Frontend TypeScript, lint and all six profile
+  tests pass. Live checks cover 320, 768 and 1366 CSS-pixel widths in light/dark
+  themes; actual browser zoom and broader accessibility remain separate gates.
+
 - Experimental custom ACP creation in the existing Agents workspace, with
   accessible labeled executable/argument/version fields. Generic threads show a
   runtime summary instead of Codex payment/model controls. Profiles and native

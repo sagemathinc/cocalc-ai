@@ -41,7 +41,12 @@ export function HarnessRuntimeControl({
         aria-haspopup="dialog"
         title={`ACP: ${name} settings`}
         onClick={() => setOpen(true)}
-        style={{ minWidth: 0, maxWidth: "100%", width: "100%" }}
+        style={{
+          minWidth: 0,
+          maxWidth: "100%",
+          width: "100%",
+          justifyContent: "flex-start",
+        }}
       >
         <span
           style={{
