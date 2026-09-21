@@ -98,3 +98,33 @@ test("untrusted metadata is bounded and non-text content does not become executa
     ),
   ).toBeUndefined();
 });
+
+test("expanded tool output is named and keyboard reachable", async () => {
+  const user = userEvent.setup();
+  render(
+    <>
+      <HarnessToolRow
+        entry={{
+          kind: "harness-tool",
+          id: "tool",
+          seq: 1,
+          title: "Run checks",
+          status: "failed",
+          output: "Failure details\n".repeat(100),
+        }}
+      />
+      <button>Next control</button>
+    </>,
+  );
+  const summary = screen.getByText("Run checks · failed");
+  await user.tab();
+  expect(document.activeElement).toBe(summary);
+  await user.click(summary);
+  const output = screen.getByRole("region", { name: "Run checks output" });
+  await user.tab();
+  expect(document.activeElement).toBe(output);
+  await user.tab();
+  expect(document.activeElement).toBe(
+    screen.getByRole("button", { name: "Next control" }),
+  );
+});

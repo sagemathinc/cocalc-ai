@@ -80,6 +80,9 @@ export function HarnessToolRow({ entry }: { entry: HarnessToolEntry }) {
         {entry.title || "ACP tool"} · {entry.status}
       </summary>
       <pre
+        role="region"
+        aria-label={`${entry.title || "ACP tool"} output`}
+        tabIndex={0}
         style={{
           whiteSpace: "pre-wrap",
           overflowWrap: "anywhere",

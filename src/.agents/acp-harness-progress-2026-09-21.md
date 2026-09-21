@@ -1502,6 +1502,22 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Tool Output Keyboard Navigation
+
+Generic tool output now exposes its height-limited `pre` as a named, focusable
+region. This provides an explicit keyboard target for scrolling long output
+instead of relying on browser-specific automatic scroll-container focusability.
+The native details/summary disclosure and visible textual status are unchanged.
+Three focused tool tests, frontend lint and the frontend TypeScript build pass.
+
+A separate Chromium instance rendered the compiled component at 320 CSS pixels:
+Tab focused its summary, Enter expanded it, Tab entered the named output region,
+Page Down scrolled the output (observed scrollTop 280), and Tab reached the next
+control. Shift-Tab returned through the output to the summary and Space collapsed
+it. The document did not overflow horizontally. This is a component-level browser
+check, not full workspace accessibility qualification; no logged-in tabs were
+changed.
+
 ## Unsaved Text And External Writer Check
 
 A separate disposable file, `/home/user/acp-concurrent-editor-qualification.txt`,
