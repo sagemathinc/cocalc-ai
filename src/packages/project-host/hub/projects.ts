@@ -2602,6 +2602,9 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     beginProjectHostActivity(activity_id, "stop");
     logger.debug("stop: project-host request received", { project_id, force });
     try {
+      // ACP sidecars share the project network namespace. Release their live
+      // runtimes before Podman removes the primary container they depend on.
+      await fenceProjectHostAcpWork({ project_id });
       const status = await runnerApi.stop({ project_id, force });
       noteProjectHostActivityProgress(activity_id);
       let finalState = status?.state ?? "opened";
@@ -2633,6 +2636,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
           `project stop did not converge; runner still reports state='${finalState}'`,
         );
       }
+      // Retain the post-stop sweep for late worker/queue completion races.
       await fenceProjectHostAcpWork({ project_id });
       if (!syntheticRuntimeProbeProjects.has(project_id)) {
         try {
