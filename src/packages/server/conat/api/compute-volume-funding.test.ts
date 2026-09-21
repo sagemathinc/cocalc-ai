@@ -70,6 +70,8 @@ beforeEach(() => {
   jest.mocked(requireSponsoredVmAdmission).mockResolvedValue(undefined);
   jest.mocked(getComputeVmConfig).mockResolvedValue({
     environment: "development",
+    gcp_service_account_json: "{}",
+    gcp_project_id: "managed-compute-test",
     max_volume_gb: 1024,
     max_volumes_per_account: 10,
   } as any);
@@ -190,4 +192,70 @@ it("advertises sponsored volumes only when the resource rollout admits sponsorsh
   expect(
     (await getCatalog({ account_id: student })).sponsored_home_volumes,
   ).toBe(false);
+});
+it("omits GCP and defaults to Nebius when managed GCP is not configured", async () => {
+  jest.mocked(getComputeVmConfig).mockResolvedValue({
+    environment: "development",
+    max_volume_gb: 1024,
+    max_volumes_per_account: 10,
+  } as any);
+  jest.mocked(getHostCatalog).mockImplementation(async ({ provider }) => {
+    if (provider !== "nebius") throw Error(`unexpected provider ${provider}`);
+    return {
+      provider: "nebius",
+      entries: [
+        {
+          kind: "regions",
+          scope: "global",
+          payload: [{ name: "eu-north1" }],
+        },
+        {
+          kind: "instance_types",
+          scope: "global",
+          payload: [
+            {
+              name: "4vcpu-16gb",
+              regions: ["eu-north1"],
+              vcpus: 4,
+              memory_gib: 16,
+            },
+          ],
+        },
+      ],
+    } as any;
+  });
+
+  const catalog = await getCatalog({ account_id: student });
+
+  expect(catalog.providers).toEqual(["nebius"]);
+  expect(catalog.provider_catalogs.gcp).toBeUndefined();
+  expect(catalog.defaults).toMatchObject({
+    provider: "nebius",
+    region: "eu-north1",
+    zone: "",
+    machine_type: "4vcpu-16gb",
+    boot_disk_gb: 40,
+  });
+  expect(catalog.operating_systems).toEqual([
+    expect.objectContaining({ value: "linux", providers: ["nebius"] }),
+  ]);
+  expect(getHostCatalog).not.toHaveBeenCalledWith(
+    expect.objectContaining({ provider: "gcp" }),
+  );
+  expect(assertDedicatedHostAdmissionForAccount).toHaveBeenCalledWith(
+    expect.objectContaining({ machine_cloud: "nebius" }),
+  );
+});
+it("fails catalog loading when no managed compute provider is configured", async () => {
+  jest.mocked(getComputeVmConfig).mockResolvedValue({
+    environment: "development",
+  } as any);
+  jest
+    .mocked(getHostCatalog)
+    .mockRejectedValue(new Error("provider not configured"));
+
+  await expect(getCatalog({ account_id: student })).rejects.toMatchObject({
+    message: "managed compute providers are not configured",
+    code: 503,
+  });
 });

@@ -50,7 +50,10 @@ import type {
   CreateComputeVolumeRequest,
   CreateComputeVmRequest,
 } from "@cocalc/conat/hub/api/compute";
-import type { HostCatalogMachineType } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostCatalog,
+  HostCatalogMachineType,
+} from "@cocalc/conat/hub/api/hosts";
 import { getConfiguredBayId } from "@cocalc/server/bay-config";
 import isAdmin from "@cocalc/server/accounts/is-admin";
 import { getServerSettings } from "@cocalc/database/settings/server-settings";
@@ -692,20 +695,62 @@ function defaultComputeVolumeDiskType(provider: "gcp" | "nebius") {
   return provider === "nebius" ? ("ssd" as const) : ("balanced" as const);
 }
 
+function defaultNebiusCatalogSelection(catalog: HostCatalog): {
+  region: string;
+  machine_type: string;
+} {
+  const machines = catalog.entries.find(
+    ({ kind, scope }) => kind === "instance_types" && scope === "global",
+  )?.payload as
+    | Array<{ name?: string; regions?: string[]; deprecated?: unknown }>
+    | undefined;
+  const machine = machines?.find(({ name, deprecated }) => name && !deprecated);
+  const regions = catalog.entries.find(
+    ({ kind, scope }) => kind === "regions" && scope === "global",
+  )?.payload as Array<{ name?: string }> | undefined;
+  return {
+    region:
+      machine?.regions?.find(Boolean) ??
+      regions?.find(({ name }) => name)?.name ??
+      "",
+    machine_type: machine?.name ?? "",
+  };
+}
+
 export async function getCatalog(opts: {
   account_id?: string;
 }): Promise<ComputeCatalog> {
   const accountId = requireAccount(opts.account_id);
   const config = await getComputeVmConfig();
-  const configuredRegions = await getProviderComputeRegions();
-  const gcpCatalog = restrictHostCatalogToRegions(
-    await getHostCatalog({
+  const providerCatalogs: ComputeCatalog["provider_catalogs"] = {};
+  if (config.gcp_service_account_json && config.gcp_project_id) {
+    const configuredRegions = await getProviderComputeRegions();
+    providerCatalogs.gcp = restrictHostCatalogToRegions(
+      await getHostCatalog({
+        account_id: accountId,
+        provider: "gcp",
+      }),
+      configuredRegions,
+    );
+  }
+  try {
+    providerCatalogs.nebius = await getHostCatalog({
       account_id: accountId,
-      provider: "gcp",
-    }),
-    configuredRegions,
+      provider: "nebius",
+    });
+  } catch {
+    // Nebius is omitted until its provider credentials/catalog are configured.
+  }
+  const providers = (["gcp", "nebius"] as const).filter(
+    (provider) => providerCatalogs[provider] != null,
   );
-  const zone = defaultComputeZone(gcpCatalog);
+  if (!providers.length) {
+    throw Object.assign(
+      new Error("managed compute providers are not configured"),
+      { code: 503 },
+    );
+  }
+  const defaultProvider = providers[0];
   const fundingModes = await Promise.all(
     (["site-funded", "account-prepaid", "account-postpaid"] as const).map(
       async (value) => {
@@ -721,7 +766,7 @@ export async function getCatalog(opts: {
           await assertDedicatedHostAdmissionForAccount({
             account_id: accountId,
             action: "create",
-            machine_cloud: "gcp",
+            machine_cloud: defaultProvider,
             funding_mode_override: value,
           });
           return {
@@ -751,17 +796,11 @@ export async function getCatalog(opts: {
     ),
   );
   const allowedFunding = fundingModes.find(({ allowed }) => allowed);
-  const providerCatalogs: ComputeCatalog["provider_catalogs"] = {
-    gcp: gcpCatalog,
-  };
-  try {
-    providerCatalogs.nebius = await getHostCatalog({
-      account_id: accountId,
-      provider: "nebius",
-    });
-  } catch {
-    // Nebius is omitted until its provider credentials/catalog are configured.
-  }
+  const gcpCatalog = providerCatalogs.gcp;
+  const nebiusDefaults = providerCatalogs.nebius
+    ? defaultNebiusCatalogSelection(providerCatalogs.nebius)
+    : undefined;
+  const zone = gcpCatalog ? defaultComputeZone(gcpCatalog) : "";
   let sponsoredHomeVolumes = false;
   try {
     await requireSponsoredVmAdmission();
@@ -771,7 +810,7 @@ export async function getCatalog(opts: {
   }
   return {
     sponsored_home_volumes: sponsoredHomeVolumes,
-    providers: providerCatalogs.nebius ? ["gcp", "nebius"] : ["gcp"],
+    providers,
     provider_catalogs: providerCatalogs,
     funding_modes: fundingModes,
     default_funding_mode: allowedFunding?.value ?? "account-prepaid",
@@ -779,32 +818,42 @@ export async function getCatalog(opts: {
       {
         value: "linux",
         label: "Linux (Ubuntu 24.04)",
-        providers: providerCatalogs.nebius ? ["gcp", "nebius"] : ["gcp"],
+        providers,
         architectures: ["x86_64", "arm64"],
         versions: ["ubuntu-24.04"],
         minimum_boot_disk_gb: 20,
         license_per_vcpu_hourly_usd: "0.000000",
       },
-      {
-        value: "windows",
-        label: "Windows Server 2022",
-        providers: ["gcp"],
-        architectures: ["x86_64"],
-        versions: ["windows-server-2022"],
-        minimum_boot_disk_gb: 50,
-        license_per_vcpu_hourly_usd:
-          GCP_WINDOWS_SERVER_LICENSE_USD_PER_VCPU_HOUR.toFixed(6),
-      },
+      ...(gcpCatalog
+        ? [
+            {
+              value: "windows" as const,
+              label: "Windows Server 2022",
+              providers: ["gcp" as const],
+              architectures: ["x86_64" as const],
+              versions: ["windows-server-2022"],
+              minimum_boot_disk_gb: 50,
+              license_per_vcpu_hourly_usd:
+                GCP_WINDOWS_SERVER_LICENSE_USD_PER_VCPU_HOUR.toFixed(6),
+            },
+          ]
+        : []),
     ],
     defaults: {
-      provider: "gcp",
+      provider: defaultProvider,
       operating_system: "linux",
       architecture: "x86_64",
-      region: regionFromComputeZone(zone),
+      region:
+        defaultProvider === "gcp"
+          ? regionFromComputeZone(zone)
+          : (nebiusDefaults?.region ?? ""),
       zone,
-      machine_type: "e2-standard-2",
+      machine_type:
+        defaultProvider === "gcp"
+          ? "e2-standard-2"
+          : (nebiusDefaults?.machine_type ?? ""),
       ttl_minutes: null,
-      boot_disk_gb: 20,
+      boot_disk_gb: defaultProvider === "gcp" ? 20 : 40,
     },
     limits: {
       max_active_per_account: config.max_active_per_account,

@@ -3382,24 +3382,25 @@ export function ProjectComputeVms({
       machine_type: catalog?.defaults.machine_type ?? "e2-standard-2",
       pricing_model: "on_demand",
       storage_mode: "persistent",
-      disk_type: "balanced",
+      disk_type: defaultProvider === "nebius" ? "ssd" : "balanced",
       disk_gb: catalog?.defaults.boot_disk_gb ?? 20,
     };
-    const nearestRegion = catalog
-      ? sortRegionOptionsByPreference({
-          options: compatibleOptions(
-            getGcpRegionOptions(defaultCatalog, {
-              ...defaultSelection,
-              region: undefined,
-              zone: undefined,
-            }),
-          ),
-          preference: "closest",
-          preferredRegion: preferredR2Region,
-        })[0]?.value
-      : undefined;
+    const nearestRegion =
+      catalog && defaultProvider === "gcp"
+        ? sortRegionOptionsByPreference({
+            options: compatibleOptions(
+              getGcpRegionOptions(defaultCatalog, {
+                ...defaultSelection,
+                region: undefined,
+                zone: undefined,
+              }),
+            ),
+            preference: "closest",
+            preferredRegion: preferredR2Region,
+          })[0]?.value
+        : undefined;
     const nearestZone =
-      catalog && nearestRegion
+      catalog && defaultProvider === "gcp" && nearestRegion
         ? compatibleOptions(
             getGcpZoneOptions(defaultCatalog, {
               ...defaultSelection,
@@ -3408,21 +3409,62 @@ export function ProjectComputeVms({
             }),
           )[0]?.value
         : undefined;
-    const zone = nearestZone ?? catalogDefaultZone;
+    const zone =
+      defaultProvider === "gcp"
+        ? (nearestZone ?? catalogDefaultZone)
+        : undefined;
+    const nebiusDefault =
+      catalog && defaultProvider === "nebius"
+        ? (getNebiusPlacementOptions(
+            defaultCatalog,
+            {
+              ...defaultSelection,
+              pricing_model: "spot",
+              disk_gb: Math.max(Number(defaultSelection.disk_gb ?? 0), 40),
+            },
+            "gpu",
+          )[0] ??
+          getNebiusPlacementOptions(
+            defaultCatalog,
+            { ...defaultSelection, pricing_model: "on_demand" },
+            "cpu",
+          )[0])
+        : undefined;
+    const pricingModel = nebiusDefault?.gpuCount ? "spot" : "on_demand";
+    const region =
+      defaultProvider === "gcp"
+        ? regionFromZone(zone)
+        : (nebiusDefault?.region ?? catalog?.defaults.region ?? "");
+    const machineType =
+      nebiusDefault?.machineType ??
+      catalog?.defaults.machine_type ??
+      "e2-standard-2";
     return {
       name: "",
       provider: defaultProvider,
       operating_system: catalog?.defaults.operating_system ?? "linux",
       funding_mode: catalog?.default_funding_mode ?? "account-prepaid",
       architecture: catalog?.defaults.architecture ?? "x86_64",
-      region: regionFromZone(zone),
+      region,
       zone,
-      machine_type: catalog?.defaults.machine_type ?? "e2-standard-2",
-      pricing_model: "on_demand",
-      allow_on_demand_fallback: false,
+      machine_type: machineType,
+      provider_platform: nebiusDefault?.platform,
+      pricing_model: pricingModel,
+      allow_on_demand_fallback: pricingModel === "spot",
+      gpu_type: nebiusDefault?.gpuLabel,
+      gpu_count: nebiusDefault?.gpuCount ?? 0,
       ttl_minutes: catalog?.defaults.ttl_minutes ?? null,
       stop_after_minutes: 360,
-      boot_disk_gb: catalog?.defaults.boot_disk_gb ?? 20,
+      boot_disk_gb:
+        defaultProvider === "nebius"
+          ? Math.max(
+              catalog?.defaults.boot_disk_gb ?? 40,
+              getNebiusMinimumBootDiskGb(defaultCatalog, {
+                region,
+                machine_type: machineType,
+              }),
+            )
+          : (catalog?.defaults.boot_disk_gb ?? 20),
       create_home_volume: false,
       new_home_volume_name: availableName(
         "vm-home",
