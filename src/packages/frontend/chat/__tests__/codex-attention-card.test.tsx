@@ -168,6 +168,44 @@ describe("Codex question attention", () => {
     otherView.unmount();
   });
 
+  it("uses the runtime summary and does not describe a closed question as paused", () => {
+    jest
+      .mocked(webapp_client.conat_client.attentionAcp)
+      .mockResolvedValue({ ok: true });
+    const view = render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          summary: "The current ACP turn is paused.",
+        }}
+      />,
+    );
+    expect(
+      screen.getByText("The current ACP turn is paused."),
+    ).toBeInTheDocument();
+    view.unmount();
+    render(
+      <CodexAttentionCard
+        initialRecord={{
+          ...questionRecord,
+          state: "stale",
+          summary: "The current ACP turn is paused.",
+          resolution_reason: "The request was interrupted.",
+        }}
+      />,
+    );
+    expect(screen.getByText("Request no longer active")).toBeInTheDocument();
+    expect(
+      screen.getByText("The request was interrupted."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("The current ACP turn is paused."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Send response" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("allows exactly one suggested answer", async () => {
     const user = userEvent.setup();
     const view = render(<CodexAttentionCard initialRecord={questionRecord} />);

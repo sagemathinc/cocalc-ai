@@ -373,8 +373,25 @@ queue, grant system or authentication flow is introduced.
 
 Validation includes 37 subprocess tests and 29 focused attention-storage,
 delivery and harness-admission tests, plus the project-host TypeScript build.
-Live deployment and browser reply/reload/cancellation qualification are still
-pending. Do not claim the interactive-question release gate from these tests.
+Live qualification passed on bundle `20260921T095242Z-b8226960e3c2`, deployed by
+operation `983ae1ec-8137-40ee-af92-a1405dccddb6`. Fixture `agent-2` asked a blocking
+form question, stayed waiting through a full browser reload, and received the
+selected `local` answer through the normal QA UI. Durable job
+`3ec97a6d-4c0d-44f6-bc0f-40e9f946acd6` completed; attention record
+`ca5f827c-16b1-4881-8e53-7f837b61c855` became answered. The harness printed the
+exact ACP accept response. The answered card disappears from the main thread;
+an initial probe incorrectly waited for it to remain visible, but read-only
+durable-state inspection and the rendered final response confirmed completion.
+
+A second question was interrupted through the UI. Job
+`feb98567-48f7-4850-9d40-8053b6d0712e` became interrupted and attention record
+`0a6f1060-0a90-41e8-92f4-22aeeb193173` became stale. No pending question or running
+fixture turn remained. Follow-up UI changes use the runtime summary and show
+resolution text, not a misleading paused message, for closed questions.
+
+This qualifies the supported form subset with a deterministic ACP executable,
+not every harness-specific question extension or schema. URL/auth elicitation,
+optional and non-string fields remain explicitly unsupported.
 
 ## Reproduce
 

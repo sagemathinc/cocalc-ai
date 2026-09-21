@@ -354,7 +354,7 @@ export function createCodexAttentionHandler(
               source_kind: "codex_sync_question",
               source_id: syncSourceId(context, requestId),
               state: "expired",
-              reason: "Codex request expired",
+              reason: `${runtimeLabel} request expired`,
             });
             if (expired) {
               void publishStoredAttentionNoticeBestEffort({
@@ -362,7 +362,7 @@ export function createCodexAttentionHandler(
                 record: expired,
               });
             }
-            throw new Error("Codex attention request expired");
+            throw new Error(`${runtimeLabel} attention request expired`);
           }
           if (current.response_id) {
             return validateAttentionAnswers({
@@ -380,7 +380,7 @@ export function createCodexAttentionHandler(
             source_kind: "codex_sync_question",
             source_id: syncSourceId(context, requestId),
             state: "stale",
-            reason: "Codex runtime closed before the response was delivered",
+            reason: `${runtimeLabel} runtime closed before the response was delivered`,
           });
           if (stale) {
             void publishStoredAttentionNoticeBestEffort({

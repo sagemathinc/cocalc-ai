@@ -45,7 +45,7 @@ function stateLabel(state: AcpAttentionRecord["state"]): string {
     case "declined":
       return "Declined";
     case "stale":
-      return "Codex disconnected";
+      return "Request no longer active";
     case "canceled":
       return "Canceled";
     case "expired":
@@ -382,11 +382,13 @@ function RuntimeCodexAttentionCard({
               {pendingFreshAuth
                 ? "Approve this request in CoCalc. The waiting command will continue automatically."
                 : responseAwaitingCodex
-                  ? "Your response is saved. Waiting for Codex to accept it."
+                  ? "Your response is saved. Waiting for the agent to accept it."
                   : lateQuestion
                     ? "That turn has ended. Send your answer as a new message to continue."
+                    : !pending
+                      ? record.resolution_reason
                     : record.is_blocking
-                      ? "The current Codex turn is paused until you respond."
+                      ? (record.summary ?? "The current turn is paused until you respond.")
                       : record.source_kind === "codex_async_question"
                         ? "Codex may continue while it waits. Your response starts a new user message."
                         : record.summary}
