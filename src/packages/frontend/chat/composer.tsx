@@ -893,6 +893,8 @@ export function ChatRoomComposer({
         >
           <AgentFileAttachment
             projectId={project_id}
+            path={showComposerCodexConfig ? path : undefined}
+            threadId={showComposerCodexConfig ? selectedThread?.key : undefined}
             workingDirectory={
               actions.getCodexConfig?.(selectedThread?.key)?.workingDirectory
             }

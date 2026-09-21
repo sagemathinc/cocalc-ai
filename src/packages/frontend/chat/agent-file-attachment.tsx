@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Alert, Button, Dropdown, Input, Modal, Space, Spin } from "antd";
 import type { MenuProps } from "antd";
 import { Buffer } from "buffer";
-import { redux } from "@cocalc/frontend/app-framework";
+import { redux, useTypedRedux } from "@cocalc/frontend/app-framework";
 import { Icon, Tooltip } from "@cocalc/frontend/components";
 import { getProjectHomeDirectory } from "@cocalc/frontend/project/home-directory";
 import {
@@ -15,6 +15,11 @@ import {
   normalizeAbsolutePath,
 } from "@cocalc/util/path-model";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
+import { VmToolbox } from "@cocalc/frontend/agents/vm-toolbox";
+import {
+  readVmToolbox,
+  VM_TOOLBOX_SETTING,
+} from "@cocalc/frontend/agents/vm-toolbox-model";
 
 interface FileEntry {
   name: string;
@@ -23,17 +28,30 @@ interface FileEntry {
 
 export function AgentFileAttachment({
   projectId,
+  path,
+  threadId,
   workingDirectory,
   onInsert,
   onSetGoal,
   disabled = false,
 }: {
   projectId: string;
+  path?: string;
+  threadId?: string;
   workingDirectory?: string;
   onInsert: (markdown: string) => void;
   onSetGoal?: () => void;
   disabled?: boolean;
 }) {
+  const settings = useTypedRedux("account", "other_settings");
+  const [toolboxOpen, setToolboxOpen] = useState(false);
+  const vmCount =
+    readVmToolbox(settings?.get?.(VM_TOOLBOX_SETTING)).find(
+      (item) =>
+        item.projectId === projectId &&
+        item.path === path &&
+        item.threadId === threadId,
+    )?.vms.length ?? 0;
   const home = getProjectHomeDirectory(projectId);
   const initialDirectory = normalizeAbsolutePath(
     workingDirectory || home,
@@ -150,6 +168,15 @@ export function AgentFileAttachment({
         icon: <Icon name="folder-open" />,
         label: "Choose project files",
       },
+      ...(path && threadId
+        ? [
+            {
+              key: "vm",
+              icon: <Icon name="server" />,
+              label: "Virtual machine...",
+            },
+          ]
+        : []),
       ...(onSetGoal
         ? [
             { type: "divider" as const },
@@ -165,6 +192,7 @@ export function AgentFileAttachment({
       if (key === "upload") uploadRef.current?.click();
       if (key === "choose") setOpen(true);
       if (key === "goal") onSetGoal?.();
+      if (key === "vm") setToolboxOpen(true);
     },
   };
 
@@ -191,6 +219,27 @@ export function AgentFileAttachment({
           />
         </Dropdown>
       </Tooltip>
+      {path && threadId && (
+        <>
+          {vmCount > 0 && (
+            <Button
+              type="text"
+              aria-label={`VM toolbox, ${vmCount} attached`}
+              icon={<Icon name="server" />}
+              onClick={() => setToolboxOpen(true)}
+            >
+              {vmCount}
+            </Button>
+          )}
+          <VmToolbox
+            projectId={projectId}
+            path={path}
+            threadId={threadId}
+            open={toolboxOpen}
+            onClose={() => setToolboxOpen(false)}
+          />
+        </>
+      )}
       <input
         ref={uploadRef}
         type="file"

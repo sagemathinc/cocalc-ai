@@ -11,6 +11,7 @@ import type { History as LanguageModelHistory } from "@cocalc/frontend/client/ty
 import { processAcpLLM } from "../acp-api";
 import type { ChatActions } from "../actions";
 import type { ChatMessage } from "../types";
+import { contextForVmToolbox } from "@cocalc/frontend/agents/vm-toolbox-service";
 
 export async function processAI({
   actions,
@@ -72,12 +73,25 @@ export async function processAI({
   input = regen?.input ?? input;
 
   const acpPromptOverride = `${(message as any)?.acp_prompt ?? ""}`.trim();
+  const toolboxProjectId = store.get("project_id");
+  const toolboxPath = store.get("path");
+  const toolboxContext =
+    threadIdForThread && toolboxProjectId && toolboxPath
+      ? await contextForVmToolbox({
+          accountId: message.sender_id,
+          projectId: toolboxProjectId,
+          path: toolboxPath,
+          threadId: threadIdForThread,
+        })
+      : "";
 
   await processAcpLLM({
     actions,
     message,
     model,
-    input: acpPromptOverride || input,
+    input: [acpPromptOverride || input, toolboxContext]
+      .filter(Boolean)
+      .join("\n\n"),
     sendMode: effectiveAcpSendMode,
     acpConfigOverride,
   });

@@ -50,7 +50,10 @@ export function projectSshConfigBlock({
   route,
 }: {
   alias: string;
-  route: WorkspaceSshConnectionInfo;
+  route: Pick<
+    WorkspaceSshConnectionInfo,
+    "transport" | "ssh_username" | "ssh_server" | "cloudflare_hostname"
+  >;
 }): string {
   const markers = blockMarkers(alias);
   const lines = [`Host ${alias}`, `  User ${route.ssh_username}`];

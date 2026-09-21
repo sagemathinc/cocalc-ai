@@ -5,7 +5,10 @@ Date: 2026-09-19
 Revised: 2026-09-21, following product discussion. Implementation base:
 `feature/my-agents-workspace` ([PR #640](https://github.com/sagemathinc/cocalc-ai/pull/640)).
 
-Status: proposal for discussion, not an implementation or security signoff.
+Status: roadmap with an initial VM toolbox implementation; not a security signoff.
+See [VM toolbox implementation and dogfooding notes](agent-connectors-vm-toolbox-2026-09-21.md)
+for the delivered scope, validation, and remaining work. Sections below describe
+the target design unless explicitly identified as implemented.
 
 ## 1. Product Goal
 

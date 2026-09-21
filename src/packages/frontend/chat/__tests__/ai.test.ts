@@ -2,6 +2,11 @@
 
 import { processAI } from "../actions/ai";
 import { processAcpLLM } from "../acp-api";
+import { contextForVmToolbox } from "@cocalc/frontend/agents/vm-toolbox-service";
+
+jest.mock("@cocalc/frontend/agents/vm-toolbox-service", () => ({
+  contextForVmToolbox: jest.fn(async () => ""),
+}));
 
 jest.mock("../acp-api", () => ({
   processAcpLLM: jest.fn(),
@@ -47,6 +52,23 @@ function makeMessage(overrides: Record<string, any> = {}) {
 }
 
 describe("processAI Codex dispatch", () => {
+  it("adds personal VM context without replacing the request", async () => {
+    (contextForVmToolbox as jest.Mock).mockResolvedValueOnce("VM context");
+    await processAI({
+      actions: makeActions(),
+      message: makeMessage(),
+      threadModel: "gpt-5.4",
+    });
+    expect(contextForVmToolbox).toHaveBeenCalledWith({
+      accountId: "user-1",
+      projectId: "proj",
+      path: "chat.chat",
+      threadId: "thread-test-1",
+    });
+    expect(processAcpLLM).toHaveBeenCalledWith(
+      expect.objectContaining({ input: "hello\n\nVM context" }),
+    );
+  });
   it("never dispatches a posted message, even on regenerate", async () => {
     await processAI({
       actions: makeActions(),
