@@ -473,10 +473,34 @@ it.each(["lost", "terminal", "live"])(
   },
 );
 
-it.each(["direct", "durable"])(
-  "%s harness cancel keeps the job running until the prompt outcome is known",
-  async (delivery) => {
-    const request = makeRequest();
+it.each([
+  ["direct", "1"],
+  ["durable", "1"],
+  ["direct", "0"],
+  ["durable", "0"],
+])(
+  "%s harness cancel with admission flag %s waits for the prompt outcome",
+  async (delivery, enabled) => {
+    const previousEnabled = process.env.COCALC_ACP_HARNESSES;
+    const request = {
+      ...makeRequest(),
+      config: undefined,
+      runtime: {
+        version: 1,
+        kind: "acp",
+        profile: {
+          version: 1,
+          kind: "acp",
+          id: "fixture",
+          revision: "1",
+          executable: "/home/user/fixture",
+          args: [],
+          cwd: "/home/user",
+          executionPolicy: "full-access",
+          credentialMode: "project-managed",
+        },
+      },
+    } satisfies AcpRequest;
     const job = enqueueAcpJob(request);
     claimNextQueuedAcpJobForThread({
       project_id: job.project_id,
@@ -492,6 +516,8 @@ it.each(["direct", "durable"])(
       true,
     );
     try {
+      // The rollback switch applies to new admissions, not existing stop requests.
+      process.env.COCALC_ACP_HARNESSES = enabled;
       if (delivery === "direct") {
         expect(
           await acpTestInternals.handleInterruptRequest({
@@ -525,6 +551,9 @@ it.each(["direct", "durable"])(
       });
       expect(getAcpJob(key)?.state).toBe("error");
     } finally {
+      if (previousEnabled === undefined)
+        delete process.env.COCALC_ACP_HARNESSES;
+      else process.env.COCALC_ACP_HARNESSES = previousEnabled;
       unregister();
     }
   },

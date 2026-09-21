@@ -1502,6 +1502,17 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Rollback Cancellation Regression
+
+The detached-worker cancellation matrix now stores a generic runtime request
+and exercises both direct and durable interruption with the host admission flag
+enabled and disabled. In all four cases the retained agent receives exactly one
+interrupt, the job remains running until the worker records its outcome, and
+the transport does not prematurely finalize the turn lease. All 60 tests in the
+suite and the Lite TypeScript build pass. This supplements the earlier live
+idle-host disable/re-enable check; it does not claim a live active-turn test
+across host restart or mixed-version replacement.
+
 ## Additional Question Lifecycle Coverage
 
 The real-stdio client suite now has 89 passing tests. New cases verify that a
