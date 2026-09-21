@@ -47,6 +47,8 @@ export type ReserveSiteFundedCodexTurnOptions = {
   policy: SiteFundedCodexPolicy;
   accountRemaining5hMicrousd?: number | null;
   accountRemaining7dMicrousd?: number | null;
+  accountCredited5hMicrousdByFundedTurn?: Record<string, number>;
+  accountCredited7dMicrousdByFundedTurn?: Record<string, number>;
   surface?: string;
 };
 
@@ -70,6 +72,35 @@ function int(value: unknown): number {
 function iso(value: unknown): string {
   if (value instanceof Date) return value.toISOString();
   return new Date(`${value}`).toISOString();
+}
+
+function creditedMicrousd(
+  credits: Record<string, number> | undefined,
+  fundedTurnId: string,
+): number {
+  const value = credits?.[fundedTurnId];
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
+}
+
+function uncreditedActiveReservationMicrousd(
+  reservations: Array<{
+    funded_turn_id: string;
+    reserved_microusd: unknown;
+  }>,
+  credits: Record<string, number> | undefined,
+): number {
+  return reservations.reduce(
+    (total, reservation) =>
+      total +
+      Math.max(
+        0,
+        int(reservation.reserved_microusd) -
+          creditedMicrousd(credits, reservation.funded_turn_id),
+      ),
+    0,
+  );
 }
 
 function periodBounds(now = new Date()): { start: Date; end: Date } {
@@ -555,6 +586,15 @@ export async function reserveSiteFundedCodexTurn(
       `,
       [opts.accountId],
     );
+    const activeAccountReservations = await client.query<{
+      funded_turn_id: string;
+      reserved_microusd: unknown;
+    }>(
+      `SELECT funded_turn_id, reserved_microusd
+       FROM site_ai_turn_reservations
+       WHERE status = 'active' AND account_id = $1`,
+      [opts.accountId],
+    );
     if (
       int(active.rows[0]?.account_active) >=
       opts.policy.maxConcurrentTurnsPerAccount
@@ -572,14 +612,26 @@ export async function reserveSiteFundedCodexTurn(
         "Site-funded Codex is temporarily at its global concurrency limit.",
       );
     }
+    // Canonical remaining usage already includes credited events from active
+    // turns. Reserve only each active turn's liability that is absent from the
+    // exact home-bay snapshot, so propagation lag is safe without counting the
+    // same spend twice.
+    const uncredited5hMicrousd = uncreditedActiveReservationMicrousd(
+      activeAccountReservations.rows,
+      opts.accountCredited5hMicrousdByFundedTurn,
+    );
+    const uncredited7dMicrousd = uncreditedActiveReservationMicrousd(
+      activeAccountReservations.rows,
+      opts.accountCredited7dMicrousdByFundedTurn,
+    );
     const remaining5h =
       opts.accountRemaining5hMicrousd == null
         ? Number.MAX_SAFE_INTEGER
-        : Math.max(0, opts.accountRemaining5hMicrousd);
+        : Math.max(0, opts.accountRemaining5hMicrousd - uncredited5hMicrousd);
     const remaining7d =
       opts.accountRemaining7dMicrousd == null
         ? Number.MAX_SAFE_INTEGER
-        : Math.max(0, opts.accountRemaining7dMicrousd);
+        : Math.max(0, opts.accountRemaining7dMicrousd - uncredited7dMicrousd);
     const requested = Math.min(
       opts.policy.maxTurnCostMicrousd,
       remaining5h,
@@ -930,6 +982,30 @@ export async function getSiteFundedCodexPoolStatus(): Promise<
       utilization: limit > 0 ? (reserved + committed) / limit : 1,
     };
   });
+}
+
+export async function getSiteFundedCodexAccountReservationStatus({
+  accountId,
+}: {
+  accountId: string;
+}): Promise<{
+  accountId: string;
+  activeCount: number;
+  reservedMicrousd: number;
+}> {
+  await ensureSiteFundedCodexReservationTables();
+  const { rows } = await getPool().query(
+    `SELECT COUNT(*)::int AS active_count,
+       COALESCE(SUM(reserved_microusd), 0) AS reserved_microusd
+     FROM site_ai_turn_reservations
+     WHERE account_id = $1 AND status = 'active'`,
+    [accountId],
+  );
+  return {
+    accountId,
+    activeCount: int(rows[0]?.active_count),
+    reservedMicrousd: int(rows[0]?.reserved_microusd),
+  };
 }
 
 export async function reconcileTerminalSiteFundedCodexReservations({

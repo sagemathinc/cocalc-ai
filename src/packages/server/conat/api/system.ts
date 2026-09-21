@@ -107,8 +107,12 @@ import {
   transcribeChatAudio as transcribeChatAudioLocal,
 } from "@cocalc/server/ai/chat-speech";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
-import { getSiteFundedCodexPoolStatus } from "@cocalc/server/ai/site-funded-codex-reservations";
+import {
+  getSiteFundedCodexAccountReservationStatus,
+  getSiteFundedCodexPoolStatus,
+} from "@cocalc/server/ai/site-funded-codex-reservations";
 import { reconcileSiteFundedCodexCosts } from "@cocalc/server/ai/site-funded-codex-reconciliation";
+import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import {
   enqueueRootfsPrepullForHost,
   enqueueRootfsPrepullForRunningHosts,
@@ -6828,6 +6832,12 @@ export async function getCodexPaymentSource({
       if (!configuration.enabled) {
         siteFundedCodex = { enabled: false };
       } else {
+        const membership = await resolveMembershipForAccount(account_id);
+        const accountConcurrency =
+          getEffectiveMembershipUsageLimits(membership)
+            .acp_max_running_per_account ??
+          configuration.policy?.maxConcurrentTurnsPerAccount ??
+          DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
         const limit5hMicrousd = aiUsageUnitsToMicrousd(usage5h?.limit);
         const limit7dMicrousd = aiUsageUnitsToMicrousd(usage7d?.limit);
         const account = {
@@ -6847,13 +6857,22 @@ export async function getCodexPaymentSource({
           seedBayId === getConfiguredBayId()
             ? {
                 pools: await getSiteFundedCodexPoolStatus(),
+                accountReservations:
+                  await getSiteFundedCodexAccountReservationStatus({
+                    accountId: account_id,
+                  }),
               }
             : await getInterBayBridge()
                 .bayOps(seedBayId, { timeout_ms: 15_000 })
-                .getSiteFundedCodexStatus({});
+                .getSiteFundedCodexStatus({ accountId: account_id });
+        account.activeReservedMicrousd =
+          fundingStatus.accountReservations?.reservedMicrousd ?? 0;
         siteFundedCodex = {
           enabled: true,
-          policy: configuration.policy,
+          policy: {
+            ...configuration.policy,
+            maxConcurrentTurnsPerAccount: accountConcurrency,
+          },
           status: { ...fundingStatus, account },
         };
       }
