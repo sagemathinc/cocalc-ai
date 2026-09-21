@@ -1710,6 +1710,23 @@ sensitive; waiting for the dropdown to hide and focus to settle passes. This was
 a summary-only render with the unused modal keyboard-boundary import shimmed,
 not a full Agents workspace or modal reflow audit. No live session was changed.
 
+### Live Modal Follow-Up
+
+Rebuilt the lite4b frontend at `9bb406a65e` and reloaded the existing disposable
+Pi-rejection agent. In the actual Agents workspace at 320 CSS pixels, the ACP
+settings modal measured 304 pixels wide, from x=8 to x=312, with equal scroll
+and client widths. Its saved Model and Thinking controls, discovery explanation
+and close button remained inside the modal. Escape closed it and restored focus
+to the ACP settings button when opened at that viewport size. The normal viewport
+was restored afterward. No prompt or model-discovery request was sent.
+
+The first automation attempt selected a hidden retained dialog, and another
+waited for a toolbar while the mobile agent list was showing. Selecting the
+visible dialog and opening the agent from that list resolved those probe errors.
+Resizing after opening can remount the originating toolbar; this check does not
+claim focus restoration across that remount. The remote project-host backend was
+not upgraded by this frontend build.
+
 ## Next Integration Slice
 
 The admission checkpoint adds four tests (including a real SQLite profile
