@@ -143,8 +143,23 @@ Network-policy product support remains a follow-up, not a new implicit feature.
   protected storage wrapper: injected install failure rolled back, successful
   replacement left home/snapshot markers intact, and a missing snapshot rootfs
   removed only the live rootfs. All temporary subvolumes were removed. This is
-  protected-helper qualification, not yet a deployed project-level restore or
-  evidence for crash recovery between rename operations.
+  protected-helper qualification, not evidence for crash recovery between rename
+  operations.
+
+  The deployed project-level rootfs-only restore subsequently passed on artifact
+  `20260921T133155Z-4dfc53b94363` (bundle SHA-256
+  `70494339def5c636a1f25309d044453913c00d29a3395580f39a69b045e29212`,
+  host upgrade `799bb83f-6d63-4207-be94-9ed21f55d163`). In disposable project
+  `1892b11a-6c63-4a92-988d-01dcddc0bc79`, snapshot
+  `acp-rootfs-only-20260921-qualify` captured separate home/rootfs markers.
+  Both were changed, then typed CLI restore with `--mode rootfs` succeeded as
+  operation `386de0f0-5269-4b25-bd8e-12fc4becc895`. The rootfs marker reverted to
+  `acp-rootfs-only-before-20260921`; home retained
+  `acp-rootfs-only-home-after-20260921`. Snapshot listing confirmed the automatic
+  `acp-rootfs-only-20260921-safety` snapshot, and project status was running.
+  The four rootfs/home/project-API suites passed 81 tests (the existing Jest
+  open-handle warning remains). This qualifies the normal orchestration path,
+  not abrupt loss during the swap or every rollback/cleanup failure.
 
 - Generic ACP composers no longer display native Codex goals or ChatGPT payment
   setup banners. The previous shared goal/agent flag also controlled naming and
@@ -356,7 +371,8 @@ injected for this follow-up.
 Home-only restore is now fixed and live-qualified by `48bbf9f4d2`. It prepares
 the disposable snapshot clone with an anchored reflink copy of the current
 rootfs before swapping homes, leaving the original home/rootfs intact for the
-existing rollback path. Rootfs-only restore is unchanged and remains unqualified.
+existing rollback path. Rootfs-only restore was unqualified at this checkpoint;
+the later implementation and deployed qualification are recorded above.
 Five preparation regressions, 76 combined snapshot/project-API tests and the
 project-host TypeScript build passed; the existing Jest open-handle warning was
 observed before the test process exited successfully.
@@ -1039,8 +1055,8 @@ use yet; the current UI is an experimental operator-testing surface.
    coverage above; async and cross-project cases remain. Text prompts remain the
    only supported input; attachment types and unsupported forms fail explicitly.
 5. Broaden the passing external text-write convergence check to simultaneous
-   edits; verify snapshot scheduling, rootfs-only restore, broader restore failure
-   handling and recovery protection. Home-only success is qualified above.
+   edits; verify snapshot scheduling, broader restore failure handling and
+   recovery protection. Home-only and rootfs-only success are qualified above.
    Extend the project-egress-blocked inference check to broader on-prem control-
    plane deployment qualification. Extend same-project messaging to cross-project
    delivery once fresh authentication is available; queued revocation now has

@@ -10,7 +10,10 @@ passed browser submission, reload, follow-up and interruption using a fixture.
 Manual full-project snapshot recovery passed. Home-only restore exposed a rootfs
 staging failure; preparing the clone before swapping now fixes that case, with
 live checks that home content reverts while newer rootfs content survives.
-Rootfs-only restore and broader failure cases remain unqualified. OpenCode and Pi have passed
+Rootfs-only restore now also passes the deployed project flow: the rootfs reverts,
+newer home contents survive, a safety snapshot exists, and the project restarts.
+Broader failure cases, including process loss between restore renames, remain
+unqualified. OpenCode and Pi have passed
 real-process, local-fake-provider smoke tests, including network-disabled tests.
 Pi also passed actual local Qwen inference in a separate network-disabled
 container. Durable OpenCode resume, same-project queued agent messaging, external
