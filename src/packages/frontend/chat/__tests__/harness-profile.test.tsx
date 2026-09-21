@@ -169,12 +169,29 @@ test("discovery is explicit, keyboard accessible and does not select a model", a
 });
 
 test("discovery errors are announced instead of supplying invented controls", async () => {
+  const runtime = harnessRuntimeFromDraft(draft, "/home/user");
+  const onSettings = jest.fn();
+  const onDiscover = jest
+    .fn()
+    .mockRejectedValueOnce(Error("host unavailable"))
+    .mockResolvedValueOnce({
+      profile: runtime.profile,
+      controls: {
+        configOptions: [
+          {
+            id: "model",
+            name: "Model",
+            currentValue: "local",
+            options: [{ value: "local", name: "Local" }],
+          },
+        ],
+      },
+    });
   render(
     <HarnessRuntimeSummary
-      runtime={harnessRuntimeFromDraft(draft, "/home/user")}
-      onDiscover={async () => {
-        throw Error("host unavailable");
-      }}
+      runtime={runtime}
+      onSettings={onSettings}
+      onDiscover={onDiscover}
     />,
   );
   await userEvent
@@ -184,6 +201,17 @@ test("discovery errors are announced instead of supplying invented controls", as
     "host unavailable",
   );
   expect(screen.queryByRole("combobox")).toBeNull();
+  const button = screen.getByRole("button", {
+    name: "Load model and mode options",
+  });
+  button.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(await screen.findByRole("combobox", { name: "Model" })).toBeTruthy();
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(screen.getByRole("status").textContent).toBe("Harness options loaded");
+  expect(onDiscover).toHaveBeenCalledTimes(2);
+  expect(onSettings).not.toHaveBeenCalled();
+  expect(document.activeElement).toBe(button);
 });
 
 test("arguments remain structured and unknown runtimes do not display Codex controls", () => {
