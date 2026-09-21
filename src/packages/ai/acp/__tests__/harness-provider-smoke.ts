@@ -50,6 +50,7 @@ async function main() {
   if (!executable?.startsWith("/"))
     throw Error("Pass an absolute path to pinned OpenCode or pi-acp");
   const offline = process.argv.includes("--require-loopback-only");
+  const rejectProvider = process.argv.includes("--provider-reject");
   if (offline) await verifyLoopbackOnly();
   const home = await mkdtemp(join(tmpdir(), "cocalc-acp-smoke-"));
   const cwd = join(home, "workspace");
@@ -74,6 +75,19 @@ async function main() {
     }
     const request = JSON.parse(Buffer.concat(chunks).toString());
     calls++;
+    if (rejectProvider) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(
+        JSON.stringify({
+          error: {
+            message: "Local fixture rejected inference",
+            type: "authentication_error",
+            code: "invalid_api_key",
+          },
+        }),
+      );
+      return;
+    }
     if (calls > 12) {
       res.writeHead(429).end();
       return;
@@ -288,6 +302,48 @@ async function main() {
       0,
       "Discovery and session creation must not perform inference",
     );
+    if (rejectProvider) {
+      const messages: string[] = [];
+      const updates: string[] = [];
+      await assert.rejects(
+        client
+          .prompt("Greet me.", async (event) => {
+            if (event.type === "message") messages.push(event.text);
+            else if (updates.length < 20)
+              updates.push(JSON.stringify(event).slice(0, 2048));
+          })
+          .then((result) => {
+            process.stdout.write(
+              JSON.stringify({
+                observedProviderRejection: {
+                  result,
+                  messages,
+                  updates,
+                  calls,
+                  agent: capabilities.agentInfo,
+                },
+              }) + "\n",
+            );
+            return result;
+          }),
+        (error: any) => {
+          assert.equal(error.code, "rejected");
+          return true;
+        },
+      );
+      assert.ok(calls > 0 && calls <= 12);
+      assert.equal(writes, 0);
+      assert.ok(!messages.join("").includes("ACP local fixture verified"));
+      process.stdout.write(
+        JSON.stringify({
+          ok: true,
+          agent: capabilities.agentInfo,
+          providerRejectionVerified: true,
+          providerCalls: calls,
+        }) + "\n",
+      );
+      return;
+    }
     const messages: string[] = [];
     const result = await client.prompt(
       "Create acp-fixture.txt containing ACP fixture file, then greet me.",

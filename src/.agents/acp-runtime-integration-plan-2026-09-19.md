@@ -15,6 +15,11 @@ newer home contents survive, a safety snapshot exists, and the project restarts.
 Broader failure cases, including process loss between restore renames, remain
 unqualified. OpenCode and Pi have passed
 real-process, local-fake-provider smoke tests, including network-disabled tests.
+Provider rejection qualification found a remaining Pi bridge gap: pinned
+`pi-acp@0.0.33` returns an empty `end_turn` after local HTTP 401 without an error
+event. OpenCode `1.18.31` surfaces this rejection correctly. Successful Pi
+inference does not qualify its provider-error reporting; fix/requalify the bridge
+before relying on that behavior.
 Pi also passed actual local Qwen inference in a separate network-disabled
 container. Durable OpenCode resume, same-project queued agent messaging, external
 text-editor convergence, and supported ACP form questions through the persistent

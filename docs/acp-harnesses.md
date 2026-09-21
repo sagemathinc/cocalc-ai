@@ -6,6 +6,13 @@ default, separate integration. This feature is currently for operator testing;
 see the [qualification record](../src/.agents/acp-harness-progress-2026-09-21.md)
 for evidence and unresolved release gates.
 
+Known pinned-harness limitation: `pi-acp@0.0.33` with Pi `0.86.1` returned
+`end_turn` with no answer or error event when a local provider rejected inference
+with HTTP 401. Successful Pi inference is qualified, but this provider-error path
+is not. Do not interpret an empty completed turn as proof that inference succeeded.
+OpenCode `1.18.31` surfaced the same rejection correctly. Require a bridge fix or
+requalification before relying on Pi for unattended error reporting.
+
 ## Execution And Trust
 
 The harness runs with full project access. It can use its own filesystem, shell

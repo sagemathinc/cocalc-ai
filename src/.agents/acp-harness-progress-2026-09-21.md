@@ -5,6 +5,31 @@ Date: 2026-09-21. Branch: `feature/acp-harnesses`. Draft PR: #663, stacked on
 
 ## Broad Regression Checkpoint
 
+### Real Harness Provider Rejection
+
+Added `--provider-reject` to the disposable fake-provider smoke tool. It returns
+HTTP 401 with an explicit fake authentication error after session discovery and
+requires a classified ACP rejection instead of a successful prompt result.
+Unexpected completion prints bounded event diagnostics from this isolated fake
+environment, then fails the probe. No real credentials or provider are used.
+
+OpenCode `1.18.31` passes: it made two local provider calls and the client received
+a `rejected` error. Pi `0.86.1` through `pi-acp@0.0.33` fails reproducibly: one
+HTTP 401, `end_turn`, zero message chunks, and only available-command plus
+running-state metadata updates. No protocol error identifies the rejected
+inference. The test was not weakened to call this success. CoCalc should not
+invent an error based on empty output or parse harness-private session files to
+hide this bridge limitation. A bridge fix/requalification remains needed for
+reliable provider-error reporting.
+
+These probes used fresh temporary HOME directories and the existing disposable
+project's pinned installations. They are standalone real-harness/client checks,
+not browser/durable-path failure qualification or new offline-network checks.
+Normal successful file-write/follow-up smoke still passes for Pi (three local
+calls) and OpenCode (four local calls). AI TypeScript passes. The optional rejection probe is not part of the
+normal unit suite; its nonzero result for the pinned Pi bridge is intentional
+qualification evidence, not a green gate.
+
 ### Cleanup Failure Classification
 
 Follow-up regressions found that the unconditional attention cleanup in
@@ -1198,6 +1223,10 @@ project, and run one of:
 node smoke.cjs /absolute/path/to/node_modules/.bin/opencode
 node smoke.cjs /absolute/path/to/node_modules/.bin/pi-acp pi
 ```
+
+Append `--provider-reject` to test local HTTP 401 propagation without real
+credentials. This currently passes OpenCode and fails the pinned Pi bridge as
+recorded above; do not suppress that failure when qualifying another release.
 
 For the offline check, run the same bundled tool inside a separately provisioned
 Linux container with `--network=none`, the pinned packages available read-only,
