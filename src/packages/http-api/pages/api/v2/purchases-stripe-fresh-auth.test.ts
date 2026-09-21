@@ -373,34 +373,43 @@ describe("purchases Stripe fresh-auth routes", () => {
     expect(mockGetCheckoutSession).not.toHaveBeenCalled();
   });
 
-  it("creates a checkout session after fresh auth", async () => {
-    mockGetParams.mockReturnValue({
-      purpose: "membership-change",
-      description: "Membership",
-      lineItems: [{ description: "Membership", amount: 10 }],
-      return_url: "https://example.com/return",
-      metadata: { membership_id: "membership-1" },
-    });
-    const { req, res } = createMocks({ method: "POST" });
+  it.each([undefined, "instance-a", "instance-b"])(
+    "forwards checkout instance %p to the billing authority after fresh auth",
+    async (checkout_instance_id) => {
+      mockGetParams.mockReturnValue({
+        purpose: "membership-change",
+        description: "Membership",
+        lineItems: [{ description: "Membership", amount: 10 }],
+        return_url: "https://example.com/return",
+        metadata: { membership_id: "membership-1" },
+        checkout_instance_id,
+      });
+      const { req, res } = createMocks({ method: "POST" });
 
-    const { default: handler } =
-      await import("./purchases/stripe/get-checkout-session");
-    await handler(req, res);
+      const { default: handler } =
+        await import("./purchases/stripe/get-checkout-session");
+      await handler(req, res);
 
-    expect(res._getJSONData()).toEqual({ clientSecret: "cs_test" });
-    expect(mockRequireFreshAuth).toHaveBeenCalledWith({
-      req,
-      account_id: "acct-1",
-      allow_actor_impersonation: true,
-    });
-    expect(mockGetCheckoutSession).toHaveBeenCalledWith({
-      account_id: "acct-1",
-      purpose: "membership-change",
-      description: "Membership",
-      lineItems: [{ description: "Membership", amount: 10 }],
-      metadata: { membership_id: "membership-1" },
-    });
-  });
+      expect(res._getJSONData()).toEqual({ clientSecret: "cs_test" });
+      expect(mockRequireFreshAuth).toHaveBeenCalledWith({
+        req,
+        account_id: "acct-1",
+        allow_actor_impersonation: true,
+      });
+      expect(mockGetCheckoutSession).toHaveBeenCalledWith({
+        account_id: "acct-1",
+        purpose: "membership-change",
+        description: "Membership",
+        lineItems: [{ description: "Membership", amount: 10 }],
+        metadata: { membership_id: "membership-1" },
+        checkout_instance_id,
+      });
+      expect(mockExecuteBillingHttpCommand).toHaveBeenCalledWith(
+        "get-checkout-session",
+        expect.objectContaining({ account_id: "acct-1", checkout_instance_id }),
+      );
+    },
+  );
 
   it("rejects arbitrary self-service payment purposes", async () => {
     mockGetParams.mockReturnValue({

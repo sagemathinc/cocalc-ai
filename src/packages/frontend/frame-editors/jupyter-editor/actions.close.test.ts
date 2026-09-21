@@ -161,6 +161,75 @@ describe("JupyterEditorActions.close", () => {
   });
 });
 
+describe("JupyterEditorActions.save", () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  function saveTarget() {
+    let pending = false;
+    const saveInput = jest.fn(() => {
+      pending = true;
+    });
+    const target = {
+      _state: "ready",
+      path: "notebook.ipynb",
+      _active_id: () => "frame-1",
+      get_frame_actions: () => ({ save_input_editor: saveInput }),
+      jupyter_actions: {
+        hasPendingIpynbChanges: () => pending,
+        save: jest.fn().mockResolvedValue(undefined),
+      },
+      setState: jest.fn(),
+      set_error: jest.fn(),
+    };
+    return { target, saveInput };
+  }
+
+  it("flushes live cell input before checking whether the notebook needs saving", async () => {
+    const { target, saveInput } = saveTarget();
+
+    await JupyterEditorActions.prototype.save.call(target as any);
+
+    expect(saveInput).toHaveBeenCalledTimes(1);
+    expect(target.jupyter_actions.save).toHaveBeenCalledTimes(1);
+    expect(target.setState.mock.calls).toEqual([
+      [{ is_saving: true }],
+      [{ is_saving: false }],
+    ]);
+  });
+
+  it("still reports a real disk-save failure while the notebook is open", async () => {
+    const { target } = saveTarget();
+    jest.spyOn(console, "warn").mockImplementation(() => {});
+    target.jupyter_actions.save.mockRejectedValue(new Error("disk full"));
+
+    await JupyterEditorActions.prototype.save.call(target as any);
+
+    expect(target.set_error).toHaveBeenCalledWith(
+      "error saving file to disk -- Error: disk full",
+    );
+    expect(target.setState).toHaveBeenLastCalledWith({ is_saving: false });
+  });
+
+  it("does not update saving state after a pending save finishes during close", async () => {
+    const { target } = saveTarget();
+    let finish!: () => void;
+    target.jupyter_actions.save.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+
+    const saving = JupyterEditorActions.prototype.save.call(target as any);
+    expect(target.jupyter_actions.save).toHaveBeenCalledTimes(1);
+    target._state = "closed";
+    finish();
+    await saving;
+
+    expect(target.setState.mock.calls).toEqual([[{ is_saving: true }]]);
+    expect(target.set_error).not.toHaveBeenCalled();
+  });
+});
+
 describe("JupyterEditorActions close-frame cleanup", () => {
   it("closes the notebook frame action synchronously before closing the file tab", () => {
     const store = new EventEmitter();
