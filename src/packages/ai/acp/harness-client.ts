@@ -6,7 +6,11 @@ import type {
   RequestPermissionRequest,
   RequestPermissionResponse,
   StopReason,
+  CreateElicitationRequest,
+  CreateElicitationResponse,
 } from "@agentclientprotocol/sdk-v1";
+import type { AcpAttentionQuestion } from "@cocalc/conat/ai/acp/types";
+import { harnessQuestionForm } from "./harness-questions";
 import type { Readable, Writable } from "node:stream";
 import { parseAcpHarnessProfile } from "@cocalc/util/ai/runtime";
 import type { AcpHarnessProfile } from "@cocalc/util/ai/runtime";
@@ -39,6 +43,10 @@ export interface HarnessBinding {
 export type HarnessLauncher = (
   binding: HarnessBinding,
 ) => Promise<HarnessProcess>;
+export type HarnessQuestionHandler = (
+  questions: AcpAttentionQuestion[],
+  signal: AbortSignal,
+) => Promise<Record<string, { answers: string[] }>>;
 export type HarnessEvent =
   | { type: "message" | "thinking"; text: string; messageId?: string }
   | { type: "update"; update: SessionNotification["update"] }
@@ -77,6 +85,7 @@ export class AcpHarnessClient {
   private info!: InitializeResponse;
   private shutdown?: Promise<void>;
   private cancelTimer?: ReturnType<typeof setTimeout>;
+  private questionAbort?: AbortController;
   private readonly binding: HarnessBinding;
   private readonly timeoutMs: number;
 
@@ -84,6 +93,7 @@ export class AcpHarnessClient {
     binding: HarnessBinding,
     private process: HarnessProcess,
     timeoutMs: number,
+    private readonly questionHandler?: HarnessQuestionHandler,
   ) {
     this.binding = {
       ...binding,
@@ -98,6 +108,7 @@ export class AcpHarnessClient {
       () => ({
         sessionUpdate: (notification) => this.onUpdate(notification),
         requestPermission: (request) => this.permission(request),
+        createElicitation: (request) => this.question(request),
       }),
       harnessTransport(process.stdout, process.stdin, (error) =>
         this.fail(error),
@@ -113,6 +124,7 @@ export class AcpHarnessClient {
     binding: HarnessBinding,
     launch: HarnessLauncher,
     timeoutMs = 30_000,
+    questionHandler?: HarnessQuestionHandler,
   ): Promise<AcpHarnessClient> {
     const profile = parseAcpHarnessProfile(binding.profile);
     if (!binding.projectId || !binding.accountId)
@@ -121,13 +133,17 @@ export class AcpHarnessClient {
       { ...binding, profile },
       await launch({ ...binding, profile }),
       timeoutMs,
+      questionHandler,
     );
     try {
       client.info = await client.request(
         client.connection.initialize({
           protocolVersion: 1,
           clientInfo: { name: "cocalc", version: "1" },
-          clientCapabilities: {}, // No host filesystem, terminals, or secret/login callbacks.
+          // No host filesystem, terminals, URL or secret/login callbacks.
+          clientCapabilities: questionHandler
+            ? { elicitation: { form: {} } }
+            : {},
         }),
       );
       if (client.info.protocolVersion !== 1)
@@ -337,6 +353,7 @@ export class AcpHarnessClient {
       if (this.cancelTimer) clearTimeout(this.cancelTimer);
       this.cancelTimer = undefined;
       this.active = false;
+      this.questionAbort?.abort();
       this.listener = undefined;
     }
   }
@@ -417,9 +434,60 @@ export class AcpHarnessClient {
     return { outcome: { outcome: "selected", optionId: option.optionId } };
   }
 
+  private async question(
+    request: CreateElicitationRequest,
+  ): Promise<CreateElicitationResponse> {
+    if (
+      !this.questionHandler ||
+      !this.active ||
+      this.canceled ||
+      this.disposed ||
+      this.questionAbort
+    )
+      throw new HarnessError(
+        "unsupported",
+        "ACP task questions are unavailable",
+      );
+    const form = harnessQuestionForm(request);
+    if (form.sessionId !== this.session?.sessionId)
+      throw new HarnessError("rejected", "ACP question has wrong session");
+    const controller = new AbortController();
+    this.questionAbort = controller;
+    let onAbort: () => void = () => {};
+    try {
+      const cancelled = new Promise<undefined>((resolve) => {
+        onAbort = () => resolve(undefined);
+        controller.signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const answers = await Promise.race([
+        this.questionHandler(form.questions, controller.signal),
+        cancelled,
+      ]);
+      if (
+        !answers ||
+        controller.signal.aborted ||
+        !this.active ||
+        this.canceled ||
+        this.disposed
+      )
+        return { action: "cancel" };
+      return form.response(answers);
+    } catch {
+      if (controller.signal.aborted) return { action: "cancel" };
+      throw new HarnessError(
+        "rejected",
+        "ACP task question could not be completed",
+      );
+    } finally {
+      controller.signal.removeEventListener("abort", onAbort);
+      if (this.questionAbort === controller) this.questionAbort = undefined;
+    }
+  }
+
   async cancel(): Promise<void> {
     if (!this.active || !this.session) return;
     this.canceled = true;
+    this.questionAbort?.abort();
     this.cancelTimer ??= setTimeout(
       () => this.fail(Error("ACP cancellation was not confirmed")),
       this.timeoutMs,
@@ -432,6 +500,7 @@ export class AcpHarnessClient {
   dispose(): Promise<void> {
     if (this.shutdown) return this.shutdown;
     this.disposed = true;
+    this.questionAbort?.abort();
     if (this.cancelTimer) clearTimeout(this.cancelTimer);
     this.process.stdin.destroy();
     this.process.stdout.destroy();

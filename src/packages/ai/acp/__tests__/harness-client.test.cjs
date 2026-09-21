@@ -7,6 +7,95 @@ const path = require("node:path");
 const { AcpHarnessClient } = require("../../dist/acp/harness-client.js");
 const { parseAcpHarnessProfile } = require("@cocalc/util/ai/runtime");
 const { HarnessAgent } = require("../../dist/acp/harness-agent.js");
+const { harnessQuestionForm } = require("../../dist/acp/harness-questions.js");
+
+function questionForm() {
+  return {
+    mode: "form",
+    sessionId: "native-session",
+    message: "Which target?",
+    requestedSchema: {
+      type: "object",
+      required: ["target"],
+      properties: {
+        target: { type: "string", title: "Target", enum: ["staging", "local"] },
+      },
+    },
+  };
+}
+test("ACP form questions retain exact choice values and decline explicitly", () => {
+  const source = questionForm();
+  const form = harnessQuestionForm(source);
+  source.requestedSchema.properties.target.enum[0] = "changed";
+  assert.equal(form.sessionId, "native-session");
+  assert.equal(form.questions[0].isOther, false);
+  assert.match(form.questions[0].question, /Do not enter passwords/);
+  assert.deepEqual(form.response({ target: { answers: ["staging"] } }), {
+    action: "accept",
+    content: { target: "staging" },
+  });
+  assert.deepEqual(form.response({ target: { answers: [] } }), {
+    action: "decline",
+  });
+  for (const answers of [
+    {},
+    { target: { answers: ["changed"] } },
+    { target: { answers: ["staging", "local"] } },
+    { target: { answers: ["local"] }, extra: { answers: ["ignored"] } },
+  ])
+    assert.throws(() => form.response(answers));
+});
+test("ACP form questions enforce Unicode length and reject partial required answers", () => {
+  const source = questionForm();
+  source.requestedSchema.properties = {
+    target: { type: "string", minLength: 1, maxLength: 2 },
+    reason: { type: "string" },
+  };
+  source.requestedSchema.required.push("reason");
+  const form = harnessQuestionForm(source);
+  assert.deepEqual(
+    form.response({
+      target: { answers: ["\u{1f30e}"] },
+      reason: { answers: ["test"] },
+    }),
+    {
+      action: "accept",
+      content: { target: "\u{1f30e}", reason: "test" },
+    },
+  );
+  assert.throws(() =>
+    form.response({
+      target: { answers: ["abc"] },
+      reason: { answers: ["test"] },
+    }),
+  );
+  assert.throws(() =>
+    form.response({ target: { answers: ["ok"] }, reason: { answers: [] } }),
+  );
+});
+test("ACP form questions reject unsupported schema constraints and non-session elicitation", () => {
+  for (const mutate of [
+    (x) => (x.mode = "url"),
+    (x) => delete x.sessionId,
+    (x) => (x.requestId = "auth-start"),
+    (x) => (x.requestedSchema.required = []),
+    (x) => (x.requestedSchema.properties.target.type = "object"),
+    (x) => (x.requestedSchema.properties.target.format = "password"),
+    (x) => (x.requestedSchema.properties.target.pattern = "local"),
+    (x) => (x.requestedSchema.properties.target.default = "local"),
+    (x) => (x.requestedSchema.properties.target.enum = ["same", "same"]),
+    (x) => (x.requestedSchema.properties.target.maxLength = 9000),
+    (x) => (x.message = "x".repeat(4097)),
+    (x) => (x.requestedSchema.additionalProperties = true),
+  ]) {
+    const source = questionForm();
+    mutate(source);
+    assert.throws(
+      () => harnessQuestionForm(source),
+      /Unsupported ACP question form/,
+    );
+  }
+});
 
 const profile = {
   version: 1,
@@ -177,7 +266,7 @@ test("agent adapter preserves permission policy events and cancellation stop rea
   );
   assert.ok(!events.some((event) => event.type === "summary"));
 });
-async function start(t, args = []) {
+async function start(t, args = [], questionHandler) {
   let child;
   const client = await AcpHarnessClient.start(
     {
@@ -211,10 +300,58 @@ async function start(t, args = []) {
       };
     },
     1500,
+    questionHandler,
   );
   t.after(() => client.dispose());
   return client;
 }
+test("ACP task questions use the registered handler and exact schema response", async (t) => {
+  let called = 0;
+  const client = await start(t, [], async (questions, signal) => {
+    called++;
+    assert.equal(questions[0].id, "target");
+    assert.equal(signal.aborted, false);
+    return { target: { answers: ["local"] } };
+  });
+  await client.open();
+  const chunks = [];
+  await client.prompt("question", async (e) => {
+    if (e.type === "message") chunks.push(e.text);
+  });
+  assert.deepEqual(JSON.parse(chunks.join("")), {
+    action: "accept",
+    content: { target: "local" },
+  });
+  await client.prompt("question-wrong-session", async () => {});
+  assert.equal(called, 1);
+});
+test("cancel aborts pending ACP task questions and ignores late answers", async (t) => {
+  let questionSignal, answer;
+  let ready;
+  const entered = new Promise((resolve) => (ready = resolve));
+  const client = await start(t, [], async (_questions, signal) => {
+    questionSignal = signal;
+    ready();
+    return new Promise((resolve) => (answer = resolve));
+  });
+  await client.open();
+  const pending = client.prompt("question", async () => {});
+  await entered;
+  await client.cancel();
+  assert.equal(questionSignal.aborted, true);
+  await pending;
+  answer({ target: { answers: ["staging"] } });
+  assert.equal(client.running, false);
+});
+test("unavailable ACP question callbacks fail explicitly instead of hanging", async (t) => {
+  const client = await start(t);
+  await client.open();
+  const chunks = [];
+  await client.prompt("question", async (e) => {
+    if (e.type === "message") chunks.push(e.text);
+  });
+  assert.deepEqual(JSON.parse(chunks.join("")), { rejected: true });
+});
 test("advertised grouped config options apply before inference and survive follow-up", async (t) => {
   const client = await start(t, ["--config-options"]);
   await client.open();

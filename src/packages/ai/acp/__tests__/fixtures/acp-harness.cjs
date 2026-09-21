@@ -5,6 +5,7 @@ const send = (message) =>
 const result = (id, value) => send({ id, result: value });
 let pendingPrompt;
 let permissionPrompt;
+let questionPrompt;
 let counter = 0;
 let selectedModel = "fast";
 let selectedMode = "code";
@@ -54,6 +55,14 @@ const update = (text, sessionId = "fixture-session") =>
   });
 readline.createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
+  if (message.id === "question") {
+    if (questionPrompt == null) return;
+    update(JSON.stringify(message.result ?? { rejected: true }));
+    result(questionPrompt, { stopReason: "end_turn" });
+    questionPrompt = undefined;
+    pendingPrompt = undefined;
+    return;
+  }
   if (message.id === "permission") {
     update(JSON.stringify(message.result));
     result(permissionPrompt, { stopReason: "end_turn" });
@@ -91,6 +100,30 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
       return result(message.id, {});
     case "session/prompt": {
       const text = message.params.prompt[0].text;
+      if (text === "question" || text === "question-wrong-session") {
+        questionPrompt = message.id;
+        pendingPrompt = message.id;
+        return send({
+          id: "question",
+          method: "elicitation/create",
+          params: {
+            mode: "form",
+            sessionId: text === "question" ? "fixture-session" : "wrong",
+            message: "Choose the target.",
+            requestedSchema: {
+              type: "object",
+              required: ["target"],
+              properties: {
+                target: {
+                  type: "string",
+                  title: "Target",
+                  enum: ["local", "staging"],
+                },
+              },
+            },
+          },
+        });
+      }
       if (text === "tools") {
         for (const tool of [
           {
@@ -177,6 +210,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
     case "session/cancel":
       if (process.argv.includes("--ignore-cancel")) return;
       if (pendingPrompt != null) {
+        questionPrompt = undefined;
         result(pendingPrompt, { stopReason: "cancelled" });
         pendingPrompt = undefined;
       }

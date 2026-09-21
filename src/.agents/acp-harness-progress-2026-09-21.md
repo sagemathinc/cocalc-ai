@@ -345,6 +345,30 @@ snapshot. Repeated host upgrades during qualification reset the scheduler's
 these observations or replace the existing memory-pressure safeguards just to
 make the test pass.
 
+### Task Question Client Checkpoint
+
+The pinned SDK includes released `elicitation/create` form requests. Added a
+bounded adapter to existing attention-question shapes for one to three required
+string fields, including exact enum choices and Unicode length constraints.
+Unsupported schema constraints, optional fields, non-string forms, URL/auth
+elicitation and non-session requests fail explicitly rather than being ignored.
+The rendered prompt warns against entering secrets; this is not an authentication
+or approval mechanism.
+
+The ACP client advertises form elicitation only when given an internal question
+handler. It requires an active matching session, permits one outstanding question,
+aborts on cancellation/disposal/turn end, ignores late answers and redacts handler
+failures. The subprocess fixture exercises successful response translation,
+wrong-session requests, unavailable handlers and cancellation with a late reply.
+The AI package build and 34 subprocess tests pass.
+
+This checkpoint is not user-facing QA support yet. The production HarnessAgent
+does not supply that handler, so it still advertises no elicitation capability.
+Next: bind the handler to the existing durable attention records and current
+execution context, resolve/expire records correctly, and qualify browser replies
+and cancellation across reload. Do not claim the interactive-question release
+gate from client-only tests.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
