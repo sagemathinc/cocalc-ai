@@ -29,10 +29,21 @@ and one Interrupt action produced durable job
 `4d77122f-bf8d-4717-a9c5-94852dc0d1e7`, state `interrupted`, with the new worker
 bundle version. After reload and chat hydration, the partial `working` response
 and `Conversation interrupted.` were visible. No inference provider was used.
-This verifies ordinary durable cancellation, not the malformed `end_turn`
-case through the live worker; that case still has subprocess evidence only.
-An old opt-out error remains visible above unrelated history, despite successful
-new admission. Do not mistake that stale error for the current job outcome.
+The malformed `end_turn` case subsequently passed through the same deployed
+worker. Temporarily wrapped the disposable fixture with `--cancel-as-completed`,
+submitted one `hang` prompt and clicked Interrupt once. Job
+`b2bbdcbe-9b77-497e-b2b0-2c1ff68b27c2` and its turn ended in `error`, with
+`ACP prompt completed after interruption was requested; cancellation was not
+confirmed`. After reload and hydration, the partial output and that exact error
+remained visible, with an explicit resubmit action rather than automatic retry.
+No active jobs remained. Restored the original fixture and verified its SHA256
+`87ceb7f55ff99a726112994ac3cb514660a0bd1913e0587ac1f57c430e0ef4fd`.
+This is a deliberately misbehaving fixture test, not live OpenCode provider
+backoff qualification or proof that arbitrary background work stopped.
+
+An older opt-out error above the history was also investigated: it is rendered
+as historical message content with its own resubmit action, not current host
+availability state. It was not erased or treated as a new admission failure.
 
 ### Real Harness Provider Rejection
 
