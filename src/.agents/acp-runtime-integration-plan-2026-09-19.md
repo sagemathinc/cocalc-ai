@@ -16,6 +16,10 @@ text-editor convergence, and supported ACP form questions through the persistent
 QA UI have live evidence. This is not the full release qualification below;
 the real local model also works through the durable browser path, but that path
 has not yet been qualified with public egress blocked.
+Normal project restart with a retained Pi/local-model session now passes. Live
+forced-cancellation testing also verifies detached-child cleanup and explicit
+uncertainty when a harness never acknowledges cancel; this is not qualification
+of every process-removal fallback or abrupt-loss case.
 See [implementation checkpoint](acp-harness-progress-2026-09-21.md).
 Implementation base: `feature/my-agents-workspace` (PR #640), initially
 `d0775fa58f`. Development branch: `feature/acp-harnesses`.

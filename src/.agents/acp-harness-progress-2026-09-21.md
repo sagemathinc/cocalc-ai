@@ -511,6 +511,68 @@ the conversation and completed. Read-only SQLite checks confirmed registry kind
 configured for local CPU inference; its retained model server is intentional
 runtime state, not an untracked host service.
 
+## Forced Cancellation And Durable Outcome Checkpoint
+
+The disposable `agent-7` runs the checked-in `acp-descendant.cjs` fixture. Its
+ACP parent ignores cancel and its detached child ignores SIGTERM while writing
+a heartbeat every 200 ms. A 300-second safety exit limits abandoned tests; it is
+not counted as cleanup evidence. The test uses no provider or subscription.
+
+The first live interrupt removed the sidecar and both captured host processes,
+but falsely presented a confirmed interruption. Commit `266a14f368` separates
+the cancel request from the prompt's confirmed cancellation in the chat writer.
+The next probe exposed a second layer: the interrupt transport prematurely
+terminalized the durable job. Commit `981e775bc3` leaves both direct and durable
+generic cancellation finalization to the worker; native behavior is unchanged.
+
+Live operation `1a085a08-de77-47fd-8ece-a67b1a6c7009` on artifact
+`20260921T104638Z-981e775bc3a2` showed `Stopping...` while the job remained
+`running`. After the cancellation timeout the job became `error`, with an
+explicit uncertain-delivery/completion warning and no automatic resubmission.
+Parent PID `3380468` and detached child `3380487` both disappeared. Heartbeat
+count stopped at 279, well before the 300-second safety exit. The generated
+sidecar was `acp-1892b11a-6c63-4a92-988d-01dcddc0bc79-cc6d9f02-cfa6-41db-b1db-313333b5ec5b`.
+This qualifies ordinary forced sidecar/descendant cleanup, not the rare Podman
+stop-timeout fallback or external side-effect rollback.
+The warning remained visible after a browser reload and project restart;
+the fixture thread still had exactly its three deliberately submitted jobs.
+
+Validation: 149 chat-writer/detached-worker tests, 121 native ACP tests, and the
+project-host TypeScript build passed. The earlier client checkpoint passed all
+37 harness subprocess tests. Upgrade operation
+`03f8a8b6-9045-444f-9e90-3dcdc2cdb605` succeeded; artifact SHA-256
+`b7377b346be0e0d5f1a47764fe40d908081d67f7045fcfcfd71afc05309b9fe7`.
+
+## Project Restart With A Retained Local Model
+
+Restarting the disposable project after a completed Pi turn reproduced a real
+lifecycle failure: Podman could not remove the primary project container because
+the retained ACP sidecar depended on its network namespace. The project-host
+stop path previously fenced ACP work only after container removal.
+
+Commit `5cace5e6a1` adds the existing project ACP fence before `runner.stop` and
+retains the post-stop sweep for late completion/queue races. It adds ordering
+and failure regressions rather than bypassing the lifecycle API or forcibly
+removing containers by hand. All 60 project API tests and project-host typecheck
+passed; Jest retained its existing open-handle warning. The 14 focused frontend
+tests, frontend lint and dependency consistency check also passed.
+
+Deployed artifact `20260921T105243Z-5cace5e6a115` (SHA-256
+`0d7240bb542240e41099beb34b2a4392ff3b5eb5b225c916ff6c815bef084fc5`), upgrade
+`24d5bee4-f543-467d-ae12-bef2a5d33ccd`. First restored the partly stopped test
+project with ordinary restart `585d3c42-27f3-4e16-93f5-ddf17d3fab1f`. A new local
+inference turn `190d7b58-2803-4d34-8dc1-7dc9e93cf958` completed and retained
+sidecar `acp-1892b11a-6c63-4a92-988d-01dcddc0bc79-1b0f8184-1293-4740-94bd-84e143e40e89`.
+Restart `b1ae798e-4d7e-462d-b3c6-5fa93f53f6fa` then succeeded with that sidecar
+present. Container inventory confirmed its removal. An explicit browser
+follow-up `8b399cb2-8801-4c5a-a07d-a836d5c8506a` completed after restart, keeping
+native Pi session `01a0c373-055c-72d0-98c2-b4adfb21919d` and registry kind `acp`.
+
+This covers normal project restart between completed turns. Abrupt project loss
+during a delivered prompt, resource exhaustion, and failure of the cleanup
+fallback still require separate qualification. The test project remains
+network-enabled; this does not expand the separate offline inference claim.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
@@ -569,11 +631,13 @@ Continue qualifying interrupted-chat projection and broaden real-harness
 coverage beyond the live checks above. Do not enable the host flag for general
 use yet; the current UI is an experimental operator-testing surface.
 
-1. Broaden live qualification to persistence failures and project restart.
+1. Broaden live qualification to persistence failures and abrupt project loss
+   during a delivered prompt. Normal project restart with retained Pi and
    OpenCode native resume after worker restart passed, as recorded above.
    Add pre-first-turn model/config capability discovery.
 2. Extend the supervised launcher's live tests to resource exhaustion and forced
-   descendant termination. The smoke launcher is not reusable as a privileged
+   descendant termination beyond the passing forced-cancellation fixture above.
+   The smoke launcher is not reusable as a privileged
    host execution path. Direct Podman removal of the retained Pi sidecar failed
    with "given PID did not die within timeout", even with a five-second grace
    period. The launcher now reuses project-runner's existing container-process
