@@ -503,6 +503,14 @@ regression exercises queue, claim, terminal mirror and sparse publication.
 The registry/writer run passes 107 tests, chat helpers pass six, avatar/author
 tests pass eight, and frontend/project-host TypeScript plus frontend lint pass.
 
+The follow-up bundle `20260921T102709Z-3150fb6a0466` deployed successfully via
+`be40bb87-eb20-4215-b406-b1875d02554b`. After normal old-worker/sidecar cleanup,
+another explicit local-model turn `7d5302f9-02a9-4bce-9a51-5bf2a01874c6` resumed
+the conversation and completed. Read-only SQLite checks confirmed registry kind
+`acp` both while running and after completion. The disposable `agent-6` remains
+configured for local CPU inference; its retained model server is intentional
+runtime state, not an untracked host service.
+
 ## Reproduce
 
 Local protocol tests (includes package build):
