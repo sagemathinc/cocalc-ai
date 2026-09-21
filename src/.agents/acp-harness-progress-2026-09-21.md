@@ -1502,6 +1502,29 @@ Pinned packages are in `/home/user/acp-qualification`. No new host was allocated
 No application restart or deployment was needed for the standalone checkpoint;
 the subsequent durable checkpoint above upgraded and restarted the test host.
 
+## Full Build And Regression Baseline At 4e34636951
+
+`pnpm -C src build:dev` completed successfully at `4e34636951`, including workspace
+TypeScript outputs, generated translations, frontend bundling, CLI build and
+Python API documentation. The existing optional project-debug-log permission
+warning remained nonfatal. No tracked generated-file changes resulted.
+
+After the build finished, all selected checks completed with exit status zero:
+
+- Lite `acp/.*test`: 48 suites, 450 tests.
+- Project-host Codex/ACP/reconcile/runtime-lifecycle/snapshot selection:
+  19 suites, 143 tests.
+- Frontend harness/profile/tool, ACP API, composer and agent-network selection:
+  7 suites, 63 tests.
+- Native AI package: 12 suites, 140 tests.
+- Real-stdio harness client: 89 tests.
+- Workspace dependency version consistency.
+
+This is 885 selected tests, not the entire monorepo test suite. Build/test logs
+use the local `/tmp/acp-4e346-` prefix. The build refreshed frontend assets but did
+not upgrade the remote project-host or installed CLI bundle. Runtime deployment
+and remaining live qualification limits documented elsewhere still apply.
+
 ## Rollback Cancellation Regression
 
 The detached-worker cancellation matrix now stores a generic runtime request
