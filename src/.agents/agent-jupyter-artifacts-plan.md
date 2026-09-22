@@ -1,7 +1,37 @@
 # Jupyter artifacts in the Agents workspace
 
-Status: proposed follow-up to #640. This document does not claim implementation
-or release readiness. Keep this work separate from the #640 release.
+Status: implementation started after #640 merged. The shared read-only renderer
+is extracted; the Agents notebook workflow is not yet implemented or release-ready.
+
+## Integration audit (2026-09-22)
+
+#640 is merged. This branch incorporates main and PR #668 targets main.
+
+- `chat/open-result.ts` already routes files and artifact cards into persistent
+  Workbench frames, with full-frame presentation on narrow screens.
+- `frame-editors/chat-editor/workbench.tsx` sends both file entry points to
+  `FileArtifact`. Do not add notebooks to its generic saved-file reader: that
+  would miss unsaved changes in the authoritative live document.
+- `jupyter/readonly-notebook.tsx` extracts the existing history CellList surface
+  for reuse. It consumes an observed document, receives no editing/execution
+  actions, and does not own a session. History uses this same renderer.
+- `frame-editors/jupyter-editor/jupyter-actions.ts` opens `syncdbPath(path)`
+  using `SYNCDB_OPTIONS`. `jupyter/browser-actions.ts` additionally owns
+  `watchIpynb`, disk/RTC reconciliation, runtime subscriptions and widget state.
+  A raw syncdb subscription alone does not initialize a never-opened notebook.
+  Reuse this lifecycle rather than implementing a second import/watch policy.
+- The compute Jupyter API explicitly prohibits its load/save methods for
+  passive opening. Use project-host filesystem/session routing; artifact open
+  must not start compute or execute cells.
+
+Next slice: extract a reusable passive session owner from existing initialization
+and reconciliation, then attach the read-only surface to both Workbench entry
+points. Cover first-open, unsaved edits, multiple consumers, disconnect and
+last-consumer cleanup. Never close a session owned by an open project editor.
+
+Cell/output snapshot references, origin-bound feedback, execution freshness,
+live export and browser acceptance remain unfinished. The renderer extraction
+does not yet expose a notebook artifact UI or establish live-session behavior.
 
 ## Product goal
 
@@ -31,7 +61,7 @@ full reproducibility in a stateful kernel.
 
 ## Implementation checklist
 
-- [ ] Audit existing notebook renderers, session lifecycle, artifact locators,
+- [x] Audit existing notebook renderers, session lifecycle, artifact locators,
       and contextual-feedback APIs; identify minimal integration seams.
 - [ ] Open notebook cards and ordinary links in a reusable Agents result pane.
 - [ ] Render the authoritative live notebook, including unsaved edits, without
