@@ -62,3 +62,25 @@ test("the public preview flag cannot enable fixtures in a production runtime", (
     else process.env.EXPO_PUBLIC_MOBILE_PREVIEW = previousFlag;
   }
 });
+
+test("Markdown has a separate resumable conversation with the reading corpus", () => {
+  const {
+    previewWorkspace,
+    resumePreviewChat,
+    MARKDOWN_PREVIEW_THREAD,
+  } = require("./fixtures");
+  const agent = previewWorkspace().directory.agents.find(
+    (a: any) => a.name === "Markdown",
+  );
+  expect(agent.thread_id).toBe(MARKDOWN_PREVIEW_THREAD);
+  const chat = resumePreviewChat(agent.thread_id);
+  expect(chat).toBe(resumePreviewChat(agent.thread_id));
+  expect(chat).not.toBe(resumePreviewChat());
+  const snapshot = chat.getSnapshot();
+  expect(snapshot.threads[0].thread_id).toBe(agent.thread_id);
+  expect(
+    snapshot.messages.every((m: any) => m.thread_id === agent.thread_id),
+  ).toBe(true);
+  expect(snapshot.messages[1].content).toContain("CoCalc macro compatibility");
+  expect(snapshot.message_window.has_older).toBe(false);
+});

@@ -99,3 +99,16 @@ it("renders shared CoCalc tokens without dropping formulas, tasks, or mentions",
   ).toBeGreaterThan(0);
   await act(async () => view.unmount());
 });
+
+it("renders the full phone preview corpus", async () => {
+  const { MARKDOWN_SAMPLE } = require("../preview/markdown-sample");
+  let view: any;
+  await act(async () => {
+    view = create(<Markdown value={MARKDOWN_SAMPLE} />);
+  });
+  expect(JSON.stringify(view.toJSON())).toContain("End of sample");
+  expect(
+    view.root.findAllByProps({ accessibilityLabel: "Copy code block" }),
+  ).toHaveLength(2);
+  await act(async () => view.unmount());
+});

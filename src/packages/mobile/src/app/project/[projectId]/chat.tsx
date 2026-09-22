@@ -244,7 +244,7 @@ export default function ChatScreen() {
     }
     try {
       if (isPreviewProfile(profileId)) {
-        const next = resumePreviewChat();
+        const next = resumePreviewChat(threadId);
         clientRef.current = next;
         setClient(next);
         setStatus("Local preview · no network");

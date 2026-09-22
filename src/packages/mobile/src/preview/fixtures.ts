@@ -10,6 +10,10 @@ import type {
 import type { loadNamedAgentWorkspace } from "@cocalc/chat-client/named-agents";
 import { normalizeAgentWorkspaceOrganization } from "@cocalc/chat-client/agent-organization";
 
+import { MARKDOWN_SAMPLE } from "./markdown-sample";
+
+export const MARKDOWN_PREVIEW_THREAD = "preview-markdown-thread";
+
 // Both gates are required: a production bundle cannot enable local fixtures.
 export const previewEnabled =
   typeof __DEV__ !== "undefined" &&
@@ -41,6 +45,7 @@ export function previewWorkspace(): Workspace {
           "A very long agent name for investigating mathematical questions",
           "Writing",
           "Unavailable",
+          "Markdown",
         ].map((name, index) => ({
           account_id: PREVIEW_PROFILE,
           name,
@@ -49,10 +54,13 @@ export function previewWorkspace(): Workspace {
             project_id: "preview-project",
           },
           path: "preview.chat",
-          thread_id: "preview-thread",
+          thread_id:
+            name === "Markdown" ? MARKDOWN_PREVIEW_THREAD : "preview-thread",
           project_title: "Mobile layout laboratory",
           description:
-            "A realistic description that wraps over several lines on a narrow screen and at larger text sizes.",
+            name === "Markdown"
+              ? "Rich Markdown, mathematics, tables, code, and speech samples for testing on your phone."
+              : "A realistic description that wraps over several lines on a narrow screen and at larger text sizes.",
           available: index !== 3,
           updated_at: "2026-09-21T12:00:00Z",
         })),
@@ -66,14 +74,16 @@ export function savePreviewOrganization(
 ) {
   workspace = { ...previewWorkspace(), organization };
 }
-export function createPreviewChat(): ConversationClient {
+export function createPreviewChat(
+  threadId = "preview-thread",
+): ConversationClient {
   let sequence = 0;
   const message = (
     role: ProjectedChatMessage["role"],
     content: string,
   ): ProjectedChatMessage => ({
     message_id: `preview-message-${sequence++}`,
-    thread_id: "preview-thread",
+    thread_id: threadId,
     sender_id: role,
     role,
     content,
@@ -87,9 +97,7 @@ export function createPreviewChat(): ConversationClient {
     ready: true,
     project_id: "preview-project",
     path: "preview.chat",
-    threads: [
-      { thread_id: "preview-thread", agent_kind: "acp", state: "idle" },
-    ],
+    threads: [{ thread_id: threadId, agent_kind: "acp", state: "idle" }],
     messages: [
       message(
         "human",
@@ -107,6 +115,21 @@ export function createPreviewChat(): ConversationClient {
     ],
     message_window: { limit: 30, loaded: 4, has_older: true, omitted: 1 },
   };
+  if (threadId === MARKDOWN_PREVIEW_THREAD) {
+    snapshot.messages = [
+      message(
+        "human",
+        "Show me a broad sample of CoCalc Markdown to test reading on my phone.",
+      ),
+      message("agent", MARKDOWN_SAMPLE),
+    ];
+    snapshot.message_window = {
+      limit: 30,
+      loaded: 2,
+      has_older: false,
+      omitted: 0,
+    };
+  }
   const listeners = new Set<(snapshot: ChatSnapshot) => void>();
   const publish = () => {
     snapshot = { ...snapshot, revision: snapshot.revision + 1 };
@@ -187,7 +210,14 @@ export function createPreviewChat(): ConversationClient {
   };
 }
 
-let resumedChat: ConversationClient | undefined;
-export function resumePreviewChat(): ConversationClient {
-  return (resumedChat ??= createPreviewChat());
+const resumedChats = new Map<string, ConversationClient>();
+export function resumePreviewChat(
+  threadId = "preview-thread",
+): ConversationClient {
+  let chat = resumedChats.get(threadId);
+  if (!chat) {
+    chat = createPreviewChat(threadId);
+    resumedChats.set(threadId, chat);
+  }
+  return chat;
 }
