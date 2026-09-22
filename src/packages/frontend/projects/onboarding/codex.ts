@@ -24,11 +24,14 @@ function detectCodexOnboardingMode(request: string): CodexOnboardingMode {
   ) {
     return "terminal";
   }
-  if (
-    /\b(jupyter|notebook|data ?frame|pandas|numpy|matplotlib|plots?|visuali[sz](e|ation|ing)|data analysis|statistics?|benchmarks?|benchmarking|experiments?|simulation|number theory)\b/.test(
+  // Asking for an analysis or visualization does not select its underlying
+  // editor. A mention that rules out notebooks is not a format request.
+  const mentionsNotebook = /\b(jupyter(?:lab)?|notebooks?|ipynb)\b/.test(goal);
+  const rulesOutNotebook =
+    /\b(?:no|without|avoid|never|not|don't|do not)\b(?:\s+[\w'-]+){0,5}[\s.]+\b(?:jupyter(?:lab)?|notebooks?|ipynb)\b/.test(
       goal,
-    )
-  ) {
+    );
+  if (mentionsNotebook && !rulesOutNotebook) {
     return "notebook";
   }
   if (
@@ -81,11 +84,12 @@ Complete the goal autonomously and make the first experience successful:
 
 - Create a small, concrete, polished deliverable in /home/user that directly addresses the goal.
 - ${formatGuidance}
+- The user's requested output and constraints take priority over these format suggestions.
 - If data or exact requirements are missing, use a clearly labeled, representative example and reasonable defaults. Do not stop merely to ask for clarification when a useful first version can be made.
 - Actually run or otherwise validate what you create, inspect the result, and fix obvious errors.
 - Keep the scope focused enough to finish during this onboarding turn. Favor a working demonstration that the user can extend over a broad unfinished scaffold.
 - Do not search browser tabs, inspect account or project metadata, or use CoCalc CLI discovery commands. Only the onboarding artifact named above, when present, should be assumed to exist.
-- Finish with a concise explanation of what you created, the exact filenames to open, and one or two useful next steps.
+- Finish with the useful result in the conversation, a link to the saved deliverable, and one or two ways to refine it. Use a supported preview or inline image when suitable; do not claim that an output was displayed or opened unless it was. Offer source files and underlying tools as optional next steps unless the user asked to work in them.
 
 Begin by creating the deliverable rather than investigating the empty project.`;
 }

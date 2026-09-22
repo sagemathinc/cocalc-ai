@@ -29,7 +29,7 @@ describe("Codex onboarding availability", () => {
       "<user_goal>\nSee benchmarks of some basic number theory algorithms.\n</user_goal>",
     );
     expect(prompt).toContain("project was just created");
-    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
     expect(prompt).toContain("Actually run or otherwise validate");
     expect(prompt).toContain("Do not search browser tabs");
     expect(prompt).toContain("Begin by creating the deliverable");
@@ -52,6 +52,61 @@ describe("Codex onboarding availability", () => {
       }
     },
   );
+
+  it.each([
+    "Compare sales and stock in a reorder dashboard",
+    "Plot inspection errors under different lighting conditions",
+    "Create a data visualization from this CSV",
+    "Analyze the statistics from an experiment",
+    "Benchmark number theory algorithms",
+  ])("keeps the output choice open for %s", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request);
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain(
+      "Finish with the useful result in the conversation",
+    );
+    expect(prompt).toContain(
+      "Offer source files and underlying tools as optional next steps",
+    );
+    expect(prompt).toContain("Actually run or otherwise validate");
+  });
+
+  it("uses software guidance when Python and pandas are requested", () => {
+    const prompt = buildCodexOnboardingPrompt(
+      "Use Python and pandas to compare our results",
+    );
+    expect(prompt).toContain("appropriate source files");
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain(
+      "Finish with the useful result in the conversation",
+    );
+  });
+
+  it.each([
+    "Create a Jupyter notebook to analyze sales",
+    "Help me create notebooks comparing different models",
+    "Use JupyterLab to explore the measurements",
+    "Update results.ipynb with this comparison",
+  ])("retains notebook guidance when requested: %s", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request);
+    expect(prompt).toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain(
+      "The user's requested output and constraints take priority",
+    );
+  });
+
+  it.each([
+    "Analyze this CSV without a notebook",
+    "Do not use Jupyter; give me an HTML report",
+    "Don't create a notebook; return a chart in chat",
+    "Do not use results.ipynb for this report",
+  ])("respects a request to avoid notebooks: %s", (request) => {
+    const prompt = buildCodexOnboardingPrompt(request);
+    expect(prompt).not.toContain("Prefer a runnable Jupyter notebook");
+    expect(prompt).toContain(
+      "The user's requested output and constraints take priority",
+    );
+  });
 
   it("points Codex at the starter artifact for contextual onboarding", () => {
     const prompt = buildCodexOnboardingPrompt("Add a chart of the results", {
