@@ -30,6 +30,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       : "com.sagemath.cocalc.mobile.dev",
   },
   plugins: [
+    "./plugins/with-native-cookie-fix.cjs",
     "expo-router",
     "expo-secure-store",
     [

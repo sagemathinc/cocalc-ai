@@ -183,3 +183,17 @@ reconciliation, verified provider usage settlement, configurable paid entitlemen
 and background/Bluetooth qualification remain later work. Ending a call never
 invokes agent interruption. Voice approval is not a substitute for the existing
 approval controls.
+
+### iOS socket session cookies
+
+The workspace patches React Native 0.86.0's `RCTWebSocketModule` so an explicit
+`Cookie` header replaces cookies loaded from the iOS cookie jar. Upstream uses
+`addValue`, which comma-joins those headers; the resulting login cookie can be
+parsed as part of another cookie's value. CoCalc stores profile credentials
+separately and supplies its session cookie explicitly.
+
+`plugins/with-native-cookie-fix.cjs` enables `ios.buildReactNativeFromSource` so
+Expo does not substitute an unpatched precompiled React Native binary. Native
+builds take longer with this setting. Re-run prebuild/pod install and rebuild
+the development app when adding or changing this patch. Revisit both the patch
+and plugin when upgrading React Native.

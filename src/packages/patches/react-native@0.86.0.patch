@@ -1,0 +1,17 @@
+--- a/React/CoreModules/RCTWebSocketModule.mm
++++ b/React/CoreModules/RCTWebSocketModule.mm
+@@ -117,7 +117,13 @@
+         return;
+       }
+ 
+-      [request addValue:headerValue == nil ? @"" : headerValue forHTTPHeaderField:headerKey];
++      if ([headerKey caseInsensitiveCompare:@"Cookie"] == NSOrderedSame) {
++        // An explicit session must replace ambient cookies, not be comma-joined
++        // with them (Cookie uses semicolon separators, unlike most headers).
++        [request setValue:headerValue == nil ? @"" : headerValue forHTTPHeaderField:headerKey];
++      } else {
++        [request addValue:headerValue == nil ? @"" : headerValue forHTTPHeaderField:headerKey];
++      }
+     }];
+   }
+ 
