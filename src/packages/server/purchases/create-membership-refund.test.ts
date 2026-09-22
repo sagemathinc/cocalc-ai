@@ -93,6 +93,126 @@ describe("membership admin refund", () => {
     });
   });
 
+  async function teamFixture() {
+    const account_id = uuid(),
+      licenseId = uuid(),
+      admin_account_id = uuid();
+    await createTestAccount(account_id);
+    await createCredit({ account_id, amount: 1800, description: {} });
+    const purchase_id = await createPurchase({
+      account_id,
+      service: "membership",
+      cost: 1800,
+      client: null,
+      description: {
+        type: "team-license-change",
+        team_license_id: licenseId,
+        lifecycle: "first_paid",
+      },
+    });
+    const package_id = await createTestMembershipPackage({
+      owner_account_id: account_id,
+      kind: "team",
+      membership_class: "pro",
+      seat_count: 1,
+      purchase_id,
+      metadata: { team_license_id: licenseId },
+    });
+    await getPool().query(
+      "INSERT INTO team_licenses (id,owner_account_id,status,current_period_start,current_period_end,latest_purchase_id) VALUES ($1,$2,'active',NOW(),NOW()+interval '1 year',$3)",
+      [licenseId, account_id, purchase_id],
+    );
+    await getPool().query(
+      "INSERT INTO team_license_seat_lines (id,team_license_id,owner_account_id,package_id,membership_class,seat_count,annual_price_per_seat) VALUES ($1,$2,$3,$4,'pro',1,1800)",
+      [uuid(), licenseId, account_id, package_id],
+    );
+    await assignMembershipPackageSeat({
+      package_id,
+      email_address: `reserved-${uuid()}@example.com`,
+    });
+    return { account_id, admin_account_id, licenseId, package_id, purchase_id };
+  }
+
+  it("reverses an initial Team purchase exactly once without calling Stripe", async () => {
+    const f = await teamFixture();
+    const opts = {
+      account_id: f.admin_account_id,
+      purchase_id: f.purchase_id,
+      reason: "requested_by_customer" as const,
+    };
+    const id = await createRefund(opts);
+    expect(await createRefund(opts)).toBe(id);
+    expect(mockGetConn).not.toHaveBeenCalled();
+    const { rows: licenses } = await getPool().query(
+      "SELECT status,current_period_end FROM team_licenses WHERE id=$1",
+      [f.licenseId],
+    );
+    expect(licenses[0].status).toBe("canceled");
+    expect(
+      new Date(licenses[0].current_period_end).getTime(),
+    ).toBeLessThanOrEqual(Date.now());
+    const assignments = await listMembershipPackageAssignments({
+      package_id: f.package_id,
+    });
+    expect(assignments).toHaveLength(0);
+    expect(Number(await getBalance({ account_id: f.account_id }))).toBe(1800);
+  });
+
+  it.each(["later purchase", "pending renewal"])(
+    "rejects Team reversal with %s without changing seats",
+    async (state) => {
+      const f = await teamFixture();
+      if (state === "later purchase") {
+        await getPool().query(
+          "UPDATE team_licenses SET latest_purchase_id=$2 WHERE id=$1",
+          [f.licenseId, f.purchase_id + 100],
+        );
+      } else {
+        await getPool().query(
+          "UPDATE team_licenses SET payment=$2::jsonb WHERE id=$1",
+          [f.licenseId, { status: "active", payment_intent_id: "pi_pending" }],
+        );
+      }
+      await expect(
+        createRefund({
+          account_id: f.admin_account_id,
+          purchase_id: f.purchase_id,
+          reason: "requested_by_customer",
+        }),
+      ).rejects.toThrow();
+      expect(
+        await listMembershipPackageAssignments({ package_id: f.package_id }),
+      ).toHaveLength(1);
+      expect(Number(await getBalance({ account_id: f.account_id }))).toBe(0);
+    },
+  );
+
+  it("rolls back a Team reversal when its package is inconsistent", async () => {
+    const f = await teamFixture();
+    await getPool().query(
+      "UPDATE membership_packages SET purchase_id=$2 WHERE id=$1",
+      [f.package_id, f.purchase_id + 100],
+    );
+    await expect(
+      createRefund({
+        account_id: f.admin_account_id,
+        purchase_id: f.purchase_id,
+        reason: "requested_by_customer",
+      }),
+    ).rejects.toThrow("does not match");
+    expect(
+      (
+        await getPool().query("SELECT status FROM team_licenses WHERE id=$1", [
+          f.licenseId,
+        ])
+      ).rows[0].status,
+    ).toBe("active");
+    expect(Number(await getBalance({ account_id: f.account_id }))).toBe(0);
+    expect(
+      await listMembershipPackageAssignments({ package_id: f.package_id }),
+    ).toHaveLength(1);
+  });
+
   it("refunds membership and Stripe credit independently", async () => {
     const account_id = uuid();
     const admin_account_id = uuid();
