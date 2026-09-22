@@ -95,6 +95,10 @@ export async function postSiteApi<T>({
   }
   const response = await fetch(url, {
     method: "POST",
+    // Native profiles own their credentials in SecureStore. RN's default
+    // cookie handling merges the platform jar with our explicit Cookie header,
+    // potentially presenting an old browser session instead of this profile.
+    credentials: "omit",
     headers,
     body: JSON.stringify(body),
     signal,

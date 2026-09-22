@@ -41,3 +41,43 @@ test("reports a server upgrade for an incompatible chat schema", () => {
     /server upgrade is required/i,
   );
 });
+
+test("native API requests use explicit profile cookies without the platform cookie jar", async () => {
+  const { postSiteApi } = await import("./protocol");
+  const originalFetch = globalThis.fetch;
+  const requests: RequestInit[] = [];
+  globalThis.fetch = async (_url, options) => {
+    requests.push(options ?? {});
+    return new Response(JSON.stringify({ signed_in: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
+  };
+  try {
+    const site = {
+      entered_app_url: "https://example.com",
+      canonical_app_url: "https://example.com",
+      origin: "https://example.com",
+      app_base_path: "",
+    };
+    await postSiteApi({
+      site,
+      endpoint: "auth/bootstrap",
+      body: {},
+      cookieHeader: "remember_me=test-profile-session",
+    });
+    await postSiteApi({ site, endpoint: "auth/bootstrap", body: {} });
+    assert.equal(requests[0].credentials, "omit");
+    assert.equal(
+      (requests[0].headers as Record<string, string>).Cookie,
+      "remember_me=test-profile-session",
+    );
+    assert.equal(requests[1].credentials, "omit");
+    assert.equal(
+      (requests[1].headers as Record<string, string>).Cookie,
+      undefined,
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
