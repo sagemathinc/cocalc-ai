@@ -2,6 +2,18 @@ import React from "react";
 const { act, create } = require("react-test-renderer");
 import { ChatSettings } from "./settings";
 import { getActiveSiteSession } from "../cocalc/session-registry";
+jest.mock("../cocalc/codex-models", () => ({
+  getProjectCodexModels: (
+    session: any,
+    project: string,
+    credentialId?: string,
+  ) =>
+    session.hubApi.projects.getCodexUsageStatus({
+      project_id: project,
+      include_models: true,
+      credential_id: credentialId,
+    }),
+}));
 jest.mock("../cocalc/session-registry", () => ({
   getActiveSiteSession: jest.fn(),
 }));
@@ -117,25 +129,23 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
     credentialId: credential_id,
     subscriptions: [{ id: "personal", label: "My Pro", isDefault: false }],
   }));
-  jest
-    .mocked(getActiveSiteSession)
-    .mockResolvedValue({
-      hubApi: {
-        system: { getCodexPaymentSource: lookup },
-        projects: {
-          getCodexUsageStatus: async () => ({
-            models: [
-              {
-                model: "test",
-                displayName: "Test model",
-                reasoning: [],
-                serviceTiers: [],
-              },
-            ],
-          }),
-        },
+  jest.mocked(getActiveSiteSession).mockResolvedValue({
+    hubApi: {
+      system: { getCodexPaymentSource: lookup },
+      projects: {
+        getCodexUsageStatus: async () => ({
+          models: [
+            {
+              model: "test",
+              displayName: "Test model",
+              reasoning: [],
+              serviceTiers: [],
+            },
+          ],
+        }),
       },
-    } as any);
+    },
+  } as any);
   const save = jest.fn();
   await act(async () => {
     renderer = create(
@@ -149,7 +159,7 @@ it("selects a non-default ChatGPT credential even when hasSubscription is false"
       />,
     );
   });
-  expect(find("ChatGPT plan").props.disabled).toBe(false);
+  expect(find("ChatGPT plan")).toBeUndefined();
   await act(async () => find("ChatGPT: My Pro").props.onPress());
   expect(lookup).toHaveBeenLastCalledWith(
     expect.objectContaining({

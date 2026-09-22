@@ -68,3 +68,9 @@ The voice bridge now checks agent payment before delegation, relays submission e
 Read-only staging checks confirmed the specific named credential resolves as `subscription`. The exact thread config and latest persisted Codex activity were inspected. No test turn or paid voice call was submitted by the agent.
 
 Validation for the follow-up: 45 mobile UI tests, 15 focused auth/voice tests, 56 shared ACP config tests, mobile typecheck, and frontend lint passed. Simulator settings flows passed in light/dark mode. The large-text directory flow missed its chat-navigation tap; a focused direct-chat payment flow passed at accessibility text size and its screenshot was inspected.
+
+### Subscription catalog routing correction
+
+Mobile model discovery was calling the real hub's `projects.getCodexUsageStatus`, which intentionally returns an unavailable placeholder. The browser intercepts this method and sends it to the project host. Mobile now resolves the owning host and uses the same account-authorized method on its direct host connection, including the selected credential ID and a 90-second discovery timeout. A read-only staging check returned `available: true`, subscription funding, and five models, including the thread's `gpt-5.6-sol`.
+
+Named subscriptions now replace the generic ChatGPT plan row, avoiding two selected radio buttons for one choice. Automatic continues to reflect the server's default resolution. Validation: 46 mobile UI tests, mobile typecheck, frontend lint, and the real project-host catalog check passed. The user confirmed the API-key live-voice path works end to end; subscription phone qualification is next.

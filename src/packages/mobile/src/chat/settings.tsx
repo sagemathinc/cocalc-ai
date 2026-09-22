@@ -21,6 +21,7 @@ import {
   DEFAULT_CODEX_MODELS,
   DEFAULT_CODEX_MODEL_NAME,
 } from "@cocalc/util/ai/codex";
+import { getProjectCodexModels } from "../cocalc/codex-models";
 import { getActiveSiteSession } from "../cocalc/session-registry";
 import { isPreviewProfile, type ConversationClient } from "../preview/fixtures";
 import { usePalette } from "../ui/palette";
@@ -93,11 +94,11 @@ export function ChatSettings({
         );
       }
       if (payment.source === "subscription") {
-        const status = await session.hubApi.projects.getCodexUsageStatus({
-          project_id: project,
-          include_models: true,
-          credential_id: payment.credentialId,
-        });
+        const status = await getProjectCodexModels(
+          session,
+          project,
+          payment.credentialId,
+        );
         // Reject a catalog fetched while the account credential was changing.
         const current = await session.hubApi.system.getCodexPaymentSource({
           project_id: project,
@@ -117,7 +118,8 @@ export function ChatSettings({
           );
         if (!status.models?.length)
           throw new Error(
-            "Could not load models for your ChatGPT plan. Please try again.",
+            status.reason ||
+              "Could not load models for your ChatGPT plan. Please try again.",
           );
         if (active) setModels(status.models);
       } else if (active) setModels(catalog);
@@ -227,21 +229,18 @@ export function ChatSettings({
                 credentialId: undefined,
               }),
           )}
-          {choice(
-            "ChatGPT plan",
-            draft.paymentSource === "subscription",
-            () =>
-              setDraft({
-                ...draft,
-                paymentSource: "subscription",
-                credentialId:
-                  source?.subscriptions?.find((c) => c.isDefault)?.id ??
-                  source?.subscriptions?.[0]?.id,
-              }),
-            !!source &&
-              !source.hasSubscription &&
-              !source.subscriptions?.length,
-          )}
+          {!source?.subscriptions?.length &&
+            choice(
+              "ChatGPT plan",
+              draft.paymentSource === "subscription",
+              () =>
+                setDraft({
+                  ...draft,
+                  paymentSource: "subscription",
+                  credentialId: undefined,
+                }),
+              !!source && !source.hasSubscription,
+            )}
           {choice(
             "CoCalc membership",
             draft.paymentSource === "site-api-key",
