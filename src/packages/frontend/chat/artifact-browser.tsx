@@ -18,6 +18,7 @@ import {
   SortableList,
 } from "@cocalc/frontend/components/sortable-list";
 import { useArtifactPins } from "./use-artifact-pins";
+import { useChatEmbeddingOptions } from "./embedding-options";
 
 async function showConversation(
   actions: ChatActions,
@@ -273,6 +274,7 @@ export default function ArtifactBrowser({
   onClose: () => void;
 }) {
   const [scope, setScope] = useState(threadId ? "thread" : "room");
+  const { agentWorkspace = false } = useChatEmbeddingOptions();
   const organization = useArtifactPins();
   const inputRef = useRef<InputRef>(null);
   const [query, setQuery] = useState("");
@@ -305,12 +307,19 @@ export default function ArtifactBrowser({
           <Select
             aria-label="Artifact scope"
             style={{ width: 170 }}
-            value={scope}
+            value={agentWorkspace ? "thread" : scope}
+            disabled={agentWorkspace}
             onChange={setScope}
-            options={[
-              ...(threadId ? [{ value: "thread", label: "This thread" }] : []),
-              { value: "room", label: "Entire chatroom" },
-            ]}
+            options={
+              agentWorkspace
+                ? [{ value: "thread", label: "This agent" }]
+                : [
+                    ...(threadId
+                      ? [{ value: "thread", label: "This thread" }]
+                      : []),
+                    { value: "room", label: "Entire chatroom" },
+                  ]
+            }
           />
           <Select
             aria-label="Artifact type"
@@ -335,15 +344,21 @@ export default function ArtifactBrowser({
         </Space>
         {organization.error && <div role="alert">{organization.error}</div>}
         <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
-          <ArtifactResults
-            actions={actions}
-            query={query}
-            threadId={scope === "thread" ? threadId : undefined}
-            kind={kind}
-            sort={sort}
-            onOpen={onClose}
-            organization={organization}
-          />
+          {agentWorkspace && !threadId ? (
+            <div role="status">Select an agent to browse its artifacts.</div>
+          ) : (
+            <ArtifactResults
+              actions={actions}
+              query={query}
+              threadId={
+                agentWorkspace || scope === "thread" ? threadId : undefined
+              }
+              kind={kind}
+              sort={sort}
+              onOpen={onClose}
+              organization={organization}
+            />
+          )}
         </div>
       </KeyboardBoundary>
     </Modal>

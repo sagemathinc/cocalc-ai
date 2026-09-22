@@ -12,6 +12,50 @@ import userEvent from "@testing-library/user-event";
 import { publishArtifact } from "@cocalc/chat";
 import ArtifactBrowser, { ArtifactResults } from "../artifact-browser";
 import { ArtifactBrowserButton } from "../artifact-discovery";
+import { ChatEmbeddingOptionsProvider } from "../embedding-options";
+
+test("Agents scope cannot include unrelated chatroom threads", async () => {
+  const rows: any[] = [];
+  const syncdb = Object.assign(new EventEmitter(), {
+    get_one: () => undefined,
+    set: (row) => rows.push(...(Array.isArray(row) ? row : [row])),
+    get: () => rows.filter((row) => row.event === "chat-artifact-publication"),
+  });
+  for (const thread_id of ["one", "two"])
+    publishArtifact(syncdb, {
+      thread_id,
+      artifact_id: "doc",
+      operation_id: "op",
+      message_id: "message",
+      title: `Plan ${thread_id}`,
+      markdown: "hello",
+    });
+  const view = (threadId?: string) => (
+    <ChatEmbeddingOptionsProvider value={{ agentWorkspace: true }}>
+      <ArtifactBrowser
+        actions={{ syncdb } as any}
+        threadId={threadId}
+        onClose={() => {}}
+      />
+    </ChatEmbeddingOptionsProvider>
+  );
+  const { rerender } = render(view("one"));
+  expect(
+    screen.getByRole("combobox", { name: "Artifact scope" }),
+  ).toBeDisabled();
+  await waitFor(() => expect(screen.getByText("This agent")).toBeVisible());
+  expect(screen.queryByText("Entire chatroom")).toBeNull();
+  expect(screen.getByText("Plan one")).toBeVisible();
+  expect(screen.queryByText("Plan two")).toBeNull();
+  rerender(view("two"));
+  expect(screen.getByText("Plan two")).toBeVisible();
+  expect(screen.queryByText("Plan one")).toBeNull();
+  rerender(view());
+  expect(screen.queryByText("Plan two")).toBeNull();
+  expect(
+    screen.getByText("Select an agent to browse its artifacts."),
+  ).toBeVisible();
+});
 
 test("pinning and keyboard menu actions retain custom order independently of sorting", async () => {
   const rows: any[] = [];
