@@ -7,6 +7,11 @@ import { HostCreateForm } from "./host-create-form";
 import { addMonthlyDiskPriceLabels } from "./host-create-advanced-fields";
 import { HostSharedScratchFields } from "./host-shared-scratch-fields";
 import type { HostCatalog } from "@cocalc/conat/hub/api/hosts";
+import type {
+  HostCreateDraft,
+  HostCreateDraftContext,
+} from "../create/host-create-draft";
+import { useHostCreateDraft } from "../create/use-host-create-draft";
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const actual = jest.requireActual("@cocalc/frontend/app-framework");
@@ -145,6 +150,31 @@ const GCP_SHARED_SCRATCH_CATALOG: HostCatalog = {
   },
 };
 
+const MANAGED_SCRATCH_CONTEXT: HostCreateDraftContext = {
+  enabledProviders: ["gcp"],
+  catalogByProvider: { gcp: GCP_SHARED_SCRATCH_CATALOG },
+  billing: {
+    fundingModeOptions: [{ value: "account-postpaid" }],
+    defaultFundingMode: "account-postpaid",
+  },
+};
+
+const MANAGED_SCRATCH_INITIAL_DRAFT: HostCreateDraft = {
+  name: "Copied host",
+  provider: "gcp",
+  funding_mode: "account-postpaid",
+  start_after_create: true,
+  region_preference: "cheapest",
+  price_display: "hourly",
+  pricing_model: "on_demand",
+  interruption_restore_policy: "immediate",
+  storage_mode: "persistent",
+  disk_gb: 75,
+  disk: 75,
+  shared_disk_gb: 500,
+  shared_disk_type: "balanced",
+};
+
 function TestCreateSimilarSharedScratch({
   onDraftPatch,
   catalog,
@@ -168,6 +198,34 @@ function TestCreateSimilarSharedScratch({
       <HostSharedScratchFields
         provider="gcp"
         catalog={catalog}
+        draftManaged
+        onDraftPatch={onDraftPatch}
+      />
+    </Form>
+  );
+}
+
+function TestManagedCreateSimilarSharedScratch() {
+  const [form] = Form.useForm();
+  const draftState = useHostCreateDraft({
+    form,
+    context: MANAGED_SCRATCH_CONTEXT,
+    initialDraft: MANAGED_SCRATCH_INITIAL_DRAFT,
+  });
+  const onDraftPatch = React.useCallback(
+    (patch: Record<string, any>) => {
+      draftState.onValuesChange(patch, {
+        ...form.getFieldsValue(true),
+        ...patch,
+      });
+    },
+    [draftState.onValuesChange, form],
+  );
+  return (
+    <Form form={form} onValuesChange={draftState.onValuesChange}>
+      <HostSharedScratchFields
+        provider="gcp"
+        catalog={GCP_SHARED_SCRATCH_CATALOG}
         draftManaged
         onDraftPatch={onDraftPatch}
       />
@@ -353,6 +411,25 @@ describe("HostCreateForm", () => {
     await user.clear(size);
 
     expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(
+      screen.getByRole("spinbutton", { name: "Scratch size (GB)" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps scratch enabled while the managed draft normalizes an empty size", async () => {
+    const user = userEvent.setup();
+    render(<TestManagedCreateSimilarSharedScratch />);
+
+    const toggle = await screen.findByRole("switch", {
+      name: "Enable shared scratch disk",
+    });
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    const size = screen.getByRole("spinbutton", {
+      name: "Scratch size (GB)",
+    });
+    await user.clear(size);
+
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
     expect(
       screen.getByRole("spinbutton", { name: "Scratch size (GB)" }),
     ).toBeInTheDocument();
