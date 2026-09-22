@@ -7,8 +7,8 @@ the shelf must never initiate chat-file scans or require starting projects.
 
 ## Catalog implementation checkpoint (2026-09-22)
 
-Implemented storage primitives and owner-routed ingestion endpoints. Source
-workers are not yet integrated into running project services:
+Implemented storage primitives, owner-routed ingestion and reads, service
+workers, a standalone Lite adapter, and an in-memory frontend catalog preview:
 
 - Bounded, content-free metadata protocol with canonical source identities.
 - Shared extraction of published current artifacts from complete chat records.
@@ -17,7 +17,7 @@ workers are not yet integrated into running project services:
   payloads, generation checks, persisted backoff and asynchronous registration.
   First writes can be journaled without contacting an available hub.
 - Bounded single-flight source projector with injectable sandbox reader and
-  owner-routed sender. It has no timer or RPC wiring yet.
+  owner-routed sender, single-flight timer, and service lifetime process lock.
 - Project-owning-bay Postgres catalog/source/outbox tables. Ingestion checks
   current project owner/host under a lock; owner-issued writer epochs fence
   stale writers. Registration and delivery retries are idempotent.
@@ -32,11 +32,35 @@ workers are not yet integrated into running project services:
   conflicts cannot silently acquire a newer writer's epoch. Its transport is
   injectable for project-host and Lite adapters.
 
-Not implemented yet: filesystem/service hooks and worker lifecycle, Lite catalog
-storage adapter, backfill, account projections, live feed, IndexedDB cache, or
-shelf UI. The existing global browser still scans. The SQLite journal is not a
-Lite catalog adapter. These primitives are not a claim that the new catalog is
-operational or that the UX issue is fixed.
+- Project-host filesystem hooks journal chat mutations before execution,
+  including indexed descendants of directory renames/deletes. Background
+  discovery reconciles registered sources and known agent chat paths without
+  starting projects or waiting for the artifact browser to open.
+- Standalone Lite has a separate SQLite catalog, local writer adapter,
+  account-checked metadata reads, filesystem hooks, and bounded historical
+  discovery. Its lifecycle starts only from the standalone Lite entrypoint.
+- Human metadata reads recheck collaboration at the owning bay and use indexed
+  keyset pagination. Hosts use a separate authenticated source-discovery API.
+- All agents now warms an account-scoped memory cache while the Agents page is
+  mounted. Opening, searching, sorting and filtering use that cache rather than
+  chat scans. Refreshes swap snapshots atomically in the background every ten
+  seconds. Errors clear cached metadata; no cache survives logout/unmount.
+- Explicit preview bounds: 100 projects, 100 pages, 10,000 entries and roughly
+  16 MiB retained metadata. The UI renders at most 200 filtered results and
+  reports incomplete coverage. Only current known agent conversations can be
+  opened through this preview.
+
+Manual-test checkpoint: dev hub and project-host deployment includes the catalog
+pipeline and frontend preview. Live Postgres ingestion has been verified.
+Standalone Lite is covered by tests/typecheck, not a live deployment test.
+
+Not implemented yet: account-home projections/outbox delivery, live feed,
+IndexedDB cache, floating shelf, or stationary cross-source Workbench tabs.
+Initial page loading still fetches metadata; only a warm cache is instant.
+Opening a result still switches to its source agent. Host backfill discovers
+known agent/registered chats, not arbitrary previously unseen chat files; raw
+shell edits reconcile only after the source is known. Source parsing is bounded
+to 16 MiB and failures retain prior metadata rather than implying deletion.
 
 ## Chosen ownership model
 
@@ -52,7 +76,7 @@ operational or that the UX issue is fixed.
   the project data plane. Opening must eventually support source-aware tabs in
   the current workbench without changing the user's composing conversation.
 
-## Next catalog stages
+## Catalog stages (first two now integrated)
 
 1. Wire the source journal into service-owned chat filesystem mutations before
    writes, deletes and renames, covering CLI and browser saves. Fence prior

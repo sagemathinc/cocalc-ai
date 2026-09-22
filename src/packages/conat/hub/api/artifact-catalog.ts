@@ -5,8 +5,29 @@
 import type {
   ArtifactCatalogSnapshot,
   ArtifactCatalogSource,
+  ArtifactCatalogItem,
 } from "@cocalc/util/artifact-catalog";
-import { authFirstRequireHost } from "./util";
+import { authFirstRequireHost, authFirstRequireAccount } from "./util";
+
+export interface CatalogProjectRequest {
+  project_id: string;
+  account_id?: string;
+  after?: string;
+}
+export interface CatalogSourcePageRequest {
+  project_id: string;
+  host_id?: string;
+  after?: string;
+}
+export interface CatalogEntry extends ArtifactCatalogSource {
+  entry_id: string;
+  item: ArtifactCatalogItem;
+}
+export interface CatalogPage {
+  entries: CatalogEntry[];
+  next?: string;
+  indexed_sources: number;
+}
 
 export interface CatalogSourceRequest extends ArtifactCatalogSource {
   /** Bound by the authenticated host transform, not trusted from callers. */
@@ -26,6 +47,10 @@ export interface CatalogWriterState {
   writer_host_id: string | null;
 }
 export interface ArtifactCatalogApi {
+  sourcePage(
+    opts: CatalogSourcePageRequest,
+  ): Promise<{ paths: string[]; next?: string }>;
+  listProject(opts: CatalogProjectRequest): Promise<CatalogPage>;
   writerState(opts: CatalogSourceRequest): Promise<CatalogWriterState | null>;
   registerSource(opts: CatalogRegistrationRequest): Promise<{ epoch: string }>;
   ingest(
@@ -33,6 +58,8 @@ export interface ArtifactCatalogApi {
   ): Promise<{ revision: number; replayed: boolean }>;
 }
 export const artifactCatalog = {
+  sourcePage: authFirstRequireHost,
+  listProject: authFirstRequireAccount,
   writerState: authFirstRequireHost,
   registerSource: authFirstRequireHost,
   ingest: authFirstRequireHost,

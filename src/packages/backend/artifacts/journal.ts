@@ -77,6 +77,42 @@ export class ArtifactCatalogJournal {
     this.db.close();
   }
 
+  /** Keyset paging for bounded reconciliation, including sources now deleted. */
+  sources(
+    project_id: string,
+    after = "",
+    limit = 100,
+  ): ArtifactCatalogSource[] {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 1000)
+      throw Error("invalid source page size");
+    return this.db
+      .prepare(
+        `SELECT project_id,chat_path FROM artifact_sources
+      WHERE project_id=? AND chat_path>? ORDER BY chat_path LIMIT ?`,
+      )
+      .all(project_id, after, limit) as unknown as ArtifactCatalogSource[];
+  }
+
+  descendants(
+    project_id: string,
+    path: string,
+    after = "",
+  ): ArtifactCatalogSource[] {
+    const root = path.replace(/\/$/, "");
+    return this.db
+      .prepare(
+        `SELECT project_id,chat_path FROM artifact_sources
+      WHERE project_id=? AND chat_path>=? AND chat_path<? AND chat_path>?
+      ORDER BY chat_path LIMIT 100`,
+      )
+      .all(
+        project_id,
+        root + "/",
+        root + "0",
+        after,
+      ) as unknown as ArtifactCatalogSource[];
+  }
+
   private transaction<T>(fn: () => T): T {
     this.db.exec("BEGIN IMMEDIATE");
     try {

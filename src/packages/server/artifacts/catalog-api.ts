@@ -19,8 +19,11 @@ import {
   applyArtifactCatalogSnapshot,
   registerArtifactCatalogSource,
   getArtifactCatalogWriterState,
+  artifactCatalogSourcePage,
+  readProjectArtifactCatalog,
 } from "@cocalc/database/postgres/artifact-catalog";
 import { validateArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
+import { assertActor } from "@cocalc/server/agents/access";
 
 function source(opts: CatalogSourceRequest) {
   requireUuid(opts.host_id, "authenticated host_id");
@@ -63,6 +66,34 @@ async function route<T>(
 export const writerState: ArtifactCatalogApi["writerState"] = async (opts) => {
   const request = source(opts);
   return route(request, (api, route) => api.writerState({ ...request, route }));
+};
+
+export const sourcePage: ArtifactCatalogApi["sourcePage"] = async (opts) => {
+  const request = {
+    ...source({ ...opts, chat_path: "/home/user/.catalog.chat" }),
+    after: opts.after,
+  };
+  return route(request, (api, route) => api.sourcePage({ ...request, route }));
+};
+
+export const listProject: ArtifactCatalogApi["listProject"] = async (opts) => {
+  requireUuid(opts.account_id, "account_id");
+  requireUuid(opts.project_id, "project_id");
+  const owner = await resolveProjectBay(opts.project_id);
+  if (!owner) throw Error("artifact catalog project owner unavailable");
+  const api =
+    owner.bay_id === getConfiguredBayId()
+      ? catalogOwnerControl
+      : createInterBayArtifactCatalogClient({
+          client: getInterBayFabricClient(),
+          bay_id: owner.bay_id,
+        });
+  return api.listProject({
+    account_id: opts.account_id,
+    project_id: opts.project_id,
+    after: opts.after,
+    route: { bay_id: owner.bay_id, epoch: owner.epoch },
+  });
 };
 export const registerSource: ArtifactCatalogApi["registerSource"] = async (
   opts,
@@ -126,6 +157,28 @@ async function owned<T>(
 
 /** Trusted fabric only. Database checks the current host assignment under lock. */
 export const catalogOwnerControl: InterBayArtifactCatalogApi = {
+  sourcePage: (opts) =>
+    owned({ ...opts, chat_path: "/home/user/.catalog.chat" }, (authority) =>
+      artifactCatalogSourcePage(opts.project_id, authority, opts.after),
+    ),
+  listProject: async (opts) => {
+    requireUuid(opts.account_id, "account_id");
+    const owner = await resolveProjectBay(opts.project_id);
+    if (
+      !owner ||
+      owner.bay_id !== getConfiguredBayId() ||
+      opts.route.bay_id !== owner.bay_id ||
+      opts.route.epoch !== owner.epoch
+    )
+      throw Error("stale artifact catalog project routing");
+    await assertActor(opts.account_id!, opts.project_id);
+    const result = await readProjectArtifactCatalog(
+      opts.project_id,
+      opts.after,
+    );
+    await assertActor(opts.account_id!, opts.project_id);
+    return result;
+  },
   writerState: (opts) =>
     owned(opts, (authority) =>
       getArtifactCatalogWriterState(source(opts), authority),

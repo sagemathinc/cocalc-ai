@@ -58,6 +58,61 @@ async function assertOwner(
     );
 }
 
+export async function artifactCatalogSourcePage(
+  project_id: string,
+  authority: CatalogWriterAuthority,
+  after = "",
+) {
+  if (typeof after !== "string" || after.length > 4096)
+    throw Error("invalid source cursor");
+  return transaction(async (db) => {
+    await assertOwner(db, project_id, authority);
+    const { rows } = await db.query(
+      `SELECT path FROM (
+      SELECT path FROM agent_identities WHERE project_id=$1
+      UNION SELECT chat_path AS path FROM artifact_catalog_sources WHERE project_id=$1
+    ) sources WHERE path>$2 ORDER BY path LIMIT 101`,
+      [project_id, after],
+    );
+    const paths = rows.slice(0, 100).map((row) => row.path as string);
+    return { paths, ...(rows.length > 100 ? { next: paths[99] } : {}) };
+  });
+}
+
+/** Internal read; caller must resolve ownership and check collaboration first. */
+export async function readProjectArtifactCatalog(
+  project_id: string,
+  after = "",
+) {
+  if (typeof after !== "string" || (after && !/^[a-f0-9]{64}$/.test(after)))
+    throw Error("invalid catalog cursor");
+  const db = getPool();
+  const { rows } = await db.query(
+    `SELECT c.entry_id,s.chat_path,c.metadata
+    FROM artifact_catalog c JOIN artifact_catalog_sources s USING(source_id)
+    WHERE c.project_id=$1 AND NOT c.deleted AND c.entry_id>$2
+    ORDER BY c.entry_id LIMIT 101`,
+    [project_id, after],
+  );
+  const entries = rows
+    .slice(0, 100)
+    .map((row) => ({
+      entry_id: row.entry_id as string,
+      project_id,
+      chat_path: row.chat_path as string,
+      item: row.metadata,
+    }));
+  const count = await db.query(
+    `SELECT count(*) AS n FROM artifact_catalog_sources WHERE project_id=$1 AND source_sequence>0`,
+    [project_id],
+  );
+  return {
+    entries,
+    indexed_sources: Number(count.rows[0].n),
+    ...(rows.length > 100 ? { next: entries[99].entry_id } : {}),
+  };
+}
+
 /** Compare-and-swap rotation prevents a delayed registration fencing a newer writer. */
 export async function registerArtifactCatalogSource(
   source: ArtifactCatalogSource,

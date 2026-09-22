@@ -4,12 +4,13 @@
  */
 import { Table } from "./types";
 
-// Internal tables only. Browser reads must use the authorized account projection.
+// Internal tables only. Browser reads go through authorized catalog APIs;
+// account-home feed projections remain the target for steady-state discovery.
 Table({
   name: "artifact_catalog_sources",
   rules: {
     primary_key: "source_id",
-    pg_indexes: ["project_id", "owning_bay_id"],
+    pg_indexes: ["project_id", "owning_bay_id", "project_id, chat_path"],
   },
   fields: {
     source_id: {
@@ -53,7 +54,12 @@ Table({
   name: "artifact_catalog",
   rules: {
     primary_key: "entry_id",
-    pg_indexes: ["project_id", "source_id", "project_id, created_at, entry_id"],
+    pg_indexes: [
+      "project_id",
+      "source_id",
+      "project_id, created_at, entry_id",
+      "project_id, entry_id",
+    ],
   },
   fields: {
     entry_id: {

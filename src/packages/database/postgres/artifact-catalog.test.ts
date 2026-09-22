@@ -6,6 +6,8 @@ import {
   applyArtifactCatalogSnapshot,
   registerArtifactCatalogSource,
   getArtifactCatalogWriterState,
+  readProjectArtifactCatalog,
+  artifactCatalogSourcePage,
 } from "./artifact-catalog";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
@@ -101,6 +103,47 @@ test("catalog writes and projection outbox are atomic and retries do not duplica
   expect(events).toHaveLength(1);
   expect(events[0].payload.entries[0].metadata.title).toBe("Notes");
   expect(events[0].published_at).toBeNull();
+});
+
+test("metadata pages use stable keyset cursors and omit tombstones", async () => {
+  const base = snapshot();
+  const items = Array.from({ length: 105 }, (_, i) => ({
+    ...base.items[0],
+    artifact_id: `artifact-${i}`,
+  }));
+  await applyArtifactCatalogSnapshot({ ...base, items }, authority);
+  const first = await readProjectArtifactCatalog(project_id);
+  expect(first.entries).toHaveLength(100);
+  expect(first.indexed_sources).toBe(1);
+  const second = await readProjectArtifactCatalog(project_id, first.next);
+  expect(second.entries).toHaveLength(5);
+  expect(second.next).toBeUndefined();
+  expect(
+    new Set([...first.entries, ...second.entries].map((e) => e.entry_id)).size,
+  ).toBe(105);
+  await applyArtifactCatalogSnapshot(
+    { ...base, sequence: 2, items: [] },
+    authority,
+  );
+  expect((await readProjectArtifactCatalog(project_id)).entries).toEqual([]);
+  await expect(
+    readProjectArtifactCatalog(project_id, "invalid"),
+  ).rejects.toThrow("cursor");
+});
+
+test("background source discovery includes registered sources without metadata", async () => {
+  expect(await artifactCatalogSourcePage(project_id, authority)).toEqual({
+    paths: [source.chat_path],
+  });
+  expect(
+    await artifactCatalogSourcePage(project_id, authority, source.chat_path),
+  ).toEqual({ paths: [] });
+  await expect(
+    artifactCatalogSourcePage(project_id, {
+      ...authority,
+      host_id: randomUUID(),
+    }),
+  ).rejects.toThrow("owner/host");
 });
 
 test("rejects different content at the same sequence and older deliveries", async () => {

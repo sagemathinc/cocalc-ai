@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { Alert, Button, Empty, Input, Modal, Select, Space } from "antd";
 import type { NamedAgent } from "@cocalc/conat/agents/personal";
 import { Icon } from "@cocalc/frontend/components";
@@ -6,163 +6,63 @@ import { KeyboardBoundary } from "@cocalc/frontend/keyboard/boundary";
 import { webapp_client } from "@cocalc/frontend/webapp-client";
 import { UI_COLORS } from "@cocalc/util/appearance-palette";
 import { agentSearchStore } from "./search-state";
-import { boundedProjectSearch, type AgentSearchHit } from "./search-runner";
+import type { AgentSearchHit } from "./search-runner";
 import { useArtifactPins } from "@cocalc/frontend/chat/use-artifact-pins";
+import {
+  ArtifactCatalogStore,
+  artifactIdentity as identity,
+  catalogResults,
+  CATALOG_LIMITS,
+} from "./artifact-catalog-store";
 
-interface Cursor {
-  agent: NamedAgent;
-  offset: number;
-}
-const identity = ({ agent, hit }: AgentSearchHit) =>
-  JSON.stringify([
-    agent.endpoint.project_id,
-    agent.path,
-    agent.thread_id,
-    hit.artifact_id,
-  ]);
-
-export function AgentArtifactBrowser({
-  accountId,
-  agents,
-  active,
-  onSelect,
-}: {
+interface Props {
   accountId: string;
   agents: NamedAgent[];
   active: boolean;
   onSelect: (hit: AgentSearchHit) => Promise<void>;
-}) {
+}
+
+export function AgentArtifactBrowser(props: Props) {
+  // Remount before rendering another account: never expose the old snapshot.
+  return <AccountArtifactBrowser key={props.accountId} {...props} />;
+}
+
+function AccountArtifactBrowser({
+  accountId,
+  agents,
+  active,
+  onSelect,
+}: Props) {
   const store = agentSearchStore(accountId);
   const state = useSyncExternalStore(store.subscribe, store.get);
   const open = !!state.artifactsOpen && active;
   const [query, setQuery] = useState("");
   const [project, setProject] = useState<string>();
   const [sort, setSort] = useState("recent");
-  const [results, setResults] = useState<AgentSearchHit[]>([]);
-  const [pending, setPending] = useState<Cursor[]>([]);
-  const [errors, setErrors] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [catalog] = useState(
+    () =>
+      new ArtifactCatalogStore(accountId, (opts) =>
+        webapp_client.conat_client.hub.artifactCatalog.listProject(opts),
+      ),
+  );
+  const metadata = useSyncExternalStore(catalog.subscribe, catalog.get);
+  const [openError, setOpenError] = useState("");
   const [opening, setOpening] = useState(false);
-  const [searched, setSearched] = useState("");
-  const generation = useRef(0);
-  const busyRef = useRef(false);
   const pins = useArtifactPins();
   const projects = [
     ...new Set(agents.map((agent) => agent.endpoint.project_id)),
-  ];
-  useEffect(
-    () => () => {
-      generation.current++;
-    },
-    [],
-  );
+  ].sort();
+  const projectKey = JSON.stringify(projects);
   useEffect(() => {
-    if (open) void search(false);
-    else generation.current++;
-  }, [open]);
+    catalog.start(JSON.parse(projectKey));
+    return catalog.stop;
+  }, [catalog, projectKey]);
 
-  async function search(more: boolean) {
-    if (busyRef.current) return;
-    const run = ++generation.current;
-    const canceled = () => run !== generation.current;
-    busyRef.current = true;
-    setBusy(true);
-    const needle = more ? searched : query.trim();
-    const queue = more
-      ? [...pending]
-      : agents
-          .filter((agent) => !project || agent.endpoint.project_id === project)
-          .map((agent) => ({ agent, offset: 0 }));
-    const found = more ? [...results] : [];
-    const failures = more ? [...errors] : [];
-    if (!more) {
-      setResults([]);
-      setErrors([]);
-      setSearched(needle);
-    }
-    const deadline = Date.now() + 20_000;
-    let requests = 0;
-    try {
-      while (
-        queue.length &&
-        requests++ < 20 &&
-        Date.now() < deadline &&
-        !canceled() &&
-        found.length < 500
-      ) {
-        const cursor = queue[0];
-        const { agent, offset } = cursor;
-        let timer: ReturnType<typeof setTimeout> | undefined;
-        try {
-          const response = await Promise.race([
-            boundedProjectSearch(agent.endpoint.project_id, () =>
-              webapp_client.conat_client.hub.projects.chatStoreSearch({
-                project_id: agent.endpoint.project_id,
-                chat_path: agent.path,
-                thread_id: agent.thread_id,
-                artifacts: true,
-                query: needle,
-                limit: Math.min(25, 500 - found.length),
-                offset,
-              }),
-            ),
-            new Promise<never>((_, reject) => {
-              timer = setTimeout(
-                () =>
-                  reject(
-                    Error("Project search timed out; results are incomplete"),
-                  ),
-                Math.min(8000, Math.max(1, deadline - Date.now())),
-              );
-            }),
-          ]);
-          if (canceled()) return;
-          if (!response.includes_artifacts)
-            throw Error("Project host needs an update for artifact discovery");
-          for (const hit of response.hits) {
-            if (!hit.artifact_id || hit.thread_id !== agent.thread_id) continue;
-            const result = {
-              agent,
-              threadId: agent.thread_id,
-              historical: false,
-              hit,
-            };
-            if (!found.some((row) => identity(row) === identity(result)))
-              found.push(result);
-          }
-          queue.shift();
-          if (response.next_offset !== undefined)
-            queue.unshift({ agent, offset: response.next_offset });
-        } catch (err) {
-          if (canceled()) return;
-          queue.shift();
-          failures.push(`@${agent.name}: ${err}`);
-          // Leave other sources for explicit continuation, rather than repeatedly
-          // probing while an outstanding request still occupies the shared slot.
-          break;
-        } finally {
-          clearTimeout(timer);
-        }
-        setResults([...found]);
-      }
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-      if (!canceled()) {
-        setResults(found);
-        setPending(queue);
-        setErrors(failures);
-      }
-    }
-  }
-
-  const ordered = [...results].sort((a, b) => {
-    const ai = pins.pins.indexOf(identity(a)),
-      bi = pins.pins.indexOf(identity(b));
-    if (ai >= 0 || bi >= 0) return ai < 0 ? 1 : bi < 0 ? -1 : ai - bi;
-    return sort === "title"
-      ? (a.hit.artifact_title ?? "").localeCompare(b.hit.artifact_title ?? "")
-      : (b.hit.date_ms ?? 0) - (a.hit.date_ms ?? 0);
+  const ordered = catalogResults(metadata.entries, agents, {
+    query,
+    project,
+    sort,
+    pins: pins.pins,
   });
   return (
     <Modal
@@ -171,7 +71,6 @@ export function AgentArtifactBrowser({
       footer={null}
       width={760}
       onCancel={() => {
-        generation.current++;
         store.set({ artifactsOpen: false });
       }}
     >
@@ -179,12 +78,10 @@ export function AgentArtifactBrowser({
         <Input.Search
           autoFocus
           aria-label="Search all agent artifacts"
-          placeholder="Search titles, text, paths, commits..."
+          placeholder="Filter cached titles, descriptions, paths, commits..."
           maxLength={256}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onSearch={() => void search(false)}
-          loading={busy}
         />
         <Space wrap style={{ margin: "12px 0" }}>
           <Select
@@ -211,39 +108,38 @@ export function AgentArtifactBrowser({
               { value: "title", label: "Title" },
             ]}
           />
-          <Button disabled={busy} onClick={() => void search(false)}>
+          <Button
+            disabled={metadata.loading}
+            onClick={() => void catalog.refresh()}
+          >
             Refresh
           </Button>
         </Space>
         <p style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
-          Saved artifacts in current agent conversations. Pinned results appear
-          first. Searches run in bounded batches without opening chats. Sorting
-          and pins apply to discovered results only. Opening a result switches
-          to its source agent's Workbench.
+          Saved artifacts from current agent conversations. Updates refresh in
+          the background; some sources may still be indexing.
+          <br />
+          Opening an artifact switches to its source agent's Workbench.
         </p>
         <div role="status">
-          {results.length} artifacts found{searched ? ` for “${searched}”` : ""}
-          . {busy ? "Searching…" : `${pending.length} source pages remaining.`}
+          {ordered.length} artifacts{metadata.loading ? " · Refreshing..." : ""}
+          {metadata.limited &&
+            " · Local preview limit reached; some metadata is not cached."}
         </div>
-        {!!errors.length && (
+        {metadata.error && (
           <Alert
             type="warning"
-            title="Partial results: some sources could not be searched"
-            description={
-              <div style={{ maxHeight: 100, overflow: "auto" }}>
-                {errors.map((error, i) => (
-                  <div key={i}>{error}</div>
-                ))}
-              </div>
-            }
+            title="Metadata preview unavailable"
+            description={metadata.error}
           />
         )}
         {pins.error && <div role="alert">{pins.error}</div>}
+        {openError && <div role="alert">{openError}</div>}
         <div style={{ maxHeight: "50vh", overflowY: "auto" }}>
-          {!busy && !results.length && (
-            <Empty description="No artifacts found in successfully searched sources" />
+          {!metadata.loading && !ordered.length && (
+            <Empty description="No matching cached artifacts. Sources may not be indexed yet." />
           )}
-          {ordered.map((result) => (
+          {ordered.slice(0, 200).map((result) => (
             <div
               key={identity(result)}
               style={{
@@ -266,11 +162,12 @@ export function AgentArtifactBrowser({
                 }}
                 onClick={async () => {
                   setOpening(true);
+                  setOpenError("");
                   try {
                     await onSelect(result);
                     store.set({ artifactsOpen: false });
                   } catch (err) {
-                    setErrors((errors) => [...errors, `${err}`]);
+                    setOpenError(`${err}`);
                   } finally {
                     setOpening(false);
                   }
@@ -313,17 +210,33 @@ export function AgentArtifactBrowser({
             </div>
           ))}
         </div>
-        {!!pending.length && (
-          <Button
-            disabled={busy || results.length >= 500}
-            onClick={() => void search(true)}
-          >
-            Search more agents / artifacts
-          </Button>
+        {ordered.length > 200 && (
+          <p role="status">
+            Showing the first 200 of {ordered.length} matches. Narrow the search
+            or project filter to see other cached artifacts.
+          </p>
         )}
-        {results.length >= 500 && (
-          <p>Result limit reached. Narrow the query or select a project.</p>
-        )}
+        <details style={{ color: UI_COLORS.secondary, fontSize: 12 }}>
+          <summary>Preview details</summary>
+          <p>
+            Background-refreshed metadata preview, not a live feed. Refreshes
+            about every 10 seconds while mounted, without scanning files or
+            starting projects. Only known current agent threads are shown.
+            Pinned artifacts appear first.
+          </p>
+          <p>
+            {metadata.indexedSources} successfully indexed sources reported;
+            this is not a completeness count. {metadata.checkedProjects} project
+            listings read to the end. Coverage may still be partial.
+          </p>
+          <p>
+            Preview limits: {CATALOG_LIMITS.projects} projects,{" "}
+            {CATALOG_LIMITS.pages} pages, {CATALOG_LIMITS.entries} entries and
+            approximately 16 MiB of metadata per refresh. Search, project
+            filters and sorting use cached metadata only; they do not fetch
+            beyond these limits.
+          </p>
+        </details>
       </KeyboardBoundary>
     </Modal>
   );

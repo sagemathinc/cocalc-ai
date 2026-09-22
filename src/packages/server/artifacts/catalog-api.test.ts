@@ -4,16 +4,26 @@ import {
   registerSource,
   ingest,
   catalogOwnerControl,
+  listProject,
+  sourcePage,
 } from "./catalog-api";
 
 const owner = jest.fn();
 const state = jest.fn();
 const register = jest.fn();
 const apply = jest.fn();
+const read = jest.fn();
+const sources = jest.fn();
+const actor = jest.fn();
+jest.mock("@cocalc/server/agents/access", () => ({
+  assertActor: (...a) => actor(...a),
+}));
 const remote = {
   writerState: jest.fn(),
   registerSource: jest.fn(),
   ingest: jest.fn(),
+  listProject: jest.fn(),
+  sourcePage: jest.fn(),
 };
 const remoteClient = jest.fn(() => remote);
 let bay = "owner";
@@ -33,6 +43,8 @@ jest.mock("@cocalc/database/postgres/artifact-catalog", () => ({
   getArtifactCatalogWriterState: (...a) => state(...a),
   registerArtifactCatalogSource: (...a) => register(...a),
   applyArtifactCatalogSnapshot: (...a) => apply(...a),
+  readProjectArtifactCatalog: (...a) => read(...a),
+  artifactCatalogSourcePage: (...a) => sources(...a),
 }));
 const source = {
   project_id: randomUUID(),
@@ -56,6 +68,44 @@ beforeEach(() => {
   state.mockReset().mockResolvedValue(null);
   register.mockReset().mockResolvedValue(snapshot.epoch);
   apply.mockReset().mockResolvedValue({ revision: 1, replayed: false });
+  actor.mockReset().mockResolvedValue(undefined);
+  read.mockReset().mockResolvedValue({ entries: [], indexed_sources: 0 });
+  sources.mockReset().mockResolvedValue({ paths: [] });
+});
+
+test("project reads check collaboration before and after the bounded query", async () => {
+  const account_id = randomUUID();
+  await listProject({ project_id: source.project_id, account_id });
+  expect(actor).toHaveBeenCalledTimes(2);
+  expect(actor).toHaveBeenCalledWith(account_id, source.project_id);
+  actor.mockRejectedValueOnce(Error("not a collaborator"));
+  read.mockClear();
+  await expect(
+    listProject({ project_id: source.project_id, account_id }),
+  ).rejects.toThrow("collaborator");
+  expect(read).not.toHaveBeenCalled();
+  actor
+    .mockResolvedValueOnce(undefined)
+    .mockRejectedValueOnce(Error("revoked"));
+  await expect(
+    listProject({ project_id: source.project_id, account_id }),
+  ).rejects.toThrow("revoked");
+});
+
+test("project reads route to owner while host discovery uses checked host authority", async () => {
+  await sourcePage({ project_id: source.project_id, host_id: source.host_id });
+  expect(sources).toHaveBeenCalledWith(source.project_id, authority, undefined);
+  bay = "entry";
+  const request = { project_id: source.project_id, account_id: randomUUID() };
+  await listProject(request);
+  expect(remote.listProject).toHaveBeenCalledWith({
+    ...request,
+    after: undefined,
+    route,
+  });
+  await expect(
+    catalogOwnerControl.listProject({ ...request, route }),
+  ).rejects.toThrow("stale");
 });
 
 test("same-bay dispatch binds database authority and strips caller extras", async () => {

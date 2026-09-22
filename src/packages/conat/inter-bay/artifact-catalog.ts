@@ -13,6 +13,8 @@ import type {
   CatalogSourceRequest,
   CatalogRegistrationRequest,
   CatalogIngestRequest,
+  CatalogProjectRequest,
+  CatalogSourcePageRequest,
 } from "@cocalc/conat/hub/api/artifact-catalog";
 
 export interface CatalogOwnerRoute {
@@ -20,6 +22,12 @@ export interface CatalogOwnerRoute {
   epoch: number;
 }
 export interface InterBayArtifactCatalogApi {
+  sourcePage(
+    opts: CatalogSourcePageRequest & { route: CatalogOwnerRoute },
+  ): ReturnType<ArtifactCatalogApi["sourcePage"]>;
+  listProject(
+    opts: CatalogProjectRequest & { route: CatalogOwnerRoute },
+  ): ReturnType<ArtifactCatalogApi["listProject"]>;
   writerState(
     opts: CatalogSourceRequest & { route: CatalogOwnerRoute },
   ): ReturnType<ArtifactCatalogApi["writerState"]>;
