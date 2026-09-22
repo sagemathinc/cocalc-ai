@@ -3,7 +3,7 @@
  * License: MS-RSL – see LICENSE.md for details
  */
 import { useMemo, useState, type ReactNode } from "react";
-import MarkdownIt from "markdown-it";
+import { parse_markdown } from "@cocalc/util/markdown/parse";
 import type Token from "markdown-it/lib/token";
 import {
   Linking,
@@ -18,7 +18,6 @@ import * as Clipboard from "expo-clipboard";
 import type { AppearancePalette } from "@cocalc/util/appearance-palette";
 import { usePalette } from "../ui/palette";
 
-const parser = new MarkdownIt({ html: false, linkify: true, breaks: false });
 interface Node {
   token: Token;
   children: Node[];
@@ -43,13 +42,48 @@ function tree(tokens: Token[]): Node[] {
 export function Markdown({ value }: { value: string }) {
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
-  const nodes = useMemo(() => tree(parser.parse(value, {})), [value]);
+  const nodes = useMemo(() => tree(parse_markdown(value).tokens), [value]);
   function render(nodes: Node[]): ReactNode {
     return nodes.map(({ token: t, children }, index) => {
       const body = () => render(children);
       switch (t.type) {
+        case "emoji":
+        case "html_inline":
         case "text":
           return t.content;
+        case "hashtag":
+          return `#${t.content}`;
+        case "mention":
+          return `@${(t as Token & { name: string }).name}`;
+        case "agent-mention":
+          return `@${(t as Token & { reference: { name: string } }).reference.name}`;
+        case "checkbox_input": {
+          const checked = t.attrGet("checked") === "true";
+          return (
+            <Text
+              key={index}
+              accessibilityLabel={checked ? "Completed" : "Not completed"}
+            >
+              {checked ? "☑" : "☐"}
+            </Text>
+          );
+        }
+        case "math_inline":
+        case "math_inline_double":
+          // Preserve the complete formula until a native math renderer is connected.
+          return (
+            <Text key={index} style={styles.inlineCode}>
+              {t.content}
+            </Text>
+          );
+        case "math_block":
+          return (
+            <Text key={index} selectable style={styles.codeText}>
+              {t.content}
+            </Text>
+          );
+        case "blank_line":
+          return <View key={index} style={{ height: 8 }} />;
         case "softbreak":
           return " ";
         case "hardbreak":

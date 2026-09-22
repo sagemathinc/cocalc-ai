@@ -2448,6 +2448,12 @@ importers:
       lru-cache:
         specifier: ^7.18.3
         version: 7.18.3
+      markdown-it:
+        specifier: ^14.2.0
+        version: 14.2.0
+      markdown-it-emoji:
+        specifier: ^2.0.2
+        version: 2.0.2
       prop-types:
         specifier: ^15.7.2
         version: 15.8.1
@@ -2479,6 +2485,9 @@ importers:
       '@types/lodash':
         specifier: ^4.17.20
         version: 4.17.20
+      '@types/markdown-it':
+        specifier: 12.2.3
+        version: 12.2.3
       '@types/node':
         specifier: ^22.10.10
         version: 22.20.1

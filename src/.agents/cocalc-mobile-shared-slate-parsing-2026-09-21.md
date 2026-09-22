@@ -107,3 +107,39 @@ without delegating the entire document format to another parser.
 This approach reuses an existing CoCalc document model and parser; it does not
 remove the need to implement native presentation. It is the strongest option
 identified so far for retaining CoCalc-specific semantics across platforms.
+
+## Implementation checkpoint: shared tokenizer and speech (2026-09-21)
+
+Implemented the first extraction into `@cocalc/util/markdown`:
+
+- One parser configuration and the existing math, emoji, checkbox, hashtag,
+  mention, blank-line, and front-matter code. Existing frontend import paths
+  remain compatibility exports.
+- The existing `parse_markdown` entrypoint now lives beside the shared parser,
+  retaining source lines, reference definitions, metadata, and whitespace rules.
+- Web Slate, native mobile Markdown, and shared chat speech now use this parser.
+  Mobile recognizes the CoCalc-specific tokens; math currently displays its TeX
+  source, not a rendered formula. HTML remains a literal source fallback on mobile.
+- Speech pairs table values with column headers, keeps nested list numbering
+  correct, speaks task completion states and mention names, and avoids inserting
+  sentence breaks at soft line wraps. Math remains TeX; proper mathematical
+  verbalization is still pending. HTML blocks retain a raw-source speech fallback and still need semantic
+  conversion, alongside the Slate HTML extraction.
+
+Regression snapshots were captured before moving the parser and passed unchanged
+following extraction (four documents, eight snapshots of tokens and HTML).
+Focused existing Slate math/whitespace/HTML tests, native UI tests, speech tests,
+Node-only parser tests, frontend typecheck/lint, package builds, and iOS Hermes
+export passed. This is not a claim of complete document or renderer parity.
+
+Next extraction: isolate the existing token-to-Slate handlers and headless
+normalization from element registration and browser imports. Then have native
+rendering and speech consume those shared descendants instead of independently
+walking tokens. Preserve the web editor's document shape and round-trip behavior.
+Native math, HTML/details, rich images/artifacts, syntax highlighting, complete
+link routing, and streaming performance remain explicit work items. Avoid adding
+an independent competing Markdown dialect while completing these adapters.
+
+Simulator Markdown checks also passed in light, dark, and large-text modes after
+restarting Metro to pick up changed dependency links. Artifacts:
+`src/packages/mobile/dist/visual/2026-09-22T04-17-10.166Z/` (local, ignored).

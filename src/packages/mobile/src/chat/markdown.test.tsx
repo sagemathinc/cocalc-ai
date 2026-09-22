@@ -74,3 +74,28 @@ it("preserves numeric table alignment and exposes column headings", async () => 
   expect(headings[1].props.style).toContainEqual({ textAlign: "right" });
   await act(async () => view.unmount());
 });
+
+it("renders shared CoCalc tokens without dropping formulas, tasks, or mentions", async () => {
+  let view: any;
+  await act(async () => {
+    view = create(
+      <Markdown
+        value={
+          '- [x] Done\n- [ ] Pending\n\nHello <span class="user-mention" account-id=47d0393e-4814-4452-bb6c-35bac4cbd314>@William</span> #topic :smile: \\(x_1 + x_2\\)'
+        }
+      />,
+    );
+  });
+  const json = JSON.stringify(view.toJSON());
+  expect(json).toContain("@William");
+  expect(json).toContain("#topic");
+  expect(json).toContain("x_1 + x_2");
+  expect(json).toContain("😄");
+  expect(
+    view.root.findAllByProps({ accessibilityLabel: "Completed" }).length,
+  ).toBeGreaterThan(0);
+  expect(
+    view.root.findAllByProps({ accessibilityLabel: "Not completed" }).length,
+  ).toBeGreaterThan(0);
+  await act(async () => view.unmount());
+});

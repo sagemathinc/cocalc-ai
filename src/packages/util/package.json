@@ -61,6 +61,8 @@
     "jsonic": "^1.0.1",
     "lodash": "^4.18.1",
     "lru-cache": "^7.18.3",
+    "markdown-it": "^14.2.0",
+    "markdown-it-emoji": "^2.0.2",
     "prop-types": "^15.7.2",
     "react": "19.2.3",
     "react-intl": "^7.1.11",
@@ -78,6 +80,7 @@
   "devDependencies": {
     "@types/jest": "^30.0.0",
     "@types/lodash": "^4.17.20",
+    "@types/markdown-it": "12.2.3",
     "@types/node": "^22.10.10",
     "@types/seedrandom": "^3.0.8",
     "@types/uuid": "^8.3.1",
