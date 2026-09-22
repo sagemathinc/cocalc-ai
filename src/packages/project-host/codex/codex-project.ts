@@ -1849,6 +1849,27 @@ type SpawnCodexAppServerInProjectRuntimeResult = {
   siteFundedTurn?: CodexSiteFundedTurnRuntime;
 };
 
+async function closeSiteFundedTurnAfterRuntimeFailure({
+  siteFundedTurn,
+  projectId,
+  stage,
+}: {
+  siteFundedTurn: CodexSiteFundedTurnRuntime | undefined;
+  projectId: string;
+  stage: string;
+}): Promise<void> {
+  if (!siteFundedTurn) return;
+  try {
+    await siteFundedTurn.close();
+  } catch (err) {
+    logger.error("failed to close site-funded Codex runtime", {
+      projectId,
+      stage,
+      err: `${err}`,
+    });
+  }
+}
+
 async function spawnCodexAppServerInProjectRuntime({
   projectId,
   accountId,
@@ -1920,14 +1941,24 @@ async function spawnCodexAppServerInProjectRuntime({
         appServerLogin,
       });
   const name = projectContainerName(projectId);
-  const cliTokenLease = await createProjectCliTokenLease({
-    projectId,
-    accountId,
-    agentSessionKey,
-    currentEnv: initialExecEnv,
-    home,
-    scratch,
-  });
+  let cliTokenLease: Awaited<ReturnType<typeof createProjectCliTokenLease>>;
+  try {
+    cliTokenLease = await createProjectCliTokenLease({
+      projectId,
+      accountId,
+      agentSessionKey,
+      currentEnv: initialExecEnv,
+      home,
+      scratch,
+    });
+  } catch (err) {
+    await closeSiteFundedTurnAfterRuntimeFailure({
+      siteFundedTurn,
+      projectId,
+      stage: "project CLI identity setup",
+    });
+    throw err;
+  }
 
   const execArgs: string[] = [
     "exec",
@@ -2029,6 +2060,11 @@ async function spawnCodexAppServerInProjectRuntime({
   } catch (err) {
     restrictedEgress?.close();
     await cliTokenLease?.close();
+    await closeSiteFundedTurnAfterRuntimeFailure({
+      siteFundedTurn,
+      projectId,
+      stage: "restricted egress setup",
+    });
     await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
@@ -2095,6 +2131,11 @@ async function spawnCodexAppServerInProjectRuntime({
   } catch (err) {
     restrictedEgress?.close();
     await cliTokenLease?.close();
+    await closeSiteFundedTurnAfterRuntimeFailure({
+      siteFundedTurn,
+      projectId,
+      stage: "app-server process spawn",
+    });
     await removeIsolatedCodexHome(isolatedCodexHomeHostPath);
     throw err;
   }
@@ -2132,6 +2173,11 @@ async function spawnCodexAppServerInProjectRuntime({
       }
     } finally {
       await cliTokenLease?.close();
+      await closeSiteFundedTurnAfterRuntimeFailure({
+        siteFundedTurn,
+        projectId,
+        stage: "app-server process exit",
+      });
       if (touchReason) {
         void touchProjectLastEdited(projectId, touchReason);
       }

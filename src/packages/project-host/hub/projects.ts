@@ -3497,15 +3497,18 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
       chat_path,
       db_path,
     });
-    return await searchChatStore({
-      include_head,
-      ...paths,
-      query,
-      thread_id,
-      exclude_thread_ids,
-      limit,
-      offset,
-    });
+    return await searchChatStore(
+      {
+        include_head,
+        ...paths,
+        query,
+        thread_id,
+        exclude_thread_ids,
+        limit,
+        offset,
+      },
+      account_id ?? "",
+    );
   }
 
   async function chatStoreDelete({

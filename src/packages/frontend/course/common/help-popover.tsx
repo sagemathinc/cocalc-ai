@@ -9,11 +9,12 @@ import type { ReactNode } from "react";
 import { Icon } from "@cocalc/frontend/components";
 
 interface Props {
+  ariaLabel?: string;
   content: ReactNode;
   title?: ReactNode;
 }
 
-export default function HelpPopover({ content, title }: Props) {
+export default function HelpPopover({ ariaLabel, content, title }: Props) {
   return (
     <Popover
       content={<div style={{ maxWidth: 420 }}>{content}</div>}
@@ -21,7 +22,7 @@ export default function HelpPopover({ content, title }: Props) {
       trigger="click"
     >
       <Button
-        aria-label="Help"
+        aria-label={ariaLabel ?? "Help"}
         size="small"
         style={{ padding: "0 4px" }}
         type="text"

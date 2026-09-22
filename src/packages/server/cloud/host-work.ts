@@ -61,8 +61,10 @@ import {
 } from "./host-dns-reconciliation";
 import {
   activeHostPublicRouteMode,
+  desiredHostPublicRouteMode,
   ensureDirectCloudflareIngressForHost,
   hostPublicRouteMigrationInProgress,
+  migrateHostPublicRouteInternal,
 } from "./public-route";
 
 const logger = getLogger("server:cloud:host-work");
@@ -1246,6 +1248,49 @@ async function reconcileRuntimeNetworkAfterStart(
   }
   await ensureDnsForHost(row);
   await scheduleRuntimeRefresh(row, { force: providerId === "gcp" });
+}
+
+async function reconcileDesiredPublicRouteAfterReady({
+  host,
+  providerId,
+  verificationPayload,
+}: {
+  host: any;
+  providerId?: string;
+  verificationPayload?: Record<string, any>;
+}): Promise<void> {
+  if (providerId !== "gcp") {
+    return;
+  }
+  if (hostPublicRouteMigrationInProgress(host)) {
+    // A terminated worker's readiness lease expires before the migration
+    // marker does. Keep a durable retry instead of completing the last check.
+    await enqueueCloudVmWork({
+      vm_id: host.id,
+      action: "verify_host_ready",
+      not_before: new Date(Date.now() + 60_000),
+      payload: { ...verificationPayload, provider: providerId },
+    });
+    return;
+  }
+  const desiredMode = desiredHostPublicRouteMode(host);
+  if (activeHostPublicRouteMode(host) === desiredMode) {
+    return;
+  }
+  try {
+    await migrateHostPublicRouteInternal({
+      id: host.id,
+      mode: desiredMode,
+    });
+  } catch (err) {
+    // The guarded migration restores the tunnel route on failure. Keep the
+    // healthy host available and retry after its next lifecycle verification.
+    logger.warn("failed to reconcile desired project-host public route", {
+      host_id: host.id,
+      desired_mode: desiredMode,
+      err,
+    });
+  }
 }
 
 function maybeReplaceIpInUrl(
@@ -3034,6 +3079,11 @@ async function handleVerifyHostReady(row: any) {
         err,
       });
     }
+    await reconcileDesiredPublicRouteAfterReady({
+      host,
+      providerId,
+      verificationPayload: row.payload,
+    });
     return;
   }
 

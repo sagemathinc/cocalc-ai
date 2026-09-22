@@ -65,6 +65,17 @@ describe("billing authority service boundary", () => {
     ).toBe(true);
     expect(
       isBillingAuthorityCommand({
+        kind: "account-local",
+        operation: "get-dedicated-host-financial-snapshot",
+        input: {
+          account_id: "00000000-0000-4000-8000-000000000001",
+          needs_postpaid_snapshot: false,
+        },
+        actor_account_id: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).toBe(true);
+    expect(
+      isBillingAuthorityCommand({
         kind: "maintenance",
         task: "automatic-payments",
       }),

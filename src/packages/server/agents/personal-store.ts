@@ -396,6 +396,8 @@ export class PersonalAgentStore {
     )
       throw new Error("invalid_proposal_reason");
     await this.validateMembers(account, options.members, memberLimit);
+    if (options.members.some((member) => member.kind === "external"))
+      throw new Error("external_members_require_existing_network_enrollment");
     const sourcePresent = options.members.some((member) =>
       member.kind === "registered"
         ? !isExternalAgentSource(source) && same(member.endpoint, source)
@@ -452,7 +454,7 @@ export class PersonalAgentStore {
             source,
             title,
             delivery_mode,
-            options.members,
+            JSON.stringify(options.members),
             options.reason?.trim() || null,
             binding,
           ],
@@ -720,7 +722,11 @@ export class PersonalAgentStore {
       await db.query(
         `INSERT INTO agent_network_members
          (agent_network_id,member_kind,member_id,registered_agent_id,project_id,added_by)
-         VALUES($1,'registered',$2,$2,$3,$4)`,
+         VALUES($1,'registered',$2,$2,$3,$4)
+         ON CONFLICT(agent_network_id,member_kind,member_id) DO UPDATE
+         SET project_id=EXCLUDED.project_id,added_by=EXCLUDED.added_by,
+             added_at=now(),removed_at=NULL
+         WHERE agent_network_members.removed_at IS NOT NULL`,
         [
           agent_network_id,
           member.endpoint.agent_id,
@@ -742,7 +748,11 @@ export class PersonalAgentStore {
     await db.query(
       `INSERT INTO agent_network_members
        (agent_network_id,member_kind,member_id,external_agent_id,installation_id,added_by)
-       VALUES($1,'external',$2,$2,$3,$4)`,
+       VALUES($1,'external',$2,$2,$3,$4)
+       ON CONFLICT(agent_network_id,member_kind,member_id) DO UPDATE
+       SET installation_id=EXCLUDED.installation_id,added_by=EXCLUDED.added_by,
+           added_at=now(),removed_at=NULL
+       WHERE agent_network_members.removed_at IS NOT NULL`,
       [agent_network_id, member.agent_id, member.installation_id, account],
     );
   }
@@ -1332,20 +1342,23 @@ export class PersonalAgentStore {
     source: AgentRpcSource,
     run_id?: string,
   ): Promise<AgentNetworkDiscovery> {
-    if (!isExternalAgentSource(source)) {
-      requireUuid(run_id, "run_id");
-      if ((await this.principal(source, run_id!)) !== account)
-        throw new PersonalAgentAuthorizationError("principal_mismatch");
-    }
+    await this.authenticateSource(account, source, run_id);
     const rows = (
       await this.db.query(
         `SELECT DISTINCT s.* FROM agent_networks s
          JOIN agent_network_members m USING(agent_network_id)
          WHERE s.account_id=$1 AND s.state='active' AND m.removed_at IS NULL
-           AND ((m.member_kind='registered' AND m.registered_agent_id=$2)
-             OR (m.member_kind='external' AND m.external_agent_id=$2))
+           AND ((m.member_kind='registered' AND m.registered_agent_id=$2
+                 AND m.project_id=$3 AND $4::uuid IS NULL)
+             OR (m.member_kind='external' AND m.external_agent_id=$2
+                 AND m.installation_id=$4))
          ORDER BY s.updated_at DESC LIMIT 100`,
-        [account, source.agent_id],
+        [
+          account,
+          source.agent_id,
+          isExternalAgentSource(source) ? null : source.project_id,
+          isExternalAgentSource(source) ? source.installation_id : null,
+        ],
       )
     ).rows;
     const networks: AgentNetwork[] = [];
@@ -1354,6 +1367,7 @@ export class PersonalAgentStore {
     const peers = new Map<string, AgentNetworkDiscovery["peers"][number]>();
     for (const network of networks)
       for (const member of network.members) {
+        if (member.removed_at) continue;
         if (this.findMember([member], source)) continue;
         const key =
           member.kind === "registered"

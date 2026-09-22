@@ -10,6 +10,12 @@ const getJupyterActions = jest.fn();
 const useRedux = jest.fn();
 let cellOutputProps: any;
 
+// CellOutput is mocked below; its MIME renderer registration is outside this test.
+jest.mock(
+  "@cocalc/frontend/jupyter/output-messages/mime-types/init-frontend",
+  () => ({}),
+);
+
 jest.mock("@cocalc/frontend/app-framework", () => ({
   useIsMountedRef: () => ({ current: true }),
   useRedux: (...args: any[]) => useRedux(...args),

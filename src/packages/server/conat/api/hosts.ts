@@ -107,6 +107,7 @@ import {
 } from "@cocalc/server/project-host/access";
 import { maybeAutoGrowHostDiskForReservationFailure } from "@cocalc/server/project-host/auto-grow";
 import { resolveMembershipForAccount } from "@cocalc/server/membership/resolve";
+import { getEffectiveMembershipUsageLimits } from "@cocalc/server/membership/effective-limits";
 import { getProjectUsageAccountId } from "@cocalc/server/membership/project-usage";
 import {
   enqueueCloudVmWork,
@@ -225,6 +226,7 @@ import {
   type ReserveSiteFundedCodexTurnOptions,
 } from "@cocalc/server/ai/site-funded-codex-reservations";
 import { getSiteFundedCodexConfiguration } from "@cocalc/server/ai/site-funded-codex-policy";
+import { DEFAULT_SITE_FUNDED_CODEX_POLICY } from "@cocalc/util/ai/site-funded-codex";
 import type {
   SiteFundedCodexAdmission,
   SiteFundedCodexPoolStatus,
@@ -3461,22 +3463,35 @@ export async function recordCodexSiteUsage({
 function usageLimitAndRemainingMicrousd(
   status: Awaited<ReturnType<typeof getAIUsageStatus>>,
   window: "5h" | "7d",
-): { limit: number; remaining: number } {
+): {
+  limit: number;
+  remaining: number;
+  creditsByFundedTurn: Record<string, number>;
+} {
   const usage = status.windows.find((entry) => entry.window === window);
   return {
     limit: aiUsageUnitsToMicrousd(usage?.limit),
     remaining: aiUsageUnitsToMicrousd(usage?.remaining),
+    creditsByFundedTurn: usage?.site_funded_credits_microusd ?? {},
   };
 }
 
 function overviewLimitAndRemainingMicrousd(
   overview: AccountUsageOverview,
   window: "5h" | "7d",
-): { limit: number; remaining: number } {
+): {
+  limit: number;
+  remaining: number;
+  creditsByFundedTurn: Record<string, number>;
+} {
   const meter = overview.meters.find(({ id }) => id === `ai-${window}`);
+  const credits = overview.site_funded_codex_credits?.windows.find(
+    (entry) => entry.window === window,
+  );
   return {
     limit: aiUsageUnitsToMicrousd(meter?.limit),
     remaining: aiUsageUnitsToMicrousd(meter?.remaining),
+    creditsByFundedTurn: credits?.credits_microusd ?? {},
   };
 }
 
@@ -3558,7 +3573,10 @@ export async function reserveSiteFundedCodexTurn({
       ? await (async () => {
           const [membership, usageStatus] = await Promise.all([
             resolveMembershipForAccount(account_id),
-            getAIUsageStatus({ account_id }),
+            getAIUsageStatus({
+              account_id,
+              include_site_funded_credits: true,
+            }),
           ]);
           return [
             membership,
@@ -3573,7 +3591,10 @@ export async function reserveSiteFundedCodexTurn({
           });
           const [membership, overview] = await Promise.all([
             accountHome.getMembership({ account_id }),
-            accountHome.getAccountUsageOverview({ account_id }),
+            accountHome.getAccountUsageOverview({
+              account_id,
+              include_site_funded_codex_credits: true,
+            }),
           ]);
           return [
             membership,
@@ -3582,6 +3603,10 @@ export async function reserveSiteFundedCodexTurn({
           ] as const;
         })();
   const paid = membership.source !== "free";
+  const accountConcurrency =
+    getEffectiveMembershipUsageLimits(membership).acp_max_running_per_account ??
+    configuration.policy?.maxConcurrentTurnsPerAccount ??
+    DEFAULT_SITE_FUNDED_CODEX_POLICY.maxConcurrentTurnsPerAccount;
   if (account5h.limit <= 0 || account7d.limit <= 0) {
     return {
       allowed: false,
@@ -3605,9 +3630,14 @@ export async function reserveSiteFundedCodexTurn({
     homeBayId,
     owningBayId: getConfiguredBayId(),
     membershipTier: membership.class,
-    policy: configuration.policy,
+    policy: {
+      ...configuration.policy,
+      maxConcurrentTurnsPerAccount: accountConcurrency,
+    },
     accountRemaining5hMicrousd: account5h.remaining,
     accountRemaining7dMicrousd: account7d.remaining,
+    accountCredited5hMicrousdByFundedTurn: account5h.creditsByFundedTurn,
+    accountCredited7dMicrousdByFundedTurn: account7d.creditsByFundedTurn,
     surface: path?.endsWith(".ipynb")
       ? "jupyter"
       : path?.endsWith(".chat")
@@ -6581,11 +6611,6 @@ export async function startHost({
   }
   const row = await loadHostForStartStop(id, actor);
   const billingOwner = hostBillingOwnerAccountId(row, actor);
-  await assertRequestedHostFundingModeAllowed({
-    account_id: billingOwner,
-    machine_cloud: row.metadata?.machine?.cloud,
-    funding_mode: currentHostFundingMode(row.metadata),
-  });
   assertHostBillingEnforcementAllowsStart(row.metadata);
   const auth = await maybeRequireFreshAuthForInteractiveHostAction({
     account_id,
@@ -6594,6 +6619,11 @@ export async function startHost({
     required: hostActionRequiresInteractiveFreshAuth(
       row.metadata?.machine?.cloud,
     ),
+  });
+  await assertRequestedHostFundingModeAllowed({
+    account_id: billingOwner,
+    machine_cloud: row.metadata?.machine?.cloud,
+    funding_mode: currentHostFundingMode(row.metadata),
   });
   await assertNoPendingDestructiveHostOp(row.id);
   await assertDedicatedHostAdmissionForAccount({

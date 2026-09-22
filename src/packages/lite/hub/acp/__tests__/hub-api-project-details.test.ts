@@ -113,5 +113,11 @@ describe("lite hub project detail getters", () => {
         project_id: PROJECT_ID,
       }),
     ).resolves.toBeNull();
+    await expect(
+      hubApi.projects.getCodexCredentialSelectionCapability({
+        account_id: ACCOUNT_ID,
+        project_id: PROJECT_ID,
+      }),
+    ).resolves.toEqual({ version: 2, credentialLifecycle: true });
   });
 });

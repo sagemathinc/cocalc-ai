@@ -535,7 +535,13 @@ export function shouldRouteProjectHostIngressToApp(
     hostnameFromUrl(process.env.PROJECT_HOST_INTERNAL_URL),
     examHostnameFromProjectHostPublicUrl(process.env.PROJECT_HOST_PUBLIC_URL),
   ]);
-  return !infrastructureHostnames.has(requestHostname);
+  const requestLabels = requestHostname.split(".");
+  const publicLabels = publicHostname.split(".");
+  const directProbeHostname =
+    requestLabels.length === publicLabels.length &&
+    /^direct-check-[a-f0-9]+$/.test(requestLabels[0] ?? "") &&
+    requestLabels.slice(1).join(".") === publicLabels.slice(1).join(".");
+  return !infrastructureHostnames.has(requestHostname) && !directProbeHostname;
 }
 
 export function attachProjectHostConatRouterProxy({

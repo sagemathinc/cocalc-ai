@@ -54,6 +54,11 @@ const STABLE_ROUTE_SUCCESS_INTERVAL_MS = Math.max(
   ),
 );
 const STABLE_ROUTE_REQUIRED_SUCCESSES = 3;
+const PUBLIC_ROUTE_MIGRATION_CLOCK_SKEW_MS = 5 * 60_000;
+const PUBLIC_ROUTE_MIGRATION_STALE_MS = Math.max(
+  60 * 60_000,
+  2 * PROBE_DEADLINE_MS + STABLE_ROUTE_CONFIRMATION_MS + 10 * 60_000,
+);
 
 type HostRow = {
   id: string;
@@ -85,10 +90,37 @@ export function activeHostPublicRouteMode(row: {
     : "cloudflare-tunnel";
 }
 
-export function hostPublicRouteMigrationInProgress(row: {
+export function desiredHostPublicRouteMode(row: {
   metadata?: Record<string, any>;
-}): boolean {
-  return row.metadata?.public_route?.status === "preparing";
+}): HostPublicRouteMode {
+  const desired = row.metadata?.public_route?.desired_mode;
+  if (desired === "cloudflare-proxy" || desired === "cloudflare-tunnel") {
+    return desired;
+  }
+  return normalizeProviderId(row.metadata?.machine?.cloud) === "gcp"
+    ? "cloudflare-proxy"
+    : "cloudflare-tunnel";
+}
+
+export function hostPublicRouteMigrationInProgress(
+  row: {
+    metadata?: Record<string, any>;
+  },
+  nowMs = Date.now(),
+): boolean {
+  const route = row.metadata?.public_route;
+  if (route?.status !== "preparing") {
+    return false;
+  }
+  const startedAtMs = new Date(`${route.started_at ?? ""}`).getTime();
+  if (!Number.isFinite(startedAtMs)) {
+    return false;
+  }
+  const ageMs = nowMs - startedAtMs;
+  return (
+    ageMs >= -PUBLIC_ROUTE_MIGRATION_CLOCK_SKEW_MS &&
+    ageMs < PUBLIC_ROUTE_MIGRATION_STALE_MS
+  );
 }
 
 async function loadHost(id: string): Promise<HostRow> {

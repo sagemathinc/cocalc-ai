@@ -15,6 +15,7 @@ import getLogger from "@cocalc/backend/logger";
 import { agentStore } from "./store";
 import { assertAgent, assertRun } from "./access";
 import { startAgentMessagingMaintenance } from "./maintenance";
+import { retireLegacyAgentMessagingAuthority } from "./session-cutover";
 
 const logger = getLogger("agents:messaging");
 export function acceptAgentMessage(
@@ -44,6 +45,9 @@ export async function startAgentMessaging(
   client: Client,
   external = false,
 ): Promise<() => Promise<void>> {
+  if (!external) {
+    await retireLegacyAgentMessagingAuthority();
+  }
   const binary = true;
   const stopExternal = !external
     ? await startAgentMessaging(client, true)

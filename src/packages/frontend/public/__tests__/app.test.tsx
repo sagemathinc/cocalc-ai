@@ -327,7 +327,7 @@ describe("PublicApp", () => {
     );
   });
 
-  it("shows Projects and Settings in the shared nav when authenticated", async () => {
+  it("shows Projects and Agents in the shared nav when authenticated", async () => {
     await renderPublicApp(
       <PublicApp
         config={{ is_authenticated: true, site_name: "Launchpad" }}
@@ -336,7 +336,28 @@ describe("PublicApp", () => {
     );
 
     expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
-    expect(screen.getByRole("link", { name: "Settings" })).not.toBeNull();
+    expect(screen.getByRole("link", { name: "Agents" })).not.toBeNull();
+  });
+
+  it("hides Agents on the landing page after loading the signed-in AI preference", async () => {
+    const bootstrap = jest
+      .spyOn(authApi, "getControlPlaneAuthBootstrap")
+      .mockResolvedValue({ signed_in: true, openai_disabled: true });
+    try {
+      await renderPublicApp(
+        <PublicApp
+          config={{ is_authenticated: true }}
+          initialRoute={{ section: "home" }}
+        />,
+      );
+      await waitFor(() => {
+        expect(bootstrap).toHaveBeenCalled();
+        expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+      });
+      expect(screen.getByRole("link", { name: "Projects" })).not.toBeNull();
+    } finally {
+      bootstrap.mockRestore();
+    }
   });
 
   it("renders the guides bridge page", async () => {

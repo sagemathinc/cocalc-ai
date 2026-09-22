@@ -36,6 +36,11 @@ import type {
   BillingAuthorityTransportResponse,
 } from "./protocol";
 import { billingAuthorityOperationName } from "./protocol";
+import { billingAuthorityAccountIds } from "./protocol";
+import {
+  ensureBillingAccounts,
+  updateBillingAccountLifecycle,
+} from "@cocalc/server/purchases/billing-account";
 import { isBillingAuthorityHubApiCall } from "./classification";
 import {
   acquireBillingAuthorityLease,
@@ -149,11 +154,19 @@ function hasString(value: Record<string, unknown>, key: string): boolean {
 
 const ACCOUNT_LOCAL_OPERATIONS = new Set<BillingAuthorityAccountLocalOperation>(
   [
+    "apply-funding-approval",
     "admin-create-membership-package-purchase",
     "admin-provision-site-license",
     "legacy-apply-financial-home-bay",
     "legacy-apply-financial-migration",
     "legacy-configure-financial-renewal-home-bay",
+    "compute-funding-check",
+    "compute-funding-fallback",
+    "compute-funding-lookup",
+    "compute-funding-reserve",
+    "compute-funding-settle",
+    "get-dedicated-host-financial-snapshot",
+    "update-billing-account-home",
     "purchase-team-license-change",
   ],
 );
@@ -188,6 +201,9 @@ const HTTP_OPERATIONS = new Set<BillingAuthorityHttpOperation>([
 ]);
 
 const MAINTENANCE_TASKS = new Set<BillingAuthorityMaintenanceTask>([
+  "monthly-collections",
+  "credit-transfers",
+  "provider-refunds",
   "automatic-payments",
   "auto-balance",
   "payment-intents",
@@ -776,6 +792,9 @@ export async function handleBillingAuthorityTransportRequest(
             { status: 400, code: 400 },
           );
         }
+        await ensureBillingAccounts(
+          billingAuthorityAccountIds(request.request.command),
+        );
         return {
           ok: true,
           value: await submitBillingAuthorityCommand(request.request),
@@ -792,28 +811,62 @@ export async function handleBillingAuthorityTransportRequest(
             (await cancelQueuedBillingAuthorityCommand(request.command_id)) ??
             null,
         };
-      case "freeze-account":
+      case "freeze-account": {
+        const value = await setBillingAuthorityAccountFrozen({
+          account_id: request.account_id,
+          frozen: true,
+          cause: request.cause,
+          reason: request.reason,
+          actor_account_id: request.actor_account_id,
+        });
+        await updateBillingAccountLifecycle({
+          account_id: request.account_id,
+          ...(request.cause === "ban" ? { banned: true } : {}),
+          ...(request.cause === "deletion" ? { deleted: true } : {}),
+        });
         return {
           ok: true,
-          value: await setBillingAuthorityAccountFrozen({
-            account_id: request.account_id,
-            frozen: true,
-            cause: request.cause,
-            reason: request.reason,
-            actor_account_id: request.actor_account_id,
-          }),
+          value,
         };
-      case "unfreeze-account":
+      }
+      case "unfreeze-account": {
+        const value = await setBillingAuthorityAccountFrozen({
+          account_id: request.account_id,
+          frozen: false,
+          cause: request.cause,
+          reason: request.reason,
+          actor_account_id: request.actor_account_id,
+        });
+        await updateBillingAccountLifecycle({
+          account_id: request.account_id,
+          ...(request.cause === "ban" ? { banned: false } : {}),
+          ...(request.cause === "deletion" ? { deleted: false } : {}),
+        });
         return {
           ok: true,
-          value: await setBillingAuthorityAccountFrozen({
-            account_id: request.account_id,
-            frozen: false,
-            cause: request.cause,
-            reason: request.reason,
-            actor_account_id: request.actor_account_id,
+          value,
+        };
+      }
+      case "stripe-webhook-raw": {
+        if (request.body_base64.length > 3 * 1024 * 1024) {
+          throw Object.assign(
+            new Error("Stripe webhook payload is too large"),
+            {
+              status: 413,
+              code: 413,
+            },
+          );
+        }
+        const { verifyAndProcessStripeWebhookPayload } =
+          await import("../stripe/webhook");
+        return {
+          ok: true,
+          value: await verifyAndProcessStripeWebhookPayload({
+            body: Buffer.from(request.body_base64, "base64"),
+            signature: request.signature,
           }),
         };
+      }
       case "health":
         return { ok: true, value: await getBillingAuthorityHealth() };
       default:

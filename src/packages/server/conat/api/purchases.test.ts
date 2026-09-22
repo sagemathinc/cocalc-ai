@@ -382,6 +382,10 @@ jest.mock("@cocalc/server/inter-bay/bridge", () => ({
 jest.mock("@cocalc/conat/inter-bay/api", () => ({
   createInterBayAccountLocalClient: jest.fn(({ dest_bay }) => ({
     dest_bay,
+    assertProductAccessTrust: (...args: any[]) =>
+      assertAccountTrustedForProductAccessMock(...args),
+    requireFreshAuth: (...args: any[]) =>
+      requireFreshAuthForSessionHashMock(...args),
     getMembershipDetails: (...args: any[]) =>
       interBayGetMembershipDetailsMock(...args),
     setAutoBalance: (...args: any[]) => interBaySetAutoBalanceMock(...args),
@@ -2233,7 +2237,10 @@ describe("purchases membership packages", () => {
       session_hash: "fresh-session-1",
       allow_actor_impersonation: false,
     });
-    expect(resolveAccountHomeBayMock).not.toHaveBeenCalled();
+    expect(resolveAccountHomeBayMock).toHaveBeenCalledWith({
+      account_id: "admin-1",
+      user_account_id: "admin-1",
+    });
     expect(updateMembershipPackageMock).not.toHaveBeenCalled();
   });
 

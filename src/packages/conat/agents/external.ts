@@ -47,6 +47,7 @@ export interface ExternalAgentInboxMessage {
 }
 
 export type ExternalAgentControlRequest =
+  | ({ action: "enqueue"; home_bay_id: string } & ExternalAgentEnqueueOptions)
   | {
       action: "claim-enrollment";
       account_id: string;
@@ -62,10 +63,22 @@ export type ExternalAgentControlRequest =
       secret_hash: string;
     };
 export type ExternalAgentControlResult =
+  | { message: ExternalAgentInboxMessage }
   | {
       challenge: { label: string; secret_hash: string; expires_at: string };
     }
   | { installation: ExternalAgentInstallation | null };
+
+/** Authorized, bounded inbox delivery over the sealed inter-bay control API. */
+export interface ExternalAgentEnqueueOptions {
+  account_id: string;
+  installation_id: string;
+  attempt_id: string;
+  agent_network_id: string;
+  network_generation: string;
+  source: import("./rpc").AgentRpcSource;
+  body: string;
+}
 
 export function externalAgentSubject(
   account_id: string,

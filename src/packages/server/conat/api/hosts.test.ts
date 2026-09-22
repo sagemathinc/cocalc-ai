@@ -244,6 +244,14 @@ jest.mock("@cocalc/server/purchases/get-balance", () => ({
   default: (...args: any[]) => getBalanceMock(...args),
 }));
 
+jest.mock("@cocalc/server/purchases/get-spendable-balance", () => ({
+  __esModule: true,
+  getAccountFundingHolds: jest.fn(async () => ({
+    prepaid_held_usd: "0",
+    postpaid_committed_usd: "0",
+  })),
+}));
+
 jest.mock("@cocalc/server/bay-directory", () => ({
   __esModule: true,
   resolveAccountHomeBay: (...args: any[]) => resolveAccountHomeBayMock(...args),
@@ -575,7 +583,11 @@ describe("site-funded Codex account directory routing", () => {
       home_bay_id: "remote-account-home",
       email_address_verified: true,
     });
-    membership = jest.fn(async () => ({ source: "free", class: "free" }));
+    membership = jest.fn(async () => ({
+      source: "free",
+      class: "free",
+      effective_limits: { acp_max_running_per_account: 3 },
+    }));
     overview = jest.fn(async () => ({ meters: [] }));
     jest
       .spyOn(
@@ -602,6 +614,18 @@ describe("site-funded Codex account directory routing", () => {
         { id: "ai-5h", limit: 10, remaining: 5 },
         { id: "ai-7d", limit: 20, remaining: 15 },
       ],
+      site_funded_codex_credits: {
+        windows: [
+          {
+            window: "5h",
+            credits_microusd: { [request.funded_turn_id]: 1_000 },
+          },
+          {
+            window: "7d",
+            credits_microusd: { [request.funded_turn_id]: 2_000 },
+          },
+        ],
+      },
     });
     jest
       .spyOn(
@@ -628,6 +652,149 @@ describe("site-funded Codex account directory routing", () => {
         hostId: HOST_ID,
         projectId: request.project_id,
         poolId: "site-funded-codex-free",
+        policy: expect.objectContaining({
+          maxConcurrentTurnsPerAccount: 3,
+        }),
+        accountCredited5hMicrousdByFundedTurn: {
+          [request.funded_turn_id]: 1_000,
+        },
+        accountCredited7dMicrousdByFundedTurn: {
+          [request.funded_turn_id]: 2_000,
+        },
+      }),
+    );
+    expect(overview).toHaveBeenCalledWith({
+      account_id: ACCOUNT_ID,
+      include_site_funded_codex_credits: true,
+    });
+  });
+
+  it("uses the paid membership ACP concurrency for site-funded turns", async () => {
+    membership.mockResolvedValue({
+      source: "subscription",
+      class: "instructor",
+      effective_limits: { acp_max_running_per_account: 20 },
+    });
+    overview.mockResolvedValue({
+      meters: [
+        { id: "ai-5h", limit: 10, remaining: 5 },
+        { id: "ai-7d", limit: 20, remaining: 15 },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    const reserve = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({ allowed: true } as any);
+
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await expect(reserveSiteFundedCodexTurn(request)).resolves.toEqual({
+      allowed: true,
+    });
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        poolId: "site-funded-codex-paid",
+        policy: expect.objectContaining({
+          maxConcurrentTurnsPerAccount: 20,
+        }),
+      }),
+    );
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["negative", -1],
+    ["not numeric", "20"],
+    ["not finite", Number.NaN],
+  ])(
+    "uses conservative site-funded concurrency for a %s entitlement",
+    async (_description, entitlement) => {
+      membership.mockResolvedValue({
+        source: "subscription",
+        class: "custom",
+        effective_limits: { acp_max_running_per_account: entitlement },
+      });
+      overview.mockResolvedValue({
+        meters: [
+          { id: "ai-5h", limit: 10, remaining: 5 },
+          { id: "ai-7d", limit: 20, remaining: 15 },
+        ],
+      });
+      jest
+        .spyOn(
+          await import("@cocalc/server/cluster-config"),
+          "getConfiguredClusterSeedBayId",
+        )
+        .mockReturnValue(
+          (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+        );
+      const reserve = jest
+        .spyOn(
+          await import("@cocalc/server/ai/site-funded-codex-reservations"),
+          "reserveSiteFundedCodexTurn",
+        )
+        .mockResolvedValue({ allowed: true } as any);
+
+      const { reserveSiteFundedCodexTurn } = await import("./hosts");
+      await expect(reserveSiteFundedCodexTurn(request)).resolves.toEqual({
+        allowed: true,
+      });
+      expect(reserve).toHaveBeenCalledWith(
+        expect.objectContaining({
+          policy: expect.objectContaining({
+            maxConcurrentTurnsPerAccount: 2,
+          }),
+        }),
+      );
+    },
+  );
+
+  it("preserves a zero concurrency entitlement", async () => {
+    membership.mockResolvedValue({
+      source: "subscription",
+      class: "custom",
+      effective_limits: { acp_max_running_per_account: 0 },
+    });
+    overview.mockResolvedValue({
+      meters: [
+        { id: "ai-5h", limit: 10, remaining: 5 },
+        { id: "ai-7d", limit: 20, remaining: 15 },
+      ],
+    });
+    jest
+      .spyOn(
+        await import("@cocalc/server/cluster-config"),
+        "getConfiguredClusterSeedBayId",
+      )
+      .mockReturnValue(
+        (await import("@cocalc/server/bay-config")).getConfiguredBayId(),
+      );
+    const reserve = jest
+      .spyOn(
+        await import("@cocalc/server/ai/site-funded-codex-reservations"),
+        "reserveSiteFundedCodexTurn",
+      )
+      .mockResolvedValue({
+        allowed: false,
+        code: "account_concurrency",
+      } as any);
+
+    const { reserveSiteFundedCodexTurn } = await import("./hosts");
+    await reserveSiteFundedCodexTurn(request);
+    expect(reserve).toHaveBeenCalledWith(
+      expect.objectContaining({
+        policy: expect.objectContaining({
+          maxConcurrentTurnsPerAccount: 0,
+        }),
       }),
     );
   });
@@ -2394,7 +2561,7 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return { rows: [{ stripe_usage_subscription: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -2487,7 +2654,7 @@ describe("hosts browser fresh auth gating", () => {
         savedMetadata = params?.[2];
         return { rowCount: 1, rows: [] };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return { rows: [{ stripe_usage_subscription: null }] };
       }
       throw new Error(`unexpected query: ${sql}`);
@@ -2672,7 +2839,7 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [
             {
@@ -2985,7 +3152,7 @@ describe("hosts browser fresh auth gating", () => {
       if (sql.includes("FROM account_impersonation_sessions")) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
         };
@@ -3003,7 +3170,7 @@ describe("hosts browser fresh auth gating", () => {
           ],
         };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
         };
@@ -3077,7 +3244,7 @@ describe("hosts browser fresh auth gating", () => {
       if (sql.includes("FROM account_impersonation_sessions")) {
         return { rows: [] };
       }
-      if (sql.includes("SELECT stripe_usage_subscription FROM accounts")) {
+      if (sql.includes("SELECT stripe_usage_subscription")) {
         return {
           rows: [{ stripe_usage_subscription: null }],
         };

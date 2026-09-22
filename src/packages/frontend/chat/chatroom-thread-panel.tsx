@@ -28,7 +28,7 @@ import {
   useState,
   useTypedRedux,
 } from "@cocalc/frontend/app-framework";
-import { createPortal } from "react-dom";
+import { ThreadPanelToolbar } from "./thread-panel-toolbar";
 import { debounce } from "lodash";
 import { ColorButton } from "@cocalc/frontend/components/color-picker";
 import { containingPath, humanSize } from "@cocalc/util/misc";
@@ -2268,13 +2268,13 @@ export function ChatRoomThreadPanel({
       </Tooltip>
     </div>
   );
-  const topRightControls = !showTopControls
-    ? null
-    : topRightControlsPortal === undefined
-      ? renderTopRightControls()
-      : topRightControlsPortal != null
-        ? createPortal(renderTopRightControls(), topRightControlsPortal)
-        : null;
+  const topRightControls = (
+    <ThreadPanelToolbar
+      showInline={showTopControls}
+      portal={topRightControlsPortal}
+      render={renderTopRightControls}
+    />
+  );
 
   return (
     <div

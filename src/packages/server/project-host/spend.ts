@@ -35,6 +35,7 @@ import {
   getActiveAccountUsageWindows,
 } from "@cocalc/server/membership/usage-windows";
 import { isTrustedAdminPostpaid } from "./funding-policy";
+import { lockAccountSpending } from "@cocalc/server/purchases/lock-account-spending";
 import {
   applyDedicatedHostSurchargeToBreakdown,
   estimateGcpCatalogRateBreakdown,
@@ -87,7 +88,6 @@ export interface DedicatedHostRateEstimate {
 
 const HOST_PURCHASE_TAG_PREFIX = "dedicated-host:";
 const METERED_PURCHASE_TAG_PREFIX = "dedicated-host-metered:";
-const localPurchaseMutationTails = new Map<string, Promise<void>>();
 
 function purchaseTag(host_id: string): string {
   return `${HOST_PURCHASE_TAG_PREFIX}${host_id}`;
@@ -152,44 +152,24 @@ async function withDedicatedHostPurchaseMutation<T>({
   client?: PoolClient;
   fn: (client: PoolClient) => Promise<T>;
 }): Promise<T> {
-  const mutationKey = `${account_id}:${host_id}`;
-  const previous = localPurchaseMutationTails.get(mutationKey);
-  let releaseLocal!: () => void;
-  const current = new Promise<void>((resolve) => {
-    releaseLocal = resolve;
-  });
-  const tail = (previous ?? Promise.resolve()).then(() => current);
-  localPurchaseMutationTails.set(mutationKey, tail);
-  await previous;
+  const transactionClient = client ?? (await getPool().connect());
   try {
-    if (client) {
-      await client.query(
-        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
-        [account_id, purchaseTag(host_id)],
-      );
-      return await fn(client);
-    }
-    const transactionClient = await getPool().connect();
-    try {
-      await transactionClient.query("BEGIN");
-      await transactionClient.query(
-        "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
-        [account_id, purchaseTag(host_id)],
-      );
-      const result = await fn(transactionClient);
-      await transactionClient.query("COMMIT");
-      return result;
-    } catch (err) {
-      await transactionClient.query("ROLLBACK");
-      throw err;
-    } finally {
-      transactionClient.release();
-    }
+    if (!client) await transactionClient.query("BEGIN");
+    // Account serialization replaces the process-local queue. A queue acquired
+    // first could deadlock callers already holding the account lock.
+    await lockAccountSpending(transactionClient, account_id);
+    await transactionClient.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))",
+      [account_id, purchaseTag(host_id)],
+    );
+    const result = await fn(transactionClient);
+    if (!client) await transactionClient.query("COMMIT");
+    return result;
+  } catch (err) {
+    if (!client) await transactionClient.query("ROLLBACK");
+    throw err;
   } finally {
-    releaseLocal();
-    if (localPurchaseMutationTails.get(mutationKey) === tail) {
-      localPurchaseMutationTails.delete(mutationKey);
-    }
+    if (!client) transactionClient.release();
   }
 }
 
@@ -257,7 +237,12 @@ export function isDedicatedHostLaneCurrentlyAllowed({
     if (snapshot.funding_mode !== "account-prepaid") {
       return false;
     }
-    if (toDecimal(snapshot.balance ?? 0).lte(0)) return false;
+    if (
+      toDecimal(
+        snapshot.prepaid_spendable_balance ?? snapshot.balance ?? 0,
+      ).lte(0)
+    )
+      return false;
     return (
       isLaneWindowAvailable({
         used: usage.prepaid_5h_usd,
@@ -290,7 +275,9 @@ export function isDedicatedHostLaneCurrentlyAllowed({
       limit: limits.credit_spend_limit_5h_usd,
     }) &&
     isLaneWindowAvailable({
-      used: usage.credit_7d_usd,
+      used: toDecimal(usage.credit_7d_usd).add(
+        snapshot.postpaid_committed_usd ?? 0,
+      ),
       limit: limits.credit_spend_limit_7d_usd,
     })
   );
@@ -298,13 +285,15 @@ export function isDedicatedHostLaneCurrentlyAllowed({
 
 export async function getDedicatedHostWindowUsageLocal(
   account_id: string,
+  { client }: { client?: PoolClient } = {},
 ): Promise<DedicatedHostWindowUsageSnapshot> {
   const windows = await getDedicatedHostUsageWindows({
     account_id,
+    client,
   });
   const window5h = windows["5h"];
   const window7d = windows["7d"];
-  const { rows } = await getPool("medium").query(
+  const { rows } = await (client ?? getPool("medium")).query(
     `
       SELECT
         COALESCE(
@@ -407,7 +396,7 @@ export async function getDedicatedHostWindowUsageLocal(
       "dedicated-host",
     ],
   );
-  const { rows: egressRows } = await getPool("medium").query(
+  const { rows: egressRows } = await (client ?? getPool("medium")).query(
     `
       SELECT
         COALESCE(SUM(CASE
@@ -525,31 +514,37 @@ export async function getDedicatedHostWindowUsageForHostLocal({
 async function getDedicatedHostUsageWindows({
   account_id,
   host_id,
+  client,
 }: {
   account_id: string;
   host_id?: string;
+  client?: PoolClient;
 }) {
-  const existing = await getActiveAccountUsageWindows({ account_id });
+  const existing = await getActiveAccountUsageWindows({ account_id, client });
   if (existing["5h"] && existing["7d"]) return existing;
   const hasActiveSpend = await hasOpenDedicatedHostSpend({
     account_id,
     host_id,
+    client,
   });
   if (!hasActiveSpend) return existing;
   return await ensureAccountUsageWindowsForEvent({
     account_id,
     occurred_at: new Date(),
+    client,
   });
 }
 
 async function hasOpenDedicatedHostSpend({
   account_id,
   host_id,
+  client,
 }: {
   account_id: string;
   host_id?: string;
+  client?: PoolClient;
 }): Promise<boolean> {
-  const { rows } = await getPool("short").query(
+  const { rows } = await (client ?? getPool("short")).query(
     `
       SELECT 1
       FROM purchases
@@ -604,8 +599,11 @@ async function listOpenDedicatedHostPurchasesLocal({
 
 export async function getDedicatedHostPostpaidUnbilledExposureLocal(
   account_id: string,
+  { client }: { client?: PoolClient } = {},
 ): Promise<MoneyValue> {
-  const { rows } = await getPool("medium").query<{ exposure: string | null }>(
+  const { rows } = await (client ?? getPool("medium")).query<{
+    exposure: string | null;
+  }>(
     `
       SELECT COALESCE(
         SUM(

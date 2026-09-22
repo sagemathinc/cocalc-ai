@@ -431,7 +431,7 @@ async function createProjectImpl(
   if (opts.project_id) {
     if (await projectIdConflictsDeleted(project_id)) {
       throw Error(
-        "project_id belongs to a permanently deleted workspace; restore that workspace instead of reusing its project_id",
+        "project_id belongs to a permanently deleted project and cannot be reused",
       );
     }
     if (await projectIdExists(project_id)) {

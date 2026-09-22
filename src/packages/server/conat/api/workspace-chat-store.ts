@@ -130,16 +130,20 @@ export async function workspaceChatStoreSearch(
     limit?: number;
     offset?: number;
   },
+  account_id: string,
 ) {
   const { project_id, chat_path, db_path, ...search } = opts;
-  return await searchChatStore({
-    ...(await resolveWorkspaceChatStorePaths({
-      project_id,
-      chat_path,
-      db_path,
-    })),
-    ...search,
-  });
+  return await searchChatStore(
+    {
+      ...(await resolveWorkspaceChatStorePaths({
+        project_id,
+        chat_path,
+        db_path,
+      })),
+      ...search,
+    },
+    account_id,
+  );
 }
 
 export async function workspaceChatStoreDelete(

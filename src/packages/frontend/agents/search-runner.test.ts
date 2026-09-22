@@ -44,7 +44,7 @@ test("1000 agents: expands empty batches only to the hard cap, with bounded proj
     search,
   });
   expect(search).toHaveBeenCalledTimes(100);
-  expect(peak).toBeLessThanOrEqual(3);
+  expect(peak).toBe(1);
   expect(result).toMatchObject({
     searched: 100,
     remaining: 900,
@@ -107,7 +107,7 @@ test("deadline and cancellation stop scheduling", async () => {
     now: () => time,
     budgetMs: 50,
   });
-  expect(search.mock.calls.length).toBeLessThanOrEqual(3);
+  expect(search).toHaveBeenCalledTimes(1);
   expect(result.remaining).toBeGreaterThan(990);
   search.mockClear();
   await runAgentSearch({
@@ -130,6 +130,9 @@ test("capacity remains occupied until an outstanding request settles", async () 
   );
   await expect(
     boundedProjectSearch("hung-project", async () => undefined),
+  ).rejects.toThrow("still finishing");
+  await expect(
+    boundedProjectSearch("another-project", async () => undefined),
   ).rejects.toThrow("still finishing");
   done();
   await pending;

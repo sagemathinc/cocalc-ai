@@ -52,6 +52,28 @@ describe("PublicTopNav", () => {
     setViewportWidth(1280);
   });
 
+  it.each([1280, 375])(
+    "hides Agents for signed-in AI opt-out at width %s",
+    async (width) => {
+      setViewportWidth(width);
+      const user = userEvent.setup();
+      render(
+        <PublicConfigProvider
+          config={{ is_authenticated: true, openai_disabled: true }}
+        >
+          <PublicTopNav />
+        </PublicConfigProvider>,
+      );
+      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+      const projects = screen.getByRole("link", { name: "Projects" });
+      expect(projects).toHaveAttribute("href", "/projects");
+      projects.focus();
+      expect(projects).toHaveFocus();
+      await user.tab();
+      expect(screen.queryByRole("link", { name: "Agents" })).toBeNull();
+    },
+  );
+
   it("uses the compact appearance selector in desktop navigation", async () => {
     await renderTopNav(<PublicTopNav />);
 

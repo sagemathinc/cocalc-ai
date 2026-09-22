@@ -3,7 +3,7 @@
  *  License: MS-RSL – see LICENSE.md for details
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { List, Map } from "immutable";
@@ -405,6 +405,102 @@ describe("MulticellOutputHandler", () => {
 });
 
 describe("createJupyterSyncFilesystem", () => {
+  it("uses the project filesystem for canonical workspace notebook and syncdoc paths", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-workspace-home-"));
+    try {
+      const fs = new SandboxedFilesystem(home, {
+        unsafeMode: true,
+        homeAliases: ["/home/user"],
+      });
+      const wrapped = createJupyterSyncFilesystem(fs);
+      for (const name of ["fixture.ipynb", ".fixture.ipynb.sage-jupyter2"]) {
+        await writeFile(join(home, name), "project content");
+        const canonical = `/home/user/${name}`;
+        expect(await wrapped.readFile(canonical, "utf8")).toBe(
+          "project content",
+        );
+        expect(await wrapped.exists(canonical)).toBe(true);
+        expect((await wrapped.stat(canonical)).size).toBe(15);
+        expect(await wrapped.realpath(canonical)).toBe(join(home, name));
+        expect(await wrapped.canonicalSyncIdentityPath?.(canonical)).toBe(
+          canonical,
+        );
+      }
+      expect(await wrapped.exists("/home/user/missing.ipynb")).toBe(false);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it("saves and reloads via the alias without overwriting the host path", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-workspace-home-"));
+    const alias = await mkdtemp(join(tmpdir(), "jupyter-workspace-alias-"));
+    try {
+      const fs = new SandboxedFilesystem(home, {
+        unsafeMode: true,
+        homeAliases: [alias],
+      });
+      const wrapped = createJupyterSyncFilesystem(fs);
+      const notebook = join(alias, "fixture.ipynb");
+      await writeFile(notebook, "host sentinel");
+      await wrapped.writeFile(notebook, "saved notebook", true);
+      expect(await readFile(notebook, "utf8")).toBe("host sentinel");
+      expect(await readFile(join(home, "fixture.ipynb"), "utf8")).toBe(
+        "saved notebook",
+      );
+      const reloaded = createJupyterSyncFilesystem(fs);
+      expect(await reloaded.readFile(notebook, "utf8")).toBe("saved notebook");
+
+      const delta = jest
+        .spyOn(fs, "writeFileDelta")
+        .mockResolvedValue(undefined);
+      await wrapped.writeFileDelta(notebook, "delta notebook");
+      expect(delta).toHaveBeenCalledWith(
+        "fixture.ipynb",
+        "delta notebook",
+        undefined,
+      );
+      expect(await readFile(notebook, "utf8")).toBe("host sentinel");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(alias, { recursive: true, force: true });
+    }
+  });
+
+  it("does not mistake alias-prefix siblings for workspace files", async () => {
+    const home = await mkdtemp(join(tmpdir(), "jupyter-workspace-home-"));
+    const outside = await mkdtemp(join(tmpdir(), "jupyter-workspace-outside-"));
+    try {
+      const alias = join(outside, "advertised");
+      const wrapped = createJupyterSyncFilesystem(
+        new SandboxedFilesystem(home, {
+          unsafeMode: true,
+          homeAliases: [alias],
+        }),
+      );
+      const sibling = `${alias}-other.ipynb`;
+      await wrapped.writeFile(sibling, "outside notebook");
+      expect(await readFile(sibling, "utf8")).toBe("outside notebook");
+      expect(await wrapped.readFile(sibling, "utf8")).toBe("outside notebook");
+      const escaped = `${alias}/../escaped.ipynb`;
+      // Resolve dot segments before deciding whether this is a home alias.
+      await writeFile(join(outside, "escaped.ipynb"), "parent notebook");
+      // The parent alias directory must exist for native absolute file access.
+      await mkdir(alias);
+      expect(await wrapped.readFile(escaped, "utf8")).toBe("parent notebook");
+    } finally {
+      await rm(home, { recursive: true, force: true });
+      await rm(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves safe-mode filesystem handling unchanged", () => {
+    const fs = new SandboxedFilesystem("/unused", {
+      homeAliases: ["/home/user"],
+    });
+    expect(createJupyterSyncFilesystem(fs)).toBe(fs);
+  });
+
   it("preserves absolute sync identities for project-home files in unsafe mode", async () => {
     const home = await mkdtemp(join(tmpdir(), "jupyter-control-home-"));
     try {

@@ -30,6 +30,26 @@ describe("hub API response handling", () => {
 });
 
 describe("hub API argument transforms", () => {
+  it.each(["agent.registerIdentity", "agent.startFreshConversation"])(
+    "binds %s to the authenticated human without requiring fresh auth",
+    async (name) => {
+      const args = await transformArgs({
+        name,
+        args: [{ account_id: "forged" }],
+        account_id: "human",
+      });
+      expect(args[0]).toMatchObject({ account_id: "human" });
+      await expect(
+        transformArgs({
+          name,
+          args: [{}],
+          account_id: "agent",
+          auth_actor: "agent",
+        }),
+      ).rejects.toThrow();
+      await expect(transformArgs({ name, args: [{}] })).rejects.toThrow();
+    },
+  );
   it("declares a principal policy for every Hub API method", () => {
     const policies = getHubApiPrincipalPolicies();
     expect(Object.keys(policies).length).toBeGreaterThan(700);
@@ -100,7 +120,6 @@ describe("hub API argument transforms", () => {
   );
 
   it.each([
-    "agent.registerIdentity",
     "agent.createAgentNetwork",
     "agent.updateAgentNetwork",
     "agent.resolveAgentNetworkProposal",

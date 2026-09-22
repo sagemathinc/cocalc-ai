@@ -18,6 +18,11 @@ export async function start(path: string) {
   }
   fs ??= new SandboxedFilesystem(process.env.HOME ?? "/tmp", {
     unsafeMode: true,
+    // Workspace processes use a real directory as HOME while notebook paths
+    // retain the canonical home advertised to clients.
+    homeAliases: process.env.COCALC_RUNTIME_HOME
+      ? [process.env.COCALC_RUNTIME_HOME]
+      : undefined,
   });
   await control.start({ project_id, path, client: getClient(), fs });
 }

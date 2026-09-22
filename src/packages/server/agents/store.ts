@@ -13,7 +13,7 @@ export function agentMessagingEnabled(): boolean {
 
 export function assertAgentMessagingEnabled(): void {}
 
-export function normalizeAgentPath(path: string): string {
+function normalizePath(path: string): string {
   if (
     typeof path !== "string" ||
     !path.trim() ||
@@ -22,7 +22,11 @@ export function normalizeAgentPath(path: string): string {
   ) {
     throw new Error("invalid chat path");
   }
-  const normalized = posix.resolve("/home/user", path);
+  return posix.resolve("/home/user", path);
+}
+
+export function normalizeAgentPath(path: string): string {
+  const normalized = normalizePath(path);
   if (!normalized.endsWith(".chat"))
     throw new Error("agent requires a .chat path");
   return normalized;
@@ -82,9 +86,13 @@ export class AgentStore {
     path: string,
     threadId: string,
   ): Promise<AgentIdentity | undefined> {
+    const normalizedPath = normalizePath(path);
+    // Some Codex entry points use virtual paths rather than persisted chats.
+    // They are not registered messaging agents, so an identity lookup is a miss.
+    if (!normalizedPath.endsWith(".chat")) return;
     const { rows } = await this.query<AgentIdentity>(
       "SELECT * FROM agent_identities WHERE project_id=$1 AND path=$2 AND thread_id=$3 AND disabled_at IS NULL",
-      [projectId, normalizeAgentPath(path), threadId],
+      [projectId, normalizedPath, threadId],
     );
     return rows[0];
   }

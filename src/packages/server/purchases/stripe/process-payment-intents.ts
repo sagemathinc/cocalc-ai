@@ -2,12 +2,17 @@ import getConn from "@cocalc/server/stripe/connection";
 import { registerBillingAuthorityAccount } from "@cocalc/server/purchases/billing-authority/context";
 import {
   getStripeCustomerId,
+  setStripeCustomerId,
   getAccountIdFromStripeCustomerId,
   currentStripeSite,
 } from "./util";
-import { setStripeCustomerId } from "@cocalc/database/postgres/stripe";
 import getLogger from "@cocalc/backend/logger";
 import createCredit from "@cocalc/server/purchases/create-credit";
+import {
+  recordCapturedPayment,
+  fulfillCapturedPayment,
+} from "../captured-payment";
+import type { PoolClient } from "@cocalc/database/pool";
 import { LineItem } from "@cocalc/util/stripe/types";
 import { stripeToDecimal } from "@cocalc/util/stripe/calc";
 import {
@@ -16,6 +21,7 @@ import {
   RESUME_SUBSCRIPTION,
   MEMBERSHIP_CHANGE,
   MEMBERSHIP_PACKAGE_PURCHASE,
+  ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
   TEAM_LICENSE_CHANGE,
   TEAM_LICENSE_RENEWAL,
 } from "@cocalc/util/db-schema/purchases";
@@ -26,6 +32,7 @@ import {
   processResumeSubscriptionFailure,
 } from "./create-subscription-payment";
 import { applyMembershipChange } from "../membership-change";
+import { getBillingReadiness } from "./billing-readiness";
 import send, { support, url, name } from "@cocalc/server/messages/send";
 import adminAlert from "@cocalc/server/messages/admin-alert";
 import {
@@ -34,6 +41,10 @@ import {
   toDecimal,
 } from "@cocalc/util/money";
 import type { MoneyValue } from "@cocalc/util/money";
+import { verifyAdminMembershipPayment } from "../admin-membership-orders";
+import { fulfillAdminMembershipCardPayment } from "../admin-membership-package";
+import { ensureAccountAdminAuditLogSchema } from "@cocalc/server/accounts/admin-audit";
+import { getServerSettings } from "@cocalc/database/settings/server-settings";
 import { reuseInFlight } from "@cocalc/util/reuse-in-flight";
 import getBalance from "@cocalc/server/purchases/get-balance";
 import { refreshAccountBalanceAndPublishBestEffort } from "@cocalc/server/purchases/refresh-balance";
@@ -47,11 +58,12 @@ import {
   verifyDirectStudentCourseProduct,
   verifyDirectStudentCourseProducts,
 } from "@cocalc/server/purchases/direct-student-course-product";
-import isValidAccount from "@cocalc/server/accounts/is-valid-account";
+import { isValidBillingAccount } from "@cocalc/server/purchases/billing-account";
 import {
   processTeamLicenseRenewal,
   processTeamLicenseRenewalFailure,
   purchaseTeamLicenseChange,
+  sendTeamLicenseRenewedNotification,
 } from "@cocalc/server/purchases/team-license";
 import type { MembershipPackageProduct } from "@cocalc/util/membership-package-product";
 import sendEmail from "@cocalc/server/email/send-email";
@@ -129,7 +141,10 @@ async function assertPaymentCustomerCanBeUsedForAccount({
         paymentIntentCustomerId,
       },
     );
-    await setStripeCustomerId(account_id, paymentIntentCustomerId);
+    await setStripeCustomerId({
+      account_id,
+      id: paymentIntentCustomerId,
+    });
     return paymentIntentCustomerId;
   }
   throw Error("payment intent customer does not match payer");
@@ -546,7 +561,7 @@ export async function belongsToCurrentStripeSite({
   // intents as local if their account_id exists here.
   const account_id = `${paymentIntent.metadata?.account_id ?? ""}`.trim();
   if (account_id) {
-    return await isValidAccount(account_id);
+    return await isValidBillingAccount(account_id);
   }
   return false;
 }
@@ -812,7 +827,18 @@ async function withPaymentIntentProcessingLock(
   }
 }
 
-function paymentIntentCreditId(paymentIntent): number | undefined {
+async function paymentIntentCreditId(
+  paymentIntent,
+): Promise<number | undefined> {
+  if (paymentIntent.metadata?.account_id && paymentIntent.id) {
+    const {
+      rows: [local],
+    } = await getPool().query(
+      "SELECT id FROM purchases WHERE account_id=$1 AND invoice_id=$2 AND service IN ('credit','auto-credit')",
+      [paymentIntent.metadata.account_id, paymentIntent.id],
+    );
+    if (local) return local.id;
+  }
   const creditId = Number.parseInt(
     `${paymentIntent.metadata?.credit_id ?? ""}`,
   );
@@ -1029,11 +1055,30 @@ ${await support()}`;
     });
   }
 
-  // credit the account.  If the account was already credited for this (e.g.,
-  // by another process doing this at the same time), that should be detected
-  // and is a no-op, due to the invoice_id being unique amount purchases records
-  // for this account (MAKE SURE!).
-  const credit_id = await createCredit({
+  const purpose = paymentIntent.metadata.purpose;
+  let adminMinimumPayment: number | undefined;
+  if (purpose === ADMIN_MEMBERSHIP_PACKAGE_PURCHASE) {
+    await verifyAdminMembershipPayment({
+      account_id,
+      order_id: paymentIntent.metadata.admin_membership_order_id,
+      payment_intent_id: paymentIntent.id,
+      amount,
+    });
+    await ensureAccountAdminAuditLogSchema();
+    adminMinimumPayment = Number(
+      (await getServerSettings()).pay_as_you_go_min_payment ?? 0,
+    );
+  }
+  const needsFulfillment = [
+    SUBSCRIPTION_RENEWAL,
+    RESUME_SUBSCRIPTION,
+    MEMBERSHIP_CHANGE,
+    MEMBERSHIP_PACKAGE_PURCHASE,
+    ADMIN_MEMBERSHIP_PACKAGE_PURCHASE,
+    TEAM_LICENSE_CHANGE,
+    TEAM_LICENSE_RENEWAL,
+  ].includes(purpose);
+  const creditOptions = {
     account_id,
     invoice_id: paymentIntent.id,
     amount,
@@ -1042,9 +1087,43 @@ ${await support()}`;
       description: paymentIntent.description,
       purpose: paymentIntent.metadata.purpose,
     },
-    service:
-      paymentIntent.metadata.purpose == AUTO_CREDIT ? "auto-credit" : "credit",
-  });
+  };
+  // Only immutable product terms participate in replay identity. Provider status,
+  // invoice bookkeeping and our processed/credit flags may change on retry.
+  const productRequest = Object.fromEntries(
+    [
+      "subscription_id",
+      "renewal_attempt_id",
+      "membership_class",
+      "membership_interval",
+      "allow_downgrade",
+      "membership_package_product",
+      "membership_package_products",
+      "admin_membership_order_id",
+      "team_license_target_seats",
+      "team_license_id",
+    ]
+      .filter((key) => paymentIntent.metadata[key] != null)
+      .map((key) => [key, paymentIntent.metadata[key]]),
+  );
+  const credit_id = needsFulfillment
+    ? (
+        await recordCapturedPayment({
+          ...creditOptions,
+          payment_id: paymentIntent.id,
+          purpose,
+          request: productRequest,
+        })
+      ).credit_id
+    : await createCredit({
+        ...creditOptions,
+        service: purpose == AUTO_CREDIT ? "auto-credit" : "credit",
+      });
+  const fulfill = <T>(fn: (client: PoolClient) => Promise<T>): Promise<T> =>
+    fulfillCapturedPayment(
+      { account_id, payment_id: paymentIntent.id, purpose },
+      fn,
+    );
 
   // Keep the credit id on the in-memory payment intent, but only mark the
   // payment intent processed after the intended product change succeeds.
@@ -1056,23 +1135,42 @@ ${await support()}`;
   try {
     if (paymentIntent.metadata.purpose == SUBSCRIPTION_RENEWAL) {
       reason = `renew a subscription (id=${paymentIntent.metadata.subscription_id})`;
-      await processSubscriptionRenewal({ account_id, paymentIntent, amount });
+      await fulfill((client) =>
+        processSubscriptionRenewal({
+          account_id,
+          paymentIntent,
+          amount,
+          client,
+        }),
+      );
     } else if (paymentIntent.metadata.purpose == RESUME_SUBSCRIPTION) {
       reason = `resume a subscription (id=${paymentIntent.metadata.subscription_id})`;
-      await processResumeSubscription({ account_id, paymentIntent, amount });
+      await fulfill((client) =>
+        processResumeSubscription({
+          account_id,
+          paymentIntent,
+          amount,
+          client,
+        }),
+      );
     } else if (paymentIntent.metadata.purpose == MEMBERSHIP_CHANGE) {
       reason = `change membership to ${paymentIntent.metadata.membership_class}`;
-      await applyMembershipChange({
-        account_id,
-        targetClass: paymentIntent.metadata.membership_class,
-        interval: paymentIntent.metadata.membership_interval as
-          | "month"
-          | "year",
-        allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
-        storeVisibleOnly: true,
-        paymentAmount: amount,
-        creditId: credit_id,
-      });
+      const billingReadiness = await getBillingReadiness(account_id);
+      await fulfill((client) =>
+        applyMembershipChange({
+          account_id,
+          targetClass: paymentIntent.metadata.membership_class,
+          interval: paymentIntent.metadata.membership_interval as
+            | "month"
+            | "year",
+          allowDowngrade: paymentIntent.metadata.allow_downgrade === "true",
+          storeVisibleOnly: true,
+          paymentAmount: amount,
+          creditId: credit_id,
+          client,
+          billingReadiness,
+        }),
+      );
     } else if (paymentIntent.metadata.purpose == MEMBERSHIP_PACKAGE_PURCHASE) {
       const products = getMembershipPackageProductsFromMetadata(
         paymentIntent.metadata,
@@ -1086,12 +1184,15 @@ ${await support()}`;
           product.package_id != null
             ? `expand membership package ${product.package_id}`
             : `purchase a ${product.kind} membership package`;
-        const { package_id } = await purchaseMembershipPackage({
-          account_id,
-          fulfillment_id: paymentIntent.id,
-          product,
-          amount,
-        });
+        const { package_id } = await fulfill((client) =>
+          purchaseMembershipPackage({
+            account_id,
+            fulfillment_id: paymentIntent.id,
+            product,
+            amount,
+            client,
+          }),
+        );
         await assignDirectStudentCoursePackage({
           account_id,
           package_id,
@@ -1103,12 +1204,15 @@ ${await support()}`;
           products,
         });
         reason = `purchase ${verifiedProducts.length} membership package changes`;
-        const purchases = await purchaseMembershipPackages({
-          account_id,
-          fulfillment_id: paymentIntent.id,
-          products: verifiedProducts,
-          amount,
-        });
+        const purchases = await fulfill((client) =>
+          purchaseMembershipPackages({
+            account_id,
+            fulfillment_id: paymentIntent.id,
+            products: verifiedProducts,
+            amount,
+            client,
+          }),
+        );
         for (const [index, product] of verifiedProducts.entries()) {
           const package_id = purchases[index]?.package_id;
           if (package_id) {
@@ -1120,22 +1224,55 @@ ${await support()}`;
           }
         }
       }
+    } else if (
+      paymentIntent.metadata.purpose === ADMIN_MEMBERSHIP_PACKAGE_PURCHASE
+    ) {
+      reason = "purchase your custom membership package";
+      await fulfill((client) =>
+        fulfillAdminMembershipCardPayment(
+          {
+            account_id,
+            order_id: paymentIntent.metadata.admin_membership_order_id,
+            payment_intent_id: paymentIntent.id,
+            amount,
+            credit_id,
+            hosted_invoice_url: invoice?.hosted_invoice_url ?? undefined,
+            minimumPayment: adminMinimumPayment!,
+          },
+          client,
+        ),
+      );
     } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_CHANGE) {
       reason = "change your team license";
-      await purchaseTeamLicenseChange({
-        account_id,
-        target_seats: getTeamLicenseTargetSeatsFromMetadata(
-          paymentIntent.metadata,
-        ),
-        amount,
-        creditId: credit_id,
-      });
+      await fulfill((client) =>
+        purchaseTeamLicenseChange({
+          account_id,
+          target_seats: getTeamLicenseTargetSeatsFromMetadata(
+            paymentIntent.metadata,
+          ),
+          amount,
+          creditId: credit_id,
+          client,
+        }),
+      );
     } else if (paymentIntent.metadata.purpose == TEAM_LICENSE_RENEWAL) {
       reason = `renew team license ${paymentIntent.metadata.team_license_id}`;
-      await processTeamLicenseRenewal({ account_id, paymentIntent, amount });
+      const notification = await fulfill((client) =>
+        processTeamLicenseRenewal({
+          account_id,
+          paymentIntent,
+          amount,
+          client,
+        }),
+      );
+      if (notification) await sendTeamLicenseRenewedNotification(notification);
     } else if (paymentIntent.metadata.purpose?.startsWith("statement-")) {
-      const statement_id = parseInt(
-        paymentIntent.metadata.purpose.split("-")[1],
+      const statement_id = await (
+        await import("../payment-local-reference")
+      ).localPaymentStatementId(
+        account_id,
+        paymentIntent.id,
+        parseInt(paymentIntent.metadata.purpose.split("-")[1]),
       );
       reason = `pay balance on monthly statement (id=${statement_id})`;
       await markStatementPaidByPurchase({
@@ -1155,8 +1292,11 @@ payment processor, and a credit of ${moneyToCurrency(amount)} has been added to 
 account (purchase id=${credit_id}).   You made this payment to ${reason}, but something
 went wrong.
 
-Please retry that purchase instead using the credit that is now on your account, or contact
-support if you are concerned (see below).
+${
+  needsFulfillment
+    ? "The payment is recorded for this purchase. Any funds still awaiting fulfillment remain reserved while processing is retried. Please contact support if the purchase does not complete; do not submit another payment."
+    : "Please retry using the credit on your account, or contact support if you are concerned."
+}
 
 - Account Balance: ${moneyToCurrency(
       moneyRound2Down(toDecimal(await getBalance({ account_id }))),

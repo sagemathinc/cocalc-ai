@@ -79,7 +79,7 @@ describe("accounts.cluster-directory", () => {
           rows: [
             {
               account_id: "11111111-1111-4111-8111-111111111111",
-              email_address: "qa@example.com",
+              email_address: "new@example.com",
               display_name: "QA Directory",
               first_name: "QA",
               last_name: "Directory",
@@ -96,7 +96,7 @@ describe("accounts.cluster-directory", () => {
           rows: [
             {
               account_id: "11111111-1111-4111-8111-111111111111",
-              email_address: "qa@example.com",
+              email_address: "old@example.com",
               display_name: "QA Local",
               first_name: "QA",
               last_name: "Local",
@@ -114,7 +114,7 @@ describe("accounts.cluster-directory", () => {
     });
   });
 
-  it("prefers local profile fields and directory home bay when merging account rows", async () => {
+  it("uses directory identity fields after an account moves to another bay", async () => {
     const { getClusterAccountByIdDirect } = await import("./cluster-directory");
     const account = await getClusterAccountByIdDirect(
       "11111111-1111-4111-8111-111111111111",
@@ -122,12 +122,38 @@ describe("accounts.cluster-directory", () => {
 
     expect(account).toMatchObject({
       account_id: "11111111-1111-4111-8111-111111111111",
-      email_address: "qa@example.com",
-      display_name: "QA Local",
-      last_name: "Local",
+      email_address: "new@example.com",
+      display_name: "QA Directory",
+      last_name: "Directory",
       home_bay_id: "bay-2",
       last_active: new Date("2026-07-16T12:00:00.000Z").valueOf(),
     });
+  });
+
+  it("does not resolve a retained non-home account row by its obsolete email", async () => {
+    queryMock = jest.fn(async (sql: string, params: unknown[]) => {
+      if (sql.includes("CREATE TABLE") || sql.includes("CREATE INDEX")) {
+        return { rows: [], rowCount: 0 };
+      }
+      if (sql.includes("FROM cluster_account_directory")) {
+        return { rows: [] };
+      }
+      if (
+        sql.includes("FROM accounts") &&
+        sql.includes("WHERE email_address=$1")
+      ) {
+        expect(params).toEqual(["old@example.com", "bay-0"]);
+        expect(sql).toContain("BTRIM(home_bay_id)");
+        return { rows: [] };
+      }
+      return { rows: [], rowCount: 0 };
+    });
+
+    const { getClusterAccountByEmailDirect } =
+      await import("./cluster-directory");
+    await expect(
+      getClusterAccountByEmailDirect("OLD@EXAMPLE.COM"),
+    ).resolves.toBeNull();
   });
 
   it("preserves admin-only is_admin across cluster directory merge", async () => {
@@ -286,7 +312,7 @@ describe("accounts.cluster-directory", () => {
       [
         "11111111-1111-4111-8111-111111111111",
         "new@example.com",
-        "QA Local",
+        "QA Directory",
         null,
         null,
         "bay-2",

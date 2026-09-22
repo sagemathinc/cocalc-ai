@@ -14,6 +14,7 @@ import {
 } from "../embedding-options";
 
 let lastChatInputProps: any;
+let lastCodexConfigProps: any;
 
 jest.mock("../input", () => ({
   __esModule: true,
@@ -36,11 +37,14 @@ jest.mock("../input", () => ({
 }));
 
 jest.mock("../codex", () => ({
-  CodexConfigButton: () => (
-    <button type="button" aria-label="Codex settings">
-      Codex settings
-    </button>
-  ),
+  CodexConfigButton: (props: any) => {
+    lastCodexConfigProps = props;
+    return (
+      <button type="button" aria-label="Codex settings">
+        Codex settings
+      </button>
+    );
+  },
 }));
 
 jest.mock("@cocalc/frontend/components", () => ({
@@ -104,6 +108,21 @@ function renderComposer(
 }
 
 describe("ChatRoomComposer resize handle", () => {
+  it.each([false, true])(
+    "uses compact settings only on mobile (%s)",
+    (mobile) => {
+      renderComposer({
+        mobile,
+        isSelectedThreadAI: true,
+        selectedThread: { key: "thread-mobile", label: "Agent" } as any,
+      });
+      expect(lastCodexConfigProps.compact).toBe(mobile ? "icon" : "composer");
+      expect(screen.getByRole("button", { name: "Send" })).toBeTruthy();
+      expect(
+        screen.getByRole("button", { name: "Codex settings" }),
+      ).toBeTruthy();
+    },
+  );
   beforeEach(() => {
     lastChatInputProps = undefined;
   });
@@ -578,6 +597,12 @@ describe("ChatRoomComposer resize handle", () => {
       expect(
         screen.getByTestId("chat-composer-actions").style.flexDirection,
       ).toBe("row");
+      expect(screen.getByTestId("chat-composer-actions").style.flexWrap).toBe(
+        "wrap",
+      );
+      expect(
+        screen.getByTestId("chat-composer-input").parentElement?.style.order,
+      ).toBe("");
       expect(
         screen.getByTestId("chat-composer-input").parentElement?.style.width,
       ).toBe("100%");

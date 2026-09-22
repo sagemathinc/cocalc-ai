@@ -929,6 +929,21 @@ export async function reconfigureCourseProjectsLocal({
       ...(student.send_email_invite ? { send_email_invite: true } : {}),
     };
   });
+  const existingActiveProjects = normalizedStudents.filter(
+    (student) => !student.deleted && !student.create,
+  );
+  const existingProjectBays = await resolveProjectBays(
+    existingActiveProjects.map((student) => student.project_id),
+  );
+  for (const student of existingActiveProjects) {
+    if (existingProjectBays.get(student.project_id) != null) continue;
+    seenStudentProjectIds.delete(student.project_id);
+    let project_id = randomUUID();
+    while (seenStudentProjectIds.has(project_id)) project_id = randomUUID();
+    student.project_id = project_id;
+    student.create = true;
+    seenStudentProjectIds.add(project_id);
+  }
   const graceDays = settings.student_membership_grace_days;
   if (
     graceDays !== undefined &&
@@ -7204,17 +7219,20 @@ export async function chatStoreSearch({
   offset?: number;
 }) {
   await assertCollab({ account_id, project_id });
-  return await workspaceChatStoreSearch({
-    include_head,
-    project_id,
-    chat_path,
-    query,
-    db_path,
-    thread_id,
-    exclude_thread_ids,
-    limit,
-    offset,
-  });
+  return await workspaceChatStoreSearch(
+    {
+      include_head,
+      project_id,
+      chat_path,
+      query,
+      db_path,
+      thread_id,
+      exclude_thread_ids,
+      limit,
+      offset,
+    },
+    account_id ?? "",
+  );
 }
 
 export async function chatStoreDelete({

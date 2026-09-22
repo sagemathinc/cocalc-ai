@@ -19,6 +19,7 @@ import {
 const mockAssertBillingReady = jest.fn();
 
 jest.mock("@cocalc/server/purchases/stripe/billing-readiness", () => ({
+  ...jest.requireActual("@cocalc/server/purchases/stripe/billing-readiness"),
   assertBillingReady: (...args: any[]) => mockAssertBillingReady(...args),
 }));
 
@@ -437,6 +438,37 @@ describe("membership change payment enforcement", () => {
       },
     ]);
   });
+
+  it.each([true, false])(
+    "uses preflight billing readiness without another provider lookup (ready=%s)",
+    async (ready) => {
+      const trialAccount = uuid();
+      const trialTier = `preflight-${uuid().slice(0, 8)}` as any;
+      await createTestAccount(trialAccount);
+      await createTestMembershipTier({
+        id: trialTier,
+        price_monthly: 50,
+        price_yearly: 500,
+        priority: 20,
+        trial_days: 7,
+      });
+      mockAssertBillingReady.mockRejectedValue(
+        new Error("unexpected provider lookup"),
+      );
+      const change = applyTestMembershipChange({
+        account_id: trialAccount,
+        targetClass: trialTier,
+        interval: "month",
+        billingReadiness: { hasBillingDetails: ready, hasPaymentMethod: true },
+      });
+      if (ready) {
+        expect((await change).subscription_id).toBeGreaterThan(0);
+      } else {
+        await expect(change).rejects.toThrow("Billing details are required");
+      }
+      expect(mockAssertBillingReady).not.toHaveBeenCalled();
+    },
+  );
 
   it("records both sides of an immediate paid membership upgrade", async () => {
     const upgradeAccount = uuid();

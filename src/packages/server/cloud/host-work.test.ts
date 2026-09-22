@@ -17,6 +17,7 @@ const getServerSettingsMock = jest.fn();
 const getRoutedHostControlClientMock = jest.fn();
 const maybeAutoGrowHostDiskForReservationFailureMock = jest.fn();
 const removeHostSshKnownHostAliasMock = jest.fn();
+const migrateHostPublicRouteInternalMock = jest.fn();
 
 jest.mock("./host-util", () => ({
   buildHostSpec: (...args: any[]) => buildHostSpecMock(...args),
@@ -65,6 +66,15 @@ jest.mock("./host-ssh-known-hosts", () => ({
     removeHostSshKnownHostAliasMock(...args),
 }));
 
+jest.mock("./public-route", () => {
+  const actual = jest.requireActual("./public-route");
+  return {
+    ...actual,
+    migrateHostPublicRouteInternal: (...args: any[]) =>
+      migrateHostPublicRouteInternalMock(...args),
+  };
+});
+
 beforeAll(async () => {
   await before({ noConat: true });
 }, 15000);
@@ -102,6 +112,9 @@ beforeEach(async () => {
     reason: "not a reservation failure",
   });
   removeHostSshKnownHostAliasMock.mockResolvedValue(undefined);
+  migrateHostPublicRouteInternalMock.mockResolvedValue({
+    mode: "cloudflare-proxy",
+  });
   buildHostSpecMock.mockImplementation(async (row) => ({
     name: row.id,
     region: row.region,
@@ -934,9 +947,12 @@ describe("cloud host start failures", () => {
     ]);
   });
 
-  it("queues RootFS pre-pull work when a host becomes operational", async () => {
+  it("queues RootFS pre-pull and reclaims a stale route migration", async () => {
     const hostId = "a81b9181-39af-4a75-8c43-33f7f481a059";
     const startedAt = new Date(Date.now() - 60_000).toISOString();
+    const staleRouteStartedAt = new Date(
+      Date.now() - 2 * 60 * 60_000,
+    ).toISOString();
     await upsertProjectHost({
       id: hostId,
       name: "Prepull ready host",
@@ -955,6 +971,20 @@ describe("cloud host start failures", () => {
         },
       },
     });
+    // Route state is control-plane owned; host heartbeat upserts discard it.
+    await getPool().query(
+      `UPDATE project_hosts SET metadata=jsonb_set(metadata, '{public_route}', $2::jsonb)
+       WHERE id=$1`,
+      [
+        hostId,
+        JSON.stringify({
+          status: "preparing",
+          started_at: staleRouteStartedAt,
+          active_mode: "cloudflare-tunnel",
+          desired_mode: "cloudflare-proxy",
+        }),
+      ],
+    );
 
     const { cloudHostHandlers } = await import("./host-work");
     await cloudHostHandlers.verify_host_ready({
@@ -966,6 +996,11 @@ describe("cloud host start failures", () => {
         started_at: startedAt,
       },
     } as any);
+
+    expect(migrateHostPublicRouteInternalMock).toHaveBeenCalledWith({
+      id: hostId,
+      mode: "cloudflare-proxy",
+    });
 
     const workRows = await getPool().query(
       `
@@ -983,6 +1018,72 @@ describe("cloud host start failures", () => {
     expect(workRows.rows[0].payload).toMatchObject({
       source: "verify_host_ready",
       provider: "gcp",
+    });
+  });
+
+  it("retains a route retry when reclaimed readiness work precedes migration expiry", async () => {
+    const hostId = "47a18b25-b832-45f3-8eef-c1b9abf656e4";
+    const startedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    const payload = { provider: "gcp", started_at: startedAt };
+    await upsertProjectHost({
+      id: hostId,
+      name: "Interrupted route migration",
+      region: "us-west3",
+      status: "running",
+      last_seen: new Date() as any,
+      metadata: {
+        machine: { cloud: "gcp" },
+      },
+    });
+    await getPool().query(
+      `UPDATE project_hosts SET metadata=jsonb_set(metadata, '{public_route}', $2::jsonb)
+       WHERE id=$1`,
+      [
+        hostId,
+        JSON.stringify({
+          status: "preparing",
+          started_at: startedAt,
+          active_mode: "cloudflare-tunnel",
+          desired_mode: "cloudflare-proxy",
+        }),
+      ],
+    );
+    const { enqueueCloudVmWork, claimCloudVmWork, markCloudVmWorkDone } =
+      await import("./db");
+    await enqueueCloudVmWork({
+      vm_id: hostId,
+      action: "verify_host_ready",
+      payload,
+    });
+    const [work] = await claimCloudVmWork({ worker_id: "route-recovery" });
+    const { cloudHostHandlers } = await import("./host-work");
+    await cloudHostHandlers.verify_host_ready(work);
+    await markCloudVmWorkDone(work.id);
+
+    expect(migrateHostPublicRouteInternalMock).not.toHaveBeenCalled();
+    const { rows } = await getPool().query(
+      `SELECT * FROM cloud_vm_work
+       WHERE vm_id=$1 AND action='verify_host_ready' AND state='queued'`,
+      [hostId],
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].payload).toEqual(payload);
+    expect(new Date(rows[0].not_before).getTime()).toBeGreaterThan(Date.now());
+
+    // Simulate the later retry after the abandoned marker becomes stale.
+    await getPool().query(
+      `UPDATE project_hosts
+       SET metadata=jsonb_set(metadata, '{public_route,started_at}', $2::jsonb)
+       WHERE id=$1`,
+      [
+        hostId,
+        JSON.stringify(new Date(Date.now() - 2 * 60 * 60_000).toISOString()),
+      ],
+    );
+    await cloudHostHandlers.verify_host_ready(rows[0]);
+    expect(migrateHostPublicRouteInternalMock).toHaveBeenCalledWith({
+      id: hostId,
+      mode: "cloudflare-proxy",
     });
   });
 

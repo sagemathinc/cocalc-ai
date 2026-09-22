@@ -78,6 +78,14 @@ Table({
       "map",
       "Canonical approval parameters for duplicate approval conflict detection.",
     ),
+    destinations: {
+      ...required(
+        "array",
+        "Deprecated send-only destinations; kept empty so rollback cannot grant legacy authority.",
+      ),
+      pg_type: "JSONB",
+      pg_default: "'[]'::jsonb",
+    },
     agent_network_id: {
       ...required(
         "uuid",

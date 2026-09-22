@@ -37,6 +37,7 @@ import { promises as fs } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { Worker } from "node:worker_threads";
+import { searchAdmission } from "./search-admission";
 import getLogger from "@cocalc/backend/logger";
 import { chatSearchIndex, searchableChatText } from "@cocalc/util/chat-search";
 
@@ -1409,24 +1410,34 @@ export function readChatStoreArchivedHit({
 }
 
 /** Search saved recent messages as well as offloaded history without opening an editor. */
-let activeSearchWorkers = 0;
 export async function searchChatStore(
   opts: SearchArchivedOptions,
+  principal: string,
 ): Promise<SearchArchivedResult> {
-  if (!opts.include_head && !opts.thread_id)
-    return searchChatStoreArchived(opts);
   if (
-    !opts.thread_id ||
-    opts.thread_id.length > 200 ||
-    !opts.query?.trim() ||
-    opts.query.length > 256
+    (opts.include_head && !opts.thread_id) ||
+    (opts.thread_id !== undefined &&
+      (typeof opts.thread_id !== "string" ||
+        !opts.thread_id.length ||
+        opts.thread_id.length > 200)) ||
+    typeof opts.query !== "string" ||
+    !opts.query.trim() ||
+    opts.query.length > 256 ||
+    (opts.limit !== undefined &&
+      (!Number.isInteger(opts.limit) || opts.limit < 1 || opts.limit > 100)) ||
+    (opts.offset !== undefined &&
+      (!Number.isInteger(opts.offset) ||
+        opts.offset < 0 ||
+        opts.offset > 10_000)) ||
+    (opts.exclude_thread_ids !== undefined &&
+      (!Array.isArray(opts.exclude_thread_ids) ||
+        opts.exclude_thread_ids.length > 100 ||
+        opts.exclude_thread_ids.some(
+          (id) => typeof id !== "string" || !id.length || id.length > 200,
+        )))
   )
-    throw new Error(
-      "Search requires a thread scope and 1-256 query characters",
-    );
-  if (activeSearchWorkers >= 3)
-    throw new Error("Project host search capacity is busy; retry shortly");
-  activeSearchWorkers++;
+    throw new Error("Invalid or oversized search request");
+  const release = searchAdmission.acquire(principal);
   let worker: Worker | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -1458,7 +1469,7 @@ export async function searchChatStore(
     try {
       await worker?.terminate();
     } finally {
-      activeSearchWorkers--;
+      release();
     }
   }
 }

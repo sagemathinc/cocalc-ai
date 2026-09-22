@@ -638,7 +638,6 @@ export function ChatRoomComposer({
         <div
           style={{
             flex: mobile ? "0 1 auto" : "1",
-            order: mobile ? 1 : undefined,
             width: "100%",
             padding: 0,
             // Critical flexbox quirk: without minWidth: 0, long unbroken input text
@@ -885,7 +884,7 @@ export function ChatRoomComposer({
             borderTop: `1px solid ${UI_COLORS.border}`,
             display: "flex",
             flexDirection: "row",
-            flexWrap: "nowrap",
+            flexWrap: "wrap",
             gap: 4,
             flexShrink: 0,
             minWidth: 0,
@@ -918,13 +917,13 @@ export function ChatRoomComposer({
             <div
               style={{
                 display: "flex",
-                flex: "1 1 auto",
+                flex: mobile ? "0 0 auto" : "1 1 auto",
                 minWidth: 0,
                 overflow: "hidden",
               }}
             >
               <CodexConfigButton
-                compact="composer"
+                compact={mobile ? "icon" : "composer"}
                 threadKey={selectedThread.key}
                 chatPath={path}
                 projectId={project_id}
@@ -938,10 +937,18 @@ export function ChatRoomComposer({
           ) : (
             <span style={{ flex: 1 }} />
           )}
+          {mobile && showComposerCodexConfig && selectedThread && (
+            <span style={{ flex: 1 }} />
+          )}
           {hasAcpPrompt ? (
             <Tooltip title="View or edit the full prompt that will be sent to the agent">
-              <Button size="small" onClick={() => setAcpPromptModalOpen(true)}>
-                Agent Prompt
+              <Button
+                size="small"
+                aria-label="Agent Prompt"
+                icon={mobile ? <Icon name="file" /> : undefined}
+                onClick={() => setAcpPromptModalOpen(true)}
+              >
+                {mobile ? null : "Agent Prompt"}
               </Button>
             </Tooltip>
           ) : null}

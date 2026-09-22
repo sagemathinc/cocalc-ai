@@ -5,6 +5,10 @@ import {
   normalizeCloudflareHostname,
 } from "@cocalc/server/cloud/derived-domains";
 import { resolvePublicViewerDns } from "@cocalc/util/public-viewer-origin";
+import {
+  computeDeploymentNamespace,
+  computeVmDnsLabelIsOwned,
+} from "@cocalc/server/compute/resource-names";
 
 // Default TTL is ignored by Cloudflare when proxied.
 const TTL = 120;
@@ -377,6 +381,7 @@ export async function ensureUnproxiedAddressDns(opts: {
 }
 
 export async function listManagedVmDnsRecords(): Promise<ManagedVmDnsRecord[]> {
+  if (!computeDeploymentNamespace()) return [];
   const config = await getConfig();
   if (!config.token || !config.dns) return [];
   const { zoneId } = await getZoneForHostname(config.token, config.dns);
@@ -398,7 +403,7 @@ export async function listManagedVmDnsRecords(): Promise<ManagedVmDnsRecord[]> {
       const name = `${record.name ?? ""}`.trim().toLowerCase();
       const label = name.endsWith(suffix) ? name.slice(0, -suffix.length) : "";
       const record_id = `${record.id ?? ""}`.trim();
-      if (!record_id || !/^vm-[a-f0-9]{32}$/.test(label)) continue;
+      if (!record_id || !computeVmDnsLabelIsOwned(label)) continue;
       records.push({
         record_id,
         name,

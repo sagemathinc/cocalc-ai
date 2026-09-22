@@ -5,6 +5,11 @@ import { set_url } from "@cocalc/frontend/history";
 import { ensureProjectReduxRuntime } from "@cocalc/frontend/app-framework/project-runtime";
 import { PageActions } from "./actions";
 import { init_store } from "./store";
+import { setNotificationsOpen } from "../notifications/drawer-state";
+
+jest.mock("../notifications/drawer-state", () => ({
+  setNotificationsOpen: jest.fn(),
+}));
 
 jest.mock("@cocalc/frontend/app-framework", () => {
   const { AppRedux } = jest.requireActual("@cocalc/util/redux/AppRedux");
@@ -132,7 +137,36 @@ afterEach(() => {
 });
 
 describe("project context across global navigation", () => {
-  it.each(["account", "admin", "docs", "agents", "projects", "notifications"])(
+  it.each([false, true])(
+    "keeps Agents navigation in the assigned exam project (AI disabled=%s)",
+    async (disabled) => {
+      redux.createActions("customize").setState({
+        exam_mode: true,
+        project_id: B,
+      });
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: disabled },
+      });
+      await actions.set_active_tab("agents");
+      expect(page().get("active_top_tab")).toBe(B);
+      expect(projectActions[B].show).toHaveBeenCalled();
+      expect(set_url).not.toHaveBeenCalledWith(
+        expect.stringContaining("/agents"),
+      );
+    },
+  );
+  it.each([true, false])(
+    "redirects disabled AI away from Agents (change_history=%s)",
+    async (changeHistory) => {
+      redux.getActions("account").setState({
+        other_settings: { openai_disabled: true },
+      });
+      await actions.set_active_tab("agents", changeHistory);
+      expect(page().get("active_top_tab")).toBe("projects");
+      expect(set_url).toHaveBeenLastCalledWith("/projects");
+    },
+  );
+  it.each(["account", "admin", "docs", "agents", "projects"])(
     "remembers the selected project while opening %s",
     async (route) => {
       await actions.set_active_tab(B);
@@ -146,6 +180,15 @@ describe("project context across global navigation", () => {
       if (route === "admin") expect(set_url).toHaveBeenLastCalledWith("/admin");
     },
   );
+
+  it("opens notifications in a drawer without leaving the selected project", async () => {
+    await actions.set_active_tab(B);
+    await actions.set_active_tab("notifications");
+    expect(setNotificationsOpen).toHaveBeenCalledWith(true);
+    expect(page().get("active_top_tab")).toBe(B);
+    expect(page().get("last_project_tab")).toBe(B);
+    expect(projectActions[B].hide).not.toHaveBeenCalled();
+  });
 
   it("opens the selected agent's stable workspace URL", async () => {
     actions.setState({

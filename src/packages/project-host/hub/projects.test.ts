@@ -2547,6 +2547,30 @@ describe("project host start ACP rehydrate ordering", () => {
     });
   });
 
+  it("passes the routing account separately to search admission for scoped and unscoped searches", async () => {
+    const { wireProjectsApi } = await import("./projects");
+    wireProjectsApi({ start: jest.fn(), stop: jest.fn() } as any);
+    for (const thread_id of [undefined, "thread-1"]) {
+      await hubApi.projects.chatStoreSearch({
+        account_id: "acct-1",
+        project_id,
+        chat_path: "/home/user/test.chat",
+        query: "test",
+        thread_id,
+        exclude_thread_ids: ["excluded"],
+      });
+      expect(searchChatStoreArchived).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          chat_path: "/projects/host/home/user/test.chat",
+          query: "test",
+          thread_id,
+          exclude_thread_ids: ["excluded"],
+        }),
+        "acct-1",
+      );
+    }
+  });
+
   it("translates chat store paths on project-host before reading archived rows", async () => {
     const runnerApi = {
       start: jest.fn(),
