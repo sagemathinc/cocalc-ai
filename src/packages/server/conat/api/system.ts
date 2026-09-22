@@ -1,3 +1,4 @@
+import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 import getCustomize from "@cocalc/database/settings/customize";
 export { getCustomize };
 import getPool from "@cocalc/database/pool";
@@ -8605,4 +8606,12 @@ export async function clearProviderSetupChallenge({
     throw Error("must be an admin");
   }
   return await clearProviderSetupChallenge0({ account_id, id });
+}
+
+export async function liveVoice(opts: Parameters<typeof liveVoiceLocal>[0]) {
+  if (!opts.account_id) throw Error("must be signed in");
+  const client = await getChatSpeechHomeClient(opts.account_id);
+  return client
+    ? await client.liveVoice({ ...opts, account_id: opts.account_id })
+    : await liveVoiceLocal(opts);
 }
