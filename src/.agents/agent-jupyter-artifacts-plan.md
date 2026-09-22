@@ -1,7 +1,28 @@
 # Jupyter artifacts in the Agents workspace
 
 Status: implementation started after #640 merged. The shared read-only renderer
-is extracted; the Agents notebook workflow is not yet implemented or release-ready.
+is extracted and notebook file links/cards now open a live read-only Workbench
+preview. The full feedback workflow is not yet release-ready.
+
+## First testable preview
+
+Open an existing `.ipynb` link from agent chat (or a notebook file-artifact card).
+It should remain beside chat and render the live notebook through the existing
+project-owned embedded editor runtime. Opening invokes no run operation. Missing
+files are checked before initialization. Closing the pane removes its listeners,
+not the shared notebook runtime; normal project editor lifecycle owns cleanup.
+
+Try changing a cell from the project notebook editor while leaving the preview
+open, then switch back to the agent. The updated contents should appear without
+refresh. Reconnect reattaches the observer, Open in project uses the normal
+editor, and Download saved notebook intentionally downloads the saved file
+(live unsaved export is not implemented yet). Outputs have an explicit freshness
+warning, not a claim that the current code produced them.
+
+Automated coverage checks document updates, missing-file non-creation, listener
+cleanup without closing the shared runtime, and keyboard reconnect/focus.
+Live browser acceptance, permission-loss handling, bounded output rendering,
+cell feedback and persistence beyond existing Workbench state remain pending.
 
 ## Integration audit (2026-09-22)
 
@@ -24,14 +45,13 @@ is extracted; the Agents notebook workflow is not yet implemented or release-rea
   passive opening. Use project-host filesystem/session routing; artifact open
   must not start compute or execute cells.
 
-Next slice: extract a reusable passive session owner from existing initialization
-and reconciliation, then attach the read-only surface to both Workbench entry
-points. Cover first-open, unsaved edits, multiple consumers, disconnect and
-last-consumer cleanup. Never close a session owned by an open project editor.
+The first preview reuses project-owned embedded editor initialization instead
+of extracting a second session owner. Next: validate first-open, unsaved edits,
+multiple consumers and disconnect in the browser. Never close a session owned
+by an open project editor.
 
 Cell/output snapshot references, origin-bound feedback, execution freshness,
-live export and browser acceptance remain unfinished. The renderer extraction
-does not yet expose a notebook artifact UI or establish live-session behavior.
+live export and browser acceptance remain unfinished.
 
 ## Product goal
 
@@ -63,7 +83,7 @@ full reproducibility in a stateful kernel.
 
 - [x] Audit existing notebook renderers, session lifecycle, artifact locators,
       and contextual-feedback APIs; identify minimal integration seams.
-- [ ] Open notebook cards and ordinary links in a reusable Agents result pane.
+- [x] Open notebook cards and ordinary links in a reusable Agents result pane.
 - [ ] Render the authoritative live notebook, including unsaved edits, without
       introducing a separate editor, notebook engine, or storage format.
 - [ ] Provide stable cell/output selection references, capturing the inspected
