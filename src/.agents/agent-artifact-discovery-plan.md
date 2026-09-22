@@ -1,8 +1,32 @@
 # Cross-agent artifact discovery
 
-Status: scope correction implemented in PR #668. Cross-agent discovery below is
-not implemented. Keep the UI honest: Agents currently offers only This agent;
-ordinary chat files retain This thread / Entire chatroom.
+Status: PR #668 now implements an initial bounded All agents discovery path.
+Agents offers This agent / All agents; ordinary chat files retain This thread /
+Entire chatroom. The persistent metadata index below remains follow-up work.
+
+## Initial implementation and limits
+
+- Reuses the authenticated project-host chat search RPC and worker admission,
+  memory, execution-time, concurrency, and start-rate limits.
+- Scans saved heads, capped at 8 MiB, for artifact publications/current metadata;
+  message offload preserves these records. Does not open editor sessions or
+  create a new index. Unsaved edits are not included in cross-agent discovery.
+- Returns bounded metadata pages for one explicitly scoped thread; browser
+  requests at most 20 pages / 20 seconds per pass and retains at most 500 results.
+- Provides query/project filtering, partial-result warnings, continuation, and
+  personal pins ordered ahead of other discovered results. Pins in unsearched
+  sources are not yet resolved independently. Sorting is over discovered results.
+- Covers current conversations from the human's full agent directory, not just
+  mounted workspaces or members of a selected Agent Network.
+- Opening switches to the source agent, rechecks its current identity, opens
+  its project-owned chat runtime, rereads the artifact, and opens that source
+  Workbench. It does not embed a foreign artifact against the current chat.
+- Older hosts explicitly report unsupported discovery. Production needs the
+  updated project-host/backend code as well as the frontend.
+
+Remaining limitations: large heads need indexing, historical agent conversations
+are not searched, pins outside discovered pages are not independently resolved,
+and cross-source tabs in one stationary Workbench are not implemented.
 
 ## Existing seams
 
@@ -57,5 +81,6 @@ ordinary chat files retain This thread / Entire chatroom.
 - Ensure revoked project access fails on both discovery and opening.
 - Preserve pinned order across paging/filtering; support keyboard and mobile UI.
 
-Do not add a placeholder All agents option backed by loaded chats, and do not
-claim completion of this plan when only the scope-label correction is shipped.
+Do not replace global discovery with a loaded-chat-only catalog. Do not claim
+the persistent index or stationary cross-source Workbench is implemented by the
+initial bounded scan.

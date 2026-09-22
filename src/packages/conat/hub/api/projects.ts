@@ -740,6 +740,10 @@ export interface ChatStoreArchivedRow {
 }
 
 export interface ChatStoreSearchHit {
+  artifact_id?: string;
+  artifact_title?: string;
+  artifact_kind?: string;
+  operation_id?: string;
   row_id: number;
   segment_id: string;
   message_id?: string;
@@ -2581,6 +2585,7 @@ export interface Projects {
   }) => Promise<{ chat_id: string; row?: ChatStoreArchivedRow }>;
 
   chatStoreSearch: (opts: {
+    artifacts?: boolean;
     include_head?: boolean;
     account_id?: string;
     project_id: string;
@@ -2593,6 +2598,7 @@ export interface Projects {
     offset?: number;
   }) => Promise<{
     includes_head?: boolean;
+    includes_artifacts?: boolean;
     chat_id: string;
     hits: ChatStoreSearchHit[];
     offset: number;

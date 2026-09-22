@@ -274,7 +274,8 @@ export default function ArtifactBrowser({
   onClose: () => void;
 }) {
   const [scope, setScope] = useState(threadId ? "thread" : "room");
-  const { agentWorkspace = false } = useChatEmbeddingOptions();
+  const { agentWorkspace = false, onBrowseAllArtifacts } =
+    useChatEmbeddingOptions();
   const organization = useArtifactPins();
   const inputRef = useRef<InputRef>(null);
   const [query, setQuery] = useState("");
@@ -308,11 +309,21 @@ export default function ArtifactBrowser({
             aria-label="Artifact scope"
             style={{ width: 170 }}
             value={agentWorkspace ? "thread" : scope}
-            disabled={agentWorkspace}
-            onChange={setScope}
+            disabled={agentWorkspace && !onBrowseAllArtifacts}
+            onChange={(value) => {
+              if (value === "agents") {
+                onClose();
+                onBrowseAllArtifacts?.();
+              } else setScope(value);
+            }}
             options={
               agentWorkspace
-                ? [{ value: "thread", label: "This agent" }]
+                ? [
+                    { value: "thread", label: "This agent" },
+                    ...(onBrowseAllArtifacts
+                      ? [{ value: "agents", label: "All agents" }]
+                      : []),
+                  ]
                 : [
                     ...(threadId
                       ? [{ value: "thread", label: "This thread" }]

@@ -3463,6 +3463,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
   }
 
   async function chatStoreSearch({
+    artifacts,
     include_head,
     account_id,
     project_id,
@@ -3474,6 +3475,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     limit,
     offset,
   }: {
+    artifacts?: boolean;
     include_head?: boolean;
     account_id?: string;
     project_id: string;
@@ -3485,6 +3487,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     limit?: number;
     offset?: number;
   }): Promise<{
+    includes_artifacts?: boolean;
     chat_id: string;
     hits: ChatStoreSearchHit[];
     offset: number;
@@ -3499,6 +3502,7 @@ export function wireProjectsApi(runnerApi: RunnerApi) {
     });
     return await searchChatStore(
       {
+        artifacts,
         include_head,
         ...paths,
         query,

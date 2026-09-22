@@ -33,6 +33,7 @@ import type { ChatActions } from "@cocalc/frontend/chat/actions";
 import { initChat } from "@cocalc/frontend/chat/register";
 import { requestThreadSearch } from "@cocalc/frontend/chat/thread-search-request";
 import { AgentSearch } from "./search";
+import { AgentArtifactBrowser } from "./artifact-browser";
 import { agentSearchStore } from "./search-state";
 import { agentMessageFragment } from "./message-fragment";
 import type { AgentSearchHit } from "./search-runner";
@@ -1481,6 +1482,10 @@ function AgentProjectContext({
           onSearchAll: () => {
             if (accountId) agentSearchStore(accountId).set({ open: true });
           },
+          onBrowseAllArtifacts: () => {
+            if (accountId)
+              agentSearchStore(accountId).set({ artifactsOpen: true });
+          },
           selectedNetworkId,
           disableConversationFocus: true,
           hideSingleFrameToolbar: !showEditorControls,
@@ -2500,7 +2505,8 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
       change_history: historical,
       fragmentId: {
         thread: threadId,
-        chat: hit.date_ms == null ? undefined : `${hit.date_ms}`,
+        chat:
+          hit.artifact_id || hit.date_ms == null ? undefined : `${hit.date_ms}`,
       },
     });
     if (superseded()) return;
@@ -2513,6 +2519,34 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
     if (superseded()) return;
     const chat = editor.getChatActions();
     if (!chat) throw new Error("Conversation is not ready; try again shortly");
+    if (hit.artifact_id) {
+      if (!chat.frameTreeActions || !chat.frameId)
+        throw Error("Source Workbench is not ready; try again shortly");
+      const { readArtifact, validateArtifactPublication } =
+        await import("@cocalc/chat");
+      const { openArtifact } =
+        await import("@cocalc/frontend/chat/open-artifact");
+      const result = readArtifact(chat.syncdb, {
+        thread_id: threadId,
+        artifact_id: hit.artifact_id,
+      });
+      const publications = chat.syncdb.get({
+        event: "chat-artifact-publication",
+      });
+      const rows = publications?.toJS?.() ?? publications ?? [];
+      const publication = rows.find(
+        (row) =>
+          row.thread_id === threadId &&
+          row.artifact_id === hit.artifact_id &&
+          row.operation_id === hit.operation_id,
+      );
+      if (!publication || !result.artifact)
+        throw Error(
+          "Artifact changed or is no longer available; refresh the results.",
+        );
+      openArtifact(chat, validateArtifactPublication(publication));
+      return;
+    }
     if (hit.segment_id !== "head") {
       const { webapp_client } = await import("@cocalc/frontend/webapp-client");
       const archived =
@@ -2948,6 +2982,15 @@ export function MyAgentsWorkspacePage({ active = true }: { active?: boolean }) {
             setMobileList(false);
           }}
         />
+        {accountId && (
+          <AgentArtifactBrowser
+            key={accountId}
+            accountId={accountId}
+            agents={agents}
+            active={active}
+            onSelect={openSearchHit}
+          />
+        )}
         {accountId && (
           <AgentSearch
             accountId={accountId}
