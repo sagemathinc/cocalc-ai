@@ -7,6 +7,10 @@ import { randomUUID } from "node:crypto";
 import getLogger from "@cocalc/backend/logger";
 import { is_valid_uuid_string as isValidUuid } from "@cocalc/util/misc";
 import {
+  ACCOUNT_CREDENTIAL_IDENTITY_METADATA_KEY as IDENTITY_METADATA_KEY,
+  ACCOUNT_CREDENTIAL_PROFILE_METADATA_KEY as PROFILE_METADATA_KEY,
+} from "@cocalc/util/ai/external-credential-profiles";
+import {
   createExternalCredentialRouted,
   getExternalCredentialByIdRouted,
   revokeAccountExternalCredentialRouted,
@@ -21,8 +25,6 @@ import type {
   ExternalCredentialSelector,
 } from "./store";
 
-const PROFILE_METADATA_KEY = "cocalc_credential_profile";
-const IDENTITY_METADATA_KEY = "cocalc_provider_identity";
 const RESERVED_METADATA_KEYS = new Set([
   PROFILE_METADATA_KEY,
   IDENTITY_METADATA_KEY,

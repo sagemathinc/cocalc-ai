@@ -5,14 +5,21 @@
 
 import { createHash } from "node:crypto";
 import {
+  ANTHROPIC_API_KEY_KIND,
+  ANTHROPIC_API_KEY_PROFILE_ID,
+  ANTHROPIC_API_PROVIDER,
+} from "@cocalc/util/ai/external-credential-profiles";
+import {
   AccountCredentialBroker,
   type AccountCredentialBrokerStore,
   type AccountCredentialProviderAdapter,
 } from "./account-broker";
 
-export const ANTHROPIC_API_KEY_PROFILE_ID = "anthropic-api-key-v1";
-export const ANTHROPIC_API_KEY_KIND = "anthropic-api-key";
-export const ANTHROPIC_API_PROVIDER = "anthropic";
+export {
+  ANTHROPIC_API_KEY_KIND,
+  ANTHROPIC_API_KEY_PROFILE_ID,
+  ANTHROPIC_API_PROVIDER,
+} from "@cocalc/util/ai/external-credential-profiles";
 
 const DEFAULT_VERIFY_URL = "https://api.anthropic.com/v1/models?limit=1";
 const ANTHROPIC_API_VERSION = "2023-06-01";
