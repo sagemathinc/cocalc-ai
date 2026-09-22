@@ -285,3 +285,23 @@ it("opens at recent messages without imperative scrolling during streamed update
   await act(async () => button("Load earlier messages").props.onPress());
   expect(client.loadOlderMessages).toHaveBeenCalledWith(60);
 });
+
+it("renders the thinking placeholder as an accessible spinner", async () => {
+  client.getSnapshot().messages = [
+    {
+      message_id: "thinking",
+      role: "agent",
+      content: ":robot: Thinking...",
+      generating: true,
+    },
+  ];
+  await act(async () => {
+    renderer = create(<ChatScreen />);
+  });
+  expect(
+    renderer.root.findByProps({ accessibilityLabel: "Agent is thinking" }),
+  ).toBeDefined();
+  expect(
+    renderer.root.findAllByProps({ value: ":robot: Thinking..." }),
+  ).toHaveLength(0);
+});

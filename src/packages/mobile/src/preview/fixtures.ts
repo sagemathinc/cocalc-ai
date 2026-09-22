@@ -29,6 +29,7 @@ export type ConversationClient = Pick<
   | "subscribe"
   | "getSnapshot"
   | "interrupt"
+  | "updateCodexThreadConfig"
   | "loadOlderMessages"
   | "sendToExistingCodexThread"
   | "sendGuidanceToCodexThread"
@@ -182,6 +183,15 @@ export function createPreviewChat(
     return { message_id: sent.message_id, thread_id };
   };
   return {
+    updateCodexThreadConfig: async ({ thread_id, acp_config }) => {
+      snapshot = {
+        ...snapshot,
+        threads: snapshot.threads.map((t) =>
+          t.thread_id === thread_id ? { ...t, acp_config } : t,
+        ),
+      };
+      publish();
+    },
     open: async () => {},
     close: async () => {
       listeners.clear();

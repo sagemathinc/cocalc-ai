@@ -246,3 +246,36 @@ including wrap/unwrap and copy feedback (nine screenshots). Artifacts:
 `src/packages/mobile/dist/visual/2026-09-22T01-13-26.490Z/`.
 Keep preview controls clear of Expo's floating developer overlay; taps near it
 produced misleading failures during the initial automation attempts.
+
+## Production feedback: accounts, directory, and thread settings
+
+The home screen now shows saved accounts directly. Agent rows show indexed
+thread titles, colors, images, and supported web icon aliases (Ant Design and
+the existing CoCalc icon font). The appearance reader uses three bounded
+workers and project-host session indices; unavailable appearance does not
+block the directory or start compute.
+
+The directory exposes the existing shared recent/custom order, project grouping,
+and pinned sections. A native draggable list provides reordering, with
+accessible up/down alternatives. Moves stay inside pinned/project groups.
+Large-text testing moved row actions underneath the title/description and
+limited title display to three lines while retaining the full accessible name.
+
+The thread's thinking placeholder becomes an accessible native spinner.
+A native settings sheet saves payment preference, model, reasoning, and service
+tier via the existing updateThread RPC. It fetches ChatGPT model capabilities
+for the selected funding source and preserves other thread configuration.
+Credential connection/management remains in the web UI. Missing model catalogs
+and failed saves remain visible and do not silently close the sheet.
+
+Validation: 43 UI tests, mobile typecheck, frontend lint, dependency consistency,
+and simulator settings flows in light/dark and large-text mode. Large-text
+automation needed to wait for reorder layout to settle before tapping the
+moved row. Physical-device behavior and production appearance/index coverage
+still need maintainer qualification.
+
+Staging CLI authentication was approved and verified. No server deployment or
+live provider call has been made during this UI change. Deployment target/config
+and R2 artifact setup are not present in this worktree's operator configuration;
+the maintainer has been asked for the staging deployment location. Existing
+live voice remains the admin-only development prototype described above.

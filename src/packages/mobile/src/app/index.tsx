@@ -4,23 +4,75 @@
  */
 
 import { COLORS } from "@cocalc/util/theme";
-import { Link, Stack } from "expo-router";
-import { PlatformColor, StyleSheet, Text, View } from "react-native";
+import { useCallback, useState } from "react";
+import {
+  listSiteProfiles,
+  type MobileSiteProfile,
+} from "../storage/site-profiles";
+import { Link, Stack, useFocusEffect } from "expo-router";
+import {
+  PlatformColor,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import { previewEnabled, PREVIEW_PROFILE } from "../preview/fixtures";
 
 export default function WelcomeScreen() {
+  const [profiles, setProfiles] = useState<MobileSiteProfile[]>([]);
+  const [error, setError] = useState<string>();
+  useFocusEffect(
+    useCallback(() => {
+      let active = true;
+      void listSiteProfiles()
+        .then((value) => {
+          if (active) setProfiles(value);
+        })
+        .catch((err) => {
+          if (active) setError(String(err));
+        });
+      return () => {
+        active = false;
+      };
+    }, []),
+  );
   return (
     <SafeAreaView style={styles.safeArea} edges={["bottom"]}>
       <Stack.Screen options={{ title: "CoCalc" }} />
-      <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.container}>
         <Text accessibilityRole="header" style={styles.title}>
           CoCalc on mobile
         </Text>
         <Text style={styles.body}>
           Connect to your CoCalc site and work with your agents.
         </Text>
+        {error ? <Text accessibilityRole="alert">{error}</Text> : null}
+        {profiles.map((profile) => (
+          <Link
+            key={profile.profile_id}
+            accessibilityRole="button"
+            accessibilityLabel={`Open ${profile.display_name ?? profile.email_address ?? profile.account_id} on ${profile.canonical_app_url}`}
+            href={
+              profile.signed_out_at
+                ? "/transport"
+                : {
+                    pathname: "/agents",
+                    params: { profile: profile.profile_id },
+                  }
+            }
+            style={styles.account}
+          >
+            {profile.display_name ??
+              profile.email_address ??
+              profile.account_id}
+            {"\n"}
+            {profile.canonical_app_url}
+            {profile.signed_out_at ? "\nSigned out · sign in again" : ""}
+          </Link>
+        ))}
         {previewEnabled ? (
           <Link
             accessibilityRole="button"
@@ -33,13 +85,13 @@ export default function WelcomeScreen() {
         ) : null}
         <Link
           accessibilityRole="button"
-          accessibilityLabel="Configure a CoCalc site"
+          accessibilityLabel="Add or manage CoCalc accounts"
           href="/transport"
           style={styles.primaryAction}
         >
-          Configure site
+          Add or manage accounts
         </Link>
-      </View>
+      </ScrollView>
     </SafeAreaView>
   );
 }
@@ -50,7 +102,7 @@ const styles = StyleSheet.create({
     backgroundColor: PlatformColor("systemBackground"),
   },
   container: {
-    flex: 1,
+    flexGrow: 1,
     justifyContent: "center",
     padding: 24,
     gap: 16,
@@ -64,6 +116,13 @@ const styles = StyleSheet.create({
     color: PlatformColor("secondaryLabel"),
     fontSize: 18,
     lineHeight: 26,
+  },
+  account: {
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: PlatformColor("secondarySystemBackground"),
+    color: PlatformColor("label"),
+    fontSize: 18,
   },
   primaryAction: {
     alignSelf: "flex-start",

@@ -5,6 +5,14 @@ import { getActiveSiteSession } from "../cocalc/session-registry";
 import { router } from "expo-router";
 import { MY_AGENTS_ORGANIZATION_SETTING } from "@cocalc/chat-client/agent-organization";
 
+jest.mock("./use-appearance", () => ({
+  useAgentAppearance: () => ({ appearances: {}, siteUrl: "" }),
+}));
+jest.mock("./avatar", () => ({ AgentAvatar: "AgentAvatar" }));
+jest.mock("react-native-draggable-flatlist", () => ({
+  __esModule: true,
+  default: require("react-native").FlatList,
+}));
 jest.mock("expo-router", () => ({
   router: { push: jest.fn() },
   Link: "Link",
@@ -132,4 +140,32 @@ it("restores a hidden agent without creating a separate mobile directory", async
   ).toBe("[]");
   await act(async () => button("Show active agents").props.onPress());
   expect(button("Open Research")).toBeDefined();
+});
+
+it("changes shared ordering and offers accessible reordering controls", async () => {
+  await act(async () => {
+    renderer = create(<AgentsScreen />);
+  });
+  await act(async () => button("Use custom agent order").props.onPress());
+  expect(
+    query.mock.calls.at(-1)[0].query.accounts.other_settings[
+      MY_AGENTS_ORGANIZATION_SETTING
+    ].mode,
+  ).toBe("custom");
+  await act(async () => button("Reorder agents").props.onPress());
+  await act(async () => button("Move Research down").props.onPress());
+  const saved = JSON.parse(
+    query.mock.calls.at(-1)[0].query.accounts.other_settings[
+      MY_AGENTS_ORGANIZATION_SETTING
+    ].custom,
+  );
+  expect(saved.indexOf("Research")).toBeGreaterThan(
+    saved.indexOf("Unavailable"),
+  );
+  await act(async () => button("Group agents by project").props.onPress());
+  expect(
+    query.mock.calls.at(-1)[0].query.accounts.other_settings[
+      MY_AGENTS_ORGANIZATION_SETTING
+    ].groupByProject,
+  ).toBe(true);
 });

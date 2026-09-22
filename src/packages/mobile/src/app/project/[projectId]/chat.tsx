@@ -2,6 +2,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
+import { ChatSettings } from "../../../chat/settings";
 
 import {
   createRemoteHeadlessChatClient,
@@ -122,6 +123,10 @@ function Message({
   const colors = usePalette();
   const styles = useMemo(() => makeStyles(colors), [colors]);
   const human = item.role === "human";
+  const thinkingPlaceholder =
+    !human &&
+    /^\s*(?::robot:|🤖)?\s*Thinking(?:\.{3}|…)\s*$/.test(item.content);
+
   return (
     <View
       style={[
@@ -150,7 +155,11 @@ function Message({
           Codex activity could not be recovered: {item.activity.error}
         </Text>
       ) : null}
-      <Markdown value={item.content || (item.generating ? "Working…" : "")} />
+      {item.generating && (!item.content || thinkingPlaceholder) ? (
+        <ActivityIndicator accessibilityLabel="Agent is thinking" />
+      ) : thinkingPlaceholder ? null : (
+        <Markdown value={item.content} />
+      )}
       <View style={styles.messageActions}>
         {item.role === "agent" && !item.generating && !!item.content && (
           <Pressable
@@ -199,6 +208,7 @@ export default function ChatScreen() {
   const clientRef = useRef<ConversationClient | undefined>(undefined);
   const generation = useRef(0);
   const listRef = useRef<FlatList<ProjectedChatMessage>>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -471,6 +481,16 @@ export default function ChatScreen() {
           title: `${params.title || "Codex"}`,
         }}
       />
+      {settingsOpen && client && (
+        <ChatSettings
+          profile={profileId}
+          project={projectId}
+          thread={threadId}
+          config={selectedThread?.acp_config}
+          client={client}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       <KeyboardAvoidingView
         behavior={Platform.OS === "ios" ? "padding" : undefined}
         keyboardVerticalOffset={headerHeight}
@@ -482,6 +502,15 @@ export default function ChatScreen() {
               ? `${status} · ${selectedThread?.state ?? "idle"}`
               : status}
           </Text>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Agent settings"
+            disabled={!client || !snapshot.ready}
+            onPress={() => setSettingsOpen(true)}
+            style={{ padding: 12, minHeight: 44 }}
+          >
+            <Text style={styles.smallLink}>Settings</Text>
+          </Pressable>
           <Pressable
             accessibilityLabel="Open chat in browser"
             accessibilityRole="button"

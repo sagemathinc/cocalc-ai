@@ -7,6 +7,8 @@ module.exports = {
   Alert: { alert: jest.fn() },
   ScrollView: "ScrollView",
   View: "View",
+  Image: "Image",
+  Modal: "Modal",
   Text: "Text",
   Pressable: "Pressable",
   TextInput: "TextInput",

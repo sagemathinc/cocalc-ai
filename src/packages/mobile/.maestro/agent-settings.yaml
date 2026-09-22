@@ -1,0 +1,48 @@
+appId: com.sagemath.cocalc.mobile.dev
+---
+- tapOn:
+    text: "Open"
+    optional: true
+- openLink: "cocalc:///"
+- tapOn:
+    text: "Open"
+    optional: true
+- extendedWaitUntil:
+    visible: "Open local UI preview"
+    timeout: 15000
+- tapOn: "Open local UI preview"
+- scrollUntilVisible:
+    element: "Open Research"
+    direction: DOWN
+    centerElement: true
+- takeScreenshot: agent-appearance
+- tapOn: "Use custom agent order"
+- tapOn: "Reorder agents"
+- scrollUntilVisible:
+    element: "Move Research up"
+    direction: DOWN
+    centerElement: true
+- tapOn: "Move Research up"
+- tapOn: "Finish reordering agents"
+- waitForAnimationToEnd
+- scrollUntilVisible:
+    element: "Open Research"
+    direction: UP
+    centerElement: true
+- waitForAnimationToEnd
+- tapOn:
+    text: "Open Research"
+    retryTapIfNoChange: true
+- tapOn: "Agent settings"
+- assertVisible: "Payment"
+- takeScreenshot: agent-settings-payment
+- scrollUntilVisible:
+    element: "high"
+    direction: DOWN
+    centerElement: true
+- tapOn: "high"
+- scrollUntilVisible:
+    element: "Save agent settings"
+    direction: DOWN
+- tapOn: "Save agent settings"
+- assertVisible: "Message Codex.*"

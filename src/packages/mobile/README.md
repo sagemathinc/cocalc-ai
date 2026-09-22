@@ -197,3 +197,27 @@ Expo does not substitute an unpatched precompiled React Native binary. Native
 builds take longer with this setting. Re-run prebuild/pod install and rebuild
 the development app when adding or changing this patch. Revisit both the patch
 and plugin when upgrading React Native.
+
+### Agent directory and settings
+
+Saved accounts are available directly from the home screen. The directory uses
+the same account organization setting as the web app: pins, recent/custom order,
+and grouping by project. In Reorder mode, hold a name to drag it or use the
+accessible up/down buttons. Moves stay within the pinned/unpinned group and,
+when grouped, the project. Filtering disables reordering.
+
+Appearance is loaded independently from each project's existing agent-session
+index through its owning host, without starting compute or loading chat history.
+Missing/offline indices fall back to the directory title and initials. Supported
+web icon aliases use Ant Design and the existing CoCalc font; regenerate the
+alias maps with node scripts/generate-icon-names.cjs after web icon changes.
+Custom images use the selected site's blob endpoint.
+
+Chat Settings saves payment source, model, thinking level, and speed on the
+existing thread. It preserves other configuration. ChatGPT model availability
+comes from the account-specific server catalog; API-funded choices use the
+shared CoCalc catalog. Connecting/removing credentials remains in the web UI.
+Settings affect subsequent turns, not a turn already running.
+
+The focused local simulator flow is:
+MOBILE_VISUAL_FLOW=.maestro/agent-settings.yaml pnpm test:visual.
