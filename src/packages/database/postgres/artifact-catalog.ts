@@ -114,6 +114,38 @@ export async function registerArtifactCatalogSource(
   });
 }
 
+/** Internal owner-bay lookup, after authenticating the host and resolving ownership. */
+export async function getArtifactCatalogWriterState(
+  source: ArtifactCatalogSource,
+  authority: CatalogWriterAuthority,
+): Promise<{
+  epoch: string;
+  registration_id: string;
+  source_sequence: number;
+  writer_host_id: string | null;
+} | null> {
+  validateArtifactCatalogSnapshot({
+    ...source,
+    schema_version: 1,
+    epoch: "validate",
+    sequence: 1,
+    items: [],
+  });
+  return transaction(async (db) => {
+    await assertOwner(db, source.project_id, authority);
+    const row = (
+      await db.query(
+        `SELECT epoch,registration_id,source_sequence,writer_host_id
+      FROM artifact_catalog_sources WHERE source_id=$1`,
+        [artifactCatalogSourceId(source)],
+      )
+    ).rows[0];
+    return row
+      ? { ...row, source_sequence: Number(row.source_sequence) }
+      : null;
+  });
+}
+
 export async function applyArtifactCatalogSnapshot(
   input: ArtifactCatalogSnapshot,
   authority: CatalogWriterAuthority,

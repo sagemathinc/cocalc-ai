@@ -15,6 +15,9 @@ export type HubApiAdmissionDecision = {
 };
 
 const LOW_PRIORITY_METHODS = new Set([
+  "artifactCatalog.writerState",
+  "artifactCatalog.registerSource",
+  "artifactCatalog.ingest",
   "compute.getCatalog",
   "compute.listAgentGrants",
   "compute.listVms",

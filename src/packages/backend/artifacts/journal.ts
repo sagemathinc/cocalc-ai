@@ -17,6 +17,10 @@ export interface CatalogScan extends ArtifactCatalogSource {
   generation: number;
 }
 
+export interface CatalogRegistration extends ArtifactCatalogSource {
+  registration_id: string;
+}
+
 /**
  * Host-private write-ahead journal. The service owns one instance and fences
  * previous service processes before recovery. Never place this in user HOME.
@@ -59,6 +63,12 @@ export class ArtifactCatalogJournal {
         generation INTEGER NOT NULL,
         payload TEXT NOT NULL,
         PRIMARY KEY(project_id, chat_path)
+      );
+      CREATE TABLE IF NOT EXISTS artifact_registrations (
+        registration_id TEXT PRIMARY KEY,
+        expected_epoch TEXT,
+        retry_at INTEGER NOT NULL DEFAULT 0,
+        failures INTEGER NOT NULL DEFAULT 0
       );
     `);
   }
@@ -151,19 +161,63 @@ export class ArtifactCatalogJournal {
     });
   }
 
-  pendingRegistrations(
-    limit = 32,
-  ): (ArtifactCatalogSource & { registration_id: string })[] {
+  pendingRegistrations(limit = 32, now = Date.now()): CatalogRegistration[] {
     if (!Number.isInteger(limit) || limit < 1 || limit > 100)
       throw Error("invalid catalog registration limit");
     return this.db
       .prepare(
-        `SELECT project_id,chat_path,registration_id FROM artifact_sources
-      WHERE epoch='' ORDER BY project_id,chat_path LIMIT ?`,
+        `SELECT s.project_id,s.chat_path,s.registration_id FROM artifact_sources s
+      LEFT JOIN artifact_registrations r USING(registration_id)
+      WHERE s.epoch='' AND MAX(s.retry_at,COALESCE(r.retry_at,0))<=?
+      ORDER BY s.project_id,s.chat_path LIMIT ?`,
       )
-      .all(limit) as unknown as (ArtifactCatalogSource & {
-      registration_id: string;
-    })[];
+      .all(now, limit) as unknown as CatalogRegistration[];
+  }
+
+  registrationBase(
+    source: CatalogRegistration,
+  ): { expected_epoch: string | null } | undefined {
+    const row = this.db
+      .prepare(
+        "SELECT expected_epoch FROM artifact_registrations WHERE registration_id=?",
+      )
+      .get(source.registration_id);
+    return row
+      ? { expected_epoch: row.expected_epoch as string | null }
+      : undefined;
+  }
+
+  /** Freeze the CAS base before sending; retries must never steal a newer writer. */
+  prepareRegistration(
+    source: CatalogRegistration,
+    expected_epoch: string | null,
+  ) {
+    this.db
+      .prepare(
+        `INSERT INTO artifact_registrations(registration_id,expected_epoch)
+      VALUES(?,?) ON CONFLICT(registration_id) DO NOTHING`,
+      )
+      .run(source.registration_id, expected_epoch);
+    return this.registrationBase(source)!;
+  }
+
+  deferRegistration(source: CatalogRegistration, now = Date.now()) {
+    // A lookup can fail before a CAS base exists. Do not invent a base in that
+    // case; use the source backoff, which pendingRegistrations also observes.
+    this.db
+      .prepare(
+        `UPDATE artifact_sources SET
+      retry_at=?+MIN(60000,1000*(1 << MIN(failures,6))),failures=MIN(failures+1,10)
+      WHERE project_id=? AND chat_path=? AND registration_id=? AND epoch=''`,
+      )
+      .run(now, source.project_id, source.chat_path, source.registration_id);
+    this.db
+      .prepare(
+        `UPDATE artifact_registrations SET
+      retry_at=?+MIN(60000,1000*(1 << MIN(failures,6))),failures=MIN(failures+1,10)
+      WHERE registration_id=?`,
+      )
+      .run(now, source.registration_id);
   }
 
   /** Call in finally: failed writes must also be reconciled against actual bytes. */

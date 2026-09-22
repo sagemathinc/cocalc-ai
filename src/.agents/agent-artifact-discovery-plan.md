@@ -7,7 +7,8 @@ the shelf must never initiate chat-file scans or require starting projects.
 
 ## Catalog implementation checkpoint (2026-09-22)
 
-Implemented storage primitives, not yet integrated into running services:
+Implemented storage primitives and owner-routed ingestion endpoints. Source
+workers are not yet integrated into running project services:
 
 - Bounded, content-free metadata protocol with canonical source identities.
 - Shared extraction of published current artifacts from complete chat records.
@@ -23,11 +24,19 @@ Implemented storage primitives, not yet integrated into running services:
 - Catalog updates and the projection outbox commit atomically. Removals leave
   tombstones; original creation order survives updates and reappearance.
   Ordinary chat writes with unchanged metadata do not generate feed churn.
+- Host-authenticated registration, writer-state lookup and ingestion RPCs,
+  routed through the trusted fabric to the project-owning bay. The owner
+  rechecks directory epochs and bounds concurrent work globally and per host.
+- Portable single-flight registration worker with persisted CAS bases and
+  retry backoff. Lost responses/restarts retry the identical registration;
+  conflicts cannot silently acquire a newer writer's epoch. Its transport is
+  injectable for project-host and Lite adapters.
 
-Not implemented yet: filesystem/service hooks, epoch recovery/registration RPC,
-cross-bay transport, backfill, account projections, live feed, IndexedDB cache,
-or shelf UI. The existing global browser still scans. These primitives are not
-a claim that the new catalog is operational or that the UX issue is fixed.
+Not implemented yet: filesystem/service hooks and worker lifecycle, Lite catalog
+storage adapter, backfill, account projections, live feed, IndexedDB cache, or
+shelf UI. The existing global browser still scans. The SQLite journal is not a
+Lite catalog adapter. These primitives are not a claim that the new catalog is
+operational or that the UX issue is fixed.
 
 ## Chosen ownership model
 
@@ -49,8 +58,9 @@ a claim that the new catalog is operational or that the UX issue is fixed.
    writes, deletes and renames, covering CLI and browser saves. Fence prior
    service writers before recovering interrupted intents. Journal registration
    must retain its retry identity across lost responses and host restarts.
-   Add authenticated, owner-routed registration/ingestion RPC; host identity and
-   owning bay must come from authenticated routing, never caller payload.
+   Connect the implemented authenticated, owner-routed registration/ingestion
+   RPCs to the portable workers; host identity and owning bay come from
+   authenticated routing, never caller payload.
    Workspace/Lite service integration needs its own lifecycle adapter.
 2. Add resumable background backfill of saved chat sources, including prior
    agent conversations. Never drive it from opening the shelf. Bound parsing,

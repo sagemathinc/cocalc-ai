@@ -5,6 +5,8 @@
 
 import { createInterBayAgentIdentityHandler } from "@cocalc/conat/inter-bay/agent-identities";
 import { agentIdentityControl } from "@cocalc/server/agents/identity-control";
+import { createInterBayArtifactCatalogHandler } from "@cocalc/conat/inter-bay/artifact-catalog";
+import { catalogOwnerControl } from "@cocalc/server/artifacts/catalog-api";
 import { createAgentRpcControlHandler } from "@cocalc/conat/inter-bay/agent-rpc";
 import { agentRpcControl } from "@cocalc/server/agents/rpc";
 import { list as listOperations } from "@cocalc/server/conat/api/lro";
@@ -661,6 +663,12 @@ export async function initInterBayServices(): Promise<void> {
         bay_id: getConfiguredBayId(),
         parallel: true,
         impl: agentIdentityControl,
+      }),
+      createInterBayArtifactCatalogHandler({
+        client: getInterBayFabricClient({ noCache: true }),
+        bay_id: getConfiguredBayId(),
+        parallel: true,
+        impl: catalogOwnerControl,
       }),
     );
     await startProjectSecretsService();

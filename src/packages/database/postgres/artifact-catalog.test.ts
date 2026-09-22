@@ -5,6 +5,7 @@ import type { ArtifactCatalogSnapshot } from "@cocalc/util/artifact-catalog";
 import {
   applyArtifactCatalogSnapshot,
   registerArtifactCatalogSource,
+  getArtifactCatalogWriterState,
 } from "./artifact-catalog";
 
 const project_id = "11111111-1111-4111-8111-111111111111";
@@ -52,6 +53,37 @@ beforeEach(async () => {
 });
 afterAll(async () => {
   await testCleanup();
+});
+
+test("writer recovery lookup is owner/host checked and reports committed sequence", async () => {
+  expect(await getArtifactCatalogWriterState(source, authority)).toMatchObject({
+    epoch,
+    source_sequence: 0,
+    writer_host_id: host_id,
+  });
+  await applyArtifactCatalogSnapshot(snapshot(3), authority);
+  expect(await getArtifactCatalogWriterState(source, authority)).toMatchObject({
+    epoch,
+    source_sequence: 3,
+  });
+  expect(
+    await getArtifactCatalogWriterState(
+      { ...source, chat_path: "/missing.chat" },
+      authority,
+    ),
+  ).toBeNull();
+  await expect(
+    getArtifactCatalogWriterState(source, {
+      ...authority,
+      host_id: randomUUID(),
+    }),
+  ).rejects.toThrow("owner/host");
+  await expect(
+    getArtifactCatalogWriterState(source, {
+      ...authority,
+      owning_bay_id: "wrong",
+    }),
+  ).rejects.toThrow("owner/host");
 });
 
 test("catalog writes and projection outbox are atomic and retries do not duplicate events", async () => {

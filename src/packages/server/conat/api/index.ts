@@ -44,6 +44,7 @@ import * as hosts from "./hosts";
 import * as software from "./software";
 import * as lro from "./lro";
 import * as agent from "./agent";
+import * as artifactCatalog from "./artifact-catalog";
 import * as notifications from "./notifications";
 import * as adminData from "./admin-data-explorer";
 import * as adminDb from "./admin-db";
@@ -107,6 +108,7 @@ export const hubApi: HubApi = {
   software,
   lro,
   agent,
+  artifactCatalog,
   notifications,
   adminData,
   adminDb,
