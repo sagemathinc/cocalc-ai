@@ -1,3 +1,4 @@
+import type { LiveVoiceRequest, LiveVoiceResult } from "./live-voice";
 import {
   noAuth,
   authFirstRequireAccount,
@@ -146,6 +147,7 @@ export const system = {
   setOpenAiApiKey: authFirstRequireAccount,
   deleteOpenAiApiKey: authFirstRequireAccount,
   getOpenAiApiKeyStatus: authFirstRequireAccount,
+  liveVoice: authFirstRequireAccount,
   getChatSpeechCapabilities: authFirstRequireAccount,
   transcribeChatAudio: authFirstRequireAccount,
   synthesizeChatSpeech: authFirstRequireAccount,
@@ -2872,6 +2874,7 @@ export interface System {
     project_id?: string;
   }) => Promise<OpenAiApiKeyStatus>;
 
+  liveVoice: (opts: LiveVoiceRequest) => Promise<LiveVoiceResult>;
   getChatSpeechCapabilities: (opts?: {
     account_id?: string;
     project_id?: string;

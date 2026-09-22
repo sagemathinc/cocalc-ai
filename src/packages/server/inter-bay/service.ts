@@ -1,3 +1,4 @@
+import { liveVoice as liveVoiceLocal } from "@cocalc/server/ai/live-voice";
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -1353,6 +1354,7 @@ async function startAccountLocalService(): Promise<void> {
         project_id,
         challenge_id,
       }),
+    liveVoice: async (opts) => await liveVoiceLocal(opts),
     getChatSpeechCapabilities: async (opts) =>
       await getChatSpeechCapabilitiesLocal(opts),
     transcribeChatAudio: async (opts) => await transcribeChatAudioLocal(opts),

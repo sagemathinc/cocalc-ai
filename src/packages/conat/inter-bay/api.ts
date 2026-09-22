@@ -1,3 +1,7 @@
+import type {
+  LiveVoiceRequest,
+  LiveVoiceResult,
+} from "@cocalc/conat/hub/api/live-voice";
 /*
  *  This file is part of CoCalc: Copyright © 2026 Sagemath, Inc.
  *  License: MS-RSL – see LICENSE.md for details
@@ -2967,6 +2971,7 @@ export type AccountLocalMethod =
   | "validate-host-action-auth"
   | "start-codex-fresh-auth"
   | "get-codex-fresh-auth-status"
+  | "live-voice"
   | "get-chat-speech-capabilities"
   | "transcribe-chat-audio"
   | "synthesize-chat-speech"
@@ -4690,6 +4695,9 @@ export interface InterBayAccountLocalApi
   getCodexFreshAuthStatus: (
     opts: AccountLocalCodexFreshAuthStatusRequest,
   ) => Promise<AccountLocalCodexFreshAuthStatusResult>;
+  liveVoice: (
+    opts: LiveVoiceRequest & { account_id: string },
+  ) => Promise<LiveVoiceResult>;
   getChatSpeechCapabilities: (
     opts: AccountLocalChatSpeechCapabilitiesRequest,
   ) => Promise<ChatSpeechCapabilities>;
@@ -7339,6 +7347,15 @@ export function createInterBayAccountLocalClient({
       method: "get-codex-fresh-auth-status",
     }),
   });
+  const liveVoiceClient = createServiceClient<
+    Pick<InterBayAccountLocalApi, "liveVoice">
+  >({
+    ...serviceClientOptions({
+      client,
+      timeout: Math.max(timeout ?? 0, 60_000),
+    }),
+    subject: accountLocalSubject({ dest_bay, method: "live-voice" }),
+  });
   const getChatSpeechCapabilitiesClient = createServiceClient<
     Pick<InterBayAccountLocalApi, "getChatSpeechCapabilities">
   >({
@@ -8675,6 +8692,7 @@ export function createInterBayAccountLocalClient({
       await startCodexFreshAuthClient.startCodexFreshAuth(opts),
     getCodexFreshAuthStatus: async (opts) =>
       await getCodexFreshAuthStatusClient.getCodexFreshAuthStatus(opts),
+    liveVoice: async (opts) => await liveVoiceClient.liveVoice(opts),
     getChatSpeechCapabilities: async (opts) =>
       await getChatSpeechCapabilitiesClient.getChatSpeechCapabilities(opts),
     transcribeChatAudio: async (opts) =>
@@ -9391,6 +9409,12 @@ export function createInterBayAccountLocalHandler({
         getCodexFreshAuthStatus: async (opts) =>
           await impl.getCodexFreshAuthStatus(opts),
       },
+    }),
+    createServiceHandler<Pick<InterBayAccountLocalApi, "liveVoice">>({
+      ...options,
+      service: "inter-bay-account-local",
+      subject: accountLocalSubject({ dest_bay: bay_id, method: "live-voice" }),
+      impl: { liveVoice: async (opts) => await impl.liveVoice(opts) },
     }),
     createServiceHandler<
       Pick<InterBayAccountLocalApi, "getChatSpeechCapabilities">
