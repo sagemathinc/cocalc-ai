@@ -12,12 +12,12 @@ import {
   useState,
 } from "react";
 import type { InlineCodeLink } from "@cocalc/chat";
+import type { Descendant } from "slate";
 import { getStaticRender } from "./elements/register";
 import { slateCodeBlockThemeVars } from "./elements/code-block/render-theme";
 import Leaf from "./leaf";
 import { markdown_to_slate as markdownToSlate } from "./markdown-to-slate";
 import { ChangeContext } from "./use-change";
-import { staticSelectedMarkdown } from "./selected-markdown";
 import { registerMarkdownSelection } from "./selection-source";
 
 interface Props {
@@ -28,6 +28,11 @@ interface Props {
   inlineCodeLinks?: InlineCodeLink[];
   inlineCodeProjectRoot?: string;
   highlightQuery?: string;
+  serializeSelection?: (
+    root: HTMLElement,
+    nodes: Descendant[],
+    range: Range,
+  ) => string;
 }
 
 type PartialSlateEditor = any; // TODO
@@ -47,6 +52,7 @@ export default function StaticMarkdown({
   inlineCodeLinks,
   inlineCodeProjectRoot,
   highlightQuery,
+  serializeSelection,
 }: Props) {
   const didMountRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -74,11 +80,11 @@ export default function StaticMarkdown({
   }, []);
   useEffect(() => {
     const root = rootRef.current;
-    if (!root) return;
+    if (!root || !serializeSelection) return;
     return registerMarkdownSelection(root, (range) =>
-      staticSelectedMarkdown(root, editor.children, range),
+      serializeSelection(root, editor.children, range),
     );
-  }, [editor]);
+  }, [editor, serializeSelection]);
   const changeContext = useMemo(
     () => ({ change, editor, setEditor: replaceEditor }),
     [change, editor, replaceEditor],
