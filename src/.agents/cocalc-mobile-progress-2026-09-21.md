@@ -225,3 +225,24 @@ mute, end, disconnect, and background/return. Artifacts are under
 Run this focused flow with
 `MOBILE_VISUAL_FLOW=.maestro/live.yaml pnpm -C src/packages/mobile test:visual`.
 These simulated checks do not qualify real provider audio or billing behavior.
+
+## Markdown reading while staging is prepared
+
+Added per-block wrap/unwrap controls for native code rendering, accessible copy
+success/failure feedback, and preservation of code whitespace when copying.
+Tables now honor Markdown column alignment and expose bold column headings.
+The local reply fixture includes a long code line and a numeric table. No native
+rebuild or server changes are required. The focused native flow is
+`MOBILE_VISUAL_FLOW=.maestro/markdown.yaml pnpm -C src/packages/mobile test:visual`.
+Mobile typechecking, all 33 UI tests, and frontend lint passed for this change.
+
+A development-only `cocalc:///markdown-preview` screen provides isolated renderer
+fixtures for native visual checks. It redirects to the welcome screen unless
+local preview is explicitly enabled. This avoids chat virtualization and
+scroll-to-newest behavior interfering with renderer-focused automation.
+
+The final isolated Maestro flow passed in light, dark, and large-text modes,
+including wrap/unwrap and copy feedback (nine screenshots). Artifacts:
+`src/packages/mobile/dist/visual/2026-09-22T01-13-26.490Z/`.
+Keep preview controls clear of Expo's floating developer overlay; taps near it
+produced misleading failures during the initial automation attempts.

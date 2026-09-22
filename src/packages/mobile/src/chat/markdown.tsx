@@ -2,7 +2,7 @@
  * This file is part of CoCalc: Copyright © 2026 SageMath, Inc.
  * License: MS-RSL – see LICENSE.md for details
  */
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import MarkdownIt from "markdown-it";
 import type Token from "markdown-it/lib/token";
 import {
@@ -138,28 +138,7 @@ export function Markdown({ value }: { value: string }) {
         case "fence":
         case "code_block":
           return (
-            <View key={index} style={styles.code}>
-              <View style={styles.codeHeader}>
-                <Text style={styles.language}>{t.info.trim() || "Code"}</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel="Copy code block"
-                  onPress={() => void Clipboard.setStringAsync(t.content)}
-                  style={styles.copy}
-                >
-                  <Text style={styles.link}>Copy code</Text>
-                </Pressable>
-              </View>
-              <ScrollView
-                horizontal
-                style={styles.horizontalScroll}
-                accessibilityLabel="Scrollable code block"
-              >
-                <Text selectable style={styles.codeText}>
-                  {t.content.trimEnd()}
-                </Text>
-              </ScrollView>
-            </View>
+            <CodeBlock key={index} content={t.content} language={t.info} />
           );
         case "bullet_list_open":
         case "ordered_list_open":
@@ -209,7 +188,27 @@ export function Markdown({ value }: { value: string }) {
               key={index}
               style={[styles.cell, t.type === "th_open" && styles.tableHeading]}
             >
-              {body()}
+              <Text
+                selectable
+                accessibilityRole={t.type === "th_open" ? "header" : undefined}
+                style={[
+                  styles.text,
+                  t.type === "th_open" && styles.bold,
+                  {
+                    textAlign: t.attrGet("style")?.includes("right")
+                      ? "right"
+                      : t.attrGet("style")?.includes("center")
+                        ? "center"
+                        : "left",
+                  },
+                ]}
+              >
+                {render(
+                  children.flatMap((child) =>
+                    child.token.type === "inline" ? child.children : [child],
+                  ),
+                )}
+              </Text>
             </View>
           );
         default:
@@ -228,6 +227,73 @@ export function Markdown({ value }: { value: string }) {
     });
   }
   return <View style={styles.container}>{render(nodes)}</View>;
+}
+function CodeBlock({
+  content,
+  language,
+}: {
+  content: string;
+  language: string;
+}) {
+  const colors = usePalette();
+  const styles = useMemo(() => makeStyles(colors), [colors]);
+  const [wrap, setWrap] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
+  const code = (
+    <Text selectable style={styles.codeText}>
+      {content.replace(/\n$/, "")}
+    </Text>
+  );
+  return (
+    <View style={styles.code}>
+      <View style={styles.codeHeader}>
+        <Text style={styles.language}>
+          {language.trim().split(/\s+/)[0] || "Code"}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={wrap ? "Unwrap code" : "Wrap code"}
+          accessibilityState={{ selected: wrap }}
+          onPress={() => setWrap(!wrap)}
+          style={styles.copy}
+        >
+          <Text style={styles.link}>{wrap ? "Unwrap code" : "Wrap code"}</Text>
+        </Pressable>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Copy code block"
+          onPress={async () => {
+            setCopyStatus("Copying…");
+            try {
+              await Clipboard.setStringAsync(content);
+              setCopyStatus("Copied");
+            } catch {
+              setCopyStatus("Could not copy code. Select the text to copy it.");
+            }
+          }}
+          style={styles.copy}
+        >
+          <Text style={styles.link}>Copy code</Text>
+        </Pressable>
+      </View>
+      {copyStatus ? (
+        <Text accessibilityLiveRegion="polite" style={styles.language}>
+          {copyStatus}
+        </Text>
+      ) : null}
+      {wrap ? (
+        code
+      ) : (
+        <ScrollView
+          horizontal
+          style={styles.horizontalScroll}
+          accessibilityLabel="Scrollable code block"
+        >
+          {code}
+        </ScrollView>
+      )}
+    </View>
+  );
 }
 const makeStyles = (colors: AppearancePalette) =>
   StyleSheet.create({

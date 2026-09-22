@@ -97,7 +97,7 @@ export function createPreviewChat(): ConversationClient {
       ),
       message(
         "agent",
-        "This is local preview data. No account or running agent is connected.\n\nHere is a longer paragraph to check wrapping, selection, spacing, and scrolling. The conversation should remain readable while the keyboard is open.\n\n```python\nfor number in range(10):\n    print(number ** 2)\n```\n\nAn inline `variable_name` and a [documentation link](https://cocalc.ai).",
+        'This is local preview data. No account or running agent is connected.\n\nHere is a longer paragraph to check wrapping, selection, spacing, and scrolling. The conversation should remain readable while the keyboard is open.\n\n```python\nfor number in range(10):\n    print(number ** 2, "A longer code line to check wrapping on a narrow phone screen.")\n```\n\nAn inline `variable_name` and a [documentation link](https://cocalc.ai).',
       ),
       message("human", "Can I type and send a local message?"),
       message(
@@ -149,7 +149,7 @@ export function createPreviewChat(): ConversationClient {
                 state: "complete",
                 activity: undefined,
                 content:
-                  "Preview reply: your message stayed on this device.\n\n## Result\n\n- **Reviewed** the task.\n- Ready for your next instruction.\n\nYou can leave and return to this conversation.",
+                  'Preview reply: your message stayed on this device.\n\n## Result\n\n- **Reviewed** the task.\n- Ready for your next instruction.\n\nYou can leave and return to this conversation.\n\n```python\nprint("A long line of code that you can wrap to read comfortably on a narrow phone screen.")\n```\n\n| Check | Result |\n|:---|---:|\n| Passed | 42 |\n| Failed | 0 |',
               }
             : item,
         ),

@@ -17,12 +17,60 @@ it("renders semantic headings, lists, emphasis, code copy and scrollable tables"
   });
   expect(
     view.root.findAllByProps({ accessibilityRole: "header" }),
-  ).toHaveLength(1);
+  ).toHaveLength(3);
   expect(
     view.root.findAllByProps({ accessibilityLabel: "Scrollable table" }).length,
   ).toBeGreaterThan(0);
   const copy = view.root.findByProps({ accessibilityLabel: "Copy code block" });
   await act(async () => copy.props.onPress());
   expect(Clipboard.setStringAsync).toHaveBeenCalledWith("x = 1\n");
+  await act(async () => view.unmount());
+});
+
+it("wraps code without changing copied whitespace and reports copy failures", async () => {
+  let view: any;
+  const content = "a very long line with trailing spaces  \n\n";
+  await act(async () => {
+    view = create(<Markdown value={`\`\`\`text\n${content}\`\`\``} />);
+  });
+  const button = (name: string) =>
+    view.root.findByProps({
+      accessibilityRole: "button",
+      accessibilityLabel: name,
+    });
+  await act(async () => button("Wrap code").props.onPress());
+  expect(button("Unwrap code").props.accessibilityState.selected).toBe(true);
+  expect(
+    view.root.findAllByProps({ accessibilityLabel: "Scrollable code block" }),
+  ).toHaveLength(0);
+  await act(async () => button("Copy code block").props.onPress());
+  expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(content);
+  expect(
+    view.root.findByProps({ accessibilityLiveRegion: "polite" }).props.children,
+  ).toBe("Copied");
+  (Clipboard.setStringAsync as jest.Mock).mockRejectedValueOnce(
+    new Error("Unavailable"),
+  );
+  await act(async () => button("Copy code block").props.onPress());
+  expect(
+    view.root.findByProps({ accessibilityLiveRegion: "polite" }).props.children,
+  ).toContain("Could not copy");
+  await act(async () => button("Unwrap code").props.onPress());
+  expect(
+    view.root.findAllByProps({ accessibilityLabel: "Scrollable code block" }),
+  ).toHaveLength(1);
+  await act(async () => view.unmount());
+});
+
+it("preserves numeric table alignment and exposes column headings", async () => {
+  let view: any;
+  await act(async () => {
+    view = create(
+      <Markdown value={"| Item | Count |\n|:---|---:|\n| Tests | 42 |"} />,
+    );
+  });
+  const headings = view.root.findAllByProps({ accessibilityRole: "header" });
+  expect(headings).toHaveLength(2);
+  expect(headings[1].props.style).toContainEqual({ textAlign: "right" });
   await act(async () => view.unmount());
 });
